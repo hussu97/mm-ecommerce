@@ -1,17 +1,79 @@
-export default function Home() {
+import type { Metadata } from 'next';
+import type { Product } from '@/lib/types';
+import { HeroSection } from '@/components/home/HeroSection';
+import { FeaturedProducts } from '@/components/home/FeaturedProducts';
+import { MeetTheBaker } from '@/components/home/MeetTheBaker';
+import { CaterSection } from '@/components/home/CaterSection';
+
+export const metadata: Metadata = {
+  title: 'Melting Moments Cakes — Artisanal Bakery in UAE',
+  description:
+    'Handcrafted brownies, cookies, cookie melts, and desserts delivered across the UAE. Made with 100% love by Fatema Abbasi.',
+  openGraph: {
+    title: 'Melting Moments Cakes',
+    description: 'Handcrafted brownies, cookies and desserts — made with 100% love in the UAE',
+    images: [{ url: '/images/logos/color_logo.jpeg' }],
+  },
+};
+
+const JSON_LD = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'Organization',
+      name: 'Melting Moments Cakes',
+      url: 'https://meltingmomentscakes.com',
+      logo: 'https://meltingmomentscakes.com/images/logos/color_logo.jpeg',
+      sameAs: ['https://www.instagram.com/meltingmomentscakes'],
+    },
+    {
+      '@type': 'WebSite',
+      name: 'Melting Moments Cakes',
+      url: 'https://meltingmomentscakes.com',
+    },
+    {
+      '@type': 'LocalBusiness',
+      '@id': 'https://meltingmomentscakes.com',
+      name: 'Melting Moments Cakes',
+      description:
+        'Artisanal bakery delivering handcrafted brownies, cookies and desserts across the UAE',
+      address: {
+        '@type': 'PostalAddress',
+        addressCountry: 'AE',
+        addressRegion: 'Dubai',
+      },
+      currenciesAccepted: 'AED',
+      areaServed: 'AE',
+    },
+  ],
+};
+
+async function getFeaturedProducts(): Promise<Product[]> {
+  try {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+    const res = await fetch(`${apiUrl}/api/v1/products/featured`, {
+      next: { revalidate: 300 },
+    });
+    if (!res.ok) return [];
+    return res.json();
+  } catch {
+    return [];
+  }
+}
+
+export default async function HomePage() {
+  const featuredProducts = await getFeaturedProducts();
+
   return (
-    <main className="flex-1 flex items-center justify-center min-h-screen">
-      <div className="text-center">
-        <h1
-          className="text-5xl font-bold mb-4"
-          style={{ fontFamily: "var(--font-playfair)", color: "#8a5a64" }}
-        >
-          Melting Moments
-        </h1>
-        <p style={{ fontFamily: "var(--font-jost)", color: "#666666" }}>
-          Artisanal Bakery — UAE
-        </p>
-      </div>
-    </main>
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }}
+      />
+      <HeroSection />
+      <FeaturedProducts products={featuredProducts} />
+      <MeetTheBaker />
+      <CaterSection />
+    </>
   );
 }
