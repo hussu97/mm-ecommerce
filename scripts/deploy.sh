@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Zero-downtime redeploy for Melting Moments Ecommerce.
+# Pulls latest code, rebuilds changed images, and restarts services.
+set -euo pipefail
+
+DEPLOY_DIR="${DEPLOY_DIR:-/opt/mm-ecommerce}"
+COMPOSE_FILE="docker-compose.prod.yml"
+
+cd "$DEPLOY_DIR"
+
+echo "==> Pulling latest code..."
+git pull origin main
+
+echo "==> Pulling updated base images..."
+docker compose -f "$COMPOSE_FILE" pull umami
+
+echo "==> Building and restarting application services..."
+# Build new images first (keeps old containers running)
+docker compose -f "$COMPOSE_FILE" build api web admin
+
+echo "==> Restarting services with new images..."
+docker compose -f "$COMPOSE_FILE" up -d --no-deps api
+sleep 10
+
+echo "==> Running database migrations..."
+docker compose -f "$COMPOSE_FILE" exec -T api alembic upgrade head
+
+echo "==> Restarting frontend services..."
+docker compose -f "$COMPOSE_FILE" up -d --no-deps web admin
+
+echo "==> Reloading nginx..."
+docker compose -f "$COMPOSE_FILE" exec nginx nginx -s reload
+
+echo "==> Pruning unused images..."
+docker image prune -f
+
+echo ""
+echo "==> Deployment complete!"
+docker compose -f "$COMPOSE_FILE" ps
