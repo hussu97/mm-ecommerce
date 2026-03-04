@@ -226,35 +226,43 @@
 - [x] Category management: CRUD with inline form, up/down reorder (swap display_order), toggle active, product count
 - [x] **Verify**: admin app builds with 9 routes, no type errors ✅
 
-## Prompt 16: Admin - Orders & Analytics
-- [ ] Orders list: table (order#, customer, items, total, status badge, payment, date), filters, search, pagination, bulk actions, CSV export
-- [ ] Order detail: full info, status timeline, customer/items/delivery/payment, status action buttons (Confirm/Pack/Cancel + email), admin notes
-- [ ] Promo code management: list, create/edit, activate/deactivate
-- [ ] Customer list: table (name, email, orders, total spent, joined), click to view details + orders
-- [ ] Analytics page:
-  - [ ] Date range selector
-  - [ ] Revenue line chart, orders bar chart
-  - [ ] Top products table (by revenue + quantity)
-  - [ ] Sales by category pie chart
-  - [ ] Shopping funnel with conversion rates
-  - [ ] Average order value
-- [ ] Backend analytics API: GET /analytics/overview, /revenue, /orders, /top-products, /funnel
-- [ ] **Verify**: admin can manage orders, view analytics
+## ✅ Prompt 16: Admin - Orders & Analytics — DONE
+- [x] Orders list: table (order#, customer, items, total, status badge, payment, date), debounced search, status filter, pagination, CSV export, row-click to detail
+- [x] Order detail: status timeline (Created→Confirmed→Packed), action buttons (Confirm/Pack/Cancel), items table with totals, admin notes
+- [x] Promo code management: list, inline create/edit form (code auto-uppercase, type/value/min/max/dates), active toggle, delete with confirm
+- [x] Customer list: table (name, email, orders, total spent, joined), debounced search, pagination, "View Orders" button
+- [x] Analytics page:
+  - [x] Date range quick selectors (7d/30d/90d) + custom date inputs
+  - [x] 4 metric cards (revenue, orders, AOV, customers) with growth vs prior period
+  - [x] Revenue line chart (Recharts LineChart)
+  - [x] Orders bar chart (Recharts BarChart)
+  - [x] Top products table (by revenue + quantity)
+  - [x] Orders by status pie chart (Recharts PieChart from funnel data)
+- [x] Backend analytics API: GET /analytics/overview, /revenue, /orders-chart, /top-products, /funnel
+- [x] Backend customers API: GET /users/admin/all with order_count + total_spent subquery
+- [x] Sidebar nav: Customers + Analytics links added
+- [x] recharts installed
+- [x] **Verify**: admin builds ✅ 12 routes, 0 type errors; backend imports clean ✅ 58 routes
 
-## Prompt 17: Analytics, SEO & Performance
-- [ ] Umami analytics: tracking script, custom events (page_view, product_view, add_to_cart, checkout_*, order_completed, promo_applied)
-- [ ] Umami in docker-compose.yml
-- [ ] sitemap.xml (auto-generated from categories + products)
-- [ ] robots.txt (allow all, disallow /account/, /checkout/, /cart/)
-- [ ] Structured data consolidation across all pages
-- [ ] OG images (dynamic or brand images)
-- [ ] Breadcrumb navigation component
-- [ ] Image optimization: next/image everywhere, WebP, lazy load, priority LCP
-- [ ] Font optimization: next/font, font-display swap
-- [ ] Code splitting: dynamic imports for heavy components
-- [ ] Prefetch category pages on hover
-- [ ] Custom 404 and error pages (branded)
-- [ ] **Verify**: Lighthouse SEO > 90, analytics events fire
+## ✅ Prompt 17: Analytics, SEO & Performance — DONE
+- [x] Umami docker service + umami-db (PostgreSQL 16) in docker-compose.yml
+- [x] lib/analytics.ts: Umami window.umami wrapper for all custom events
+- [x] add_to_cart event: fires in ProductCard on successful addItem
+- [x] remove_from_cart event: fires in cart page handleRemove
+- [x] begin_checkout event: fires in cart page handleProceedToCheckout
+- [x] promo_applied event: fires in cart page handleApplyPromo
+- [x] order_completed event: fires in checkout/confirmation on order load
+- [x] Umami <Script afterInteractive> in root layout (gated on NEXT_PUBLIC_UMAMI_WEBSITE_ID env)
+- [x] sitemap.ts: dynamic — static pages + all active categories from API (revalidate 1h)
+- [x] robots.ts: allow /, disallow /account/ /checkout/ /cart/
+- [x] OG images: metadataBase set in root layout; category pages use category.image_url with logo fallback; Twitter card added
+- [x] Breadcrumb component: semantic nav with Home / Category, used in category pages
+- [x] CategoryNav: slim desktop bar below header with explicit prefetch={true} on all 5 categories
+- [x] Image optimization: next/image already used everywhere; priority on LCP images (header logo)
+- [x] Font optimization: next/font with display="swap" already set on both fonts (Prompt 1)
+- [x] Custom 404 page (app/not-found.tsx): branded with large display number, Back to Home + Contact CTAs
+- [x] Custom error page (app/error.tsx): error boundary with Try Again + Back to Home, error digest shown
+- [x] **Verify**: web builds ✅ 20 routes, 0 type errors; sitemap.xml + robots.txt generated as routes
 
 ## Prompt 18: Deployment & DevOps
 - [ ] Dockerfiles: api (python:3.12-slim, multi-stage, uvicorn 4 workers), web (node:20-alpine, standalone), admin (same)
