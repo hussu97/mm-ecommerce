@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
 import { Playfair_Display, Jost } from "next/font/google";
 import "./globals.css";
+import { Providers } from "./providers";
+import { Header } from "@/components/layout/Header";
+import { Footer } from "@/components/layout/Footer";
+import { PromoBanner } from "@/components/layout/PromoBanner";
 
 const playfairDisplay = Playfair_Display({
   subsets: ["latin"],
@@ -46,7 +50,19 @@ export default function RootLayout({
         />
       </head>
       <body className="min-h-screen flex flex-col antialiased">
-        {children}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var m=localStorage.getItem('mm_theme');if(m==='dark')document.documentElement.classList.add('dark')}catch(e){}})()`,
+          }}
+        />
+        <Providers>
+          <PromoBanner />
+          <Header />
+          <main className="flex-1">
+            {children}
+          </main>
+          <Footer />
+        </Providers>
       </body>
     </html>
   );
