@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Playfair_Display, Jost } from "next/font/google";
 import "./globals.css";
+import { Providers } from "./providers";
 
 const playfairDisplay = Playfair_Display({
   subsets: ["latin"],
@@ -33,8 +34,11 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={`${playfairDisplay.variable} ${jost.variable}`}>
-      <body className="min-h-screen flex flex-col antialiased bg-gray-50">
-        {children}
+      <head>
+        <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet" />
+      </head>
+      <body className="min-h-screen antialiased bg-gray-50">
+        <Providers>{children}</Providers>
       </body>
     </html>
   );
