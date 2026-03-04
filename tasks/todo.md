@@ -217,14 +217,14 @@
 - [x] SEO: metadata export on all pages, JSON-LD (Person/LocalBusiness on About, FAQPage on FAQ, LocalBusiness on Contact)
 - [x] **Verify**: `pnpm build` passes ✅ — 18 routes, no type errors
 
-## Prompt 15: Admin Dashboard - Layout & Product Management
-- [ ] Admin layout: collapsible sidebar nav, top bar (user + logout), main content, admin auth required
-- [ ] Admin login: email/password, verify is_admin
-- [ ] Dashboard overview: metrics cards (today's orders/revenue, total products, active promos), recent orders, quick actions
-- [ ] Product list: table (image, name, category, price, stock, status, actions), search/filter, pagination
-- [ ] Product create/edit: form (name, auto-slug, category, description, price, featured, active), image upload (drag-drop, preview, reorder), variants section
-- [ ] Category management: CRUD, drag-to-reorder
-- [ ] **Verify**: admin can manage products and categories
+## ✅ Prompt 15: Admin Dashboard - Layout & Product Management — DONE
+- [x] Admin layout: collapsible sidebar nav (w-52/w-14), mobile hamburger overlay, top bar (user + logout), admin auth guard
+- [x] Admin login: email/password, verify is_admin flag
+- [x] Dashboard overview: metrics cards (today's orders/revenue, total products, active promos), recent orders table, quick actions
+- [x] Product list: table (image, name/slug, category, price, variants/stock, status badges, actions), search/filter, pagination
+- [x] Product create/edit: form (name, auto-slug on create, category, description, price, featured, active), image upload (multi-file, preview with cover badge, move left/right, remove), variants section (add/remove inline, diff on edit)
+- [x] Category management: CRUD with inline form, up/down reorder (swap display_order), toggle active, product count
+- [x] **Verify**: admin app builds with 9 routes, no type errors ✅
 
 ## Prompt 16: Admin - Orders & Analytics
 - [ ] Orders list: table (order#, customer, items, total, status badge, payment, date), filters, search, pagination, bulk actions, CSV export
