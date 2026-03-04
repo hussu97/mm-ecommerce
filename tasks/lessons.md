@@ -9,8 +9,16 @@
 - ~33 SKUs across 5 categories, delivery across UAE
 
 ## Lessons
-<!-- Add entries here as corrections are made -->
-<!-- Format: ### [Date] Category: Brief title -->
-<!-- - What went wrong -->
-<!-- - Why it happened -->
-<!-- - Rule to prevent it -->
+
+### [2026-03-05] Python: Don't use passlib with Python 3.14+
+- **What went wrong**: `passlib[bcrypt]` crashes on Python 3.14 — `bcrypt.__about__` attribute was removed in bcrypt 4.x, causing passlib's backend detection to fail
+- **Why**: passlib is largely unmaintained; it hasn't caught up with newer bcrypt API changes
+- **Rule**: Use `bcrypt` directly instead of `passlib`. Pattern:
+  ```python
+  import bcrypt
+  def hash_password(pw: str) -> str:
+      return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
+  def verify_password(plain: str, hashed: str) -> bool:
+      return bcrypt.checkpw(plain.encode(), hashed.encode())
+  ```
+- **pyproject.toml**: Use `"bcrypt>=4.0.0"` — remove `"passlib[bcrypt]"`
