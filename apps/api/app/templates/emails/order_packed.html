@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}
+  {% if order.delivery_method.value == "delivery" %}Your Order is On Its Way — {{ order.order_number }}
+  {% else %}Ready for Pickup — {{ order.order_number }}{% endif %}
+{% endblock %}
+
+{% block content %}
+{% if order.delivery_method.value == "delivery" %}
+<h2>Your Order is On Its Way!</h2>
+<p>Hi {{ name }},</p>
+<p>Great news — your order has been packed and is on its way to you. Your freshly baked treats will be with you soon!</p>
+{% else %}
+<h2>Ready for Pickup</h2>
+<p>Hi {{ name }},</p>
+<p>Your order has been freshly packed and is ready for collection. We look forward to seeing you!</p>
+{% endif %}
+
+<div style="text-align:center;margin:24px 0;">
+  <span class="status status-packed">&#9998; Packed</span><br/>
+  <span class="order-badge">{{ order.order_number }}</span>
+</div>
+
+<!-- Items summary -->
+<table class="items-table" cellpadding="0" cellspacing="0">
+  <thead>
+    <tr>
+      <th>Item</th>
+      <th style="text-align:center;width:50px;">Qty</th>
+      <th class="right" style="width:80px;">Price</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in order.items %}
+    <tr>
+      <td>
+        {{ item.product_name }}
+        <span class="variant-label">{{ item.variant_name }}</span>
+      </td>
+      <td style="text-align:center;">{{ item.quantity }}</td>
+      <td class="right">{{ "%.2f"|format(item.total_price) }} AED</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<table class="totals" cellpadding="0" cellspacing="0">
+  <tr class="total-row">
+    <td class="label">Total Paid</td>
+    <td class="value">{{ "%.2f"|format(order.total) }} AED</td>
+  </tr>
+</table>
+
+<hr class="divider" />
+
+{% if order.delivery_method.value == "delivery" and order.shipping_address_snapshot %}
+{% set addr = order.shipping_address_snapshot %}
+<div class="info-box">
+  <p class="label">Delivering To</p>
+  <p>{{ addr.get('first_name', '') }} {{ addr.get('last_name', '') }}<br/>
+  {{ addr.get('address_line_1', '') }}{% if addr.get('address_line_2') %}, {{ addr.get('address_line_2') }}{% endif %}<br/>
+  {{ addr.get('city', '') }}, {{ addr.get('emirate', '') }}, UAE</p>
+</div>
+{% else %}
+<div class="info-box">
+  <p class="label">Pickup Details</p>
+  <p>Please bring your order confirmation when collecting. Contact us on WhatsApp if you need to arrange a specific time.</p>
+</div>
+{% endif %}
+
+<div style="text-align:center;margin:28px 0;">
+  <a href="{{ web_url }}/account/orders/{{ order.order_number }}" class="btn">View Order</a>
+</div>
+{% endblock %}

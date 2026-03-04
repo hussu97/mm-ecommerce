@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Welcome to Melting Moments{% endblock %}
+
+{% block content %}
+<h2>Welcome to Melting Moments</h2>
+<p>Hi {{ first_name }},</p>
+<p>We're so glad you're here. Thank you for joining the Melting Moments family — where every bite is made with 100% love.</p>
+
+<div style="background-color:#f9f5f0;border:1px solid #dfbdc1;border-radius:4px;padding:24px 28px;margin:24px 0;text-align:center;">
+  <p style="color:#8a5a64;font-size:18px;letter-spacing:1px;margin:0 0 8px;font-family:Georgia,serif;">
+    Artisanal Brownies, Cookies &amp; More
+  </p>
+  <p style="color:#666;font-size:14px;margin:0;font-family:Arial,sans-serif;">
+    Handcrafted in the UAE, delivered to your door
+  </p>
+</div>
+
+<p>With your new account you can:</p>
+<ul style="font-family:Arial,sans-serif;font-size:14px;line-height:2;color:#3a2a2d;padding-left:20px;">
+  <li>Track your orders in real time</li>
+  <li>Save delivery addresses for faster checkout</li>
+  <li>Receive exclusive offers and new flavour alerts</li>
+</ul>
+
+<div style="text-align:center;margin:32px 0;">
+  <a href="{{ web_url }}" class="btn">Start Shopping</a>
+</div>
+
+<hr class="divider" />
+
+<p class="muted" style="text-align:center;">
+  Questions? We're always happy to help at
+  <a href="mailto:orders@meltingmomentscakes.com" style="color:#8a5a64;">orders@meltingmomentscakes.com</a>
+</p>
+{% endblock %}

@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Order Cancelled — {{ order.order_number }}{% endblock %}
+
+{% block content %}
+<h2>Order Cancelled</h2>
+<p>Hi {{ name }},</p>
+<p>We're sorry to let you know that your order <strong>{{ order.order_number }}</strong> has been cancelled.</p>
+
+<div style="text-align:center;margin:24px 0;">
+  <span class="status status-cancelled">&#10005; Cancelled</span><br/>
+  <span class="order-badge">{{ order.order_number }}</span>
+</div>
+
+<!-- Items summary -->
+<table class="items-table" cellpadding="0" cellspacing="0">
+  <thead>
+    <tr>
+      <th>Item</th>
+      <th style="text-align:center;width:50px;">Qty</th>
+      <th class="right" style="width:80px;">Price</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in order.items %}
+    <tr>
+      <td>
+        {{ item.product_name }}
+        <span class="variant-label">{{ item.variant_name }}</span>
+      </td>
+      <td style="text-align:center;">{{ item.quantity }}</td>
+      <td class="right">{{ "%.2f"|format(item.total_price) }} AED</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<table class="totals" cellpadding="0" cellspacing="0">
+  <tr class="total-row">
+    <td class="label">Order Total</td>
+    <td class="value">{{ "%.2f"|format(order.total) }} AED</td>
+  </tr>
+</table>
+
+{% if order.admin_notes %}
+<hr class="divider" />
+<div class="info-box">
+  <p class="label">Note from Us</p>
+  <p>{{ order.admin_notes }}</p>
+</div>
+{% endif %}
+
+<hr class="divider" />
+
+<p>If you were charged for this order, a refund will be processed to your original payment method within 5–7 business days.</p>
+<p>We'd love to have you back — please feel free to place a new order anytime.</p>
+
+<div style="text-align:center;margin:28px 0;">
+  <a href="{{ web_url }}" class="btn">Shop Again</a>
+</div>
+
+<p class="muted" style="text-align:center;">Questions? Reply to this email or reach us on WhatsApp.</p>
+{% endblock %}

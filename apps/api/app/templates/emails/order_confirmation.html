@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Order Confirmed — {{ order.order_number }}{% endblock %}
+
+{% block content %}
+<h2>Order Confirmed</h2>
+<p>Hi {{ name }},</p>
+<p>Thank you for your order! We've received it and will begin preparing your treats shortly.</p>
+
+<div style="text-align:center;margin:24px 0;">
+  <span class="status status-confirmed">&#10003; Confirmed</span><br/>
+  <span class="order-badge">{{ order.order_number }}</span>
+</div>
+
+<!-- Items -->
+<table class="items-table" cellpadding="0" cellspacing="0">
+  <thead>
+    <tr>
+      <th>Item</th>
+      <th style="text-align:center;width:50px;">Qty</th>
+      <th class="right" style="width:80px;">Price</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in order.items %}
+    <tr>
+      <td>
+        {{ item.product_name }}
+        <span class="variant-label">{{ item.variant_name }}</span>
+      </td>
+      <td style="text-align:center;">{{ item.quantity }}</td>
+      <td class="right">{{ "%.2f"|format(item.total_price) }} AED</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<!-- Totals -->
+<table class="totals" cellpadding="0" cellspacing="0">
+  <tr>
+    <td class="label">Subtotal</td>
+    <td class="value">{{ "%.2f"|format(order.subtotal) }} AED</td>
+  </tr>
+  {% if order.discount_amount and order.discount_amount > 0 %}
+  <tr class="discount-row">
+    <td class="label">Discount{% if order.promo_code_used %} ({{ order.promo_code_used }}){% endif %}</td>
+    <td class="value">&minus;{{ "%.2f"|format(order.discount_amount) }} AED</td>
+  </tr>
+  {% endif %}
+  <tr>
+    <td class="label">Delivery</td>
+    <td class="value">
+      {% if order.delivery_fee == 0 %}
+        Free
+      {% else %}
+        {{ "%.2f"|format(order.delivery_fee) }} AED
+      {% endif %}
+    </td>
+  </tr>
+  <tr class="total-row">
+    <td class="label">Total</td>
+    <td class="value">{{ "%.2f"|format(order.total) }} AED</td>
+  </tr>
+</table>
+
+<hr class="divider" />
+
+<!-- Delivery info -->
+{% if order.delivery_method.value == "delivery" and order.shipping_address_snapshot %}
+{% set addr = order.shipping_address_snapshot %}
+<div class="info-box">
+  <p class="label">Delivery Address</p>
+  <p>{{ addr.get('first_name', '') }} {{ addr.get('last_name', '') }}<br/>
+  {{ addr.get('address_line_1', '') }}{% if addr.get('address_line_2') %}, {{ addr.get('address_line_2') }}{% endif %}<br/>
+  {{ addr.get('city', '') }}, {{ addr.get('emirate', '') }}, UAE<br/>
+  {{ addr.get('phone', '') }}</p>
+</div>
+{% else %}
+<div class="info-box">
+  <p class="label">Collection</p>
+  <p>Your order is ready for pickup. We'll reach out to confirm the pickup time.</p>
+</div>
+{% endif %}
+
+<p style="margin-top:24px;">We'll notify you when your order is packed and on its way. If you have any questions, reply to this email or reach us on WhatsApp.</p>
+
+<div style="text-align:center;margin:28px 0;">
+  <a href="{{ web_url }}/account/orders/{{ order.order_number }}" class="btn">View Order</a>
+</div>
+{% endblock %}

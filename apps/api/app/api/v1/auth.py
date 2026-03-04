@@ -17,6 +17,7 @@ from app.core.security import (
     verify_password,
 )
 from app.models import User
+from app.services import email_service
 from app.schemas.user import (
     GuestSessionRequest,
     LoginRequest,
@@ -57,6 +58,7 @@ def _make_token_response(user: User) -> TokenResponse:
 )
 async def register(
     body: UserCreate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
     result = await db.execute(select(User).where(User.email == body.email.lower()))
@@ -81,7 +83,7 @@ async def register(
     await db.flush()
     await db.refresh(user)
 
-    # TODO (Prompt 7): send_welcome_email(user) in background
+    background_tasks.add_task(email_service.send_welcome, user.email, user.first_name)
     return _make_token_response(user)
 
 
@@ -192,8 +194,9 @@ async def forgot_password(
     # Always return 200 to avoid email enumeration
     if user and user.hashed_password and not user.is_guest:
         reset_token = create_password_reset_token(str(user.id), user.email)
-        # TODO (Prompt 7): background_tasks.add_task(send_password_reset, user, reset_token)
-        _ = reset_token  # suppress unused warning until email service is wired up
+        background_tasks.add_task(
+            email_service.send_password_reset, user.email, user.first_name, reset_token
+        )
 
     return {"message": "If this email exists, a password reset link has been sent"}
 

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>{% block title %}Melting Moments{% endblock %}</title>
+  <style>
+    /* Reset */
+    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+    img { -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; }
+    /* General */
+    body { margin: 0 !important; padding: 0 !important; background-color: #f9f5f0; font-family: Georgia, 'Times New Roman', serif; color: #3a2a2d; }
+    .wrapper { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
+    /* Header */
+    .header { background-color: #8a5a64; padding: 36px 32px; text-align: center; }
+    .header-brand { color: #ffffff; font-size: 26px; font-weight: normal; letter-spacing: 6px; margin: 0; text-transform: uppercase; }
+    .header-tagline { color: #d6acab; font-size: 10px; letter-spacing: 3px; margin: 8px 0 0; text-transform: uppercase; font-family: Arial, sans-serif; }
+    /* Content */
+    .content { padding: 40px 32px; }
+    h2 { color: #8a5a64; font-size: 22px; font-weight: normal; margin: 0 0 20px; letter-spacing: 1px; }
+    p { font-family: Arial, sans-serif; font-size: 15px; line-height: 1.7; color: #3a2a2d; margin: 0 0 16px; }
+    .muted { color: #888; font-size: 13px; }
+    /* Order number badge */
+    .order-badge { display: inline-block; background-color: #f9f5f0; border: 1px solid #dfbdc1; color: #8a5a64; font-family: 'Courier New', monospace; font-size: 16px; font-weight: bold; letter-spacing: 2px; padding: 10px 20px; border-radius: 4px; margin: 8px 0 24px; }
+    /* Items table */
+    .items-table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+    .items-table th { background-color: #8a5a64; color: #ffffff; font-family: Arial, sans-serif; font-size: 12px; font-weight: normal; letter-spacing: 1px; text-transform: uppercase; padding: 10px 12px; text-align: left; }
+    .items-table th.right { text-align: right; }
+    .items-table td { padding: 12px; border-bottom: 1px solid #f0e8e6; font-family: Arial, sans-serif; font-size: 14px; color: #3a2a2d; vertical-align: top; }
+    .items-table td.right { text-align: right; }
+    .items-table tr:last-child td { border-bottom: none; }
+    .variant-label { color: #8a5a64; font-size: 12px; display: block; margin-top: 2px; }
+    /* Totals */
+    .totals { width: 100%; border-collapse: collapse; margin: 16px 0 0; }
+    .totals td { font-family: Arial, sans-serif; font-size: 14px; padding: 6px 12px; color: #3a2a2d; }
+    .totals td.label { text-align: left; color: #666; }
+    .totals td.value { text-align: right; }
+    .totals .total-row td { border-top: 2px solid #8a5a64; padding-top: 12px; font-size: 16px; font-weight: bold; color: #8a5a64; }
+    .totals .discount-row td { color: #2a7a4a; }
+    /* Divider */
+    .divider { border: none; border-top: 1px solid #dfbdc1; margin: 28px 0; }
+    /* CTA Button */
+    .btn { display: inline-block; background-color: #8a5a64; color: #ffffff !important; font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; text-decoration: none; padding: 14px 32px; border-radius: 2px; margin: 8px 0; }
+    /* Info box */
+    .info-box { background-color: #f9f5f0; border-left: 3px solid #8a5a64; padding: 16px 20px; margin: 20px 0; border-radius: 0 4px 4px 0; }
+    .info-box p { margin: 4px 0; font-size: 14px; }
+    .info-box .label { color: #8a5a64; font-weight: bold; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; }
+    /* Status badge */
+    .status { display: inline-block; padding: 4px 12px; border-radius: 20px; font-family: Arial, sans-serif; font-size: 12px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; }
+    .status-confirmed { background-color: #e8f5e9; color: #2e7d32; }
+    .status-packed { background-color: #e3f2fd; color: #1565c0; }
+    .status-cancelled { background-color: #fce4ec; color: #c62828; }
+    /* Footer */
+    .footer { background-color: #f9f5f0; border-top: 2px solid #dfbdc1; padding: 28px 32px; text-align: center; }
+    .footer p { font-family: Arial, sans-serif; font-size: 12px; color: #8a5a64; margin: 4px 0; line-height: 1.6; }
+    .footer .footer-links a { color: #8a5a64; text-decoration: none; margin: 0 8px; }
+    .footer .love { font-size: 13px; font-style: italic; margin-bottom: 10px; }
+    /* Mobile */
+    @media only screen and (max-width: 620px) {
+      .wrapper { width: 100% !important; }
+      .content { padding: 24px 16px !important; }
+      .header { padding: 28px 16px !important; }
+      .footer { padding: 20px 16px !important; }
+    }
+  </style>
+</head>
+<body>
+  <div style="padding: 20px 0; background-color: #f9f5f0;">
+    <table class="wrapper" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;margin:0 auto;background:#ffffff;">
+      <!-- Header -->
+      <tr>
+        <td class="header">
+          <h1 class="header-brand">Melting Moments</h1>
+          <p class="header-tagline">Artisanal Cakes &amp; Baked Goods &middot; UAE</p>
+        </td>
+      </tr>
+      <!-- Content -->
+      <tr>
+        <td class="content">
+          {% block content %}{% endblock %}
+        </td>
+      </tr>
+      <!-- Footer -->
+      <tr>
+        <td class="footer">
+          <p class="love">Made with 100% Love</p>
+          <p>&copy; {{ now.year }} Melting Moments Cakes &middot; United Arab Emirates</p>
+          <p class="footer-links">
+            <a href="{{ web_url }}">Shop</a> &middot;
+            <a href="{{ web_url }}/about">About</a> &middot;
+            <a href="{{ web_url }}/contact">Contact</a>
+          </p>
+          <p style="margin-top:12px;color:#aaa;font-size:11px;">
+            This email was sent to {{ recipient_email }}.<br/>
+            If you have questions, contact us at orders@meltingmomentscakes.com
+          </p>
+        </td>
+      </tr>
+    </table>
+  </div>
+</body>
+</html>

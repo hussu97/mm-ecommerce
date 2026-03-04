@@ -119,15 +119,19 @@
 - [x] **Verify**: 57 total routes registered ✅, all imports clean ✅
   - Note: End-to-end Stripe test requires STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET in .env
 
-## Prompt 7: Backend API - Email Service
-- [ ] Email service (Resend): send_email base, send_order_confirmation/cancelled/packed, send_welcome, send_password_reset
-- [ ] Jinja2 email templates (mobile-responsive, branded):
-  - [ ] Base template (logo, colors #8a5a64/#d6acab, footer)
-  - [ ] order_confirmation.html, order_cancelled.html, order_packed.html
-  - [ ] welcome.html, password_reset.html
-- [ ] Hook into order status update flow
-- [ ] Use FastAPI BackgroundTasks for non-blocking sends
-- [ ] Error handling + logging for failed sends
+## ✅ Prompt 7: Backend API - Email Service — DONE
+- [x] Email service (Resend v2): _send base with RESEND_API_KEY guard + error logging, send_order_confirmation/cancelled/packed, send_welcome, send_password_reset
+- [x] Jinja2 email templates (mobile-responsive, branded):
+  - [x] Base template (logo #8a5a64 header, #d6acab accent, #f9f5f0 bg, footer with links + recipient)
+  - [x] order_confirmation.html (items table, totals, promo discount, address/pickup info, CTA)
+  - [x] order_cancelled.html (items summary, admin_notes if set, refund notice, shop-again CTA)
+  - [x] order_packed.html (delivery vs pickup variant, items summary, address snapshot)
+  - [x] welcome.html (feature bullets, shop CTA)
+  - [x] password_reset.html (button + plaintext fallback link, 1-hour expiry notice)
+- [x] Hook into order status update flow (orders.py PUT /status → BackgroundTasks)
+- [x] Use FastAPI BackgroundTasks for non-blocking sends (orders + auth routes)
+- [x] Error handling: logs error without raising, RESEND_API_KEY guard skips gracefully
+- [x] **Verify**: all 5 templates render ✅ (7100–8000 chars each), imports clean ✅
 - [ ] **Verify**: emails send correctly on order status changes
 
 ## Prompt 8: Frontend - Shared UI Components & Layout

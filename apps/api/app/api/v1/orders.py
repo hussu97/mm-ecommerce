@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_admin_user, get_current_active_user, get_db, get_optional_user
 from app.models.order import OrderStatusEnum
 from app.models.user import User
 from app.schemas.order import OrderCreate, OrderListResponse, OrderResponse, OrderStatusUpdate
-from app.services import order_service
+from app.services import email_service, order_service
 
 router = APIRouter()
 
@@ -80,8 +80,18 @@ async def get_order(
 async def update_order_status(
     order_number: str,
     data: OrderStatusUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_admin_user),
 ):
-    """Update order status with validated transitions (admin only)."""
-    return await order_service.update_status(db, order_number, data.status, data.admin_notes)
+    """Update order status with validated transitions (admin only). Triggers email notification."""
+    order = await order_service.update_status(db, order_number, data.status, data.admin_notes)
+
+    if data.status == OrderStatusEnum.CONFIRMED:
+        background_tasks.add_task(email_service.send_order_confirmation, order)
+    elif data.status == OrderStatusEnum.PACKED:
+        background_tasks.add_task(email_service.send_order_packed, order)
+    elif data.status == OrderStatusEnum.CANCELLED:
+        background_tasks.add_task(email_service.send_order_cancelled, order)
+
+    return order
