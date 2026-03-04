@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { ordersApi } from '@/lib/api';
+import { analytics } from '@/lib/analytics';
 import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 import type { Order } from '@/lib/types';
@@ -19,7 +20,16 @@ function ConfirmationContent() {
   useEffect(() => {
     if (!orderNumber) { setLoading(false); setError(true); return; }
     ordersApi.get(orderNumber)
-      .then(setOrder)
+      .then(order => {
+        setOrder(order);
+        analytics.orderCompleted({
+          order_number: order.order_number,
+          total: Number(order.total),
+          payment_provider: order.payment_provider ?? 'unknown',
+          delivery_method: order.delivery_method,
+          item_count: order.items.length,
+        });
+      })
       .catch(() => setError(true))
       .finally(() => setLoading(false));
   }, [orderNumber]);

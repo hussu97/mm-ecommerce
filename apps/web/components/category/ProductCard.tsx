@@ -5,6 +5,7 @@ import Image from 'next/image';
 import { useCart } from '@/lib/cart-context';
 import { useToast, QuantitySelector } from '@/components/ui';
 import { ApiError } from '@/lib/api';
+import { analytics } from '@/lib/analytics';
 import type { Product } from '@/lib/types';
 
 export function ProductCard({ product }: { product: Product }) {
@@ -26,6 +27,12 @@ export function ProductCard({ product }: { product: Product }) {
     setAdding(true);
     try {
       await addItem(selectedVariant.id, qty);
+      analytics.addToCart({
+        product_name: product.name,
+        variant_name: selectedVariant.name,
+        price: Number(selectedVariant.price),
+        quantity: qty,
+      });
       addToast(`${product.name} added to cart`, 'success');
       setQty(1);
     } catch (err) {

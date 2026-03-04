@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import type { Category, Product, ProductListResponse } from '@/lib/types';
 import { ProductGrid } from '@/components/category/ProductGrid';
+import { Breadcrumb } from '@/components/ui';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api/v1';
 
@@ -36,16 +37,20 @@ export async function generateMetadata({
   if (!data) return {};
 
   const { category } = data;
+  const description =
+    category.description ??
+    `Shop our range of handcrafted ${category.name.toLowerCase()} — made with love in the UAE.`;
+  const ogImage = category.image_url
+    ? [{ url: category.image_url, alt: category.name }]
+    : [{ url: '/images/logos/color_logo.jpeg', alt: 'Melting Moments Cakes' }];
+
   return {
     title: category.name,
-    description:
-      category.description ??
-      `Shop our range of handcrafted ${category.name.toLowerCase()} — made with love in the UAE.`,
+    description,
     openGraph: {
       title: `${category.name} | Melting Moments Cakes`,
-      description:
-        category.description ??
-        `Handcrafted ${category.name.toLowerCase()} delivered across the UAE.`,
+      description,
+      images: ogImage,
     },
   };
 }
@@ -98,6 +103,8 @@ export default async function CategoryPage({
       />
 
       <div className="max-w-7xl mx-auto px-4 py-12">
+
+        <Breadcrumb items={[{ label: 'Home', href: '/' }, { label: category.name }]} />
 
         {/* Category header */}
         <header className="mb-10">

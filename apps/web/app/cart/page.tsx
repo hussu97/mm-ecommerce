@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useState, useCallback } from 'react';
 import { useCart } from '@/lib/cart-context';
 import { promoApi, authApi, getToken, setToken, ensureSessionId } from '@/lib/api';
+import { analytics } from '@/lib/analytics';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { QuantitySelector } from '@/components/ui/QuantitySelector';
@@ -37,9 +38,10 @@ export default function CartPage() {
     }
   }, [updateItem, addToast]);
 
-  const handleRemove = useCallback(async (itemId: string) => {
+  const handleRemove = useCallback(async (itemId: string, productName: string) => {
     try {
       await removeItem(itemId);
+      analytics.removeFromCart({ product_name: productName });
     } catch {
       addToast('Failed to remove item', 'error');
     }
@@ -56,7 +58,9 @@ export default function CartPage() {
     try {
       const result = await promoApi.validate(code, subtotal);
       if (result.valid) {
-        setAppliedPromo({ code, discount: Number(result.discount_amount), message: result.message ?? '' });
+        const discountAmount = Number(result.discount_amount);
+        setAppliedPromo({ code, discount: discountAmount, message: result.message ?? '' });
+        analytics.promoApplied({ code, discount: discountAmount });
         addToast(`Promo code "${code}" applied!`, 'success');
       } else {
         setPromoError(result.message ?? 'Invalid promo code');
@@ -77,6 +81,7 @@ export default function CartPage() {
   const handleProceedToCheckout = useCallback(async () => {
     if (items.length === 0) return;
 
+    analytics.beginCheckout({ item_count: items.length, subtotal });
     setCheckoutLoading(true);
     try {
       // Create guest session if not authenticated
@@ -173,7 +178,7 @@ export default function CartPage() {
                       </div>
                       {/* Remove */}
                       <button
-                        onClick={() => handleRemove(item.id)}
+                        onClick={() => handleRemove(item.id, item.product_name ?? '')}
                         disabled={isLoading}
                         className="text-gray-300 hover:text-red-400 transition-colors shrink-0 disabled:opacity-50"
                         aria-label="Remove item"
