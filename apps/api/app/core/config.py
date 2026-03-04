@@ -1,0 +1,3 @@
+# Placeholder — implemented in Prompt 3
+# from pydantic_settings import BaseSettings
+# class Settings(BaseSettings): ...
