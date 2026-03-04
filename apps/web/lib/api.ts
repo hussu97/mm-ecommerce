@@ -89,6 +89,8 @@ export const authApi = {
   guest: (email?: string) =>
     api.post<TokenResponse>('/auth/guest', { email }),
   me: () => api.get<User>('/auth/me'),
+  updateMe: (data: { first_name?: string; last_name?: string; phone?: string }) =>
+    api.put<User>('/auth/me', data),
   forgotPassword: (email: string) =>
     api.post<{ message: string }>('/auth/forgot-password', { email }),
   resetPassword: (token: string, new_password: string) =>
