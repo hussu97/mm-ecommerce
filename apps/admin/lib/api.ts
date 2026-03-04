@@ -1,6 +1,8 @@
 import type {
-  Category, Order, PaginatedOrders, Product, ProductListResponse,
-  ProductVariant, PromoCode, TokenResponse, UploadResponse, User,
+  AnalyticsOverview, Category, FunnelData, Order,
+  OrdersPoint, PaginatedCustomers, PaginatedOrders, Product,
+  ProductListResponse, ProductVariant, PromoCode, RevenuePoint,
+  TokenResponse, TopProduct, UploadResponse, User,
 } from './types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
@@ -113,8 +115,40 @@ export const ordersApi = {
       : '';
     return api.get<PaginatedOrders>(`/orders/admin/all${qs}`);
   },
+  get: (orderNumber: string) => api.get<Order>(`/orders/${orderNumber}`),
   updateStatus: (orderNumber: string, status: string, admin_notes?: string) =>
     api.put<Order>(`/orders/${orderNumber}/status`, { status, admin_notes }),
+};
+
+// ─── Analytics ────────────────────────────────────────────────────────────────
+
+type DateParams = { start_date?: string; end_date?: string; group_by?: string };
+
+function buildQs(params?: Record<string, string | number | undefined>): string {
+  if (!params) return '';
+  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== '');
+  if (!entries.length) return '';
+  return '?' + new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString();
+}
+
+export const analyticsApi = {
+  overview: (params?: { start_date?: string; end_date?: string }) =>
+    api.get<AnalyticsOverview>(`/analytics/overview${buildQs(params)}`),
+  revenue: (params?: DateParams) =>
+    api.get<RevenuePoint[]>(`/analytics/revenue${buildQs(params)}`),
+  ordersChart: (params?: DateParams) =>
+    api.get<OrdersPoint[]>(`/analytics/orders-chart${buildQs(params)}`),
+  topProducts: (params?: { start_date?: string; end_date?: string; limit?: number }) =>
+    api.get<TopProduct[]>(`/analytics/top-products${buildQs(params)}`),
+  funnel: (params?: { start_date?: string; end_date?: string }) =>
+    api.get<FunnelData>(`/analytics/funnel${buildQs(params)}`),
+};
+
+// ─── Customers ────────────────────────────────────────────────────────────────
+
+export const customersApi = {
+  list: (params?: { search?: string; page?: number; per_page?: number }) =>
+    api.get<PaginatedCustomers>(`/users/admin/all${buildQs(params)}`),
 };
 
 // ─── Promo Codes ──────────────────────────────────────────────────────────────

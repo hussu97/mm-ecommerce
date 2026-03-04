@@ -125,3 +125,60 @@ export interface UploadResponse {
   url: string;
   key: string;
 }
+
+// ─── Customers ────────────────────────────────────────────────────────────────
+
+export interface CustomerSummary {
+  id: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  phone: string | null;
+  order_count: number;
+  total_spent: number;
+  created_at: string;
+}
+
+export interface PaginatedCustomers {
+  items: CustomerSummary[];
+  total: number;
+  page: number;
+  per_page: number;
+  pages: number;
+}
+
+// ─── Analytics ────────────────────────────────────────────────────────────────
+
+export interface AnalyticsOverview {
+  total_revenue: number;
+  total_orders: number;
+  avg_order_value: number;
+  total_customers: number;
+  revenue_growth: number;
+  orders_growth: number;
+}
+
+export interface RevenuePoint {
+  date: string;
+  revenue: number;
+}
+
+export interface OrdersPoint {
+  date: string;
+  count: number;
+}
+
+export interface TopProduct {
+  product_name: string;
+  variant_name: string;
+  revenue: number;
+  quantity: number;
+}
+
+export interface FunnelData {
+  created: number;
+  confirmed: number;
+  packed: number;
+  cancelled: number;
+  conversion_rate: number;
+}

@@ -12,6 +12,8 @@ const NAV = [
   { href: '/categories',    label: 'Categories',  icon: 'category' },
   { href: '/orders',        label: 'Orders',      icon: 'receipt_long' },
   { href: '/promo-codes',   label: 'Promo Codes', icon: 'local_offer' },
+  { href: '/customers',     label: 'Customers',   icon: 'people' },
+  { href: '/analytics',     label: 'Analytics',   icon: 'bar_chart' },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {

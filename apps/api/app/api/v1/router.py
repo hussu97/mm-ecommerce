@@ -10,8 +10,8 @@ from .promo_codes import router as promo_codes_router
 from .orders import router as orders_router
 from .addresses import router as addresses_router
 from .payments import router as payments_router
-
-# Prompt 16: analytics
+from .analytics import router as analytics_router
+from .users import router as users_router
 
 api_router = APIRouter()
 
@@ -25,3 +25,5 @@ api_router.include_router(promo_codes_router, prefix="/promo-codes", tags=["Prom
 api_router.include_router(orders_router, prefix="/orders", tags=["Orders"])
 api_router.include_router(addresses_router, prefix="/addresses", tags=["Addresses"])
 api_router.include_router(payments_router, prefix="/payments", tags=["Payments"])
+api_router.include_router(analytics_router, prefix="/analytics", tags=["Analytics"])
+api_router.include_router(users_router, prefix="/users", tags=["Users"])
