@@ -30,6 +30,8 @@ class OrderCreate(BaseModel):
     promo_code: str | None = None
     payment_method: str = Field(description="stripe | tabby | tamara")
     notes: str | None = None
+    # Guest checkout: identify which cart to convert
+    session_id: str | None = None
 
 
 class OrderStatusUpdate(BaseModel):
