@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, ReactNode, useCallback, useContext, useState } from 'react';
+import { createContext, ReactNode, useCallback, useContext, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils';
 import { generateId } from '@/lib/utils';
@@ -48,6 +48,11 @@ function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: () => void }) 
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const removeToast = useCallback((id: string) => {
     setToasts(prev => prev.filter(t => t.id !== id));
@@ -62,7 +67,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={{ addToast }}>
       {children}
-      {typeof document !== 'undefined' && createPortal(
+      {mounted && createPortal(
         <div
           aria-live="polite"
           className="fixed bottom-5 right-5 z-[9999] flex flex-col gap-2 items-end"
