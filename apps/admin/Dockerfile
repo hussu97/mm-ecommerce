@@ -24,9 +24,9 @@ WORKDIR /repo
 
 COPY --from=deps /repo/node_modules ./node_modules
 COPY --from=deps /repo/apps/admin/node_modules ./apps/admin/node_modules
-COPY --from=deps /repo/packages/ui/node_modules ./packages/ui/node_modules 2>/dev/null || true
-COPY --from=deps /repo/packages/types/node_modules ./packages/types/node_modules 2>/dev/null || true
-COPY --from=deps /repo/packages/config/node_modules ./packages/config/node_modules 2>/dev/null || true
+COPY --from=deps /repo/packages/ui/node_modules ./packages/ui/node_modules
+COPY --from=deps /repo/packages/types/node_modules ./packages/types/node_modules
+COPY --from=deps /repo/packages/config/node_modules ./packages/config/node_modules
 
 COPY . .
 
