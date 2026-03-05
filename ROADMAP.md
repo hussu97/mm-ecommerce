@@ -11,22 +11,22 @@ _Must fix before production launch._
 
 ### Security
 
-- [ ] **Weak default SECRET_KEY** — `apps/api/app/core/config.py:20` uses `"change-me-in-production-use-a-long-random-string-here"`. No runtime guard rejects this in production. Add a startup check that refuses to boot with the default key when `APP_ENV=production`.
-- [ ] **Weak session ID generation** — `apps/web/lib/api.ts:37` uses `Math.random().toString(36)` which is not cryptographically random. Replace with `crypto.randomUUID()` or `crypto.getRandomValues()`.
-- [ ] **CORS allows all methods and headers** — `apps/api/app/main.py:47-48` sets `allow_methods=["*"]` and `allow_headers=["*"]`. Restrict to the specific methods and headers actually used (GET, POST, PUT, PATCH, DELETE + Content-Type, Authorization, X-Session-Id).
-- [ ] **No rate limiting on auth endpoints** — `apps/api/app/api/v1/auth.py` login, register, forgot-password have no rate limiting. Add `slowapi` or equivalent to prevent brute-force and credential-stuffing attacks.
-- [ ] **JWT token has no revocation mechanism** — 7-day expiry (`ACCESS_TOKEN_EXPIRE_MINUTES: 10080` at `config.py:21`) with no token blocklist. If a token is compromised, it stays valid for a week. Add token revocation (Redis blocklist or short-lived tokens + refresh token rotation).
+- [x] **Weak default SECRET_KEY** — Startup guard added in `apps/api/app/main.py` — refuses to boot in production with the default key.
+- [x] **Weak session ID generation** — `apps/web/lib/api.ts` now uses `crypto.randomUUID()`.
+- [x] **CORS allows all methods and headers** — Restricted to `GET POST PUT PATCH DELETE` + `Content-Type Authorization X-Session-Id`.
+- [x] **No rate limiting on auth endpoints** — `slowapi` added; login, register, forgot-password capped at 5/minute.
+- [x] **JWT token has no revocation mechanism** — 30-min access tokens + refresh token rotation (`RefreshToken` model, `/auth/refresh`, `/auth/logout`).
 - [x] **Admin routes lack role verification audit** — All admin routes confirmed using `get_admin_user` dependency (`apps/api/app/core/deps.py:85`). categories, products, orders, users, analytics, promo_codes, uploads all verified.
-- [ ] **Docker Compose secrets in plain text** — `docker-compose.yml:8-9` has `mm_user` / `mm_password` and `docker-compose.yml:42` has Umami `APP_SECRET: change-me-in-production-to-a-random-secret`. Use Docker secrets or `.env` file excluded from VCS.
-- [ ] **Stripe webhook secret not enforced at startup** — `apps/api/app/services/providers/stripe_provider.py:113-122` only checks `STRIPE_WEBHOOK_SECRET` when a webhook arrives. In production, fail fast at startup if this is empty.
-- [ ] **Missing security headers** — API responses lack `Strict-Transport-Security`, `X-Content-Type-Options: nosniff`, and `TrustedHostMiddleware`. Add these for production.
-- [ ] **No request payload size limit** — No middleware caps request body size. Oversized payloads could cause OOM. Add a max body size middleware (e.g., 10 MB).
+- [x] **Docker Compose secrets in plain text** — `docker-compose.yml` uses `${POSTGRES_USER:-mm_user}` etc. with `.env.example` template added.
+- [x] **Stripe webhook secret not enforced at startup** — Startup guard in `main.py` raises `RuntimeError` if `STRIPE_WEBHOOK_SECRET` is empty in production.
+- [x] **Missing security headers** — `X-Content-Type-Options: nosniff` always; `Strict-Transport-Security` in production; `TrustedHostMiddleware` added.
+- [x] **No request payload size limit** — `MaxBodySizeMiddleware` rejects bodies >10 MB.
 
 ### Data Integrity
 
-- [ ] **Stock decrement race condition** — `apps/api/app/services/order_service.py:163` does `variant.stock_quantity -= quantity` as a Python-side decrement without `SELECT ... FOR UPDATE` or an atomic SQL `UPDATE ... SET stock = stock - :qty WHERE stock >= :qty`. Concurrent orders can oversell. Fix with pessimistic locking or optimistic concurrency (version column).
-- [ ] **Order number generation race condition** — `apps/api/app/services/order_service.py:33-51` reads the latest order number and increments in Python. Two concurrent requests on the same day can generate duplicate order numbers. Use a DB sequence or `SELECT ... FOR UPDATE`.
-- [ ] **Promo code usage increment is non-atomic** — `apps/api/app/services/order_service.py:167` does `promo_obj.current_uses += 1` in Python. Concurrent redemptions can bypass the `max_uses` limit. Use atomic SQL increment with a WHERE guard.
+- [x] **Stock decrement race condition** — Atomic `UPDATE ... WHERE stock_quantity >= qty` with rowcount check; prevents overselling under concurrency.
+- [x] **Order number generation race condition** — `SELECT ... FOR UPDATE` serializes concurrent generation on the same day prefix.
+- [x] **Promo code usage increment is non-atomic** — Atomic `UPDATE ... WHERE current_uses < max_uses RETURNING id`; raises error if the row wasn't updated (limit reached concurrently).
 
 ---
 
