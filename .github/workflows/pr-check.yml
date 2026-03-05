@@ -26,6 +26,9 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      - name: Run tests
+        run: pnpm test
+
       - name: Type-check
         run: pnpm --filter web exec tsc --noEmit && pnpm --filter admin exec tsc --noEmit
 
@@ -51,11 +54,19 @@ jobs:
           cache: "pip"
           cache-dependency-path: apps/api/pyproject.toml
 
-      - name: Install ruff
-        run: pip install ruff
+      - name: Install dependencies
+        run: |
+          cd apps/api
+          pip install -e ".[dev]"
+          pip install ruff
 
       - name: Ruff check
         run: ruff check apps/api/
 
       - name: Ruff format check
         run: ruff format --check apps/api/
+
+      - name: Run pytest
+        run: |
+          cd apps/api
+          pytest tests/ -v --tb=short --cov=app --cov-report=term-missing

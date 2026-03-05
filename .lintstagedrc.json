@@ -1,0 +1,6 @@
+{
+  "apps/web/**/*.{ts,tsx}": ["eslint --fix", "vitest related --run"],
+  "apps/admin/**/*.{ts,tsx}": ["eslint --fix", "vitest related --run"],
+  "packages/**/*.{ts,tsx}": ["eslint --fix", "vitest related --run"],
+  "apps/api/**/*.py": ["ruff check --fix", "ruff format"]
+}

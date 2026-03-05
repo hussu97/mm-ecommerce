@@ -5,6 +5,8 @@
     "dev": "turbo dev",
     "build": "turbo build",
     "lint": "turbo lint",
+    "test": "turbo test",
+    "prepare": "husky",
     "dev:web": "turbo dev --filter=web",
     "dev:admin": "turbo dev --filter=admin",
     "dev:api": "cd apps/api && uvicorn app.main:app --reload --port 8000",
@@ -13,7 +15,9 @@
     "db:seed": "cd apps/api && python -m scripts.seed_db"
   },
   "devDependencies": {
-    "turbo": "^2.4"
+    "turbo": "^2.4",
+    "husky": "^9.0.0",
+    "lint-staged": "^15.0.0"
   },
   "packageManager": "pnpm@9.15.0",
   "engines": {

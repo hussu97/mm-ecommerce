@@ -6,7 +6,9 @@
     "dev": "next dev --port 3000",
     "build": "next build",
     "start": "next start --port 3000",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "next": "^15.1.0",
@@ -23,6 +25,11 @@
     "postcss": "^8.5.0",
     "eslint": "^9.0.0",
     "eslint-config-next": "^15.1.0",
-    "@eslint/eslintrc": "^3.0.0"
+    "@eslint/eslintrc": "^3.0.0",
+    "vitest": "^2.0.0",
+    "@vitejs/plugin-react": "^4.0.0",
+    "@testing-library/react": "^16.0.0",
+    "@testing-library/jest-dom": "^6.0.0",
+    "happy-dom": "^15.0.0"
   }
 }
