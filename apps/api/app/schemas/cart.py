@@ -11,11 +11,11 @@ from .product import ProductVariantResponse, ProductResponse
 
 class CartItemCreate(BaseModel):
     variant_id: UUID
-    quantity: int = Field(ge=1, default=1)
+    quantity: int = Field(ge=1, le=99, default=1)
 
 
 class CartItemUpdate(BaseModel):
-    quantity: int = Field(ge=1)
+    quantity: int = Field(ge=1, le=99)
 
 
 class CartItemResponse(BaseModel):

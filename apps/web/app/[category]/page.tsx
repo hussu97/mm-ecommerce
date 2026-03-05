@@ -23,7 +23,7 @@ async function getCategoryData(
 
     return { category, products };
   } catch {
-    return null;
+    throw new Error('Failed to load category data');
   }
 }
 

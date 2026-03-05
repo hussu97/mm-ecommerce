@@ -69,6 +69,7 @@ export function Footer() {
               { href: '/faq',     label: 'FAQ' },
               { href: '/contact', label: 'Contact' },
               { href: '/privacy', label: 'Privacy' },
+              { href: '/terms',   label: 'Terms' },
             ].map(({ href, label }) => (
               <Link
                 key={href}

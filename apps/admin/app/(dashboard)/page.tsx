@@ -129,7 +129,7 @@ export default function DashboardPage() {
             {recentOrders.map(order => (
               <Link
                 key={order.id}
-                href={`/orders`}
+                href={`/orders/${order.order_number}`}
                 className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
               >
                 <div className="flex items-center gap-4 min-w-0">

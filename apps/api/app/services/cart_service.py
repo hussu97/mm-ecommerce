@@ -261,7 +261,14 @@ async def merge(db: AsyncSession, guest_session_id: str, user_id: uuid.UUID) -> 
         )
         existing = existing_result.scalar_one_or_none()
         if existing:
-            existing.quantity += guest_item.quantity
+            # Fetch variant stock to cap merged quantity
+            variant_result = await db.execute(
+                select(ProductVariant).where(ProductVariant.id == guest_item.variant_id)
+            )
+            variant = variant_result.scalar_one_or_none()
+            stock = variant.stock_quantity if variant else 0
+            new_qty = min(existing.quantity + guest_item.quantity, stock)
+            existing.quantity = new_qty
         else:
             new_item = CartItem(
                 cart_id=user_cart.id,

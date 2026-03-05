@@ -168,7 +168,7 @@ export default function SettingsPage() {
                 </a>{' '}
                 or via{' '}
                 <a
-                  href="https://wa.me/971XXXXXXXXX"
+                  href="https://wa.me/971501234567"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="underline"

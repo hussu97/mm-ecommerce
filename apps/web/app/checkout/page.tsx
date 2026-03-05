@@ -68,7 +68,7 @@ interface CheckoutForm {
   promoCode: string;
   promoDiscount: number;
   promoMessage: string;
-  paymentMethod: 'stripe' | 'tabby' | 'tamara';
+  paymentMethod: 'stripe';
   notes: string;
 }
 
@@ -556,20 +556,6 @@ function StepPayment({
       sublabel: 'Visa, Mastercard · Apple Pay',
       icon: 'credit_card',
       enabled: true,
-    },
-    {
-      id: 'tabby' as const,
-      label: 'Tabby — Pay in 4',
-      sublabel: 'Split into 4 interest-free payments',
-      icon: 'payments',
-      enabled: false,
-    },
-    {
-      id: 'tamara' as const,
-      label: 'Tamara — Pay Later',
-      sublabel: 'Buy now, pay in 3 months',
-      icon: 'schedule',
-      enabled: false,
     },
   ] as const;
 

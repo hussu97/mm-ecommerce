@@ -47,7 +47,7 @@ def _send(to: str, subject: str, html: str) -> None:
         response = resend.Emails.send(params)
         logger.info("Email sent: id=%s to=%s subject=%s", response.get("id"), to, subject)
     except Exception as exc:
-        logger.error("Email send failed to=%s subject=%s error=%s", to, subject, exc)
+        logger.error("Email send failed to=%s subject=%s", to, subject, exc_info=True)
 
 
 # ─── Order Emails ─────────────────────────────────────────────────────────────
