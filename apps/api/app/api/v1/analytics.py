@@ -419,12 +419,20 @@ async def get_traffic(
         return _empty
 
     try:
-        s = stats_resp.get("visitors", {})
-        visitors = int(s.get("value", 0))
-        sessions = int(stats_resp.get("sessions", {}).get("value", 0))
-        pageviews = int(stats_resp.get("pageviews", {}).get("value", 0))
-        bounce_rate = float(stats_resp.get("bounces", {}).get("value", 0))
-        avg_duration = float(stats_resp.get("totaltime", {}).get("value", 0))
+        # Umami v2 returns flat integers: {"visitors": 1, "pageviews": 5, ...}
+        # with an optional nested "comparison" key
+        def _stat(key: str) -> float:
+            v = stats_resp.get(key, 0)
+            # older Umami versions returned {"value": N}
+            if isinstance(v, dict):
+                return float(v.get("value", 0))
+            return float(v)
+
+        visitors = int(_stat("visitors"))
+        sessions = int(_stat("visits"))  # Umami uses "visits" not "sessions"
+        pageviews = int(_stat("pageviews"))
+        bounce_rate = _stat("bounces")
+        avg_duration = _stat("totaltime")
 
         chart_items = pv_resp.get("pageviews", [])
         chart = [
@@ -465,7 +473,7 @@ async def _umami_fetch_all(
     stats_resp, pv_resp, pages_resp = await asyncio.gather(
         fetch(f"{base}/stats"),
         fetch(f"{base}/pageviews", {"unit": "day", "timezone": "Asia/Dubai"}),
-        fetch(f"{base}/metrics", {"type": "url"}),
+        fetch(f"{base}/metrics", {"type": "path"}),
     )
 
     stats_data = stats_resp.json() if stats_resp.is_success else {}
@@ -495,6 +503,7 @@ async def get_customers(
             )
             .label("guest"),
         )
+        .select_from(Order)
         .outerjoin(User, User.id == Order.user_id)
         .where(
             func.date(Order.created_at) >= start,
@@ -582,12 +591,12 @@ async def get_revenue_breakdown(
 
     payment_stmt = (
         select(
-            func.coalesce(Order.payment_provider, "unknown").label("label"),
+            Order.payment_provider.label("label"),
             func.count(Order.id).label("orders"),
             func.coalesce(func.sum(Order.total), 0).label("revenue"),
         )
         .where(*base_filter)
-        .group_by(func.coalesce(Order.payment_provider, "unknown"))
+        .group_by(Order.payment_provider)
         .order_by(func.sum(Order.total).desc())
     )
     payment_rows = (await db.execute(payment_stmt)).all()
@@ -601,7 +610,9 @@ async def get_revenue_breakdown(
         ],
         by_payment_provider=[
             BreakdownItem(
-                label=str(r.label), orders=int(r.orders), revenue=float(r.revenue)
+                label=str(r.label) if r.label else "unknown",
+                orders=int(r.orders),
+                revenue=float(r.revenue),
             )
             for r in payment_rows
         ],
