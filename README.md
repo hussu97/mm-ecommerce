@@ -113,21 +113,26 @@ python -m scripts.seed_db      # optional: seed sample data
 
 ### 4. Start all apps
 
-From the repo root:
+The API must be running before the web/admin apps — they fetch data from it at startup.
 
+**Option A — start everything together (recommended):**
 ```bash
 pnpm dev
 ```
 
-This starts the web storefront (`:3000`), admin panel (`:3001`), and — if you started the API separately — everything is wired up.
-
-To start only one app:
-
+**Option B — start in separate terminals:**
 ```bash
-pnpm dev:web     # storefront only
-pnpm dev:admin   # admin only
-pnpm dev:api     # FastAPI with --reload
+# Terminal 1 — FastAPI backend (must start first)
+pnpm dev:api
+
+# Terminal 2 — Next.js storefront
+pnpm dev:web
+
+# Terminal 3 — Next.js admin
+pnpm dev:admin
 ```
+
+> If you see `Failed to load category data` or similar errors in the web app, the API is not running. Start it first.
 
 ### 5. Visit
 
@@ -254,6 +259,27 @@ cd apps/api && alembic revision --autogenerate -m "describe change"
 # Roll back one migration
 cd apps/api && alembic downgrade -1
 ```
+
+### Reset the database (dev only)
+
+Use this if migrations fail mid-run (e.g. `DuplicateObjectError`, `UndefinedTableError`, or any partial state):
+
+```bash
+# 1. Wipe the DB — drops all tables, types, enums
+docker exec -it mm-ecommerce-postgres-1 psql -U mm_user -d mm_ecommerce \
+  -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+
+# 2. Reset Alembic's migration state (it thinks migrations ran — tell it they didn't)
+cd apps/api && alembic stamp base
+
+# 3. Run all migrations from scratch
+alembic upgrade head
+
+# 4. Optional: re-seed sample data
+python -m scripts.seed_db
+```
+
+> If `mm-ecommerce-postgres-1` is not your container name, check with `docker ps`.
 
 Key tables: `users`, `categories`, `products`, `product_variants`, `carts`, `cart_items`, `orders`, `order_items`, `addresses`, `promo_codes`, `refresh_tokens`.
 

@@ -20,29 +20,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # --- Enums ---
-    emirate_enum = postgresql.ENUM(
-        "Dubai", "Sharjah", "Ajman", "Abu Dhabi", "Ras Al Khaimah", "Fujairah", "Umm Al Quwain",
-        name="emirateenum",
-    )
-    emirate_enum.create(op.get_bind())
-
-    order_status_enum = postgresql.ENUM(
-        "created", "confirmed", "packed", "cancelled",
-        name="orderstatusenum",
-    )
-    order_status_enum.create(op.get_bind())
-
-    delivery_method_enum = postgresql.ENUM(
-        "delivery", "pickup",
-        name="deliverymethodenum",
-    )
-    delivery_method_enum.create(op.get_bind())
-
-    discount_type_enum = postgresql.ENUM(
-        "percentage", "fixed",
-        name="discounttypeenum",
-    )
-    discount_type_enum.create(op.get_bind())
+    op.execute(sa.text("DO $$ BEGIN CREATE TYPE emirateenum AS ENUM ('Dubai', 'Sharjah', 'Ajman', 'Abu Dhabi', 'Ras Al Khaimah', 'Fujairah', 'Umm Al Quwain'); EXCEPTION WHEN duplicate_object THEN NULL; END $$"))
+    op.execute(sa.text("DO $$ BEGIN CREATE TYPE orderstatusenum AS ENUM ('created', 'confirmed', 'packed', 'cancelled'); EXCEPTION WHEN duplicate_object THEN NULL; END $$"))
+    op.execute(sa.text("DO $$ BEGIN CREATE TYPE deliverymethodenum AS ENUM ('delivery', 'pickup'); EXCEPTION WHEN duplicate_object THEN NULL; END $$"))
+    op.execute(sa.text("DO $$ BEGIN CREATE TYPE discounttypeenum AS ENUM ('percentage', 'fixed'); EXCEPTION WHEN duplicate_object THEN NULL; END $$"))
 
     # --- Users ---
     op.create_table(
@@ -73,7 +54,7 @@ def upgrade() -> None:
         sa.Column("address_line_1", sa.String(255), nullable=False),
         sa.Column("address_line_2", sa.String(255), nullable=True),
         sa.Column("city", sa.String(100), nullable=False),
-        sa.Column("emirate", sa.Enum("Dubai", "Sharjah", "Ajman", "Abu Dhabi", "Ras Al Khaimah", "Fujairah", "Umm Al Quwain", name="emirateenum", create_type=False), nullable=False),
+        sa.Column("emirate", postgresql.ENUM(name="emirateenum", create_type=False), nullable=False),
         sa.Column("country", sa.String(2), nullable=False, server_default="AE"),
         sa.Column("is_default", sa.Boolean, nullable=False, server_default="false"),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
@@ -161,12 +142,12 @@ def upgrade() -> None:
         sa.Column("order_number", sa.String(30), nullable=False),
         sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
         sa.Column("email", sa.String(255), nullable=False),
-        sa.Column("delivery_method", sa.Enum("delivery", "pickup", name="deliverymethodenum", create_type=False), nullable=False),
+        sa.Column("delivery_method", postgresql.ENUM(name="deliverymethodenum", create_type=False), nullable=False),
         sa.Column("delivery_fee", sa.Numeric(10, 2), nullable=False, server_default="0"),
         sa.Column("subtotal", sa.Numeric(10, 2), nullable=False),
         sa.Column("discount_amount", sa.Numeric(10, 2), nullable=False, server_default="0"),
         sa.Column("total", sa.Numeric(10, 2), nullable=False),
-        sa.Column("status", sa.Enum("created", "confirmed", "packed", "cancelled", name="orderstatusenum", create_type=False), nullable=False, server_default="created"),
+        sa.Column("status", postgresql.ENUM(name="orderstatusenum", create_type=False), nullable=False, server_default="created"),
         sa.Column("promo_code_used", sa.String(50), nullable=True),
         sa.Column("shipping_address_snapshot", postgresql.JSONB, nullable=True),
         sa.Column("payment_method", sa.String(50), nullable=True),
@@ -201,7 +182,7 @@ def upgrade() -> None:
         "promo_codes",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("code", sa.String(50), nullable=False),
-        sa.Column("discount_type", sa.Enum("percentage", "fixed", name="discounttypeenum", create_type=False), nullable=False),
+        sa.Column("discount_type", postgresql.ENUM(name="discounttypeenum", create_type=False), nullable=False),
         sa.Column("discount_value", sa.Numeric(10, 2), nullable=False),
         sa.Column("min_order_amount", sa.Numeric(10, 2), nullable=True),
         sa.Column("max_uses", sa.Integer, nullable=True),

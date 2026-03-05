@@ -38,7 +38,7 @@ class Address(Base, UUIDMixin):
     address_line_2: Mapped[str | None] = mapped_column(String(255), nullable=True)
     city: Mapped[str] = mapped_column(String(100), nullable=False)
     emirate: Mapped[EmirateEnum] = mapped_column(
-        Enum(EmirateEnum, name="emirateenum", create_type=False),
+        Enum(EmirateEnum, name="emirateenum", create_type=False, values_callable=lambda obj: [e.value for e in obj]),
         nullable=False,
     )
     country: Mapped[str] = mapped_column(String(2), nullable=False, default="AE")

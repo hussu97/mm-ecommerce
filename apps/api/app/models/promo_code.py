@@ -20,7 +20,7 @@ class PromoCode(Base, UUIDMixin):
 
     code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
     discount_type: Mapped[DiscountTypeEnum] = mapped_column(
-        Enum(DiscountTypeEnum, name="discounttypeenum", create_type=False), nullable=False
+        Enum(DiscountTypeEnum, name="discounttypeenum", create_type=False, values_callable=lambda obj: [e.value for e in obj]), nullable=False
     )
     discount_value: Mapped[Any] = mapped_column(Numeric(10, 2), nullable=False)
     min_order_amount: Mapped[Any | None] = mapped_column(Numeric(10, 2), nullable=True)
