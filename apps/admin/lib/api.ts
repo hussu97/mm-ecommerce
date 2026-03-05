@@ -1,8 +1,8 @@
 import type {
-  AnalyticsOverview, Category, FunnelData, Order,
-  OrdersPoint, PaginatedCustomers, PaginatedOrders, Product,
-  ProductListResponse, ProductVariant, PromoCode, RevenuePoint,
-  TokenResponse, TopProduct, UploadResponse, User,
+  AnalyticsOverview, Category, CustomerBreakdown, EmirateData,
+  FunnelData, Order, OrdersPoint, PaginatedCustomers, PaginatedOrders, Product,
+  ProductListResponse, ProductVariant, PromoCode, PromoPerformance, RevenueBreakdown,
+  RevenuePoint, TokenResponse, TopProduct, TrafficData, UploadResponse, User,
 } from './types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
@@ -142,6 +142,16 @@ export const analyticsApi = {
     api.get<TopProduct[]>(`/analytics/top-products${buildQs(params)}`),
   funnel: (params?: { start_date?: string; end_date?: string }) =>
     api.get<FunnelData>(`/analytics/funnel${buildQs(params)}`),
+  traffic: (params?: { start_date?: string; end_date?: string }) =>
+    api.get<TrafficData>(`/analytics/traffic${buildQs(params)}`),
+  customers: (params?: { start_date?: string; end_date?: string }) =>
+    api.get<CustomerBreakdown>(`/analytics/customers${buildQs(params)}`),
+  revenueBreakdown: (params?: { start_date?: string; end_date?: string }) =>
+    api.get<RevenueBreakdown>(`/analytics/revenue-breakdown${buildQs(params)}`),
+  emirates: (params?: { start_date?: string; end_date?: string }) =>
+    api.get<EmirateData[]>(`/analytics/emirates${buildQs(params)}`),
+  promos: (params?: { start_date?: string; end_date?: string }) =>
+    api.get<PromoPerformance[]>(`/analytics/promos${buildQs(params)}`),
 };
 
 // ─── Customers ────────────────────────────────────────────────────────────────

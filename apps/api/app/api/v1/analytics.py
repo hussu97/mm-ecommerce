@@ -3,11 +3,13 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, cast, Text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.deps import get_admin_user, get_db
 from app.models.order import Order, OrderItem, OrderStatusEnum
 from app.models.user import User
@@ -16,6 +18,7 @@ router = APIRouter()
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def _date_range(
     start_date: Optional[date],
@@ -28,7 +31,15 @@ def _date_range(
     return start_date, end_date
 
 
+def _to_ms(d: date) -> int:
+    """Convert date to milliseconds timestamp (Umami API format)."""
+    from datetime import datetime
+
+    return int(datetime(d.year, d.month, d.day).timestamp() * 1000)
+
+
 # ─── Response schemas ─────────────────────────────────────────────────────────
+
 
 class OverviewResponse(BaseModel):
     total_revenue: float
@@ -64,7 +75,63 @@ class FunnelData(BaseModel):
     conversion_rate: float
 
 
+# New schemas
+
+
+class PageviewPoint(BaseModel):
+    date: str
+    views: int
+
+
+class TopPage(BaseModel):
+    path: str
+    views: int
+
+
+class TrafficData(BaseModel):
+    visitors: int
+    sessions: int
+    pageviews: int
+    bounce_rate: float
+    avg_duration: float
+    pageviews_chart: list[PageviewPoint]
+    top_pages: list[TopPage]
+    configured: bool
+
+
+class CustomerBreakdown(BaseModel):
+    registered: int
+    guest: int
+    new_customers: int
+    returning_customers: int
+
+
+class BreakdownItem(BaseModel):
+    label: str
+    orders: int
+    revenue: float
+
+
+class RevenueBreakdown(BaseModel):
+    by_delivery_method: list[BreakdownItem]
+    by_payment_provider: list[BreakdownItem]
+
+
+class EmirateData(BaseModel):
+    emirate: str
+    orders: int
+    revenue: float
+
+
+class PromoPerformance(BaseModel):
+    code: str
+    uses: int
+    revenue_driven: float
+    discount_given: float
+
+
 # ─── Endpoints ────────────────────────────────────────────────────────────────
+
 
 @router.get("/overview", response_model=OverviewResponse)
 async def get_overview(
@@ -110,7 +177,9 @@ async def get_overview(
     prev_orders = int(prev.orders)
 
     rev_growth = ((total_revenue - prev_rev) / prev_rev * 100) if prev_rev else 0.0
-    orders_growth = ((total_orders - prev_orders) / prev_orders * 100) if prev_orders else 0.0
+    orders_growth = (
+        ((total_orders - prev_orders) / prev_orders * 100) if prev_orders else 0.0
+    )
 
     return OverviewResponse(
         total_revenue=total_revenue,
@@ -135,7 +204,10 @@ async def get_revenue(
     trunc = func.date_trunc(group_by, Order.created_at)
 
     stmt = (
-        select(trunc.label("period"), func.coalesce(func.sum(Order.total), 0).label("revenue"))
+        select(
+            trunc.label("period"),
+            func.coalesce(func.sum(Order.total), 0).label("revenue"),
+        )
         .where(
             Order.status != OrderStatusEnum.CANCELLED,
             func.date(Order.created_at) >= start,
@@ -264,3 +336,310 @@ async def get_funnel(
         cancelled=cancelled,
         conversion_rate=conversion_rate,
     )
+
+
+@router.get("/traffic", response_model=TrafficData)
+async def get_traffic(
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    _admin: User = Depends(get_admin_user),
+):
+    """Traffic metrics proxied from Umami analytics."""
+    _empty = TrafficData(
+        visitors=0,
+        sessions=0,
+        pageviews=0,
+        bounce_rate=0.0,
+        avg_duration=0.0,
+        pageviews_chart=[],
+        top_pages=[],
+        configured=False,
+    )
+
+    if (
+        not settings.UMAMI_URL
+        or not settings.UMAMI_WEBSITE_ID
+        or not settings.UMAMI_API_KEY
+    ):
+        return _empty
+
+    start, end = _date_range(start_date, end_date)
+    start_ms = _to_ms(start)
+    end_ms = _to_ms(end) + 86_399_999  # inclusive end-of-day
+
+    headers = {"Authorization": f"Bearer {settings.UMAMI_API_KEY}"}
+    base = f"{settings.UMAMI_URL}/api/websites/{settings.UMAMI_WEBSITE_ID}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            stats_resp, pv_resp, pages_resp = await _umami_fetch_all(
+                client, base, headers, start_ms, end_ms
+            )
+    except Exception:
+        return _empty
+
+    try:
+        s = stats_resp.get("visitors", {})
+        visitors = int(s.get("value", 0))
+        sessions = int(stats_resp.get("sessions", {}).get("value", 0))
+        pageviews = int(stats_resp.get("pageviews", {}).get("value", 0))
+        bounce_rate = float(stats_resp.get("bounces", {}).get("value", 0))
+        avg_duration = float(stats_resp.get("totaltime", {}).get("value", 0))
+
+        chart_items = pv_resp.get("pageviews", [])
+        chart = [
+            PageviewPoint(date=item.get("x", ""), views=int(item.get("y", 0)))
+            for item in chart_items
+        ]
+
+        top = [
+            TopPage(path=item.get("x", ""), views=int(item.get("y", 0)))
+            for item in pages_resp[:10]
+        ]
+
+        return TrafficData(
+            visitors=visitors,
+            sessions=sessions,
+            pageviews=pageviews,
+            bounce_rate=round(bounce_rate, 1),
+            avg_duration=round(avg_duration, 0),
+            pageviews_chart=chart,
+            top_pages=top,
+            configured=True,
+        )
+    except Exception:
+        return _empty
+
+
+async def _umami_fetch_all(
+    client: httpx.AsyncClient, base: str, headers: dict, start_ms: int, end_ms: int
+) -> tuple[dict, dict, list]:
+    import asyncio
+
+    params = {"startAt": start_ms, "endAt": end_ms}
+
+    async def fetch(url: str, extra: dict | None = None) -> httpx.Response:
+        p = {**params, **(extra or {})}
+        return await client.get(url, headers=headers, params=p)
+
+    stats_resp, pv_resp, pages_resp = await asyncio.gather(
+        fetch(f"{base}/stats"),
+        fetch(f"{base}/pageviews", {"unit": "day", "timezone": "Asia/Dubai"}),
+        fetch(f"{base}/metrics", {"type": "url"}),
+    )
+
+    stats_data = stats_resp.json() if stats_resp.is_success else {}
+    pv_data = pv_resp.json() if pv_resp.is_success else {}
+    pages_data = pages_resp.json() if pages_resp.is_success else []
+
+    return stats_data, pv_data, pages_data
+
+
+@router.get("/customers", response_model=CustomerBreakdown)
+async def get_customers(
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    """Customer type breakdown: registered vs guest, new vs returning."""
+    start, end = _date_range(start_date, end_date)
+
+    # Registered vs guest — orders in range joined to users
+    reg_stmt = (
+        select(
+            func.count(Order.id).filter(User.is_guest == False).label("registered"),  # noqa: E712
+            func.count(Order.id)
+            .filter(
+                (User.is_guest == True) | (Order.user_id == None)  # noqa: E711,E712
+            )
+            .label("guest"),
+        )
+        .outerjoin(User, User.id == Order.user_id)
+        .where(
+            func.date(Order.created_at) >= start,
+            func.date(Order.created_at) <= end,
+        )
+    )
+    reg_result = (await db.execute(reg_stmt)).one()
+    registered = int(reg_result.registered)
+    guest = int(reg_result.guest)
+
+    # New customers: users whose FIRST ever order falls in the date range
+    first_order_sub = (
+        select(Order.user_id, func.min(Order.created_at).label("first_at"))
+        .where(Order.user_id != None)  # noqa: E711
+        .group_by(Order.user_id)
+        .subquery()
+    )
+    new_stmt = (
+        select(func.count())
+        .select_from(first_order_sub)
+        .where(
+            func.date(first_order_sub.c.first_at) >= start,
+            func.date(first_order_sub.c.first_at) <= end,
+        )
+    )
+    new_customers = int((await db.execute(new_stmt)).scalar() or 0)
+
+    # Returning: users with ≥1 order before start AND ≥1 order in range
+    before_sub = (
+        select(func.distinct(Order.user_id).label("uid"))
+        .where(Order.user_id != None, func.date(Order.created_at) < start)  # noqa: E711
+        .subquery()
+    )
+    in_range_sub = (
+        select(func.distinct(Order.user_id).label("uid"))
+        .where(
+            Order.user_id != None,
+            func.date(Order.created_at) >= start,
+            func.date(Order.created_at) <= end,
+        )  # noqa: E711
+        .subquery()
+    )
+    returning_stmt = (
+        select(func.count())
+        .select_from(in_range_sub)
+        .where(in_range_sub.c.uid.in_(select(before_sub.c.uid)))
+    )
+    returning_customers = int((await db.execute(returning_stmt)).scalar() or 0)
+
+    return CustomerBreakdown(
+        registered=registered,
+        guest=guest,
+        new_customers=new_customers,
+        returning_customers=returning_customers,
+    )
+
+
+@router.get("/revenue-breakdown", response_model=RevenueBreakdown)
+async def get_revenue_breakdown(
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    """Revenue split by delivery method and payment provider."""
+    start, end = _date_range(start_date, end_date)
+
+    base_filter = [
+        Order.status != OrderStatusEnum.CANCELLED,
+        func.date(Order.created_at) >= start,
+        func.date(Order.created_at) <= end,
+    ]
+
+    delivery_stmt = (
+        select(
+            Order.delivery_method.label("label"),
+            func.count(Order.id).label("orders"),
+            func.coalesce(func.sum(Order.total), 0).label("revenue"),
+        )
+        .where(*base_filter)
+        .group_by(Order.delivery_method)
+        .order_by(func.sum(Order.total).desc())
+    )
+    delivery_rows = (await db.execute(delivery_stmt)).all()
+
+    payment_stmt = (
+        select(
+            func.coalesce(Order.payment_provider, "unknown").label("label"),
+            func.count(Order.id).label("orders"),
+            func.coalesce(func.sum(Order.total), 0).label("revenue"),
+        )
+        .where(*base_filter)
+        .group_by(func.coalesce(Order.payment_provider, "unknown"))
+        .order_by(func.sum(Order.total).desc())
+    )
+    payment_rows = (await db.execute(payment_stmt)).all()
+
+    return RevenueBreakdown(
+        by_delivery_method=[
+            BreakdownItem(
+                label=str(r.label), orders=int(r.orders), revenue=float(r.revenue)
+            )
+            for r in delivery_rows
+        ],
+        by_payment_provider=[
+            BreakdownItem(
+                label=str(r.label), orders=int(r.orders), revenue=float(r.revenue)
+            )
+            for r in payment_rows
+        ],
+    )
+
+
+@router.get("/emirates", response_model=list[EmirateData])
+async def get_emirates(
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    """Sales breakdown by UAE emirate (from shipping address snapshot)."""
+    start, end = _date_range(start_date, end_date)
+
+    emirate_col = cast(Order.shipping_address_snapshot["emirate"], Text)
+
+    stmt = (
+        select(
+            emirate_col.label("emirate"),
+            func.count(Order.id).label("orders"),
+            func.coalesce(func.sum(Order.total), 0).label("revenue"),
+        )
+        .where(
+            Order.status != OrderStatusEnum.CANCELLED,
+            Order.shipping_address_snapshot != None,  # noqa: E711
+            func.date(Order.created_at) >= start,
+            func.date(Order.created_at) <= end,
+        )
+        .group_by(emirate_col)
+        .order_by(func.sum(Order.total).desc())
+    )
+    rows = (await db.execute(stmt)).all()
+
+    return [
+        EmirateData(
+            emirate=str(r.emirate), orders=int(r.orders), revenue=float(r.revenue)
+        )
+        for r in rows
+        if r.emirate
+    ]
+
+
+@router.get("/promos", response_model=list[PromoPerformance])
+async def get_promos(
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    """Promo code performance: uses, revenue driven, discount given."""
+    start, end = _date_range(start_date, end_date)
+
+    stmt = (
+        select(
+            Order.promo_code_used.label("code"),
+            func.count(Order.id).label("uses"),
+            func.coalesce(func.sum(Order.total), 0).label("revenue_driven"),
+            func.coalesce(func.sum(Order.discount_amount), 0).label("discount_given"),
+        )
+        .where(
+            Order.status != OrderStatusEnum.CANCELLED,
+            Order.promo_code_used != None,  # noqa: E711
+            func.date(Order.created_at) >= start,
+            func.date(Order.created_at) <= end,
+        )
+        .group_by(Order.promo_code_used)
+        .order_by(func.count(Order.id).desc())
+    )
+    rows = (await db.execute(stmt)).all()
+
+    return [
+        PromoPerformance(
+            code=str(r.code),
+            uses=int(r.uses),
+            revenue_driven=float(r.revenue_driven),
+            discount_given=float(r.discount_given),
+        )
+        for r in rows
+    ]

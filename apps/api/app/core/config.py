@@ -14,13 +14,15 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
 
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://mm_user:mm_password@localhost:5432/mm_ecommerce"
+    DATABASE_URL: str = (
+        "postgresql+asyncpg://mm_user:mm_password@localhost:5432/mm_ecommerce"
+    )
 
     # Security
     SECRET_KEY: str = "change-me-in-production-use-a-long-random-string-here"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
-    PASSWORD_RESET_EXPIRE_MINUTES: int = 60   # 1 hour
+    PASSWORD_RESET_EXPIRE_MINUTES: int = 60  # 1 hour
 
     # CORS — accepts JSON array string or comma-separated
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:3001"]
@@ -76,6 +78,11 @@ class Settings(BaseSettings):
     # Frontend URLs
     WEB_URL: str = "http://localhost:3000"
     ADMIN_URL: str = "http://localhost:3001"
+
+    # Umami analytics (optional — leave empty to disable traffic metrics)
+    UMAMI_URL: str = ""
+    UMAMI_WEBSITE_ID: str = ""
+    UMAMI_API_KEY: str = ""
 
     @property
     def is_production(self) -> bool:

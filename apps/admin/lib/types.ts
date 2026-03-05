@@ -182,3 +182,38 @@ export interface FunnelData {
   cancelled: number;
   conversion_rate: number;
 }
+
+export interface PageviewPoint { date: string; views: number; }
+export interface TopPage { path: string; views: number; }
+export interface TrafficData {
+  visitors: number;
+  sessions: number;
+  pageviews: number;
+  bounce_rate: number;
+  avg_duration: number;
+  pageviews_chart: PageviewPoint[];
+  top_pages: TopPage[];
+  configured: boolean;
+}
+
+export interface CustomerBreakdown {
+  registered: number;
+  guest: number;
+  new_customers: number;
+  returning_customers: number;
+}
+
+export interface BreakdownItem { label: string; orders: number; revenue: number; }
+export interface RevenueBreakdown {
+  by_delivery_method: BreakdownItem[];
+  by_payment_provider: BreakdownItem[];
+}
+
+export interface EmirateData { emirate: string; orders: number; revenue: number; }
+
+export interface PromoPerformance {
+  code: string;
+  uses: number;
+  revenue_driven: number;
+  discount_given: number;
+}
