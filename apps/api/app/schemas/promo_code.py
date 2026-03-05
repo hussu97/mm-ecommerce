@@ -34,8 +34,8 @@ class PromoCodeResponse(BaseModel):
     id: UUID
     code: str
     discount_type: DiscountTypeEnum
-    discount_value: Decimal
-    min_order_amount: Decimal | None
+    discount_value: float
+    min_order_amount: float | None
     max_uses: int | None
     current_uses: int
     is_active: bool
@@ -51,5 +51,5 @@ class PromoCodeValidateRequest(BaseModel):
 
 class PromoCodeValidateResponse(BaseModel):
     valid: bool
-    discount_amount: Decimal = Decimal("0.00")
+    discount_amount: float = 0.0
     message: str | None = None

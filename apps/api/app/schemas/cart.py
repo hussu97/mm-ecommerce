@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime
-from decimal import Decimal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .product import ProductVariantResponse, ProductResponse
+from .product import ProductVariantResponse
 
 
 class CartItemCreate(BaseModel):
@@ -31,7 +30,7 @@ class CartItemResponse(BaseModel):
     # Computed fields (populated by service layer)
     product_name: str | None = None
     product_image: str | None = None
-    line_total: Decimal | None = None
+    line_total: float | None = None
 
 
 class CartResponse(BaseModel):
@@ -44,4 +43,4 @@ class CartResponse(BaseModel):
 
     # Computed fields
     item_count: int = 0
-    subtotal: Decimal = Decimal("0.00")
+    subtotal: float = 0.0

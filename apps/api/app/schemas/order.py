@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -19,14 +18,16 @@ class OrderItemResponse(BaseModel):
     product_name: str
     variant_name: str
     quantity: int
-    unit_price: Decimal
-    total_price: Decimal
+    unit_price: float
+    total_price: float
 
 
 class OrderCreate(BaseModel):
     email: EmailStr
     delivery_method: DeliveryMethodEnum
-    shipping_address: AddressCreate | None = None  # required if delivery_method == delivery
+    shipping_address: AddressCreate | None = (
+        None  # required if delivery_method == delivery
+    )
     promo_code: str | None = None
     payment_method: str = Field(description="stripe | tabby | tamara")
     notes: str | None = None
@@ -47,10 +48,10 @@ class OrderResponse(BaseModel):
     user_id: UUID | None
     email: str
     delivery_method: DeliveryMethodEnum
-    delivery_fee: Decimal
-    subtotal: Decimal
-    discount_amount: Decimal
-    total: Decimal
+    delivery_fee: float
+    subtotal: float
+    discount_amount: float
+    total: float
     status: OrderStatusEnum
     promo_code_used: str | None
     shipping_address_snapshot: dict[str, Any] | None
@@ -71,7 +72,7 @@ class OrderListResponse(BaseModel):
     order_number: str
     email: str
     status: OrderStatusEnum
-    total: Decimal
+    total: float
     delivery_method: DeliveryMethodEnum
     payment_provider: str | None
     created_at: datetime

@@ -33,7 +33,7 @@ class ProductVariantResponse(BaseModel):
     product_id: UUID
     name: str
     sku: str
-    price: Decimal
+    price: float
     stock_quantity: int
     is_active: bool
     display_order: int
@@ -71,7 +71,7 @@ class ProductResponse(BaseModel):
     name: str
     slug: str
     description: str | None
-    base_price: Decimal
+    base_price: float
     image_urls: list[str]
     is_active: bool
     is_featured: bool
