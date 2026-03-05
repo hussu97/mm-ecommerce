@@ -70,33 +70,6 @@ services:
       postgres:
         condition: service_healthy
 
-  web:
-    build:
-      context: .
-      dockerfile: apps/web/Dockerfile
-    restart: always
-    environment:
-      NODE_ENV: production
-      NEXT_PUBLIC_API_URL: https://api.meltingmomentscakes.com
-      NEXT_PUBLIC_UMAMI_WEBSITE_ID: ${UMAMI_WEBSITE_ID}
-    networks:
-      - mm_network
-    depends_on:
-      - api
-
-  admin:
-    build:
-      context: .
-      dockerfile: apps/admin/Dockerfile
-    restart: always
-    environment:
-      NODE_ENV: production
-      NEXT_PUBLIC_API_URL: https://api.meltingmomentscakes.com
-    networks:
-      - mm_network
-    depends_on:
-      - api
-
   nginx:
     image: nginx:1.27-alpine
     restart: always
@@ -111,8 +84,6 @@ services:
     networks:
       - mm_network
     depends_on:
-      - web
-      - admin
       - api
       - umami
 

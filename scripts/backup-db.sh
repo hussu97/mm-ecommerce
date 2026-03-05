@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Backup PostgreSQL database with 7-day local retention.
-# Optionally uploads to S3-compatible storage.
+# Optionally uploads to GCP Cloud Storage (uses VM attached service account).
 set -euo pipefail
 
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/mm-ecommerce}"
@@ -28,15 +28,12 @@ docker compose -f "$COMPOSE_FILE" exec -T postgres \
 
 echo "    Backup size: $(du -sh "$BACKUP_FILE" | cut -f1)"
 
-# Upload to S3 if configured
-if [ -n "${BACKUP_S3_BUCKET:-}" ]; then
-  echo "==> Uploading to S3: s3://${BACKUP_S3_BUCKET}/backups/"
-  AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}" \
-  AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}" \
-  aws s3 cp "$BACKUP_FILE" \
-    "s3://${BACKUP_S3_BUCKET}/backups/$(basename "$BACKUP_FILE")" \
-    --region "${BACKUP_S3_REGION:-us-east-1}"
-  echo "    S3 upload complete."
+# Upload to GCS if configured (VM must have an attached service account with Storage Object Creator role)
+if [ -n "${BACKUP_GCS_BUCKET:-}" ]; then
+  echo "==> Uploading to GCS: gs://${BACKUP_GCS_BUCKET}/backups/"
+  gsutil cp "$BACKUP_FILE" \
+    "gs://${BACKUP_GCS_BUCKET}/backups/$(basename "$BACKUP_FILE")"
+  echo "    GCS upload complete."
 fi
 
 echo "==> Removing backups older than ${RETENTION_DAYS} days..."

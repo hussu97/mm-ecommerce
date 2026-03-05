@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# First-time VPS setup for Melting Moments Ecommerce.
+# First-time GCP VM setup for Melting Moments Ecommerce backend.
+# Deploys: PostgreSQL, FastAPI, Umami, Nginx, Certbot.
+# Note: web + admin (Next.js) are deployed separately on Vercel.
 # Run as root or a user with sudo + docker access.
 set -euo pipefail
 
@@ -34,10 +36,10 @@ fi
 echo "==> Pulling Docker images..."
 docker compose -f docker-compose.prod.yml pull
 
-echo "==> Building application images..."
-docker compose -f docker-compose.prod.yml build
+echo "==> Building API image..."
+docker compose -f docker-compose.prod.yml build api
 
-echo "==> Starting all services..."
+echo "==> Starting backend services..."
 docker compose -f docker-compose.prod.yml up -d
 
 echo "==> Waiting for database to be ready..."
@@ -55,8 +57,11 @@ echo "    Services running:"
 docker compose -f docker-compose.prod.yml ps
 echo ""
 echo "    Next steps:"
-echo "    1. Point DNS for your domains to this server's IP"
-echo "    2. Obtain SSL certificates:"
-echo "       docker compose -f docker-compose.prod.yml exec certbot certbot certonly \\"
-echo "         --webroot -w /var/www/certbot -d meltingmomentscakes.com -d www.meltingmomentscakes.com"
+echo "    1. Point DNS A records for api.* and analytics.* to this VM's external IP"
+echo "    2. Obtain SSL certificates (api + analytics subdomains only):"
+echo "       docker compose -f docker-compose.prod.yml run --rm certbot certonly \\"
+echo "         --webroot -w /var/www/certbot \\"
+echo "         -d api.meltingmomentscakes.com \\"
+echo "         -d analytics.meltingmomentscakes.com"
 echo "    3. Reload nginx: docker compose -f docker-compose.prod.yml exec nginx nginx -s reload"
+echo "    4. Deploy web + admin on Vercel (see PRODUCTION.md Steps 10-11)"

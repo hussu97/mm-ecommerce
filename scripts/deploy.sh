@@ -14,19 +14,16 @@ git pull origin main
 echo "==> Pulling updated base images..."
 docker compose -f "$COMPOSE_FILE" pull umami
 
-echo "==> Building and restarting application services..."
-# Build new images first (keeps old containers running)
-docker compose -f "$COMPOSE_FILE" build api web admin
+echo "==> Building and restarting API service..."
+# Build new image first (keeps old container running)
+docker compose -f "$COMPOSE_FILE" build api
 
-echo "==> Restarting services with new images..."
+echo "==> Restarting API with new image..."
 docker compose -f "$COMPOSE_FILE" up -d --no-deps api
 sleep 10
 
 echo "==> Running database migrations..."
 docker compose -f "$COMPOSE_FILE" exec -T api alembic upgrade head
-
-echo "==> Restarting frontend services..."
-docker compose -f "$COMPOSE_FILE" up -d --no-deps web admin
 
 echo "==> Reloading nginx..."
 docker compose -f "$COMPOSE_FILE" exec nginx nginx -s reload
