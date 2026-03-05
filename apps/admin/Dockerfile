@@ -13,7 +13,8 @@ COPY packages/ui/package.json ./packages/ui/
 COPY packages/types/package.json ./packages/types/
 COPY packages/config/package.json ./packages/config/
 
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile && \
+    mkdir -p packages/ui/node_modules packages/types/node_modules packages/config/node_modules
 
 # ── Stage 2: builder ───────────────────────────────────────────────────────────
 FROM node:20-alpine AS builder
