@@ -148,55 +148,70 @@ pnpm dev:admin
 
 ## Environment Variables
 
+Copy the example files and fill in your values:
+
+```bash
+cp apps/api/.env.example apps/api/.env
+cp apps/web/.env.example apps/web/.env
+cp apps/admin/.env.example apps/admin/.env
+```
+
 ### API (`apps/api/.env`)
 
 ```env
-# App
 APP_ENV=development
-
-# Database
 DATABASE_URL=postgresql+asyncpg://mm_user:mm_password@localhost:5432/mm_ecommerce
 
-# Security — change in production
-SECRET_KEY=change-me-in-production-use-a-long-random-string-here
-ACCESS_TOKEN_EXPIRE_MINUTES=30
+# Security — generate with: openssl rand -hex 32
+SECRET_KEY=change-me
+ACCESS_TOKEN_EXPIRE_MINUTES=10080
 REFRESH_TOKEN_EXPIRE_DAYS=30
+PASSWORD_RESET_EXPIRE_MINUTES=60
 
-# CORS
 CORS_ORIGINS=["http://localhost:3000","http://localhost:3001"]
 ALLOWED_HOSTS=["*"]
 
-# Stripe
 STRIPE_SECRET_KEY=sk_test_...
 STRIPE_PUBLISHABLE_KEY=pk_test_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 
-# Resend (email)
 RESEND_API_KEY=re_...
 FROM_EMAIL=orders@meltingmomentscakes.com
 
-# Cloudflare R2 (image uploads)
 CLOUDFLARE_R2_ACCESS_KEY=
 CLOUDFLARE_R2_SECRET_KEY=
 CLOUDFLARE_R2_BUCKET=mm-ecommerce
 CLOUDFLARE_R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
-CLOUDFLARE_R2_PUBLIC_URL=https://your-public-r2-url.com
+CLOUDFLARE_R2_PUBLIC_URL=https://media.meltingmomentscakes.com
 
-# Frontend URLs
+TABBY_API_KEY=
+TABBY_PUBLIC_KEY=
+TABBY_MERCHANT_CODE=
+
+TAMARA_API_KEY=
+TAMARA_API_URL=https://api.tamara.co
+
 WEB_URL=http://localhost:3000
 ADMIN_URL=http://localhost:3001
+
+# Umami — leave empty to disable traffic analytics (see Umami section below)
+UMAMI_URL=
+UMAMI_WEBSITE_ID=
+UMAMI_API_KEY=
 ```
 
-### Web storefront (`apps/web/.env.local`)
+### Web storefront (`apps/web/.env`)
 
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
 NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_...
+
+# Umami — leave empty to disable client-side page tracking
 NEXT_PUBLIC_UMAMI_WEBSITE_ID=
-NEXT_PUBLIC_UMAMI_URL=http://localhost:3002
+NEXT_PUBLIC_UMAMI_URL=
 ```
 
-### Admin (`apps/admin/.env.local`)
+### Admin (`apps/admin/.env`)
 
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
@@ -282,6 +297,62 @@ python -m scripts.seed_db
 > If `mm-ecommerce-postgres-1` is not your container name, check with `docker ps`.
 
 Key tables: `users`, `categories`, `products`, `product_variants`, `carts`, `cart_items`, `orders`, `order_items`, `addresses`, `promo_codes`, `refresh_tokens`.
+
+---
+
+## Umami Analytics (optional)
+
+Umami is a self-hosted, open-source analytics tool that tracks visitors, sessions, pageviews, and top pages. It is already included in `docker-compose.yml` and runs on port `3002`. All traffic metrics on the admin analytics dashboard come from it.
+
+It is **optional** — the admin dashboard degrades gracefully if it is not configured.
+
+### 1. Start Umami
+
+```bash
+docker compose up -d umami
+```
+
+This also starts `umami-db` (a dedicated Postgres instance for Umami's own data).
+
+### 2. Create your account
+
+Visit `http://localhost:3002` and log in with the default credentials:
+
+| Field | Value |
+|-------|-------|
+| Username | `admin` |
+| Password | `umami` |
+
+**Change the password immediately** after first login (Settings → Profile).
+
+### 3. Add your website
+
+1. Go to **Settings → Websites → Add website**
+2. Set the name (e.g. `Melting Moments`) and domain (`localhost`)
+3. Copy the **Website ID** (a UUID shown on the website card)
+
+### 4. Create an API key
+
+1. Go to **Settings → API Keys → Create API key**
+2. Give it a name (e.g. `admin-dashboard`)
+3. Copy the generated key
+
+### 5. Configure env vars
+
+**`apps/api/.env`** — lets the admin dashboard pull analytics data:
+```env
+UMAMI_URL=http://localhost:3002
+UMAMI_WEBSITE_ID=<paste website ID>
+UMAMI_API_KEY=<paste API key>
+```
+
+**`apps/web/.env`** — enables client-side page tracking in the storefront:
+```env
+NEXT_PUBLIC_UMAMI_WEBSITE_ID=<paste website ID>
+NEXT_PUBLIC_UMAMI_URL=http://localhost:3002/script.js
+```
+
+Restart the API after updating its `.env`. Page views will start appearing in the admin analytics dashboard under **Visitor Trend** and **Top Pages** as you browse the storefront.
 
 ---
 
