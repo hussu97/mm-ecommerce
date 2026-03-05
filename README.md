@@ -333,9 +333,9 @@ Visit `http://localhost:3002` and log in with the default credentials:
 
 ### 4. Create an API key
 
-1. Go to **Settings → API Keys → Create API key**
-2. Give it a name (e.g. `admin-dashboard`)
-3. Copy the generated key
+1. Click your **username / avatar** in the bottom-left of the sidebar
+2. Select **API Keys → Create API key**
+3. Give it a name (e.g. `admin-dashboard`) and copy the generated key
 
 ### 5. Configure env vars
 
