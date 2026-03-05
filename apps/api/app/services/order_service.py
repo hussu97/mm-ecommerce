@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -39,6 +39,7 @@ async def _generate_order_number(db: AsyncSession) -> str:
         .where(Order.order_number.like(f"{prefix}%"))
         .order_by(Order.order_number.desc())
         .limit(1)
+        .with_for_update()
     )
     last = result.scalar_one_or_none()
 
@@ -155,16 +156,48 @@ async def create_order(
     db.add(order)
     await db.flush()
 
-    # ── 10. Create order items & decrement stock ──────────────────────────────
+    # ── 10. Create order items & decrement stock (atomic) ────────────────────
     for item in items_data:
         variant: ProductVariant = item.pop("_variant")
         order_item = OrderItem(order_id=order.id, **item)
         db.add(order_item)
-        variant.stock_quantity -= item["quantity"]
+        # Atomic decrement with stock guard — prevents overselling under concurrency
+        update_result = await db.execute(
+            sql_update(ProductVariant)
+            .where(
+                ProductVariant.id == variant.id,
+                ProductVariant.stock_quantity >= item["quantity"],
+            )
+            .values(stock_quantity=ProductVariant.stock_quantity - item["quantity"])
+            .execution_options(synchronize_session=False)
+        )
+        if update_result.rowcount != 1:
+            raise BadRequestError(
+                f"'{item['product_name']} — {item['variant_name']}': insufficient stock"
+            )
 
-    # ── 11. Increment promo uses ──────────────────────────────────────────────
+    # ── 11. Increment promo uses (atomic) ────────────────────────────────────
     if promo_obj:
-        promo_obj.current_uses += 1
+        if promo_obj.max_uses is not None:
+            promo_result = await db.execute(
+                sql_update(PromoCode)
+                .where(
+                    PromoCode.id == promo_obj.id,
+                    PromoCode.current_uses < PromoCode.max_uses,
+                )
+                .values(current_uses=PromoCode.current_uses + 1)
+                .returning(PromoCode.id)
+                .execution_options(synchronize_session=False)
+            )
+            if not promo_result.scalar_one_or_none():
+                raise BadRequestError("Promo code has reached its usage limit")
+        else:
+            await db.execute(
+                sql_update(PromoCode)
+                .where(PromoCode.id == promo_obj.id)
+                .values(current_uses=PromoCode.current_uses + 1)
+                .execution_options(synchronize_session=False)
+            )
 
     # ── 12. Clear cart ────────────────────────────────────────────────────────
     items_result = await db.execute(select(CartItem).where(CartItem.cart_id == cart.id))

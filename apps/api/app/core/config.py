@@ -18,11 +18,25 @@ class Settings(BaseSettings):
 
     # Security
     SECRET_KEY: str = "change-me-in-production-use-a-long-random-string-here"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080  # 7 days
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     PASSWORD_RESET_EXPIRE_MINUTES: int = 60   # 1 hour
 
     # CORS — accepts JSON array string or comma-separated
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:3001"]
+
+    # Allowed hosts — override in production: ["meltingmomentscakes.com", ...]
+    ALLOWED_HOSTS: list[str] = ["*"]
+
+    @field_validator("ALLOWED_HOSTS", mode="before")
+    @classmethod
+    def parse_allowed_hosts(cls, v: Union[str, list]) -> list[str]:
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return [h.strip() for h in v.split(",")]
+        return v
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

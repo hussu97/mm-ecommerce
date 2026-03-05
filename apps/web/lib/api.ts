@@ -26,6 +26,19 @@ export function clearToken(): void {
   localStorage.removeItem('mm_token');
 }
 
+export function getRefreshToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('mm_refresh_token');
+}
+
+export function setRefreshToken(token: string): void {
+  localStorage.setItem('mm_refresh_token', token);
+}
+
+export function clearRefreshToken(): void {
+  localStorage.removeItem('mm_refresh_token');
+}
+
 export function getSessionId(): string | null {
   if (typeof window === 'undefined') return null;
   return localStorage.getItem('mm_session_id');
@@ -34,7 +47,7 @@ export function getSessionId(): string | null {
 export function ensureSessionId(): string {
   let id = getSessionId();
   if (!id) {
-    id = 'sess_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    id = 'sess_' + crypto.randomUUID().replace(/-/g, '');
     localStorage.setItem('mm_session_id', id);
   }
   return id;
@@ -44,9 +57,33 @@ export function clearSessionId(): void {
   localStorage.removeItem('mm_session_id');
 }
 
+// ─── Refresh access token ─────────────────────────────────────────────────────
+
+async function refreshAccessToken(): Promise<string | null> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return null;
+
+  const res = await fetch(`${API_URL}/auth/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  });
+
+  if (!res.ok) {
+    clearToken();
+    clearRefreshToken();
+    return null;
+  }
+
+  const data: TokenResponse = await res.json();
+  setToken(data.access_token);
+  setRefreshToken(data.refresh_token);
+  return data.access_token;
+}
+
 // ─── Core fetch ───────────────────────────────────────────────────────────────
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, options: RequestInit = {}, _retry = true): Promise<T> {
   const token = getToken();
   const sessionId = getSessionId();
 
@@ -59,6 +96,14 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (sessionId) headers['X-Session-Id'] = sessionId;
 
   const res = await fetch(`${API_URL}${path}`, { ...options, headers });
+
+  if (res.status === 401 && _retry) {
+    const newToken = await refreshAccessToken();
+    if (newToken) {
+      return request<T>(path, options, false);
+    }
+    throw new ApiError(401, 'Session expired. Please log in again.');
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
@@ -82,12 +127,33 @@ export const api = {
 // ─── Typed endpoints ──────────────────────────────────────────────────────────
 
 export const authApi = {
-  register: (data: { email: string; password: string; first_name: string; last_name: string; phone?: string }) =>
-    api.post<TokenResponse>('/auth/register', data),
-  login: (email: string, password: string) =>
-    api.post<TokenResponse>('/auth/login', { email, password }),
-  guest: (email?: string) =>
-    api.post<TokenResponse>('/auth/guest', { email }),
+  register: async (data: { email: string; password: string; first_name: string; last_name: string; phone?: string }) => {
+    const resp = await api.post<TokenResponse>('/auth/register', data);
+    setToken(resp.access_token);
+    setRefreshToken(resp.refresh_token);
+    return resp;
+  },
+  login: async (email: string, password: string) => {
+    const resp = await api.post<TokenResponse>('/auth/login', { email, password });
+    setToken(resp.access_token);
+    setRefreshToken(resp.refresh_token);
+    return resp;
+  },
+  guest: async (email?: string) => {
+    const resp = await api.post<TokenResponse>('/auth/guest', { email });
+    setToken(resp.access_token);
+    setRefreshToken(resp.refresh_token);
+    return resp;
+  },
+  refresh: () => api.post<TokenResponse>('/auth/refresh', { refresh_token: getRefreshToken() }),
+  logout: async () => {
+    const refreshToken = getRefreshToken();
+    if (refreshToken) {
+      await api.post<void>('/auth/logout', { refresh_token: refreshToken }).catch(() => {});
+    }
+    clearToken();
+    clearRefreshToken();
+  },
   me: () => api.get<User>('/auth/me'),
   updateMe: (data: { first_name?: string; last_name?: string; phone?: string }) =>
     api.put<User>('/auth/me', data),

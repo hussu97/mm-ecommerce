@@ -9,6 +9,7 @@ from .product import Product, ProductVariant  # noqa: F401
 from .cart import Cart, CartItem  # noqa: F401
 from .order import Order, OrderItem, OrderStatusEnum, DeliveryMethodEnum  # noqa: F401
 from .promo_code import PromoCode, DiscountTypeEnum  # noqa: F401
+from .refresh_token import RefreshToken  # noqa: F401
 
 __all__ = [
     "Base",
@@ -26,4 +27,5 @@ __all__ = [
     "DeliveryMethodEnum",
     "PromoCode",
     "DiscountTypeEnum",
+    "RefreshToken",
 ]

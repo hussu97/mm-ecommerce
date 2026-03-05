@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
@@ -71,3 +73,11 @@ def decode_password_reset_token(token: str) -> dict:
     if payload.get("type") != "reset":
         raise JWTError("Invalid token type")
     return payload
+
+
+def create_refresh_token() -> tuple[str, str]:
+    """Generate a refresh token. Returns (raw_token, token_hash).
+    Store the hash in the DB; return the raw token to the client."""
+    raw = secrets.token_urlsafe(64)
+    h = hashlib.sha256(raw.encode()).hexdigest()
+    return raw, h

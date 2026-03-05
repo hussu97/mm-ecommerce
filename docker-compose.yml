@@ -5,13 +5,13 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: mm_user
-      POSTGRES_PASSWORD: mm_password
-      POSTGRES_DB: mm_ecommerce
+      POSTGRES_USER: ${POSTGRES_USER:-mm_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mm_password}
+      POSTGRES_DB: ${POSTGRES_DB:-mm_ecommerce}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mm_user -d mm_ecommerce"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mm_user} -d ${POSTGRES_DB:-mm_ecommerce}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -39,7 +39,7 @@ services:
     environment:
       DATABASE_URL: postgresql://umami:umami_password@umami-db:5432/umami
       DATABASE_TYPE: postgresql
-      APP_SECRET: change-me-in-production-to-a-random-secret
+      APP_SECRET: ${UMAMI_APP_SECRET:-change-me-in-production-to-a-random-secret}
     depends_on:
       umami-db:
         condition: service_healthy
@@ -52,7 +52,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://mm_user:mm_password@postgres:5432/mm_ecommerce
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mm_user}:${POSTGRES_PASSWORD:-mm_password}@postgres:5432/${POSTGRES_DB:-mm_ecommerce}
       ENVIRONMENT: development
     volumes:
       - ./apps/api:/app

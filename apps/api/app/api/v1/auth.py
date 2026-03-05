@@ -1,22 +1,29 @@
 from __future__ import annotations
 
+import hashlib
 import uuid
+from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from jose import JWTError
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_active_user, get_db
 from app.core.exceptions import BadRequestError, ConflictError
+from app.core.limiter import limiter
 from app.core.security import (
     create_access_token,
     create_password_reset_token,
+    create_refresh_token,
     decode_password_reset_token,
     hash_password,
     verify_password,
 )
+from app.core.config import settings
 from app.models import User
+from app.models.refresh_token import RefreshToken
 from app.services import email_service
 from app.schemas.user import (
     GuestSessionRequest,
@@ -36,14 +43,29 @@ router = APIRouter()
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_token_response(user: User) -> TokenResponse:
+async def _make_token_response(user: User, db: AsyncSession) -> TokenResponse:
     token = create_access_token(
         user_id=str(user.id),
         email=user.email,
         is_admin=user.is_admin,
         is_guest=user.is_guest,
     )
-    return TokenResponse(access_token=token, user=UserResponse.model_validate(user))
+    raw_refresh, refresh_hash = create_refresh_token()
+    expires_at = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    rt = RefreshToken(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        token_hash=refresh_hash,
+        expires_at=expires_at,
+        is_revoked=False,
+    )
+    db.add(rt)
+    await db.flush()
+    return TokenResponse(
+        access_token=token,
+        refresh_token=raw_refresh,
+        user=UserResponse.model_validate(user),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -56,7 +78,9 @@ def _make_token_response(user: User) -> TokenResponse:
     status_code=status.HTTP_201_CREATED,
     summary="Create a new user account",
 )
+@limiter.limit("5/minute")
 async def register(
+    request: Request,
     body: UserCreate,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
@@ -84,7 +108,7 @@ async def register(
     await db.refresh(user)
 
     background_tasks.add_task(email_service.send_welcome, user.email, user.first_name)
-    return _make_token_response(user)
+    return await _make_token_response(user, db)
 
 
 @router.post(
@@ -92,7 +116,9 @@ async def register(
     response_model=TokenResponse,
     summary="Login with email and password",
 )
+@limiter.limit("5/minute")
 async def login(
+    request: Request,
     body: LoginRequest,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
@@ -113,7 +139,7 @@ async def login(
     if user.is_guest:
         user.is_guest = False
 
-    return _make_token_response(user)
+    return await _make_token_response(user, db)
 
 
 @router.post(
@@ -142,7 +168,7 @@ async def create_guest_session(
     await db.flush()
     await db.refresh(guest)
 
-    return _make_token_response(guest)
+    return await _make_token_response(guest, db)
 
 
 @router.get(
@@ -183,7 +209,9 @@ async def update_me(
     status_code=status.HTTP_200_OK,
     summary="Request a password reset email",
 )
+@limiter.limit("5/minute")
 async def forgot_password(
+    request: Request,
     body: PasswordResetRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
@@ -228,3 +256,74 @@ async def reset_password(
     await db.flush()
 
     return {"message": "Password updated successfully"}
+
+
+# ---------------------------------------------------------------------------
+# Refresh token rotation
+# ---------------------------------------------------------------------------
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+@router.post(
+    "/refresh",
+    response_model=TokenResponse,
+    summary="Rotate refresh token and issue a new access token",
+)
+async def refresh_token(
+    body: RefreshRequest,
+    db: AsyncSession = Depends(get_db),
+) -> TokenResponse:
+    token_hash = hashlib.sha256(body.refresh_token.encode()).hexdigest()
+
+    result = await db.execute(
+        select(RefreshToken).where(RefreshToken.token_hash == token_hash)
+    )
+    rt = result.scalar_one_or_none()
+
+    if not rt or rt.is_revoked or rt.expires_at < datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
+        )
+
+    # Revoke old token (rotation)
+    rt.is_revoked = True
+
+    user_result = await db.execute(select(User).where(User.id == rt.user_id))
+    user = user_result.scalar_one_or_none()
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or inactive",
+        )
+
+    return await _make_token_response(user, db)
+
+
+# ---------------------------------------------------------------------------
+# Logout
+# ---------------------------------------------------------------------------
+
+class LogoutRequest(BaseModel):
+    refresh_token: str
+
+
+@router.post(
+    "/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Revoke refresh token (logout)",
+)
+async def logout(
+    body: LogoutRequest,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    token_hash = hashlib.sha256(body.refresh_token.encode()).hexdigest()
+    result = await db.execute(
+        select(RefreshToken).where(RefreshToken.token_hash == token_hash)
+    )
+    rt = result.scalar_one_or_none()
+    if rt and not rt.is_revoked:
+        rt.is_revoked = True
+        await db.flush()

@@ -16,8 +16,7 @@ _Must fix before production launch._
 - [ ] **CORS allows all methods and headers** — `apps/api/app/main.py:47-48` sets `allow_methods=["*"]` and `allow_headers=["*"]`. Restrict to the specific methods and headers actually used (GET, POST, PUT, PATCH, DELETE + Content-Type, Authorization, X-Session-Id).
 - [ ] **No rate limiting on auth endpoints** — `apps/api/app/api/v1/auth.py` login, register, forgot-password have no rate limiting. Add `slowapi` or equivalent to prevent brute-force and credential-stuffing attacks.
 - [ ] **JWT token has no revocation mechanism** — 7-day expiry (`ACCESS_TOKEN_EXPIRE_MINUTES: 10080` at `config.py:21`) with no token blocklist. If a token is compromised, it stays valid for a week. Add token revocation (Redis blocklist or short-lived tokens + refresh token rotation).
-- [ ] **Admin routes lack role verification audit** — Verify all admin-only endpoints properly check `is_admin`. Guest users should never reach admin routes.
-- [ ] **Docs endpoints exposed in production** — `apps/api/app/main.py:33-35` exposes `/docs`, `/redoc`, and `/openapi.json` unconditionally. Disable in production or gate behind admin auth.
+- [x] **Admin routes lack role verification audit** — All admin routes confirmed using `get_admin_user` dependency (`apps/api/app/core/deps.py:85`). categories, products, orders, users, analytics, promo_codes, uploads all verified.
 - [ ] **Docker Compose secrets in plain text** — `docker-compose.yml:8-9` has `mm_user` / `mm_password` and `docker-compose.yml:42` has Umami `APP_SECRET: change-me-in-production-to-a-random-secret`. Use Docker secrets or `.env` file excluded from VCS.
 - [ ] **Stripe webhook secret not enforced at startup** — `apps/api/app/services/providers/stripe_provider.py:113-122` only checks `STRIPE_WEBHOOK_SECRET` when a webhook arrives. In production, fail fast at startup if this is empty.
 - [ ] **Missing security headers** — API responses lack `Strict-Transport-Security`, `X-Content-Type-Options: nosniff`, and `TrustedHostMiddleware`. Add these for production.
@@ -117,7 +116,6 @@ _Backlog — prioritize as bandwidth allows._
 ### Feature Requests (Customer Experience)
 
 - [ ] **Product reviews & ratings** — Allow customers to leave reviews with star ratings. Display average rating on product cards.
-- [ ] **Wishlist / favorites** — Let users save products to a wishlist for later purchase.
 - [ ] **Order tracking with status updates** — Email notifications when order status changes (confirmed, packed, shipped). Real-time tracking page.
 - [ ] **Multi-language support (Arabic)** — UAE market expects Arabic. Implement i18n with RTL layout support.
 - [ ] **WhatsApp order notifications** — Send order confirmation and status updates via WhatsApp Business API (very popular in UAE).
@@ -125,7 +123,6 @@ _Backlog — prioritize as bandwidth allows._
 - [ ] **Loyalty / rewards program** — Points-based system for repeat customers (e.g., 1 AED = 1 point, 100 points = 10 AED discount).
 - [ ] **Scheduled delivery / pre-orders** — Let customers pick a delivery date, especially for event cakes.
 - [ ] **Social login (Google, Apple)** — Reduce registration friction with OAuth providers.
-- [ ] **Product bundles / combo deals** — Allow creating product bundles at a discounted price.
 - [ ] **Recently viewed products** — Show recently browsed products for easy re-discovery.
 
 ### Feature Requests (Platform & Operations)
@@ -141,6 +138,14 @@ _Backlog — prioritize as bandwidth allows._
 - [ ] **API request/response logging** — The logging middleware exists but verify it captures enough context for debugging without logging sensitive data (passwords, tokens).
 - [ ] **Container image size optimization** — Review Dockerfiles for multi-stage build efficiency. Minimize final image size for faster deploys.
 - [ ] **Missing DB indexes for common queries** — `orders.created_at` (analytics), `product_variants.stock_quantity` (cart validation), `users.is_guest` + `users.is_admin` (customer list filters) lack indexes. Add them for performance at scale.
+
+---
+
+---
+
+## Good to Have
+
+- [ ] **Docs endpoints exposed in production** — `apps/api/app/main.py` exposes `/docs`, `/redoc`, and `/openapi.json` unconditionally. Disable in production or gate behind admin auth.
 
 ---
 
