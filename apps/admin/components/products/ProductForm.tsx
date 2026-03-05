@@ -8,17 +8,6 @@ import type { Category, Product } from '@/lib/types';
 import { Button, Input, Select, Textarea } from '@/components/ui';
 import { slugify } from '@/lib/utils';
 
-interface VariantRow {
-  id?: string;
-  name: string;
-  sku: string;
-  price: string;
-  stock_quantity: string;
-  display_order: number;
-  is_active: boolean;
-  _deleted?: boolean;
-}
-
 interface Props {
   product?: Product;
 }
@@ -30,32 +19,26 @@ export function ProductForm({ product }: Props) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [form, setForm] = useState({
     name: product?.name ?? '',
+    name_localized: product?.name_localized ?? '',
     slug: product?.slug ?? '',
+    sku: product?.sku ?? '',
     category_id: product?.category_id ?? '',
     description: product?.description ?? '',
-    base_price: String(product?.base_price ?? ''),
+    description_localized: product?.description_localized ?? '',
+    base_price: String(product?.base_price ?? '0'),
+    calories: String(product?.calories ?? ''),
+    preparation_time: String(product?.preparation_time ?? ''),
     is_featured: product?.is_featured ?? false,
     is_active: product?.is_active ?? true,
+    is_stock_product: product?.is_stock_product ?? false,
     display_order: String(product?.display_order ?? 0),
   });
   const [imageUrls, setImageUrls] = useState<string[]>(product?.image_urls ?? []);
-  const [variants, setVariants] = useState<VariantRow[]>(
-    product?.variants.map(v => ({
-      id: v.id,
-      name: v.name,
-      sku: v.sku,
-      price: String(v.price),
-      stock_quantity: String(v.stock_quantity),
-      display_order: v.display_order,
-      is_active: v.is_active,
-    })) ?? []
-  );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [uploadingIdx, setUploadingIdx] = useState<number | null>(null);
   const [apiError, setApiError] = useState('');
 
-  // Auto-slug only on create
   const isEdit = !!product;
   useEffect(() => {
     if (!isEdit) setForm(f => ({ ...f, slug: slugify(f.name) }));
@@ -74,12 +57,7 @@ export function ProductForm({ product }: Props) {
     const e: Record<string, string> = {};
     if (!form.name.trim()) e.name = 'Required';
     if (!form.slug.trim()) e.slug = 'Required';
-    if (!form.base_price || isNaN(Number(form.base_price))) e.base_price = 'Valid price required';
-    variants.filter(v => !v._deleted).forEach((v, i) => {
-      if (!v.name.trim()) e[`variant_name_${i}`] = 'Required';
-      if (!v.sku.trim()) e[`variant_sku_${i}`] = 'Required';
-      if (!v.price || isNaN(Number(v.price))) e[`variant_price_${i}`] = 'Valid price';
-    });
+    if (form.base_price === '' || isNaN(Number(form.base_price))) e.base_price = 'Valid price required (0 or more)';
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -113,83 +91,36 @@ export function ProductForm({ product }: Props) {
     });
   }
 
-  function addVariant() {
-    setVariants(prev => [...prev, {
-      name: '',
-      sku: '',
-      price: form.base_price,
-      stock_quantity: '0',
-      display_order: prev.length,
-      is_active: true,
-    }]);
-  }
-
-  function removeVariant(idx: number) {
-    setVariants(prev => prev.map((v, i) => i === idx ? { ...v, _deleted: true } : v));
-  }
-
-  function updateVariant(idx: number, field: keyof VariantRow, value: string | boolean) {
-    setVariants(prev => prev.map((v, i) => i === idx ? { ...v, [field]: value } : v));
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!validate()) return;
     setSaving(true);
     setApiError('');
 
-    const activeVariants = variants.filter(v => !v._deleted);
     const payload = {
       name: form.name.trim(),
+      name_localized: form.name_localized.trim() || null,
       slug: form.slug.trim(),
+      sku: form.sku.trim() || null,
       category_id: form.category_id || null,
       description: form.description.trim() || null,
+      description_localized: form.description_localized.trim() || null,
       base_price: Number(form.base_price),
+      calories: form.calories.trim() ? Number(form.calories) : null,
+      preparation_time: form.preparation_time.trim() ? Number(form.preparation_time) : null,
       image_urls: imageUrls,
       is_featured: form.is_featured,
       is_active: form.is_active,
+      is_stock_product: form.is_stock_product,
       display_order: Number(form.display_order) || 0,
     };
 
     try {
       if (isEdit) {
-        // Update product fields
         await productsApi.update(product.slug, payload);
-
-        // Handle variants: update existing, create new, delete removed
-        const deleted = variants.filter(v => v._deleted && v.id);
-        const updated = variants.filter(v => !v._deleted && v.id);
-        const created = variants.filter(v => !v._deleted && !v.id);
-
-        await Promise.all([
-          ...deleted.map(v => productsApi.deleteVariant(v.id!)),
-          ...updated.map(v => productsApi.updateVariant(v.id!, {
-            name: v.name, sku: v.sku,
-            price: Number(v.price),
-            stock_quantity: Number(v.stock_quantity),
-            is_active: v.is_active,
-            display_order: v.display_order,
-          })),
-          ...created.map(v => productsApi.addVariant(payload.slug, {
-            name: v.name, sku: v.sku,
-            price: Number(v.price),
-            stock_quantity: Number(v.stock_quantity),
-            display_order: v.display_order,
-          })),
-        ]);
       } else {
-        // Create product with variants inline
-        await productsApi.create({
-          ...payload,
-          variants: activeVariants.map(v => ({
-            name: v.name, sku: v.sku,
-            price: Number(v.price),
-            stock_quantity: Number(v.stock_quantity),
-            display_order: v.display_order,
-          })),
-        });
+        await productsApi.create(payload);
       }
-
       router.push('/products');
       router.refresh();
     } catch (err) {
@@ -198,8 +129,6 @@ export function ProductForm({ product }: Props) {
       setSaving(false);
     }
   }
-
-  const activeVariants = variants.filter(v => !v._deleted);
 
   return (
     <form onSubmit={handleSubmit} className="space-y-8">
@@ -220,11 +149,25 @@ export function ProductForm({ product }: Props) {
             error={errors.name}
           />
           <Input
+            label="Name (Arabic / Localized)"
+            value={form.name_localized}
+            onChange={e => setForm(f => ({ ...f, name_localized: e.target.value }))}
+            placeholder="Optional"
+          />
+        </div>
+        <div className="grid sm:grid-cols-2 gap-4 mt-4">
+          <Input
             label="Slug (URL)"
             value={form.slug}
             onChange={e => setForm(f => ({ ...f, slug: e.target.value }))}
             error={errors.slug}
             helper="Auto-generated from name"
+          />
+          <Input
+            label="SKU"
+            value={form.sku}
+            onChange={e => setForm(f => ({ ...f, sku: e.target.value }))}
+            placeholder="Foodics SKU"
           />
         </div>
         <div className="grid sm:grid-cols-2 gap-4 mt-4">
@@ -242,6 +185,25 @@ export function ProductForm({ product }: Props) {
             value={form.base_price}
             onChange={e => setForm(f => ({ ...f, base_price: e.target.value }))}
             error={errors.base_price}
+            helper="Set to 0 if price comes from modifier options"
+          />
+        </div>
+        <div className="grid sm:grid-cols-2 gap-4 mt-4">
+          <Input
+            label="Calories"
+            type="number"
+            min="0"
+            value={form.calories}
+            onChange={e => setForm(f => ({ ...f, calories: e.target.value }))}
+            placeholder="Optional"
+          />
+          <Input
+            label="Preparation Time (minutes)"
+            type="number"
+            min="0"
+            value={form.preparation_time}
+            onChange={e => setForm(f => ({ ...f, preparation_time: e.target.value }))}
+            placeholder="Optional"
           />
         </div>
         <div className="mt-4">
@@ -253,7 +215,16 @@ export function ProductForm({ product }: Props) {
             placeholder="Product description..."
           />
         </div>
-        <div className="flex gap-6 mt-4">
+        <div className="mt-4">
+          <Textarea
+            label="Description (Arabic / Localized)"
+            value={form.description_localized}
+            onChange={e => setForm(f => ({ ...f, description_localized: e.target.value }))}
+            rows={2}
+            placeholder="Optional"
+          />
+        </div>
+        <div className="flex flex-wrap gap-6 mt-4">
           <label className="flex items-center gap-2 cursor-pointer text-xs font-body text-gray-600 uppercase tracking-wider">
             <input
               type="checkbox"
@@ -271,6 +242,15 @@ export function ProductForm({ product }: Props) {
               className="accent-primary"
             />
             Active
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer text-xs font-body text-gray-600 uppercase tracking-wider">
+            <input
+              type="checkbox"
+              checked={form.is_stock_product}
+              onChange={e => setForm(f => ({ ...f, is_stock_product: e.target.checked }))}
+              className="accent-primary"
+            />
+            Track Stock
           </label>
           <div className="w-24">
             <Input
@@ -301,30 +281,15 @@ export function ProductForm({ product }: Props) {
               </div>
               <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1">
                 {idx > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => moveImage(idx, -1)}
-                    className="text-white hover:text-secondary"
-                    title="Move left"
-                  >
+                  <button type="button" onClick={() => moveImage(idx, -1)} className="text-white hover:text-secondary" title="Move left">
                     <span className="material-icons text-[16px]">chevron_left</span>
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={() => removeImage(idx)}
-                  className="text-white hover:text-red-300"
-                  title="Remove"
-                >
+                <button type="button" onClick={() => removeImage(idx)} className="text-white hover:text-red-300" title="Remove">
                   <span className="material-icons text-[16px]">delete</span>
                 </button>
                 {idx < imageUrls.length - 1 && (
-                  <button
-                    type="button"
-                    onClick={() => moveImage(idx, 1)}
-                    className="text-white hover:text-secondary"
-                    title="Move right"
-                  >
+                  <button type="button" onClick={() => moveImage(idx, 1)} className="text-white hover:text-secondary" title="Move right">
                     <span className="material-icons text-[16px]">chevron_right</span>
                   </button>
                 )}
@@ -332,7 +297,6 @@ export function ProductForm({ product }: Props) {
             </div>
           ))}
 
-          {/* Upload button */}
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
@@ -362,84 +326,37 @@ export function ProductForm({ product }: Props) {
         </p>
       </section>
 
-      {/* Variants */}
-      <section className="bg-white border border-gray-200 p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xs font-body uppercase tracking-widest text-gray-500">Variants</h2>
-          <Button type="button" variant="ghost" size="sm" onClick={addVariant}>
-            <span className="material-icons text-[14px]">add</span>
-            Add Variant
-          </Button>
-        </div>
-
-        {activeVariants.length === 0 ? (
-          <p className="text-xs text-gray-400 font-body py-4 text-center border border-dashed border-gray-200">
-            No variants yet. Add at least one variant with stock quantity.
-          </p>
-        ) : (
+      {/* Modifiers (read-only display) */}
+      {isEdit && product.product_modifiers.length > 0 && (
+        <section className="bg-white border border-gray-200 p-5">
+          <h2 className="text-xs font-body uppercase tracking-widest text-gray-500 mb-4">
+            Linked Modifiers ({product.product_modifiers.length})
+          </h2>
           <div className="space-y-3">
-            {variants.map((v, idx) => {
-              if (v._deleted) return null;
-              const visibleIdx = variants.filter((vv, ii) => !vv._deleted && ii <= idx).length - 1;
-              return (
-                <div key={idx} className="grid grid-cols-2 sm:grid-cols-5 gap-2 items-end p-3 border border-gray-200 bg-gray-50">
-                  <Input
-                    label="Name"
-                    value={v.name}
-                    onChange={e => updateVariant(idx, 'name', e.target.value)}
-                    error={errors[`variant_name_${visibleIdx}`]}
-                    placeholder="e.g. 6 Pieces"
-                  />
-                  <Input
-                    label="SKU"
-                    value={v.sku}
-                    onChange={e => updateVariant(idx, 'sku', e.target.value)}
-                    error={errors[`variant_sku_${visibleIdx}`]}
-                    placeholder="e.g. PROD-6"
-                  />
-                  <Input
-                    label="Price (AED)"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={v.price}
-                    onChange={e => updateVariant(idx, 'price', e.target.value)}
-                    error={errors[`variant_price_${visibleIdx}`]}
-                  />
-                  <Input
-                    label="Stock"
-                    type="number"
-                    min="0"
-                    value={v.stock_quantity}
-                    onChange={e => updateVariant(idx, 'stock_quantity', e.target.value)}
-                  />
-                  <div className="flex items-end gap-2">
-                    {v.id && (
-                      <label className="flex items-center gap-1 cursor-pointer text-[10px] text-gray-500 uppercase tracking-wide font-body pb-0.5">
-                        <input
-                          type="checkbox"
-                          checked={v.is_active}
-                          onChange={e => updateVariant(idx, 'is_active', e.target.checked)}
-                          className="accent-primary"
-                        />
-                        Active
-                      </label>
-                    )}
-                    <Button
-                      type="button"
-                      variant="danger"
-                      size="sm"
-                      onClick={() => removeVariant(idx)}
-                    >
-                      <span className="material-icons text-[14px]">delete</span>
-                    </Button>
-                  </div>
+            {product.product_modifiers.map(pm => (
+              <div key={pm.id} className="border border-gray-200 p-3 bg-gray-50">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-body font-medium text-gray-700">{pm.modifier.name}</span>
+                  <span className="text-[11px] text-gray-400 font-body">
+                    min {pm.minimum_options} · max {pm.maximum_options}
+                    {pm.free_options > 0 ? ` · ${pm.free_options} free` : ''}
+                  </span>
                 </div>
-              );
-            })}
+                <div className="flex flex-wrap gap-1">
+                  {pm.modifier.options.filter(o => o.is_active).map(opt => (
+                    <span key={opt.id} className="text-[11px] bg-white border border-gray-200 px-2 py-0.5 font-body text-gray-600">
+                      {opt.name}{opt.price > 0 ? ` +${opt.price.toFixed(2)}` : ''}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
-        )}
-      </section>
+          <p className="text-[11px] text-gray-400 font-body mt-3">
+            Manage modifier assignments via CSV import or the Modifiers page.
+          </p>
+        </section>
+      )}
 
       {/* Actions */}
       <div className="flex items-center gap-3">

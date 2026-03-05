@@ -15,7 +15,13 @@ class Category(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "categories"
 
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    slug: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    name_localized: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    slug: Mapped[str] = mapped_column(
+        String(100), unique=True, nullable=False, index=True
+    )
+    reference: Mapped[str | None] = mapped_column(
+        String(100), unique=True, nullable=True, index=True
+    )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

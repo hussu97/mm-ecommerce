@@ -8,7 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class CategoryCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
+    name_localized: str | None = None
     slug: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9-]+$")
+    reference: str | None = None
     description: str | None = None
     image_url: str | None = None
     display_order: int = 0
@@ -16,7 +18,9 @@ class CategoryCreate(BaseModel):
 
 class CategoryUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=100)
+    name_localized: str | None = None
     slug: str | None = Field(None, pattern=r"^[a-z0-9-]+$")
+    reference: str | None = None
     description: str | None = None
     image_url: str | None = None
     display_order: int | None = None
@@ -28,7 +32,9 @@ class CategoryResponse(BaseModel):
 
     id: UUID
     name: str
+    name_localized: str | None
     slug: str
+    reference: str | None
     description: str | None
     image_url: str | None
     display_order: int

@@ -1,4 +1,4 @@
-import { Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse } from './types';
+import { Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, SelectedOptionSnapshot } from './types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
@@ -174,8 +174,8 @@ export const productsApi = {
 
 export const cartApi = {
   get: () => api.get<Cart>('/cart'),
-  addItem: (variant_id: string, quantity: number) =>
-    api.post<Cart>('/cart/items', { variant_id, quantity }),
+  addItem: (product_id: string, quantity: number, selected_options: Array<{modifier_id: string; option_id: string}> = []) =>
+    api.post<Cart>('/cart/items', { product_id, quantity, selected_options }),
   updateItem: (item_id: string, quantity: number) =>
     api.put<Cart>(`/cart/items/${item_id}`, { quantity }),
   removeItem: (item_id: string) =>

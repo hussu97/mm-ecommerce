@@ -60,13 +60,12 @@ export default async function ProductDetailPage({
     description: product.description ?? undefined,
     image: galleryImages,
     url: `https://meltingmomentscakes.com/${categorySlug}/${productSlug}`,
-    offers: product.variants.map(v => ({
+    offers: {
       '@type': 'Offer',
-      name: v.name,
-      price: Number(v.price).toFixed(2),
+      price: Number(product.base_price).toFixed(2),
       priceCurrency: 'AED',
-      availability: v.stock_quantity > 0 ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
-    })),
+      availability: 'https://schema.org/InStock',
+    },
   };
 
   return (

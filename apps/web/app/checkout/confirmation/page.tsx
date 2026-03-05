@@ -83,7 +83,11 @@ function ConfirmationContent() {
           <div key={item.id} className="flex justify-between items-start px-4 py-3">
             <div>
               <p className="font-body text-sm font-medium text-gray-800">{item.product_name}</p>
-              <p className="font-body text-xs text-gray-400">{item.variant_name} × {item.quantity}</p>
+              <p className="font-body text-xs text-gray-400">
+                {item.selected_options_snapshot && item.selected_options_snapshot.length > 0
+                  ? item.selected_options_snapshot.map(o => o.option_name).join(', ') + ' × ' + item.quantity
+                  : `× ${item.quantity}`}
+              </p>
             </div>
             <p className="font-body text-sm text-gray-700">{Number(item.total_price).toFixed(2)} AED</p>
           </div>

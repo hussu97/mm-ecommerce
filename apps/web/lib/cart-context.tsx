@@ -1,14 +1,19 @@
 'use client';
 
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { cartApi, ensureSessionId, getToken } from './api';
+import { cartApi, ensureSessionId } from './api';
 import { Cart } from './types';
+
+interface SelectedOption {
+  modifier_id: string;
+  option_id: string;
+}
 
 interface CartContextType {
   cart: Cart | null;
   itemCount: number;
   isLoading: boolean;
-  addItem: (variantId: string, quantity?: number) => Promise<void>;
+  addItem: (productId: string, quantity?: number, selectedOptions?: SelectedOption[]) => Promise<void>;
   updateItem: (itemId: string, quantity: number) => Promise<void>;
   removeItem: (itemId: string) => Promise<void>;
   clearCart: () => Promise<void>;
@@ -28,22 +33,20 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       const data = await cartApi.get();
       setCart(data);
     } catch {
-      // No cart yet — that's fine
       setCart(null);
     }
   }, []);
 
-  // Load cart on mount
   useEffect(() => {
     ensureSessionId();
     refreshCart();
   }, [refreshCart]);
 
-  const addItem = useCallback(async (variantId: string, quantity = 1) => {
+  const addItem = useCallback(async (productId: string, quantity = 1, selectedOptions: SelectedOption[] = []) => {
     setIsLoading(true);
     const prev = cart;
     try {
-      const updated = await cartApi.addItem(variantId, quantity);
+      const updated = await cartApi.addItem(productId, quantity, selectedOptions);
       setCart(updated);
     } catch (err) {
       setCart(prev);
@@ -96,7 +99,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       const updated = await cartApi.merge(sessionId);
       setCart(updated);
     } catch {
-      // Merge failed silently — user still has their cart
+      // Merge failed silently
     }
   }, []);
 

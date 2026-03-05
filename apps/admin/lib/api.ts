@@ -1,8 +1,9 @@
 import type {
   AnalyticsOverview, Category, CustomerBreakdown, EmirateData,
-  FunnelData, Order, OrdersPoint, PaginatedCustomers, PaginatedOrders, Product,
-  ProductListResponse, ProductVariant, PromoCode, PromoPerformance, RevenueBreakdown,
-  RevenuePoint, TokenResponse, TopProduct, TrafficData, UploadResponse, User,
+  FunnelData, ImportResult, Modifier, Order, OrdersPoint, PaginatedCustomers,
+  PaginatedOrders, Product, ProductListResponse, PromoCode, PromoPerformance,
+  RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct, TrafficData,
+  UploadResponse, User,
 } from './types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
@@ -83,7 +84,7 @@ export const categoriesApi = {
 // ─── Products ─────────────────────────────────────────────────────────────────
 
 export const productsApi = {
-  list: (params?: { search?: string; category?: string; page?: number; per_page?: number }) => {
+  list: (params?: { search?: string; category?: string; page?: number; per_page?: number; include_inactive?: boolean }) => {
     const qs = params
       ? '?' + new URLSearchParams(
           Object.entries(params)
@@ -97,9 +98,33 @@ export const productsApi = {
   create: (data: object) => api.post<Product>('/products', data),
   update: (slug: string, data: object) => api.put<Product>(`/products/${slug}`, data),
   delete: (slug: string) => api.delete<void>(`/products/${slug}`),
-  addVariant: (slug: string, data: object) => api.post<ProductVariant>(`/products/${slug}/variants`, data),
-  updateVariant: (variantId: string, data: object) => api.put<ProductVariant>(`/products/variants/${variantId}`, data),
-  deleteVariant: (variantId: string) => api.delete<void>(`/products/variants/${variantId}`),
+};
+
+// ─── Modifiers ────────────────────────────────────────────────────────────────
+
+export const modifiersApi = {
+  list: () => api.get<Modifier[]>('/modifiers'),
+  get: (id: string) => api.get<Modifier>(`/modifiers/${id}`),
+  create: (data: object) => api.post<Modifier>('/modifiers', data),
+  update: (id: string, data: object) => api.put<Modifier>(`/modifiers/${id}`, data),
+  delete: (id: string) => api.delete<void>(`/modifiers/${id}`),
+  addOption: (modifierId: string, data: object) => api.post<Modifier>(`/modifiers/${modifierId}/options`, data),
+};
+
+// ─── Import ───────────────────────────────────────────────────────────────────
+
+async function uploadCsv(path: string, file: File): Promise<ImportResult> {
+  const fd = new FormData();
+  fd.append('file', file);
+  return api.upload<ImportResult>(path, fd);
+}
+
+export const importApi = {
+  categories: (file: File) => uploadCsv('/import/categories', file),
+  products: (file: File) => uploadCsv('/import/products', file),
+  modifiers: (file: File) => uploadCsv('/import/modifiers', file),
+  modifierOptions: (file: File) => uploadCsv('/import/modifier-options', file),
+  productModifiers: (file: File) => uploadCsv('/import/product-modifiers', file),
 };
 
 // ─── Orders ───────────────────────────────────────────────────────────────────

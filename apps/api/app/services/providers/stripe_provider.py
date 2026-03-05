@@ -32,7 +32,7 @@ def create_session(order: Order) -> dict:
                 "unit_amount": int(item.unit_price * 100),
                 "product_data": {
                     "name": item.product_name,
-                    "description": item.variant_name,
+                    "description": item.product_sku or item.product_name,
                 },
             },
             "quantity": item.quantity,
@@ -71,8 +71,7 @@ def create_session(order: Order) -> dict:
         f"?order_number={order.order_number}&session_id={{CHECKOUT_SESSION_ID}}"
     )
     cancel_url = (
-        f"{settings.WEB_URL}/checkout"
-        f"?step=payment&order_number={order.order_number}"
+        f"{settings.WEB_URL}/checkout?step=payment&order_number={order.order_number}"
     )
 
     try:

@@ -137,8 +137,10 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
             <div key={item.id} className="flex items-center justify-between px-4 py-3">
               <div>
                 <p className="text-sm font-body text-gray-800">{item.product_name}</p>
-                {item.variant_name && (
-                  <p className="text-xs text-gray-400 font-body">{item.variant_name}</p>
+                {item.selected_options_snapshot && item.selected_options_snapshot.length > 0 && (
+                  <p className="text-xs text-gray-400 font-body">
+                    {item.selected_options_snapshot.map(o => o.option_name).join(', ')}
+                  </p>
                 )}
               </div>
               <div className="text-right">

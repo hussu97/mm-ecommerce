@@ -9,14 +9,19 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.cart import Cart, CartItem
-from app.models.product import Product, ProductVariant
-from app.schemas.cart import CartItemCreate, CartItemResponse, CartItemUpdate, CartResponse
+from app.models.modifier import Modifier, ModifierOption, ProductModifier
+from app.models.product import Product
+from app.schemas.cart import (
+    CartItemCreate,
+    CartItemResponse,
+    CartItemUpdate,
+    CartResponse,
+    SelectedOption,
+)
 
 
 def _cart_load_options():
-    return [
-        selectinload(Cart.items).joinedload(CartItem.variant).joinedload(ProductVariant.product)
-    ]
+    return [selectinload(Cart.items).joinedload(CartItem.product)]
 
 
 async def _build_response(cart: Cart) -> CartResponse:
@@ -26,40 +31,113 @@ async def _build_response(cart: Cart) -> CartResponse:
     item_count = 0
 
     for cart_item in cart.items:
-        variant = cart_item.variant
-        product = variant.product if variant else None
+        product = cart_item.product
 
-        line_total = (variant.price * cart_item.quantity) if variant else None
-        if line_total:
-            subtotal += line_total
-
+        # Compute unit price from stored JSONB snapshot
+        selected_options = cart_item.selected_options or []
+        options_total = sum(
+            Decimal(str(opt.get("option_price", 0))) for opt in selected_options
+        )
+        base = Decimal(str(product.base_price)) if product else Decimal("0")
+        unit_price = base + options_total
+        line_total = unit_price * cart_item.quantity
+        subtotal += line_total
         item_count += cart_item.quantity
 
         item_resp = CartItemResponse.model_validate(cart_item)
         item_resp.product_name = product.name if product else None
-        item_resp.product_image = (product.image_urls[0] if product and product.image_urls else None)
-        item_resp.line_total = line_total
+        item_resp.product_image = (
+            product.image_urls[0] if product and product.image_urls else None
+        )
+        item_resp.unit_price = float(unit_price)
+        item_resp.line_total = float(line_total)
 
         items.append(item_resp)
 
     response = CartResponse.model_validate(cart)
     response.items = items
-    response.subtotal = subtotal
+    response.subtotal = float(subtotal)
     response.item_count = item_count
     return response
 
 
 async def _load_cart(db: AsyncSession, cart_id: uuid.UUID) -> Cart:
-    stmt = (
-        select(Cart)
-        .options(*_cart_load_options())
-        .where(Cart.id == cart_id)
-    )
+    stmt = select(Cart).options(*_cart_load_options()).where(Cart.id == cart_id)
     result = await db.execute(stmt)
     cart = result.scalar_one_or_none()
     if not cart:
         raise NotFoundError("Cart not found")
     return cart
+
+
+async def _build_options_snapshot(
+    db: AsyncSession,
+    product: Product,
+    selected_options: list[SelectedOption],
+) -> list[dict]:
+    """Validate selected options against product modifiers and build JSONB snapshot."""
+    if not selected_options:
+        return []
+
+    # Load product modifiers with options
+    pm_result = await db.execute(
+        select(ProductModifier)
+        .where(ProductModifier.product_id == product.id)
+        .options(joinedload(ProductModifier.modifier).selectinload(Modifier.options))
+    )
+    product_modifiers = pm_result.scalars().unique().all()
+
+    # Group selected options by modifier_id
+    selections_by_modifier: dict[uuid.UUID, list[uuid.UUID]] = {}
+    for sel in selected_options:
+        selections_by_modifier.setdefault(sel.modifier_id, []).append(sel.option_id)
+
+    # Validate constraints for each modifier
+    for pm in product_modifiers:
+        mod_selections = selections_by_modifier.get(pm.modifier_id, [])
+        count = len(mod_selections)
+        if count < pm.minimum_options:
+            raise BadRequestError(
+                f"Modifier '{pm.modifier.name}' requires at least {pm.minimum_options} option(s), got {count}"
+            )
+        if count > pm.maximum_options:
+            raise BadRequestError(
+                f"Modifier '{pm.modifier.name}' allows at most {pm.maximum_options} option(s), got {count}"
+            )
+
+    # Build snapshot
+    snapshot = []
+    option_id_map: dict[uuid.UUID, ModifierOption] = {}
+    modifier_map: dict[uuid.UUID, Modifier] = {}
+    for pm in product_modifiers:
+        modifier_map[pm.modifier_id] = pm.modifier
+        for opt in pm.modifier.options:
+            option_id_map[opt.id] = opt
+
+    for sel in selected_options:
+        opt = option_id_map.get(sel.option_id)
+        if not opt:
+            raise BadRequestError(
+                f"Option '{sel.option_id}' not found for this product"
+            )
+        mod = modifier_map.get(sel.modifier_id)
+        snapshot.append(
+            {
+                "modifier_id": str(sel.modifier_id),
+                "modifier_name": mod.name if mod else "",
+                "option_id": str(sel.option_id),
+                "option_name": opt.name,
+                "option_price": float(opt.price),
+            }
+        )
+
+    return snapshot
+
+
+def _options_key(product_id: uuid.UUID, selected_options: list[dict]) -> tuple:
+    """Dedup key: product_id + sorted option_ids."""
+    option_ids = tuple(sorted(opt["option_id"] for opt in selected_options))
+    return (product_id, option_ids)
 
 
 async def get_or_create(
@@ -73,9 +151,7 @@ async def get_or_create(
     # Try to find existing cart
     if user_id:
         stmt = (
-            select(Cart)
-            .options(*_cart_load_options())
-            .where(Cart.user_id == user_id)
+            select(Cart).options(*_cart_load_options()).where(Cart.user_id == user_id)
         )
     else:
         stmt = (
@@ -103,7 +179,7 @@ async def add_item(
     session_id: str | None,
     data: CartItemCreate,
 ) -> CartResponse:
-    # Get or create cart (without loading relationships for efficiency)
+    # Get or create cart
     if user_id:
         stmt = select(Cart).where(Cart.user_id == user_id)
     else:
@@ -116,38 +192,45 @@ async def add_item(
         db.add(cart)
         await db.flush()
 
-    # Validate variant exists and has stock
-    variant_result = await db.execute(
-        select(ProductVariant).where(
-            ProductVariant.id == data.variant_id, ProductVariant.is_active == True  # noqa: E712
+    # Validate product exists and is active
+    product_result = await db.execute(
+        select(Product).where(
+            Product.id == data.product_id,
+            Product.is_active == True,  # noqa: E712
         )
     )
-    variant = variant_result.scalar_one_or_none()
-    if not variant:
-        raise NotFoundError(f"Product variant '{data.variant_id}' not found or inactive")
+    product = product_result.scalar_one_or_none()
+    if not product:
+        raise NotFoundError(f"Product '{data.product_id}' not found or inactive")
 
-    if variant.stock_quantity < data.quantity:
-        raise BadRequestError(
-            f"Insufficient stock. Only {variant.stock_quantity} available."
-        )
+    # Build + validate options snapshot
+    options_snapshot = await _build_options_snapshot(db, product, data.selected_options)
 
-    # Check if item already in cart
-    existing_item_result = await db.execute(
+    # Check for duplicate: same product + same sorted options
+    existing_items_result = await db.execute(
         select(CartItem).where(
-            CartItem.cart_id == cart.id, CartItem.variant_id == data.variant_id
+            CartItem.cart_id == cart.id, CartItem.product_id == data.product_id
         )
     )
-    existing_item = existing_item_result.scalar_one_or_none()
+    existing_items = existing_items_result.scalars().all()
 
-    if existing_item:
-        new_qty = existing_item.quantity + data.quantity
-        if variant.stock_quantity < new_qty:
-            raise BadRequestError(
-                f"Insufficient stock. Only {variant.stock_quantity} available."
-            )
-        existing_item.quantity = new_qty
+    new_key = _options_key(data.product_id, options_snapshot)
+    duplicate = None
+    for item in existing_items:
+        item_key = _options_key(data.product_id, item.selected_options or [])
+        if item_key == new_key:
+            duplicate = item
+            break
+
+    if duplicate:
+        duplicate.quantity += data.quantity
     else:
-        item = CartItem(cart_id=cart.id, variant_id=data.variant_id, quantity=data.quantity)
+        item = CartItem(
+            cart_id=cart.id,
+            product_id=data.product_id,
+            quantity=data.quantity,
+            selected_options=options_snapshot,
+        )
         db.add(item)
 
     await db.flush()
@@ -170,14 +253,6 @@ async def update_item(
     item = item_result.scalar_one_or_none()
     if not item:
         raise NotFoundError("Cart item not found")
-
-    # Check stock
-    variant_result = await db.execute(
-        select(ProductVariant).where(ProductVariant.id == item.variant_id)
-    )
-    variant = variant_result.scalar_one_or_none()
-    if variant and variant.stock_quantity < data.quantity:
-        raise BadRequestError(f"Insufficient stock. Only {variant.stock_quantity} available.")
 
     item.quantity = data.quantity
     await db.flush()
@@ -224,7 +299,9 @@ async def clear(
     return await _build_response(cart)
 
 
-async def merge(db: AsyncSession, guest_session_id: str, user_id: uuid.UUID) -> CartResponse:
+async def merge(
+    db: AsyncSession, guest_session_id: str, user_id: uuid.UUID
+) -> CartResponse:
     """Merge guest session cart into user cart after login."""
     # Find guest cart
     guest_result = await db.execute(
@@ -241,7 +318,6 @@ async def merge(db: AsyncSession, guest_session_id: str, user_id: uuid.UUID) -> 
         await db.flush()
 
     if not guest_cart:
-        # Nothing to merge
         cart = await _load_cart(db, user_cart.id)
         return await _build_response(cart)
 
@@ -252,28 +328,32 @@ async def merge(db: AsyncSession, guest_session_id: str, user_id: uuid.UUID) -> 
     guest_items = guest_items_result.scalars().all()
 
     for guest_item in guest_items:
-        # Check if user cart already has same variant
-        existing_result = await db.execute(
+        # Check if user cart already has same product + options
+        user_items_result = await db.execute(
             select(CartItem).where(
                 CartItem.cart_id == user_cart.id,
-                CartItem.variant_id == guest_item.variant_id,
+                CartItem.product_id == guest_item.product_id,
             )
         )
-        existing = existing_result.scalar_one_or_none()
+        user_items = user_items_result.scalars().all()
+
+        guest_key = _options_key(
+            guest_item.product_id, guest_item.selected_options or []
+        )
+        existing = None
+        for ui in user_items:
+            if _options_key(ui.product_id, ui.selected_options or []) == guest_key:
+                existing = ui
+                break
+
         if existing:
-            # Fetch variant stock to cap merged quantity
-            variant_result = await db.execute(
-                select(ProductVariant).where(ProductVariant.id == guest_item.variant_id)
-            )
-            variant = variant_result.scalar_one_or_none()
-            stock = variant.stock_quantity if variant else 0
-            new_qty = min(existing.quantity + guest_item.quantity, stock)
-            existing.quantity = new_qty
+            existing.quantity += guest_item.quantity
         else:
             new_item = CartItem(
                 cart_id=user_cart.id,
-                variant_id=guest_item.variant_id,
+                product_id=guest_item.product_id,
                 quantity=guest_item.quantity,
+                selected_options=guest_item.selected_options,
             )
             db.add(new_item)
 

@@ -11,7 +11,6 @@ from sqlalchemy.orm import selectinload
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.models.cart import Cart, CartItem
 from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
-from app.models.product import ProductVariant
 from app.models.promo_code import PromoCode
 from app.schemas.order import OrderCreate, OrderListResponse, OrderResponse
 from app.services import delivery_service, promo_code_service
@@ -66,43 +65,49 @@ async def create_order(
         raise BadRequestError("No cart found — provide session_id for guest checkout")
 
     cart_result = await db.execute(
-        cart_stmt.options(
-            selectinload(Cart.items).joinedload(CartItem.variant).joinedload(ProductVariant.product)
-        )
+        cart_stmt.options(selectinload(Cart.items).joinedload(CartItem.product))
     )
     cart = cart_result.scalar_one_or_none()
     if not cart or not cart.items:
         raise BadRequestError("Cart is empty")
 
     # ── 2. Validate delivery requirements ───────────────────────────────────
-    if data.delivery_method == DeliveryMethodEnum.DELIVERY and not data.shipping_address:
+    if (
+        data.delivery_method == DeliveryMethodEnum.DELIVERY
+        and not data.shipping_address
+    ):
         raise BadRequestError("Shipping address is required for delivery orders")
 
-    # ── 3. Validate stock & compute subtotal ────────────────────────────────
+    # ── 3. Compute subtotal from cart items ─────────────────────────────────
     subtotal = Decimal("0.00")
     items_data: list[dict] = []
 
     for cart_item in cart.items:
-        variant = cart_item.variant
-        if not variant or not variant.is_active:
-            raise BadRequestError(
-                f"Product variant is no longer available"
-            )
-        if variant.stock_quantity < cart_item.quantity:
-            raise BadRequestError(
-                f"'{variant.product.name} — {variant.name}': only {variant.stock_quantity} in stock"
-            )
-        line_total = variant.price * cart_item.quantity
+        product = cart_item.product
+        if not product or not product.is_active:
+            raise BadRequestError("A product in your cart is no longer available")
+
+        selected_options = cart_item.selected_options or []
+        options_price = sum(
+            Decimal(str(opt.get("option_price", 0))) for opt in selected_options
+        )
+        base_price = Decimal(str(product.base_price))
+        unit_price = base_price + options_price
+        line_total = unit_price * cart_item.quantity
         subtotal += line_total
+
         items_data.append(
             {
-                "variant_id": variant.id,
-                "product_name": variant.product.name,
-                "variant_name": variant.name,
+                "product_id": product.id,
+                "product_name": product.name,
+                "product_name_localized": product.name_localized,
+                "product_sku": product.sku or "",
                 "quantity": cart_item.quantity,
-                "unit_price": variant.price,
+                "base_price": base_price,
+                "options_price": options_price,
+                "unit_price": unit_price,
                 "total_price": line_total,
-                "_variant": variant,  # keep ref for stock decrement
+                "selected_options_snapshot": selected_options,
             }
         )
 
@@ -156,25 +161,10 @@ async def create_order(
     db.add(order)
     await db.flush()
 
-    # ── 10. Create order items & decrement stock (atomic) ────────────────────
+    # ── 10. Create order items ────────────────────────────────────────────────
     for item in items_data:
-        variant: ProductVariant = item.pop("_variant")
         order_item = OrderItem(order_id=order.id, **item)
         db.add(order_item)
-        # Atomic decrement with stock guard — prevents overselling under concurrency
-        update_result = await db.execute(
-            sql_update(ProductVariant)
-            .where(
-                ProductVariant.id == variant.id,
-                ProductVariant.stock_quantity >= item["quantity"],
-            )
-            .values(stock_quantity=ProductVariant.stock_quantity - item["quantity"])
-            .execution_options(synchronize_session=False)
-        )
-        if update_result.rowcount != 1:
-            raise BadRequestError(
-                f"'{item['product_name']} — {item['variant_name']}': insufficient stock"
-            )
 
     # ── 11. Increment promo uses (atomic) ────────────────────────────────────
     if promo_obj:
@@ -221,12 +211,13 @@ async def get_user_orders(
 ) -> tuple[list[OrderListResponse], int]:
     base_stmt = select(Order).where(Order.user_id == user_id)
 
-    count_result = await db.execute(select(func.count()).select_from(base_stmt.subquery()))
+    count_result = await db.execute(
+        select(func.count()).select_from(base_stmt.subquery())
+    )
     total = count_result.scalar() or 0
 
     stmt = (
-        base_stmt
-        .options(selectinload(Order.items))
+        base_stmt.options(selectinload(Order.items))
         .order_by(Order.created_at.desc())
         .offset((page - 1) * per_page)
         .limit(per_page)
@@ -317,12 +308,13 @@ async def get_all_admin(
             Order.order_number.ilike(f"%{search}%") | Order.email.ilike(f"%{search}%")
         )
 
-    count_result = await db.execute(select(func.count()).select_from(base_stmt.subquery()))
+    count_result = await db.execute(
+        select(func.count()).select_from(base_stmt.subquery())
+    )
     total = count_result.scalar() or 0
 
     stmt = (
-        base_stmt
-        .options(selectinload(Order.items))
+        base_stmt.options(selectinload(Order.items))
         .order_by(Order.created_at.desc())
         .offset((page - 1) * per_page)
         .limit(per_page)

@@ -152,8 +152,10 @@ function OrderSummarySidebar({
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-body text-xs text-gray-800 leading-snug truncate">{item.product_name}</p>
-                {item.variant?.name && (
-                  <p className="font-body text-[11px] text-gray-400">{item.variant.name}</p>
+                {item.selected_options && item.selected_options.length > 0 && (
+                  <p className="font-body text-[11px] text-gray-400">
+                    {item.selected_options.map(o => o.option_name).join(', ')}
+                  </p>
                 )}
               </div>
               <p className="font-body text-xs text-gray-700 shrink-0">

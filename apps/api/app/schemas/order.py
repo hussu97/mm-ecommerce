@@ -14,12 +14,16 @@ class OrderItemResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    variant_id: UUID | None
+    product_id: UUID | None
     product_name: str
-    variant_name: str
+    product_name_localized: str | None
+    product_sku: str
     quantity: int
+    base_price: float
+    options_price: float
     unit_price: float
     total_price: float
+    selected_options_snapshot: list[Any] = []
 
 
 class OrderCreate(BaseModel):

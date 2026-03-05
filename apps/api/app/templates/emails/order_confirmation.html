@@ -25,7 +25,7 @@
     <tr>
       <td>
         {{ item.product_name }}
-        <span class="variant-label">{{ item.variant_name }}</span>
+        {% if item.selected_options_snapshot %}<span class="variant-label">{{ item.selected_options_snapshot | map(attribute='option_name') | join(', ') }}</span>{% endif %}
       </td>
       <td style="text-align:center;">{{ item.quantity }}</td>
       <td class="right">{{ "%.2f"|format(item.total_price) }} AED</td>

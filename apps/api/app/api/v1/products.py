@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import uuid
-from typing import Any
 
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel
@@ -13,9 +11,6 @@ from app.schemas.product import (
     ProductCreate,
     ProductResponse,
     ProductUpdate,
-    ProductVariantCreate,
-    ProductVariantResponse,
-    ProductVariantUpdate,
 )
 from app.services import product_service
 
@@ -35,9 +30,12 @@ async def list_products(
     category: str | None = Query(None, description="Filter by category slug"),
     search: str | None = Query(None, description="Search by product name"),
     featured: bool | None = Query(None, description="Filter featured products"),
-    sort: str = Query("newest", description="Sort order: newest|oldest|price_asc|price_desc|name"),
+    sort: str = Query(
+        "newest", description="Sort order: newest|oldest|price_asc|price_desc|name"
+    ),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
+    include_inactive: bool = Query(False),
     db: AsyncSession = Depends(get_db),
 ):
     """List products with filtering, search, and pagination."""
@@ -49,9 +47,12 @@ async def list_products(
         sort=sort,
         page=page,
         per_page=per_page,
+        include_inactive=include_inactive,
     )
     pages = max(1, (total + per_page - 1) // per_page)
-    return ProductListResponse(items=items, total=total, page=page, per_page=per_page, pages=pages)
+    return ProductListResponse(
+        items=items, total=total, page=page, per_page=per_page, pages=pages
+    )
 
 
 @router.get("/featured", response_model=list[ProductResponse])
@@ -65,7 +66,7 @@ async def list_featured(
 
 @router.get("/{slug}", response_model=ProductResponse)
 async def get_product(slug: str, db: AsyncSession = Depends(get_db)):
-    """Get a product by slug with all variants."""
+    """Get a product by slug with all modifiers."""
     return await product_service.get_by_slug(db, slug)
 
 
@@ -75,7 +76,7 @@ async def create_product(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_admin_user),
 ):
-    """Create a new product with optional variants (admin only)."""
+    """Create a new product (admin only)."""
     return await product_service.create(db, data)
 
 
@@ -96,39 +97,5 @@ async def delete_product(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_admin_user),
 ):
-    """Delete a product and all its variants (admin only)."""
+    """Delete a product (admin only)."""
     await product_service.delete(db, slug)
-
-
-# ─── Variant CRUD ─────────────────────────────────────────────────────────────
-
-@router.post("/{slug}/variants", response_model=ProductVariantResponse, status_code=status.HTTP_201_CREATED)
-async def add_variant(
-    slug: str,
-    data: ProductVariantCreate,
-    db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
-):
-    """Add a variant to a product (admin only)."""
-    return await product_service.create_variant(db, slug, data)
-
-
-@router.put("/variants/{variant_id}", response_model=ProductVariantResponse)
-async def update_variant(
-    variant_id: uuid.UUID,
-    data: ProductVariantUpdate,
-    db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
-):
-    """Update a product variant (admin only)."""
-    return await product_service.update_variant(db, variant_id, data)
-
-
-@router.delete("/variants/{variant_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_variant(
-    variant_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
-):
-    """Delete a product variant (admin only)."""
-    await product_service.delete_variant(db, variant_id)

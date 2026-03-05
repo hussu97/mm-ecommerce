@@ -14,6 +14,7 @@ const NAV = [
   { href: '/promo-codes',   label: 'Promo Codes', icon: 'local_offer' },
   { href: '/customers',     label: 'Customers',   icon: 'people' },
   { href: '/analytics',     label: 'Analytics',   icon: 'bar_chart' },
+  { href: '/import',        label: 'Import Data', icon: 'upload_file' },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {

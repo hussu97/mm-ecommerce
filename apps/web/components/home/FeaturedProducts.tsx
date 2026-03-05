@@ -10,16 +10,20 @@ function ProductCard({ product }: { product: Product }) {
   const { addItem } = useCart();
   const [adding, setAdding] = useState(false);
 
-  const defaultVariant = product.variants?.[0];
-  const price = defaultVariant?.price ?? product.base_price;
+  const hasModifiers = product.product_modifiers && product.product_modifiers.length > 0;
+  const price = Number(product.base_price);
   const image = product.image_urls?.[0];
   const categorySlug = product.category?.slug ?? 'products';
 
   const handleAdd = async () => {
-    if (!defaultVariant) return;
+    if (hasModifiers) {
+      // Redirect to PDP for modifier selection
+      window.location.href = `/${categorySlug}/${product.slug}`;
+      return;
+    }
     setAdding(true);
     try {
-      await addItem(defaultVariant.id, 1);
+      await addItem(product.id, 1, []);
     } finally {
       setAdding(false);
     }
@@ -56,14 +60,14 @@ function ProductCard({ product }: { product: Product }) {
         <div className="h-px bg-secondary/40" />
         <div className="flex items-center justify-between gap-2">
           <span className="font-body text-sm font-medium text-primary">
-            {Number(price).toFixed(2)} AED
+            {hasModifiers ? 'From ' : ''}{price.toFixed(2)} AED
           </span>
           <button
             onClick={handleAdd}
-            disabled={adding || !defaultVariant}
+            disabled={adding}
             className="text-[10px] font-body uppercase tracking-widest px-3 py-1.5 border border-primary text-primary hover:bg-primary hover:text-white transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {adding ? '...' : 'Add'}
+            {adding ? '...' : hasModifiers ? 'Select' : 'Add'}
           </button>
         </div>
       </div>

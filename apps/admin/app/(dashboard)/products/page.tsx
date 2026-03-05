@@ -107,7 +107,8 @@ export default function ProductsPage() {
               <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Product</th>
               <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden sm:table-cell">Category</th>
               <th className="px-4 py-3 text-right text-[11px] font-body uppercase tracking-widest text-gray-500">Price</th>
-              <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500 hidden md:table-cell">Variants</th>
+              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden md:table-cell">SKU</th>
+              <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500 hidden md:table-cell">Modifiers</th>
               <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500 hidden lg:table-cell">Status</th>
               <th className="px-4 py-3 text-right text-[11px] font-body uppercase tracking-widest text-gray-500">Actions</th>
             </tr>
@@ -116,7 +117,7 @@ export default function ProductsPage() {
             {loading ? (
               Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i}>
-                  {Array.from({ length: 7 }).map((_, j) => (
+                  {Array.from({ length: 8 }).map((_, j) => (
                     <td key={j} className="px-4 py-3">
                       <div className="h-4 bg-gray-100 animate-pulse rounded-sm" />
                     </td>
@@ -125,13 +126,12 @@ export default function ProductsPage() {
               ))
             ) : products.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-400 font-body">
+                <td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-400 font-body">
                   No products found.
                 </td>
               </tr>
             ) : (
               products.map(product => {
-                const totalStock = product.variants.reduce((s, v) => s + v.stock_quantity, 0);
                 return (
                   <tr key={product.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-2.5">
@@ -159,11 +159,16 @@ export default function ProductsPage() {
                       <span className="text-xs font-body text-gray-500">{product.category?.name ?? '—'}</span>
                     </td>
                     <td className="px-4 py-2.5 text-right">
-                      <span className="text-xs font-body text-gray-700">{formatCurrency(product.base_price)}</span>
+                      <span className="text-xs font-body text-gray-700">
+                        {product.base_price > 0 ? formatCurrency(product.base_price) : 'From options'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 hidden md:table-cell">
+                      <span className="text-xs font-body text-gray-400">{product.sku ?? '—'}</span>
                     </td>
                     <td className="px-4 py-2.5 text-center hidden md:table-cell">
                       <span className="text-xs font-body text-gray-500">
-                        {product.variants.length} · {totalStock} stock
+                        {product.product_modifiers.length}
                       </span>
                     </td>
                     <td className="px-4 py-2.5 text-center hidden lg:table-cell">

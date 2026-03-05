@@ -62,7 +62,7 @@ class OrdersPoint(BaseModel):
 
 class TopProduct(BaseModel):
     product_name: str
-    variant_name: str
+    product_sku: str
     revenue: float
     quantity: int
 
@@ -273,7 +273,7 @@ async def get_top_products(
     stmt = (
         select(
             OrderItem.product_name,
-            OrderItem.variant_name,
+            OrderItem.product_sku,
             func.coalesce(func.sum(OrderItem.total_price), 0).label("revenue"),
             func.coalesce(func.sum(OrderItem.quantity), 0).label("quantity"),
         )
@@ -283,7 +283,7 @@ async def get_top_products(
             func.date(Order.created_at) >= start,
             func.date(Order.created_at) <= end,
         )
-        .group_by(OrderItem.product_name, OrderItem.variant_name)
+        .group_by(OrderItem.product_name, OrderItem.product_sku)
         .order_by(func.sum(OrderItem.total_price).desc())
         .limit(limit)
     )
@@ -292,7 +292,7 @@ async def get_top_products(
     return [
         TopProduct(
             product_name=row.product_name,
-            variant_name=row.variant_name,
+            product_sku=row.product_sku,
             revenue=float(row.revenue),
             quantity=int(row.quantity),
         )

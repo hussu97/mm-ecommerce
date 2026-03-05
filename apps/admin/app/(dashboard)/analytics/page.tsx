@@ -543,7 +543,7 @@ export default function AnalyticsPage() {
                       <tr key={i}>
                         <td className="py-2 text-gray-700">
                           {p.product_name}
-                          <span className="text-gray-400 ml-1">({p.variant_name})</span>
+                          {p.product_sku && <span className="text-gray-400 ml-1">({p.product_sku})</span>}
                         </td>
                         <td className="py-2 text-right text-gray-500">{p.quantity}</td>
                         <td className="py-2 text-right text-gray-800">{formatCurrency(p.revenue)}</td>

@@ -197,7 +197,14 @@ export default function OrderDetailPage() {
               <tr key={item.id}>
                 <td className="px-4 py-2.5">
                   <div className="text-xs font-body text-gray-800">{item.product_name}</div>
-                  <div className="text-[11px] font-body text-gray-400">{item.variant_name}</div>
+                  <div className="text-[11px] font-body text-gray-400">{item.product_sku}</div>
+                  {item.selected_options_snapshot && item.selected_options_snapshot.length > 0 && (
+                    <div className="text-[11px] font-body text-gray-400 mt-0.5">
+                      {item.selected_options_snapshot.map((o, i) => (
+                        <span key={i}>{i > 0 ? ', ' : ''}{o.option_name}{o.option_price > 0 ? ` (+${o.option_price.toFixed(2)})` : ''}</span>
+                      ))}
+                    </div>
+                  )}
                 </td>
                 <td className="px-4 py-2.5 text-center text-xs font-body text-gray-600">{item.quantity}</td>
                 <td className="px-4 py-2.5 text-right text-xs font-body text-gray-600">{formatCurrency(item.unit_price)}</td>

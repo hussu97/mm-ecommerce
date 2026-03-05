@@ -1,20 +1,44 @@
-// ─── Product ──────────────────────────────────────────────────────────────────
+// ─── Modifier ─────────────────────────────────────────────────────────────────
 
-export interface ProductVariant {
+export interface ModifierOption {
   id: string;
-  product_id: string;
+  modifier_id: string;
   name: string;
+  name_localized: string | null;
   sku: string;
   price: number;
-  stock_quantity: number;
+  calories: number | null;
   is_active: boolean;
   display_order: number;
 }
 
+export interface Modifier {
+  id: string;
+  reference: string;
+  name: string;
+  name_localized: string | null;
+  options: ModifierOption[];
+}
+
+export interface ProductModifier {
+  id: string;
+  modifier_id: string;
+  modifier: Modifier;
+  minimum_options: number;
+  maximum_options: number;
+  free_options: number;
+  unique_options: boolean;
+  display_order: number;
+}
+
+// ─── Product ──────────────────────────────────────────────────────────────────
+
 export interface Category {
   id: string;
   name: string;
+  name_localized: string | null;
   slug: string;
+  reference: string | null;
   description: string | null;
   image_url: string | null;
   display_order: number;
@@ -26,16 +50,23 @@ export interface Product {
   id: string;
   category_id: string | null;
   name: string;
+  name_localized: string | null;
   slug: string;
+  sku: string | null;
   description: string | null;
+  description_localized: string | null;
   base_price: number;
+  calories: number | null;
+  preparation_time: number | null;
+  is_sold_by_weight: boolean;
+  is_stock_product: boolean;
   image_urls: string[];
   is_active: boolean;
   is_featured: boolean;
   display_order: number;
   created_at: string;
   updated_at: string;
-  variants: ProductVariant[];
+  product_modifiers: ProductModifier[];
   category: Category | null;
 }
 
@@ -49,15 +80,24 @@ export interface ProductListResponse {
 
 // ─── Cart ─────────────────────────────────────────────────────────────────────
 
+export interface SelectedOptionSnapshot {
+  modifier_id: string;
+  modifier_name: string;
+  option_id: string;
+  option_name: string;
+  option_price: number;
+}
+
 export interface CartItem {
   id: string;
   cart_id: string;
-  variant_id: string;
+  product_id: string;
   quantity: number;
+  selected_options: SelectedOptionSnapshot[];
   created_at: string;
-  variant: ProductVariant | null;
   product_name: string | null;
   product_image: string | null;
+  unit_price: number | null;
   line_total: number | null;
 }
 
@@ -77,12 +117,16 @@ export type DeliveryMethod = 'delivery' | 'pickup';
 
 export interface OrderItem {
   id: string;
-  variant_id: string | null;
+  product_id: string | null;
   product_name: string;
-  variant_name: string;
+  product_name_localized: string | null;
+  product_sku: string;
   quantity: number;
+  base_price: number;
+  options_price: number;
   unit_price: number;
   total_price: number;
+  selected_options_snapshot: SelectedOptionSnapshot[];
 }
 
 export interface Order {

@@ -1,21 +1,16 @@
 from __future__ import annotations
 
-import uuid
-from decimal import Decimal
-
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.core.exceptions import ConflictError, NotFoundError
-from app.models.product import Product, ProductVariant
+from app.models.modifier import Modifier, ProductModifier
+from app.models.product import Product
 from app.schemas.product import (
     ProductCreate,
     ProductResponse,
     ProductUpdate,
-    ProductVariantCreate,
-    ProductVariantResponse,
-    ProductVariantUpdate,
 )
 
 
@@ -30,7 +25,9 @@ _SORT_MAP = {
 
 def _product_load_options():
     return [
-        selectinload(Product.variants),
+        selectinload(Product.product_modifiers)
+        .joinedload(ProductModifier.modifier)
+        .selectinload(Modifier.options),
         joinedload(Product.category),
     ]
 
@@ -93,6 +90,16 @@ async def get_by_slug(db: AsyncSession, slug: str) -> ProductResponse:
     return ProductResponse.model_validate(product)
 
 
+async def get_by_slug_admin(db: AsyncSession, slug: str) -> ProductResponse:
+    """Get product by slug without active filter (for admin)."""
+    stmt = select(Product).options(*_product_load_options()).where(Product.slug == slug)
+    result = await db.execute(stmt)
+    product = result.scalar_one_or_none()
+    if not product:
+        raise NotFoundError(f"Product '{slug}' not found")
+    return ProductResponse.model_validate(product)
+
+
 async def get_featured(db: AsyncSession, limit: int = 8) -> list[ProductResponse]:
     stmt = (
         select(Product)
@@ -111,24 +118,21 @@ async def create(db: AsyncSession, data: ProductCreate) -> ProductResponse:
     if existing.scalar_one_or_none():
         raise ConflictError(f"Product with slug '{data.slug}' already exists")
 
-    variants_data = data.variants
-    product_data = data.model_dump(exclude={"variants"})
-    product = Product(**product_data)
+    if data.sku:
+        sku_existing = await db.execute(select(Product).where(Product.sku == data.sku))
+        if sku_existing.scalar_one_or_none():
+            raise ConflictError(f"Product with SKU '{data.sku}' already exists")
+
+    product = Product(**data.model_dump())
     db.add(product)
     await db.flush()
 
-    for v in variants_data:
-        # Check SKU uniqueness
-        sku_existing = await db.execute(select(ProductVariant).where(ProductVariant.sku == v.sku))
-        if sku_existing.scalar_one_or_none():
-            raise ConflictError(f"Variant SKU '{v.sku}' already exists")
-        variant = ProductVariant(product_id=product.id, **v.model_dump())
-        db.add(variant)
-
-    await db.flush()
-
     # Reload with relationships
-    stmt = select(Product).options(*_product_load_options()).where(Product.id == product.id)
+    stmt = (
+        select(Product)
+        .options(*_product_load_options())
+        .where(Product.id == product.id)
+    )
     result = await db.execute(stmt)
     product = result.scalar_one()
     return ProductResponse.model_validate(product)
@@ -148,12 +152,22 @@ async def update(db: AsyncSession, slug: str, data: ProductUpdate) -> ProductRes
         if existing.scalar_one_or_none():
             raise ConflictError(f"Product with slug '{new_slug}' already exists")
 
+    new_sku = updates.get("sku")
+    if new_sku and new_sku != product.sku:
+        sku_existing = await db.execute(select(Product).where(Product.sku == new_sku))
+        if sku_existing.scalar_one_or_none():
+            raise ConflictError(f"Product with SKU '{new_sku}' already exists")
+
     for key, val in updates.items():
         setattr(product, key, val)
 
     await db.flush()
 
-    stmt = select(Product).options(*_product_load_options()).where(Product.id == product.id)
+    stmt = (
+        select(Product)
+        .options(*_product_load_options())
+        .where(Product.id == product.id)
+    )
     result = await db.execute(stmt)
     product = result.scalar_one()
     return ProductResponse.model_validate(product)
@@ -167,54 +181,10 @@ async def delete(db: AsyncSession, slug: str) -> None:
     await db.delete(product)
 
 
-# ─── Variant CRUD ────────────────────────────────────────────────────────────
-
-async def get_variant(db: AsyncSession, variant_id: uuid.UUID) -> ProductVariantResponse:
-    result = await db.execute(select(ProductVariant).where(ProductVariant.id == variant_id))
-    variant = result.scalar_one_or_none()
-    if not variant:
-        raise NotFoundError(f"Variant '{variant_id}' not found")
-    return ProductVariantResponse.model_validate(variant)
-
-
-async def create_variant(
-    db: AsyncSession, product_slug: str, data: ProductVariantCreate
-) -> ProductVariantResponse:
-    result = await db.execute(select(Product).where(Product.slug == product_slug))
+async def get_by_sku(db: AsyncSession, sku: str) -> ProductResponse | None:
+    stmt = select(Product).options(*_product_load_options()).where(Product.sku == sku)
+    result = await db.execute(stmt)
     product = result.scalar_one_or_none()
     if not product:
-        raise NotFoundError(f"Product '{product_slug}' not found")
-
-    sku_existing = await db.execute(select(ProductVariant).where(ProductVariant.sku == data.sku))
-    if sku_existing.scalar_one_or_none():
-        raise ConflictError(f"Variant SKU '{data.sku}' already exists")
-
-    variant = ProductVariant(product_id=product.id, **data.model_dump())
-    db.add(variant)
-    await db.flush()
-    await db.refresh(variant)
-    return ProductVariantResponse.model_validate(variant)
-
-
-async def update_variant(
-    db: AsyncSession, variant_id: uuid.UUID, data: ProductVariantUpdate
-) -> ProductVariantResponse:
-    result = await db.execute(select(ProductVariant).where(ProductVariant.id == variant_id))
-    variant = result.scalar_one_or_none()
-    if not variant:
-        raise NotFoundError(f"Variant '{variant_id}' not found")
-
-    for key, val in data.model_dump(exclude_unset=True).items():
-        setattr(variant, key, val)
-
-    await db.flush()
-    await db.refresh(variant)
-    return ProductVariantResponse.model_validate(variant)
-
-
-async def delete_variant(db: AsyncSession, variant_id: uuid.UUID) -> None:
-    result = await db.execute(select(ProductVariant).where(ProductVariant.id == variant_id))
-    variant = result.scalar_one_or_none()
-    if not variant:
-        raise NotFoundError(f"Variant '{variant_id}' not found")
-    await db.delete(variant)
+        return None
+    return ProductResponse.model_validate(product)

@@ -143,10 +143,8 @@ export default function CartPage() {
           {/* Cart items */}
           <section className="lg:col-span-2 space-y-0" aria-label="Cart items">
             {items.map((item, idx) => {
-              const variantName = item.variant?.name ?? '';
-              const unitPrice = item.variant?.price ?? 0;
+              const unitPrice = item.unit_price ?? 0;
               const lineTotal = item.line_total ?? unitPrice * item.quantity;
-              const stock = item.variant?.stock_quantity ?? 99;
               const image = item.product_image ?? PLACEHOLDER_IMAGE;
 
               return (
@@ -172,8 +170,10 @@ export default function CartPage() {
                         <p className="font-body font-medium text-sm text-gray-900 leading-snug">
                           {item.product_name}
                         </p>
-                        {variantName && (
-                          <p className="font-body text-xs text-gray-400 mt-0.5">{variantName}</p>
+                        {item.selected_options && item.selected_options.length > 0 && (
+                          <p className="font-body text-xs text-gray-400 mt-0.5">
+                            {item.selected_options.map(o => o.option_name).join(', ')}
+                          </p>
                         )}
                       </div>
                       {/* Remove */}
@@ -196,7 +196,7 @@ export default function CartPage() {
                         value={item.quantity}
                         onChange={(q) => handleQuantityChange(item.id, q)}
                         min={1}
-                        max={stock}
+                        max={99}
                         disabled={isLoading}
                       />
                       <p className="font-body font-semibold text-sm text-gray-900">
