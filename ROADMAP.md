@@ -19,6 +19,9 @@ _Must fix before production launch._
 - [ ] **Admin routes lack role verification audit** — Verify all admin-only endpoints properly check `is_admin`. Guest users should never reach admin routes.
 - [ ] **Docs endpoints exposed in production** — `apps/api/app/main.py:33-35` exposes `/docs`, `/redoc`, and `/openapi.json` unconditionally. Disable in production or gate behind admin auth.
 - [ ] **Docker Compose secrets in plain text** — `docker-compose.yml:8-9` has `mm_user` / `mm_password` and `docker-compose.yml:42` has Umami `APP_SECRET: change-me-in-production-to-a-random-secret`. Use Docker secrets or `.env` file excluded from VCS.
+- [ ] **Stripe webhook secret not enforced at startup** — `apps/api/app/services/providers/stripe_provider.py:113-122` only checks `STRIPE_WEBHOOK_SECRET` when a webhook arrives. In production, fail fast at startup if this is empty.
+- [ ] **Missing security headers** — API responses lack `Strict-Transport-Security`, `X-Content-Type-Options: nosniff`, and `TrustedHostMiddleware`. Add these for production.
+- [ ] **No request payload size limit** — No middleware caps request body size. Oversized payloads could cause OOM. Add a max body size middleware (e.g., 10 MB).
 
 ### Data Integrity
 
@@ -40,6 +43,11 @@ _Fix within 1-2 sprints._
 - [ ] **Placeholder WhatsApp number** — `apps/web/app/account/settings/page.tsx:171` has `href="https://wa.me/971XXXXXXXXX"`. Replace with real number before launch.
 - [ ] **Tabby & Tamara payment providers are stubs** — `apps/api/app/services/providers/tabby_provider.py` and `tamara_provider.py` raise errors. Either implement or remove from checkout UI to avoid customer confusion.
 - [ ] **Category page silently swallows fetch errors** — `apps/web/app/[category]/page.tsx:25-26` catches all errors and returns `null`, making debugging impossible and potentially showing 404 for transient API failures.
+- [ ] **Missing privacy and terms pages** — `apps/web/components/layout/Footer.tsx:71` and `apps/web/app/signup/page.tsx:135,137` link to `/privacy` and `/terms` which don't exist. Legal/compliance risk for production.
+- [ ] **Hardcoded placeholder phone in contact & footer** — `apps/web/app/contact/page.tsx:18` and `apps/web/components/layout/Footer.tsx:45` show a placeholder phone number. Replace with real business number.
+- [ ] **Cart merge ignores stock limits** — `apps/api/app/services/cart_service.py:264` merges guest cart into user cart by summing quantities without validating combined quantity doesn't exceed stock.
+- [ ] **Payment status overly permissive for BNPL** — `apps/api/app/services/payment_service.py:127-130` marks orders as paid for Tabby/Tamara if any `payment_id` exists, without webhook confirmation. Will cause unpaid orders to ship once providers are integrated.
+- [ ] **Cart quantity has no bounds validation** — `apps/api/app/schemas/cart.py` allows any integer for quantity, including negative or extremely large values. Add `Field(ge=1, le=99)`.
 
 ### Missing Core Features
 
@@ -62,6 +70,12 @@ _Next quarter._
 - [ ] **Token stored in localStorage** — `apps/web/lib/api.ts:21` stores JWT in `localStorage` which is vulnerable to XSS. Consider `httpOnly` cookies for sensitive tokens.
 - [ ] **API error class inconsistency** — Auth routes (`apps/api/app/api/v1/auth.py`) use raw `HTTPException` while other routes use custom `AppError` subclasses. Standardize on one pattern.
 - [ ] **Guest user cleanup** — `apps/api/app/api/v1/auth.py:125-145` creates unlimited guest users that accumulate forever. Add a scheduled cleanup for stale guest accounts.
+- [ ] **No error tracking integration** — `apps/web/app/error.tsx:15` only logs to `console.error`. No Sentry or equivalent for production error monitoring.
+- [ ] **Health check doesn't verify DB** — `apps/api/app/main.py:90-92` returns `{"status": "ok"}` without checking database connectivity. Add a `SELECT 1` probe.
+- [ ] **No audit logging for admin actions** — No trail of who updated orders, deleted products, or modified promo codes. Add an audit log table.
+- [ ] **Promo code discount value has no positive constraint** — `apps/api/app/models/promo_code.py:25` allows zero or negative `discount_value` at the DB level. Add a CHECK constraint.
+- [ ] **No unique constraint on cart per user/session** — `apps/api/alembic/versions/001_initial_tables.py` allows multiple carts for the same user or session. Add a unique constraint.
+- [ ] **Payment method field not enum-validated** — `apps/api/app/schemas/order.py:31` accepts arbitrary strings for `payment_method` instead of a `PaymentMethodEnum`. Users can pass invalid providers.
 
 ### UI/UX Design Issues
 
@@ -72,6 +86,8 @@ _Next quarter._
 - [ ] **No product image zoom** — Product images (once detail page exists) should support pinch-to-zoom on mobile and hover-zoom on desktop.
 - [ ] **No breadcrumb on all pages** — Only category pages have breadcrumbs. Add to product detail, cart, checkout, and account pages for consistent navigation.
 - [ ] **Admin dashboard mobile responsiveness** — Verify admin app works on tablet/mobile for on-the-go order management.
+- [ ] **FeaturedProducts horizontal scroll has no indicators** — `apps/web/components/home/FeaturedProducts.tsx:94` uses `snap-x` scroll but no visual cues that more products exist off-screen.
+- [ ] **Checkout phone validation too loose** — `apps/web/app/checkout/page.tsx:213` only checks `length > 7`. Accepts clearly invalid inputs like `+971 1`.
 
 ### Performance
 
@@ -124,6 +140,7 @@ _Backlog — prioritize as bandwidth allows._
 - [ ] **Webhook retry mechanism** — Payment webhooks (Stripe) should have retry logic and idempotency keys to handle transient failures.
 - [ ] **API request/response logging** — The logging middleware exists but verify it captures enough context for debugging without logging sensitive data (passwords, tokens).
 - [ ] **Container image size optimization** — Review Dockerfiles for multi-stage build efficiency. Minimize final image size for faster deploys.
+- [ ] **Missing DB indexes for common queries** — `orders.created_at` (analytics), `product_variants.stock_quantity` (cart validation), `users.is_guest` + `users.is_admin` (customer list filters) lack indexes. Add them for performance at scale.
 
 ---
 
