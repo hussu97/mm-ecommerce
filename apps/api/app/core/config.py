@@ -82,7 +82,8 @@ class Settings(BaseSettings):
     # Umami analytics (optional — leave empty to disable traffic metrics)
     UMAMI_URL: str = ""
     UMAMI_WEBSITE_ID: str = ""
-    UMAMI_API_KEY: str = ""
+    UMAMI_USERNAME: str = "admin"
+    UMAMI_PASSWORD: str = ""
 
     @property
     def is_production(self) -> bool:

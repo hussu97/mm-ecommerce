@@ -197,7 +197,8 @@ ADMIN_URL=http://localhost:3001
 # Umami — leave empty to disable traffic analytics (see Umami section below)
 UMAMI_URL=
 UMAMI_WEBSITE_ID=
-UMAMI_API_KEY=
+UMAMI_USERNAME=admin
+UMAMI_PASSWORD=
 ```
 
 ### Web storefront (`apps/web/.env`)
@@ -331,20 +332,17 @@ Visit `http://localhost:3002` and log in with the default credentials:
 2. Set the name (e.g. `Melting Moments`) and domain (`localhost`)
 3. Copy the **Website ID** (a UUID shown on the website card)
 
-### 4. Create an API key
-
-1. Click your **username / avatar** in the bottom-left of the sidebar
-2. Select **API Keys → Create API key**
-3. Give it a name (e.g. `admin-dashboard`) and copy the generated key
-
-### 5. Configure env vars
+### 4. Configure env vars
 
 **`apps/api/.env`** — lets the admin dashboard pull analytics data:
 ```env
 UMAMI_URL=http://localhost:3002
 UMAMI_WEBSITE_ID=<paste website ID>
-UMAMI_API_KEY=<paste API key>
+UMAMI_USERNAME=admin
+UMAMI_PASSWORD=<your umami password>
 ```
+
+> Self-hosted Umami does not support API keys — authentication uses your Umami username and password. The backend logs in automatically via `POST /api/auth/login` and caches the token in memory.
 
 **`apps/web/.env`** — enables client-side page tracking in the storefront:
 ```env
