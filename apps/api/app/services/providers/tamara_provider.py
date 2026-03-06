@@ -15,6 +15,7 @@ TODO:
   4. Capture payment after approval: POST {TAMARA_API_URL}/orders/{order_id}/payments/simplified-capture
   5. Docs: https://docs.tamara.co/
 """
+
 from __future__ import annotations
 
 from app.core.exceptions import BadRequestError

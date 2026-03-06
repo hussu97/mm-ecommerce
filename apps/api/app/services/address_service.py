@@ -19,7 +19,9 @@ async def get_all(db: AsyncSession, user_id: uuid.UUID) -> list[AddressResponse]
     return [AddressResponse.model_validate(a) for a in result.scalars().all()]
 
 
-async def get_by_id(db: AsyncSession, user_id: uuid.UUID, address_id: uuid.UUID) -> AddressResponse:
+async def get_by_id(
+    db: AsyncSession, user_id: uuid.UUID, address_id: uuid.UUID
+) -> AddressResponse:
     result = await db.execute(select(Address).where(Address.id == address_id))
     address = result.scalar_one_or_none()
     if not address:
@@ -29,7 +31,9 @@ async def get_by_id(db: AsyncSession, user_id: uuid.UUID, address_id: uuid.UUID)
     return AddressResponse.model_validate(address)
 
 
-async def create(db: AsyncSession, user_id: uuid.UUID, data: AddressCreate) -> AddressResponse:
+async def create(
+    db: AsyncSession, user_id: uuid.UUID, data: AddressCreate
+) -> AddressResponse:
     if data.is_default:
         await _unset_defaults(db, user_id)
 

@@ -49,7 +49,9 @@ async def add_to_cart(
 ):
     """Add an item to the cart (or increase quantity if already present)."""
     user_id, session_id = _resolve_identity(current_user, x_session_id)
-    return await cart_service.add_item(db, user_id=user_id, session_id=session_id, data=data)
+    return await cart_service.add_item(
+        db, user_id=user_id, session_id=session_id, data=data
+    )
 
 
 @router.put("/items/{item_id}", response_model=CartResponse)
@@ -62,7 +64,9 @@ async def update_cart_item(
 ):
     """Update quantity of a cart item."""
     user_id, session_id = _resolve_identity(current_user, x_session_id)
-    return await cart_service.update_item(db, user_id=user_id, session_id=session_id, item_id=item_id, data=data)
+    return await cart_service.update_item(
+        db, user_id=user_id, session_id=session_id, item_id=item_id, data=data
+    )
 
 
 @router.delete("/items/{item_id}", response_model=CartResponse)
@@ -74,7 +78,9 @@ async def remove_cart_item(
 ):
     """Remove a specific item from the cart."""
     user_id, session_id = _resolve_identity(current_user, x_session_id)
-    return await cart_service.remove_item(db, user_id=user_id, session_id=session_id, item_id=item_id)
+    return await cart_service.remove_item(
+        db, user_id=user_id, session_id=session_id, item_id=item_id
+    )
 
 
 @router.delete("", response_model=CartResponse)
@@ -97,4 +103,6 @@ async def merge_cart(
     """Merge a guest session cart into the authenticated user's cart (call after login)."""
     if not current_user:
         raise UnauthorizedError("Authentication required to merge cart")
-    return await cart_service.merge(db, guest_session_id=data.session_id, user_id=current_user.id)
+    return await cart_service.merge(
+        db, guest_session_id=data.session_id, user_id=current_user.id
+    )

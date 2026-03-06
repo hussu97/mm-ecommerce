@@ -26,6 +26,7 @@ config.set_main_option("sqlalchemy.url", database_url)
 # These will be populated in Prompt 2
 try:
     from app.models import Base  # noqa: F401
+
     target_metadata = Base.metadata
 except ImportError:
     target_metadata = None

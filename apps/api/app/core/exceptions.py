@@ -3,6 +3,7 @@ from __future__ import annotations
 
 class AppError(Exception):
     """Base application error."""
+
     status_code: int = 500
 
     def __init__(self, detail: str = "An unexpected error occurred"):

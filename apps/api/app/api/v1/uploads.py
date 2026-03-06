@@ -34,10 +34,14 @@ def _get_r2_client():
     )
 
 
-@router.post("/image", response_model=UploadResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/image", response_model=UploadResponse, status_code=status.HTTP_201_CREATED
+)
 async def upload_image(
     file: UploadFile = File(...),
-    folder: str = Query("products", description="R2 folder prefix (e.g. products, categories)"),
+    folder: str = Query(
+        "products", description="R2 folder prefix (e.g. products, categories)"
+    ),
     _admin: User = Depends(get_admin_user),
 ):
     """Upload an image to Cloudflare R2 (admin only). Returns public URL."""

@@ -15,6 +15,7 @@ TODO:
      - Event type "payment.closed" → payment confirmed
   5. Docs: https://docs.tabby.ai/
 """
+
 from __future__ import annotations
 
 from app.core.exceptions import BadRequestError

@@ -19,11 +19,7 @@ FREE_THRESHOLD = Decimal("200.00")
 DELIVERY_RATES = {
     "standard_zones": [e.value for e in STANDARD_ZONE],
     "standard_rate": float(STANDARD_RATE),
-    "remote_zones": [
-        e.value
-        for e in EmirateEnum
-        if e not in STANDARD_ZONE
-    ],
+    "remote_zones": [e.value for e in EmirateEnum if e not in STANDARD_ZONE],
     "remote_rate": float(REMOTE_RATE),
     "free_threshold": float(FREE_THRESHOLD),
     "pickup_rate": 0.0,

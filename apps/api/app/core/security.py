@@ -16,6 +16,7 @@ ALGORITHM = "HS256"
 # Password hashing  (using bcrypt directly — passlib is unmaintained)
 # ---------------------------------------------------------------------------
 
+
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
@@ -27,6 +28,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 # ---------------------------------------------------------------------------
 # JWT tokens
 # ---------------------------------------------------------------------------
+
 
 def create_access_token(
     user_id: str,

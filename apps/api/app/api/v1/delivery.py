@@ -34,7 +34,9 @@ async def get_rates():
 @router.post("/calculate", response_model=DeliveryCalculateResponse)
 async def calculate_delivery(data: DeliveryCalculateRequest):
     """Calculate the delivery fee for a given emirate and order subtotal."""
-    fee = delivery_service.calculate_fee(data.delivery_method, data.emirate, data.subtotal)
+    fee = delivery_service.calculate_fee(
+        data.delivery_method, data.emirate, data.subtotal
+    )
 
     if data.delivery_method == DeliveryMethodEnum.PICKUP:
         reason = "Free pickup"
@@ -43,4 +45,6 @@ async def calculate_delivery(data: DeliveryCalculateRequest):
     else:
         reason = None
 
-    return DeliveryCalculateResponse(delivery_fee=fee, is_free=(fee == Decimal("0.00")), reason=reason)
+    return DeliveryCalculateResponse(
+        delivery_fee=fee, is_free=(fee == Decimal("0.00")), reason=reason
+    )
