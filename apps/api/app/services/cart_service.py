@@ -346,13 +346,27 @@ async def merge(
                 existing = ui
                 break
 
+        # Determine merged quantity, capped at stock if applicable
         if existing:
-            existing.quantity += guest_item.quantity
+            merged_qty = existing.quantity + guest_item.quantity
+        else:
+            merged_qty = guest_item.quantity
+
+        # Cap at available stock for stock-tracked products
+        product_result = await db.execute(
+            select(Product).where(Product.id == guest_item.product_id)
+        )
+        product = product_result.scalar_one_or_none()
+        if product and product.is_stock_product and merged_qty > product.stock_quantity:
+            merged_qty = product.stock_quantity
+
+        if existing:
+            existing.quantity = merged_qty
         else:
             new_item = CartItem(
                 cart_id=user_cart.id,
                 product_id=guest_item.product_id,
-                quantity=guest_item.quantity,
+                quantity=merged_qty,
                 selected_options=guest_item.selected_options,
             )
             db.add(new_item)

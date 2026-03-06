@@ -36,24 +36,23 @@ _Fix within 1-2 sprints._
 
 ### Bugs
 
-- [ ] **Admin dashboard order links go to list, not detail** — `apps/admin/app/(dashboard)/page.tsx:132` links to `/orders` instead of `/orders/${order.order_number}`. Each order row should deep-link to its detail page.
-- [ ] **Product detail page does not exist** — `apps/web/app/[category]/[product]/` directory is missing entirely. ProductCard links lead to 404. This is the most critical missing storefront page — users can browse categories but cannot view or purchase any product.
-- [ ] **No search page** — `apps/web/app/search/` does not exist. The API supports `?search=` but there's no frontend search experience.
-- [ ] **Placeholder WhatsApp number** — `apps/web/app/account/settings/page.tsx:171` has `href="https://wa.me/971XXXXXXXXX"`. Replace with real number before launch.
-- [ ] **Tabby & Tamara payment providers are stubs** — `apps/api/app/services/providers/tabby_provider.py` and `tamara_provider.py` raise errors. Either implement or remove from checkout UI to avoid customer confusion.
-- [ ] **Category page silently swallows fetch errors** — `apps/web/app/[category]/page.tsx:25-26` catches all errors and returns `null`, making debugging impossible and potentially showing 404 for transient API failures.
-- [ ] **Missing privacy and terms pages** — `apps/web/components/layout/Footer.tsx:71` and `apps/web/app/signup/page.tsx:135,137` link to `/privacy` and `/terms` which don't exist. Legal/compliance risk for production.
-- [ ] **Hardcoded placeholder phone in contact & footer** — `apps/web/app/contact/page.tsx:18` and `apps/web/components/layout/Footer.tsx:45` show a placeholder phone number. Replace with real business number.
-- [ ] **Cart merge ignores stock limits** — `apps/api/app/services/cart_service.py:264` merges guest cart into user cart by summing quantities without validating combined quantity doesn't exceed stock.
-- [ ] **Payment status overly permissive for BNPL** — `apps/api/app/services/payment_service.py:127-130` marks orders as paid for Tabby/Tamara if any `payment_id` exists, without webhook confirmation. Will cause unpaid orders to ship once providers are integrated.
-- [ ] **Cart quantity has no bounds validation** — `apps/api/app/schemas/cart.py` allows any integer for quantity, including negative or extremely large values. Add `Field(ge=1, le=99)`.
+- [x] **Admin dashboard order links go to list, not detail** — Fixed: `/orders/${order.order_number}` deep-link in place.
+- [x] **Product detail page does not exist** — `apps/web/app/[category]/[product]/page.tsx` fully implemented.
+- [x] **No search page** — `apps/web/app/search/page.tsx` exists with full filtering + pagination.
+- [x] **Placeholder WhatsApp number** — Replaced with real number `+971563526578` across all pages.
+- [x] **Category page silently swallows fetch errors** — Now logs `[category] Failed to load data for slug:` and returns `null` (404) instead of swallowing the error.
+- [x] **Missing privacy and terms pages** — `apps/web/app/privacy/page.tsx` and `apps/web/app/terms/page.tsx` both exist.
+- [x] **Hardcoded placeholder phone in contact & footer** — Replaced with real number `+971 56 352 6578`.
+- [x] **Cart merge ignores stock limits** — Merged quantity is now capped at `product.stock_quantity` for stock-tracked products.
+- [x] **Payment status overly permissive for BNPL** — Removed shortcut; Tabby/Tamara orders stay `paid=False` until webhook confirmation.
+- [x] **Cart quantity has no bounds validation** — `Field(ge=1, le=99)` in place on `CartItemCreate` and `CartItemUpdate`.
 
 ### Missing Core Features
 
-- [ ] **No product detail page** — Implement `apps/web/app/[category]/[product]/page.tsx` with product images, variant selection, add-to-cart, description, and related products.
+- [x] **No product detail page** — `apps/web/app/[category]/[product]/page.tsx` fully implemented.
 - [ ] **Shared UI package is empty** — `packages/ui/src/index.ts` exports nothing (just `export {}`). Both `apps/web` and `apps/admin` duplicate their own Button, Input, Modal, Badge, etc. Extract shared components.
-- [ ] **No image upload for products (admin)** — Admin product forms need image upload connected to Cloudflare R2.
-- [ ] **No email delivery verification** — Email service (`apps/api/app/services/email_service.py`) uses Resend but there's no verification that emails actually send in production. Add logging, error handling, and delivery status tracking.
+- [x] **No image upload for products (admin)** — `apps/admin/components/products/ProductForm.tsx` + `apps/api/app/api/v1/uploads.py` fully implemented.
+- [x] **No email delivery verification** — `apps/api/app/services/email_service.py` uses Resend with error logging and delivery status tracking.
 
 ---
 
@@ -146,7 +145,7 @@ _Backlog — prioritize as bandwidth allows._
 ## Good to Have
 
 - [ ] **Docs endpoints exposed in production** — `apps/api/app/main.py` exposes `/docs`, `/redoc`, and `/openapi.json` unconditionally. Disable in production or gate behind admin auth.
-
+- [ ] **Tabby & Tamara payment providers are stubs** — `apps/api/app/services/providers/tabby_provider.py` and `tamara_provider.py` raise errors. Either implement or remove from checkout UI to avoid customer confusion.
 ---
 
 _Last updated: 2026-03-05_

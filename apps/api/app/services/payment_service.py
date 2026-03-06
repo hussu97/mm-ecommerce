@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import logging
-import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import BadRequestError, NotFoundError
-from app.models.order import Order, OrderItem, OrderStatusEnum
+from app.models.order import Order, OrderStatusEnum
 from app.services.providers import stripe_provider, tabby_provider, tamara_provider
 
 logger = logging.getLogger(__name__)
@@ -23,7 +22,9 @@ _PROVIDERS = {
 def _get_provider(name: str):
     p = _PROVIDERS.get(name.lower())
     if not p:
-        raise BadRequestError(f"Unknown payment provider '{name}'. Supported: stripe, tabby, tamara")
+        raise BadRequestError(
+            f"Unknown payment provider '{name}'. Supported: stripe, tabby, tamara"
+        )
     return p
 
 
@@ -40,9 +41,7 @@ async def _load_order(db: AsyncSession, order_number: str) -> Order:
     return order
 
 
-async def create_session(
-    db: AsyncSession, order_number: str, provider: str
-) -> dict:
+async def create_session(db: AsyncSession, order_number: str, provider: str) -> dict:
     """
     Create a payment checkout session for the given order.
     Stores session_id in order.payment_id. Returns {provider, session_id, checkout_url}.
@@ -66,7 +65,9 @@ async def create_session(
 
     logger.info(
         "Payment session created: order=%s provider=%s session=%s",
-        order_number, provider, result["session_id"],
+        order_number,
+        provider,
+        result["session_id"],
     )
 
     return {
@@ -76,7 +77,9 @@ async def create_session(
     }
 
 
-async def handle_stripe_webhook(db: AsyncSession, payload: bytes, signature: str) -> dict:
+async def handle_stripe_webhook(
+    db: AsyncSession, payload: bytes, signature: str
+) -> dict:
     """
     Verify and process a Stripe webhook event.
     On checkout.session.completed: update order.payment_id to the payment intent ID.
@@ -95,7 +98,8 @@ async def handle_stripe_webhook(db: AsyncSession, payload: bytes, signature: str
             await db.flush()
             logger.info(
                 "Payment confirmed: order=%s payment_intent=%s",
-                order_number, payment_intent_id,
+                order_number,
+                payment_intent_id,
             )
         except NotFoundError:
             logger.error("Webhook: order not found for order_number=%s", order_number)
@@ -125,9 +129,7 @@ async def get_status(db: AsyncSession, order_number: str) -> dict:
     order = await _load_order(db, order_number)
 
     paid = stripe_provider.is_confirmed_payment_id(order.payment_id)
-    # For non-Stripe providers (once integrated), treat any payment_id as paid
-    if not paid and order.payment_provider in ("tabby", "tamara") and order.payment_id:
-        paid = True
+    # BNPL providers (Tabby/Tamara) require webhook confirmation — payment_id alone is not proof
 
     return {
         "order_number": order.order_number,

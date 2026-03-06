@@ -17,13 +17,15 @@ async function getCategoryData(
     if (!catRes.ok) return null;
 
     const category: Category = await catRes.json();
+    if (!category.is_active) return null;
     const products: Product[] = prodRes.ok
       ? ((await prodRes.json()) as ProductListResponse).items ?? []
       : [];
 
     return { category, products };
-  } catch {
-    throw new Error('Failed to load category data');
+  } catch (error) {
+    console.error('[category] Failed to load data for slug:', slug, error);
+    return null;
   }
 }
 

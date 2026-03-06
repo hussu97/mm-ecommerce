@@ -15,8 +15,8 @@ const INFO_CARDS = [
   {
     icon: 'chat',
     title: 'WhatsApp',
-    lines: ['+971 50 123 4567'],
-    href: 'https://wa.me/971501234567',
+    lines: ['+971 56 352 6578'],
+    href: 'https://wa.me/971563526578',
     cta: 'Message us',
   },
   {
