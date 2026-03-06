@@ -108,33 +108,33 @@ _Backlog — prioritize as bandwidth allows._
 - [ ] **CI runs no tests** — `pr-check.yml` runs lint + type-check + build but no tests. Add test steps once test suites exist.
 - [ ] **Deploy workflow swallows migration failures** — `.github/workflows/deploy.yml:36` uses `|| true` after `alembic upgrade head`. A failed migration silently proceeds, potentially leaving the DB in an inconsistent state. Remove `|| true` and fail the deployment.
 - [ ] **No staging environment** — Only production deployment exists. Add a staging environment for pre-production validation.
-- [ ] **No health check for frontend containers** — `docker-compose.yml` web and admin services have no health checks, unlike postgres.
+- [x] **No health check for frontend containers** — `docker-compose.yml` web and admin services have no health checks, unlike postgres.
 - [ ] **No rollback strategy** — Deploy workflow has no rollback mechanism. A bad deploy requires manual SSH intervention.
 
 ### Feature Requests (Customer Experience)
 
 - [ ] **Product reviews & ratings** — Allow customers to leave reviews with star ratings. Display average rating on product cards.
-- [ ] **Order tracking with status updates** — Email notifications when order status changes (confirmed, packed, shipped). Real-time tracking page.
+- [x] **Order tracking with status updates** — Email notifications when order status changes (confirmed, packed, shipped). Real-time tracking page.
 - [x] **Multi-language support (Arabic)** — Full `[locale]` App Router, SSR `lang`/`dir`, RTL layout, Arabic content, admin Languages + Translations pages, i18n API (`apps/api/app/api/v1/i18n.py`).
 - [ ] **WhatsApp order notifications** — Send order confirmation and status updates via WhatsApp Business API (very popular in UAE).
 - [ ] **Gift wrapping & gift messages** — Add option during checkout for gift packaging with a custom message.
 - [ ] **Loyalty / rewards program** — Points-based system for repeat customers (e.g., 1 AED = 1 point, 100 points = 10 AED discount).
 - [ ] **Scheduled delivery / pre-orders** — Let customers pick a delivery date, especially for event cakes.
 - [ ] **Social login (Google, Apple)** — Reduce registration friction with OAuth providers.
-- [ ] **Recently viewed products** — Show recently browsed products for easy re-discovery.
+- [x] **Recently viewed products** — Show recently browsed products for easy re-discovery.
 
 ### Feature Requests (Platform & Operations)
 
-- [ ] **Sales reports export** — CSV/Excel export for orders, revenue, and product performance from admin dashboard.
+- [x] **Sales reports export** — CSV/Excel export for orders, revenue, and product performance from admin dashboard.
 - [ ] **Automated backup strategy** — Scheduled PostgreSQL backups to cloud storage (GCS/S3) with point-in-time recovery.
 - [ ] **API versioning strategy** — Current `/api/v1` has no plan for v2 migration. Document the versioning approach.
 - [ ] **Structured logging** — Replace basic `logging.basicConfig` with structured JSON logging for production (better for log aggregation in GCP).
-- [ ] **Database indexes audit** — Review query patterns and add missing indexes (e.g., `orders.email`, `orders.created_at`, `products.slug`, `users.email` if not already indexed).
+- [x] **Database indexes audit** — Review query patterns and add missing indexes (e.g., `orders.email`, `orders.created_at`, `products.slug`, `users.email` if not already indexed).
 - [x] **Content management** — CMS model + API (`apps/api/app/api/v1/cms.py`), migrations 008–010, admin `/content` page; About, FAQ, Contact, Privacy all CMS-driven with EN + AR content.
 - [ ] **Webhook retry mechanism** — Payment webhooks (Stripe) should have retry logic and idempotency keys to handle transient failures.
 - [ ] **API request/response logging** — The logging middleware exists but verify it captures enough context for debugging without logging sensitive data (passwords, tokens).
-- [ ] **Container image size optimization** — Review Dockerfiles for multi-stage build efficiency. Minimize final image size for faster deploys.
-- [ ] **Missing DB indexes for common queries** — `orders.created_at` (analytics), `product_variants.stock_quantity` (cart validation), `users.is_guest` + `users.is_admin` (customer list filters) lack indexes. Add them for performance at scale.
+- [x] **Container image size optimization** — Review Dockerfiles for multi-stage build efficiency. Minimize final image size for faster deploys.
+- [x] **Missing DB indexes for common queries** — `orders.created_at` (analytics), `product_variants.stock_quantity` (cart validation), `users.is_guest` + `users.is_admin` (customer list filters) lack indexes. Add them for performance at scale.
 
 ---
 
