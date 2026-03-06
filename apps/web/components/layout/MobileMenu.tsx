@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
@@ -23,6 +23,19 @@ export function MobileMenu({ isOpen, onClose, languages = [], categories = [], l
   const router = useRouter();
   const { locale: ctxLocale, t } = useTranslation();
   const locale = localeProp ?? ctxLocale;
+
+  // Only enable the slide transition while the menu is actively opening or closing.
+  // Without this, a dir="ltr"→"rtl" change on locale switch causes the closed drawer
+  // to animate across the screen (the flash bug).
+  const [animate, setAnimate] = useState(false);
+  useEffect(() => {
+    if (isOpen) {
+      setAnimate(true);
+    } else {
+      const t = setTimeout(() => setAnimate(false), 300);
+      return () => clearTimeout(t);
+    }
+  }, [isOpen]);
 
   function handleLogout() {
     logout();
@@ -59,7 +72,8 @@ export function MobileMenu({ isOpen, onClose, languages = [], categories = [], l
       {/* Drawer */}
       <aside
         className={cn(
-          'fixed top-0 start-0 z-50 h-full w-72 bg-white flex flex-col transition-transform duration-300 ease-in-out',
+          'fixed top-0 start-0 z-50 h-full w-72 bg-white flex flex-col',
+          animate && 'transition-transform duration-300 ease-in-out',
           isOpen ? 'translate-x-0' : 'rtl:translate-x-full -translate-x-full rtl:-translate-x-0',
         )}
         aria-label="Navigation menu"
