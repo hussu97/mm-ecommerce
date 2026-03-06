@@ -18,6 +18,7 @@ const NAV = [
   { href: '/import',        label: 'Import / Export', icon: 'sync_alt' },
   { href: '/languages',     label: 'Languages',     icon: 'translate' },
   { href: '/translations',  label: 'Translations',  icon: 'text_fields' },
+  { href: '/content',       label: 'Content',       icon: 'edit_note' },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {

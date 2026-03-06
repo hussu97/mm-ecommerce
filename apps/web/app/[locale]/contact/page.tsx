@@ -1,55 +1,105 @@
 import type { Metadata } from 'next';
+import { cmsApi } from '@/lib/api';
 import { ContactForm } from './ContactForm';
 
-export const metadata: Metadata = {
-  title: 'Contact',
-  description:
-    'Get in touch with Melting Moments Cakes. Order custom treats, ask about delivery, or just say hello — we\'re always happy to hear from you.',
-  openGraph: {
-    title: 'Contact Us | Melting Moments Cakes',
-    description: 'Reach out for custom orders, delivery enquiries, or anything else.',
-  },
-};
+interface ContactContent {
+  header?: { title?: string; subtitle?: string };
+  info?: {
+    phone?: string;
+    whatsapp?: string;
+    email?: string;
+    location?: string;
+    location_detail?: string;
+    hours?: string;
+    hours_detail?: string;
+  };
+  seo?: { title?: string; description?: string };
+}
 
-const INFO_CARDS = [
-  {
-    icon: 'chat',
-    title: 'WhatsApp',
-    lines: ['+971 56 352 6578'],
-    href: 'https://wa.me/971563526578',
-    cta: 'Message us',
-  },
-  {
-    icon: 'mail',
-    title: 'Email',
-    lines: ['hello@meltingmomentscakes.com'],
-    href: 'mailto:hello@meltingmomentscakes.com',
-    cta: 'Send email',
-  },
-  {
-    icon: 'location_on',
-    title: 'Location',
-    lines: ['Dubai, UAE', 'Delivering across the UAE'],
-    href: null,
-    cta: null,
-  },
-  {
-    icon: 'schedule',
-    title: 'Hours',
-    lines: ['Mon – Sat: 9 AM – 9 PM', 'Orders before 12 PM for same-day'],
-    href: null,
-    cta: null,
-  },
-];
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}): Promise<Metadata> {
+  const { locale } = await params;
+  try {
+    const page = await cmsApi.getPage('contact', locale);
+    const c = page.content as ContactContent;
+    return {
+      title: c.seo?.title ?? 'Contact',
+      description: c.seo?.description ?? '',
+      openGraph: {
+        title: `${c.seo?.title ?? 'Contact Us'} | Melting Moments Cakes`,
+        description: c.seo?.description ?? '',
+      },
+    };
+  } catch {
+    return { title: 'Contact' };
+  }
+}
 
-export default function ContactPage() {
+export default async function ContactPage({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}) {
+  const { locale } = await params;
+  // Contact info is always fetched in 'en' for non-translatable fields (phone/email)
+  // but we use locale content for header/seo
+  let c: ContactContent = {};
+  let enInfo: ContactContent['info'] = {};
+  try {
+    const [localePage, enPage] = await Promise.all([
+      cmsApi.getPage('contact', locale),
+      locale !== 'en' ? cmsApi.getPage('contact', 'en') : Promise.resolve(null),
+    ]);
+    c = localePage.content as ContactContent;
+    enInfo = enPage ? (enPage.content as ContactContent).info : c.info;
+  } catch {
+    // fallback to empty
+  }
+
+  // Non-translatable contact details always come from 'en'
+  const info = enInfo ?? c.info ?? {};
+
+  const INFO_CARDS = [
+    {
+      icon: 'chat',
+      title: 'WhatsApp',
+      lines: [info.phone ?? ''],
+      href: info.whatsapp ?? null,
+      cta: 'Message us',
+    },
+    {
+      icon: 'mail',
+      title: 'Email',
+      lines: [info.email ?? ''],
+      href: info.email ? `mailto:${info.email}` : null,
+      cta: 'Send email',
+    },
+    {
+      icon: 'location_on',
+      title: 'Location',
+      lines: [info.location ?? '', info.location_detail ?? ''].filter(Boolean),
+      href: null,
+      cta: null,
+    },
+    {
+      icon: 'schedule',
+      title: 'Hours',
+      lines: [info.hours ?? '', info.hours_detail ?? ''].filter(Boolean),
+      href: null,
+      cta: null,
+    },
+  ];
+
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'LocalBusiness',
     name: 'Melting Moments Cakes',
     url: process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com',
-    telephone: '+971501234567',
-    email: 'hello@meltingmomentscakes.com',
+    telephone: info.phone,
+    email: info.email,
     address: {
       '@type': 'PostalAddress',
       addressCountry: 'AE',
@@ -58,8 +108,8 @@ export default function ContactPage() {
     openingHours: 'Mo-Sa 09:00-21:00',
     sameAs: [
       'https://www.instagram.com/meltingmomentscakes',
-      'https://wa.me/971501234567',
-    ],
+      info.whatsapp,
+    ].filter(Boolean),
     areaServed: 'AE',
     currenciesAccepted: 'AED',
   };
@@ -75,9 +125,9 @@ export default function ContactPage() {
       <div className="bg-[#f9f5f0] border-b border-secondary/30">
         <div className="max-w-3xl mx-auto px-4 py-14 text-center">
           <p className="text-xs font-body uppercase tracking-widest text-secondary mb-3">Reach Out</p>
-          <h1 className="font-display text-4xl sm:text-5xl text-primary mb-4">Get in Touch</h1>
+          <h1 className="font-display text-4xl sm:text-5xl text-primary mb-4">{c.header?.title ?? ''}</h1>
           <p className="font-body text-sm text-gray-500 max-w-md mx-auto">
-            Custom orders, delivery questions, event catering — we&apos;re always happy to help.
+            {c.header?.subtitle ?? ''}
           </p>
         </div>
       </div>
@@ -166,26 +216,28 @@ export default function ContactPage() {
                     <p className="text-[11px] font-body text-gray-400">@meltingmomentscakes</p>
                   </div>
                 </a>
-                <a
-                  href="https://wa.me/971501234567"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-3 border border-gray-200 hover:border-primary px-4 py-3 transition-colors group"
-                >
-                  <svg
-                    viewBox="0 0 24 24"
-                    className="w-5 h-5 text-gray-500 group-hover:text-primary transition-colors"
-                    fill="currentColor"
+                {info.whatsapp && (
+                  <a
+                    href={info.whatsapp}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-3 border border-gray-200 hover:border-primary px-4 py-3 transition-colors group"
                   >
-                    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
-                  </svg>
-                  <div>
-                    <p className="text-xs font-body font-medium text-gray-700 group-hover:text-primary transition-colors">
-                      WhatsApp
-                    </p>
-                    <p className="text-[11px] font-body text-gray-400">+971 50 123 4567</p>
-                  </div>
-                </a>
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="w-5 h-5 text-gray-500 group-hover:text-primary transition-colors"
+                      fill="currentColor"
+                    >
+                      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+                    </svg>
+                    <div>
+                      <p className="text-xs font-body font-medium text-gray-700 group-hover:text-primary transition-colors">
+                        WhatsApp
+                      </p>
+                      <p className="text-[11px] font-body text-gray-400">{info.phone ?? ''}</p>
+                    </div>
+                  </a>
+                )}
               </div>
             </div>
           </div>

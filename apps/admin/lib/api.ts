@@ -1,5 +1,5 @@
 import type {
-  AnalyticsOverview, Category, CustomerBreakdown, EmirateData,
+  AnalyticsOverview, Category, CmsPage, CustomerBreakdown, EmirateData,
   FunnelData, ImportResult, Language, Modifier, Order, OrdersPoint, PaginatedCustomers,
   PaginatedOrders, Product, ProductListResponse, PromoCode, PromoPerformance,
   RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct, TrafficData,
@@ -255,6 +255,17 @@ export const languagesApi = {
   create: (data: Partial<Language>) => api.post<Language>('/i18n/languages', data),
   update: (code: string, data: Partial<Language>) => api.put<Language>(`/i18n/languages/${code}`, data),
   delete: (code: string) => api.delete<void>(`/i18n/languages/${code}`),
+};
+
+// ─── CMS ──────────────────────────────────────────────────────────────────────
+
+export const cmsApi = {
+  list: () => api.get<CmsPage[]>('/cms/pages'),
+  get: (slug: string) => api.get<CmsPage>(`/cms/pages/${slug}`),
+  update: (slug: string, content: Record<string, unknown>) =>
+    api.put<CmsPage>(`/cms/pages/${slug}`, { content }),
+  updateLocale: (slug: string, locale: string, content: Record<string, unknown>) =>
+    api.put<CmsPage>(`/cms/pages/${slug}/${locale}`, { content }),
 };
 
 // ─── Translations ──────────────────────────────────────────────────────────

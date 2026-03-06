@@ -26,6 +26,15 @@ export interface Language {
   display_order: number;
 }
 
+export interface CmsPage {
+  id: string;
+  slug: string;
+  is_active: boolean;
+  content: Record<string, Record<string, unknown>>;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface UiTranslation {
   id: string;
   locale: string;
