@@ -5,7 +5,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { productsApi, categoriesApi, bulkApi } from '@/lib/api';
 import type { Category, Product } from '@/lib/types';
-import { Badge, Button, Input, Select, TabBar } from '@/components/ui';
+import { Badge, Button, Input, MultiSelect, TabBar } from '@/components/ui';
 import { formatCurrency } from '@/lib/utils';
 
 export default function ProductsPage() {
@@ -16,8 +16,9 @@ export default function ProductsPage() {
   const [pages, setPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<'active' | 'inactive'>('active');
+  const [tabCounts, setTabCounts] = useState<{ active?: number; inactive?: number }>({});
   const [actionSlug, setActionSlug] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulking, setBulking] = useState(false);
@@ -25,14 +26,20 @@ export default function ProductsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params =
-        activeTab === 'active'
-          ? { search: search || undefined, category: categoryFilter || undefined, page, per_page: 20, is_active: true }
-          : { search: search || undefined, category: categoryFilter || undefined, page, per_page: 20, include_inactive: true, is_active: false };
+      const base = {
+        search: search || undefined,
+        category: categoryFilter.length > 0 ? categoryFilter : undefined,
+        page,
+        per_page: 20,
+      };
+      const params = activeTab === 'active'
+        ? { ...base, is_active: true }
+        : { ...base, include_inactive: true, is_active: false };
       const res = await productsApi.list(params);
       setProducts(res.items);
       setTotal(res.total);
       setPages(res.pages);
+      setTabCounts(prev => ({ ...prev, [activeTab]: res.total }));
     } catch {
       // silent
     } finally {
@@ -40,8 +47,12 @@ export default function ProductsPage() {
     }
   }, [search, categoryFilter, page, activeTab]);
 
+  // Load categories + pre-fetch inactive count on mount
   useEffect(() => {
     categoriesApi.list(true).then(setCategories).catch(() => {});
+    productsApi.list({ is_active: false, include_inactive: true, per_page: 1 })
+      .then(r => setTabCounts(prev => ({ ...prev, inactive: r.total })))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -60,6 +71,7 @@ export default function ProductsPage() {
       await productsApi.delete(slug);
       setProducts(prev => prev.filter(p => p.slug !== slug));
       setTotal(t => t - 1);
+      setTabCounts(prev => ({ ...prev, active: (prev.active ?? 1) - 1 }));
     } catch (err) {
       alert((err as Error).message);
     } finally {
@@ -73,6 +85,7 @@ export default function ProductsPage() {
       await productsApi.update(slug, { is_active: true });
       setProducts(prev => prev.filter(p => p.slug !== slug));
       setTotal(t => t - 1);
+      setTabCounts(prev => ({ ...prev, inactive: (prev.inactive ?? 1) - 1 }));
     } catch (err) {
       alert((err as Error).message);
     } finally {
@@ -108,10 +121,7 @@ export default function ProductsPage() {
     }
   }
 
-  const categoryOptions = [
-    { value: '', label: 'All Categories' },
-    ...categories.map(c => ({ value: c.slug, label: c.name })),
-  ];
+  const categoryOptions = categories.map(c => ({ value: c.slug, label: c.name }));
 
   return (
     <div>
@@ -119,7 +129,7 @@ export default function ProductsPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="font-display text-2xl text-gray-800">Products</h1>
-          <p className="text-xs text-gray-400 font-body mt-0.5">{total} total</p>
+          <p className="text-xs text-gray-400 font-body mt-0.5">{total} {activeTab}</p>
         </div>
         <Link href="/products/new">
           <Button>
@@ -138,11 +148,12 @@ export default function ProductsPage() {
             onChange={e => setSearch(e.target.value)}
           />
         </div>
-        <div className="w-44">
-          <Select
-            value={categoryFilter}
-            onChange={e => setCategoryFilter(e.target.value)}
+        <div className="w-52">
+          <MultiSelect
             options={categoryOptions}
+            value={categoryFilter}
+            onChange={setCategoryFilter}
+            placeholder="All Categories"
           />
         </div>
       </div>
@@ -150,8 +161,8 @@ export default function ProductsPage() {
       {/* Tabs */}
       <TabBar
         tabs={[
-          { key: 'active', label: 'Active' },
-          { key: 'inactive', label: 'Inactive' },
+          { key: 'active', label: 'Active', count: tabCounts.active },
+          { key: 'inactive', label: 'Inactive', count: tabCounts.inactive },
         ]}
         active={activeTab}
         onChange={key => setActiveTab(key as 'active' | 'inactive')}

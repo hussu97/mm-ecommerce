@@ -84,15 +84,17 @@ export const categoriesApi = {
 // ─── Products ─────────────────────────────────────────────────────────────────
 
 export const productsApi = {
-  list: (params?: { search?: string; category?: string; page?: number; per_page?: number; include_inactive?: boolean; is_active?: boolean }) => {
-    const qs = params
-      ? '?' + new URLSearchParams(
-          Object.entries(params)
-            .filter(([, v]) => v !== undefined && v !== '')
-            .map(([k, v]) => [k, String(v)])
-        ).toString()
-      : '';
-    return api.get<ProductListResponse>(`/products${qs}`);
+  list: (params?: { search?: string; category?: string[]; page?: number; per_page?: number; include_inactive?: boolean; is_active?: boolean }) => {
+    if (!params) return api.get<ProductListResponse>('/products');
+    const p = new URLSearchParams();
+    if (params.search) p.set('search', params.search);
+    params.category?.forEach(c => p.append('category', c));
+    if (params.page !== undefined) p.set('page', String(params.page));
+    if (params.per_page !== undefined) p.set('per_page', String(params.per_page));
+    if (params.include_inactive !== undefined) p.set('include_inactive', String(params.include_inactive));
+    if (params.is_active !== undefined) p.set('is_active', String(params.is_active));
+    const qs = p.toString();
+    return api.get<ProductListResponse>(`/products${qs ? '?' + qs : ''}`);
   },
   get: (slug: string) => api.get<Product>(`/products/${slug}`),
   create: (data: object) => api.post<Product>('/products', data),

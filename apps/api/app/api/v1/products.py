@@ -30,7 +30,7 @@ class ProductListResponse(BaseModel):
 
 @router.get("", response_model=ProductListResponse)
 async def list_products(
-    category: str | None = Query(None, description="Filter by category slug"),
+    category: list[str] | None = Query(None, description="Filter by category slug"),
     search: str | None = Query(None, description="Search by product name"),
     featured: bool | None = Query(None, description="Filter featured products"),
     sort: str = Query(
@@ -45,7 +45,7 @@ async def list_products(
     """List products with filtering, search, and pagination."""
     items, total = await product_service.get_all(
         db,
-        category_slug=category,
+        category_slugs=category,
         search=search,
         featured=featured,
         sort=sort,

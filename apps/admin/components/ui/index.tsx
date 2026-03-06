@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils';
-import { InputHTMLAttributes, SelectHTMLAttributes, TextareaHTMLAttributes, forwardRef } from 'react';
+import { InputHTMLAttributes, SelectHTMLAttributes, TextareaHTMLAttributes, forwardRef, useEffect, useRef, useState } from 'react';
 
 // ─── Button ───────────────────────────────────────────────────────────────────
 
@@ -163,6 +163,82 @@ export function Badge({ variant = 'neutral', children, className }: { variant?: 
 export function Spinner({ className }: { className?: string }) {
   return (
     <div className={cn('w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin', className)} />
+  );
+}
+
+// ─── MultiSelect ──────────────────────────────────────────────────────────────
+
+interface MultiSelectOption { value: string; label: string }
+interface MultiSelectProps {
+  options: MultiSelectOption[];
+  value: string[];
+  onChange: (value: string[]) => void;
+  placeholder?: string;
+  className?: string;
+}
+
+export function MultiSelect({ options, value, onChange, placeholder = 'All', className }: MultiSelectProps) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open]);
+
+  const label = value.length === 0
+    ? placeholder
+    : value.length <= 2
+    ? value.map(v => options.find(o => o.value === v)?.label ?? v).join(', ')
+    : `${value.length} selected`;
+
+  function toggle(val: string) {
+    onChange(value.includes(val) ? value.filter(v => v !== val) : [...value, val]);
+  }
+
+  return (
+    <div ref={ref} className={cn('relative', className)}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className={cn(
+          'w-full px-3 py-2 text-sm font-body bg-white border rounded-sm outline-none transition-colors flex items-center justify-between gap-2 cursor-pointer',
+          open ? 'border-primary ring-1 ring-primary/30' : 'border-gray-300',
+          value.length > 0 ? 'text-gray-700' : 'text-gray-400',
+        )}
+      >
+        <span className="truncate">{label}</span>
+        <span className="material-icons text-[14px] text-gray-400 shrink-0">expand_more</span>
+      </button>
+      {open && (
+        <div className="absolute z-20 top-full left-0 right-0 bg-white border border-gray-200 shadow-md mt-0.5 max-h-52 overflow-y-auto">
+          {value.length > 0 && (
+            <button
+              type="button"
+              onClick={() => { onChange([]); setOpen(false); }}
+              className="w-full px-3 py-1.5 text-left text-xs font-body text-primary hover:bg-primary/5 border-b border-gray-100"
+            >
+              Clear selection
+            </button>
+          )}
+          {options.map(opt => (
+            <label key={opt.value} className="flex items-center gap-2.5 px-3 py-2 hover:bg-gray-50 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={value.includes(opt.value)}
+                onChange={() => toggle(opt.value)}
+                className="accent-primary shrink-0"
+              />
+              <span className="text-sm font-body text-gray-700">{opt.label}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -36,7 +36,7 @@ def _product_load_options():
 async def get_all(
     db: AsyncSession,
     *,
-    category_slug: str | None = None,
+    category_slugs: list[str] | None = None,
     search: str | None = None,
     featured: bool | None = None,
     sort: str = "newest",
@@ -58,8 +58,8 @@ async def get_all(
     elif not include_inactive:
         stmt = stmt.where(Product.is_active == True)  # noqa: E712
 
-    if category_slug:
-        stmt = stmt.join(Product.category).where(Category.slug == category_slug)
+    if category_slugs:
+        stmt = stmt.join(Product.category).where(Category.slug.in_(category_slugs))
 
     if search:
         stmt = stmt.where(Product.name.ilike(f"%{search}%"))
