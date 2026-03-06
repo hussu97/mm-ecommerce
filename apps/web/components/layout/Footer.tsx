@@ -15,10 +15,10 @@ export function Footer() {
         {/* Top section */}
         <div className="flex flex-col items-center gap-5 mb-10">
           <Image
-            src="/images/logos/black_and_white_logo.jpeg"
+            src="/images/logos/color_logo.jpeg"
             alt="Melting Moments"
-            width={120}
-            height={84}
+            width={56}
+            height={56}
             className="object-contain"
           />
           <p className="text-sm text-gray-500 font-body italic text-center max-w-xs">
