@@ -12,6 +12,10 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "pub-**.r2.dev",
       },
+      {
+        protocol: "https",
+        hostname: "foodics-console-production.s3.eu-west-1.amazonaws.com",
+      },
     ],
   },
 };

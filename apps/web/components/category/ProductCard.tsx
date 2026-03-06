@@ -26,7 +26,7 @@ function ConditionalLink({
 /** Compute "from" price for a product: base_price + cheapest required option per modifier */
 function computeFromPrice(product: Product): number {
   let price = Number(product.base_price);
-  for (const pm of product.product_modifiers) {
+  for (const pm of product.product_modifiers ?? []) {
     if (pm.minimum_options <= 0) continue;
     const activeOptions = pm.modifier.options.filter(o => o.is_active);
     if (activeOptions.length === 0) continue;

@@ -121,7 +121,7 @@ export default function ProductsPage() {
     }
   }
 
-  const categoryOptions = categories.map(c => ({ value: c.slug, label: c.name }));
+  const categoryOptions = categories.map(c => ({ value: c.slug, label: `${c.name} (${c.product_count})` }));
 
   return (
     <div>

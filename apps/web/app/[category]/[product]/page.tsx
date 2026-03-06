@@ -48,6 +48,7 @@ export default async function ProductDetailPage({
   const { category: categorySlug, product: productSlug } = await params;
   const product = await getProduct(productSlug);
   if (!product) notFound();
+  if (product.category && !product.category.is_active) notFound();
 
   const categoryName = product.category?.name ?? categorySlug;
   const mainImage = product.image_urls?.[0];

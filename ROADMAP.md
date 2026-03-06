@@ -50,7 +50,6 @@ _Fix within 1-2 sprints._
 ### Missing Core Features
 
 - [x] **No product detail page** — `apps/web/app/[category]/[product]/page.tsx` fully implemented.
-- [ ] **Shared UI package is empty** — `packages/ui/src/index.ts` exports nothing (just `export {}`). Both `apps/web` and `apps/admin` duplicate their own Button, Input, Modal, Badge, etc. Extract shared components.
 - [x] **No image upload for products (admin)** — `apps/admin/components/products/ProductForm.tsx` + `apps/api/app/api/v1/uploads.py` fully implemented.
 - [x] **No email delivery verification** — `apps/api/app/services/email_service.py` uses Resend with error logging and delivery status tracking.
 
@@ -146,6 +145,7 @@ _Backlog — prioritize as bandwidth allows._
 
 - [ ] **Docs endpoints exposed in production** — `apps/api/app/main.py` exposes `/docs`, `/redoc`, and `/openapi.json` unconditionally. Disable in production or gate behind admin auth.
 - [ ] **Tabby & Tamara payment providers are stubs** — `apps/api/app/services/providers/tabby_provider.py` and `tamara_provider.py` raise errors. Either implement or remove from checkout UI to avoid customer confusion.
+- [ ] **Shared UI package is empty** — `packages/ui/src/index.ts` exports nothing (just `export {}`). Both `apps/web` and `apps/admin` duplicate their own Button, Input, Modal, Badge, etc. Extract shared components.
 ---
 
 _Last updated: 2026-03-05_

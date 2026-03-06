@@ -49,6 +49,18 @@ git commit --author="Hussain Abbasi <h_abbasi97@hotmail.com>" -m "..."
 ```
 No variations (`h-abbasi`, `hussain`, other emails). No `Co-Authored-By` trailer of any kind.
 
+### 8. Admin Pagination Standard
+All paginated tables in `apps/admin` must use the following page size options, in this exact order:
+
+| Option | Value |
+|--------|-------|
+| Default | **50 / page** |
+| — | 100 / page |
+| — | 200 / page |
+| — | 500 / page |
+| — | 1000 / page |
+| — | 2000 / page |
+
 ## Task Management
 
 1. **Plan First**: Write plan to 'tasks/todo.md' with checkable items
