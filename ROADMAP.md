@@ -88,7 +88,7 @@ _Next quarter._
 
 ### Performance
 
-- [ ] **No image optimization pipeline** — Product images served directly from R2 without CDN resizing. Implement responsive `srcset` with on-the-fly resizing (Cloudflare Image Resizing or `next/image` with a loader).
+- [x] **No image optimization pipeline** — `next/image` configured with explicit `deviceSizes`, `imageSizes`, `formats: ["image/webp"]`, and R2 remote patterns in `apps/web/next.config.ts` and `apps/admin/next.config.ts`.
 - [x] **No database connection pooling configuration** — Already at 10/20 connections with `pool_pre_ping` (done in earlier work).
 - [x] **Category page fetches up to 50 products without pagination** — Reduced to 12 per page; prev/next pagination via `?page=N` searchParam.
 - [x] **No caching layer** — Redis cache added (`cache.py`, fail-open); 5 min TTL on `GET /categories` and `GET /products/featured`; invalidated on mutations. Redis service added to docker-compose.
@@ -115,7 +115,7 @@ _Backlog — prioritize as bandwidth allows._
 
 - [ ] **Product reviews & ratings** — Allow customers to leave reviews with star ratings. Display average rating on product cards.
 - [ ] **Order tracking with status updates** — Email notifications when order status changes (confirmed, packed, shipped). Real-time tracking page.
-- [ ] **Multi-language support (Arabic)** — UAE market expects Arabic. Implement i18n with RTL layout support.
+- [x] **Multi-language support (Arabic)** — Full `[locale]` App Router, SSR `lang`/`dir`, RTL layout, Arabic content, admin Languages + Translations pages, i18n API (`apps/api/app/api/v1/i18n.py`).
 - [ ] **WhatsApp order notifications** — Send order confirmation and status updates via WhatsApp Business API (very popular in UAE).
 - [ ] **Gift wrapping & gift messages** — Add option during checkout for gift packaging with a custom message.
 - [ ] **Loyalty / rewards program** — Points-based system for repeat customers (e.g., 1 AED = 1 point, 100 points = 10 AED discount).
@@ -125,13 +125,12 @@ _Backlog — prioritize as bandwidth allows._
 
 ### Feature Requests (Platform & Operations)
 
-- [ ] **Inventory alerts** — Admin notification when stock runs low (configurable threshold per variant).
 - [ ] **Sales reports export** — CSV/Excel export for orders, revenue, and product performance from admin dashboard.
 - [ ] **Automated backup strategy** — Scheduled PostgreSQL backups to cloud storage (GCS/S3) with point-in-time recovery.
 - [ ] **API versioning strategy** — Current `/api/v1` has no plan for v2 migration. Document the versioning approach.
 - [ ] **Structured logging** — Replace basic `logging.basicConfig` with structured JSON logging for production (better for log aggregation in GCP).
 - [ ] **Database indexes audit** — Review query patterns and add missing indexes (e.g., `orders.email`, `orders.created_at`, `products.slug`, `users.email` if not already indexed).
-- [ ] **Content management** — Static pages (About, FAQ, Contact) are hardcoded in Next.js. Consider a lightweight CMS or admin-editable content.
+- [x] **Content management** — CMS model + API (`apps/api/app/api/v1/cms.py`), migrations 008–010, admin `/content` page; About, FAQ, Contact, Privacy all CMS-driven with EN + AR content.
 - [ ] **Webhook retry mechanism** — Payment webhooks (Stripe) should have retry logic and idempotency keys to handle transient failures.
 - [ ] **API request/response logging** — The logging middleware exists but verify it captures enough context for debugging without logging sensitive data (passwords, tokens).
 - [ ] **Container image size optimization** — Review Dockerfiles for multi-stage build efficiency. Minimize final image size for faster deploys.
@@ -146,6 +145,7 @@ _Backlog — prioritize as bandwidth allows._
 - [ ] **Docs endpoints exposed in production** — `apps/api/app/main.py` exposes `/docs`, `/redoc`, and `/openapi.json` unconditionally. Disable in production or gate behind admin auth.
 - [ ] **Tabby & Tamara payment providers are stubs** — `apps/api/app/services/providers/tabby_provider.py` and `tamara_provider.py` raise errors. Either implement or remove from checkout UI to avoid customer confusion.
 - [ ] **Shared UI package is empty** — `packages/ui/src/index.ts` exports nothing (just `export {}`). Both `apps/web` and `apps/admin` duplicate their own Button, Input, Modal, Badge, etc. Extract shared components.
+- [ ] **Inventory alerts** — Admin notification when stock runs low (configurable threshold per variant).
 ---
 
 _Last updated: 2026-03-06_
