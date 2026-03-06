@@ -57,4 +57,7 @@ EXPOSE 3001
 ENV PORT=3001
 ENV HOSTNAME="0.0.0.0"
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget -qO- http://localhost:3001/ 2>/dev/null | head -c1 || exit 1
+
 CMD ["node", "apps/admin/server.js"]

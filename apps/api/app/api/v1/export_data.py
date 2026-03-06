@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from datetime import date, timedelta
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_admin_user, get_db
 from app.models.language import Language
+from app.models.order import OrderStatusEnum
 from app.models.user import User
 from app.services import export_service
 
@@ -28,6 +32,21 @@ async def _get_language_codes(db: AsyncSession) -> list[str]:
         .order_by(Language.display_order)
     )
     return list(result.scalars().all())
+
+
+@router.get("/orders")
+async def export_orders(
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    status: Optional[OrderStatusEnum] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    if start_date is None and end_date is None:
+        end_date = date.today()
+        start_date = end_date - timedelta(days=30)
+    content = await export_service.export_orders(db, start_date, end_date, status)
+    return _csv_response(content, "orders.csv")
 
 
 @router.get("/categories")

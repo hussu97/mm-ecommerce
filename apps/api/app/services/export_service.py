@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 import io
+from datetime import date
+from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +11,7 @@ from sqlalchemy.orm import joinedload
 
 from app.models.category import Category
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
+from app.models.order import Order, OrderStatusEnum
 from app.models.product import Product
 
 
@@ -134,6 +137,70 @@ async def export_modifier_options(db: AsyncSession, languages: list[str]) -> str
             row_data.append(t.get(code, {}).get("name", ""))
         row_data.append(str(r.is_active))
         w.writerow(row_data)
+    return buf.getvalue()
+
+
+async def export_orders(
+    db: AsyncSession,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    status: Optional[OrderStatusEnum] = None,
+) -> str:
+    stmt = (
+        select(Order).options(joinedload(Order.items)).order_by(Order.created_at.desc())
+    )
+    if start_date:
+        stmt = stmt.where(Order.created_at >= start_date)
+    if end_date:
+        from datetime import timedelta
+
+        stmt = stmt.where(Order.created_at < (end_date + timedelta(days=1)))
+    if status:
+        stmt = stmt.where(Order.status == status)
+
+    result = await db.execute(stmt)
+    rows = result.scalars().unique().all()
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(
+        [
+            "Order #",
+            "Date",
+            "Customer Email",
+            "Status",
+            "Items Count",
+            "Subtotal",
+            "Discount",
+            "Delivery Fee",
+            "Total",
+            "Payment Provider",
+            "Delivery Method",
+            "Emirate",
+            "Promo Code",
+        ]
+    )
+    for r in rows:
+        emirate = ""
+        if r.shipping_address_snapshot:
+            emirate = r.shipping_address_snapshot.get("emirate", "")
+        w.writerow(
+            [
+                r.order_number,
+                r.created_at.strftime("%Y-%m-%d"),
+                r.email,
+                r.status.value,
+                len(r.items),
+                str(r.subtotal),
+                str(r.discount_amount),
+                str(r.delivery_fee),
+                str(r.total),
+                r.payment_provider or "",
+                r.delivery_method.value,
+                emirate,
+                r.promo_code_used or "",
+            ]
+        )
     return buf.getvalue()
 
 

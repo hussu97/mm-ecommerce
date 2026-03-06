@@ -1,0 +1,22 @@
+# Python
+**/__pycache__
+**/*.pyc
+**/*.pyo
+apps/api/.venv
+apps/api/venv
+apps/api/.pytest_cache
+apps/api/.ruff_cache
+apps/api/.mypy_cache
+
+# Node
+**/node_modules
+**/.next
+**/.turbo
+
+# Misc
+.git
+.gitignore
+**/*.log
+**/*.md
+!README.md
+branding/

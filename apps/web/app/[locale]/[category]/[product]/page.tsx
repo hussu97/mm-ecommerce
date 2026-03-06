@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { Breadcrumb } from '@/components/ui';
 import { ProductDetailATC } from './ProductDetailATC';
 import { ProductImageGallery } from './ProductImageGallery';
+import { RecentlyViewedProducts } from '@/components/product/RecentlyViewedProducts';
 import type { Product } from '@/lib/types';
 import { localizedField } from '@/lib/i18n/entity';
 import { getTranslations, createT } from '@/lib/i18n/server';
@@ -123,6 +124,8 @@ export default async function ProductDetailPage({
           </div>
         </div>
       </div>
+
+      <RecentlyViewedProducts currentSlug={product.slug} locale={locale} />
     </>
   );
 }

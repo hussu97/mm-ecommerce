@@ -213,6 +213,21 @@ export const paymentsApi = {
     }),
 };
 
+export const trackApi = {
+  lookup: async (order_number: string, email: string) => {
+    const res = await fetch(`${API_URL}/orders/track`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order_number, email }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ detail: 'Order not found.' }));
+      throw new ApiError(res.status, body.detail);
+    }
+    return res.json();
+  },
+};
+
 export const cmsApi = {
   getPage: (slug: string, locale: string): Promise<{ slug: string; content: Record<string, unknown> }> => {
     // Server-side safe: uses absolute URL without client-only helpers

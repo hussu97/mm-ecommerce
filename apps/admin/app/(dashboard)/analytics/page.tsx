@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import dynamic from 'next/dynamic';
-import { analyticsApi } from '@/lib/api';
+import { analyticsApi, exportApi } from '@/lib/api';
 import type {
   AnalyticsOverview, CustomerBreakdown, EmirateData, FunnelData,
   OrdersPoint, PromoPerformance, RevenueBreakdown, RevenuePoint,
@@ -104,6 +104,7 @@ export default function AnalyticsPage() {
   const [emirates, setEmirates] = useState<EmirateData[]>([]);
   const [promos, setPromos] = useState<PromoPerformance[]>([]);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -139,6 +140,17 @@ export default function AnalyticsPage() {
   }, [startDate, endDate]);
 
   useEffect(() => { load(); }, [load]);
+
+  async function handleExport() {
+    setExporting(true);
+    try {
+      await exportApi.exportOrders({ start_date: startDate, end_date: endDate });
+    } catch {
+      // silent
+    } finally {
+      setExporting(false);
+    }
+  }
 
   function applyPreset(p: string) {
     setPreset(p);
@@ -180,6 +192,13 @@ export default function AnalyticsPage() {
 
         {/* Date range controls */}
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={handleExport}
+            disabled={loading || exporting}
+            className="px-3 py-1.5 text-xs font-body uppercase tracking-wider border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50"
+          >
+            {exporting ? 'Exporting…' : 'Export CSV'}
+          </button>
           {(['7d', '30d', '90d'] as const).map(p => (
             <button
               key={p}

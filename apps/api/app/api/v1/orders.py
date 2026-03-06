@@ -1,13 +1,25 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.core.deps import get_admin_user, get_current_active_user, get_db, get_optional_user
-from app.models.order import OrderStatusEnum
+from app.core.deps import (
+    get_admin_user,
+    get_current_active_user,
+    get_db,
+    get_optional_user,
+)
+from app.models.order import Order, OrderStatusEnum
 from app.models.user import User
-from app.schemas.order import OrderCreate, OrderListResponse, OrderResponse, OrderStatusUpdate
+from app.schemas.order import (
+    OrderCreate,
+    OrderListResponse,
+    OrderResponse,
+    OrderStatusUpdate,
+)
 from app.services import email_service, order_service
 
 router = APIRouter()
@@ -44,9 +56,13 @@ async def list_my_orders(
     current_user: User = Depends(get_current_active_user),
 ):
     """Get the current user's orders, paginated."""
-    items, total = await order_service.get_user_orders(db, current_user.id, page, per_page)
+    items, total = await order_service.get_user_orders(
+        db, current_user.id, page, per_page
+    )
     pages = max(1, (total + per_page - 1) // per_page)
-    return PaginatedOrders(items=items, total=total, page=page, per_page=per_page, pages=pages)
+    return PaginatedOrders(
+        items=items, total=total, page=page, per_page=per_page, pages=pages
+    )
 
 
 @router.get("/admin/all", response_model=PaginatedOrders)
@@ -59,9 +75,41 @@ async def list_all_orders(
     _admin: User = Depends(get_admin_user),
 ):
     """List all orders with optional filters (admin only)."""
-    items, total = await order_service.get_all_admin(db, status=status, search=search, page=page, per_page=per_page)
+    items, total = await order_service.get_all_admin(
+        db, status=status, search=search, page=page, per_page=per_page
+    )
     pages = max(1, (total + per_page - 1) // per_page)
-    return PaginatedOrders(items=items, total=total, page=page, per_page=per_page, pages=pages)
+    return PaginatedOrders(
+        items=items, total=total, page=page, per_page=per_page, pages=pages
+    )
+
+
+class TrackOrderRequest(BaseModel):
+    order_number: str
+    email: str
+
+
+@router.post("/track")
+async def track_order(data: TrackOrderRequest, db: AsyncSession = Depends(get_db)):
+    """Public endpoint to look up order status by order number + email."""
+    stmt = (
+        select(Order)
+        .options(selectinload(Order.items))
+        .where(
+            Order.order_number == data.order_number,
+            Order.email == data.email.lower().strip(),
+        )
+    )
+    order = (await db.execute(stmt)).scalar_one_or_none()
+    if not order:
+        raise HTTPException(404, "Order not found. Check your order number and email.")
+    return {
+        "order_number": order.order_number,
+        "status": order.status.value,
+        "delivery_method": order.delivery_method.value,
+        "items_count": len(order.items),
+        "created_at": order.created_at.strftime("%Y-%m-%d"),
+    }
 
 
 @router.get("/{order_number}", response_model=OrderResponse)
@@ -73,7 +121,9 @@ async def get_order(
     """Get an order by order number. Authenticated users can only view their own orders."""
     user_id = current_user.id if current_user else None
     is_admin = current_user.is_admin if current_user else False
-    return await order_service.get_by_order_number(db, order_number, user_id=user_id, admin=is_admin)
+    return await order_service.get_by_order_number(
+        db, order_number, user_id=user_id, admin=is_admin
+    )
 
 
 @router.put("/{order_number}/status", response_model=OrderResponse)
@@ -85,7 +135,9 @@ async def update_order_status(
     _admin: User = Depends(get_admin_user),
 ):
     """Update order status with validated transitions (admin only). Triggers email notification."""
-    order = await order_service.update_status(db, order_number, data.status, data.admin_notes)
+    order = await order_service.update_status(
+        db, order_number, data.status, data.admin_notes
+    )
 
     if data.status == OrderStatusEnum.CONFIRMED:
         background_tasks.add_task(email_service.send_order_confirmation, order)

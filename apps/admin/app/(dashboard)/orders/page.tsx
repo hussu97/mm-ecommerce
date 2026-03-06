@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { ordersApi } from '@/lib/api';
+import { ordersApi, exportApi } from '@/lib/api';
 import type { Order, OrderStatus } from '@/lib/types';
 import { Badge, Button, Input, Pagination, Select } from '@/components/ui';
 import { formatCurrency, formatDate } from '@/lib/utils';
@@ -65,25 +65,12 @@ export default function OrdersPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  function exportCsv() {
-    const headers = ['Order #', 'Email', 'Items', 'Total', 'Status', 'Payment', 'Date'];
-    const rows = orders.map(o => [
-      o.order_number,
-      o.email,
-      String(o.item_count ?? o.items?.length ?? 0),
-      String(o.total),
-      o.status,
-      o.payment_provider ?? '',
-      formatDate(o.created_at),
-    ]);
-    const csv = [headers, ...rows].map(r => r.map(c => `"${c}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `orders-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  async function exportCsv() {
+    try {
+      await exportApi.exportOrders({ status: statusFilter || undefined });
+    } catch {
+      // silent
+    }
   }
 
   return (

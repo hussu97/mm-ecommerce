@@ -234,6 +234,25 @@ export const exportApi = {
     a.click();
     URL.revokeObjectURL(url);
   },
+  exportOrders: async (params?: { start_date?: string; end_date?: string; status?: string }) => {
+    const token = getToken();
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const qs = params
+      ? '?' + new URLSearchParams(
+          Object.entries(params).filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => [k, String(v)])
+        ).toString()
+      : '';
+    const res = await fetch(`${API_URL}/export/orders${qs}`, { headers });
+    if (!res.ok) throw new ApiError(res.status, `Export failed: HTTP ${res.status}`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'orders.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  },
 };
 
 // ─── Uploads ──────────────────────────────────────────────────────────────────
