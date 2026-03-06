@@ -12,10 +12,12 @@ import { Input } from '@/components/ui/Input';
 import { QuantitySelector } from '@/components/ui/QuantitySelector';
 import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
 
 const PLACEHOLDER_IMAGE = '/images/logos/main_logo.png';
 
 export default function CartPage() {
+  const { t, locale } = useTranslation();
   const { cart, isLoading, updateItem, removeItem } = useCart();
   const { addToast } = useToast();
 
@@ -35,18 +37,18 @@ export default function CartPage() {
     try {
       await updateItem(itemId, quantity);
     } catch {
-      addToast('Failed to update quantity', 'error');
+      addToast(t('cart.failed_update'), 'error');
     }
-  }, [updateItem, addToast]);
+  }, [updateItem, addToast, t]);
 
   const handleRemove = useCallback(async (itemId: string, productName: string) => {
     try {
       await removeItem(itemId);
       analytics.removeFromCart({ product_name: productName });
     } catch {
-      addToast('Failed to remove item', 'error');
+      addToast(t('cart.failed_remove'), 'error');
     }
-  }, [removeItem, addToast]);
+  }, [removeItem, addToast, t]);
 
   const handleApplyPromo = useCallback(async () => {
     const code = promoCode.trim().toUpperCase();
@@ -62,16 +64,16 @@ export default function CartPage() {
         const discountAmount = Number(result.discount_amount);
         setAppliedPromo({ code, discount: discountAmount, message: result.message ?? '' });
         analytics.promoApplied({ code, discount: discountAmount });
-        addToast(`Promo code "${code}" applied!`, 'success');
+        addToast(t('cart.promo_applied', { code }), 'success');
       } else {
-        setPromoError(result.message ?? 'Invalid promo code');
+        setPromoError(result.message ?? t('cart.invalid_promo'));
       }
     } catch {
-      setPromoError('Failed to validate promo code. Please try again.');
+      setPromoError(t('cart.promo_error'));
     } finally {
       setPromoLoading(false);
     }
-  }, [promoCode, subtotal, addToast]);
+  }, [promoCode, subtotal, addToast, t]);
 
   const handleRemovePromo = useCallback(() => {
     setAppliedPromo(null);
@@ -95,23 +97,23 @@ export default function CartPage() {
       }
       window.location.href = '/checkout';
     } catch {
-      addToast('Something went wrong. Please try again.', 'error');
+      addToast(t('cart.something_wrong'), 'error');
       setCheckoutLoading(false);
     }
-  }, [items.length, addToast]);
+  }, [items.length, addToast, t]);
 
   // Empty cart
   if (!isLoading && items.length === 0) {
     return (
       <div className="max-w-7xl mx-auto px-4 py-16 flex flex-col items-center text-center gap-6">
         <span className="material-icons text-6xl text-secondary">shopping_bag</span>
-        <h1 className="font-display text-3xl text-primary uppercase tracking-widest">Your cart is empty</h1>
+        <h1 className="font-display text-3xl text-primary uppercase tracking-widest">{t('cart.empty_title')}</h1>
         <p className="font-body text-sm text-gray-500 max-w-sm">
-          Looks like you haven&apos;t added anything yet. Explore our handcrafted treats and find something you&apos;ll love.
+          {t('cart.empty_body')}
         </p>
-        <Link href="/">
+        <Link href={`/${locale}`}>
           <Button variant="primary" size="lg">
-            Continue Shopping
+            {t('cart.continue_shopping')}
           </Button>
         </Link>
       </div>
@@ -121,15 +123,15 @@ export default function CartPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 py-10">
 
-      <Breadcrumb items={[{ label: 'Home', href: '/' }, { label: 'Cart' }]} />
+      <Breadcrumb items={[{ label: t('breadcrumb.home'), href: `/${locale}` }, { label: t('breadcrumb.cart') }]} />
 
       {/* Heading */}
       <header className="mb-8">
         <h1 className="font-display text-3xl sm:text-4xl text-primary uppercase tracking-widest">
-          My Cart
+          {t('cart.title')}
           {cart && cart.item_count > 0 && (
             <span className="ml-3 font-body text-base font-normal text-gray-400 normal-case tracking-normal">
-              ({cart.item_count} {cart.item_count === 1 ? 'item' : 'items'})
+              ({cart.item_count} {cart.item_count === 1 ? t('cart.item') : t('cart.items')})
             </span>
           )}
         </h1>
@@ -163,6 +165,9 @@ export default function CartPage() {
                       fill
                       sizes="112px"
                       className="object-cover"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).src = PLACEHOLDER_IMAGE;
+                      }}
                     />
                   </div>
 
@@ -215,25 +220,25 @@ export default function CartPage() {
           {/* Order summary */}
           <aside className="lg:col-span-1">
             <div className="bg-gray-50 border border-gray-100 rounded-sm p-6 space-y-5 sticky top-24">
-              <h2 className="font-display text-lg text-primary uppercase tracking-widest">Order Summary</h2>
+              <h2 className="font-display text-lg text-primary uppercase tracking-widest">{t('cart.order_summary')}</h2>
 
               {/* Subtotal */}
               <div className="space-y-2 text-sm font-body">
                 <div className="flex justify-between">
-                  <span className="text-gray-500">Subtotal</span>
+                  <span className="text-gray-500">{t('cart.subtotal')}</span>
                   <span className="text-gray-900">{subtotal.toFixed(2)} AED</span>
                 </div>
 
                 {appliedPromo && (
                   <div className="flex justify-between text-green-700">
-                    <span>Discount ({appliedPromo.code})</span>
+                    <span>{t('cart.discount')} ({appliedPromo.code})</span>
                     <span>-{appliedPromo.discount.toFixed(2)} AED</span>
                   </div>
                 )}
 
                 <div className="flex justify-between text-gray-500">
-                  <span>Delivery</span>
-                  <span className="text-gray-400 italic text-xs self-center">Calculated at checkout</span>
+                  <span>{t('cart.delivery')}</span>
+                  <span className="text-gray-400 italic text-xs self-center">{t('cart.calculated_at_checkout')}</span>
                 </div>
               </div>
 
@@ -241,7 +246,7 @@ export default function CartPage() {
 
               {/* Total */}
               <div className="flex justify-between font-body font-semibold text-base">
-                <span className="text-gray-700">Total</span>
+                <span className="text-gray-700">{t('cart.total')}</span>
                 <span className="text-primary">{total.toFixed(2)} AED</span>
               </div>
 
@@ -267,7 +272,7 @@ export default function CartPage() {
                   <div className="flex gap-2 items-start">
                     <div className="flex-1 min-w-0">
                       <Input
-                        placeholder="Promo code"
+                        placeholder={t('cart.promo_placeholder')}
                         value={promoCode}
                         onChange={(e) => {
                           setPromoCode(e.target.value.toUpperCase());
@@ -286,7 +291,7 @@ export default function CartPage() {
                       disabled={!promoCode.trim()}
                       className="shrink-0 mt-0"
                     >
-                      Apply
+                      {t('cart.apply')}
                     </Button>
                   </div>
                 )}
@@ -301,14 +306,14 @@ export default function CartPage() {
                 loading={checkoutLoading}
                 disabled={items.length === 0}
               >
-                Proceed to Checkout
+                {t('cart.proceed_to_checkout')}
               </Button>
 
               <Link
-                href="/"
+                href={`/${locale}`}
                 className="block text-center font-body text-xs text-gray-400 hover:text-primary transition-colors"
               >
-                ← Continue Shopping
+                {t('cart.continue_shopping_link')}
               </Link>
             </div>
           </aside>

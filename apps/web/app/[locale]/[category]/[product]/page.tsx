@@ -5,6 +5,7 @@ import { ProductDetailATC } from './ProductDetailATC';
 import { ProductImageGallery } from './ProductImageGallery';
 import type { Product } from '@/lib/types';
 import { localizedField } from '@/lib/i18n/entity';
+import { getTranslations, createT } from '@/lib/i18n/server';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api/v1';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
@@ -48,15 +49,23 @@ export default async function ProductDetailPage({
   params: Promise<{ locale: string; category: string; product: string }>;
 }) {
   const { locale, category: categorySlug, product: productSlug } = await params;
-  const product = await getProduct(productSlug);
+
+  const [product, translations] = await Promise.all([
+    getProduct(productSlug),
+    getTranslations(locale),
+  ]);
+
   if (!product) notFound();
   if (product.category && !product.category.is_active) notFound();
+
+  const t = createT(translations);
 
   const categoryName = product.category?.name ?? categorySlug;
   const localizedCategoryName = product.category
     ? localizedField(product.category, 'name', categoryName, locale)
     : categoryName;
   const productName = localizedField(product, 'name', product.name, locale);
+  const productDescription = localizedField(product, 'description', product.description ?? '', locale);
   const galleryImages = product.image_urls ?? [];
 
   const jsonLd = {
@@ -84,7 +93,7 @@ export default async function ProductDetailPage({
       <div className="max-w-7xl mx-auto px-4 py-12">
         <Breadcrumb
           items={[
-            { label: 'Home', href: `/${locale}` },
+            { label: t('breadcrumb.home'), href: `/${locale}` },
             { label: localizedCategoryName, href: `/${locale}/${categorySlug}` },
             { label: productName },
           ]}
@@ -103,9 +112,9 @@ export default async function ProductDetailPage({
               <div className="h-px bg-secondary/40" />
             </div>
 
-            {product.description && (
+            {productDescription && (
               <p className="font-body text-sm text-gray-600 leading-relaxed">
-                {product.description}
+                {productDescription}
               </p>
             )}
 

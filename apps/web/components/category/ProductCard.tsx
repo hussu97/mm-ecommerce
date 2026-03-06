@@ -8,6 +8,8 @@ import { useToast, QuantitySelector } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { analytics } from '@/lib/analytics';
 import { ModifierModal } from '@/components/product/ModifierModal';
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { localizedField } from '@/lib/i18n/entity';
 import type { Product } from '@/lib/types';
 
 function ConditionalLink({
@@ -38,6 +40,7 @@ function computeFromPrice(product: Product): number {
 }
 
 export function ProductCard({ product }: { product: Product }) {
+  const { t, locale } = useTranslation();
   const hasModifiers = product.product_modifiers && product.product_modifiers.length > 0;
   const [qty, setQty] = useState(1);
   const [adding, setAdding] = useState(false);
@@ -49,7 +52,8 @@ export function ProductCard({ product }: { product: Product }) {
   const fromPrice = computeFromPrice(product);
   const image = product.image_urls?.[0];
   const categorySlug = product.category?.slug;
-  const pdpHref = categorySlug ? `/${categorySlug}/${product.slug}` : null;
+  const pdpHref = categorySlug ? `/${locale}/${categorySlug}/${product.slug}` : null;
+  const productName = localizedField(product, 'name', product.name, locale);
 
   // Simple add (no modifiers)
   const handleSimpleAdd = async () => {
@@ -62,10 +66,10 @@ export function ProductCard({ product }: { product: Product }) {
         price: Number(product.base_price),
         quantity: qty,
       });
-      addToast(`${product.name} added to cart`, 'success');
+      addToast(t('product.added_to_cart', { name: productName }), 'success');
       setQty(1);
     } catch (err) {
-      addToast(err instanceof ApiError ? err.message : 'Failed to add to cart', 'error');
+      addToast(err instanceof ApiError ? err.message : t('product.failed_to_add'), 'error');
     } finally {
       setAdding(false);
     }
@@ -80,7 +84,7 @@ export function ProductCard({ product }: { product: Product }) {
           {image ? (
             <Image
               src={image}
-              alt={product.name}
+              alt={productName}
               fill
               sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
               className="object-cover group-hover:scale-105 transition-transform duration-500"
@@ -96,14 +100,14 @@ export function ProductCard({ product }: { product: Product }) {
         <div className="pt-4 flex flex-col gap-3">
           <ConditionalLink href={pdpHref}>
             <h3 className="font-display text-base text-gray-800 leading-snug hover:text-primary transition-colors">
-              {product.name}
+              {productName}
             </h3>
           </ConditionalLink>
           <div className="h-px bg-secondary/40" />
 
           {/* Price */}
           <span className="font-body text-base font-medium text-primary">
-            {hasModifiers ? 'From ' : ''}{fromPrice.toFixed(2)} AED
+            {hasModifiers ? `${t('product.from')} ` : ''}{fromPrice.toFixed(2)} AED
           </span>
 
           {/* Add to cart controls */}
@@ -112,7 +116,7 @@ export function ProductCard({ product }: { product: Product }) {
               onClick={() => setShowModal(true)}
               className="w-full py-2.5 bg-primary text-white text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity"
             >
-              Select Options
+              {t('product.select_options')}
             </button>
           ) : (
             <div className="flex items-center gap-3">
@@ -128,7 +132,7 @@ export function ProductCard({ product }: { product: Product }) {
                 disabled={adding}
                 className="flex-1 py-2.5 bg-primary text-white text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {adding ? 'Adding...' : 'Add to Cart'}
+                {adding ? t('product.adding') : t('product.add_to_cart')}
               </button>
             </div>
           )}

@@ -6,9 +6,12 @@ import { useToast, QuantitySelector } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { analytics } from '@/lib/analytics';
 import { ModifierSelector, SelectedOption } from '@/components/product/ModifierSelector';
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { localizedField } from '@/lib/i18n/entity';
 import type { Product } from '@/lib/types';
 
 export function ProductDetailATC({ product }: { product: Product }) {
+  const { t, locale } = useTranslation();
   const hasModifiers = product.product_modifiers && product.product_modifiers.length > 0;
   const [qty, setQty] = useState(1);
   const [adding, setAdding] = useState(false);
@@ -18,6 +21,8 @@ export function ProductDetailATC({ product }: { product: Product }) {
 
   const { addItem } = useCart();
   const { addToast } = useToast();
+
+  const productName = localizedField(product, 'name', product.name, locale);
 
   const handleOptionsChange = (opts: SelectedOption[], price: number, valid: boolean) => {
     setSelectedOptions(opts);
@@ -36,10 +41,10 @@ export function ProductDetailATC({ product }: { product: Product }) {
         price: totalPrice,
         quantity: qty,
       });
-      addToast(`${product.name} added to cart`, 'success');
+      addToast(t('product.added_to_cart', { name: productName }), 'success');
       setQty(1);
     } catch (err) {
-      addToast(err instanceof ApiError ? err.message : 'Failed to add to cart', 'error');
+      addToast(err instanceof ApiError ? err.message : t('product.failed_to_add'), 'error');
     } finally {
       setAdding(false);
     }
@@ -51,7 +56,7 @@ export function ProductDetailATC({ product }: { product: Product }) {
       <span className="font-body text-2xl font-medium text-primary">
         {Number(totalPrice).toFixed(2)} AED
         {hasModifiers && totalPrice === Number(product.base_price) && (
-          <span className="text-base font-normal text-gray-400 ml-1">from</span>
+          <span className="text-base font-normal text-gray-400 ml-1">{t('product.from')}</span>
         )}
       </span>
 
@@ -74,7 +79,7 @@ export function ProductDetailATC({ product }: { product: Product }) {
           disabled={adding || !isValid}
           className="flex-1 py-3 bg-primary text-white text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {adding ? 'Adding...' : !isValid ? 'Select required options' : 'Add to Cart'}
+          {adding ? t('product.adding') : !isValid ? t('product.select_required_options') : t('product.add_to_cart')}
         </button>
       </div>
     </div>

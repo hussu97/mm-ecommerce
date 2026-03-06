@@ -7,6 +7,8 @@ import { useToast } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { analytics } from '@/lib/analytics';
 import { ModifierSelector, SelectedOption } from './ModifierSelector';
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { localizedField } from '@/lib/i18n/entity';
 import type { Product } from '@/lib/types';
 
 interface Props {
@@ -15,6 +17,7 @@ interface Props {
 }
 
 export function ModifierModal({ product, onClose }: Props) {
+  const { t, locale } = useTranslation();
   const { addItem } = useCart();
   const { addToast } = useToast();
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -24,6 +27,9 @@ export function ModifierModal({ product, onClose }: Props) {
   const [isValid, setIsValid] = useState(product.product_modifiers.length === 0);
   const [qty, setQty] = useState(1);
   const [adding, setAdding] = useState(false);
+
+  const productName = localizedField(product, 'name', product.name, locale);
+  const productDescription = localizedField(product, 'description', product.description ?? '', locale);
 
   // Close on Escape
   useEffect(() => {
@@ -55,10 +61,10 @@ export function ModifierModal({ product, onClose }: Props) {
         price: totalPrice,
         quantity: qty,
       });
-      addToast(`${product.name} added to cart`, 'success');
+      addToast(t('product.added_to_cart', { name: productName }), 'success');
       onClose();
     } catch (err) {
-      addToast(err instanceof ApiError ? err.message : 'Failed to add to cart', 'error');
+      addToast(err instanceof ApiError ? err.message : t('product.failed_to_add'), 'error');
     } finally {
       setAdding(false);
     }
@@ -77,13 +83,13 @@ export function ModifierModal({ product, onClose }: Props) {
         <div className="flex items-start gap-3 p-5 border-b border-gray-100">
           {image && (
             <div className="relative w-16 h-16 shrink-0">
-              <Image src={image} alt={product.name} fill sizes="64px" className="object-cover" />
+              <Image src={image} alt={productName} fill sizes="64px" className="object-cover" />
             </div>
           )}
           <div className="flex-1 min-w-0">
-            <h2 className="font-display text-base text-gray-800 leading-snug">{product.name}</h2>
-            {product.description && (
-              <p className="text-xs text-gray-400 font-body mt-0.5 line-clamp-2">{product.description}</p>
+            <h2 className="font-display text-base text-gray-800 leading-snug">{productName}</h2>
+            {productDescription && (
+              <p className="text-xs text-gray-400 font-body mt-0.5 line-clamp-2">{productDescription}</p>
             )}
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 shrink-0">
@@ -100,7 +106,7 @@ export function ModifierModal({ product, onClose }: Props) {
         <div className="border-t border-gray-100 p-5 space-y-3">
           {/* Qty selector */}
           <div className="flex items-center gap-3">
-            <span className="text-xs font-body uppercase tracking-widest text-gray-500">Qty</span>
+            <span className="text-xs font-body uppercase tracking-widest text-gray-500">{t('common.qty')}</span>
             <div className="flex items-center border border-gray-300">
               <button
                 type="button"
@@ -129,7 +135,7 @@ export function ModifierModal({ product, onClose }: Props) {
             disabled={adding || !isValid}
             className="w-full py-3 bg-primary text-white text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {adding ? 'Adding...' : !isValid ? 'Select required options' : 'Add to Cart'}
+            {adding ? t('product.adding') : !isValid ? t('product.select_required_options') : t('product.add_to_cart')}
           </button>
         </div>
       </div>

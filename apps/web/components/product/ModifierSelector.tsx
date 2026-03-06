@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { localizedField } from '@/lib/i18n/entity';
 import type { Product, ProductModifier } from '@/lib/types';
 
 export interface SelectedOption {
@@ -17,26 +19,42 @@ function ModifierGroup({
   pm,
   selected,
   onSelect,
+  t,
+  locale,
 }: {
   pm: ProductModifier;
   selected: SelectedOption[];
   onSelect: (modifierId: string, optionId: string, checked: boolean) => void;
+  t: (key: string, params?: Record<string, string | number>) => string;
+  locale: string;
 }) {
   const activeOptions = pm.modifier.options.filter(o => o.is_active);
   const selectedForThis = selected.filter(s => s.modifier_id === pm.modifier_id);
   const isSingle = pm.maximum_options === 1;
 
+  const modifierName = localizedField(pm.modifier, 'name', pm.modifier.name, locale);
+
+  let pickLabel: string;
+  if (pm.minimum_options > 0) {
+    if (pm.minimum_options === pm.maximum_options) {
+      pickLabel = t('product.pick_exactly', { n: pm.minimum_options });
+    } else {
+      pickLabel = t('product.pick_range', { min: pm.minimum_options, max: pm.maximum_options });
+    }
+  } else {
+    pickLabel = t('product.up_to', { n: pm.maximum_options });
+  }
+
   return (
     <div className="space-y-2">
       <div className="flex items-baseline justify-between">
-        <h4 className="text-xs font-body uppercase tracking-widest text-gray-600">{pm.modifier.name}</h4>
-        <span className="text-[11px] text-gray-400 font-body">
-          {pm.minimum_options > 0 ? `Pick ${pm.minimum_options === pm.maximum_options ? pm.minimum_options : `${pm.minimum_options}–${pm.maximum_options}`}` : `Up to ${pm.maximum_options}`}
-        </span>
+        <h4 className="text-xs font-body uppercase tracking-widest text-gray-600">{modifierName}</h4>
+        <span className="text-[11px] text-gray-400 font-body">{pickLabel}</span>
       </div>
       <div className="space-y-1.5">
         {activeOptions.map(opt => {
           const isSelected = selectedForThis.some(s => s.option_id === opt.id);
+          const optionName = localizedField(opt, 'name', opt.name, locale);
           return (
             <label
               key={opt.id}
@@ -54,7 +72,7 @@ function ModifierGroup({
                   onChange={e => onSelect(pm.modifier_id, opt.id, e.target.checked)}
                   className="accent-primary"
                 />
-                <span className="text-sm font-body text-gray-700">{opt.name}</span>
+                <span className="text-sm font-body text-gray-700">{optionName}</span>
               </div>
               {opt.price > 0 && (
                 <span className="text-xs font-body text-primary">+{Number(opt.price).toFixed(2)} AED</span>
@@ -68,6 +86,7 @@ function ModifierGroup({
 }
 
 export function ModifierSelector({ product, onChange }: Props) {
+  const { t, locale } = useTranslation();
   const [selected, setSelected] = useState<SelectedOption[]>([]);
 
   const productModifiers = product.product_modifiers ?? [];
@@ -129,6 +148,8 @@ export function ModifierSelector({ product, onChange }: Props) {
           pm={pm}
           selected={selected}
           onSelect={handleSelect}
+          t={t}
+          locale={locale}
         />
       ))}
     </div>
