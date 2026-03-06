@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { cmsApi, languagesApi, ApiError } from '@/lib/api';
 import type { Language } from '@/lib/types';
 import { Button, Spinner } from '@/components/ui';
+import { HomeEditor } from '@/components/content/HomeEditor';
 import { AboutEditor } from '@/components/content/AboutEditor';
 import { FaqEditor } from '@/components/content/FaqEditor';
 import { ContactEditor } from '@/components/content/ContactEditor';
@@ -14,6 +15,7 @@ import { PrivacyEditor } from '@/components/content/PrivacyEditor';
 type PageContent = Record<string, Record<string, unknown>>;
 
 const PAGE_LABELS: Record<string, string> = {
+  home: 'Home',
   about: 'About',
   faq: 'FAQ',
   contact: 'Contact',
@@ -63,6 +65,7 @@ export default function ContentEditorPage() {
   const localeContent = content[activeLocale] ?? {};
 
   function renderEditor() {
+    if (slug === 'home') return <HomeEditor content={localeContent} onChange={handleLocaleContent} />;
     if (slug === 'about') return <AboutEditor content={localeContent} onChange={handleLocaleContent} />;
     if (slug === 'faq') return <FaqEditor content={localeContent} onChange={handleLocaleContent} />;
     if (slug === 'contact') return <ContactEditor content={localeContent} onChange={handleLocaleContent} />;

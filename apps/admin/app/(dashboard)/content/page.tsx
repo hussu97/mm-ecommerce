@@ -7,6 +7,7 @@ import type { CmsPage } from '@/lib/types';
 import { Spinner } from '@/components/ui';
 
 const PAGE_META: Record<string, { label: string; description: string; icon: string }> = {
+  home: { label: 'Home', description: 'Hero, bestsellers, baker section and occasions', icon: 'home' },
   about: { label: 'About', description: 'Our story, values and CTA', icon: 'person' },
   faq: { label: 'FAQ', description: 'Frequently asked questions', icon: 'help_outline' },
   contact: { label: 'Contact', description: 'Contact info and header text', icon: 'mail' },
