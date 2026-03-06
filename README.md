@@ -11,7 +11,6 @@ Full-stack ecommerce platform for **Melting Moments Cakes** — a UAE artisanal 
 | `apps/web` | Customer-facing Next.js storefront | 3000 |
 | `apps/admin` | Internal order & product management dashboard | 3001 |
 | `apps/api` | FastAPI backend — REST API + business logic | 8000 |
-| Umami | Self-hosted analytics (Docker) | 3002 |
 
 ---
 
@@ -27,7 +26,7 @@ mm-ecommerce/
 │   ├── ui/           @mm/ui  — shared React component library
 │   ├── types/        @mm/types — shared TypeScript type definitions
 │   └── config/       @mm/config — shared ESLint + TypeScript configs
-├── docker-compose.yml        Local dev (Postgres, Umami, API, Web, Admin)
+├── docker-compose.yml        Local dev (Postgres, API, Web, Admin)
 ├── docker-compose.prod.yml   Production overrides
 ├── turbo.json
 └── pnpm-workspace.yaml
@@ -70,7 +69,7 @@ The two Next.js apps are thin presentation layers — all state and business log
 | Stripe | Payment processing |
 | Resend | Transactional email |
 | Cloudflare R2 | Product image storage |
-| Umami | Self-hosted web analytics |
+| Umami Cloud | Web analytics (SaaS) |
 
 ---
 
@@ -79,7 +78,7 @@ The two Next.js apps are thin presentation layers — all state and business log
 - **Node.js** ≥ 20
 - **pnpm** ≥ 9.15 — `npm install -g pnpm`
 - **Python** ≥ 3.12
-- **Docker** + Docker Compose (for local Postgres and Umami)
+- **Docker** + Docker Compose (for local Postgres)
 
 ---
 
@@ -142,7 +141,6 @@ pnpm dev:admin
 | http://localhost:3001 | Admin |
 | http://localhost:8000/docs | API interactive docs (Swagger) |
 | http://localhost:8000/redoc | API docs (ReDoc) |
-| http://localhost:3002 | Umami analytics |
 
 ---
 
@@ -194,11 +192,9 @@ TAMARA_API_URL=https://api.tamara.co
 WEB_URL=http://localhost:3000
 ADMIN_URL=http://localhost:3001
 
-# Umami — leave empty to disable traffic analytics (see Umami section below)
-UMAMI_URL=
+# Umami Cloud — leave empty to disable traffic analytics (see Umami section below)
+UMAMI_API_KEY=
 UMAMI_WEBSITE_ID=
-UMAMI_USERNAME=admin
-UMAMI_PASSWORD=
 ```
 
 ### Web storefront (`apps/web/.env`)
@@ -207,9 +203,9 @@ UMAMI_PASSWORD=
 NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
 NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_...
 
-# Umami — leave empty to disable client-side page tracking
+# Umami Cloud — leave empty to disable client-side page tracking
 NEXT_PUBLIC_UMAMI_WEBSITE_ID=
-NEXT_PUBLIC_UMAMI_URL=
+NEXT_PUBLIC_UMAMI_URL=https://cloud.umami.is/script.js
 ```
 
 ### Admin (`apps/admin/.env`)
@@ -301,56 +297,41 @@ Key tables: `users`, `categories`, `products`, `product_variants`, `carts`, `car
 
 ---
 
-## Umami Analytics (optional)
+## Umami Cloud Analytics (optional)
 
-Umami is a self-hosted, open-source analytics tool that tracks visitors, sessions, pageviews, and top pages. It is already included in `docker-compose.yml` and runs on port `3002`. All traffic metrics on the admin analytics dashboard come from it.
+Analytics uses [Umami Cloud](https://cloud.umami.is) (free tier) — no self-hosted service required. All traffic metrics on the admin analytics dashboard come from it.
 
-It is **optional** — the admin dashboard degrades gracefully if it is not configured.
+It is **optional** — the admin dashboard degrades gracefully if not configured.
 
-### 1. Start Umami
+### 1. Create a free Umami Cloud account
 
-```bash
-docker compose up -d umami
-```
+Sign up at [cloud.umami.is](https://cloud.umami.is). The free tier supports 1 website and 10k events/month.
 
-This also starts `umami-db` (a dedicated Postgres instance for Umami's own data).
-
-### 2. Create your account
-
-Visit `http://localhost:3002` and log in with the default credentials:
-
-| Field | Value |
-|-------|-------|
-| Username | `admin` |
-| Password | `umami` |
-
-**Change the password immediately** after first login (Settings → Profile).
-
-### 3. Add your website
+### 2. Add your website
 
 1. Go to **Settings → Websites → Add website**
-2. Set the name (e.g. `Melting Moments`) and domain (`localhost`)
-3. Copy the **Website ID** (a UUID shown on the website card)
+2. Set the name (`Melting Moments`) and domain
+3. Copy the **Website ID** (UUID shown on the website card)
+
+### 3. Create an API key
+
+Go to **Settings → API Keys → Create API key** and copy the key.
 
 ### 4. Configure env vars
 
 **`apps/api/.env`** — lets the admin dashboard pull analytics data:
 ```env
-UMAMI_URL=http://localhost:3002
+UMAMI_API_KEY=<paste API key>
 UMAMI_WEBSITE_ID=<paste website ID>
-UMAMI_USERNAME=admin
-UMAMI_PASSWORD=<your umami password>
 ```
-
-> Self-hosted Umami does not support API keys — authentication uses your Umami username and password. The backend logs in automatically via `POST /api/auth/login` and caches the token in memory.
 
 **`apps/web/.env`** — enables client-side page tracking in the storefront:
 ```env
 NEXT_PUBLIC_UMAMI_WEBSITE_ID=<paste website ID>
-NEXT_PUBLIC_UMAMI_URL=http://localhost:3002/script.js
+NEXT_PUBLIC_UMAMI_URL=https://cloud.umami.is/script.js
 ```
 
-Restart the API after updating its `.env`. Page views will start appearing in the admin analytics dashboard under **Visitor Trend** and **Top Pages** as you browse the storefront.
+Restart the API after updating its `.env`. Page views will appear in the admin analytics dashboard under **Visitor Trend** and **Top Pages**.
 
 ---
 

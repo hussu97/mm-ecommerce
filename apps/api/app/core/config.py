@@ -82,11 +82,9 @@ class Settings(BaseSettings):
     # Redis (optional — leave empty to disable caching)
     REDIS_URL: str = ""
 
-    # Umami analytics (optional — leave empty to disable traffic metrics)
-    UMAMI_URL: str = ""
+    # Umami Cloud analytics (optional — leave empty to disable traffic metrics)
+    UMAMI_API_KEY: str = ""
     UMAMI_WEBSITE_ID: str = ""
-    UMAMI_USERNAME: str = "admin"
-    UMAMI_PASSWORD: str = ""
 
     @property
     def is_production(self) -> bool:

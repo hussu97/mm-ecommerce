@@ -16,36 +16,6 @@ services:
       timeout: 5s
       retries: 5
 
-  umami-db:
-    image: postgres:16
-    restart: always
-    environment:
-      POSTGRES_USER: ${UMAMI_DB_USER}
-      POSTGRES_PASSWORD: ${UMAMI_DB_PASSWORD}
-      POSTGRES_DB: ${UMAMI_DB_NAME}
-    volumes:
-      - umami_data:/var/lib/postgresql/data
-    networks:
-      - mm_network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${UMAMI_DB_USER} -d ${UMAMI_DB_NAME}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  umami:
-    image: ghcr.io/umami-software/umami:postgresql-latest
-    restart: always
-    environment:
-      DATABASE_URL: postgresql://${UMAMI_DB_USER}:${UMAMI_DB_PASSWORD}@umami-db:5432/${UMAMI_DB_NAME}
-      DATABASE_TYPE: postgresql
-      APP_SECRET: ${UMAMI_APP_SECRET}
-    networks:
-      - mm_network
-    depends_on:
-      umami-db:
-        condition: service_healthy
-
   api:
     build:
       context: .
@@ -86,7 +56,6 @@ services:
       - mm_network
     depends_on:
       - api
-      - umami
 
   certbot:
     image: certbot/certbot:latest
@@ -106,4 +75,3 @@ networks:
 
 volumes:
   postgres_data:
-  umami_data:

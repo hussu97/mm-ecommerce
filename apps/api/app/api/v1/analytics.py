@@ -338,36 +338,13 @@ async def get_funnel(
     )
 
 
-# Module-level token cache — Umami JWTs have no expiry unless password/APP_SECRET changes
-_umami_token: str | None = None
-
-
-async def _get_umami_token(client: httpx.AsyncClient) -> str | None:
-    global _umami_token
-    if _umami_token:
-        return _umami_token
-    try:
-        resp = await client.post(
-            f"{settings.UMAMI_URL}/api/auth/login",
-            json={
-                "username": settings.UMAMI_USERNAME,
-                "password": settings.UMAMI_PASSWORD,
-            },
-        )
-        if resp.is_success:
-            _umami_token = resp.json().get("token")
-    except Exception:
-        pass
-    return _umami_token
-
-
 @router.get("/traffic", response_model=TrafficData)
 async def get_traffic(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     _admin: User = Depends(get_admin_user),
 ):
-    """Traffic metrics proxied from Umami analytics."""
+    """Traffic metrics proxied from Umami Cloud analytics."""
     _empty = TrafficData(
         visitors=0,
         sessions=0,
@@ -379,42 +356,21 @@ async def get_traffic(
         configured=False,
     )
 
-    if (
-        not settings.UMAMI_URL
-        or not settings.UMAMI_WEBSITE_ID
-        or not settings.UMAMI_PASSWORD
-    ):
+    if not settings.UMAMI_API_KEY or not settings.UMAMI_WEBSITE_ID:
         return _empty
 
     start, end = _date_range(start_date, end_date)
     start_ms = _to_ms(start)
     end_ms = _to_ms(end) + 86_399_999  # inclusive end-of-day
 
-    base = f"{settings.UMAMI_URL}/api/websites/{settings.UMAMI_WEBSITE_ID}"
+    base = f"https://api.umami.is/v1/websites/{settings.UMAMI_WEBSITE_ID}"
+    headers = {"Authorization": f"Bearer {settings.UMAMI_API_KEY}"}
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            token = await _get_umami_token(client)
-            if not token:
-                return _empty
-            headers = {"Authorization": f"Bearer {token}"}
             stats_resp, pv_resp, pages_resp = await _umami_fetch_all(
                 client, base, headers, start_ms, end_ms
             )
-            # If token was invalidated (APP_SECRET/password changed), clear and retry once
-            if (
-                isinstance(stats_resp, dict)
-                and stats_resp.get("error") == "Unauthorized"
-            ):
-                global _umami_token  # noqa: PLW0603
-                _umami_token = None
-                token = await _get_umami_token(client)
-                if not token:
-                    return _empty
-                headers = {"Authorization": f"Bearer {token}"}
-                stats_resp, pv_resp, pages_resp = await _umami_fetch_all(
-                    client, base, headers, start_ms, end_ms
-                )
     except Exception:
         return _empty
 

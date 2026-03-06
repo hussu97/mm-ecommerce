@@ -7,16 +7,14 @@ Internet
 ├── meltingmomentscakes.com        → Vercel (web storefront)
 ├── admin.meltingmomentscakes.com  → Vercel (admin panel)
 ├── api.meltingmomentscakes.com    → GCP VM: FastAPI via Nginx + SSL
-├── analytics.meltingmomentscakes.com → GCP VM: Umami via Nginx + SSL
 └── media.meltingmomentscakes.com  → Cloudflare R2 (object storage)
 ```
 
-**GCP VM** (e2-small, 2 vCPU shared, 2 GB RAM) runs:
+**GCP VM** (e2-micro, 1 vCPU shared, 1 GB RAM) runs:
 - PostgreSQL 16
-- FastAPI (4 Uvicorn workers)
-- Umami + Umami DB
-- Nginx (reverse proxy for `api.*` and `analytics.*`)
-- Certbot (SSL for those two subdomains only)
+- FastAPI (Uvicorn)
+- Nginx (reverse proxy for `api.*`)
+- Certbot (SSL for `api.*`)
 
 **Vercel** hosts both Next.js apps — free Hobby plan, global CDN, automatic deployments on push to `main`.
 
@@ -28,13 +26,14 @@ Internet
 |---------|----------|------|-----------|
 | Web storefront (Next.js) | Vercel | Hobby (free) | $0 |
 | Admin panel (Next.js) | Vercel | Hobby (free, same account) | $0 |
-| Backend VM (e2-small) | GCP Compute Engine | On-demand + sustained discount | ~$10 |
+| Backend VM (e2-micro) | GCP Compute Engine | On-demand + sustained discount | ~$4 |
 | Boot disk (30 GB SSD) | GCP Persistent Disk | Standard SSD | ~$5 |
 | Database backups | GCP Cloud Storage | Standard, ~2 GB | ~$0.05 |
 | Network egress | GCP | ~5 GB/mo | ~$0.40 |
 | Media storage | Cloudflare R2 | Free tier (10 GB) | $0 |
 | SSL certificates | Let's Encrypt | Free | $0 |
-| **Total** | | | **~$15–16/mo** |
+| Analytics | Umami Cloud | Free tier | $0 |
+| **Total** | | | **~$9–10/mo** |
 
 ---
 
@@ -68,7 +67,7 @@ Internet
 gcloud compute instances create mm-backend \
   --project=mm-ecommerce \
   --zone=me-central1-a \
-  --machine-type=e2-small \
+  --machine-type=e2-micro \
   --image-family=debian-12 \
   --image-project=debian-cloud \
   --boot-disk-size=30GB \
@@ -143,7 +142,6 @@ nano .env  # fill in all secrets (see template for field descriptions)
 Key values to fill in `.env`:
 - `POSTGRES_PASSWORD` — generate with `openssl rand -hex 20`
 - `SECRET_KEY` — generate with `openssl rand -hex 32`
-- `UMAMI_APP_SECRET` — generate with `openssl rand -hex 32`
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
 - `RESEND_API_KEY`
 - `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`
@@ -171,13 +169,13 @@ docker compose -f docker-compose.prod.yml exec api alembic upgrade head
 docker compose -f docker-compose.prod.yml exec api python -m scripts.seed_db
 ```
 
-Expected running services: `postgres`, `umami-db`, `umami`, `api`, `nginx`, `certbot`
+Expected running services: `postgres`, `api`, `nginx`, `certbot`
 
 ---
 
 ## Step 7: Issue SSL Certificates
 
-Wait until DNS is pointing `api.*` and `analytics.*` to the VM IP (Step 12 first).
+Wait until DNS is pointing `api.*` to the VM IP (Step 12 first).
 
 ```bash
 cd /opt/mm-ecommerce
@@ -186,11 +184,6 @@ cd /opt/mm-ecommerce
 docker compose -f docker-compose.prod.yml run --rm certbot certonly \
   --webroot -w /var/www/certbot \
   -d api.meltingmomentscakes.com
-
-# Issue cert for analytics subdomain
-docker compose -f docker-compose.prod.yml run --rm certbot certonly \
-  --webroot -w /var/www/certbot \
-  -d analytics.meltingmomentscakes.com
 
 # Reload nginx to pick up certs
 docker compose -f docker-compose.prod.yml exec nginx nginx -s reload
@@ -266,10 +259,11 @@ gsutil ls gs://mm-ecommerce-backups/backups/
    - **Output Directory**: `.next`
 4. Add **Environment Variables**:
    ```
+   NEXT_PUBLIC_SITE_URL=https://meltingmomentscakes.com
    NEXT_PUBLIC_API_URL=https://api.meltingmomentscakes.com
    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_CHANGE_ME
-   NEXT_PUBLIC_UMAMI_SCRIPT_URL=https://analytics.meltingmomentscakes.com/script.js
-   NEXT_PUBLIC_UMAMI_WEBSITE_ID=<from Umami dashboard after Step 6>
+   NEXT_PUBLIC_UMAMI_WEBSITE_ID=<from Umami Cloud dashboard>
+   NEXT_PUBLIC_UMAMI_URL=https://cloud.umami.is/script.js
    ```
 5. Click **Deploy** and note the preview URL (e.g. `mm-ecommerce-web.vercel.app`)
 6. Once confirmed working, go to **Settings → Domains** → add `meltingmomentscakes.com`
@@ -303,7 +297,6 @@ In Cloudflare (or your registrar), create these records:
 | CNAME | `www` | `cname.vercel-dns.com` | Vercel redirect |
 | CNAME | `admin` | `cname.vercel-dns.com` | Admin panel |
 | A | `api` | GCP VM external IP | FastAPI |
-| A | `analytics` | GCP VM external IP | Umami |
 | CNAME | `media` | `<your-r2-bucket>.r2.cloudflarestorage.com` | R2 media |
 
 > **Vercel custom domains**: After adding a custom domain in Vercel, it will show you the exact DNS record needed (either A or CNAME depending on apex vs subdomain). Follow those instructions; the values above are typical.
@@ -336,10 +329,6 @@ curl https://api.meltingmomentscakes.com/health
 # API docs accessible
 curl -s https://api.meltingmomentscakes.com/docs | grep -c "swagger"
 
-# Umami analytics running
-curl -s -o /dev/null -w "%{http_code}" https://analytics.meltingmomentscakes.com
-# Expected: 200
-
 # All backend containers healthy
 ssh <VM> "docker compose -f /opt/mm-ecommerce/docker-compose.prod.yml ps"
 # All services should show: Up (healthy) or Up
@@ -352,9 +341,8 @@ ssh <VM> "docker compose -f /opt/mm-ecommerce/docker-compose.prod.yml ps"
 ssh <VM> "DEPLOY_DIR=/opt/mm-ecommerce /opt/mm-ecommerce/scripts/backup-db.sh"
 # Should print "Backup complete" and upload to GCS
 
-# SSL certificates valid
+# SSL certificate valid
 echo | openssl s_client -connect api.meltingmomentscakes.com:443 2>/dev/null | openssl x509 -noout -dates
-echo | openssl s_client -connect analytics.meltingmomentscakes.com:443 2>/dev/null | openssl x509 -noout -dates
 ```
 
 ---
@@ -367,4 +355,4 @@ echo | openssl s_client -connect analytics.meltingmomentscakes.com:443 2>/dev/nu
 
 **Database backups**: Cron runs `scripts/backup-db.sh` daily at 2 AM, uploads to GCS, retains 7 days locally.
 
-**Scaling**: If the e2-small becomes a bottleneck, upgrade in-place: `gcloud compute instances set-machine-type mm-backend --machine-type=e2-medium --zone=me-central1-a` (requires VM stop/start).
+**Scaling**: If the e2-micro becomes a bottleneck, upgrade in-place: `gcloud compute instances set-machine-type mm-backend --machine-type=e2-small --zone=me-central1-a` (requires VM stop/start).

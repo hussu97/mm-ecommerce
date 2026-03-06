@@ -92,7 +92,7 @@ export default async function RootLayout({
         {/* Umami analytics — no-cookie, GDPR-friendly */}
         {process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID && (
           <Script
-            src={process.env.NEXT_PUBLIC_UMAMI_URL ?? 'http://localhost:3002/script.js'}
+            src={process.env.NEXT_PUBLIC_UMAMI_URL ?? 'https://cloud.umami.is/script.js'}
             data-website-id={process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID}
             strategy="afterInteractive"
           />

@@ -27,7 +27,6 @@ jobs:
             git pull origin main
 
             echo "Building and restarting services..."
-            docker compose -f docker-compose.prod.yml pull umami
             docker compose -f docker-compose.prod.yml up --build -d
 
             echo "Waiting for API to be healthy..."
