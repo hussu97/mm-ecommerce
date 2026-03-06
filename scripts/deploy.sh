@@ -11,9 +11,6 @@ cd "$DEPLOY_DIR"
 echo "==> Pulling latest code..."
 git pull origin main
 
-echo "==> Pulling updated base images..."
-docker compose -f "$COMPOSE_FILE" pull umami
-
 echo "==> Building and restarting API service..."
 # Build new image first (keeps old container running)
 docker compose -f "$COMPOSE_FILE" build api

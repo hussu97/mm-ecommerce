@@ -12,6 +12,7 @@ Internet
 
 **GCP VM** (e2-micro, 1 vCPU shared, 1 GB RAM) runs:
 - PostgreSQL 16
+- Redis 7 (response caching)
 - FastAPI (Uvicorn)
 - Nginx (reverse proxy for `api.*`)
 - Certbot (SSL for `api.*`)
@@ -41,7 +42,7 @@ Internet
 
 - [ ] GCP account with billing enabled
 - [ ] Domain registered and pointing to Cloudflare (for DNS management)
-- [ ] Cloudflare R2 bucket created (`mm-media`, public access enabled)
+- [ ] Cloudflare R2 bucket created (`mm-ecommerce`, public access enabled)
 - [ ] Stripe account with live API keys + webhook configured
 - [ ] Resend account with verified sending domain
 - [ ] Vercel account (free Hobby plan is sufficient)
@@ -135,16 +136,20 @@ sudo chown $USER:$USER /opt/mm-ecommerce
 git clone https://github.com/your-org/mm-ecommerce.git /opt/mm-ecommerce
 cd /opt/mm-ecommerce
 
-cp .env.production.example .env
-nano .env  # fill in all secrets (see template for field descriptions)
+cp apps/api/.env.example .env
+nano .env  # fill in all secrets (see .env.example for field descriptions)
 ```
 
 Key values to fill in `.env`:
-- `POSTGRES_PASSWORD` — generate with `openssl rand -hex 20`
+- `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` — choose your own values
 - `SECRET_KEY` — generate with `openssl rand -hex 32`
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
 - `RESEND_API_KEY`
-- `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`
+- `CLOUDFLARE_R2_ACCESS_KEY`, `CLOUDFLARE_R2_SECRET_KEY`, `CLOUDFLARE_R2_BUCKET`, `CLOUDFLARE_R2_ENDPOINT`, `CLOUDFLARE_R2_PUBLIC_URL`
+- `WEB_URL=https://meltingmomentscakes.com`
+- `ADMIN_URL=https://admin.meltingmomentscakes.com`
+- `CORS_ORIGINS=["https://meltingmomentscakes.com","https://admin.meltingmomentscakes.com"]`
+- `ALLOWED_HOSTS=["api.meltingmomentscakes.com"]`
 - `BACKUP_GCS_BUCKET` — the GCS bucket name from Step 8
 
 ---
@@ -164,12 +169,12 @@ docker compose -f docker-compose.prod.yml up -d
 # Verify all containers are running
 docker compose -f docker-compose.prod.yml ps
 
-# Run migrations + seed initial data
+# Run migrations + seed admin user
 docker compose -f docker-compose.prod.yml exec api alembic upgrade head
 docker compose -f docker-compose.prod.yml exec api python -m scripts.seed_db
 ```
 
-Expected running services: `postgres`, `api`, `nginx`, `certbot`
+Expected running services: `redis`, `postgres`, `api`, `nginx`, `certbot`
 
 ---
 
@@ -260,10 +265,12 @@ gsutil ls gs://mm-ecommerce-backups/backups/
 4. Add **Environment Variables**:
    ```
    NEXT_PUBLIC_SITE_URL=https://meltingmomentscakes.com
-   NEXT_PUBLIC_API_URL=https://api.meltingmomentscakes.com
+   NEXT_PUBLIC_API_URL=https://api.meltingmomentscakes.com/api/v1
    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_CHANGE_ME
+   NEXT_PUBLIC_SUPPORTED_LOCALES=en,ar
    NEXT_PUBLIC_UMAMI_WEBSITE_ID=<from Umami Cloud dashboard>
    NEXT_PUBLIC_UMAMI_URL=https://cloud.umami.is/script.js
+   NEXT_PUBLIC_SENTRY_DSN=<from Sentry project settings>  # optional
    ```
 5. Click **Deploy** and note the preview URL (e.g. `mm-ecommerce-web.vercel.app`)
 6. Once confirmed working, go to **Settings → Domains** → add `meltingmomentscakes.com`
@@ -280,7 +287,7 @@ gsutil ls gs://mm-ecommerce-backups/backups/
    - **Output Directory**: `.next`
 3. Add **Environment Variables**:
    ```
-   NEXT_PUBLIC_API_URL=https://api.meltingmomentscakes.com
+   NEXT_PUBLIC_API_URL=https://api.meltingmomentscakes.com/api/v1
    ```
 4. Click **Deploy** and verify the preview URL
 5. Go to **Settings → Domains** → add `admin.meltingmomentscakes.com`
@@ -313,7 +320,9 @@ In GitHub → repo → **Settings → Secrets and variables → Actions → Envi
 | `SERVER_USER` | Your VM username (e.g. `debian` or your username) |
 | `SERVER_SSH_KEY` | Private SSH key that can access the VM (generate with `ssh-keygen`, add public key to VM's `~/.ssh/authorized_keys`) |
 
-The `deploy.yml` workflow will then SSH into the GCP VM and run `scripts/deploy.sh` automatically on every push to `main`. Vercel handles web + admin deployments automatically via its GitHub integration.
+The `deploy.yml` workflow SSHes into the GCP VM on every push to `main` and runs migrations + restarts the API. Vercel handles web + admin deployments automatically via its GitHub integration.
+
+**Rollback**: If a bad deploy reaches production, trigger the `rollback.yml` workflow manually from GitHub Actions → dispatch. It accepts a git SHA (defaults to `HEAD~1`) and optionally runs `alembic downgrade -1` before rolling back.
 
 ---
 
@@ -322,34 +331,33 @@ The `deploy.yml` workflow will then SSH into the GCP VM and run `scripts/deploy.
 Run these checks after completing all steps:
 
 ```bash
-# API health check
+# API health check (verifies DB connectivity too)
 curl https://api.meltingmomentscakes.com/health
-# Expected: {"status": "ok"}
-
-# API docs accessible
-curl -s https://api.meltingmomentscakes.com/docs | grep -c "swagger"
+# Expected: {"status": "ok", "service": "mm-api", "env": "production"}
 
 # All backend containers healthy
 ssh <VM> "docker compose -f /opt/mm-ecommerce/docker-compose.prod.yml ps"
-# All services should show: Up (healthy) or Up
+# Expected services: redis, postgres, api, nginx, certbot — all Up
+
+# Backup script
+ssh <VM> "DEPLOY_DIR=/opt/mm-ecommerce /opt/mm-ecommerce/scripts/backup-db.sh"
+# Should print "Deployment complete" and upload to GCS
+
+# SSL certificate valid
+echo | openssl s_client -connect api.meltingmomentscakes.com:443 2>/dev/null | openssl x509 -noout -dates
 
 # Vercel deployments
 # Visit https://meltingmomentscakes.com — storefront loads
 # Visit https://admin.meltingmomentscakes.com — admin login loads
-
-# Backup script
-ssh <VM> "DEPLOY_DIR=/opt/mm-ecommerce /opt/mm-ecommerce/scripts/backup-db.sh"
-# Should print "Backup complete" and upload to GCS
-
-# SSL certificate valid
-echo | openssl s_client -connect api.meltingmomentscakes.com:443 2>/dev/null | openssl x509 -noout -dates
 ```
 
 ---
 
 ## Ongoing Maintenance
 
-**Deployments**: Push to `main` → GitHub Actions SSHes into GCP VM and runs `scripts/deploy.sh` (API only). Vercel auto-deploys web + admin.
+**Deployments**: Push to `main` → GitHub Actions SSHes into GCP VM and runs `deploy.yml` (API only). Vercel auto-deploys web + admin.
+
+**Manual deploy**: SSH into VM and run `DEPLOY_DIR=/opt/mm-ecommerce bash scripts/deploy.sh`.
 
 **SSL renewal**: Handled automatically by the `certbot` container (runs every 12 hours).
 
