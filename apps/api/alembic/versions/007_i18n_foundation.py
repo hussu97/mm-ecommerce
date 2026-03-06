@@ -77,7 +77,6 @@ EN_TRANSLATIONS: dict[str, dict[str, str]] = {
         "faq": "FAQ",
         "contact": "Contact",
         "privacy": "Privacy Policy",
-        "terms": "Terms & Conditions",
     },
     "home": {
         "hero_tagline": "Handcrafted with Love",
@@ -263,7 +262,6 @@ EN_TRANSLATIONS: dict[str, dict[str, str]] = {
         "login_title": "Sign In — Melting Moments Cakes",
         "signup_title": "Create Account — Melting Moments Cakes",
         "privacy_title": "Privacy Policy — Melting Moments Cakes",
-        "terms_title": "Terms & Conditions — Melting Moments Cakes",
         "account_title": "My Account — Melting Moments Cakes",
         "orders_title": "My Orders — Melting Moments Cakes",
         "search_title": "Search — Melting Moments Cakes",
@@ -323,10 +321,6 @@ EN_TRANSLATIONS: dict[str, dict[str, str]] = {
     },
     "privacy": {
         "title": "Privacy Policy",
-        "last_updated": "Last updated: {date}",
-    },
-    "terms": {
-        "title": "Terms & Conditions",
         "last_updated": "Last updated: {date}",
     },
     "error": {
@@ -396,7 +390,6 @@ AR_TRANSLATIONS: dict[str, dict[str, str]] = {
         "faq": "\u0627\u0644\u0623\u0633\u0626\u0644\u0629 \u0627\u0644\u0634\u0627\u0626\u0639\u0629",
         "contact": "\u0627\u062a\u0635\u0644 \u0628\u0646\u0627",
         "privacy": "\u0633\u064a\u0627\u0633\u0629 \u0627\u0644\u062e\u0635\u0648\u0635\u064a\u0629",
-        "terms": "\u0627\u0644\u0634\u0631\u0648\u0637 \u0648\u0627\u0644\u0623\u062d\u0643\u0627\u0645",
     },
     "home": {
         "hero_tagline": "\u0635\u0646\u0639 \u064a\u062f\u0648\u064a \u0628\u062d\u0628",
@@ -582,7 +575,6 @@ AR_TRANSLATIONS: dict[str, dict[str, str]] = {
         "login_title": "\u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u062f\u062e\u0648\u0644 \u2014 Melting Moments Cakes",
         "signup_title": "\u0625\u0646\u0634\u0627\u0621 \u062d\u0633\u0627\u0628 \u2014 Melting Moments Cakes",
         "privacy_title": "\u0633\u064a\u0627\u0633\u0629 \u0627\u0644\u062e\u0635\u0648\u0635\u064a\u0629 \u2014 Melting Moments Cakes",
-        "terms_title": "\u0627\u0644\u0634\u0631\u0648\u0637 \u0648\u0627\u0644\u0623\u062d\u0643\u0627\u0645 \u2014 Melting Moments Cakes",
         "account_title": "\u062d\u0633\u0627\u0628\u064a \u2014 Melting Moments Cakes",
         "orders_title": "\u0637\u0644\u0628\u0627\u062a\u064a \u2014 Melting Moments Cakes",
         "search_title": "\u0628\u062d\u062b \u2014 Melting Moments Cakes",
@@ -642,10 +634,6 @@ AR_TRANSLATIONS: dict[str, dict[str, str]] = {
     },
     "privacy": {
         "title": "\u0633\u064a\u0627\u0633\u0629 \u0627\u0644\u062e\u0635\u0648\u0635\u064a\u0629",
-        "last_updated": "\u0622\u062e\u0631 \u062a\u062d\u062f\u064a\u062b: {date}",
-    },
-    "terms": {
-        "title": "\u0627\u0644\u0634\u0631\u0648\u0637 \u0648\u0627\u0644\u0623\u062d\u0643\u0627\u0645",
         "last_updated": "\u0622\u062e\u0631 \u062a\u062d\u062f\u064a\u062b: {date}",
     },
     "error": {

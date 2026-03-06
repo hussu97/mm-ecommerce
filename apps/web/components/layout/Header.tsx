@@ -38,22 +38,19 @@ export function Header({ languages = [], categories = [], locale: localeProp }: 
             </button>
           </div>
 
-          {/* Center — logo + overlaid brand text */}
+          {/* Center — logo */}
           <div className="flex justify-center">
-            <Link href={`/${locale}`} className="flex flex-col items-center gap-0.5 group" aria-label="Melting Moments home">
-              <div className="relative w-9 h-9">
+            <Link href={`/${locale}`} aria-label="Melting Moments home">
+              <div className="relative w-20 h-14">
                 <Image
-                  src="/images/logos/color_logo.jpeg"
+                  src="/images/logos/black_and_white_logo.jpeg"
                   alt="Melting Moments"
                   fill
-                  sizes="36px"
+                  sizes="80px"
                   className="object-contain"
                   priority
                 />
               </div>
-              <span className="font-display text-[11px] tracking-[0.25em] text-primary uppercase leading-none group-hover:opacity-80 transition-opacity">
-                Melting Moments
-              </span>
             </Link>
           </div>
 
