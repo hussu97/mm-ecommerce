@@ -22,6 +22,7 @@ export default function CategoriesPage() {
   const [reorderingSlug, setReorderingSlug] = useState<string | null>(null);
   const [apiError, setApiError] = useState('');
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [search, setSearch] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulking, setBulking] = useState(false);
 
@@ -31,8 +32,10 @@ export default function CategoriesPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  const q = search.trim().toLowerCase();
   const filteredCategories = categories.filter(c =>
-    activeTab === 'active' ? c.is_active : !c.is_active
+    (activeTab === 'active' ? c.is_active : !c.is_active) &&
+    (!q || c.name.toLowerCase().includes(q) || c.slug.toLowerCase().includes(q))
   );
   const categoryPages = Math.max(1, Math.ceil(filteredCategories.length / perPage));
   const paginatedCategories = filteredCategories.slice((page - 1) * perPage, page * perPage);
@@ -270,6 +273,15 @@ export default function CategoriesPage() {
         </div>
       )}
 
+      {/* Search */}
+      <div className="mb-4 max-w-xs">
+        <Input
+          placeholder="Search by name or slug…"
+          value={search}
+          onChange={e => { setSearch(e.target.value); setPage(1); }}
+        />
+      </div>
+
       {/* Tabs */}
       <TabBar
         tabs={[
@@ -277,7 +289,7 @@ export default function CategoriesPage() {
           { key: 'inactive', label: 'Inactive', count: inactiveCount },
         ]}
         active={activeTab}
-        onChange={key => { setActiveTab(key as 'active' | 'inactive'); setSelectedIds(new Set()); setPage(1); }}
+        onChange={key => { setActiveTab(key as 'active' | 'inactive'); setSelectedIds(new Set()); setPage(1); setSearch(''); }}
       />
 
       {/* Bulk action bar */}

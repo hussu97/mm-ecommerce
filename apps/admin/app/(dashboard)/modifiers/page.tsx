@@ -26,6 +26,9 @@ export default function ModifiersPage() {
   // Per-modifier action
   const [actionId, setActionId] = useState<string | null>(null);
 
+  // Search
+  const [search, setSearch] = useState('');
+
   // Bulk selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulking, setBulking] = useState(false);
@@ -63,8 +66,15 @@ export default function ModifiersPage() {
     }
   }
 
+  const q = search.trim().toLowerCase();
   const filteredModifiers = modifiers.filter(m =>
-    activeTab === 'active' ? m.is_active : !m.is_active
+    (activeTab === 'active' ? m.is_active : !m.is_active) &&
+    (!q ||
+      m.name.toLowerCase().includes(q) ||
+      m.reference.toLowerCase().includes(q) ||
+      (m.name_localized ?? '').toLowerCase().includes(q) ||
+      m.options.some(o => o.name.toLowerCase().includes(q) || o.sku.toLowerCase().includes(q))
+    )
   );
   const modifierPages = Math.max(1, Math.ceil(filteredModifiers.length / perPage));
   const paginatedModifiers = filteredModifiers.slice((page - 1) * perPage, page * perPage);
@@ -295,6 +305,15 @@ export default function ModifiersPage() {
         </div>
       )}
 
+      {/* Search */}
+      <div className="mb-4 max-w-xs">
+        <Input
+          placeholder="Search by name, reference, or option…"
+          value={search}
+          onChange={e => { setSearch(e.target.value); setPage(1); }}
+        />
+      </div>
+
       {/* Tabs */}
       <TabBar
         tabs={[
@@ -302,7 +321,7 @@ export default function ModifiersPage() {
           { key: 'inactive', label: 'Inactive', count: inactiveCount },
         ]}
         active={activeTab}
-        onChange={key => { setActiveTab(key as 'active' | 'inactive'); setSelectedIds(new Set()); setPage(1); }}
+        onChange={key => { setActiveTab(key as 'active' | 'inactive'); setSelectedIds(new Set()); setPage(1); setSearch(''); }}
       />
 
       {/* Bulk action bar */}
