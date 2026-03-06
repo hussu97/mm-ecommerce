@@ -4,11 +4,14 @@ import { Fragment, useEffect, useState } from 'react';
 import { modifiersApi, bulkApi, ApiError } from '@/lib/api';
 import type { Modifier, ModifierOption } from '@/lib/types';
 import { Badge, Button, Input, Pagination, TabBar } from '@/components/ui';
+import { TranslationFields } from '@/components/TranslationFields';
+import { useLanguages } from '@/hooks/useLanguages';
 
-const BLANK_MODIFIER = { reference: '', name: '', name_ar: '' };
-const BLANK_OPTION = { name: '', name_ar: '', sku: '', price: '0', calories: '', is_active: true, display_order: '0' };
+const BLANK_MODIFIER = { reference: '', name: '' };
+const BLANK_OPTION = { name: '', sku: '', price: '0', calories: '', is_active: true, display_order: '0' };
 
 export default function ModifiersPage() {
+  const { languages } = useLanguages();
   const [modifiers, setModifiers] = useState<Modifier[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'active' | 'inactive'>('active');
@@ -17,6 +20,7 @@ export default function ModifiersPage() {
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState(BLANK_MODIFIER);
+  const [formTranslations, setFormTranslations] = useState<Record<string, Record<string, string>>>({});
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
 
@@ -40,12 +44,14 @@ export default function ModifiersPage() {
   // Option add form (per modifier)
   const [addingOptionFor, setAddingOptionFor] = useState<string | null>(null);
   const [optionForm, setOptionForm] = useState(BLANK_OPTION);
+  const [optionTranslations, setOptionTranslations] = useState<Record<string, Record<string, string>>>({});
   const [savingOption, setSavingOption] = useState(false);
   const [optionError, setOptionError] = useState('');
 
   // Option edit
   const [editingOptionId, setEditingOptionId] = useState<string | null>(null);
   const [editOptionForm, setEditOptionForm] = useState(BLANK_OPTION);
+  const [editOptionTranslations, setEditOptionTranslations] = useState<Record<string, Record<string, string>>>({});
   const [savingEditOption, setSavingEditOption] = useState(false);
 
   // Option delete
@@ -82,22 +88,36 @@ export default function ModifiersPage() {
   function openAdd() {
     setEditId(null);
     setForm(BLANK_MODIFIER);
+    setFormTranslations({});
     setFormError('');
     setShowForm(true);
   }
 
   function openEdit(m: Modifier) {
     setEditId(m.id);
-    setForm({ reference: m.reference, name: m.name, name_ar: m.translations?.ar?.name ?? '' });
+    setForm({ reference: m.reference, name: m.name });
+    setFormTranslations(m.translations ?? {});
     setFormError('');
     setShowForm(true);
+  }
+
+  function cleanTranslations(t: Record<string, Record<string, string>>): Record<string, Record<string, string>> | null {
+    const result: Record<string, Record<string, string>> = {};
+    for (const [lang, fields] of Object.entries(t)) {
+      const filtered: Record<string, string> = {};
+      for (const [k, v] of Object.entries(fields)) {
+        if (v.trim()) filtered[k] = v.trim();
+      }
+      if (Object.keys(filtered).length > 0) result[lang] = filtered;
+    }
+    return Object.keys(result).length > 0 ? result : null;
   }
 
   async function handleSave() {
     if (!form.reference.trim() || !form.name.trim()) { setFormError('Reference and Name are required.'); return; }
     setSaving(true); setFormError('');
     try {
-      const data = { reference: form.reference.trim(), name: form.name.trim(), translations: form.name_ar.trim() ? { ar: { name: form.name_ar.trim() } } : null };
+      const data = { reference: form.reference.trim(), name: form.name.trim(), translations: cleanTranslations(formTranslations) };
       if (editId) {
         const updated = await modifiersApi.update(editId, data);
         setModifiers(prev => prev.map(m => m.id === editId ? updated : m));
@@ -177,6 +197,7 @@ export default function ModifiersPage() {
   function openAddOption(modifierId: string) {
     setAddingOptionFor(modifierId);
     setOptionForm(BLANK_OPTION);
+    setOptionTranslations({});
     setOptionError('');
   }
 
@@ -186,7 +207,7 @@ export default function ModifiersPage() {
     try {
       const data = {
         name: optionForm.name.trim(),
-        translations: optionForm.name_ar.trim() ? { ar: { name: optionForm.name_ar.trim() } } : null,
+        translations: cleanTranslations(optionTranslations),
         sku: optionForm.sku.trim(),
         price: Number(optionForm.price) || 0,
         calories: optionForm.calories ? Number(optionForm.calories) : null,
@@ -207,13 +228,13 @@ export default function ModifiersPage() {
     setEditingOptionId(opt.id);
     setEditOptionForm({
       name: opt.name,
-      name_ar: opt.translations?.ar?.name ?? '',
       sku: opt.sku,
       price: String(opt.price),
       calories: opt.calories != null ? String(opt.calories) : '',
       is_active: opt.is_active,
       display_order: String(opt.display_order),
     });
+    setEditOptionTranslations(opt.translations ?? {});
   }
 
   async function handleSaveOption(modifierId: string, optionId: string) {
@@ -221,7 +242,7 @@ export default function ModifiersPage() {
     try {
       const data = {
         name: editOptionForm.name.trim() || undefined,
-        translations: editOptionForm.name_ar.trim() ? { ar: { name: editOptionForm.name_ar.trim() } } : null,
+        translations: cleanTranslations(editOptionTranslations),
         sku: editOptionForm.sku.trim() || undefined,
         price: editOptionForm.price !== '' ? Number(editOptionForm.price) : undefined,
         calories: editOptionForm.calories ? Number(editOptionForm.calories) : null,
@@ -278,7 +299,7 @@ export default function ModifiersPage() {
           {formError && (
             <div className="bg-red-50 border border-red-200 text-red-600 text-xs px-3 py-2 mb-4">{formError}</div>
           )}
-          <div className="grid sm:grid-cols-3 gap-4">
+          <div className="grid sm:grid-cols-2 gap-4">
             <Input
               label="Reference"
               value={form.reference}
@@ -291,13 +312,13 @@ export default function ModifiersPage() {
               value={form.name}
               onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
             />
-            <Input
-              label="Name (Arabic)"
-              value={form.name_ar}
-              onChange={e => setForm(f => ({ ...f, name_ar: e.target.value }))}
-              placeholder="Optional"
-            />
           </div>
+          <TranslationFields
+            languages={languages}
+            fields={[{ key: 'name', label: 'Name' }]}
+            translations={formTranslations}
+            onChange={setFormTranslations}
+          />
           <div className="flex gap-3 mt-5">
             <Button onClick={handleSave} loading={saving}>{editId ? 'Save Changes' : 'Create Modifier'}</Button>
             <Button variant="ghost" onClick={() => setShowForm(false)} disabled={saving}>Cancel</Button>
@@ -354,7 +375,6 @@ export default function ModifiersPage() {
                 </th>
                 <th className="px-4 py-3 w-6"></th>
                 <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Name</th>
-                <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden sm:table-cell">Name (Arabic)</th>
                 <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden md:table-cell">Reference</th>
                 <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500">Options</th>
                 <th className="px-4 py-3 text-right text-[11px] font-body uppercase tracking-widest text-gray-500">Actions</th>
@@ -363,7 +383,7 @@ export default function ModifiersPage() {
             <tbody>
               {paginatedModifiers.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-400 font-body">No modifiers yet.</td>
+                  <td colSpan={6} className="px-4 py-10 text-center text-sm text-gray-400 font-body">No modifiers yet.</td>
                 </tr>
               ) : paginatedModifiers.map(m => (
                 <Fragment key={m.id}>
@@ -388,9 +408,6 @@ export default function ModifiersPage() {
                     </td>
                     <td className="px-4 py-2.5">
                       <span className="font-body font-medium text-gray-800 text-sm">{m.name}</span>
-                    </td>
-                    <td className="px-4 py-2.5 hidden sm:table-cell">
-                      <span className="text-xs font-body text-gray-500">{m.translations?.ar?.name ?? '—'}</span>
                     </td>
                     <td className="px-4 py-2.5 hidden md:table-cell">
                       <span className="text-xs font-body text-gray-400">{m.reference}</span>
@@ -425,7 +442,7 @@ export default function ModifiersPage() {
                   {/* Expanded options */}
                   {expandedId === m.id && (
                     <tr key={`${m.id}-options`}>
-                      <td colSpan={7} className="bg-gray-50 border-b border-gray-100">
+                      <td colSpan={6} className="bg-gray-50 border-b border-gray-100">
                         <div className="px-8 py-4">
                           <div className="flex items-center justify-between mb-3">
                             <span className="text-[11px] font-body uppercase tracking-widest text-gray-500">Options</span>
@@ -531,12 +548,6 @@ export default function ModifiersPage() {
                                   onChange={e => setOptionForm(f => ({ ...f, name: e.target.value }))}
                                 />
                                 <Input
-                                  label="Name (Arabic)"
-                                  value={optionForm.name_ar}
-                                  onChange={e => setOptionForm(f => ({ ...f, name_ar: e.target.value }))}
-                                  placeholder="Optional"
-                                />
-                                <Input
                                   label="SKU"
                                   value={optionForm.sku}
                                   onChange={e => setOptionForm(f => ({ ...f, sku: e.target.value }))}
@@ -565,7 +576,13 @@ export default function ModifiersPage() {
                                   onChange={e => setOptionForm(f => ({ ...f, display_order: e.target.value }))}
                                 />
                               </div>
-                              <label className="flex items-center gap-2 text-xs font-body text-gray-600 mb-3">
+                              <TranslationFields
+                                languages={languages}
+                                fields={[{ key: 'name', label: 'Name' }]}
+                                translations={optionTranslations}
+                                onChange={setOptionTranslations}
+                              />
+                              <label className="flex items-center gap-2 text-xs font-body text-gray-600 mb-3 mt-3">
                                 <input
                                   type="checkbox"
                                   checked={optionForm.is_active}

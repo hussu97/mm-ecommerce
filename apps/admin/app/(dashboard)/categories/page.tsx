@@ -4,10 +4,13 @@ import { useEffect, useState } from 'react';
 import { categoriesApi, uploadsApi, bulkApi, ApiError } from '@/lib/api';
 import type { Category } from '@/lib/types';
 import { Button, Input, Pagination, TabBar, Textarea } from '@/components/ui';
+import { TranslationFields } from '@/components/TranslationFields';
+import { useLanguages } from '@/hooks/useLanguages';
 
 const BLANK = { name: '', slug: '', description: '', image_url: '', display_order: 0 };
 
 export default function CategoriesPage() {
+  const { languages } = useLanguages();
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'active' | 'inactive'>('active');
@@ -22,6 +25,7 @@ export default function CategoriesPage() {
   const [reorderingSlug, setReorderingSlug] = useState<string | null>(null);
   const [apiError, setApiError] = useState('');
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [translations, setTranslations] = useState<Record<string, Record<string, string>>>({});
   const [search, setSearch] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulking, setBulking] = useState(false);
@@ -52,6 +56,7 @@ export default function CategoriesPage() {
   function openAdd() {
     setEditSlug(null);
     setForm({ ...BLANK, display_order: categories.length });
+    setTranslations({});
     setErrors({});
     setApiError('');
     setShowForm(true);
@@ -66,6 +71,7 @@ export default function CategoriesPage() {
       image_url: cat.image_url ?? '',
       display_order: cat.display_order,
     });
+    setTranslations(cat.translations ?? {});
     setErrors({});
     setApiError('');
     setShowForm(true);
@@ -104,10 +110,19 @@ export default function CategoriesPage() {
     setSaving(true);
     setApiError('');
     try {
+      const cleanTranslations: Record<string, Record<string, string>> = {};
+      for (const [lang, fields] of Object.entries(translations)) {
+        const filtered: Record<string, string> = {};
+        for (const [k, v] of Object.entries(fields)) {
+          if (v.trim()) filtered[k] = v.trim();
+        }
+        if (Object.keys(filtered).length > 0) cleanTranslations[lang] = filtered;
+      }
       const data = {
         name: form.name.trim(),
         slug: form.slug.trim(),
         description: form.description.trim() || null,
+        translations: Object.keys(cleanTranslations).length > 0 ? cleanTranslations : undefined,
         image_url: form.image_url.trim() || null,
         display_order: form.display_order,
       };
@@ -254,6 +269,15 @@ export default function CategoriesPage() {
           <div className="mt-4">
             <Textarea label="Description (optional)" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2} />
           </div>
+          <TranslationFields
+            languages={languages}
+            fields={[
+              { key: 'name', label: 'Name' },
+              { key: 'description', label: 'Description', type: 'textarea' },
+            ]}
+            translations={translations}
+            onChange={setTranslations}
+          />
           <div className="mt-4 flex items-end gap-3">
             <div className="flex-1">
               <Input label="Image URL" value={form.image_url} onChange={e => setForm(f => ({ ...f, image_url: e.target.value }))} placeholder="https://... or upload below" />

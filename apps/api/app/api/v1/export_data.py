@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_admin_user, get_db
+from app.models.language import Language
 from app.models.user import User
 from app.services import export_service
 
@@ -19,12 +21,22 @@ def _csv_response(content: str, filename: str) -> StreamingResponse:
     )
 
 
+async def _get_language_codes(db: AsyncSession) -> list[str]:
+    result = await db.execute(
+        select(Language.code)
+        .where(Language.is_active == True, Language.is_default == False)  # noqa: E712
+        .order_by(Language.display_order)
+    )
+    return list(result.scalars().all())
+
+
 @router.get("/categories")
 async def export_categories(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_admin_user),
 ):
-    content = await export_service.export_categories(db)
+    languages = await _get_language_codes(db)
+    content = await export_service.export_categories(db, languages)
     return _csv_response(content, "categories.csv")
 
 
@@ -33,7 +45,8 @@ async def export_products(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_admin_user),
 ):
-    content = await export_service.export_products(db)
+    languages = await _get_language_codes(db)
+    content = await export_service.export_products(db, languages)
     return _csv_response(content, "products.csv")
 
 
@@ -42,7 +55,8 @@ async def export_modifiers(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_admin_user),
 ):
-    content = await export_service.export_modifiers(db)
+    languages = await _get_language_codes(db)
+    content = await export_service.export_modifiers(db, languages)
     return _csv_response(content, "modifiers.csv")
 
 
@@ -51,7 +65,8 @@ async def export_modifier_options(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_admin_user),
 ):
-    content = await export_service.export_modifier_options(db)
+    languages = await _get_language_codes(db)
+    content = await export_service.export_modifier_options(db, languages)
     return _csv_response(content, "modifier_options.csv")
 
 

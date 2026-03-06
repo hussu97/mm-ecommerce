@@ -44,6 +44,36 @@ def _parse_int(val: str, default: int = 0) -> int:
         return default
 
 
+def _extract_translations(
+    row: dict,
+    fields: list[str],
+) -> dict[str, dict[str, str]]:
+    """Scan CSV row for `{field}_{langcode}` columns and build translations dict.
+
+    Also handles Foodics compat: `name_localized` -> ar.name,
+    `description_localized` -> ar.description.
+    """
+    translations: dict[str, dict[str, str]] = {}
+
+    for field in fields:
+        # Foodics compat: {field}_localized -> ar.{field}
+        localized = (row.get(f"{field}_localized") or "").strip()
+        if localized:
+            translations.setdefault("ar", {})[field] = localized
+
+        # Scan all columns for {field}_{langcode} pattern
+        for col_name, col_val in row.items():
+            m = re.match(rf"^{re.escape(field)}_([a-z]{{2,10}})$", col_name)
+            if m:
+                val = (col_val or "").strip()
+                if val:
+                    lang_code = m.group(1)
+                    # Don't overwrite if already set from _localized
+                    translations.setdefault(lang_code, {})[field] = val
+
+    return translations
+
+
 async def import_categories(db: AsyncSession, rows: list[dict]) -> ImportResult:
     result = ImportResult()
 
@@ -57,13 +87,8 @@ async def import_categories(db: AsyncSession, rows: list[dict]) -> ImportResult:
                 continue
 
             foodics_id = (row.get("id") or "").strip()
-            name_ar = (
-                row.get("name_localized") or row.get("name_ar") or ""
-            ).strip() or None
             image_url = (row.get("image") or "").strip() or None
-            translations: dict = {}
-            if name_ar:
-                translations["ar"] = {"name": name_ar}
+            translations = _extract_translations(row, ["name", "description"])
 
             # Build slug from reference if available, else name
             slug_base = reference if reference else name
@@ -88,7 +113,10 @@ async def import_categories(db: AsyncSession, rows: list[dict]) -> ImportResult:
             if existing:
                 existing.name = name
                 if translations:
-                    existing.translations = translations
+                    merged = dict(existing.translations or {})
+                    for lang, fields in translations.items():
+                        merged.setdefault(lang, {}).update(fields)
+                    existing.translations = merged
                 existing.reference = reference or existing.reference
                 if image_url:
                     existing.image_url = image_url
@@ -145,21 +173,8 @@ async def import_products(db: AsyncSession, rows: list[dict]) -> ImportResult:
                 continue
 
             foodics_id = (row.get("id") or "").strip()
-            name_ar = (
-                row.get("name_localized") or row.get("name_ar") or ""
-            ).strip() or None
             description = (row.get("description") or "").strip() or None
-            desc_ar = (
-                row.get("description_localized") or row.get("description_ar") or ""
-            ).strip() or None
-            prod_translations: dict = {}
-            if name_ar or desc_ar:
-                ar_fields: dict[str, str] = {}
-                if name_ar:
-                    ar_fields["name"] = name_ar
-                if desc_ar:
-                    ar_fields["description"] = desc_ar
-                prod_translations["ar"] = ar_fields
+            prod_translations = _extract_translations(row, ["name", "description"])
             category_ref = (row.get("category_reference") or "").strip()
             base_price = _parse_decimal(row.get("price", "0"))
             image_url = (row.get("image") or "").strip() or None
@@ -205,7 +220,10 @@ async def import_products(db: AsyncSession, rows: list[dict]) -> ImportResult:
                 existing.sku = sku or existing.sku
                 existing.description = description
                 if prod_translations:
-                    existing.translations = prod_translations
+                    merged = dict(existing.translations or {})
+                    for lang, fields in prod_translations.items():
+                        merged.setdefault(lang, {}).update(fields)
+                    existing.translations = merged
                 existing.base_price = base_price
                 existing.category_id = category_id
                 existing.is_active = is_active
@@ -278,12 +296,7 @@ async def import_modifiers(db: AsyncSession, rows: list[dict]) -> ImportResult:
                 continue
 
             foodics_id = (row.get("id") or "").strip()
-            mod_name_ar = (
-                row.get("name_localized") or row.get("name_ar") or ""
-            ).strip() or None
-            mod_translations: dict = {}
-            if mod_name_ar:
-                mod_translations["ar"] = {"name": mod_name_ar}
+            mod_translations = _extract_translations(row, ["name"])
 
             res = await db.execute(
                 select(Modifier).where(Modifier.reference == reference)
@@ -293,7 +306,10 @@ async def import_modifiers(db: AsyncSession, rows: list[dict]) -> ImportResult:
             if existing:
                 existing.name = name
                 if mod_translations:
-                    existing.translations = mod_translations
+                    merged = dict(existing.translations or {})
+                    for lang, fields in mod_translations.items():
+                        merged.setdefault(lang, {}).update(fields)
+                    existing.translations = merged
                 result.updated += 1
             else:
                 mod_id = None
@@ -351,12 +367,7 @@ async def import_modifier_options(db: AsyncSession, rows: list[dict]) -> ImportR
                 continue
 
             foodics_id = (row.get("id") or "").strip()
-            opt_name_ar = (
-                row.get("name_localized") or row.get("name_ar") or ""
-            ).strip() or None
-            opt_translations: dict = {}
-            if opt_name_ar:
-                opt_translations["ar"] = {"name": opt_name_ar}
+            opt_translations = _extract_translations(row, ["name"])
             price = _parse_decimal(row.get("price", "0"))
             is_active = _parse_bool(row.get("is_active", "1"))
 
@@ -368,7 +379,10 @@ async def import_modifier_options(db: AsyncSession, rows: list[dict]) -> ImportR
             if existing:
                 existing.name = name
                 if opt_translations:
-                    existing.translations = opt_translations
+                    merged = dict(existing.translations or {})
+                    for lang, fields in opt_translations.items():
+                        merged.setdefault(lang, {}).update(fields)
+                    existing.translations = merged
                 existing.price = price
                 existing.is_active = is_active
                 existing.modifier_id = modifier.id

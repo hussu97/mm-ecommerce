@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation';
 import { categoriesApi, productsApi, modifiersApi, uploadsApi, ApiError } from '@/lib/api';
 import type { Category, Modifier, Product } from '@/lib/types';
 import { Button, Input, Select, Textarea } from '@/components/ui';
+import { TranslationFields } from '@/components/TranslationFields';
+import { useLanguages } from '@/hooks/useLanguages';
 import { slugify } from '@/lib/utils';
 
 interface Props {
@@ -15,16 +17,15 @@ interface Props {
 export function ProductForm({ product }: Props) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { languages } = useLanguages();
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [form, setForm] = useState({
     name: product?.name ?? '',
-    name_ar: product?.translations?.ar?.name ?? '',
     slug: product?.slug ?? '',
     sku: product?.sku ?? '',
     category_id: product?.category_id ?? '',
     description: product?.description ?? '',
-    description_ar: product?.translations?.ar?.description ?? '',
     base_price: String(product?.base_price ?? '0'),
     calories: String(product?.calories ?? ''),
     preparation_time: String(product?.preparation_time ?? ''),
@@ -33,6 +34,7 @@ export function ProductForm({ product }: Props) {
     is_stock_product: product?.is_stock_product ?? false,
     display_order: String(product?.display_order ?? 0),
   });
+  const [translations, setTranslations] = useState<Record<string, Record<string, string>>>(product?.translations ?? {});
   const [imageUrls, setImageUrls] = useState<string[]>(product?.image_urls ?? []);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -113,9 +115,17 @@ export function ProductForm({ product }: Props) {
       sku: form.sku.trim() || null,
       category_id: form.category_id || null,
       description: form.description.trim() || null,
-      translations: (form.name_ar.trim() || form.description_ar.trim())
-        ? { ar: { ...(form.name_ar.trim() ? { name: form.name_ar.trim() } : {}), ...(form.description_ar.trim() ? { description: form.description_ar.trim() } : {}) } }
-        : null,
+      translations: (() => {
+        const t: Record<string, Record<string, string>> = {};
+        for (const [lang, fields] of Object.entries(translations)) {
+          const filtered: Record<string, string> = {};
+          for (const [k, v] of Object.entries(fields)) {
+            if (v.trim()) filtered[k] = v.trim();
+          }
+          if (Object.keys(filtered).length > 0) t[lang] = filtered;
+        }
+        return Object.keys(t).length > 0 ? t : null;
+      })(),
       base_price: Number(form.base_price),
       calories: form.calories.trim() ? Number(form.calories) : null,
       preparation_time: form.preparation_time.trim() ? Number(form.preparation_time) : null,
@@ -158,12 +168,6 @@ export function ProductForm({ product }: Props) {
             value={form.name}
             onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
             error={errors.name}
-          />
-          <Input
-            label="Name (Arabic)"
-            value={form.name_ar}
-            onChange={e => setForm(f => ({ ...f, name_ar: e.target.value }))}
-            placeholder="Optional"
           />
         </div>
         <div className="grid sm:grid-cols-2 gap-4 mt-4">
@@ -226,15 +230,15 @@ export function ProductForm({ product }: Props) {
             placeholder="Product description..."
           />
         </div>
-        <div className="mt-4">
-          <Textarea
-            label="Description (Arabic)"
-            value={form.description_ar}
-            onChange={e => setForm(f => ({ ...f, description_ar: e.target.value }))}
-            rows={2}
-            placeholder="Optional"
-          />
-        </div>
+        <TranslationFields
+          languages={languages}
+          fields={[
+            { key: 'name', label: 'Name' },
+            { key: 'description', label: 'Description', type: 'textarea' },
+          ]}
+          translations={translations}
+          onChange={setTranslations}
+        />
         <div className="flex flex-wrap gap-6 mt-4">
           <label className="flex items-center gap-2 cursor-pointer text-xs font-body text-gray-600 uppercase tracking-wider">
             <input

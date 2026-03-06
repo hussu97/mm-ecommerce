@@ -1,9 +1,10 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { importApi, exportApi, ApiError } from '@/lib/api';
 import type { ImportResult } from '@/lib/types';
 import { Button } from '@/components/ui';
+import { useLanguages } from '@/hooks/useLanguages';
 
 interface ImportSection {
   key: keyof typeof importApi;
@@ -12,44 +13,6 @@ interface ImportSection {
   description: string;
   columns: string;
 }
-
-const SECTIONS: ImportSection[] = [
-  {
-    key: 'categories',
-    exportKey: 'categories',
-    title: '1. Categories',
-    description: 'Import product categories from Foodics Categories Export.',
-    columns: 'id, name, name_ar, reference, image',
-  },
-  {
-    key: 'products',
-    exportKey: 'products',
-    title: '2. Products',
-    description: 'Import products. Categories must be imported first.',
-    columns: 'id, name, sku, category_reference, price, description, image, name_ar, description_ar, is_active, is_stock_product, calories, preparation_time',
-  },
-  {
-    key: 'modifiers',
-    exportKey: 'modifiers',
-    title: '3. Modifiers',
-    description: 'Import modifier groups (e.g. "Size", "Your Choice of Quantity").',
-    columns: 'id, reference, name, name_ar',
-  },
-  {
-    key: 'modifierOptions',
-    exportKey: 'modifier-options',
-    title: '4. Modifier Options',
-    description: 'Import modifier options. Modifiers must be imported first.',
-    columns: 'id, modifier_reference, name, sku, price, name_ar, is_active',
-  },
-  {
-    key: 'productModifiers',
-    exportKey: 'product-modifiers',
-    title: '5. Product Modifiers',
-    description: 'Link modifiers to products. Products and Modifiers must be imported first.',
-    columns: 'product_sku, modifier_reference, minimum_options, maximum_options, free_options, unique_options',
-  },
-];
 
 function ImportCard({ section }: { section: ImportSection }) {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -155,6 +118,56 @@ function ImportCard({ section }: { section: ImportSection }) {
 }
 
 export default function ImportPage() {
+  const { languages } = useLanguages();
+
+  const sections = useMemo<ImportSection[]>(() => {
+    const langCols = (fields: string[]) =>
+      languages.flatMap(l => fields.map(f => `${f}_${l.code}`)).join(', ');
+
+    const catLang = langCols(['name', 'description']);
+    const prodLang = langCols(['name', 'description']);
+    const modLang = langCols(['name']);
+    const optLang = langCols(['name']);
+
+    return [
+      {
+        key: 'categories',
+        exportKey: 'categories',
+        title: '1. Categories',
+        description: 'Import product categories from Foodics Categories Export.',
+        columns: ['id', 'name', catLang, 'reference', 'image'].filter(Boolean).join(', '),
+      },
+      {
+        key: 'products',
+        exportKey: 'products',
+        title: '2. Products',
+        description: 'Import products. Categories must be imported first.',
+        columns: ['id', 'name', 'sku', 'category_reference', 'price', 'description', 'image', prodLang, 'is_active', 'is_stock_product', 'calories', 'preparation_time'].filter(Boolean).join(', '),
+      },
+      {
+        key: 'modifiers',
+        exportKey: 'modifiers',
+        title: '3. Modifiers',
+        description: 'Import modifier groups (e.g. "Size", "Your Choice of Quantity").',
+        columns: ['id', 'reference', 'name', modLang].filter(Boolean).join(', '),
+      },
+      {
+        key: 'modifierOptions',
+        exportKey: 'modifier-options',
+        title: '4. Modifier Options',
+        description: 'Import modifier options. Modifiers must be imported first.',
+        columns: ['id', 'modifier_reference', 'name', 'sku', 'price', optLang, 'is_active'].filter(Boolean).join(', '),
+      },
+      {
+        key: 'productModifiers',
+        exportKey: 'product-modifiers',
+        title: '5. Product Modifiers',
+        description: 'Link modifiers to products. Products and Modifiers must be imported first.',
+        columns: 'product_sku, modifier_reference, minimum_options, maximum_options, free_options, unique_options',
+      },
+    ];
+  }, [languages]);
+
   return (
     <div>
       <div className="mb-6">
@@ -165,7 +178,7 @@ export default function ImportPage() {
       </div>
 
       <div className="space-y-4">
-        {SECTIONS.map(section => (
+        {sections.map(section => (
           <ImportCard key={section.key} section={section} />
         ))}
       </div>
