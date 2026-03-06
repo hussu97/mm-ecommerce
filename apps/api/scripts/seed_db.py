@@ -21,9 +21,9 @@ PRODUCTS: dict = {}
 
 PROMO_CODES = [
     {
-        "code": "MM10",
+        "code": "MM15",
         "discount_type": "percentage",
-        "discount_value": 10.00,
+        "discount_value": 15.00,
         "is_active": True,
     },
     {
