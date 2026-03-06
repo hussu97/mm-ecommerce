@@ -10,6 +10,7 @@ const PAGE_META: Record<string, { label: string; description: string; icon: stri
   about: { label: 'About', description: 'Our story, values and CTA', icon: 'person' },
   faq: { label: 'FAQ', description: 'Frequently asked questions', icon: 'help_outline' },
   contact: { label: 'Contact', description: 'Contact info and header text', icon: 'mail' },
+  privacy: { label: 'Privacy Policy', description: 'Privacy policy sections and legal text', icon: 'shield' },
 };
 
 export default function ContentPage() {

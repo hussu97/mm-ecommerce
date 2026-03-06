@@ -9,6 +9,7 @@ import { Button, Spinner } from '@/components/ui';
 import { AboutEditor } from '@/components/content/AboutEditor';
 import { FaqEditor } from '@/components/content/FaqEditor';
 import { ContactEditor } from '@/components/content/ContactEditor';
+import { PrivacyEditor } from '@/components/content/PrivacyEditor';
 
 type PageContent = Record<string, Record<string, unknown>>;
 
@@ -65,6 +66,7 @@ export default function ContentEditorPage() {
     if (slug === 'about') return <AboutEditor content={localeContent} onChange={handleLocaleContent} />;
     if (slug === 'faq') return <FaqEditor content={localeContent} onChange={handleLocaleContent} />;
     if (slug === 'contact') return <ContactEditor content={localeContent} onChange={handleLocaleContent} />;
+    if (slug === 'privacy') return <PrivacyEditor content={localeContent} onChange={handleLocaleContent} />;
     return <p className="text-sm text-gray-500 font-body">No editor for this page.</p>;
   }
 
