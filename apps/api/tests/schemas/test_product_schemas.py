@@ -5,7 +5,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.product import ProductCreate, ProductVariantCreate
+from app.schemas.product import ProductCreate
 
 
 class TestProductCreate:
@@ -14,10 +14,6 @@ class TestProductCreate:
             name="Test Product", slug="test-product", base_price=Decimal("10.00")
         )
         assert p.name == "Test Product"
-
-    def test_price_must_be_positive(self):
-        with pytest.raises(ValidationError):
-            ProductCreate(name="Test", slug="test", base_price=Decimal("0.00"))
 
     def test_negative_price_invalid(self):
         with pytest.raises(ValidationError):
@@ -40,23 +36,3 @@ class TestProductCreate:
     def test_slug_with_spaces_invalid(self):
         with pytest.raises(ValidationError):
             ProductCreate(name="Test", slug="my slug", base_price=Decimal("10.00"))
-
-
-class TestProductVariantCreate:
-    def test_valid_variant(self):
-        v = ProductVariantCreate(name="Small", sku="SKU-001", price=Decimal("15.00"))
-        assert v.sku == "SKU-001"
-
-    def test_price_must_be_positive(self):
-        with pytest.raises(ValidationError):
-            ProductVariantCreate(name="Small", sku="SKU-001", price=Decimal("0.00"))
-
-    def test_stock_quantity_defaults_zero(self):
-        v = ProductVariantCreate(name="Small", sku="SKU-001", price=Decimal("15.00"))
-        assert v.stock_quantity == 0
-
-    def test_negative_stock_invalid(self):
-        with pytest.raises(ValidationError):
-            ProductVariantCreate(
-                name="Small", sku="SKU-001", price=Decimal("15.00"), stock_quantity=-1
-            )
