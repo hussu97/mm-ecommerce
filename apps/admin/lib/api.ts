@@ -84,7 +84,7 @@ export const categoriesApi = {
 // ─── Products ─────────────────────────────────────────────────────────────────
 
 export const productsApi = {
-  list: (params?: { search?: string; category?: string[]; page?: number; per_page?: number; include_inactive?: boolean; is_active?: boolean }) => {
+  list: (params?: { search?: string; category?: string[]; page?: number; per_page?: number; include_inactive?: boolean; is_active?: boolean; sort?: string }) => {
     if (!params) return api.get<ProductListResponse>('/products');
     const p = new URLSearchParams();
     if (params.search) p.set('search', params.search);
@@ -93,6 +93,7 @@ export const productsApi = {
     if (params.per_page !== undefined) p.set('per_page', String(params.per_page));
     if (params.include_inactive !== undefined) p.set('include_inactive', String(params.include_inactive));
     if (params.is_active !== undefined) p.set('is_active', String(params.is_active));
+    if (params.sort) p.set('sort', params.sort);
     const qs = p.toString();
     return api.get<ProductListResponse>(`/products${qs ? '?' + qs : ''}`);
   },

@@ -30,6 +30,7 @@ export default function ProductsPage() {
       const base = {
         search: search || undefined,
         category: categoryFilter.length > 0 ? categoryFilter : undefined,
+        sort: 'category',
         page,
         per_page: perPage,
       };

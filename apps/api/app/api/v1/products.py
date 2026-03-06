@@ -36,7 +36,8 @@ async def list_products(
     search: str | None = Query(None, description="Search by product name"),
     featured: bool | None = Query(None, description="Filter featured products"),
     sort: str = Query(
-        "newest", description="Sort order: newest|oldest|price_asc|price_desc|name"
+        "newest",
+        description="Sort order: newest|oldest|price_asc|price_desc|name|category",
     ),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),

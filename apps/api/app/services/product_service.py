@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.core.exceptions import ConflictError, NotFoundError
+from app.models.category import Category
 from app.models.modifier import Modifier, ProductModifier
 from app.models.product import Product
 from app.schemas.product import (
@@ -25,6 +26,7 @@ _SORT_MAP = {
     "price_asc": Product.base_price.asc(),
     "price_desc": Product.base_price.desc(),
     "name": Product.name.asc(),
+    "category": None,  # handled specially — needs outerjoin
 }
 
 
@@ -49,13 +51,14 @@ async def get_all(
     include_inactive: bool = False,
     is_active: bool | None = None,
 ) -> tuple[list[ProductResponse], int]:
-    from app.models.category import Category  # avoid circular at module level
+    stmt = select(Product).options(*_product_load_options())
 
-    stmt = (
-        select(Product)
-        .options(*_product_load_options())
-        .order_by(_SORT_MAP.get(sort, Product.created_at.desc()))
-    )
+    if sort == "category":
+        stmt = stmt.outerjoin(Category, Product.category_id == Category.id).order_by(
+            Category.name.asc(), Product.name.asc()
+        )
+    else:
+        stmt = stmt.order_by(_SORT_MAP.get(sort, Product.created_at.desc()))
 
     if is_active is not None:
         stmt = stmt.where(Product.is_active == is_active)  # noqa: E712
@@ -63,7 +66,10 @@ async def get_all(
         stmt = stmt.where(Product.is_active == True)  # noqa: E712
 
     if category_slugs:
-        stmt = stmt.join(Product.category).where(Category.slug.in_(category_slugs))
+        if sort != "category":
+            stmt = stmt.join(Product.category).where(Category.slug.in_(category_slugs))
+        else:
+            stmt = stmt.where(Category.slug.in_(category_slugs))
 
     if search:
         stmt = stmt.where(Product.name.ilike(f"%{_escape_like(search)}%", escape="\\"))
