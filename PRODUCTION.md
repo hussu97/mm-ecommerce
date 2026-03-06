@@ -28,7 +28,7 @@ Internet
 | Web storefront (Next.js) | Vercel | Hobby (free) | $0 |
 | Admin panel (Next.js) | Vercel | Hobby (free, same account) | $0 |
 | Backend VM (e2-micro) | GCP Compute Engine | On-demand + sustained discount | ~$4 |
-| Boot disk (30 GB SSD) | GCP Persistent Disk | Standard SSD | ~$5 |
+| Boot disk (20 GB SSD) | GCP Persistent Disk | Standard SSD | ~$5 |
 | Database backups | GCP Cloud Storage | Standard, ~2 GB | ~$0.05 |
 | Network egress | GCP | ~5 GB/mo | ~$0.40 |
 | Media storage | Cloudflare R2 | Free tier (10 GB) | $0 |
@@ -71,7 +71,7 @@ gcloud compute instances create mm-backend \
   --machine-type=e2-micro \
   --image-family=debian-12 \
   --image-project=debian-cloud \
-  --boot-disk-size=30GB \
+  --boot-disk-size=20GB \
   --boot-disk-type=pd-ssd \
   --tags=http-server,https-server \
   --scopes=cloud-platform
