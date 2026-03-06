@@ -1,15 +1,14 @@
 import type { Metadata } from "next";
-import { Playfair_Display, Jost, Amiri, Cairo } from "next/font/google";
+import { Raleway, Jost, Tajawal, Cairo } from "next/font/google";
 import Script from "next/script";
 import { cookies } from "next/headers";
 import "./globals.css";
 import { Providers } from "./providers";
 
-const playfairDisplay = Playfair_Display({
+const raleway = Raleway({
   subsets: ["latin"],
-  weight: ["400", "600"],
-  style: ["normal", "italic"],
-  variable: "--font-playfair",
+  weight: ["300", "400", "500", "600", "700"],
+  variable: "--font-raleway",
   display: "swap",
 });
 
@@ -20,10 +19,10 @@ const jost = Jost({
   display: "swap",
 });
 
-const amiri = Amiri({
+const tajawal = Tajawal({
   subsets: ["arabic"],
-  weight: ["400", "700"],
-  variable: "--font-amiri",
+  weight: ["300", "400", "500", "700"],
+  variable: "--font-tajawal",
   display: "swap",
 });
 
@@ -65,7 +64,7 @@ export default async function RootLayout({
   const dir = locale === 'ar' ? 'rtl' : 'ltr';
 
   return (
-    <html lang={locale} dir={dir} className={`${playfairDisplay.variable} ${jost.variable} ${amiri.variable} ${cairo.variable}`}>
+    <html lang={locale} dir={dir} className={`${raleway.variable} ${jost.variable} ${tajawal.variable} ${cairo.variable}`}>
       <head>
         <link
           href="https://fonts.googleapis.com/icon?family=Material+Icons"

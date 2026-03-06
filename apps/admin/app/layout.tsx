@@ -1,13 +1,12 @@
 import type { Metadata } from "next";
-import { Playfair_Display, Jost } from "next/font/google";
+import { Raleway, Jost } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 
-const playfairDisplay = Playfair_Display({
+const raleway = Raleway({
   subsets: ["latin"],
-  weight: ["400", "600"],
-  style: ["normal", "italic"],
-  variable: "--font-playfair",
+  weight: ["300", "400", "500", "600", "700"],
+  variable: "--font-raleway",
   display: "swap",
 });
 
@@ -33,7 +32,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${playfairDisplay.variable} ${jost.variable}`}>
+    <html lang="en" className={`${raleway.variable} ${jost.variable}`}>
       <head>
         <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet" />
       </head>

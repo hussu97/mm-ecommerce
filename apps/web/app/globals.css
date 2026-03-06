@@ -29,9 +29,9 @@
   --color-border-dark: #374151;
 
   /* Typography */
-  --font-display: "Playfair Display", serif;
+  --font-display: "Raleway", sans-serif;
   --font-body: "Jost", sans-serif;
-  --font-display-ar: "Amiri", serif;
+  --font-display-ar: "Tajawal", sans-serif;
   --font-body-ar: "Cairo", sans-serif;
 
   /* Border radius */
