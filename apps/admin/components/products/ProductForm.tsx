@@ -19,12 +19,12 @@ export function ProductForm({ product }: Props) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [form, setForm] = useState({
     name: product?.name ?? '',
-    name_localized: product?.name_localized ?? '',
+    name_ar: (product as any)?.translations?.ar?.name ?? '',
     slug: product?.slug ?? '',
     sku: product?.sku ?? '',
     category_id: product?.category_id ?? '',
     description: product?.description ?? '',
-    description_localized: product?.description_localized ?? '',
+    description_ar: (product as any)?.translations?.ar?.description ?? '',
     base_price: String(product?.base_price ?? '0'),
     calories: String(product?.calories ?? ''),
     preparation_time: String(product?.preparation_time ?? ''),
@@ -109,12 +109,13 @@ export function ProductForm({ product }: Props) {
 
     const payload = {
       name: form.name.trim(),
-      name_localized: form.name_localized.trim() || null,
       slug: form.slug.trim(),
       sku: form.sku.trim() || null,
       category_id: form.category_id || null,
       description: form.description.trim() || null,
-      description_localized: form.description_localized.trim() || null,
+      translations: (form.name_ar.trim() || form.description_ar.trim())
+        ? { ar: { ...(form.name_ar.trim() ? { name: form.name_ar.trim() } : {}), ...(form.description_ar.trim() ? { description: form.description_ar.trim() } : {}) } }
+        : null,
       base_price: Number(form.base_price),
       calories: form.calories.trim() ? Number(form.calories) : null,
       preparation_time: form.preparation_time.trim() ? Number(form.preparation_time) : null,
@@ -159,9 +160,9 @@ export function ProductForm({ product }: Props) {
             error={errors.name}
           />
           <Input
-            label="Name (Arabic / Localized)"
-            value={form.name_localized}
-            onChange={e => setForm(f => ({ ...f, name_localized: e.target.value }))}
+            label="Name (Arabic)"
+            value={form.name_ar}
+            onChange={e => setForm(f => ({ ...f, name_ar: e.target.value }))}
             placeholder="Optional"
           />
         </div>
@@ -227,9 +228,9 @@ export function ProductForm({ product }: Props) {
         </div>
         <div className="mt-4">
           <Textarea
-            label="Description (Arabic / Localized)"
-            value={form.description_localized}
-            onChange={e => setForm(f => ({ ...f, description_localized: e.target.value }))}
+            label="Description (Arabic)"
+            value={form.description_ar}
+            onChange={e => setForm(f => ({ ...f, description_ar: e.target.value }))}
             rows={2}
             placeholder="Optional"
           />

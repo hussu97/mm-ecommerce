@@ -5,8 +5,8 @@ import { modifiersApi, bulkApi, ApiError } from '@/lib/api';
 import type { Modifier, ModifierOption } from '@/lib/types';
 import { Badge, Button, Input, Pagination, TabBar } from '@/components/ui';
 
-const BLANK_MODIFIER = { reference: '', name: '', name_localized: '' };
-const BLANK_OPTION = { name: '', name_localized: '', sku: '', price: '0', calories: '', is_active: true, display_order: '0' };
+const BLANK_MODIFIER = { reference: '', name: '', name_ar: '' };
+const BLANK_OPTION = { name: '', name_ar: '', sku: '', price: '0', calories: '', is_active: true, display_order: '0' };
 
 export default function ModifiersPage() {
   const [modifiers, setModifiers] = useState<Modifier[]>([]);
@@ -72,7 +72,7 @@ export default function ModifiersPage() {
     (!q ||
       m.name.toLowerCase().includes(q) ||
       m.reference.toLowerCase().includes(q) ||
-      (m.name_localized ?? '').toLowerCase().includes(q) ||
+      ((m as any).translations?.ar?.name ?? '').toLowerCase().includes(q) ||
       m.options.some(o => o.name.toLowerCase().includes(q) || o.sku.toLowerCase().includes(q))
     )
   );
@@ -88,7 +88,7 @@ export default function ModifiersPage() {
 
   function openEdit(m: Modifier) {
     setEditId(m.id);
-    setForm({ reference: m.reference, name: m.name, name_localized: m.name_localized ?? '' });
+    setForm({ reference: m.reference, name: m.name, name_ar: (m as any).translations?.ar?.name ?? '' });
     setFormError('');
     setShowForm(true);
   }
@@ -97,7 +97,7 @@ export default function ModifiersPage() {
     if (!form.reference.trim() || !form.name.trim()) { setFormError('Reference and Name are required.'); return; }
     setSaving(true); setFormError('');
     try {
-      const data = { reference: form.reference.trim(), name: form.name.trim(), name_localized: form.name_localized.trim() || null };
+      const data = { reference: form.reference.trim(), name: form.name.trim(), translations: form.name_ar.trim() ? { ar: { name: form.name_ar.trim() } } : null };
       if (editId) {
         const updated = await modifiersApi.update(editId, data);
         setModifiers(prev => prev.map(m => m.id === editId ? updated : m));
@@ -186,7 +186,7 @@ export default function ModifiersPage() {
     try {
       const data = {
         name: optionForm.name.trim(),
-        name_localized: optionForm.name_localized.trim() || null,
+        translations: optionForm.name_ar.trim() ? { ar: { name: optionForm.name_ar.trim() } } : null,
         sku: optionForm.sku.trim(),
         price: Number(optionForm.price) || 0,
         calories: optionForm.calories ? Number(optionForm.calories) : null,
@@ -207,7 +207,7 @@ export default function ModifiersPage() {
     setEditingOptionId(opt.id);
     setEditOptionForm({
       name: opt.name,
-      name_localized: opt.name_localized ?? '',
+      name_ar: (opt as any).translations?.ar?.name ?? '',
       sku: opt.sku,
       price: String(opt.price),
       calories: opt.calories != null ? String(opt.calories) : '',
@@ -221,7 +221,7 @@ export default function ModifiersPage() {
     try {
       const data = {
         name: editOptionForm.name.trim() || undefined,
-        name_localized: editOptionForm.name_localized.trim() || null,
+        translations: editOptionForm.name_ar.trim() ? { ar: { name: editOptionForm.name_ar.trim() } } : null,
         sku: editOptionForm.sku.trim() || undefined,
         price: editOptionForm.price !== '' ? Number(editOptionForm.price) : undefined,
         calories: editOptionForm.calories ? Number(editOptionForm.calories) : null,
@@ -292,9 +292,9 @@ export default function ModifiersPage() {
               onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
             />
             <Input
-              label="Name (Localized)"
-              value={form.name_localized}
-              onChange={e => setForm(f => ({ ...f, name_localized: e.target.value }))}
+              label="Name (Arabic)"
+              value={form.name_ar}
+              onChange={e => setForm(f => ({ ...f, name_ar: e.target.value }))}
               placeholder="Optional"
             />
           </div>
@@ -354,7 +354,7 @@ export default function ModifiersPage() {
                 </th>
                 <th className="px-4 py-3 w-6"></th>
                 <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Name</th>
-                <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden sm:table-cell">Name (Localized)</th>
+                <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden sm:table-cell">Name (Arabic)</th>
                 <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden md:table-cell">Reference</th>
                 <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500">Options</th>
                 <th className="px-4 py-3 text-right text-[11px] font-body uppercase tracking-widest text-gray-500">Actions</th>
@@ -390,7 +390,7 @@ export default function ModifiersPage() {
                       <span className="font-body font-medium text-gray-800 text-sm">{m.name}</span>
                     </td>
                     <td className="px-4 py-2.5 hidden sm:table-cell">
-                      <span className="text-xs font-body text-gray-500">{m.name_localized ?? '—'}</span>
+                      <span className="text-xs font-body text-gray-500">{(m as any).translations?.ar?.name ?? '—'}</span>
                     </td>
                     <td className="px-4 py-2.5 hidden md:table-cell">
                       <span className="text-xs font-body text-gray-400">{m.reference}</span>
@@ -489,7 +489,7 @@ export default function ModifiersPage() {
                                     <tr key={opt.id} className="hover:bg-white/60 transition-colors">
                                       <td className="py-2 pr-2">
                                         <div className="font-body text-gray-700">{opt.name}</div>
-                                        {opt.name_localized && <div className="text-[10px] text-gray-400 font-body">{opt.name_localized}</div>}
+                                        {(opt as any).translations?.ar?.name && <div className="text-[10px] text-gray-400 font-body">{(opt as any).translations.ar.name}</div>}
                                       </td>
                                       <td className="py-2 pr-2 font-body text-gray-400 hidden sm:table-cell">{opt.sku}</td>
                                       <td className="py-2 pr-2 text-right font-body text-gray-700">
@@ -531,9 +531,9 @@ export default function ModifiersPage() {
                                   onChange={e => setOptionForm(f => ({ ...f, name: e.target.value }))}
                                 />
                                 <Input
-                                  label="Name (Localized)"
-                                  value={optionForm.name_localized}
-                                  onChange={e => setOptionForm(f => ({ ...f, name_localized: e.target.value }))}
+                                  label="Name (Arabic)"
+                                  value={optionForm.name_ar}
+                                  onChange={e => setOptionForm(f => ({ ...f, name_ar: e.target.value }))}
                                   placeholder="Optional"
                                 />
                                 <Input
