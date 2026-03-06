@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, get_db, get_optional_user
+from app.core.deps import get_db, get_optional_user
 from app.models.user import User
 from app.services import payment_service
 
@@ -35,7 +35,11 @@ class PaymentStatusResponse(BaseModel):
     order_status: str
 
 
-@router.post("/create-session", response_model=CreateSessionResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/create-session",
+    response_model=CreateSessionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_payment_session(
     data: CreateSessionRequest,
     db: AsyncSession = Depends(get_db),
@@ -65,7 +69,9 @@ async def stripe_webhook(
     payload = await request.body()
 
     try:
-        result = await payment_service.handle_stripe_webhook(db, payload, stripe_signature)
+        result = await payment_service.handle_stripe_webhook(
+            db, payload, stripe_signature
+        )
     except Exception as e:
         # Log but still return 200 so Stripe doesn't keep retrying malformed events
         logger.error("Stripe webhook error: %s", e)
@@ -91,7 +97,9 @@ async def tamara_webhook(
 ):
     """Tamara webhook stub — acknowledges all events."""
     payload = await request.body()
-    return await payment_service.handle_tamara_webhook(payload, x_tamara_signature or "")
+    return await payment_service.handle_tamara_webhook(
+        payload, x_tamara_signature or ""
+    )
 
 
 @router.get("/{order_number}/status", response_model=PaymentStatusResponse)

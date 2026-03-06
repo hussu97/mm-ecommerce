@@ -45,26 +45,39 @@ def _send(to: str, subject: str, html: str) -> None:
             "html": html,
         }
         response = resend.Emails.send(params)
-        logger.info("Email sent: id=%s to=%s subject=%s", response.get("id"), to, subject)
-    except Exception as exc:
+        logger.info(
+            "Email sent: id=%s to=%s subject=%s", response.get("id"), to, subject
+        )
+    except Exception:
         logger.error("Email send failed to=%s subject=%s", to, subject, exc_info=True)
 
 
 # ─── Order Emails ─────────────────────────────────────────────────────────────
 
+
 def send_order_confirmation(order: OrderResponse) -> None:
-    name = order.shipping_address_snapshot.get("first_name", "there") if order.shipping_address_snapshot else "there"
+    name = (
+        order.shipping_address_snapshot.get("first_name", "there")
+        if order.shipping_address_snapshot
+        else "there"
+    )
     html = _render(
         "order_confirmation.html",
         recipient_email=order.email,
         name=name,
         order=order,
     )
-    _send(order.email, f"Order Confirmed — {order.order_number} | Melting Moments", html)
+    _send(
+        order.email, f"Order Confirmed — {order.order_number} | Melting Moments", html
+    )
 
 
 def send_order_packed(order: OrderResponse) -> None:
-    name = order.shipping_address_snapshot.get("first_name", "there") if order.shipping_address_snapshot else "there"
+    name = (
+        order.shipping_address_snapshot.get("first_name", "there")
+        if order.shipping_address_snapshot
+        else "there"
+    )
     if order.delivery_method.value == "delivery":
         subject = f"Your Order is On Its Way — {order.order_number}"
     else:
@@ -79,17 +92,24 @@ def send_order_packed(order: OrderResponse) -> None:
 
 
 def send_order_cancelled(order: OrderResponse) -> None:
-    name = order.shipping_address_snapshot.get("first_name", "there") if order.shipping_address_snapshot else "there"
+    name = (
+        order.shipping_address_snapshot.get("first_name", "there")
+        if order.shipping_address_snapshot
+        else "there"
+    )
     html = _render(
         "order_cancelled.html",
         recipient_email=order.email,
         name=name,
         order=order,
     )
-    _send(order.email, f"Order Cancelled — {order.order_number} | Melting Moments", html)
+    _send(
+        order.email, f"Order Cancelled — {order.order_number} | Melting Moments", html
+    )
 
 
 # ─── User Emails ──────────────────────────────────────────────────────────────
+
 
 def send_welcome(email: str, first_name: str) -> None:
     html = _render(
