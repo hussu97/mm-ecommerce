@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     # Cloudflare R2
     CLOUDFLARE_R2_ACCESS_KEY: str = ""
     CLOUDFLARE_R2_SECRET_KEY: str = ""
-    CLOUDFLARE_R2_BUCKET: str = "mm-ecommerce"
+    CLOUDFLARE_R2_BUCKET: str = "melting-moments-cakes"
     CLOUDFLARE_R2_ENDPOINT: str = ""
     CLOUDFLARE_R2_PUBLIC_URL: str = ""
 

@@ -3,7 +3,7 @@
 # Pulls latest code, rebuilds changed images, and restarts services.
 set -euo pipefail
 
-DEPLOY_DIR="${DEPLOY_DIR:-/opt/mm-ecommerce}"
+DEPLOY_DIR="${DEPLOY_DIR:-/opt/melting-moments-cakes}"
 COMPOSE_FILE="docker-compose.prod.yml"
 
 cd "$DEPLOY_DIR"

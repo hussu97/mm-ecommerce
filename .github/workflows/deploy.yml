@@ -21,7 +21,7 @@ jobs:
           script: |
             set -e
 
-            cd /opt/mm-ecommerce
+            cd /opt/melting-moments-cakes
 
             echo "Pulling latest code..."
             git pull origin main

@@ -3,7 +3,7 @@
 # Optionally uploads to GCP Cloud Storage (uses VM attached service account).
 set -euo pipefail
 
-DEPLOY_DIR="${DEPLOY_DIR:-/opt/mm-ecommerce}"
+DEPLOY_DIR="${DEPLOY_DIR:-/opt/melting-moments-cakes}"
 BACKUP_DIR="${BACKUP_DIR:-$DEPLOY_DIR/backups}"
 COMPOSE_FILE="docker-compose.prod.yml"
 RETENTION_DAYS=7

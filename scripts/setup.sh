@@ -5,8 +5,8 @@
 # Run as root or a user with sudo + docker access.
 set -euo pipefail
 
-REPO_URL="${REPO_URL:-https://github.com/your-org/mm-ecommerce.git}"
-DEPLOY_DIR="${DEPLOY_DIR:-/opt/mm-ecommerce}"
+REPO_URL="${REPO_URL:-https://github.com/your-org/melting-moments-cakes.git}"
+DEPLOY_DIR="${DEPLOY_DIR:-/opt/melting-moments-cakes}"
 
 echo "==> Cloning repository..."
 if [ -d "$DEPLOY_DIR" ]; then

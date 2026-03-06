@@ -17,7 +17,7 @@ Full-stack ecommerce platform for **Melting Moments Cakes** — a UAE artisanal 
 ## Architecture
 
 ```
-mm-ecommerce/
+melting-moments-cakes/
 ├── apps/
 │   ├── web/          Next.js 15 storefront (App Router, TypeScript)
 │   ├── admin/        Next.js 15 admin panel (App Router, TypeScript)
@@ -88,7 +88,7 @@ The two Next.js apps are thin presentation layers — all state and business log
 
 ```bash
 git clone <repo-url>
-cd mm-ecommerce
+cd melting-moments-cakes
 pnpm install
 ```
 
@@ -178,7 +178,7 @@ FROM_EMAIL=orders@meltingmomentscakes.com
 
 CLOUDFLARE_R2_ACCESS_KEY=
 CLOUDFLARE_R2_SECRET_KEY=
-CLOUDFLARE_R2_BUCKET=mm-ecommerce
+CLOUDFLARE_R2_BUCKET=melting-moments-cakes
 CLOUDFLARE_R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
 CLOUDFLARE_R2_PUBLIC_URL=https://media.meltingmomentscakes.com
 
@@ -278,7 +278,7 @@ Use this if migrations fail mid-run (e.g. `DuplicateObjectError`, `UndefinedTabl
 
 ```bash
 # 1. Wipe the DB — drops all tables, types, enums
-docker exec -it mm-ecommerce-postgres-1 psql -U mm_user -d mm_ecommerce \
+docker exec -it melting-moments-cakes-postgres-1 psql -U mm_user -d mm_ecommerce \
   -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 
 # 2. Reset Alembic's migration state (it thinks migrations ran — tell it they didn't)
@@ -291,7 +291,7 @@ alembic upgrade head
 python -m scripts.seed_db
 ```
 
-> If `mm-ecommerce-postgres-1` is not your container name, check with `docker ps`.
+> If `melting-moments-cakes-postgres-1` is not your container name, check with `docker ps`.
 
 Key tables: `users`, `categories`, `products`, `product_variants`, `carts`, `cart_items`, `orders`, `order_items`, `addresses`, `promo_codes`, `refresh_tokens`.
 

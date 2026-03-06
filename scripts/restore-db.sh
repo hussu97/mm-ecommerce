@@ -9,7 +9,7 @@ if [ -z "$BACKUP_FILE" ]; then
   echo "Usage: $0 <path-to-backup.sql.gz>"
   echo ""
   echo "Available backups:"
-  ls -lh "${DEPLOY_DIR:-/opt/mm-ecommerce}/backups"/mm_ecommerce_*.sql.gz 2>/dev/null || echo "  (none found)"
+  ls -lh "${DEPLOY_DIR:-/opt/melting-moments-cakes}/backups"/mm_ecommerce_*.sql.gz 2>/dev/null || echo "  (none found)"
   exit 1
 fi
 
@@ -18,7 +18,7 @@ if [ ! -f "$BACKUP_FILE" ]; then
   exit 1
 fi
 
-DEPLOY_DIR="${DEPLOY_DIR:-/opt/mm-ecommerce}"
+DEPLOY_DIR="${DEPLOY_DIR:-/opt/melting-moments-cakes}"
 COMPOSE_FILE="docker-compose.prod.yml"
 
 cd "$DEPLOY_DIR"

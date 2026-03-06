@@ -42,7 +42,7 @@ Internet
 
 - [ ] GCP account with billing enabled
 - [ ] Domain registered and pointing to Cloudflare (for DNS management)
-- [ ] Cloudflare R2 bucket created (`mm-ecommerce`, public access enabled)
+- [ ] Cloudflare R2 bucket created (`melting-moments-cakes`, public access enabled)
 - [ ] Stripe account with live API keys + webhook configured
 - [ ] Resend account with verified sending domain
 - [ ] Vercel account (free Hobby plan is sufficient)
@@ -53,11 +53,11 @@ Internet
 
 ## Step 1: GCP Project + Billing
 
-1. Go to [console.cloud.google.com](https://console.cloud.google.com) and create a new project: `mm-ecommerce`
+1. Go to [console.cloud.google.com](https://console.cloud.google.com) and create a new project: `melting-moments-cakes`
 2. Enable billing for the project
 3. Enable the Compute Engine API:
    ```
-   gcloud services enable compute.googleapis.com --project=mm-ecommerce
+   gcloud services enable compute.googleapis.com --project=melting-moments-cakes
    ```
 
 ---
@@ -66,7 +66,7 @@ Internet
 
 ```bash
 gcloud compute instances create mm-backend \
-  --project=mm-ecommerce \
+  --project=melting-moments-cakes \
   --zone=me-central1-a \
   --machine-type=e2-micro \
   --image-family=debian-12 \
@@ -88,7 +88,7 @@ Note the **External IP** assigned — you'll need it for DNS.
 ```bash
 # Allow HTTP (for Certbot challenge) and HTTPS
 gcloud compute firewall-rules create allow-http-https \
-  --project=mm-ecommerce \
+  --project=melting-moments-cakes \
   --allow=tcp:80,tcp:443 \
   --target-tags=http-server,https-server \
   --description="Allow web traffic"
@@ -102,7 +102,7 @@ gcloud compute firewall-rules create allow-http-https \
 
 ```bash
 # SSH via gcloud (handles key management automatically)
-gcloud compute ssh mm-backend --project=mm-ecommerce --zone=me-central1-a
+gcloud compute ssh mm-backend --project=melting-moments-cakes --zone=me-central1-a
 ```
 
 Inside the VM:
@@ -122,7 +122,7 @@ docker compose version  # verify
 # Install gcloud CLI (for gsutil)
 curl https://sdk.cloud.google.com | bash
 exec -l $SHELL
-gcloud init  # follow prompts; select project mm-ecommerce
+gcloud init  # follow prompts; select project melting-moments-cakes
 ```
 
 ---
@@ -130,11 +130,11 @@ gcloud init  # follow prompts; select project mm-ecommerce
 ## Step 5: Clone Repo + Configure Environment
 
 ```bash
-sudo mkdir -p /opt/mm-ecommerce
-sudo chown $USER:$USER /opt/mm-ecommerce
+sudo mkdir -p /opt/melting-moments-cakes
+sudo chown $USER:$USER /opt/melting-moments-cakes
 
-git clone https://github.com/your-org/mm-ecommerce.git /opt/mm-ecommerce
-cd /opt/mm-ecommerce
+git clone https://github.com/your-org/melting-moments-cakes.git /opt/melting-moments-cakes
+cd /opt/melting-moments-cakes
 
 cp apps/api/.env.example .env
 nano .env  # fill in all secrets (see .env.example for field descriptions)
@@ -157,7 +157,7 @@ Key values to fill in `.env`:
 ## Step 6: Launch Backend Services
 
 ```bash
-cd /opt/mm-ecommerce
+cd /opt/melting-moments-cakes
 
 # Pull base images + build API
 docker compose -f docker-compose.prod.yml pull
@@ -183,7 +183,7 @@ Expected running services: `redis`, `postgres`, `api`, `nginx`, `certbot`
 Wait until DNS is pointing `api.*` to the VM IP (Step 12 first).
 
 ```bash
-cd /opt/mm-ecommerce
+cd /opt/melting-moments-cakes
 
 # Issue cert for api subdomain
 docker compose -f docker-compose.prod.yml run --rm certbot certonly \
@@ -202,30 +202,30 @@ Verify: `curl https://api.meltingmomentscakes.com/health` should return `{"statu
 
 ```bash
 # Create backup bucket (in the same region as the VM)
-gcloud storage buckets create gs://mm-ecommerce-backups \
-  --project=mm-ecommerce \
+gcloud storage buckets create gs://melting-moments-cakes-backups \
+  --project=melting-moments-cakes \
   --location=ME-CENTRAL1 \
   --uniform-bucket-level-access
 
 # Create a service account for backups
 gcloud iam service-accounts create mm-backup-sa \
-  --project=mm-ecommerce \
+  --project=melting-moments-cakes \
   --display-name="MM Backup Service Account"
 
 # Grant it permission to write to the bucket only
-gcloud storage buckets add-iam-policy-binding gs://mm-ecommerce-backups \
-  --member="serviceAccount:mm-backup-sa@mm-ecommerce.iam.gserviceaccount.com" \
+gcloud storage buckets add-iam-policy-binding gs://melting-moments-cakes-backups \
+  --member="serviceAccount:mm-backup-sa@melting-moments-cakes.iam.gserviceaccount.com" \
   --role="roles/storage.objectCreator"
 
 # Attach the service account to the VM
 gcloud compute instances set-service-account mm-backend \
-  --project=mm-ecommerce \
+  --project=melting-moments-cakes \
   --zone=me-central1-a \
-  --service-account=mm-backup-sa@mm-ecommerce.iam.gserviceaccount.com \
+  --service-account=mm-backup-sa@melting-moments-cakes.iam.gserviceaccount.com \
   --scopes=https://www.googleapis.com/auth/devstorage.read_write
 ```
 
-Then set `BACKUP_GCS_BUCKET=mm-ecommerce-backups` in `.env`.
+Then set `BACKUP_GCS_BUCKET=melting-moments-cakes-backups` in `.env`.
 
 ---
 
@@ -233,7 +233,7 @@ Then set `BACKUP_GCS_BUCKET=mm-ecommerce-backups` in `.env`.
 
 ```bash
 # Make backup script executable
-chmod +x /opt/mm-ecommerce/scripts/backup-db.sh
+chmod +x /opt/melting-moments-cakes/scripts/backup-db.sh
 
 # Open crontab
 crontab -e
@@ -241,14 +241,14 @@ crontab -e
 
 Add this line (runs daily at 2 AM):
 ```
-0 2 * * * DEPLOY_DIR=/opt/mm-ecommerce /opt/mm-ecommerce/scripts/backup-db.sh >> /var/log/mm-backup.log 2>&1
+0 2 * * * DEPLOY_DIR=/opt/melting-moments-cakes /opt/melting-moments-cakes/scripts/backup-db.sh >> /var/log/mm-backup.log 2>&1
 ```
 
 Test it manually:
 ```bash
-DEPLOY_DIR=/opt/mm-ecommerce /opt/mm-ecommerce/scripts/backup-db.sh
+DEPLOY_DIR=/opt/melting-moments-cakes /opt/melting-moments-cakes/scripts/backup-db.sh
 # Verify file appears in GCS:
-gsutil ls gs://mm-ecommerce-backups/backups/
+gsutil ls gs://melting-moments-cakes-backups/backups/
 ```
 
 ---
@@ -256,7 +256,7 @@ gsutil ls gs://mm-ecommerce-backups/backups/
 ## Step 10: Vercel — Web Storefront
 
 1. Go to [vercel.com](https://vercel.com) and sign in with GitHub
-2. Click **Add New Project** → import `mm-ecommerce`
+2. Click **Add New Project** → import `melting-moments-cakes`
 3. Configure:
    - **Framework Preset**: Next.js
    - **Root Directory**: `apps/web`
@@ -272,14 +272,14 @@ gsutil ls gs://mm-ecommerce-backups/backups/
    NEXT_PUBLIC_UMAMI_URL=https://cloud.umami.is/script.js
    NEXT_PUBLIC_SENTRY_DSN=<from Sentry project settings>  # optional
    ```
-5. Click **Deploy** and note the preview URL (e.g. `mm-ecommerce-web.vercel.app`)
+5. Click **Deploy** and note the preview URL (e.g. `melting-moments-cakes-web.vercel.app`)
 6. Once confirmed working, go to **Settings → Domains** → add `meltingmomentscakes.com`
 
 ---
 
 ## Step 11: Vercel — Admin Panel
 
-1. In the same Vercel account, click **Add New Project** → import `mm-ecommerce` again
+1. In the same Vercel account, click **Add New Project** → import `melting-moments-cakes` again
 2. Configure:
    - **Framework Preset**: Next.js
    - **Root Directory**: `apps/admin`
@@ -336,11 +336,11 @@ curl https://api.meltingmomentscakes.com/health
 # Expected: {"status": "ok", "service": "mm-api", "env": "production"}
 
 # All backend containers healthy
-ssh <VM> "docker compose -f /opt/mm-ecommerce/docker-compose.prod.yml ps"
+ssh <VM> "docker compose -f /opt/melting-moments-cakes/docker-compose.prod.yml ps"
 # Expected services: redis, postgres, api, nginx, certbot — all Up
 
 # Backup script
-ssh <VM> "DEPLOY_DIR=/opt/mm-ecommerce /opt/mm-ecommerce/scripts/backup-db.sh"
+ssh <VM> "DEPLOY_DIR=/opt/melting-moments-cakes /opt/melting-moments-cakes/scripts/backup-db.sh"
 # Should print "Deployment complete" and upload to GCS
 
 # SSL certificate valid
@@ -357,7 +357,7 @@ echo | openssl s_client -connect api.meltingmomentscakes.com:443 2>/dev/null | o
 
 **Deployments**: Push to `main` → GitHub Actions SSHes into GCP VM and runs `deploy.yml` (API only). Vercel auto-deploys web + admin.
 
-**Manual deploy**: SSH into VM and run `DEPLOY_DIR=/opt/mm-ecommerce bash scripts/deploy.sh`.
+**Manual deploy**: SSH into VM and run `DEPLOY_DIR=/opt/melting-moments-cakes bash scripts/deploy.sh`.
 
 **SSL renewal**: Handled automatically by the `certbot` container (runs every 12 hours).
 
