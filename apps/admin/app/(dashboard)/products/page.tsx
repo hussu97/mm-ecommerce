@@ -5,7 +5,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { productsApi, categoriesApi, bulkApi } from '@/lib/api';
 import type { Category, Product } from '@/lib/types';
-import { Badge, Button, Input, MultiSelect, TabBar } from '@/components/ui';
+import { Badge, Button, Input, MultiSelect, Pagination, TabBar } from '@/components/ui';
 import { formatCurrency } from '@/lib/utils';
 
 export default function ProductsPage() {
@@ -18,6 +18,7 @@ export default function ProductsPage() {
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<'active' | 'inactive'>('active');
+  const [perPage, setPerPage] = useState(50);
   const [tabCounts, setTabCounts] = useState<{ active?: number; inactive?: number }>({});
   const [actionSlug, setActionSlug] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -30,7 +31,7 @@ export default function ProductsPage() {
         search: search || undefined,
         category: categoryFilter.length > 0 ? categoryFilter : undefined,
         page,
-        per_page: 20,
+        per_page: perPage,
       };
       const params = activeTab === 'active'
         ? { ...base, is_active: true }
@@ -45,7 +46,7 @@ export default function ProductsPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, categoryFilter, page, activeTab]);
+  }, [search, categoryFilter, page, perPage, activeTab]);
 
   // Load categories + pre-fetch inactive count on mount
   useEffect(() => {
@@ -306,22 +307,15 @@ export default function ProductsPage() {
         </table>
       </div>
 
-      {/* Pagination */}
-      {pages > 1 && (
-        <div className="flex items-center justify-between mt-4">
-          <p className="text-xs text-gray-400 font-body">
-            Page {page} of {pages} · {total} products
-          </p>
-          <div className="flex gap-2">
-            <Button variant="ghost" size="sm" disabled={page === 1} onClick={() => setPage(p => p - 1)}>
-              <span className="material-icons text-[14px]">chevron_left</span>
-            </Button>
-            <Button variant="ghost" size="sm" disabled={page === pages} onClick={() => setPage(p => p + 1)}>
-              <span className="material-icons text-[14px]">chevron_right</span>
-            </Button>
-          </div>
-        </div>
-      )}
+      <Pagination
+        page={page}
+        pages={pages}
+        total={total}
+        perPage={perPage}
+        onPageChange={setPage}
+        onPerPageChange={setPerPage}
+        label="products"
+      />
     </div>
   );
 }

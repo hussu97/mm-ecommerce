@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { ordersApi } from '@/lib/api';
 import type { Order, OrderStatus } from '@/lib/types';
-import { Badge, Button, Input, Select } from '@/components/ui';
+import { Badge, Button, Input, Pagination, Select } from '@/components/ui';
 import { formatCurrency, formatDate } from '@/lib/utils';
 
 const STATUS_OPTIONS = [
@@ -28,6 +28,7 @@ export default function OrdersPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
+  const [perPage, setPerPage] = useState(50);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -50,7 +51,7 @@ export default function OrdersPage() {
         search: debouncedSearch || undefined,
         status: statusFilter || undefined,
         page,
-        per_page: 20,
+        per_page: perPage,
       });
       setOrders(res.items);
       setTotal(res.total);
@@ -60,7 +61,7 @@ export default function OrdersPage() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, statusFilter, page]);
+  }, [debouncedSearch, statusFilter, page, perPage]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -189,22 +190,15 @@ export default function OrdersPage() {
         </table>
       </div>
 
-      {/* Pagination */}
-      {pages > 1 && (
-        <div className="flex items-center justify-between mt-4">
-          <p className="text-xs text-gray-400 font-body">
-            Page {page} of {pages} · {total} orders
-          </p>
-          <div className="flex gap-2">
-            <Button variant="ghost" size="sm" disabled={page === 1} onClick={() => setPage(p => p - 1)}>
-              <span className="material-icons text-[14px]">chevron_left</span>
-            </Button>
-            <Button variant="ghost" size="sm" disabled={page === pages} onClick={() => setPage(p => p + 1)}>
-              <span className="material-icons text-[14px]">chevron_right</span>
-            </Button>
-          </div>
-        </div>
-      )}
+      <Pagination
+        page={page}
+        pages={pages}
+        total={total}
+        perPage={perPage}
+        onPageChange={setPage}
+        onPerPageChange={setPerPage}
+        label="orders"
+      />
     </div>
   );
 }

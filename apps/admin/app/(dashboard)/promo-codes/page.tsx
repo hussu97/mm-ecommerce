@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { promoApi, bulkApi, ApiError } from '@/lib/api';
 import type { PromoCode } from '@/lib/types';
-import { Button, Input, Select, TabBar } from '@/components/ui';
+import { Button, Input, Pagination, Select, TabBar } from '@/components/ui';
 import { formatCurrency, formatDate } from '@/lib/utils';
 
 const DISCOUNT_TYPE_OPTIONS = [
@@ -43,6 +43,8 @@ export default function PromoCodesPage() {
   const [actionCode, setActionCode] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulking, setBulking] = useState(false);
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(50);
 
   useEffect(() => {
     load();
@@ -63,6 +65,8 @@ export default function PromoCodesPage() {
   const filteredCodes = codes.filter(c =>
     activeTab === 'active' ? c.is_active : !c.is_active
   );
+  const codePages = Math.max(1, Math.ceil(filteredCodes.length / perPage));
+  const paginatedCodes = filteredCodes.slice((page - 1) * perPage, page * perPage);
 
   function openCreate() {
     setEditingCode(null);
@@ -135,11 +139,16 @@ export default function PromoCodesPage() {
   }
 
   function toggleSelectAll() {
-    if (selectedIds.size === filteredCodes.length) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(filteredCodes.map(c => c.id)));
-    }
+    const allOnPage = paginatedCodes.every(c => selectedIds.has(c.id));
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (allOnPage) {
+        paginatedCodes.forEach(c => next.delete(c.id));
+      } else {
+        paginatedCodes.forEach(c => next.add(c.id));
+      }
+      return next;
+    });
   }
 
   async function handleBulkStatus(is_active: boolean) {
@@ -148,6 +157,7 @@ export default function PromoCodesPage() {
       await bulkApi.updateStatus('promo-codes', Array.from(selectedIds), is_active);
       await load();
       setSelectedIds(new Set());
+      setPage(1);
     } catch (err) {
       alert(err instanceof ApiError ? err.message : 'Bulk action failed.');
     } finally {
@@ -277,7 +287,7 @@ export default function PromoCodesPage() {
           { key: 'inactive', label: 'Inactive', count: inactiveCount },
         ]}
         active={activeTab}
-        onChange={key => { setActiveTab(key as 'active' | 'inactive'); setSelectedIds(new Set()); }}
+        onChange={key => { setActiveTab(key as 'active' | 'inactive'); setSelectedIds(new Set()); setPage(1); }}
       />
 
       {/* Bulk action bar */}
@@ -300,7 +310,7 @@ export default function PromoCodesPage() {
               <th className="px-4 py-3 w-8">
                 <input
                   type="checkbox"
-                  checked={filteredCodes.length > 0 && selectedIds.size === filteredCodes.length}
+                  checked={paginatedCodes.length > 0 && paginatedCodes.every(c => selectedIds.has(c.id))}
                   onChange={toggleSelectAll}
                   className="accent-primary"
                 />
@@ -331,7 +341,7 @@ export default function PromoCodesPage() {
                 </td>
               </tr>
             ) : (
-              filteredCodes.map(promo => (
+              paginatedCodes.map(promo => (
                 <tr key={promo.id} className={`hover:bg-gray-50 transition-colors ${selectedIds.has(promo.id) ? 'bg-primary/5' : ''}`}>
                   <td className="px-4 py-3 w-8">
                     <input
@@ -402,6 +412,16 @@ export default function PromoCodesPage() {
           </tbody>
         </table>
       </div>
+
+      <Pagination
+        page={page}
+        pages={codePages}
+        total={filteredCodes.length}
+        perPage={perPage}
+        onPageChange={setPage}
+        onPerPageChange={p => { setPerPage(p); setPage(1); }}
+        label="promo codes"
+      />
     </div>
   );
 }

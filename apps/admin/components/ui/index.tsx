@@ -242,6 +242,48 @@ export function MultiSelect({ options, value, onChange, placeholder = 'All', cla
   );
 }
 
+// ─── Pagination ───────────────────────────────────────────────────────────────
+
+const PER_PAGE_OPTIONS = [50, 100, 200, 500, 1000, 2000];
+
+interface PaginationProps {
+  page: number;
+  pages: number;
+  total: number;
+  perPage: number;
+  onPageChange: (page: number) => void;
+  onPerPageChange: (perPage: number) => void;
+  label?: string;
+}
+
+export function Pagination({ page, pages, total, perPage, onPageChange, onPerPageChange, label = 'items' }: PaginationProps) {
+  const totalPages = Math.max(1, pages);
+  return (
+    <div className="flex items-center justify-between mt-4">
+      <p className="text-xs text-gray-400 font-body">
+        Page {page} of {totalPages} · {total} {label}
+      </p>
+      <div className="flex items-center gap-2">
+        <select
+          value={perPage}
+          onChange={e => { onPerPageChange(Number(e.target.value)); onPageChange(1); }}
+          className="text-xs font-body border border-gray-300 bg-white px-2 py-1.5 rounded-sm outline-none focus:border-primary cursor-pointer"
+        >
+          {PER_PAGE_OPTIONS.map(n => (
+            <option key={n} value={n}>{n} / page</option>
+          ))}
+        </select>
+        <Button variant="ghost" size="sm" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>
+          <span className="material-icons text-[14px]">chevron_left</span>
+        </Button>
+        <Button variant="ghost" size="sm" disabled={page >= totalPages} onClick={() => onPageChange(page + 1)}>
+          <span className="material-icons text-[14px]">chevron_right</span>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ─── TabBar ───────────────────────────────────────────────────────────────────
 
 interface TabBarProps {

@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { modifiersApi, bulkApi, ApiError } from '@/lib/api';
 import type { Modifier, ModifierOption } from '@/lib/types';
-import { Badge, Button, Input, TabBar } from '@/components/ui';
+import { Badge, Button, Input, Pagination, TabBar } from '@/components/ui';
 
 const BLANK_MODIFIER = { reference: '', name: '', name_localized: '' };
 const BLANK_OPTION = { name: '', name_localized: '', sku: '', price: '0', calories: '', is_active: true, display_order: '0' };
@@ -29,6 +29,10 @@ export default function ModifiersPage() {
   // Bulk selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulking, setBulking] = useState(false);
+
+  // Pagination
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(50);
 
   // Option add form (per modifier)
   const [addingOptionFor, setAddingOptionFor] = useState<string | null>(null);
@@ -62,6 +66,8 @@ export default function ModifiersPage() {
   const filteredModifiers = modifiers.filter(m =>
     activeTab === 'active' ? m.is_active : !m.is_active
   );
+  const modifierPages = Math.max(1, Math.ceil(filteredModifiers.length / perPage));
+  const paginatedModifiers = filteredModifiers.slice((page - 1) * perPage, page * perPage);
 
   function openAdd() {
     setEditId(null);
@@ -132,11 +138,16 @@ export default function ModifiersPage() {
   }
 
   function toggleSelectAll() {
-    if (selectedIds.size === filteredModifiers.length) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(filteredModifiers.map(m => m.id)));
-    }
+    const allOnPage = paginatedModifiers.every(m => selectedIds.has(m.id));
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (allOnPage) {
+        paginatedModifiers.forEach(m => next.delete(m.id));
+      } else {
+        paginatedModifiers.forEach(m => next.add(m.id));
+      }
+      return next;
+    });
   }
 
   async function handleBulkStatus(is_active: boolean) {
@@ -145,6 +156,7 @@ export default function ModifiersPage() {
       await bulkApi.updateStatus('modifiers', Array.from(selectedIds), is_active);
       await load();
       setSelectedIds(new Set());
+      setPage(1);
     } catch (err) {
       alert(err instanceof ApiError ? err.message : 'Bulk action failed.');
     } finally {
@@ -290,7 +302,7 @@ export default function ModifiersPage() {
           { key: 'inactive', label: 'Inactive', count: inactiveCount },
         ]}
         active={activeTab}
-        onChange={key => { setActiveTab(key as 'active' | 'inactive'); setSelectedIds(new Set()); }}
+        onChange={key => { setActiveTab(key as 'active' | 'inactive'); setSelectedIds(new Set()); setPage(1); }}
       />
 
       {/* Bulk action bar */}
@@ -316,7 +328,7 @@ export default function ModifiersPage() {
                 <th className="px-4 py-3 w-8">
                   <input
                     type="checkbox"
-                    checked={filteredModifiers.length > 0 && selectedIds.size === filteredModifiers.length}
+                    checked={paginatedModifiers.length > 0 && paginatedModifiers.every(m => selectedIds.has(m.id))}
                     onChange={toggleSelectAll}
                     className="accent-primary"
                   />
@@ -330,11 +342,11 @@ export default function ModifiersPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredModifiers.length === 0 ? (
+              {paginatedModifiers.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-400 font-body">No modifiers yet.</td>
                 </tr>
-              ) : filteredModifiers.map(m => (
+              ) : paginatedModifiers.map(m => (
                 <Fragment key={m.id}>
                   <tr className={`border-b border-gray-100 hover:bg-gray-50 transition-colors ${selectedIds.has(m.id) ? 'bg-primary/5' : ''}`}>
                     <td className="px-4 py-2.5 w-8">
@@ -563,6 +575,16 @@ export default function ModifiersPage() {
           </table>
         </div>
       )}
+
+      <Pagination
+        page={page}
+        pages={modifierPages}
+        total={filteredModifiers.length}
+        perPage={perPage}
+        onPageChange={setPage}
+        onPerPageChange={p => { setPerPage(p); setPage(1); }}
+        label="modifiers"
+      />
     </div>
   );
 }
