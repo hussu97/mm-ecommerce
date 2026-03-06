@@ -101,14 +101,11 @@ _Backlog — prioritize as bandwidth allows._
 
 ### Testing & CI/CD
 
-- [ ] **Zero test files in the entire project** — No unit tests, integration tests, or E2E tests exist anywhere in `apps/` or `packages/`. Start with:
-  - API: pytest + httpx for endpoint tests (auth, cart, orders, products)
-  - Web: Vitest + React Testing Library for component tests
-  - E2E: Playwright for critical user flows (browse → add to cart → checkout)
-- [ ] **CI runs no tests** — `pr-check.yml` runs lint + type-check + build but no tests. Add test steps once test suites exist.
-- [ ] **Deploy workflow swallows migration failures** — `.github/workflows/deploy.yml:36` uses `|| true` after `alembic upgrade head`. A failed migration silently proceeds, potentially leaving the DB in an inconsistent state. Remove `|| true` and fail the deployment.
+- [x] **Zero test files in the entire project** — API integration tests (products, cart, orders) + web component tests (Badge, Input) added. E2E Playwright specs in `apps/web/e2e/`.
+- [x] **CI runs no tests** — `pr-check.yml` runs `pnpm test` (Vitest) + `pytest` on every PR.
+- [x] **Deploy workflow swallows migration failures** — `|| true` removed from `alembic upgrade head` in `.github/workflows/deploy.yml`; `set -e` now propagates migration failures as deploy failures.
 - [x] **No health check for frontend containers** — `docker-compose.yml` web and admin services have no health checks, unlike postgres.
-- [ ] **No rollback strategy** — Deploy workflow has no rollback mechanism. A bad deploy requires manual SSH intervention.
+- [x] **No rollback strategy** — `.github/workflows/rollback.yml` added; manual `workflow_dispatch` with `git_sha` input; SSH into GCP VM, checkout target SHA, rebuild, optionally run `alembic downgrade -1`.
 
 ### Feature Requests (Customer Experience)
 

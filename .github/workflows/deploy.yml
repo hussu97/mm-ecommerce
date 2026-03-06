@@ -32,7 +32,7 @@ jobs:
             echo "Waiting for API to be healthy..."
             sleep 10
             docker compose -f docker-compose.prod.yml exec -T api \
-              sh -c "alembic upgrade head" || true
+              sh -c "alembic upgrade head"
 
             echo "Pruning old images..."
             docker image prune -f
