@@ -103,9 +103,9 @@ export default async function ContactPage({
     address: {
       '@type': 'PostalAddress',
       addressCountry: 'AE',
-      addressRegion: 'Dubai',
+      addressRegion: 'Sharjah',
     },
-    openingHours: 'Mo-Sa 09:00-21:00',
+    openingHours: ['Mo Tu We Th Fr Sa 08:00-23:30', 'Su 15:00-23:30'],
     sameAs: [
       'https://www.instagram.com/meltingmomentscakes',
       info.whatsapp,
@@ -181,7 +181,7 @@ export default async function ContactPage({
             {/* Google Maps embed */}
             <div className="aspect-[4/3] w-full overflow-hidden border border-gray-200 mb-8">
               <iframe
-                src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d462560.3010168743!2d54.89782582968765!3d25.07575470416587!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3e5f43496ad9c645%3A0xbde66e5084295162!2sDubai%20-%20United%20Arab%20Emirates!5e0!3m2!1sen!2s!4v1700000000000!5m2!1sen!2s"
+                src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3607.8!2d55.3710382!3d25.3304139!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3e5f5b6497ee3a03%3A0x5588dafa14259759!2sMelting%20Moments%20Cakes!5e0!3m2!1sen!2sae!4v1700000000000!5m2!1sen!2sae"
                 width="100%"
                 height="100%"
                 style={{ border: 0 }}

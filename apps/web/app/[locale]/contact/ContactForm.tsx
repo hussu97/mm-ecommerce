@@ -33,7 +33,7 @@ export function ContactForm() {
       .filter(Boolean)
       .join('\n');
 
-    const url = `https://wa.me/971501234567?text=${encodeURIComponent(text)}`;
+    const url = `https://wa.me/971503687757?text=${encodeURIComponent(text)}`;
     window.open(url, '_blank', 'noopener,noreferrer');
     setSubmitted(true);
   }
