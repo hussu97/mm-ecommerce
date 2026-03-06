@@ -3,6 +3,9 @@
 /* Class-based dark mode */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* RTL support */
+@custom-variant rtl (&:where([dir="rtl"], [dir="rtl"] *));
+
 @theme {
   /* Brand colors */
   --color-primary: #8a5a64;
@@ -28,6 +31,8 @@
   /* Typography */
   --font-display: "Playfair Display", serif;
   --font-body: "Jost", sans-serif;
+  --font-display-ar: "Amiri", serif;
+  --font-body-ar: "Cairo", sans-serif;
 
   /* Border radius */
   --radius: 0.5rem;
@@ -47,4 +52,18 @@ h5,
 h6,
 .font-display {
   font-family: var(--font-display);
+}
+
+[dir="rtl"] body {
+  font-family: var(--font-body-ar);
+}
+
+[dir="rtl"] h1,
+[dir="rtl"] h2,
+[dir="rtl"] h3,
+[dir="rtl"] h4,
+[dir="rtl"] h5,
+[dir="rtl"] h6,
+[dir="rtl"] .font-display {
+  font-family: var(--font-display-ar);
 }

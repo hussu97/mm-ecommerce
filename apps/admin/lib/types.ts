@@ -16,11 +16,29 @@ export interface TokenResponse {
   user: User;
 }
 
+export interface Language {
+  code: string;
+  name: string;
+  native_name: string;
+  direction: 'ltr' | 'rtl';
+  is_default: boolean;
+  is_active: boolean;
+  display_order: number;
+}
+
+export interface UiTranslation {
+  id: string;
+  locale: string;
+  namespace: string;
+  key: string;
+  value: string;
+}
+
 export interface ModifierOption {
   id: string;
   modifier_id: string;
   name: string;
-  name_localized: string | null;
+  translations: Record<string, Record<string, string>>;
   sku: string;
   price: number;
   calories: number | null;
@@ -32,7 +50,7 @@ export interface Modifier {
   id: string;
   reference: string;
   name: string;
-  name_localized: string | null;
+  translations: Record<string, Record<string, string>>;
   is_active: boolean;
   options: ModifierOption[];
 }
@@ -51,7 +69,7 @@ export interface ProductModifier {
 export interface Category {
   id: string;
   name: string;
-  name_localized: string | null;
+  translations: Record<string, Record<string, string>>;
   slug: string;
   reference: string | null;
   description: string | null;
@@ -65,11 +83,10 @@ export interface Product {
   id: string;
   category_id: string | null;
   name: string;
-  name_localized: string | null;
   slug: string;
   sku: string | null;
   description: string | null;
-  description_localized: string | null;
+  translations: Record<string, Record<string, string>>;
   base_price: number;
   calories: number | null;
   preparation_time: number | null;
@@ -107,8 +124,8 @@ export interface OrderItem {
   id: string;
   product_id: string | null;
   product_name: string;
-  product_name_localized: string | null;
   product_sku: string;
+  product_translations: Record<string, Record<string, string>>;
   quantity: number;
   base_price: number;
   options_price: number;

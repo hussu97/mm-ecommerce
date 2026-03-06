@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import type { Product, ProductModifier, ModifierOption } from '@/lib/types';
+import type { Product, ProductModifier } from '@/lib/types';
 
 export interface SelectedOption {
   modifier_id: string;

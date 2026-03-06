@@ -1,6 +1,6 @@
 import type {
   AnalyticsOverview, Category, CustomerBreakdown, EmirateData,
-  FunnelData, ImportResult, Modifier, Order, OrdersPoint, PaginatedCustomers,
+  FunnelData, ImportResult, Language, Modifier, Order, OrdersPoint, PaginatedCustomers,
   PaginatedOrders, Product, ProductListResponse, PromoCode, PromoPerformance,
   RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct, TrafficData,
   UploadResponse, User,
@@ -244,4 +244,22 @@ export const uploadsApi = {
     return api.upload<UploadResponse>(`/uploads/image?folder=${folder}`, fd);
   },
   deleteImage: (key: string) => api.delete<void>(`/uploads/image?key=${encodeURIComponent(key)}`),
+};
+
+// ─── Languages ─────────────────────────────────────────────────────────────
+
+export const languagesApi = {
+  list: () => api.get<Language[]>('/i18n/languages'),
+  listAll: () => api.get<Language[]>('/i18n/languages/all'),
+  create: (data: Partial<Language>) => api.post<Language>('/i18n/languages', data),
+  update: (code: string, data: Partial<Language>) => api.put<Language>(`/i18n/languages/${code}`, data),
+  delete: (code: string) => api.delete<void>(`/i18n/languages/${code}`),
+};
+
+// ─── Translations ──────────────────────────────────────────────────────────
+
+export const translationsApi = {
+  get: (locale: string) => api.get<Record<string, string>>(`/i18n/translations/${locale}`),
+  bulkUpsert: (locale: string, namespace: string, translations: Array<{ key: string; value: string }>) =>
+    api.put<{ updated: number }>(`/i18n/translations/${locale}`, { namespace, translations }),
 };

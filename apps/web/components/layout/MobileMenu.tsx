@@ -5,31 +5,36 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth-context';
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { LanguageSwitcher } from './LanguageSwitcher';
+import type { Language } from '@/lib/types';
 
 interface MobileMenuProps {
   isOpen: boolean;
   onClose: () => void;
+  languages?: Language[];
 }
 
 const NAV_LINKS = [
-  { href: '/',             label: 'Home' },
-  { href: '/brownies',     label: 'Brownies' },
-  { href: '/cookies',      label: 'Cookies' },
-  { href: '/cookie-melt',  label: 'Cookie Melt' },
-  { href: '/mix-boxes',    label: 'Mix Boxes' },
-  { href: '/desserts',     label: 'Desserts' },
-  { href: '/about',        label: 'About' },
-  { href: '/contact',      label: 'Contact' },
+  { href: '/',             labelKey: 'nav.home' },
+  { href: '/brownies',     labelKey: 'nav.brownies', fallback: 'Brownies' },
+  { href: '/cookies',      labelKey: 'nav.cookies', fallback: 'Cookies' },
+  { href: '/cookie-melt',  labelKey: 'nav.cookie_melt', fallback: 'Cookie Melt' },
+  { href: '/mix-boxes',    labelKey: 'nav.mix_boxes', fallback: 'Mix Boxes' },
+  { href: '/desserts',     labelKey: 'nav.desserts', fallback: 'Desserts' },
+  { href: '/about',        labelKey: 'nav.about' },
+  { href: '/contact',      labelKey: 'nav.contact' },
 ];
 
-export function MobileMenu({ isOpen, onClose }: MobileMenuProps) {
+export function MobileMenu({ isOpen, onClose, languages = [] }: MobileMenuProps) {
   const { user, logout } = useAuth();
   const router = useRouter();
+  const { locale, t } = useTranslation();
 
   function handleLogout() {
     logout();
     onClose();
-    router.push('/');
+    router.push(`/${locale}`);
   }
 
   // Lock scroll when open
@@ -61,14 +66,14 @@ export function MobileMenu({ isOpen, onClose }: MobileMenuProps) {
       {/* Drawer */}
       <aside
         className={cn(
-          'fixed top-0 left-0 z-50 h-full w-72 bg-white flex flex-col transition-transform duration-300 ease-in-out',
-          isOpen ? 'translate-x-0' : '-translate-x-full',
+          'fixed top-0 start-0 z-50 h-full w-72 bg-white flex flex-col transition-transform duration-300 ease-in-out',
+          isOpen ? 'translate-x-0' : 'rtl:translate-x-full -translate-x-full rtl:-translate-x-0',
         )}
         aria-label="Navigation menu"
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-          <span className="font-display text-primary tracking-widest text-sm uppercase">Menu</span>
+          <span className="font-display text-primary tracking-widest text-sm uppercase">{t('nav.menu')}</span>
           <button
             onClick={onClose}
             className="p-1 text-gray-400 hover:text-primary transition-colors"
@@ -80,16 +85,20 @@ export function MobileMenu({ isOpen, onClose }: MobileMenuProps) {
 
         {/* Nav links */}
         <nav className="flex-1 overflow-y-auto py-4">
-          {NAV_LINKS.map(({ href, label }) => (
-            <Link
-              key={href}
-              href={href}
-              onClick={onClose}
-              className="flex items-center px-6 py-3.5 text-sm font-body text-gray-700 hover:text-primary hover:bg-primary/5 transition-colors uppercase tracking-widest"
-            >
-              {label}
-            </Link>
-          ))}
+          {NAV_LINKS.map(({ href, labelKey, fallback }) => {
+            const translated = t(labelKey);
+            const label = translated === labelKey ? (fallback ?? labelKey.split('.').pop() ?? '') : translated;
+            return (
+              <Link
+                key={href}
+                href={`/${locale}${href}`}
+                onClick={onClose}
+                className="flex items-center px-6 py-3.5 text-sm font-body text-gray-700 hover:text-primary hover:bg-primary/5 transition-colors uppercase tracking-widest"
+              >
+                {label}
+              </Link>
+            );
+          })}
         </nav>
 
         {/* Auth links */}
@@ -97,41 +106,44 @@ export function MobileMenu({ isOpen, onClose }: MobileMenuProps) {
           {user ? (
             <>
               <Link
-                href="/account"
+                href={`/${locale}/account`}
                 onClick={onClose}
                 className="flex items-center justify-center gap-2 w-full py-2.5 text-xs font-body uppercase tracking-widest text-primary border border-primary hover:bg-primary hover:text-white transition-all duration-200"
               >
                 <span className="material-icons text-sm">person</span>
-                My Account
+                {t('nav.my_account')}
               </Link>
               <button
                 onClick={handleLogout}
                 className="flex items-center justify-center gap-2 w-full py-2.5 text-xs font-body uppercase tracking-widest text-gray-500 border border-gray-300 hover:bg-gray-50 transition-all duration-200"
               >
                 <span className="material-icons text-sm">logout</span>
-                Sign Out
+                {t('nav.sign_out')}
               </button>
             </>
           ) : (
             <>
               <Link
-                href="/login"
+                href={`/${locale}/login`}
                 onClick={onClose}
                 className="flex items-center justify-center gap-2 w-full py-2.5 text-xs font-body uppercase tracking-widest text-primary border border-primary hover:bg-primary hover:text-white transition-all duration-200"
               >
                 <span className="material-icons text-sm">person</span>
-                Log In
+                {t('nav.sign_in')}
               </Link>
               <Link
-                href="/signup"
+                href={`/${locale}/signup`}
                 onClick={onClose}
                 className="flex items-center justify-center gap-2 w-full py-2.5 text-xs font-body uppercase tracking-widest bg-primary text-white hover:opacity-90 transition-all duration-200"
               >
                 <span className="material-icons text-sm">person_add</span>
-                Sign Up
+                {t('nav.sign_up')}
               </Link>
             </>
           )}
+          <div className="pt-2">
+            <LanguageSwitcher languages={languages} />
+          </div>
         </div>
 
         {/* Tagline */}

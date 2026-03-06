@@ -19,12 +19,12 @@ export function ProductForm({ product }: Props) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [form, setForm] = useState({
     name: product?.name ?? '',
-    name_ar: (product as any)?.translations?.ar?.name ?? '',
+    name_ar: product?.translations?.ar?.name ?? '',
     slug: product?.slug ?? '',
     sku: product?.sku ?? '',
     category_id: product?.category_id ?? '',
     description: product?.description ?? '',
-    description_ar: (product as any)?.translations?.ar?.description ?? '',
+    description_ar: product?.translations?.ar?.description ?? '',
     base_price: String(product?.base_price ?? '0'),
     calories: String(product?.calories ?? ''),
     preparation_time: String(product?.preparation_time ?? ''),

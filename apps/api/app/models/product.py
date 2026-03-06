@@ -4,7 +4,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, String, Text
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, UUIDMixin
@@ -24,7 +24,6 @@ class Product(Base, UUIDMixin, TimestampMixin):
         index=True,
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
-    name_localized: Mapped[str | None] = mapped_column(String(300), nullable=True)
     slug: Mapped[str] = mapped_column(
         String(200), unique=True, nullable=False, index=True
     )
@@ -32,7 +31,9 @@ class Product(Base, UUIDMixin, TimestampMixin):
         String(100), unique=True, nullable=True, index=True
     )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    description_localized: Mapped[str | None] = mapped_column(Text, nullable=True)
+    translations: Mapped[Any] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
     base_price: Mapped[Any] = mapped_column(
         Numeric(10, 2), nullable=False, server_default="0"
     )

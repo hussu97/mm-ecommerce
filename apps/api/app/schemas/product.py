@@ -21,11 +21,10 @@ class ProductModifierLink(BaseModel):
 class ProductCreate(BaseModel):
     category_id: UUID | None = None
     name: str = Field(min_length=1, max_length=200)
-    name_localized: str | None = None
     slug: str = Field(min_length=1, max_length=200, pattern=r"^[a-z0-9-]+$")
     sku: str | None = None
     description: str | None = None
-    description_localized: str | None = None
+    translations: dict[str, dict[str, str]] = Field(default_factory=dict)
     base_price: Decimal = Field(ge=0, decimal_places=2, default=Decimal("0"))
     calories: int | None = None
     preparation_time: int | None = None
@@ -39,11 +38,10 @@ class ProductCreate(BaseModel):
 class ProductUpdate(BaseModel):
     category_id: UUID | None = None
     name: str | None = Field(None, min_length=1, max_length=200)
-    name_localized: str | None = None
     slug: str | None = Field(None, pattern=r"^[a-z0-9-]+$")
     sku: str | None = None
     description: str | None = None
-    description_localized: str | None = None
+    translations: dict[str, dict[str, str]] | None = None
     base_price: Decimal | None = Field(None, ge=0)
     calories: int | None = None
     preparation_time: int | None = None
@@ -61,11 +59,10 @@ class ProductResponse(BaseModel):
     id: UUID
     category_id: UUID | None
     name: str
-    name_localized: str | None
     slug: str
     sku: str | None
     description: str | None
-    description_localized: str | None
+    translations: dict[str, dict[str, str]] = {}
     base_price: float
     calories: int | None
     preparation_time: int | None

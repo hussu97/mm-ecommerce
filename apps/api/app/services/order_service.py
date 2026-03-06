@@ -104,8 +104,8 @@ async def create_order(
             {
                 "product_id": product.id,
                 "product_name": product.name,
-                "product_name_localized": product.name_localized,
                 "product_sku": product.sku or "",
+                "product_translations": product.translations or {},
                 "quantity": cart_item.quantity,
                 "base_price": base_price,
                 "options_price": options_price,

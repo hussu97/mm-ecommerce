@@ -1,10 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
 
 const DISMISS_KEY = 'mm_promo_banner_dismissed';
 
 export function PromoBanner() {
+  const { t } = useTranslation();
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -21,14 +23,7 @@ export function PromoBanner() {
 
   return (
     <div className="bg-primary text-white text-center text-xs tracking-widest uppercase py-2.5 px-4 relative font-body">
-      <span>Free Shipping on orders above 200 AED</span>
-      <span className="mx-2 opacity-50">·</span>
-      <span>
-        Use code{' '}
-        <span className="font-semibold border border-white/50 px-1.5 py-0.5 rounded-sm">
-          FREESHIP
-        </span>
-      </span>
+      <span>{t('promo_banner.text')}</span>
       <button
         onClick={dismiss}
         className="absolute right-3 top-1/2 -translate-y-1/2 opacity-70 hover:opacity-100 transition-opacity"

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Boolean, Integer, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, UUIDMixin
@@ -15,7 +16,9 @@ class Category(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "categories"
 
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    name_localized: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    translations: Mapped[Any] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
     slug: Mapped[str] = mapped_column(
         String(100), unique=True, nullable=False, index=True
     )

@@ -99,10 +99,10 @@ class OrderItem(Base, UUIDMixin):
     )
     # Snapshots at order time
     product_name: Mapped[str] = mapped_column(String(200), nullable=False)
-    product_name_localized: Mapped[str | None] = mapped_column(
-        String(300), nullable=True
-    )
     product_sku: Mapped[str] = mapped_column(String(100), nullable=False)
+    product_translations: Mapped[Any | None] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     base_price: Mapped[Any] = mapped_column(Numeric(10, 2), nullable=False)
     options_price: Mapped[Any] = mapped_column(

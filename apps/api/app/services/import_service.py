@@ -57,8 +57,13 @@ async def import_categories(db: AsyncSession, rows: list[dict]) -> ImportResult:
                 continue
 
             foodics_id = (row.get("id") or "").strip()
-            name_localized = (row.get("name_localized") or "").strip() or None
+            name_ar = (
+                row.get("name_localized") or row.get("name_ar") or ""
+            ).strip() or None
             image_url = (row.get("image") or "").strip() or None
+            translations: dict = {}
+            if name_ar:
+                translations["ar"] = {"name": name_ar}
 
             # Build slug from reference if available, else name
             slug_base = reference if reference else name
@@ -82,7 +87,8 @@ async def import_categories(db: AsyncSession, rows: list[dict]) -> ImportResult:
 
             if existing:
                 existing.name = name
-                existing.name_localized = name_localized
+                if translations:
+                    existing.translations = translations
                 existing.reference = reference or existing.reference
                 if image_url:
                     existing.image_url = image_url
@@ -110,7 +116,7 @@ async def import_categories(db: AsyncSession, rows: list[dict]) -> ImportResult:
                 cat = Category(
                     id=cat_id or uuid.uuid4(),
                     name=name,
-                    name_localized=name_localized,
+                    translations=translations,
                     slug=slug,
                     reference=reference or None,
                     image_url=image_url,
@@ -139,11 +145,21 @@ async def import_products(db: AsyncSession, rows: list[dict]) -> ImportResult:
                 continue
 
             foodics_id = (row.get("id") or "").strip()
-            name_localized = (row.get("name_localized") or "").strip() or None
-            description = (row.get("description") or "").strip() or None
-            description_localized = (
-                row.get("description_localized") or ""
+            name_ar = (
+                row.get("name_localized") or row.get("name_ar") or ""
             ).strip() or None
+            description = (row.get("description") or "").strip() or None
+            desc_ar = (
+                row.get("description_localized") or row.get("description_ar") or ""
+            ).strip() or None
+            prod_translations: dict = {}
+            if name_ar or desc_ar:
+                ar_fields: dict[str, str] = {}
+                if name_ar:
+                    ar_fields["name"] = name_ar
+                if desc_ar:
+                    ar_fields["description"] = desc_ar
+                prod_translations["ar"] = ar_fields
             category_ref = (row.get("category_reference") or "").strip()
             base_price = _parse_decimal(row.get("price", "0"))
             image_url = (row.get("image") or "").strip() or None
@@ -186,10 +202,10 @@ async def import_products(db: AsyncSession, rows: list[dict]) -> ImportResult:
 
             if existing:
                 existing.name = name
-                existing.name_localized = name_localized
                 existing.sku = sku or existing.sku
                 existing.description = description
-                existing.description_localized = description_localized
+                if prod_translations:
+                    existing.translations = prod_translations
                 existing.base_price = base_price
                 existing.category_id = category_id
                 existing.is_active = is_active
@@ -224,11 +240,10 @@ async def import_products(db: AsyncSession, rows: list[dict]) -> ImportResult:
                 product = Product(
                     id=prod_id or uuid.uuid4(),
                     name=name,
-                    name_localized=name_localized,
+                    translations=prod_translations,
                     slug=slug,
                     sku=sku or None,
                     description=description,
-                    description_localized=description_localized,
                     base_price=base_price,
                     category_id=category_id,
                     is_active=is_active,
@@ -263,7 +278,12 @@ async def import_modifiers(db: AsyncSession, rows: list[dict]) -> ImportResult:
                 continue
 
             foodics_id = (row.get("id") or "").strip()
-            name_localized = (row.get("name_localized") or "").strip() or None
+            mod_name_ar = (
+                row.get("name_localized") or row.get("name_ar") or ""
+            ).strip() or None
+            mod_translations: dict = {}
+            if mod_name_ar:
+                mod_translations["ar"] = {"name": mod_name_ar}
 
             res = await db.execute(
                 select(Modifier).where(Modifier.reference == reference)
@@ -272,7 +292,8 @@ async def import_modifiers(db: AsyncSession, rows: list[dict]) -> ImportResult:
 
             if existing:
                 existing.name = name
-                existing.name_localized = name_localized
+                if mod_translations:
+                    existing.translations = mod_translations
                 result.updated += 1
             else:
                 mod_id = None
@@ -286,7 +307,7 @@ async def import_modifiers(db: AsyncSession, rows: list[dict]) -> ImportResult:
                     id=mod_id or uuid.uuid4(),
                     reference=reference,
                     name=name,
-                    name_localized=name_localized,
+                    translations=mod_translations,
                 )
                 db.add(modifier)
                 result.created += 1
@@ -330,7 +351,12 @@ async def import_modifier_options(db: AsyncSession, rows: list[dict]) -> ImportR
                 continue
 
             foodics_id = (row.get("id") or "").strip()
-            name_localized = (row.get("name_localized") or "").strip() or None
+            opt_name_ar = (
+                row.get("name_localized") or row.get("name_ar") or ""
+            ).strip() or None
+            opt_translations: dict = {}
+            if opt_name_ar:
+                opt_translations["ar"] = {"name": opt_name_ar}
             price = _parse_decimal(row.get("price", "0"))
             is_active = _parse_bool(row.get("is_active", "1"))
 
@@ -341,7 +367,8 @@ async def import_modifier_options(db: AsyncSession, rows: list[dict]) -> ImportR
 
             if existing:
                 existing.name = name
-                existing.name_localized = name_localized
+                if opt_translations:
+                    existing.translations = opt_translations
                 existing.price = price
                 existing.is_active = is_active
                 existing.modifier_id = modifier.id
@@ -358,7 +385,7 @@ async def import_modifier_options(db: AsyncSession, rows: list[dict]) -> ImportR
                     id=opt_id or uuid.uuid4(),
                     modifier_id=modifier.id,
                     name=name,
-                    name_localized=name_localized,
+                    translations=opt_translations,
                     sku=sku,
                     price=price,
                     is_active=is_active,

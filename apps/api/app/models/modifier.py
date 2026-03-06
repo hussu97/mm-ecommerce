@@ -4,7 +4,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, String, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, UUIDMixin
@@ -20,7 +20,9 @@ class Modifier(Base, UUIDMixin, TimestampMixin):
         String(100), unique=True, nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
-    name_localized: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    translations: Mapped[Any] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Relationships
@@ -48,7 +50,9 @@ class ModifierOption(Base, UUIDMixin):
         index=True,
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
-    name_localized: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    translations: Mapped[Any] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
     sku: Mapped[str] = mapped_column(
         String(100), unique=True, nullable=False, index=True
     )

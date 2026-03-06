@@ -23,8 +23,8 @@ class OrderItemResponse(BaseModel):
     id: UUID
     product_id: UUID | None
     product_name: str
-    product_name_localized: str | None
     product_sku: str
+    product_translations: dict[str, dict[str, str]] = {}
     quantity: int
     base_price: float
     options_price: float

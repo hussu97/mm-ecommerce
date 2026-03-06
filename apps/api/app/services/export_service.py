@@ -18,11 +18,10 @@ async def export_categories(db: AsyncSession) -> str:
 
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["id", "name", "name_localized", "reference", "image"])
+    w.writerow(["id", "name", "name_ar", "reference", "image"])
     for r in rows:
-        w.writerow(
-            [r.id, r.name, r.name_localized or "", r.reference or "", r.image_url or ""]
-        )
+        name_ar = (r.translations or {}).get("ar", {}).get("name", "")
+        w.writerow([r.id, r.name, name_ar, r.reference or "", r.image_url or ""])
     return buf.getvalue()
 
 
@@ -45,8 +44,8 @@ async def export_products(db: AsyncSession) -> str:
             "price",
             "description",
             "image",
-            "name_localized",
-            "description_localized",
+            "name_ar",
+            "description_ar",
             "is_active",
             "is_stock_product",
             "calories",
@@ -58,6 +57,7 @@ async def export_products(db: AsyncSession) -> str:
             r.category.reference if r.category and r.category.reference else ""
         )
         image = r.image_urls[0] if r.image_urls else ""
+        ar = (r.translations or {}).get("ar", {})
         w.writerow(
             [
                 r.id,
@@ -67,8 +67,8 @@ async def export_products(db: AsyncSession) -> str:
                 r.base_price,
                 r.description or "",
                 image,
-                r.name_localized or "",
-                r.description_localized or "",
+                ar.get("name", ""),
+                ar.get("description", ""),
                 r.is_active,
                 r.is_stock_product,
                 r.calories or "",
@@ -84,9 +84,10 @@ async def export_modifiers(db: AsyncSession) -> str:
 
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["id", "reference", "name", "name_localized"])
+    w.writerow(["id", "reference", "name", "name_ar"])
     for r in rows:
-        w.writerow([r.id, r.reference, r.name, r.name_localized or ""])
+        name_ar = (r.translations or {}).get("ar", {}).get("name", "")
+        w.writerow([r.id, r.reference, r.name, name_ar])
     return buf.getvalue()
 
 
@@ -107,11 +108,12 @@ async def export_modifier_options(db: AsyncSession) -> str:
             "name",
             "sku",
             "price",
-            "name_localized",
+            "name_ar",
             "is_active",
         ]
     )
     for r in rows:
+        name_ar = (r.translations or {}).get("ar", {}).get("name", "")
         w.writerow(
             [
                 r.id,
@@ -119,7 +121,7 @@ async def export_modifier_options(db: AsyncSession) -> str:
                 r.name,
                 r.sku,
                 r.price,
-                r.name_localized or "",
+                name_ar,
                 r.is_active,
             ]
         )

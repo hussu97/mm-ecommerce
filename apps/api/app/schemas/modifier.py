@@ -12,7 +12,7 @@ class ModifierOptionResponse(BaseModel):
     id: UUID
     modifier_id: UUID
     name: str
-    name_localized: str | None
+    translations: dict[str, dict[str, str]] = {}
     sku: str
     price: float
     calories: int | None
@@ -26,7 +26,7 @@ class ModifierResponse(BaseModel):
     id: UUID
     reference: str
     name: str
-    name_localized: str | None
+    translations: dict[str, dict[str, str]] = {}
     is_active: bool
     options: list[ModifierOptionResponse] = []
 
@@ -47,18 +47,18 @@ class ProductModifierResponse(BaseModel):
 class ModifierCreate(BaseModel):
     reference: str
     name: str
-    name_localized: str | None = None
+    translations: dict[str, dict[str, str]] = {}
 
 
 class ModifierUpdate(BaseModel):
     name: str | None = None
-    name_localized: str | None = None
+    translations: dict[str, dict[str, str]] = {}
     is_active: bool | None = None
 
 
 class ModifierOptionCreate(BaseModel):
     name: str
-    name_localized: str | None = None
+    translations: dict[str, dict[str, str]] = {}
     sku: str
     price: Decimal = Decimal("0")
     calories: int | None = None
@@ -68,7 +68,7 @@ class ModifierOptionCreate(BaseModel):
 
 class ModifierOptionUpdate(BaseModel):
     name: str | None = None
-    name_localized: str | None = None
+    translations: dict[str, dict[str, str]] = {}
     sku: str | None = None
     price: Decimal | None = None
     calories: int | None = None

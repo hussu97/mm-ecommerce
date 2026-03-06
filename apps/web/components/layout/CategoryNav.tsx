@@ -7,7 +7,7 @@ import type { Category } from '@/lib/types';
 
 // ─── Client wrapper — knows which category is active ──────────────────────────
 
-export function CategoryNavLinks({ categories }: { categories: Category[] }) {
+export function CategoryNavLinks({ categories, locale = 'en' }: { categories: Category[]; locale?: string }) {
   const pathname = usePathname();
   const [showFade, setShowFade] = useState(true);
 
@@ -26,11 +26,11 @@ export function CategoryNavLinks({ categories }: { categories: Category[] }) {
         onScroll={handleScroll}
       >
         {categories.map(({ slug, name }) => {
-          const active = pathname === `/${slug}` || pathname.startsWith(`/${slug}/`);
+          const active = pathname === `/${locale}/${slug}` || pathname.startsWith(`/${locale}/${slug}/`);
           return (
             <li key={slug} className="shrink-0">
               <Link
-                href={`/${slug}`}
+                href={`/${locale}/${slug}`}
                 prefetch={true}
                 className={[
                   'font-body text-[11px] uppercase tracking-widest transition-colors whitespace-nowrap',

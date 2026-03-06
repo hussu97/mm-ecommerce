@@ -75,11 +75,18 @@ function ProductCard({ product }: { product: Product }) {
 }
 
 export function FeaturedProducts({ products }: { products: Product[] }) {
-  if (products.length === 0) return null;
-
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 0);
+    setCanScrollRight(el.scrollLeft < el.scrollWidth - el.clientWidth - 1);
+  }, [products.length]);
+
+  if (products.length === 0) return null;
 
   const updateArrows = () => {
     const el = scrollRef.current;
@@ -87,11 +94,6 @@ export function FeaturedProducts({ products }: { products: Product[] }) {
     setCanScrollLeft(el.scrollLeft > 0);
     setCanScrollRight(el.scrollLeft < el.scrollWidth - el.clientWidth - 1);
   };
-
-  useEffect(() => {
-    updateArrows();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [products.length]);
 
   const scrollBy = (dir: 'left' | 'right') => {
     scrollRef.current?.scrollBy({ left: dir === 'left' ? -280 : 280, behavior: 'smooth' });

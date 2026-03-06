@@ -72,7 +72,7 @@ export default function ModifiersPage() {
     (!q ||
       m.name.toLowerCase().includes(q) ||
       m.reference.toLowerCase().includes(q) ||
-      ((m as any).translations?.ar?.name ?? '').toLowerCase().includes(q) ||
+      (m.translations?.ar?.name ?? '').toLowerCase().includes(q) ||
       m.options.some(o => o.name.toLowerCase().includes(q) || o.sku.toLowerCase().includes(q))
     )
   );
@@ -88,7 +88,7 @@ export default function ModifiersPage() {
 
   function openEdit(m: Modifier) {
     setEditId(m.id);
-    setForm({ reference: m.reference, name: m.name, name_ar: (m as any).translations?.ar?.name ?? '' });
+    setForm({ reference: m.reference, name: m.name, name_ar: m.translations?.ar?.name ?? '' });
     setFormError('');
     setShowForm(true);
   }
@@ -207,7 +207,7 @@ export default function ModifiersPage() {
     setEditingOptionId(opt.id);
     setEditOptionForm({
       name: opt.name,
-      name_ar: (opt as any).translations?.ar?.name ?? '',
+      name_ar: opt.translations?.ar?.name ?? '',
       sku: opt.sku,
       price: String(opt.price),
       calories: opt.calories != null ? String(opt.calories) : '',
@@ -390,7 +390,7 @@ export default function ModifiersPage() {
                       <span className="font-body font-medium text-gray-800 text-sm">{m.name}</span>
                     </td>
                     <td className="px-4 py-2.5 hidden sm:table-cell">
-                      <span className="text-xs font-body text-gray-500">{(m as any).translations?.ar?.name ?? '—'}</span>
+                      <span className="text-xs font-body text-gray-500">{m.translations?.ar?.name ?? '—'}</span>
                     </td>
                     <td className="px-4 py-2.5 hidden md:table-cell">
                       <span className="text-xs font-body text-gray-400">{m.reference}</span>
@@ -489,7 +489,7 @@ export default function ModifiersPage() {
                                     <tr key={opt.id} className="hover:bg-white/60 transition-colors">
                                       <td className="py-2 pr-2">
                                         <div className="font-body text-gray-700">{opt.name}</div>
-                                        {(opt as any).translations?.ar?.name && <div className="text-[10px] text-gray-400 font-body">{(opt as any).translations.ar.name}</div>}
+                                        {opt.translations?.ar?.name && <div className="text-[10px] text-gray-400 font-body">{opt.translations.ar.name}</div>}
                                       </td>
                                       <td className="py-2 pr-2 font-body text-gray-400 hidden sm:table-cell">{opt.sku}</td>
                                       <td className="py-2 pr-2 text-right font-body text-gray-700">
