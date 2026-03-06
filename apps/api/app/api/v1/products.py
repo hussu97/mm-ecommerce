@@ -39,6 +39,7 @@ async def list_products(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     include_inactive: bool = Query(False),
+    is_active: bool | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """List products with filtering, search, and pagination."""
@@ -51,6 +52,7 @@ async def list_products(
         page=page,
         per_page=per_page,
         include_inactive=include_inactive,
+        is_active=is_active,
     )
     pages = max(1, (total + per_page - 1) // per_page)
     return ProductListResponse(

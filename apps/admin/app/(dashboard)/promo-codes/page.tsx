@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { promoApi, bulkApi, ApiError } from '@/lib/api';
 import type { PromoCode } from '@/lib/types';
-import { Badge, Button, Input, Select } from '@/components/ui';
+import { Button, Input, Select, TabBar } from '@/components/ui';
 import { formatCurrency, formatDate } from '@/lib/utils';
 
 const DISCOUNT_TYPE_OPTIONS = [
@@ -34,13 +34,13 @@ const EMPTY_FORM: FormState = {
 export default function PromoCodesPage() {
   const [codes, setCodes] = useState<PromoCode[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'active' | 'inactive'>('active');
   const [showForm, setShowForm] = useState(false);
   const [editingCode, setEditingCode] = useState<PromoCode | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
-  const [togglingCode, setTogglingCode] = useState<string | null>(null);
-  const [deletingCode, setDeletingCode] = useState<string | null>(null);
+  const [actionCode, setActionCode] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulking, setBulking] = useState(false);
 
@@ -51,7 +51,7 @@ export default function PromoCodesPage() {
   async function load() {
     setLoading(true);
     try {
-      const res = await promoApi.list();
+      const res = await promoApi.list(true);
       setCodes(res);
     } catch {
       // silent
@@ -59,6 +59,10 @@ export default function PromoCodesPage() {
       setLoading(false);
     }
   }
+
+  const filteredCodes = codes.filter(c =>
+    activeTab === 'active' ? c.is_active : !c.is_active
+  );
 
   function openCreate() {
     setEditingCode(null);
@@ -131,10 +135,10 @@ export default function PromoCodesPage() {
   }
 
   function toggleSelectAll() {
-    if (selectedIds.size === codes.length) {
+    if (selectedIds.size === filteredCodes.length) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(codes.map(c => c.id)));
+      setSelectedIds(new Set(filteredCodes.map(c => c.id)));
     }
   }
 
@@ -151,30 +155,33 @@ export default function PromoCodesPage() {
     }
   }
 
-  async function toggleActive(promo: PromoCode) {
-    setTogglingCode(promo.code);
+  async function handleDeactivate(code: string) {
+    if (!confirm(`Deactivate promo code "${code}"? It will move to the Inactive tab.`)) return;
+    setActionCode(code);
     try {
-      const updated = await promoApi.update(promo.code, { is_active: !promo.is_active });
-      setCodes(prev => prev.map(c => c.code === promo.code ? updated : c));
+      await promoApi.delete(code);
+      setCodes(prev => prev.map(c => c.code === code ? { ...c, is_active: false } : c));
     } catch (err) {
       alert((err as Error).message);
     } finally {
-      setTogglingCode(null);
+      setActionCode(null);
     }
   }
 
-  async function handleDelete(code: string) {
-    if (!confirm(`Delete promo code "${code}"? This cannot be undone.`)) return;
-    setDeletingCode(code);
+  async function handleRestore(code: string) {
+    setActionCode(code);
     try {
-      await promoApi.delete(code);
-      setCodes(prev => prev.filter(c => c.code !== code));
+      const updated = await promoApi.update(code, { is_active: true });
+      setCodes(prev => prev.map(c => c.code === code ? updated : c));
     } catch (err) {
       alert((err as Error).message);
     } finally {
-      setDeletingCode(null);
+      setActionCode(null);
     }
   }
+
+  const activeCount = codes.filter(c => c.is_active).length;
+  const inactiveCount = codes.filter(c => !c.is_active).length;
 
   return (
     <div>
@@ -263,11 +270,21 @@ export default function PromoCodesPage() {
         </form>
       )}
 
+      {/* Tabs */}
+      <TabBar
+        tabs={[
+          { key: 'active', label: 'Active', count: activeCount },
+          { key: 'inactive', label: 'Inactive', count: inactiveCount },
+        ]}
+        active={activeTab}
+        onChange={key => { setActiveTab(key as 'active' | 'inactive'); setSelectedIds(new Set()); }}
+      />
+
       {/* Bulk action bar */}
       {selectedIds.size > 0 && (
         <div className="flex items-center gap-3 bg-primary/10 border border-primary/30 px-4 py-2.5 mb-4">
           <span className="text-xs font-body text-primary font-medium">{selectedIds.size} selected</span>
-          <button onClick={() => setSelectedIds(new Set(codes.map(c => c.id)))} className="text-xs font-body text-gray-500 hover:text-primary underline">All</button>
+          <button onClick={() => setSelectedIds(new Set(filteredCodes.map(c => c.id)))} className="text-xs font-body text-gray-500 hover:text-primary underline">All</button>
           <button onClick={() => setSelectedIds(new Set())} className="text-xs font-body text-gray-500 hover:text-primary underline">None</button>
           <div className="flex-1" />
           <Button size="sm" loading={bulking} onClick={() => handleBulkStatus(true)}>Activate</Button>
@@ -283,7 +300,7 @@ export default function PromoCodesPage() {
               <th className="px-4 py-3 w-8">
                 <input
                   type="checkbox"
-                  checked={codes.length > 0 && selectedIds.size === codes.length}
+                  checked={filteredCodes.length > 0 && selectedIds.size === filteredCodes.length}
                   onChange={toggleSelectAll}
                   className="accent-primary"
                 />
@@ -293,7 +310,6 @@ export default function PromoCodesPage() {
               <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden md:table-cell">Min Order</th>
               <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500 hidden md:table-cell">Uses</th>
               <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden lg:table-cell">Valid</th>
-              <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500">Active</th>
               <th className="px-4 py-3 text-right text-[11px] font-body uppercase tracking-widest text-gray-500">Actions</th>
             </tr>
           </thead>
@@ -301,21 +317,21 @@ export default function PromoCodesPage() {
             {loading ? (
               Array.from({ length: 4 }).map((_, i) => (
                 <tr key={i}>
-                  {Array.from({ length: 8 }).map((_, j) => (
+                  {Array.from({ length: 7 }).map((_, j) => (
                     <td key={j} className="px-4 py-3">
                       <div className="h-4 bg-gray-100 animate-pulse rounded-sm" />
                     </td>
                   ))}
                 </tr>
               ))
-            ) : codes.length === 0 ? (
+            ) : filteredCodes.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-400 font-body">
+                <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-400 font-body">
                   No promo codes yet.
                 </td>
               </tr>
             ) : (
-              codes.map(promo => (
+              filteredCodes.map(promo => (
                 <tr key={promo.id} className={`hover:bg-gray-50 transition-colors ${selectedIds.has(promo.id) ? 'bg-primary/5' : ''}`}>
                   <td className="px-4 py-3 w-8">
                     <input
@@ -354,28 +370,30 @@ export default function PromoCodesPage() {
                       {promo.valid_until ? formatDate(promo.valid_until) : '∞'}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-center">
-                    <button
-                      onClick={() => toggleActive(promo)}
-                      disabled={togglingCode === promo.code}
-                      className="cursor-pointer"
-                    >
-                      <Badge variant={promo.is_active ? 'success' : 'neutral'}>
-                        {promo.is_active ? 'Active' : 'Inactive'}
-                      </Badge>
-                    </button>
-                  </td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-2">
-                      <Button variant="ghost" size="sm" onClick={() => openEdit(promo)}>Edit</Button>
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        loading={deletingCode === promo.code}
-                        onClick={() => handleDelete(promo.code)}
-                      >
-                        Delete
-                      </Button>
+                      {activeTab === 'active' ? (
+                        <>
+                          <Button variant="ghost" size="sm" onClick={() => openEdit(promo)}>Edit</Button>
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            loading={actionCode === promo.code}
+                            onClick={() => handleDeactivate(promo.code)}
+                          >
+                            Deactivate
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          loading={actionCode === promo.code}
+                          onClick={() => handleRestore(promo.code)}
+                        >
+                          Restore
+                        </Button>
+                      )}
                     </div>
                   </td>
                 </tr>

@@ -43,6 +43,7 @@ async def get_all(
     page: int = 1,
     per_page: int = 20,
     include_inactive: bool = False,
+    is_active: bool | None = None,
 ) -> tuple[list[ProductResponse], int]:
     from app.models.category import Category  # avoid circular at module level
 
@@ -52,7 +53,9 @@ async def get_all(
         .order_by(_SORT_MAP.get(sort, Product.created_at.desc()))
     )
 
-    if not include_inactive:
+    if is_active is not None:
+        stmt = stmt.where(Product.is_active == is_active)  # noqa: E712
+    elif not include_inactive:
         stmt = stmt.where(Product.is_active == True)  # noqa: E712
 
     if category_slug:
@@ -179,7 +182,8 @@ async def delete(db: AsyncSession, slug: str) -> None:
     product = result.scalar_one_or_none()
     if not product:
         raise NotFoundError(f"Product '{slug}' not found")
-    await db.delete(product)
+    product.is_active = False
+    await db.flush()
 
 
 async def link_modifier(

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_admin_user, get_db
 from app.core.exceptions import BadRequestError
 from app.models.category import Category
-from app.models.modifier import ModifierOption
+from app.models.modifier import Modifier, ModifierOption
 from app.models.product import Product
 from app.models.promo_code import PromoCode
 from app.models.user import User
@@ -21,6 +21,7 @@ _ENTITY_MAP = {
     "products": Product,
     "categories": Category,
     "promo-codes": PromoCode,
+    "modifiers": Modifier,
     "modifier-options": ModifierOption,
 }
 

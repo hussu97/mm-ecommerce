@@ -84,7 +84,7 @@ export const categoriesApi = {
 // ─── Products ─────────────────────────────────────────────────────────────────
 
 export const productsApi = {
-  list: (params?: { search?: string; category?: string; page?: number; per_page?: number; include_inactive?: boolean }) => {
+  list: (params?: { search?: string; category?: string; page?: number; per_page?: number; include_inactive?: boolean; is_active?: boolean }) => {
     const qs = params
       ? '?' + new URLSearchParams(
           Object.entries(params)
@@ -105,7 +105,7 @@ export const productsApi = {
 // ─── Modifiers ────────────────────────────────────────────────────────────────
 
 export const modifiersApi = {
-  list: () => api.get<Modifier[]>('/modifiers'),
+  list: (includeInactive = false) => api.get<Modifier[]>(`/modifiers?include_inactive=${includeInactive}`),
   get: (id: string) => api.get<Modifier>(`/modifiers/${id}`),
   create: (data: object) => api.post<Modifier>('/modifiers', data),
   update: (id: string, data: object) => api.put<Modifier>(`/modifiers/${id}`, data),
@@ -193,7 +193,7 @@ export const customersApi = {
 // ─── Promo Codes ──────────────────────────────────────────────────────────────
 
 export const promoApi = {
-  list: () => api.get<PromoCode[]>('/promo-codes'),
+  list: (includeInactive = false) => api.get<PromoCode[]>(`/promo-codes?include_inactive=${includeInactive}`),
   create: (data: object) => api.post<PromoCode>('/promo-codes', data),
   update: (code: string, data: object) => api.put<PromoCode>(`/promo-codes/${code}`, data),
   delete: (code: string) => api.delete<void>(`/promo-codes/${code}`),

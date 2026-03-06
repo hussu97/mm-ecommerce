@@ -3,19 +3,20 @@
 import { useEffect, useState } from 'react';
 import { categoriesApi, uploadsApi, bulkApi, ApiError } from '@/lib/api';
 import type { Category } from '@/lib/types';
-import { Badge, Button, Input, Textarea } from '@/components/ui';
+import { Button, Input, TabBar, Textarea } from '@/components/ui';
 
 const BLANK = { name: '', slug: '', description: '', image_url: '', display_order: 0 };
 
 export default function CategoriesPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'active' | 'inactive'>('active');
   const [showForm, setShowForm] = useState(false);
   const [editSlug, setEditSlug] = useState<string | null>(null);
   const [form, setForm] = useState(BLANK);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
-  const [deletingSlug, setDeletingSlug] = useState<string | null>(null);
+  const [actionSlug, setActionSlug] = useState<string | null>(null);
   const [reorderingSlug, setReorderingSlug] = useState<string | null>(null);
   const [apiError, setApiError] = useState('');
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -27,6 +28,10 @@ export default function CategoriesPage() {
       .then(cats => setCategories([...cats].sort((a, b) => a.display_order - b.display_order)))
       .finally(() => setLoading(false));
   }, []);
+
+  const filteredCategories = categories.filter(c =>
+    activeTab === 'active' ? c.is_active : !c.is_active
+  );
 
   // Auto-slug from name on create
   useEffect(() => {
@@ -116,21 +121,33 @@ export default function CategoriesPage() {
     }
   }
 
-  async function handleDelete(slug: string, name: string) {
-    if (!confirm(`Delete "${name}"? This will fail if products are assigned to it.`)) return;
-    setDeletingSlug(slug);
+  async function handleDeactivate(slug: string, name: string) {
+    if (!confirm(`Deactivate "${name}"? It will move to the Inactive tab.`)) return;
+    setActionSlug(slug);
     try {
       await categoriesApi.delete(slug);
-      setCategories(prev => prev.filter(c => c.slug !== slug));
+      setCategories(prev => prev.map(c => c.slug === slug ? { ...c, is_active: false } : c));
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : 'Delete failed.');
+      alert(err instanceof ApiError ? err.message : 'Deactivate failed.');
     } finally {
-      setDeletingSlug(null);
+      setActionSlug(null);
+    }
+  }
+
+  async function handleRestore(slug: string) {
+    setActionSlug(slug);
+    try {
+      const updated = await categoriesApi.update(slug, { is_active: true });
+      setCategories(prev => prev.map(c => c.slug === slug ? updated : c));
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'Restore failed.');
+    } finally {
+      setActionSlug(null);
     }
   }
 
   async function handleReorder(slug: string, dir: -1 | 1) {
-    const sorted = [...categories].sort((a, b) => a.display_order - b.display_order);
+    const sorted = [...filteredCategories].sort((a, b) => a.display_order - b.display_order);
     const idx = sorted.findIndex(c => c.slug === slug);
     const swapIdx = idx + dir;
     if (swapIdx < 0 || swapIdx >= sorted.length) return;
@@ -168,10 +185,10 @@ export default function CategoriesPage() {
   }
 
   function toggleSelectAll() {
-    if (selectedIds.size === categories.length) {
+    if (selectedIds.size === filteredCategories.length) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(categories.map(c => c.id)));
+      setSelectedIds(new Set(filteredCategories.map(c => c.id)));
     }
   }
 
@@ -189,14 +206,8 @@ export default function CategoriesPage() {
     }
   }
 
-  async function handleToggleActive(cat: Category) {
-    try {
-      const updated = await categoriesApi.update(cat.slug, { is_active: !cat.is_active });
-      setCategories(prev => prev.map(c => c.slug === cat.slug ? updated : c));
-    } catch {
-      // silent
-    }
-  }
+  const activeCount = categories.filter(c => c.is_active).length;
+  const inactiveCount = categories.filter(c => !c.is_active).length;
 
   return (
     <div>
@@ -271,11 +282,21 @@ export default function CategoriesPage() {
         </div>
       )}
 
+      {/* Tabs */}
+      <TabBar
+        tabs={[
+          { key: 'active', label: 'Active', count: activeCount },
+          { key: 'inactive', label: 'Inactive', count: inactiveCount },
+        ]}
+        active={activeTab}
+        onChange={key => { setActiveTab(key as 'active' | 'inactive'); setSelectedIds(new Set()); }}
+      />
+
       {/* Bulk action bar */}
       {selectedIds.size > 0 && (
         <div className="flex items-center gap-3 bg-primary/10 border border-primary/30 px-4 py-2.5 mb-4">
           <span className="text-xs font-body text-primary font-medium">{selectedIds.size} selected</span>
-          <button onClick={() => setSelectedIds(new Set(categories.map(c => c.id)))} className="text-xs font-body text-gray-500 hover:text-primary underline">All</button>
+          <button onClick={() => setSelectedIds(new Set(filteredCategories.map(c => c.id)))} className="text-xs font-body text-gray-500 hover:text-primary underline">All</button>
           <button onClick={() => setSelectedIds(new Set())} className="text-xs font-body text-gray-500 hover:text-primary underline">None</button>
           <div className="flex-1" />
           <Button size="sm" loading={bulking} onClick={() => handleBulkStatus(true)}>Activate</Button>
@@ -296,7 +317,7 @@ export default function CategoriesPage() {
                 <th className="px-4 py-3 w-8">
                   <input
                     type="checkbox"
-                    checked={categories.length > 0 && selectedIds.size === categories.length}
+                    checked={filteredCategories.length > 0 && selectedIds.size === filteredCategories.length}
                     onChange={toggleSelectAll}
                     className="accent-primary"
                   />
@@ -304,17 +325,16 @@ export default function CategoriesPage() {
                 <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 w-8">Order</th>
                 <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Name</th>
                 <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500 hidden sm:table-cell">Products</th>
-                <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500">Status</th>
                 <th className="px-4 py-3 text-right text-[11px] font-body uppercase tracking-widest text-gray-500">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {categories.length === 0 ? (
+              {filteredCategories.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-sm text-gray-400 font-body">No categories yet.</td>
+                  <td colSpan={5} className="px-4 py-10 text-center text-sm text-gray-400 font-body">No categories yet.</td>
                 </tr>
               ) : (
-                categories.map((cat, idx) => (
+                filteredCategories.map((cat, idx) => (
                   <tr key={cat.id} className={`hover:bg-gray-50 transition-colors ${selectedIds.has(cat.id) ? 'bg-primary/5' : ''}`}>
                     <td className="px-4 py-2.5 w-8">
                       <input
@@ -335,7 +355,7 @@ export default function CategoriesPage() {
                         </button>
                         <button
                           onClick={() => handleReorder(cat.slug, 1)}
-                          disabled={idx === categories.length - 1 || reorderingSlug === cat.slug}
+                          disabled={idx === filteredCategories.length - 1 || reorderingSlug === cat.slug}
                           className="text-gray-300 hover:text-primary disabled:opacity-30 transition-colors"
                         >
                           <span className="material-icons text-[14px]">arrow_drop_down</span>
@@ -349,24 +369,30 @@ export default function CategoriesPage() {
                     <td className="px-4 py-2.5 text-center hidden sm:table-cell">
                       <span className="text-xs font-body text-gray-500">{cat.product_count}</span>
                     </td>
-                    <td className="px-4 py-2.5 text-center">
-                      <button onClick={() => handleToggleActive(cat)}>
-                        <Badge variant={cat.is_active ? 'success' : 'neutral'}>
-                          {cat.is_active ? 'Active' : 'Inactive'}
-                        </Badge>
-                      </button>
-                    </td>
                     <td className="px-4 py-2.5 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => openEdit(cat)}>Edit</Button>
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          loading={deletingSlug === cat.slug}
-                          onClick={() => handleDelete(cat.slug, cat.name)}
-                        >
-                          Delete
-                        </Button>
+                        {activeTab === 'active' ? (
+                          <>
+                            <Button variant="ghost" size="sm" onClick={() => openEdit(cat)}>Edit</Button>
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              loading={actionSlug === cat.slug}
+                              onClick={() => handleDeactivate(cat.slug, cat.name)}
+                            >
+                              Deactivate
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            loading={actionSlug === cat.slug}
+                            onClick={() => handleRestore(cat.slug)}
+                          >
+                            Restore
+                          </Button>
+                        )}
                       </div>
                     </td>
                   </tr>

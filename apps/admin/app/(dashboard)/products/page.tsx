@@ -5,7 +5,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { productsApi, categoriesApi, bulkApi } from '@/lib/api';
 import type { Category, Product } from '@/lib/types';
-import { Badge, Button, Input, Select } from '@/components/ui';
+import { Badge, Button, Input, Select, TabBar } from '@/components/ui';
 import { formatCurrency } from '@/lib/utils';
 
 export default function ProductsPage() {
@@ -17,14 +17,19 @@ export default function ProductsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
-  const [deletingSlug, setDeletingSlug] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'active' | 'inactive'>('active');
+  const [actionSlug, setActionSlug] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulking, setBulking] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await productsApi.list({ search: search || undefined, category: categoryFilter || undefined, page, per_page: 20 });
+      const params =
+        activeTab === 'active'
+          ? { search: search || undefined, category: categoryFilter || undefined, page, per_page: 20, is_active: true }
+          : { search: search || undefined, category: categoryFilter || undefined, page, per_page: 20, include_inactive: true, is_active: false };
+      const res = await productsApi.list(params);
       setProducts(res.items);
       setTotal(res.total);
       setPages(res.pages);
@@ -33,7 +38,7 @@ export default function ProductsPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, categoryFilter, page]);
+  }, [search, categoryFilter, page, activeTab]);
 
   useEffect(() => {
     categoriesApi.list(true).then(setCategories).catch(() => {});
@@ -41,16 +46,16 @@ export default function ProductsPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [search, categoryFilter]);
+  }, [search, categoryFilter, activeTab]);
 
   useEffect(() => {
     load();
     setSelectedIds(new Set());
   }, [load]);
 
-  async function handleDelete(slug: string, name: string) {
-    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
-    setDeletingSlug(slug);
+  async function handleDeactivate(slug: string, name: string) {
+    if (!confirm(`Deactivate "${name}"? It will move to the Inactive tab.`)) return;
+    setActionSlug(slug);
     try {
       await productsApi.delete(slug);
       setProducts(prev => prev.filter(p => p.slug !== slug));
@@ -58,7 +63,20 @@ export default function ProductsPage() {
     } catch (err) {
       alert((err as Error).message);
     } finally {
-      setDeletingSlug(null);
+      setActionSlug(null);
+    }
+  }
+
+  async function handleRestore(slug: string) {
+    setActionSlug(slug);
+    try {
+      await productsApi.update(slug, { is_active: true });
+      setProducts(prev => prev.filter(p => p.slug !== slug));
+      setTotal(t => t - 1);
+    } catch (err) {
+      alert((err as Error).message);
+    } finally {
+      setActionSlug(null);
     }
   }
 
@@ -129,6 +147,16 @@ export default function ProductsPage() {
         </div>
       </div>
 
+      {/* Tabs */}
+      <TabBar
+        tabs={[
+          { key: 'active', label: 'Active' },
+          { key: 'inactive', label: 'Inactive' },
+        ]}
+        active={activeTab}
+        onChange={key => setActiveTab(key as 'active' | 'inactive')}
+      />
+
       {/* Bulk action bar */}
       {selectedIds.size > 0 && (
         <div className="flex items-center gap-3 bg-primary/10 border border-primary/30 px-4 py-2.5 mb-4">
@@ -160,7 +188,7 @@ export default function ProductsPage() {
               <th className="px-4 py-3 text-right text-[11px] font-body uppercase tracking-widest text-gray-500">Price</th>
               <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden md:table-cell">SKU</th>
               <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500 hidden md:table-cell">Modifiers</th>
-              <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500 hidden lg:table-cell">Status</th>
+              <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500 hidden lg:table-cell">Featured</th>
               <th className="px-4 py-3 text-right text-[11px] font-body uppercase tracking-widest text-gray-500">Actions</th>
             </tr>
           </thead>
@@ -182,80 +210,86 @@ export default function ProductsPage() {
                 </td>
               </tr>
             ) : (
-              products.map(product => {
-                return (
-                  <tr key={product.id} className={`hover:bg-gray-50 transition-colors ${selectedIds.has(product.id) ? 'bg-primary/5' : ''}`}>
-                    <td className="px-4 py-2.5 w-8">
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(product.id)}
-                        onChange={() => toggleSelect(product.id)}
-                        className="accent-primary"
-                      />
-                    </td>
-                    <td className="px-4 py-2.5">
-                      {product.image_urls[0] ? (
-                        <div className="relative w-9 h-9 shrink-0">
-                          <Image
-                            src={product.image_urls[0]}
-                            alt={product.name}
-                            fill
-                            sizes="36px"
-                            className="object-cover rounded-sm"
-                          />
-                        </div>
-                      ) : (
-                        <div className="w-9 h-9 bg-gray-100 flex items-center justify-center rounded-sm">
-                          <span className="material-icons text-gray-300 text-[16px]">image</span>
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <div className="font-body font-medium text-gray-800 text-sm">{product.name}</div>
-                      <div className="font-body text-[11px] text-gray-400">{product.slug}</div>
-                    </td>
-                    <td className="px-4 py-2.5 hidden sm:table-cell">
-                      <span className="text-xs font-body text-gray-500">{product.category?.name ?? '—'}</span>
-                    </td>
-                    <td className="px-4 py-2.5 text-right">
-                      <span className="text-xs font-body text-gray-700">
-                        {product.base_price > 0 ? formatCurrency(product.base_price) : 'From options'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 hidden md:table-cell">
-                      <span className="text-xs font-body text-gray-400">{product.sku ?? '—'}</span>
-                    </td>
-                    <td className="px-4 py-2.5 text-center hidden md:table-cell">
-                      <span className="text-xs font-body text-gray-500">
-                        {product.product_modifiers.length}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 text-center hidden lg:table-cell">
-                      <Badge variant={product.is_active ? 'success' : 'neutral'}>
-                        {product.is_active ? 'Active' : 'Inactive'}
-                      </Badge>
-                      {product.is_featured && (
-                        <Badge variant="info" className="ml-1">Featured</Badge>
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <Link href={`/products/${product.slug}/edit`}>
-                          <Button variant="ghost" size="sm">Edit</Button>
-                        </Link>
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          loading={deletingSlug === product.slug}
-                          onClick={() => handleDelete(product.slug, product.name)}
-                        >
-                          Delete
-                        </Button>
+              products.map(product => (
+                <tr key={product.id} className={`hover:bg-gray-50 transition-colors ${selectedIds.has(product.id) ? 'bg-primary/5' : ''}`}>
+                  <td className="px-4 py-2.5 w-8">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(product.id)}
+                      onChange={() => toggleSelect(product.id)}
+                      className="accent-primary"
+                    />
+                  </td>
+                  <td className="px-4 py-2.5">
+                    {product.image_urls[0] ? (
+                      <div className="relative w-9 h-9 shrink-0">
+                        <Image
+                          src={product.image_urls[0]}
+                          alt={product.name}
+                          fill
+                          sizes="36px"
+                          className="object-cover rounded-sm"
+                        />
                       </div>
-                    </td>
-                  </tr>
-                );
-              })
+                    ) : (
+                      <div className="w-9 h-9 bg-gray-100 flex items-center justify-center rounded-sm">
+                        <span className="material-icons text-gray-300 text-[16px]">image</span>
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <div className="font-body font-medium text-gray-800 text-sm">{product.name}</div>
+                    <div className="font-body text-[11px] text-gray-400">{product.slug}</div>
+                  </td>
+                  <td className="px-4 py-2.5 hidden sm:table-cell">
+                    <span className="text-xs font-body text-gray-500">{product.category?.name ?? '—'}</span>
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <span className="text-xs font-body text-gray-700">
+                      {product.base_price > 0 ? formatCurrency(product.base_price) : 'From options'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 hidden md:table-cell">
+                    <span className="text-xs font-body text-gray-400">{product.sku ?? '—'}</span>
+                  </td>
+                  <td className="px-4 py-2.5 text-center hidden md:table-cell">
+                    <span className="text-xs font-body text-gray-500">
+                      {product.product_modifiers.length}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 text-center hidden lg:table-cell">
+                    {product.is_featured && <Badge variant="info">Featured</Badge>}
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      {activeTab === 'active' ? (
+                        <>
+                          <Link href={`/products/${product.slug}/edit`}>
+                            <Button variant="ghost" size="sm">Edit</Button>
+                          </Link>
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            loading={actionSlug === product.slug}
+                            onClick={() => handleDeactivate(product.slug, product.name)}
+                          >
+                            Deactivate
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          loading={actionSlug === product.slug}
+                          onClick={() => handleRestore(product.slug)}
+                        >
+                          Restore
+                        </Button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))
             )}
           </tbody>
         </table>

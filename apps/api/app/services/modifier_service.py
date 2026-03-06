@@ -21,8 +21,12 @@ def _modifier_load_options():
     return [selectinload(Modifier.options)]
 
 
-async def get_all(db: AsyncSession) -> list[ModifierResponse]:
+async def get_all(
+    db: AsyncSession, include_inactive: bool = False
+) -> list[ModifierResponse]:
     stmt = select(Modifier).options(*_modifier_load_options()).order_by(Modifier.name)
+    if not include_inactive:
+        stmt = stmt.where(Modifier.is_active == True)  # noqa: E712
     result = await db.execute(stmt)
     modifiers = result.scalars().unique().all()
     return [ModifierResponse.model_validate(m) for m in modifiers]
@@ -98,7 +102,8 @@ async def delete(db: AsyncSession, modifier_id: uuid.UUID) -> None:
     modifier = result.scalar_one_or_none()
     if not modifier:
         raise NotFoundError(f"Modifier '{modifier_id}' not found")
-    await db.delete(modifier)
+    modifier.is_active = False
+    await db.flush()
 
 
 async def add_option(
@@ -179,7 +184,7 @@ async def delete_option(
             f"Option '{option_id}' not found on modifier '{modifier_id}'"
         )
 
-    await db.delete(option)
+    option.is_active = False
     await db.flush()
 
     stmt = (

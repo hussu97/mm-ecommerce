@@ -27,6 +27,7 @@ class ModifierResponse(BaseModel):
     reference: str
     name: str
     name_localized: str | None
+    is_active: bool
     options: list[ModifierOptionResponse] = []
 
 
@@ -52,6 +53,7 @@ class ModifierCreate(BaseModel):
 class ModifierUpdate(BaseModel):
     name: str | None = None
     name_localized: str | None = None
+    is_active: bool | None = None
 
 
 class ModifierOptionCreate(BaseModel):

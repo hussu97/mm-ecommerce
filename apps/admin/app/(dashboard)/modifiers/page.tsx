@@ -1,9 +1,9 @@
 'use client';
 
 import { Fragment, useEffect, useState } from 'react';
-import { modifiersApi, ApiError } from '@/lib/api';
+import { modifiersApi, bulkApi, ApiError } from '@/lib/api';
 import type { Modifier, ModifierOption } from '@/lib/types';
-import { Badge, Button, Input } from '@/components/ui';
+import { Badge, Button, Input, TabBar } from '@/components/ui';
 
 const BLANK_MODIFIER = { reference: '', name: '', name_localized: '' };
 const BLANK_OPTION = { name: '', name_localized: '', sku: '', price: '0', calories: '', is_active: true, display_order: '0' };
@@ -11,6 +11,7 @@ const BLANK_OPTION = { name: '', name_localized: '', sku: '', price: '0', calori
 export default function ModifiersPage() {
   const [modifiers, setModifiers] = useState<Modifier[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'active' | 'inactive'>('active');
 
   // Modifier form
   const [showForm, setShowForm] = useState(false);
@@ -22,8 +23,12 @@ export default function ModifiersPage() {
   // Expanded row
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // Per-modifier delete
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  // Per-modifier action
+  const [actionId, setActionId] = useState<string | null>(null);
+
+  // Bulk selection
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulking, setBulking] = useState(false);
 
   // Option add form (per modifier)
   const [addingOptionFor, setAddingOptionFor] = useState<string | null>(null);
@@ -46,13 +51,17 @@ export default function ModifiersPage() {
   async function load() {
     setLoading(true);
     try {
-      setModifiers(await modifiersApi.list());
+      setModifiers(await modifiersApi.list(true));
     } catch {
       // silent
     } finally {
       setLoading(false);
     }
   }
+
+  const filteredModifiers = modifiers.filter(m =>
+    activeTab === 'active' ? m.is_active : !m.is_active
+  );
 
   function openAdd() {
     setEditId(null);
@@ -88,17 +97,58 @@ export default function ModifiersPage() {
     }
   }
 
-  async function handleDelete(id: string, name: string) {
-    if (!confirm(`Delete modifier "${name}"? This will remove all its options and product links.`)) return;
-    setDeletingId(id);
+  async function handleDeactivate(id: string, name: string) {
+    if (!confirm(`Deactivate modifier "${name}"? It will move to the Inactive tab.`)) return;
+    setActionId(id);
     try {
       await modifiersApi.delete(id);
-      setModifiers(prev => prev.filter(m => m.id !== id));
+      setModifiers(prev => prev.map(m => m.id === id ? { ...m, is_active: false } : m));
       if (expandedId === id) setExpandedId(null);
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : 'Delete failed.');
+      alert(err instanceof ApiError ? err.message : 'Deactivate failed.');
     } finally {
-      setDeletingId(null);
+      setActionId(null);
+    }
+  }
+
+  async function handleRestore(id: string) {
+    setActionId(id);
+    try {
+      const updated = await modifiersApi.update(id, { is_active: true });
+      setModifiers(prev => prev.map(m => m.id === id ? updated : m));
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'Restore failed.');
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === filteredModifiers.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredModifiers.map(m => m.id)));
+    }
+  }
+
+  async function handleBulkStatus(is_active: boolean) {
+    setBulking(true);
+    try {
+      await bulkApi.updateStatus('modifiers', Array.from(selectedIds), is_active);
+      await load();
+      setSelectedIds(new Set());
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'Bulk action failed.');
+    } finally {
+      setBulking(false);
     }
   }
 
@@ -166,18 +216,21 @@ export default function ModifiersPage() {
     }
   }
 
-  async function handleDeleteOption(modifierId: string, optionId: string, name: string) {
-    if (!confirm(`Delete option "${name}"?`)) return;
+  async function handleDeactivateOption(modifierId: string, optionId: string, name: string) {
+    if (!confirm(`Deactivate option "${name}"?`)) return;
     setDeletingOptionId(optionId);
     try {
       const updated = await modifiersApi.deleteOption(modifierId, optionId);
       setModifiers(prev => prev.map(m => m.id === modifierId ? updated : m));
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : 'Delete failed.');
+      alert(err instanceof ApiError ? err.message : 'Deactivate failed.');
     } finally {
       setDeletingOptionId(null);
     }
   }
+
+  const activeCount = modifiers.filter(m => m.is_active).length;
+  const inactiveCount = modifiers.filter(m => !m.is_active).length;
 
   return (
     <div>
@@ -230,6 +283,28 @@ export default function ModifiersPage() {
         </div>
       )}
 
+      {/* Tabs */}
+      <TabBar
+        tabs={[
+          { key: 'active', label: 'Active', count: activeCount },
+          { key: 'inactive', label: 'Inactive', count: inactiveCount },
+        ]}
+        active={activeTab}
+        onChange={key => { setActiveTab(key as 'active' | 'inactive'); setSelectedIds(new Set()); }}
+      />
+
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 bg-primary/10 border border-primary/30 px-4 py-2.5 mb-4">
+          <span className="text-xs font-body text-primary font-medium">{selectedIds.size} selected</span>
+          <button onClick={() => setSelectedIds(new Set(filteredModifiers.map(m => m.id)))} className="text-xs font-body text-gray-500 hover:text-primary underline">All</button>
+          <button onClick={() => setSelectedIds(new Set())} className="text-xs font-body text-gray-500 hover:text-primary underline">None</button>
+          <div className="flex-1" />
+          <Button size="sm" loading={bulking} onClick={() => handleBulkStatus(true)}>Activate</Button>
+          <Button size="sm" variant="ghost" loading={bulking} onClick={() => handleBulkStatus(false)}>Deactivate</Button>
+        </div>
+      )}
+
       {/* Table */}
       {loading ? (
         <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-12 bg-gray-100 animate-pulse" />)}</div>
@@ -238,6 +313,14 @@ export default function ModifiersPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
+                <th className="px-4 py-3 w-8">
+                  <input
+                    type="checkbox"
+                    checked={filteredModifiers.length > 0 && selectedIds.size === filteredModifiers.length}
+                    onChange={toggleSelectAll}
+                    className="accent-primary"
+                  />
+                </th>
                 <th className="px-4 py-3 w-6"></th>
                 <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Name</th>
                 <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden sm:table-cell">Name (Localized)</th>
@@ -247,13 +330,21 @@ export default function ModifiersPage() {
               </tr>
             </thead>
             <tbody>
-              {modifiers.length === 0 ? (
+              {filteredModifiers.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-sm text-gray-400 font-body">No modifiers yet.</td>
+                  <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-400 font-body">No modifiers yet.</td>
                 </tr>
-              ) : modifiers.map(m => (
+              ) : filteredModifiers.map(m => (
                 <Fragment key={m.id}>
-                  <tr className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+                  <tr className={`border-b border-gray-100 hover:bg-gray-50 transition-colors ${selectedIds.has(m.id) ? 'bg-primary/5' : ''}`}>
+                    <td className="px-4 py-2.5 w-8">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(m.id)}
+                        onChange={() => toggleSelect(m.id)}
+                        className="accent-primary"
+                      />
+                    </td>
                     <td className="px-4 py-2.5">
                       <button
                         onClick={() => setExpandedId(expandedId === m.id ? null : m.id)}
@@ -278,13 +369,24 @@ export default function ModifiersPage() {
                     </td>
                     <td className="px-4 py-2.5 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => openEdit(m)}>Edit</Button>
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          loading={deletingId === m.id}
-                          onClick={() => handleDelete(m.id, m.name)}
-                        >Delete</Button>
+                        {activeTab === 'active' ? (
+                          <>
+                            <Button variant="ghost" size="sm" onClick={() => openEdit(m)}>Edit</Button>
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              loading={actionId === m.id}
+                              onClick={() => handleDeactivate(m.id, m.name)}
+                            >Deactivate</Button>
+                          </>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            loading={actionId === m.id}
+                            onClick={() => handleRestore(m.id)}
+                          >Restore</Button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -292,7 +394,7 @@ export default function ModifiersPage() {
                   {/* Expanded options */}
                   {expandedId === m.id && (
                     <tr key={`${m.id}-options`}>
-                      <td colSpan={6} className="bg-gray-50 border-b border-gray-100">
+                      <td colSpan={7} className="bg-gray-50 border-b border-gray-100">
                         <div className="px-8 py-4">
                           <div className="flex items-center justify-between mb-3">
                             <span className="text-[11px] font-body uppercase tracking-widest text-gray-500">Options</span>
@@ -376,7 +478,7 @@ export default function ModifiersPage() {
                                             size="sm"
                                             variant="danger"
                                             loading={deletingOptionId === opt.id}
-                                            onClick={() => handleDeleteOption(m.id, opt.id, opt.name)}
+                                            onClick={() => handleDeactivateOption(m.id, opt.id, opt.name)}
                                           >Del</Button>
                                         </div>
                                       </td>

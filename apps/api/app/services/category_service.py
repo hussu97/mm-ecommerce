@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
+from app.core.exceptions import ConflictError, NotFoundError
 from app.models.category import Category
 from app.models.product import Product
 from app.schemas.category import CategoryCreate, CategoryResponse, CategoryUpdate
@@ -12,7 +12,8 @@ from app.schemas.category import CategoryCreate, CategoryResponse, CategoryUpdat
 async def _with_product_count(db: AsyncSession, cat: Category) -> CategoryResponse:
     count_result = await db.execute(
         select(func.count(Product.id)).where(
-            Product.category_id == cat.id, Product.is_active == True  # noqa: E712
+            Product.category_id == cat.id,
+            Product.is_active == True,  # noqa: E712
         )
     )
     count = count_result.scalar() or 0
@@ -21,7 +22,9 @@ async def _with_product_count(db: AsyncSession, cat: Category) -> CategoryRespon
     return response
 
 
-async def get_all(db: AsyncSession, include_inactive: bool = False) -> list[CategoryResponse]:
+async def get_all(
+    db: AsyncSession, include_inactive: bool = False
+) -> list[CategoryResponse]:
     stmt = (
         select(Category, func.count(Product.id).label("product_count"))
         .outerjoin(
@@ -45,7 +48,9 @@ async def get_all(db: AsyncSession, include_inactive: bool = False) -> list[Cate
     return categories
 
 
-async def get_by_slug(db: AsyncSession, slug: str, include_inactive: bool = False) -> CategoryResponse:
+async def get_by_slug(
+    db: AsyncSession, slug: str, include_inactive: bool = False
+) -> CategoryResponse:
     stmt = (
         select(Category, func.count(Product.id).label("product_count"))
         .outerjoin(
@@ -108,14 +113,5 @@ async def delete(db: AsyncSession, slug: str) -> None:
     cat = result.scalar_one_or_none()
     if not cat:
         raise NotFoundError(f"Category '{slug}' not found")
-
-    count_result = await db.execute(
-        select(func.count(Product.id)).where(Product.category_id == cat.id)
-    )
-    count = count_result.scalar() or 0
-    if count > 0:
-        raise BadRequestError(
-            f"Cannot delete category with {count} products. Reassign or delete products first."
-        )
-
-    await db.delete(cat)
+    cat.is_active = False
+    await db.flush()

@@ -165,3 +165,40 @@ export function Spinner({ className }: { className?: string }) {
     <div className={cn('w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin', className)} />
   );
 }
+
+// ─── TabBar ───────────────────────────────────────────────────────────────────
+
+interface TabBarProps {
+  tabs: { key: string; label: string; count?: number }[];
+  active: string;
+  onChange: (key: string) => void;
+}
+
+export function TabBar({ tabs, active, onChange }: TabBarProps) {
+  return (
+    <div className="flex border-b border-gray-200 mb-4">
+      {tabs.map(tab => (
+        <button
+          key={tab.key}
+          onClick={() => onChange(tab.key)}
+          className={cn(
+            'px-4 py-2 text-xs font-body font-medium uppercase tracking-wider transition-colors border-b-2 -mb-px',
+            active === tab.key
+              ? 'text-primary border-primary'
+              : 'text-gray-500 border-transparent hover:text-gray-700',
+          )}
+        >
+          {tab.label}
+          {tab.count !== undefined && (
+            <span className={cn(
+              'ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full',
+              active === tab.key ? 'bg-primary/10 text-primary' : 'bg-gray-100 text-gray-500',
+            )}>
+              {tab.count}
+            </span>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}

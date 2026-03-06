@@ -33,6 +33,7 @@ export interface Modifier {
   reference: string;
   name: string;
   name_localized: string | null;
+  is_active: boolean;
   options: ModifierOption[];
 }
 

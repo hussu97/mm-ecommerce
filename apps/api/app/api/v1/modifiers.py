@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_admin_user, get_db
@@ -20,9 +20,12 @@ router = APIRouter()
 
 
 @router.get("", response_model=list[ModifierResponse])
-async def list_modifiers(db: AsyncSession = Depends(get_db)):
+async def list_modifiers(
+    include_inactive: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+):
     """List all modifiers with their options."""
-    return await modifier_service.get_all(db)
+    return await modifier_service.get_all(db, include_inactive=include_inactive)
 
 
 @router.post("", response_model=ModifierResponse, status_code=status.HTTP_201_CREATED)

@@ -18,7 +18,9 @@ from app.schemas.promo_code import (
 
 def _calc_discount(promo: PromoCode, subtotal: Decimal) -> Decimal:
     if promo.discount_type == DiscountTypeEnum.PERCENTAGE:
-        amount = (subtotal * promo.discount_value / Decimal("100")).quantize(Decimal("0.01"))
+        amount = (subtotal * promo.discount_value / Decimal("100")).quantize(
+            Decimal("0.01")
+        )
     else:
         amount = min(promo.discount_value, subtotal)
     return amount
@@ -37,17 +39,23 @@ async def validate(
         return PromoCodeValidateResponse(valid=False, message="Promo code not found")
 
     if not promo.is_active:
-        return PromoCodeValidateResponse(valid=False, message="Promo code is not active")
+        return PromoCodeValidateResponse(
+            valid=False, message="Promo code is not active"
+        )
 
     now = datetime.now(timezone.utc)
     if promo.valid_from and now < promo.valid_from:
-        return PromoCodeValidateResponse(valid=False, message="Promo code is not yet valid")
+        return PromoCodeValidateResponse(
+            valid=False, message="Promo code is not yet valid"
+        )
 
     if promo.valid_until and now > promo.valid_until:
         return PromoCodeValidateResponse(valid=False, message="Promo code has expired")
 
     if promo.max_uses is not None and promo.current_uses >= promo.max_uses:
-        return PromoCodeValidateResponse(valid=False, message="Promo code has reached its usage limit")
+        return PromoCodeValidateResponse(
+            valid=False, message="Promo code has reached its usage limit"
+        )
 
     if promo.min_order_amount and subtotal < promo.min_order_amount:
         return PromoCodeValidateResponse(
@@ -68,8 +76,13 @@ async def get_promo(db: AsyncSession, code: str) -> PromoCode:
     return promo
 
 
-async def get_all(db: AsyncSession) -> list[PromoCodeResponse]:
-    result = await db.execute(select(PromoCode).order_by(PromoCode.created_at.desc()))
+async def get_all(
+    db: AsyncSession, include_inactive: bool = False
+) -> list[PromoCodeResponse]:
+    stmt = select(PromoCode).order_by(PromoCode.created_at.desc())
+    if not include_inactive:
+        stmt = stmt.where(PromoCode.is_active == True)  # noqa: E712
+    result = await db.execute(stmt)
     return [PromoCodeResponse.model_validate(p) for p in result.scalars().all()]
 
 
@@ -88,7 +101,9 @@ async def create(db: AsyncSession, data: PromoCodeCreate) -> PromoCodeResponse:
     return PromoCodeResponse.model_validate(promo)
 
 
-async def update(db: AsyncSession, code: str, data: PromoCodeUpdate) -> PromoCodeResponse:
+async def update(
+    db: AsyncSession, code: str, data: PromoCodeUpdate
+) -> PromoCodeResponse:
     result = await db.execute(select(PromoCode).where(PromoCode.code == code.upper()))
     promo = result.scalar_one_or_none()
     if not promo:
@@ -107,4 +122,5 @@ async def delete(db: AsyncSession, code: str) -> None:
     promo = result.scalar_one_or_none()
     if not promo:
         raise NotFoundError(f"Promo code '{code}' not found")
-    await db.delete(promo)
+    promo.is_active = False
+    await db.flush()

@@ -21,6 +21,7 @@ class Modifier(Base, UUIDMixin, TimestampMixin):
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     name_localized: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Relationships
     options: Mapped[list[ModifierOption]] = relationship(

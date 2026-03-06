@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_admin_user, get_db
@@ -26,11 +26,12 @@ async def validate_promo_code(
 
 @router.get("", response_model=list[PromoCodeResponse])
 async def list_promo_codes(
+    include_inactive: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_admin_user),
 ):
     """List all promo codes (admin only)."""
-    return await promo_code_service.get_all(db)
+    return await promo_code_service.get_all(db, include_inactive=include_inactive)
 
 
 @router.post("", response_model=PromoCodeResponse, status_code=status.HTTP_201_CREATED)
