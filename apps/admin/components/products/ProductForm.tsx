@@ -367,7 +367,7 @@ export function ProductForm({ product }: Props) {
                     <option value="">— Select modifier —</option>
                     {allModifiers
                       .filter(m => !(currentProduct ?? product).product_modifiers.some(pm => pm.modifier_id === m.id))
-                      .map(m => <option key={m.id} value={m.id}>{m.name}</option>)
+                      .map(m => <option key={m.id} value={m.id}>{m.name} ({m.reference})</option>)
                     }
                   </select>
                 </div>
@@ -433,7 +433,7 @@ export function ProductForm({ product }: Props) {
             {(currentProduct ?? product).product_modifiers.map(pm => (
               <div key={pm.id} className="border border-gray-200 p-3 bg-gray-50">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-body font-medium text-gray-700">{pm.modifier.name}</span>
+                  <span className="text-xs font-body font-medium text-gray-700">{pm.modifier.name} <span className="text-gray-400 font-normal">({pm.modifier.reference})</span></span>
                   <div className="flex items-center gap-3">
                     <span className="text-[11px] text-gray-400 font-body">
                       min {pm.minimum_options} · max {pm.maximum_options}
