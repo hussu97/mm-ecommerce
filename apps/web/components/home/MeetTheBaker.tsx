@@ -1,7 +1,15 @@
 import Image from 'next/image';
 import Link from 'next/link';
 
-export function MeetTheBaker() {
+export interface BakerContent {
+  label?: string;
+  quote?: string;
+  body?: string;
+  button_text?: string;
+  button_href?: string;
+}
+
+export function MeetTheBaker({ c, locale }: { c: BakerContent; locale: string }) {
   return (
     <section aria-label="Meet the baker" className="relative overflow-hidden">
       <div className="relative h-[480px] sm:h-[560px]">
@@ -24,24 +32,22 @@ export function MeetTheBaker() {
 
             {/* Bordered label */}
             <span className="inline-block border border-white/60 text-xs font-body uppercase tracking-[0.3em] px-4 py-1.5 mb-6">
-              Meet the Baker
+              {c.label}
             </span>
 
             <h2 className="font-display text-3xl sm:text-4xl italic mb-5 leading-snug">
-              &ldquo;Every treat is baked<br />with intention and love.&rdquo;
+              &ldquo;{c.quote}&rdquo;
             </h2>
 
             <p className="font-body text-white/80 text-sm leading-relaxed mb-8 max-w-md mx-auto">
-              Hi, I&apos;m Fatema Abbasi — a self-taught baker based in the UAE.
-              Melting Moments started as a passion project to bring comfort through
-              food, one handcrafted dessert at a time.
+              {c.body}
             </p>
 
             <Link
-              href="/about"
+              href={`/${locale}${c.button_href ?? '/about'}`}
               className="inline-flex items-center gap-2 border border-white text-white text-xs font-body uppercase tracking-widest px-6 py-3 hover:bg-white hover:text-primary transition-all duration-300"
             >
-              Read More
+              {c.button_text}
             </Link>
 
           </div>

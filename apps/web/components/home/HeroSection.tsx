@@ -1,7 +1,17 @@
 import Image from 'next/image';
 import Link from 'next/link';
 
-export function HeroSection() {
+export interface HeroContent {
+  tagline?: string;
+  headline?: string;
+  body?: string;
+  shop_button_text?: string;
+  shop_button_href?: string;
+  story_button_text?: string;
+  story_button_href?: string;
+}
+
+export function HeroSection({ c, locale }: { c: HeroContent; locale: string }) {
   return (
     <section aria-label="Hero" className="bg-[#f9f5f0]">
 
@@ -11,28 +21,26 @@ export function HeroSection() {
         {/* Left: Text */}
         <div className="flex flex-col gap-6 order-2 lg:order-1">
           <p className="text-xs font-body uppercase tracking-[0.3em] text-primary/70">
-            Handcrafted in the UAE
+            {c.tagline}
           </p>
           <h1 className="font-display text-4xl sm:text-5xl lg:text-6xl leading-tight text-gray-800">
-            Moments that<br />
-            <em className="text-primary not-italic">melt away</em>
+            <em className="text-primary not-italic">{c.headline}</em>
           </h1>
           <p className="font-body text-gray-500 text-base leading-relaxed max-w-md">
-            Artisanal brownies, cookies, and desserts — lovingly baked by Fatema Abbasi.
-            Every bite is a little piece of home.
+            {c.body}
           </p>
           <div className="flex flex-wrap gap-3 pt-2">
             <Link
-              href="/brownies"
+              href={`/${locale}${c.shop_button_href ?? '/brownies'}`}
               className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-white text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity"
             >
-              Shop Now
+              {c.shop_button_text}
             </Link>
             <Link
-              href="/about"
+              href={`/${locale}${c.story_button_href ?? '/about'}`}
               className="inline-flex items-center gap-2 px-6 py-3 border border-primary text-primary text-xs font-body uppercase tracking-widest hover:bg-primary hover:text-white transition-all duration-200"
             >
-              Our Story
+              {c.story_button_text}
             </Link>
           </div>
         </div>
