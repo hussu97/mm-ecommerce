@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import type { Category } from '@/lib/types';
+import { localizedField } from '@/lib/i18n/entity';
 
 // ─── Client wrapper — knows which category is active ──────────────────────────
 
@@ -25,7 +26,9 @@ export function CategoryNavLinks({ categories, locale = 'en' }: { categories: Ca
         className="max-w-7xl mx-auto px-4 flex items-center gap-6 h-9 overflow-x-auto scrollbar-none"
         onScroll={handleScroll}
       >
-        {categories.map(({ slug, name }) => {
+        {categories.map((cat) => {
+          const { slug } = cat;
+          const name = localizedField(cat, 'name', cat.name, locale);
           const active = pathname === `/${locale}/${slug}` || pathname.startsWith(`/${locale}/${slug}/`);
           return (
             <li key={slug} className="shrink-0">

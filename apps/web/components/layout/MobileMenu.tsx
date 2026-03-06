@@ -6,30 +6,23 @@ import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth-context';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { localizedField } from '@/lib/i18n/entity';
 import { LanguageSwitcher } from './LanguageSwitcher';
-import type { Language } from '@/lib/types';
+import type { Category, Language } from '@/lib/types';
 
 interface MobileMenuProps {
   isOpen: boolean;
   onClose: () => void;
   languages?: Language[];
+  categories?: Category[];
+  locale?: string;
 }
 
-const NAV_LINKS = [
-  { href: '/',             labelKey: 'nav.home' },
-  { href: '/brownies',     labelKey: 'nav.brownies', fallback: 'Brownies' },
-  { href: '/cookies',      labelKey: 'nav.cookies', fallback: 'Cookies' },
-  { href: '/cookie-melt',  labelKey: 'nav.cookie_melt', fallback: 'Cookie Melt' },
-  { href: '/mix-boxes',    labelKey: 'nav.mix_boxes', fallback: 'Mix Boxes' },
-  { href: '/desserts',     labelKey: 'nav.desserts', fallback: 'Desserts' },
-  { href: '/about',        labelKey: 'nav.about' },
-  { href: '/contact',      labelKey: 'nav.contact' },
-];
-
-export function MobileMenu({ isOpen, onClose, languages = [] }: MobileMenuProps) {
+export function MobileMenu({ isOpen, onClose, languages = [], categories = [], locale: localeProp }: MobileMenuProps) {
   const { user, logout } = useAuth();
   const router = useRouter();
-  const { locale, t } = useTranslation();
+  const { locale: ctxLocale, t } = useTranslation();
+  const locale = localeProp ?? ctxLocale;
 
   function handleLogout() {
     logout();
@@ -85,20 +78,30 @@ export function MobileMenu({ isOpen, onClose, languages = [] }: MobileMenuProps)
 
         {/* Nav links */}
         <nav className="flex-1 overflow-y-auto py-4">
-          {NAV_LINKS.map(({ href, labelKey, fallback }) => {
-            const translated = t(labelKey);
-            const label = translated === labelKey ? (fallback ?? labelKey.split('.').pop() ?? '') : translated;
-            return (
-              <Link
-                key={href}
-                href={`/${locale}${href}`}
-                onClick={onClose}
-                className="flex items-center px-6 py-3.5 text-sm font-body text-gray-700 hover:text-primary hover:bg-primary/5 transition-colors uppercase tracking-widest"
-              >
-                {label}
-              </Link>
-            );
-          })}
+          {[
+            { href: `/${locale}`, label: t('nav.home') },
+            { href: `/${locale}/about`, label: t('nav.about') },
+            { href: `/${locale}/contact`, label: t('nav.contact') },
+          ].map(({ href, label }) => (
+            <Link
+              key={href}
+              href={href}
+              onClick={onClose}
+              className="flex items-center px-6 py-3.5 text-sm font-body text-gray-700 hover:text-primary hover:bg-primary/5 transition-colors uppercase tracking-widest"
+            >
+              {label}
+            </Link>
+          ))}
+          {categories.map((cat) => (
+            <Link
+              key={cat.slug}
+              href={`/${locale}/${cat.slug}`}
+              onClick={onClose}
+              className="flex items-center px-6 py-3.5 text-sm font-body text-gray-700 hover:text-primary hover:bg-primary/5 transition-colors uppercase tracking-widest"
+            >
+              {localizedField(cat, 'name', cat.name, locale)}
+            </Link>
+          ))}
         </nav>
 
         {/* Auth links */}

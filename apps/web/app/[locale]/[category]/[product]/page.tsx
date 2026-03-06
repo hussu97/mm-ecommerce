@@ -4,6 +4,7 @@ import { Breadcrumb } from '@/components/ui';
 import { ProductDetailATC } from './ProductDetailATC';
 import { ProductImageGallery } from './ProductImageGallery';
 import type { Product } from '@/lib/types';
+import { localizedField } from '@/lib/i18n/entity';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api/v1';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
@@ -17,7 +18,7 @@ async function getProduct(slug: string): Promise<Product | null> {
 export async function generateMetadata({
   params,
 }: {
-  params: Promise<{ category: string; product: string }>;
+  params: Promise<{ locale: string; category: string; product: string }>;
 }): Promise<Metadata> {
   const { product: slug } = await params;
   const product = await getProduct(slug);
@@ -44,23 +45,27 @@ export async function generateMetadata({
 export default async function ProductDetailPage({
   params,
 }: {
-  params: Promise<{ category: string; product: string }>;
+  params: Promise<{ locale: string; category: string; product: string }>;
 }) {
-  const { category: categorySlug, product: productSlug } = await params;
+  const { locale, category: categorySlug, product: productSlug } = await params;
   const product = await getProduct(productSlug);
   if (!product) notFound();
   if (product.category && !product.category.is_active) notFound();
 
   const categoryName = product.category?.name ?? categorySlug;
+  const localizedCategoryName = product.category
+    ? localizedField(product.category, 'name', categoryName, locale)
+    : categoryName;
+  const productName = localizedField(product, 'name', product.name, locale);
   const galleryImages = product.image_urls ?? [];
 
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'Product',
-    name: product.name,
+    name: productName,
     description: product.description ?? undefined,
     image: galleryImages,
-    url: `${SITE_URL}/${categorySlug}/${productSlug}`,
+    url: `${SITE_URL}/${locale}/${categorySlug}/${productSlug}`,
     offers: {
       '@type': 'Offer',
       price: Number(product.base_price).toFixed(2),
@@ -79,9 +84,9 @@ export default async function ProductDetailPage({
       <div className="max-w-7xl mx-auto px-4 py-12">
         <Breadcrumb
           items={[
-            { label: 'Home', href: '/' },
-            { label: categoryName, href: `/${categorySlug}` },
-            { label: product.name },
+            { label: 'Home', href: `/${locale}` },
+            { label: localizedCategoryName, href: `/${locale}/${categorySlug}` },
+            { label: productName },
           ]}
         />
 
@@ -93,7 +98,7 @@ export default async function ProductDetailPage({
           <div className="flex flex-col gap-6">
             <div>
               <h1 className="font-display text-3xl sm:text-4xl text-primary uppercase tracking-widest mb-3">
-                {product.name}
+                {productName}
               </h1>
               <div className="h-px bg-secondary/40" />
             </div>

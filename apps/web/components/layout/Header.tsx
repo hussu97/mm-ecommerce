@@ -8,9 +8,13 @@ import { useAuth } from '@/lib/auth-context';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { MobileMenu } from './MobileMenu';
 import { LanguageSwitcher } from './LanguageSwitcher';
-import type { Language } from '@/lib/types';
+import type { Category, Language } from '@/lib/types';
 
-export function Header({ languages = [] }: { languages?: Language[] }) {
+export function Header({ languages = [], categories = [], locale }: {
+  languages?: Language[];
+  categories?: Category[];
+  locale?: string;
+}) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { itemCount } = useCart();
   const { user } = useAuth();
@@ -79,7 +83,7 @@ export function Header({ languages = [] }: { languages?: Language[] }) {
         </div>
       </header>
 
-      <MobileMenu isOpen={menuOpen} onClose={() => setMenuOpen(false)} languages={languages} />
+      <MobileMenu isOpen={menuOpen} onClose={() => setMenuOpen(false)} languages={languages} categories={categories} locale={locale} />
     </>
   );
 }

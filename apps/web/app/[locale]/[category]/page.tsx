@@ -4,6 +4,7 @@ import Link from 'next/link';
 import type { Category, Product, ProductListResponse } from '@/lib/types';
 import { ProductGrid } from '@/components/category/ProductGrid';
 import { Breadcrumb } from '@/components/ui';
+import { localizedField } from '@/lib/i18n/entity';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api/v1';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
@@ -40,7 +41,7 @@ async function getCategoryData(
 export async function generateMetadata({
   params,
 }: {
-  params: Promise<{ category: string }>;
+  params: Promise<{ locale: string; category: string }>;
 }): Promise<Metadata> {
   const { category: slug } = await params;
   const data = await getCategoryData(slug);
@@ -114,10 +115,10 @@ export default async function CategoryPage({
   params,
   searchParams,
 }: {
-  params: Promise<{ category: string }>;
+  params: Promise<{ locale: string; category: string }>;
   searchParams: Promise<{ page?: string }>;
 }) {
-  const { category: slug } = await params;
+  const { locale, category: slug } = await params;
   const { page: pageStr } = await searchParams;
   const page = Math.max(1, parseInt(pageStr ?? '1', 10) || 1);
 
@@ -126,6 +127,7 @@ export default async function CategoryPage({
   if (!data) notFound();
 
   const { category, products, pages } = data;
+  const categoryName = localizedField(category, 'name', category.name, locale);
 
   const jsonLd = {
     '@context': 'https://schema.org',
@@ -133,21 +135,21 @@ export default async function CategoryPage({
       {
         '@type': 'BreadcrumbList',
         itemListElement: [
-          { '@type': 'ListItem', position: 1, name: 'Home', item: SITE_URL },
-          { '@type': 'ListItem', position: 2, name: category.name, item: `${SITE_URL}/${slug}` },
+          { '@type': 'ListItem', position: 1, name: 'Home', item: `${SITE_URL}/${locale}` },
+          { '@type': 'ListItem', position: 2, name: categoryName, item: `${SITE_URL}/${locale}/${slug}` },
         ],
       },
       ...(products.length > 0
         ? [
             {
               '@type': 'ItemList',
-              name: category.name,
+              name: categoryName,
               numberOfItems: products.length,
               itemListElement: products.map((p, i) => ({
                 '@type': 'ListItem',
                 position: i + 1,
                 name: p.name,
-                url: `${SITE_URL}/${slug}/${p.slug}`,
+                url: `${SITE_URL}/${locale}/${slug}/${p.slug}`,
               })),
             },
           ]
@@ -164,12 +166,12 @@ export default async function CategoryPage({
 
       <div className="max-w-7xl mx-auto px-4 py-12">
 
-        <Breadcrumb items={[{ label: 'Home', href: '/' }, { label: category.name }]} />
+        <Breadcrumb items={[{ label: 'Home', href: `/${locale}` }, { label: categoryName }]} />
 
         {/* Category header */}
         <header className="mb-10">
           <h1 className="font-display text-3xl sm:text-4xl text-primary uppercase tracking-widest mb-3">
-            {category.name}
+            {categoryName}
           </h1>
           {category.description && (
             <p className="font-body text-sm text-gray-500 max-w-xl">
@@ -183,7 +185,7 @@ export default async function CategoryPage({
         <ProductGrid products={products} />
 
         {/* Pagination */}
-        <Pagination page={page} pages={pages} basePath={`/${slug}`} />
+        <Pagination page={page} pages={pages} basePath={`/${locale}/${slug}`} />
 
       </div>
     </>

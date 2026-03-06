@@ -10,6 +10,10 @@ import type { Category, Language } from "@/lib/types";
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
 const SUPPORTED_LOCALES = (process.env.NEXT_PUBLIC_SUPPORTED_LOCALES ?? "en,ar").split(",");
 
+export function generateStaticParams() {
+  return SUPPORTED_LOCALES.map((locale) => ({ locale }));
+}
+
 async function getActiveCategories(): Promise<Category[]> {
   try {
     const res = await fetch(`${API_BASE}/categories`, { next: { revalidate: 300 } });
@@ -46,7 +50,7 @@ export default async function LocaleLayout({
   return (
     <TranslationProvider locale={locale} direction={direction} translations={translations}>
       <PromoBanner />
-      <Header languages={languages} />
+      <Header languages={languages} categories={categories} locale={locale} />
       <CategoryNavLinks categories={categories} locale={locale} />
       <main className="flex-1">
         {children}

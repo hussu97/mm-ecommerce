@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Playfair_Display, Jost, Amiri, Cairo } from "next/font/google";
 import Script from "next/script";
+import { cookies } from "next/headers";
 import "./globals.css";
 import { Providers } from "./providers";
 
@@ -54,13 +55,17 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const cookieStore = await cookies();
+  const locale = cookieStore.get('mm_locale')?.value ?? 'en';
+  const dir = locale === 'ar' ? 'rtl' : 'ltr';
+
   return (
-    <html lang="en" className={`${playfairDisplay.variable} ${jost.variable} ${amiri.variable} ${cairo.variable}`}>
+    <html lang={locale} dir={dir} className={`${playfairDisplay.variable} ${jost.variable} ${amiri.variable} ${cairo.variable}`}>
       <head>
         <link
           href="https://fonts.googleapis.com/icon?family=Material+Icons"
