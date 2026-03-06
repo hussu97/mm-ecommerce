@@ -107,7 +107,6 @@ _Backlog — prioritize as bandwidth allows._
   - E2E: Playwright for critical user flows (browse → add to cart → checkout)
 - [ ] **CI runs no tests** — `pr-check.yml` runs lint + type-check + build but no tests. Add test steps once test suites exist.
 - [ ] **Deploy workflow swallows migration failures** — `.github/workflows/deploy.yml:36` uses `|| true` after `alembic upgrade head`. A failed migration silently proceeds, potentially leaving the DB in an inconsistent state. Remove `|| true` and fail the deployment.
-- [ ] **No staging environment** — Only production deployment exists. Add a staging environment for pre-production validation.
 - [x] **No health check for frontend containers** — `docker-compose.yml` web and admin services have no health checks, unlike postgres.
 - [ ] **No rollback strategy** — Deploy workflow has no rollback mechanism. A bad deploy requires manual SSH intervention.
 
@@ -146,6 +145,7 @@ _Backlog — prioritize as bandwidth allows._
 - [ ] **Tabby & Tamara payment providers are stubs** — `apps/api/app/services/providers/tabby_provider.py` and `tamara_provider.py` raise errors. Either implement or remove from checkout UI to avoid customer confusion.
 - [ ] **Shared UI package is empty** — `packages/ui/src/index.ts` exports nothing (just `export {}`). Both `apps/web` and `apps/admin` duplicate their own Button, Input, Modal, Badge, etc. Extract shared components.
 - [ ] **Inventory alerts** — Admin notification when stock runs low (configurable threshold per variant).
+- [ ] **No staging environment** — Only production deployment exists. Add a staging environment for pre-production validation.
 ---
 
 _Last updated: 2026-03-06_
