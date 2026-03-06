@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy project definition and install deps into a local prefix
 COPY apps/api/pyproject.toml apps/api/setup.cfg* ./
 RUN pip install --upgrade pip && \
-    pip install --prefix=/install -e ".[dev]" --no-deps || true
+    pip install --prefix=/install . --no-deps || true
 
 # Install all runtime deps into /install
 RUN pip install --prefix=/install .
@@ -43,5 +43,6 @@ USER api
 
 EXPOSE 8000
 
-# Run migrations then start uvicorn
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4"]
+# Migrations are NOT run automatically — run them manually before deploying:
+#   docker compose -f docker-compose.prod.yml run --rm api alembic upgrade head
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-2}"]

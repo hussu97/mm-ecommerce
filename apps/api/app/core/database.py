@@ -18,8 +18,9 @@ engine = create_async_engine(
     DATABASE_URL,
     echo=os.getenv("APP_ENV", "development") == "development",
     pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
+    pool_size=5,
+    max_overflow=10,
+    pool_recycle=3600,
 )
 
 AsyncSessionFactory = async_sessionmaker(
