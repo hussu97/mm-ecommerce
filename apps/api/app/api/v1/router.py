@@ -14,6 +14,8 @@ from .analytics import router as analytics_router
 from .users import router as users_router
 from .modifiers import router as modifiers_router
 from .import_data import router as import_router
+from .bulk import router as bulk_router
+from .export_data import router as export_router
 
 api_router = APIRouter()
 
@@ -33,3 +35,5 @@ api_router.include_router(addresses_router, prefix="/addresses", tags=["Addresse
 api_router.include_router(payments_router, prefix="/payments", tags=["Payments"])
 api_router.include_router(analytics_router, prefix="/analytics", tags=["Analytics"])
 api_router.include_router(users_router, prefix="/users", tags=["Users"])
+api_router.include_router(bulk_router, prefix="/bulk", tags=["Bulk"])
+api_router.include_router(export_router, prefix="/export", tags=["Export"])

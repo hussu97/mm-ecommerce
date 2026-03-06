@@ -98,6 +98,8 @@ export const productsApi = {
   create: (data: object) => api.post<Product>('/products', data),
   update: (slug: string, data: object) => api.put<Product>(`/products/${slug}`, data),
   delete: (slug: string) => api.delete<void>(`/products/${slug}`),
+  linkModifier: (slug: string, data: object) => api.post<Product>(`/products/${slug}/modifiers`, data),
+  unlinkModifier: (slug: string, modifierId: string) => api.delete<Product>(`/products/${slug}/modifiers/${modifierId}`),
 };
 
 // ─── Modifiers ────────────────────────────────────────────────────────────────
@@ -109,6 +111,8 @@ export const modifiersApi = {
   update: (id: string, data: object) => api.put<Modifier>(`/modifiers/${id}`, data),
   delete: (id: string) => api.delete<void>(`/modifiers/${id}`),
   addOption: (modifierId: string, data: object) => api.post<Modifier>(`/modifiers/${modifierId}/options`, data),
+  updateOption: (modifierId: string, optionId: string, data: object) => api.put<Modifier>(`/modifiers/${modifierId}/options/${optionId}`, data),
+  deleteOption: (modifierId: string, optionId: string) => api.delete<Modifier>(`/modifiers/${modifierId}/options/${optionId}`),
 };
 
 // ─── Import ───────────────────────────────────────────────────────────────────
@@ -193,6 +197,40 @@ export const promoApi = {
   create: (data: object) => api.post<PromoCode>('/promo-codes', data),
   update: (code: string, data: object) => api.put<PromoCode>(`/promo-codes/${code}`, data),
   delete: (code: string) => api.delete<void>(`/promo-codes/${code}`),
+};
+
+// ─── Bulk Actions ─────────────────────────────────────────────────────────────
+
+export const bulkApi = {
+  updateStatus: (entity: string, ids: string[], is_active: boolean) =>
+    api.post<{ updated: number }>(`/bulk/${entity}/status`, { ids, is_active }),
+};
+
+// ─── Export ───────────────────────────────────────────────────────────────────
+
+const EXPORT_FILENAMES: Record<string, string> = {
+  categories: 'categories.csv',
+  products: 'products.csv',
+  modifiers: 'modifiers.csv',
+  'modifier-options': 'modifier_options.csv',
+  'product-modifiers': 'product_modifiers.csv',
+};
+
+export const exportApi = {
+  download: async (entity: string) => {
+    const token = getToken();
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const res = await fetch(`${API_URL}/export/${entity}`, { headers });
+    if (!res.ok) throw new ApiError(res.status, `Export failed: HTTP ${res.status}`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = EXPORT_FILENAMES[entity] ?? `${entity}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
 };
 
 // ─── Uploads ──────────────────────────────────────────────────────────────────

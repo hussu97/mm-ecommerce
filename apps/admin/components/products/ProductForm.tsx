@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { categoriesApi, productsApi, uploadsApi, ApiError } from '@/lib/api';
-import type { Category, Product } from '@/lib/types';
+import { categoriesApi, productsApi, modifiersApi, uploadsApi, ApiError } from '@/lib/api';
+import type { Category, Modifier, Product } from '@/lib/types';
 import { Button, Input, Select, Textarea } from '@/components/ui';
 import { slugify } from '@/lib/utils';
 
@@ -39,6 +39,15 @@ export function ProductForm({ product }: Props) {
   const [uploadingIdx, setUploadingIdx] = useState<number | null>(null);
   const [apiError, setApiError] = useState('');
 
+  // Modifier linking state
+  const [allModifiers, setAllModifiers] = useState<Modifier[]>([]);
+  const [currentProduct, setCurrentProduct] = useState<Product | undefined>(product);
+  const [showLinkForm, setShowLinkForm] = useState(false);
+  const [linkForm, setLinkForm] = useState({ modifier_id: '', minimum_options: 0, maximum_options: 1, free_options: 0, unique_options: false });
+  const [linking, setLinking] = useState(false);
+  const [unlinkingId, setUnlinkingId] = useState<string | null>(null);
+  const [modifierError, setModifierError] = useState('');
+
   const isEdit = !!product;
   useEffect(() => {
     if (!isEdit) setForm(f => ({ ...f, slug: slugify(f.name) }));
@@ -46,7 +55,8 @@ export function ProductForm({ product }: Props) {
 
   useEffect(() => {
     categoriesApi.list(true).then(setCategories).catch(() => {});
-  }, []);
+    if (isEdit) modifiersApi.list().then(setAllModifiers).catch(() => {});
+  }, [isEdit]);
 
   const categoryOptions = [
     { value: '', label: '— No Category —' },
@@ -326,35 +336,143 @@ export function ProductForm({ product }: Props) {
         </p>
       </section>
 
-      {/* Modifiers (read-only display) */}
-      {isEdit && product.product_modifiers.length > 0 && (
+      {/* Modifiers (interactive, edit mode only) */}
+      {isEdit && (
         <section className="bg-white border border-gray-200 p-5">
-          <h2 className="text-xs font-body uppercase tracking-widest text-gray-500 mb-4">
-            Linked Modifiers ({product.product_modifiers.length})
-          </h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xs font-body uppercase tracking-widest text-gray-500">
+              Linked Modifiers ({(currentProduct ?? product).product_modifiers.length})
+            </h2>
+            {!showLinkForm && (
+              <Button type="button" size="sm" variant="ghost" onClick={() => { setShowLinkForm(true); setModifierError(''); }}>
+                <span className="material-icons text-[14px]">add</span>
+                Link Modifier
+              </Button>
+            )}
+          </div>
+
+          {/* Link form */}
+          {showLinkForm && (
+            <div className="border border-gray-200 bg-gray-50 p-4 mb-4">
+              {modifierError && <p className="text-xs text-red-500 mb-3">{modifierError}</p>}
+              <div className="grid sm:grid-cols-2 gap-3 mb-3">
+                <div>
+                  <label className="text-[11px] font-body uppercase tracking-widest text-gray-500 block mb-1">Modifier</label>
+                  <select
+                    value={linkForm.modifier_id}
+                    onChange={e => setLinkForm(f => ({ ...f, modifier_id: e.target.value }))}
+                    className="w-full border border-gray-300 text-xs font-body px-2 py-1.5 bg-white focus:outline-none focus:border-primary"
+                  >
+                    <option value="">— Select modifier —</option>
+                    {allModifiers
+                      .filter(m => !(currentProduct ?? product).product_modifiers.some(pm => pm.modifier_id === m.id))
+                      .map(m => <option key={m.id} value={m.id}>{m.name}</option>)
+                    }
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[11px] font-body uppercase tracking-widest text-gray-500 block mb-1">Min</label>
+                    <input type="number" min="0" value={linkForm.minimum_options}
+                      onChange={e => setLinkForm(f => ({ ...f, minimum_options: Number(e.target.value) }))}
+                      className="w-full border border-gray-300 text-xs font-body px-2 py-1.5 focus:outline-none focus:border-primary"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-body uppercase tracking-widest text-gray-500 block mb-1">Max</label>
+                    <input type="number" min="0" value={linkForm.maximum_options}
+                      onChange={e => setLinkForm(f => ({ ...f, maximum_options: Number(e.target.value) }))}
+                      className="w-full border border-gray-300 text-xs font-body px-2 py-1.5 focus:outline-none focus:border-primary"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-body uppercase tracking-widest text-gray-500 block mb-1">Free</label>
+                    <input type="number" min="0" value={linkForm.free_options}
+                      onChange={e => setLinkForm(f => ({ ...f, free_options: Number(e.target.value) }))}
+                      className="w-full border border-gray-300 text-xs font-body px-2 py-1.5 focus:outline-none focus:border-primary"
+                    />
+                  </div>
+                  <label className="flex items-center gap-2 text-xs font-body text-gray-600 pt-4">
+                    <input type="checkbox" checked={linkForm.unique_options}
+                      onChange={e => setLinkForm(f => ({ ...f, unique_options: e.target.checked }))}
+                      className="accent-primary"
+                    />
+                    Unique
+                  </label>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Button type="button" size="sm" loading={linking} onClick={async () => {
+                  if (!linkForm.modifier_id) { setModifierError('Select a modifier.'); return; }
+                  setLinking(true); setModifierError('');
+                  try {
+                    const updated = await productsApi.linkModifier(product.slug, {
+                      modifier_id: linkForm.modifier_id,
+                      minimum_options: linkForm.minimum_options,
+                      maximum_options: linkForm.maximum_options,
+                      free_options: linkForm.free_options,
+                      unique_options: linkForm.unique_options,
+                    });
+                    setCurrentProduct(updated);
+                    setShowLinkForm(false);
+                    setLinkForm({ modifier_id: '', minimum_options: 0, maximum_options: 1, free_options: 0, unique_options: false });
+                  } catch (err) {
+                    setModifierError(err instanceof ApiError ? err.message : 'Failed to link modifier.');
+                  } finally {
+                    setLinking(false);
+                  }
+                }}>Link</Button>
+                <Button type="button" size="sm" variant="ghost" onClick={() => setShowLinkForm(false)}>Cancel</Button>
+              </div>
+            </div>
+          )}
+
+          {/* Linked modifiers list */}
           <div className="space-y-3">
-            {product.product_modifiers.map(pm => (
+            {(currentProduct ?? product).product_modifiers.map(pm => (
               <div key={pm.id} className="border border-gray-200 p-3 bg-gray-50">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-body font-medium text-gray-700">{pm.modifier.name}</span>
-                  <span className="text-[11px] text-gray-400 font-body">
-                    min {pm.minimum_options} · max {pm.maximum_options}
-                    {pm.free_options > 0 ? ` · ${pm.free_options} free` : ''}
-                  </span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-[11px] text-gray-400 font-body">
+                      min {pm.minimum_options} · max {pm.maximum_options}
+                      {pm.free_options > 0 ? ` · ${pm.free_options} free` : ''}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="danger"
+                      size="sm"
+                      loading={unlinkingId === pm.modifier_id}
+                      onClick={async () => {
+                        if (!confirm(`Unlink "${pm.modifier.name}" from this product?`)) return;
+                        setUnlinkingId(pm.modifier_id);
+                        try {
+                          const updated = await productsApi.unlinkModifier(product.slug, pm.modifier_id);
+                          setCurrentProduct(updated);
+                        } catch (err) {
+                          alert(err instanceof ApiError ? err.message : 'Failed to unlink.');
+                        } finally {
+                          setUnlinkingId(null);
+                        }
+                      }}
+                    >
+                      Unlink
+                    </Button>
+                  </div>
                 </div>
                 <div className="flex flex-wrap gap-1">
                   {pm.modifier.options.filter(o => o.is_active).map(opt => (
                     <span key={opt.id} className="text-[11px] bg-white border border-gray-200 px-2 py-0.5 font-body text-gray-600">
-                      {opt.name}{opt.price > 0 ? ` +${opt.price.toFixed(2)}` : ''}
+                      {opt.name}{opt.price > 0 ? ` +${Number(opt.price).toFixed(2)}` : ''}
                     </span>
                   ))}
                 </div>
               </div>
             ))}
+            {(currentProduct ?? product).product_modifiers.length === 0 && (
+              <p className="text-xs text-gray-400 font-body">No modifiers linked.</p>
+            )}
           </div>
-          <p className="text-[11px] text-gray-400 font-body mt-3">
-            Manage modifier assignments via CSV import or the Modifiers page.
-          </p>
         </section>
       )}
 

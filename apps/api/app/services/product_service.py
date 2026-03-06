@@ -9,6 +9,7 @@ from app.models.modifier import Modifier, ProductModifier
 from app.models.product import Product
 from app.schemas.product import (
     ProductCreate,
+    ProductModifierLink,
     ProductResponse,
     ProductUpdate,
 )
@@ -179,6 +180,85 @@ async def delete(db: AsyncSession, slug: str) -> None:
     if not product:
         raise NotFoundError(f"Product '{slug}' not found")
     await db.delete(product)
+
+
+async def link_modifier(
+    db: AsyncSession, slug: str, data: ProductModifierLink
+) -> ProductResponse:
+    stmt = select(Product).options(*_product_load_options()).where(Product.slug == slug)
+    result = await db.execute(stmt)
+    product = result.scalar_one_or_none()
+    if not product:
+        raise NotFoundError(f"Product '{slug}' not found")
+
+    # Check modifier exists
+    mod_result = await db.execute(
+        select(Modifier).where(Modifier.id == data.modifier_id)
+    )
+    if not mod_result.scalar_one_or_none():
+        raise NotFoundError(f"Modifier '{data.modifier_id}' not found")
+
+    # Check no duplicate
+    existing = await db.execute(
+        select(ProductModifier).where(
+            ProductModifier.product_id == product.id,
+            ProductModifier.modifier_id == data.modifier_id,
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise ConflictError("Modifier already linked to this product")
+
+    pm = ProductModifier(
+        product_id=product.id,
+        modifier_id=data.modifier_id,
+        minimum_options=data.minimum_options,
+        maximum_options=data.maximum_options,
+        free_options=data.free_options,
+        unique_options=data.unique_options,
+    )
+    db.add(pm)
+    await db.flush()
+
+    stmt = (
+        select(Product)
+        .options(*_product_load_options())
+        .where(Product.id == product.id)
+    )
+    result = await db.execute(stmt)
+    product = result.scalar_one()
+    return ProductResponse.model_validate(product)
+
+
+async def unlink_modifier(
+    db: AsyncSession, slug: str, modifier_id: str
+) -> ProductResponse:
+    stmt = select(Product).options(*_product_load_options()).where(Product.slug == slug)
+    result = await db.execute(stmt)
+    product = result.scalar_one_or_none()
+    if not product:
+        raise NotFoundError(f"Product '{slug}' not found")
+
+    pm_result = await db.execute(
+        select(ProductModifier).where(
+            ProductModifier.product_id == product.id,
+            ProductModifier.modifier_id == modifier_id,
+        )
+    )
+    pm = pm_result.scalar_one_or_none()
+    if not pm:
+        raise NotFoundError("Modifier is not linked to this product")
+
+    await db.delete(pm)
+    await db.flush()
+
+    stmt = (
+        select(Product)
+        .options(*_product_load_options())
+        .where(Product.id == product.id)
+    )
+    result = await db.execute(stmt)
+    product = result.scalar_one()
+    return ProductResponse.model_validate(product)
 
 
 async def get_by_sku(db: AsyncSession, sku: str) -> ProductResponse | None:

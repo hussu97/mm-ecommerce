@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { promoApi } from '@/lib/api';
+import { promoApi, bulkApi, ApiError } from '@/lib/api';
 import type { PromoCode } from '@/lib/types';
 import { Badge, Button, Input, Select } from '@/components/ui';
 import { formatCurrency, formatDate } from '@/lib/utils';
@@ -41,6 +41,8 @@ export default function PromoCodesPage() {
   const [formError, setFormError] = useState('');
   const [togglingCode, setTogglingCode] = useState<string | null>(null);
   const [deletingCode, setDeletingCode] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulking, setBulking] = useState(false);
 
   useEffect(() => {
     load();
@@ -117,6 +119,35 @@ export default function PromoCodesPage() {
       setFormError((err as Error).message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === codes.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(codes.map(c => c.id)));
+    }
+  }
+
+  async function handleBulkStatus(is_active: boolean) {
+    setBulking(true);
+    try {
+      await bulkApi.updateStatus('promo-codes', Array.from(selectedIds), is_active);
+      await load();
+      setSelectedIds(new Set());
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'Bulk action failed.');
+    } finally {
+      setBulking(false);
     }
   }
 
@@ -232,11 +263,31 @@ export default function PromoCodesPage() {
         </form>
       )}
 
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 bg-primary/10 border border-primary/30 px-4 py-2.5 mb-4">
+          <span className="text-xs font-body text-primary font-medium">{selectedIds.size} selected</span>
+          <button onClick={() => setSelectedIds(new Set(codes.map(c => c.id)))} className="text-xs font-body text-gray-500 hover:text-primary underline">All</button>
+          <button onClick={() => setSelectedIds(new Set())} className="text-xs font-body text-gray-500 hover:text-primary underline">None</button>
+          <div className="flex-1" />
+          <Button size="sm" loading={bulking} onClick={() => handleBulkStatus(true)}>Activate</Button>
+          <Button size="sm" variant="ghost" loading={bulking} onClick={() => handleBulkStatus(false)}>Deactivate</Button>
+        </div>
+      )}
+
       {/* Table */}
       <div className="bg-white border border-gray-200 overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-200 bg-gray-50">
+              <th className="px-4 py-3 w-8">
+                <input
+                  type="checkbox"
+                  checked={codes.length > 0 && selectedIds.size === codes.length}
+                  onChange={toggleSelectAll}
+                  className="accent-primary"
+                />
+              </th>
               <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Code</th>
               <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden sm:table-cell">Discount</th>
               <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden md:table-cell">Min Order</th>
@@ -250,7 +301,7 @@ export default function PromoCodesPage() {
             {loading ? (
               Array.from({ length: 4 }).map((_, i) => (
                 <tr key={i}>
-                  {Array.from({ length: 7 }).map((_, j) => (
+                  {Array.from({ length: 8 }).map((_, j) => (
                     <td key={j} className="px-4 py-3">
                       <div className="h-4 bg-gray-100 animate-pulse rounded-sm" />
                     </td>
@@ -259,13 +310,21 @@ export default function PromoCodesPage() {
               ))
             ) : codes.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-400 font-body">
+                <td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-400 font-body">
                   No promo codes yet.
                 </td>
               </tr>
             ) : (
               codes.map(promo => (
-                <tr key={promo.id} className="hover:bg-gray-50 transition-colors">
+                <tr key={promo.id} className={`hover:bg-gray-50 transition-colors ${selectedIds.has(promo.id) ? 'bg-primary/5' : ''}`}>
+                  <td className="px-4 py-3 w-8">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(promo.id)}
+                      onChange={() => toggleSelect(promo.id)}
+                      className="accent-primary"
+                    />
+                  </td>
                   <td className="px-4 py-3">
                     <span className="font-body font-medium text-gray-800 text-xs tracking-wider">{promo.code}</span>
                   </td>

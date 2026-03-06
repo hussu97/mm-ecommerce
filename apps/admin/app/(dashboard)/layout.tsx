@@ -7,14 +7,15 @@ import { useAuth } from '@/lib/auth-context';
 import { cn } from '@/lib/utils';
 
 const NAV = [
-  { href: '/',              label: 'Dashboard',   icon: 'dashboard' },
-  { href: '/products',      label: 'Products',    icon: 'inventory_2' },
-  { href: '/categories',    label: 'Categories',  icon: 'category' },
-  { href: '/orders',        label: 'Orders',      icon: 'receipt_long' },
-  { href: '/promo-codes',   label: 'Promo Codes', icon: 'local_offer' },
-  { href: '/customers',     label: 'Customers',   icon: 'people' },
-  { href: '/analytics',     label: 'Analytics',   icon: 'bar_chart' },
-  { href: '/import',        label: 'Import Data', icon: 'upload_file' },
+  { href: '/',              label: 'Dashboard',     icon: 'dashboard' },
+  { href: '/products',      label: 'Products',      icon: 'inventory_2' },
+  { href: '/categories',    label: 'Categories',    icon: 'category' },
+  { href: '/modifiers',     label: 'Modifiers',     icon: 'tune' },
+  { href: '/orders',        label: 'Orders',        icon: 'receipt_long' },
+  { href: '/promo-codes',   label: 'Promo Codes',   icon: 'local_offer' },
+  { href: '/customers',     label: 'Customers',     icon: 'people' },
+  { href: '/analytics',     label: 'Analytics',     icon: 'bar_chart' },
+  { href: '/import',        label: 'Import / Export', icon: 'sync_alt' },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {

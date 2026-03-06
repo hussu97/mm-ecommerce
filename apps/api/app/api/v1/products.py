@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel
@@ -7,8 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_admin_user, get_db
 from app.models.user import User
+
 from app.schemas.product import (
     ProductCreate,
+    ProductModifierLink,
     ProductResponse,
     ProductUpdate,
 )
@@ -99,3 +102,29 @@ async def delete_product(
 ):
     """Delete a product (admin only)."""
     await product_service.delete(db, slug)
+
+
+@router.post(
+    "/{slug}/modifiers",
+    response_model=ProductResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def link_modifier(
+    slug: str,
+    data: ProductModifierLink,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    """Link a modifier to a product (admin only)."""
+    return await product_service.link_modifier(db, slug, data)
+
+
+@router.delete("/{slug}/modifiers/{modifier_id}", response_model=ProductResponse)
+async def unlink_modifier(
+    slug: str,
+    modifier_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    """Unlink a modifier from a product (admin only)."""
+    return await product_service.unlink_modifier(db, slug, modifier_id)

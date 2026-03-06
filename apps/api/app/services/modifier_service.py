@@ -11,6 +11,7 @@ from app.models.modifier import Modifier, ModifierOption
 from app.schemas.modifier import (
     ModifierCreate,
     ModifierOptionCreate,
+    ModifierOptionUpdate,
     ModifierResponse,
     ModifierUpdate,
 )
@@ -116,6 +117,69 @@ async def add_option(
 
     option = ModifierOption(modifier_id=modifier_id, **data.model_dump())
     db.add(option)
+    await db.flush()
+
+    stmt = (
+        select(Modifier)
+        .options(*_modifier_load_options())
+        .where(Modifier.id == modifier_id)
+    )
+    result = await db.execute(stmt)
+    modifier = result.scalar_one()
+    return ModifierResponse.model_validate(modifier)
+
+
+async def update_option(
+    db: AsyncSession,
+    modifier_id: uuid.UUID,
+    option_id: uuid.UUID,
+    data: ModifierOptionUpdate,
+) -> ModifierResponse:
+    result = await db.execute(
+        select(ModifierOption).where(
+            ModifierOption.id == option_id,
+            ModifierOption.modifier_id == modifier_id,
+        )
+    )
+    option = result.scalar_one_or_none()
+    if not option:
+        raise NotFoundError(
+            f"Option '{option_id}' not found on modifier '{modifier_id}'"
+        )
+
+    for key, val in data.model_dump(exclude_unset=True).items():
+        setattr(option, key, val)
+
+    await db.flush()
+
+    stmt = (
+        select(Modifier)
+        .options(*_modifier_load_options())
+        .where(Modifier.id == modifier_id)
+    )
+    result = await db.execute(stmt)
+    modifier = result.scalar_one()
+    return ModifierResponse.model_validate(modifier)
+
+
+async def delete_option(
+    db: AsyncSession,
+    modifier_id: uuid.UUID,
+    option_id: uuid.UUID,
+) -> ModifierResponse:
+    result = await db.execute(
+        select(ModifierOption).where(
+            ModifierOption.id == option_id,
+            ModifierOption.modifier_id == modifier_id,
+        )
+    )
+    option = result.scalar_one_or_none()
+    if not option:
+        raise NotFoundError(
+            f"Option '{option_id}' not found on modifier '{modifier_id}'"
+        )
+
+    await db.delete(option)
     await db.flush()
 
     stmt = (

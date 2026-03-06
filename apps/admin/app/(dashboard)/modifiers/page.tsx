@@ -1,0 +1,466 @@
+'use client';
+
+import { Fragment, useEffect, useState } from 'react';
+import { modifiersApi, ApiError } from '@/lib/api';
+import type { Modifier, ModifierOption } from '@/lib/types';
+import { Badge, Button, Input } from '@/components/ui';
+
+const BLANK_MODIFIER = { reference: '', name: '', name_localized: '' };
+const BLANK_OPTION = { name: '', name_localized: '', sku: '', price: '0', calories: '', is_active: true, display_order: '0' };
+
+export default function ModifiersPage() {
+  const [modifiers, setModifiers] = useState<Modifier[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Modifier form
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [form, setForm] = useState(BLANK_MODIFIER);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState('');
+
+  // Expanded row
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // Per-modifier delete
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Option add form (per modifier)
+  const [addingOptionFor, setAddingOptionFor] = useState<string | null>(null);
+  const [optionForm, setOptionForm] = useState(BLANK_OPTION);
+  const [savingOption, setSavingOption] = useState(false);
+  const [optionError, setOptionError] = useState('');
+
+  // Option edit
+  const [editingOptionId, setEditingOptionId] = useState<string | null>(null);
+  const [editOptionForm, setEditOptionForm] = useState(BLANK_OPTION);
+  const [savingEditOption, setSavingEditOption] = useState(false);
+
+  // Option delete
+  const [deletingOptionId, setDeletingOptionId] = useState<string | null>(null);
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function load() {
+    setLoading(true);
+    try {
+      setModifiers(await modifiersApi.list());
+    } catch {
+      // silent
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function openAdd() {
+    setEditId(null);
+    setForm(BLANK_MODIFIER);
+    setFormError('');
+    setShowForm(true);
+  }
+
+  function openEdit(m: Modifier) {
+    setEditId(m.id);
+    setForm({ reference: m.reference, name: m.name, name_localized: m.name_localized ?? '' });
+    setFormError('');
+    setShowForm(true);
+  }
+
+  async function handleSave() {
+    if (!form.reference.trim() || !form.name.trim()) { setFormError('Reference and Name are required.'); return; }
+    setSaving(true); setFormError('');
+    try {
+      const data = { reference: form.reference.trim(), name: form.name.trim(), name_localized: form.name_localized.trim() || null };
+      if (editId) {
+        const updated = await modifiersApi.update(editId, data);
+        setModifiers(prev => prev.map(m => m.id === editId ? updated : m));
+      } else {
+        const created = await modifiersApi.create(data);
+        setModifiers(prev => [...prev, created]);
+      }
+      setShowForm(false);
+    } catch (err) {
+      setFormError(err instanceof ApiError ? err.message : 'Save failed.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete(id: string, name: string) {
+    if (!confirm(`Delete modifier "${name}"? This will remove all its options and product links.`)) return;
+    setDeletingId(id);
+    try {
+      await modifiersApi.delete(id);
+      setModifiers(prev => prev.filter(m => m.id !== id));
+      if (expandedId === id) setExpandedId(null);
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'Delete failed.');
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  function openAddOption(modifierId: string) {
+    setAddingOptionFor(modifierId);
+    setOptionForm(BLANK_OPTION);
+    setOptionError('');
+  }
+
+  async function handleAddOption(modifierId: string) {
+    if (!optionForm.name.trim() || !optionForm.sku.trim()) { setOptionError('Name and SKU are required.'); return; }
+    setSavingOption(true); setOptionError('');
+    try {
+      const data = {
+        name: optionForm.name.trim(),
+        name_localized: optionForm.name_localized.trim() || null,
+        sku: optionForm.sku.trim(),
+        price: Number(optionForm.price) || 0,
+        calories: optionForm.calories ? Number(optionForm.calories) : null,
+        is_active: optionForm.is_active,
+        display_order: Number(optionForm.display_order) || 0,
+      };
+      const updated = await modifiersApi.addOption(modifierId, data);
+      setModifiers(prev => prev.map(m => m.id === modifierId ? updated : m));
+      setAddingOptionFor(null);
+    } catch (err) {
+      setOptionError(err instanceof ApiError ? err.message : 'Add option failed.');
+    } finally {
+      setSavingOption(false);
+    }
+  }
+
+  function openEditOption(modifierId: string, opt: ModifierOption) {
+    setEditingOptionId(opt.id);
+    setEditOptionForm({
+      name: opt.name,
+      name_localized: opt.name_localized ?? '',
+      sku: opt.sku,
+      price: String(opt.price),
+      calories: opt.calories != null ? String(opt.calories) : '',
+      is_active: opt.is_active,
+      display_order: String(opt.display_order),
+    });
+  }
+
+  async function handleSaveOption(modifierId: string, optionId: string) {
+    setSavingEditOption(true);
+    try {
+      const data = {
+        name: editOptionForm.name.trim() || undefined,
+        name_localized: editOptionForm.name_localized.trim() || null,
+        sku: editOptionForm.sku.trim() || undefined,
+        price: editOptionForm.price !== '' ? Number(editOptionForm.price) : undefined,
+        calories: editOptionForm.calories ? Number(editOptionForm.calories) : null,
+        is_active: editOptionForm.is_active,
+        display_order: Number(editOptionForm.display_order) || 0,
+      };
+      const updated = await modifiersApi.updateOption(modifierId, optionId, data);
+      setModifiers(prev => prev.map(m => m.id === modifierId ? updated : m));
+      setEditingOptionId(null);
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'Update failed.');
+    } finally {
+      setSavingEditOption(false);
+    }
+  }
+
+  async function handleDeleteOption(modifierId: string, optionId: string, name: string) {
+    if (!confirm(`Delete option "${name}"?`)) return;
+    setDeletingOptionId(optionId);
+    try {
+      const updated = await modifiersApi.deleteOption(modifierId, optionId);
+      setModifiers(prev => prev.map(m => m.id === modifierId ? updated : m));
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'Delete failed.');
+    } finally {
+      setDeletingOptionId(null);
+    }
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="font-display text-2xl text-gray-800">Modifiers</h1>
+          <p className="text-xs text-gray-400 font-body mt-0.5">{modifiers.length} total</p>
+        </div>
+        {!showForm && (
+          <Button onClick={openAdd}>
+            <span className="material-icons text-[14px]">add</span>
+            New Modifier
+          </Button>
+        )}
+      </div>
+
+      {/* Modifier form */}
+      {showForm && (
+        <div className="bg-white border border-primary/30 p-5 mb-6">
+          <h2 className="text-xs font-body uppercase tracking-widest text-primary mb-4">
+            {editId ? 'Edit Modifier' : 'New Modifier'}
+          </h2>
+          {formError && (
+            <div className="bg-red-50 border border-red-200 text-red-600 text-xs px-3 py-2 mb-4">{formError}</div>
+          )}
+          <div className="grid sm:grid-cols-3 gap-4">
+            <Input
+              label="Reference"
+              value={form.reference}
+              onChange={e => setForm(f => ({ ...f, reference: e.target.value }))}
+              disabled={!!editId}
+              placeholder="e.g. size"
+            />
+            <Input
+              label="Name"
+              value={form.name}
+              onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+            />
+            <Input
+              label="Name (Localized)"
+              value={form.name_localized}
+              onChange={e => setForm(f => ({ ...f, name_localized: e.target.value }))}
+              placeholder="Optional"
+            />
+          </div>
+          <div className="flex gap-3 mt-5">
+            <Button onClick={handleSave} loading={saving}>{editId ? 'Save Changes' : 'Create Modifier'}</Button>
+            <Button variant="ghost" onClick={() => setShowForm(false)} disabled={saving}>Cancel</Button>
+          </div>
+        </div>
+      )}
+
+      {/* Table */}
+      {loading ? (
+        <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-12 bg-gray-100 animate-pulse" />)}</div>
+      ) : (
+        <div className="bg-white border border-gray-200">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-200 bg-gray-50">
+                <th className="px-4 py-3 w-6"></th>
+                <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Name</th>
+                <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden sm:table-cell">Name (Localized)</th>
+                <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden md:table-cell">Reference</th>
+                <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500">Options</th>
+                <th className="px-4 py-3 text-right text-[11px] font-body uppercase tracking-widest text-gray-500">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {modifiers.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-10 text-center text-sm text-gray-400 font-body">No modifiers yet.</td>
+                </tr>
+              ) : modifiers.map(m => (
+                <Fragment key={m.id}>
+                  <tr className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-2.5">
+                      <button
+                        onClick={() => setExpandedId(expandedId === m.id ? null : m.id)}
+                        className="text-gray-400 hover:text-primary transition-colors"
+                      >
+                        <span className="material-icons text-[16px]">
+                          {expandedId === m.id ? 'expand_less' : 'expand_more'}
+                        </span>
+                      </button>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span className="font-body font-medium text-gray-800 text-sm">{m.name}</span>
+                    </td>
+                    <td className="px-4 py-2.5 hidden sm:table-cell">
+                      <span className="text-xs font-body text-gray-500">{m.name_localized ?? '—'}</span>
+                    </td>
+                    <td className="px-4 py-2.5 hidden md:table-cell">
+                      <span className="text-xs font-body text-gray-400">{m.reference}</span>
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      <span className="text-xs font-body text-gray-500">{m.options.length}</span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <Button variant="ghost" size="sm" onClick={() => openEdit(m)}>Edit</Button>
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          loading={deletingId === m.id}
+                          onClick={() => handleDelete(m.id, m.name)}
+                        >Delete</Button>
+                      </div>
+                    </td>
+                  </tr>
+
+                  {/* Expanded options */}
+                  {expandedId === m.id && (
+                    <tr key={`${m.id}-options`}>
+                      <td colSpan={6} className="bg-gray-50 border-b border-gray-100">
+                        <div className="px-8 py-4">
+                          <div className="flex items-center justify-between mb-3">
+                            <span className="text-[11px] font-body uppercase tracking-widest text-gray-500">Options</span>
+                            {addingOptionFor !== m.id && (
+                              <Button size="sm" variant="ghost" onClick={() => openAddOption(m.id)}>
+                                <span className="material-icons text-[12px]">add</span>
+                                Add Option
+                              </Button>
+                            )}
+                          </div>
+
+                          {/* Options table */}
+                          {m.options.length > 0 && (
+                            <table className="w-full text-xs mb-4">
+                              <thead>
+                                <tr className="border-b border-gray-200">
+                                  <th className="py-1.5 text-left font-body uppercase tracking-widest text-gray-400 text-[10px]">Name</th>
+                                  <th className="py-1.5 text-left font-body uppercase tracking-widest text-gray-400 text-[10px] hidden sm:table-cell">SKU</th>
+                                  <th className="py-1.5 text-right font-body uppercase tracking-widest text-gray-400 text-[10px]">Price</th>
+                                  <th className="py-1.5 text-center font-body uppercase tracking-widest text-gray-400 text-[10px] hidden md:table-cell">Calories</th>
+                                  <th className="py-1.5 text-center font-body uppercase tracking-widest text-gray-400 text-[10px]">Active</th>
+                                  <th className="py-1.5 text-center font-body uppercase tracking-widest text-gray-400 text-[10px] hidden sm:table-cell">Order</th>
+                                  <th className="py-1.5 text-right font-body uppercase tracking-widest text-gray-400 text-[10px]">Actions</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100">
+                                {m.options.map(opt => (
+                                  editingOptionId === opt.id ? (
+                                    <tr key={opt.id} className="bg-white">
+                                      <td className="py-2 pr-2">
+                                        <input value={editOptionForm.name} onChange={e => setEditOptionForm(f => ({ ...f, name: e.target.value }))}
+                                          className="w-full border border-gray-300 text-xs font-body px-2 py-1 focus:outline-none focus:border-primary" />
+                                      </td>
+                                      <td className="py-2 pr-2 hidden sm:table-cell">
+                                        <input value={editOptionForm.sku} onChange={e => setEditOptionForm(f => ({ ...f, sku: e.target.value }))}
+                                          className="w-full border border-gray-300 text-xs font-body px-2 py-1 focus:outline-none focus:border-primary" />
+                                      </td>
+                                      <td className="py-2 pr-2">
+                                        <input type="number" min="0" step="0.01" value={editOptionForm.price} onChange={e => setEditOptionForm(f => ({ ...f, price: e.target.value }))}
+                                          className="w-20 border border-gray-300 text-xs font-body px-2 py-1 focus:outline-none focus:border-primary" />
+                                      </td>
+                                      <td className="py-2 pr-2 hidden md:table-cell">
+                                        <input type="number" min="0" value={editOptionForm.calories} onChange={e => setEditOptionForm(f => ({ ...f, calories: e.target.value }))}
+                                          className="w-16 border border-gray-300 text-xs font-body px-2 py-1 focus:outline-none focus:border-primary" placeholder="—" />
+                                      </td>
+                                      <td className="py-2 text-center">
+                                        <input type="checkbox" checked={editOptionForm.is_active} onChange={e => setEditOptionForm(f => ({ ...f, is_active: e.target.checked }))} className="accent-primary" />
+                                      </td>
+                                      <td className="py-2 pr-2 hidden sm:table-cell">
+                                        <input type="number" min="0" value={editOptionForm.display_order} onChange={e => setEditOptionForm(f => ({ ...f, display_order: e.target.value }))}
+                                          className="w-12 border border-gray-300 text-xs font-body px-2 py-1 focus:outline-none focus:border-primary" />
+                                      </td>
+                                      <td className="py-2 text-right">
+                                        <div className="flex items-center justify-end gap-1">
+                                          <Button size="sm" loading={savingEditOption} onClick={() => handleSaveOption(m.id, opt.id)}>Save</Button>
+                                          <Button size="sm" variant="ghost" onClick={() => setEditingOptionId(null)}>Cancel</Button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  ) : (
+                                    <tr key={opt.id} className="hover:bg-white/60 transition-colors">
+                                      <td className="py-2 pr-2">
+                                        <div className="font-body text-gray-700">{opt.name}</div>
+                                        {opt.name_localized && <div className="text-[10px] text-gray-400 font-body">{opt.name_localized}</div>}
+                                      </td>
+                                      <td className="py-2 pr-2 font-body text-gray-400 hidden sm:table-cell">{opt.sku}</td>
+                                      <td className="py-2 pr-2 text-right font-body text-gray-700">
+                                        {opt.price > 0 ? `AED ${Number(opt.price).toFixed(2)}` : '—'}
+                                      </td>
+                                      <td className="py-2 text-center font-body text-gray-400 hidden md:table-cell">{opt.calories ?? '—'}</td>
+                                      <td className="py-2 text-center">
+                                        <Badge variant={opt.is_active ? 'success' : 'neutral'}>
+                                          {opt.is_active ? 'Yes' : 'No'}
+                                        </Badge>
+                                      </td>
+                                      <td className="py-2 text-center font-body text-gray-400 hidden sm:table-cell">{opt.display_order}</td>
+                                      <td className="py-2 text-right">
+                                        <div className="flex items-center justify-end gap-1">
+                                          <Button size="sm" variant="ghost" onClick={() => openEditOption(m.id, opt)}>Edit</Button>
+                                          <Button
+                                            size="sm"
+                                            variant="danger"
+                                            loading={deletingOptionId === opt.id}
+                                            onClick={() => handleDeleteOption(m.id, opt.id, opt.name)}
+                                          >Del</Button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  )
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+
+                          {/* Add option form */}
+                          {addingOptionFor === m.id && (
+                            <div className="border border-gray-200 bg-white p-4 mt-2">
+                              {optionError && <p className="text-xs text-red-500 mb-3">{optionError}</p>}
+                              <div className="grid sm:grid-cols-3 gap-3 mb-3">
+                                <Input
+                                  label="Name"
+                                  value={optionForm.name}
+                                  onChange={e => setOptionForm(f => ({ ...f, name: e.target.value }))}
+                                />
+                                <Input
+                                  label="Name (Localized)"
+                                  value={optionForm.name_localized}
+                                  onChange={e => setOptionForm(f => ({ ...f, name_localized: e.target.value }))}
+                                  placeholder="Optional"
+                                />
+                                <Input
+                                  label="SKU"
+                                  value={optionForm.sku}
+                                  onChange={e => setOptionForm(f => ({ ...f, sku: e.target.value }))}
+                                />
+                                <Input
+                                  label="Price (AED)"
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={optionForm.price}
+                                  onChange={e => setOptionForm(f => ({ ...f, price: e.target.value }))}
+                                />
+                                <Input
+                                  label="Calories"
+                                  type="number"
+                                  min="0"
+                                  value={optionForm.calories}
+                                  onChange={e => setOptionForm(f => ({ ...f, calories: e.target.value }))}
+                                  placeholder="Optional"
+                                />
+                                <Input
+                                  label="Display Order"
+                                  type="number"
+                                  min="0"
+                                  value={optionForm.display_order}
+                                  onChange={e => setOptionForm(f => ({ ...f, display_order: e.target.value }))}
+                                />
+                              </div>
+                              <label className="flex items-center gap-2 text-xs font-body text-gray-600 mb-3">
+                                <input
+                                  type="checkbox"
+                                  checked={optionForm.is_active}
+                                  onChange={e => setOptionForm(f => ({ ...f, is_active: e.target.checked }))}
+                                  className="accent-primary"
+                                />
+                                Active
+                              </label>
+                              <div className="flex gap-2">
+                                <Button size="sm" loading={savingOption} onClick={() => handleAddOption(m.id)}>Add Option</Button>
+                                <Button size="sm" variant="ghost" onClick={() => setAddingOptionFor(null)}>Cancel</Button>
+                              </div>
+                            </div>
+                          )}
+
+                          {m.options.length === 0 && addingOptionFor !== m.id && (
+                            <p className="text-xs text-gray-400 font-body">No options yet.</p>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}

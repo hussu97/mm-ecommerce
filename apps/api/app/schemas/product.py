@@ -10,6 +10,14 @@ from .category import CategoryResponse
 from .modifier import ProductModifierResponse
 
 
+class ProductModifierLink(BaseModel):
+    modifier_id: UUID
+    minimum_options: int = 0
+    maximum_options: int = 1
+    free_options: int = 0
+    unique_options: bool = False
+
+
 class ProductCreate(BaseModel):
     category_id: UUID | None = None
     name: str = Field(min_length=1, max_length=200)

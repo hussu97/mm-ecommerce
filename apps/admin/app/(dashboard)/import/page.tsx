@@ -1,12 +1,13 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { importApi, ApiError } from '@/lib/api';
+import { importApi, exportApi, ApiError } from '@/lib/api';
 import type { ImportResult } from '@/lib/types';
 import { Button } from '@/components/ui';
 
 interface ImportSection {
   key: keyof typeof importApi;
+  exportKey: string;
   title: string;
   description: string;
   columns: string;
@@ -15,30 +16,35 @@ interface ImportSection {
 const SECTIONS: ImportSection[] = [
   {
     key: 'categories',
+    exportKey: 'categories',
     title: '1. Categories',
     description: 'Import product categories from Foodics Categories Export.',
     columns: 'id, name, name_localized, reference, image',
   },
   {
     key: 'products',
+    exportKey: 'products',
     title: '2. Products',
     description: 'Import products. Categories must be imported first.',
     columns: 'id, name, sku, category_reference, price, description, image, name_localized, description_localized, is_active, is_stock_product, calories, preparation_time',
   },
   {
     key: 'modifiers',
+    exportKey: 'modifiers',
     title: '3. Modifiers',
     description: 'Import modifier groups (e.g. "Size", "Your Choice of Quantity").',
     columns: 'id, reference, name, name_localized',
   },
   {
     key: 'modifierOptions',
+    exportKey: 'modifier-options',
     title: '4. Modifier Options',
     description: 'Import modifier options. Modifiers must be imported first.',
     columns: 'id, modifier_reference, name, sku, price, name_localized, is_active',
   },
   {
     key: 'productModifiers',
+    exportKey: 'product-modifiers',
     title: '5. Product Modifiers',
     description: 'Link modifiers to products. Products and Modifiers must be imported first.',
     columns: 'product_sku, modifier_reference, minimum_options, maximum_options, free_options, unique_options',
@@ -49,6 +55,7 @@ function ImportCard({ section }: { section: ImportSection }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
@@ -75,9 +82,26 @@ function ImportCard({ section }: { section: ImportSection }) {
     }
   };
 
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      await exportApi.download(section.exportKey);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Export failed.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="bg-white border border-gray-200 p-5">
-      <h3 className="font-display text-base text-gray-800 mb-1">{section.title}</h3>
+      <div className="flex items-start justify-between mb-1">
+        <h3 className="font-display text-base text-gray-800">{section.title}</h3>
+        <Button variant="ghost" size="sm" loading={exporting} onClick={handleExport}>
+          <span className="material-icons text-[14px]">download</span>
+          Export
+        </Button>
+      </div>
       <p className="text-xs text-gray-500 font-body mb-1">{section.description}</p>
       <p className="text-[11px] text-gray-400 font-body mb-4">
         Expected columns: <span className="text-gray-600">{section.columns}</span>
@@ -134,7 +158,7 @@ export default function ImportPage() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="font-display text-2xl text-gray-800">Import Data</h1>
+        <h1 className="font-display text-2xl text-gray-800">Import / Export</h1>
         <p className="text-xs text-gray-400 font-body mt-0.5">
           Import product catalog from Foodics CSV exports. Import in order: Categories → Products → Modifiers → Modifier Options → Product Modifiers.
         </p>

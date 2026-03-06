@@ -10,6 +10,7 @@ from app.models.user import User
 from app.schemas.modifier import (
     ModifierCreate,
     ModifierOptionCreate,
+    ModifierOptionUpdate,
     ModifierResponse,
     ModifierUpdate,
 )
@@ -74,3 +75,29 @@ async def add_modifier_option(
 ):
     """Add an option to a modifier (admin only)."""
     return await modifier_service.add_option(db, modifier_id, data)
+
+
+@router.put("/{modifier_id}/options/{option_id}", response_model=ModifierResponse)
+async def update_modifier_option(
+    modifier_id: uuid.UUID,
+    option_id: uuid.UUID,
+    data: ModifierOptionUpdate,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    """Update a modifier option (admin only)."""
+    return await modifier_service.update_option(db, modifier_id, option_id, data)
+
+
+@router.delete(
+    "/{modifier_id}/options/{option_id}",
+    response_model=ModifierResponse,
+)
+async def delete_modifier_option(
+    modifier_id: uuid.UUID,
+    option_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    """Delete a modifier option (admin only)."""
+    return await modifier_service.delete_option(db, modifier_id, option_id)

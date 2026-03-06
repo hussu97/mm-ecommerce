@@ -62,3 +62,13 @@ class ModifierOptionCreate(BaseModel):
     calories: int | None = None
     is_active: bool = True
     display_order: int = 0
+
+
+class ModifierOptionUpdate(BaseModel):
+    name: str | None = None
+    name_localized: str | None = None
+    sku: str | None = None
+    price: Decimal | None = None
+    calories: int | None = None
+    is_active: bool | None = None
+    display_order: int | None = None
