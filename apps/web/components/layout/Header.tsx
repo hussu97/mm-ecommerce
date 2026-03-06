@@ -10,7 +10,7 @@ import { MobileMenu } from './MobileMenu';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import type { Category, Language } from '@/lib/types';
 
-export function Header({ languages = [], categories = [], locale }: {
+export function Header({ languages = [], categories = [], locale: localeProp }: {
   languages?: Language[];
   categories?: Category[];
   locale?: string;
@@ -18,7 +18,8 @@ export function Header({ languages = [], categories = [], locale }: {
   const [menuOpen, setMenuOpen] = useState(false);
   const { itemCount } = useCart();
   const { user } = useAuth();
-  const { locale, t } = useTranslation();
+  const { locale: ctxLocale, t } = useTranslation();
+  const locale = localeProp ?? ctxLocale;
 
   return (
     <>
