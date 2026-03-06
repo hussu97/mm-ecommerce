@@ -7,6 +7,6 @@ export default function robots(): MetadataRoute.Robots {
       allow: '/',
       disallow: ['/account/', '/checkout/', '/cart/'],
     },
-    sitemap: 'https://meltingmomentscakes.com/sitemap.xml',
+    sitemap: `${process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com'}/sitemap.xml`,
   };
 }

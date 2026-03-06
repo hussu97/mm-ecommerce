@@ -49,7 +49,7 @@ export default function AboutPage() {
     worksFor: {
       '@type': 'LocalBusiness',
       name: 'Melting Moments Cakes',
-      url: 'https://meltingmomentscakes.com',
+      url: process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com',
     },
     sameAs: ['https://www.instagram.com/meltingmomentscakes'],
   };

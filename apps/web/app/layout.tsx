@@ -45,7 +45,7 @@ export const metadata: Metadata = {
   description:
     "Handcrafted brownies, cookies, cookie melts, and desserts delivered across the UAE. Made with 100% love by Fatema Abbasi.",
   keywords: ["brownies", "cookies", "bakery", "UAE", "Dubai", "Sharjah", "artisanal"],
-  metadataBase: new URL("https://meltingmomentscakes.com"),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://meltingmomentscakes.com"),
   openGraph: {
     siteName: "Melting Moments Cakes",
     locale: "en_AE",

@@ -6,6 +6,7 @@ import { ProductGrid } from '@/components/category/ProductGrid';
 import { Breadcrumb } from '@/components/ui';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api/v1';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 const PER_PAGE = 12;
 
 async function getCategoryData(
@@ -132,8 +133,8 @@ export default async function CategoryPage({
       {
         '@type': 'BreadcrumbList',
         itemListElement: [
-          { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://meltingmomentscakes.com' },
-          { '@type': 'ListItem', position: 2, name: category.name, item: `https://meltingmomentscakes.com/${slug}` },
+          { '@type': 'ListItem', position: 1, name: 'Home', item: SITE_URL },
+          { '@type': 'ListItem', position: 2, name: category.name, item: `${SITE_URL}/${slug}` },
         ],
       },
       ...(products.length > 0
@@ -146,7 +147,7 @@ export default async function CategoryPage({
                 '@type': 'ListItem',
                 position: i + 1,
                 name: p.name,
-                url: `https://meltingmomentscakes.com/${slug}/${p.slug}`,
+                url: `${SITE_URL}/${slug}/${p.slug}`,
               })),
             },
           ]

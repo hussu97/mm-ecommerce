@@ -53,7 +53,7 @@ services:
     restart: always
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      ENVIRONMENT: production
+      APP_ENV: ${APP_ENV:-production}
       SECRET_KEY: ${SECRET_KEY}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
@@ -63,7 +63,8 @@ services:
       R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
       R2_BUCKET_NAME: ${R2_BUCKET_NAME}
       R2_PUBLIC_URL: ${R2_PUBLIC_URL}
-      ALLOWED_ORIGINS: https://meltingmomentscakes.com,https://admin.meltingmomentscakes.com
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-*}
     networks:
       - mm_network
     depends_on:

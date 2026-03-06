@@ -6,6 +6,7 @@ import { ProductImageGallery } from './ProductImageGallery';
 import type { Product } from '@/lib/types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api/v1';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 
 async function getProduct(slug: string): Promise<Product | null> {
   const res = await fetch(`${API_BASE}/products/${slug}`, { next: { revalidate: 300 } });
@@ -59,7 +60,7 @@ export default async function ProductDetailPage({
     name: product.name,
     description: product.description ?? undefined,
     image: galleryImages,
-    url: `https://meltingmomentscakes.com/${categorySlug}/${productSlug}`,
+    url: `${SITE_URL}/${categorySlug}/${productSlug}`,
     offers: {
       '@type': 'Offer',
       price: Number(product.base_price).toFixed(2),

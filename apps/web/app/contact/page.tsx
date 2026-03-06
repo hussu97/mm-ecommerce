@@ -47,7 +47,7 @@ export default function ContactPage() {
     '@context': 'https://schema.org',
     '@type': 'LocalBusiness',
     name: 'Melting Moments Cakes',
-    url: 'https://meltingmomentscakes.com',
+    url: process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com',
     telephone: '+971501234567',
     email: 'hello@meltingmomentscakes.com',
     address: {

@@ -16,24 +16,26 @@ export const metadata: Metadata = {
   },
 };
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
+
 const JSON_LD = {
   '@context': 'https://schema.org',
   '@graph': [
     {
       '@type': 'Organization',
       name: 'Melting Moments Cakes',
-      url: 'https://meltingmomentscakes.com',
-      logo: 'https://meltingmomentscakes.com/images/logos/color_logo.jpeg',
+      url: SITE_URL,
+      logo: `${SITE_URL}/images/logos/color_logo.jpeg`,
       sameAs: ['https://www.instagram.com/meltingmomentscakes'],
     },
     {
       '@type': 'WebSite',
       name: 'Melting Moments Cakes',
-      url: 'https://meltingmomentscakes.com',
+      url: SITE_URL,
     },
     {
       '@type': 'LocalBusiness',
-      '@id': 'https://meltingmomentscakes.com',
+      '@id': SITE_URL,
       name: 'Melting Moments Cakes',
       description:
         'Artisanal bakery delivering handcrafted brownies, cookies and desserts across the UAE',
