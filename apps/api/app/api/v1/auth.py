@@ -4,14 +4,19 @@ import hashlib
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
 from jose import JWTError
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, get_db
-from app.core.exceptions import BadRequestError, ConflictError
+from app.core.deps import get_admin_user, get_current_active_user, get_db
+from app.core.exceptions import (
+    BadRequestError,
+    ConflictError,
+    ForbiddenError,
+    UnauthorizedError,
+)
 from app.core.limiter import limiter
 from app.core.security import (
     create_access_token,
@@ -43,6 +48,7 @@ router = APIRouter()
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 async def _make_token_response(user: User, db: AsyncSession) -> TokenResponse:
     token = create_access_token(
         user_id=str(user.id),
@@ -51,7 +57,9 @@ async def _make_token_response(user: User, db: AsyncSession) -> TokenResponse:
         is_guest=user.is_guest,
     )
     raw_refresh, refresh_hash = create_refresh_token()
-    expires_at = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    expires_at = datetime.now(timezone.utc) + timedelta(
+        days=settings.REFRESH_TOKEN_EXPIRE_DAYS
+    )
     rt = RefreshToken(
         id=uuid.uuid4(),
         user_id=user.id,
@@ -72,6 +80,7 @@ async def _make_token_response(user: User, db: AsyncSession) -> TokenResponse:
 # Routes
 # ---------------------------------------------------------------------------
 
+
 @router.post(
     "/register",
     response_model=TokenResponse,
@@ -87,10 +96,7 @@ async def register(
 ) -> TokenResponse:
     result = await db.execute(select(User).where(User.email == body.email.lower()))
     if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="An account with this email already exists",
-        )
+        raise ConflictError("An account with this email already exists")
 
     user = User(
         id=uuid.uuid4(),
@@ -125,16 +131,14 @@ async def login(
     result = await db.execute(select(User).where(User.email == body.email.lower()))
     user = result.scalar_one_or_none()
 
-    if not user or not user.hashed_password or not verify_password(body.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password",
-        )
+    if (
+        not user
+        or not user.hashed_password
+        or not verify_password(body.password, user.hashed_password)
+    ):
+        raise UnauthorizedError("Invalid email or password")
     if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account is inactive",
-        )
+        raise ForbiddenError("Account is inactive")
     # If user was a guest before, upgrade them on login
     if user.is_guest:
         user.is_guest = False
@@ -242,15 +246,12 @@ async def reset_password(
         payload = decode_password_reset_token(body.token)
         user_id = uuid.UUID(payload["sub"])
     except (JWTError, KeyError, ValueError):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired reset token",
-        )
+        raise BadRequestError("Invalid or expired reset token")
 
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user or not user.is_active:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid reset token")
+        raise BadRequestError("Invalid reset token")
 
     user.hashed_password = hash_password(body.new_password)
     await db.flush()
@@ -261,6 +262,7 @@ async def reset_password(
 # ---------------------------------------------------------------------------
 # Refresh token rotation
 # ---------------------------------------------------------------------------
+
 
 class RefreshRequest(BaseModel):
     refresh_token: str
@@ -283,10 +285,7 @@ async def refresh_token(
     rt = result.scalar_one_or_none()
 
     if not rt or rt.is_revoked or rt.expires_at < datetime.now(timezone.utc):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired refresh token",
-        )
+        raise UnauthorizedError("Invalid or expired refresh token")
 
     # Revoke old token (rotation)
     rt.is_revoked = True
@@ -294,10 +293,7 @@ async def refresh_token(
     user_result = await db.execute(select(User).where(User.id == rt.user_id))
     user = user_result.scalar_one_or_none()
     if not user or not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found or inactive",
-        )
+        raise UnauthorizedError("User not found or inactive")
 
     return await _make_token_response(user, db)
 
@@ -305,6 +301,7 @@ async def refresh_token(
 # ---------------------------------------------------------------------------
 # Logout
 # ---------------------------------------------------------------------------
+
 
 class LogoutRequest(BaseModel):
     refresh_token: str
@@ -327,3 +324,40 @@ async def logout(
     if rt and not rt.is_revoked:
         rt.is_revoked = True
         await db.flush()
+
+
+# ---------------------------------------------------------------------------
+# Guest cleanup (admin only)
+# ---------------------------------------------------------------------------
+
+
+@router.delete(
+    "/guests/cleanup",
+    status_code=status.HTTP_200_OK,
+    summary="Delete old guest users with no cart (admin only)",
+)
+async def cleanup_guests(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+) -> dict:
+    from app.models.cart import Cart
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+    cart_user_subq = (
+        select(Cart.user_id).where(Cart.user_id.isnot(None)).scalar_subquery()
+    )
+
+    stmt = (
+        delete(User)
+        .where(
+            User.is_guest == True,  # noqa: E712
+            User.created_at < cutoff,
+            User.id.not_in(cart_user_subq),
+        )
+        .returning(User.id)
+        .execution_options(synchronize_session=False)
+    )
+    result = await db.execute(stmt)
+    deleted_ids = result.scalars().all()
+    await db.flush()
+    return {"deleted": len(deleted_ids)}

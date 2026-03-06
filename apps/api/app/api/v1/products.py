@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.cache import cache_delete_pattern, cache_get, cache_set
 from app.core.deps import get_admin_user, get_db
 from app.models.user import User
-
 from app.schemas.product import (
     ProductCreate,
     ProductModifierLink,
@@ -18,6 +18,8 @@ from app.schemas.product import (
 from app.services import product_service
 
 router = APIRouter()
+
+_FEATURED_TTL = 300
 
 
 class ProductListResponse(BaseModel):
@@ -66,7 +68,18 @@ async def list_featured(
     db: AsyncSession = Depends(get_db),
 ):
     """Get featured products."""
-    return await product_service.get_featured(db, limit=limit)
+    cache_key = f"products:featured:{limit}"
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    result = await product_service.get_featured(db, limit=limit)
+    await cache_set(
+        cache_key,
+        [r.model_dump(mode="json") for r in result],
+        ttl=_FEATURED_TTL,
+    )
+    return result
 
 
 @router.get("/{slug}", response_model=ProductResponse)
@@ -82,7 +95,9 @@ async def create_product(
     _admin: User = Depends(get_admin_user),
 ):
     """Create a new product (admin only)."""
-    return await product_service.create(db, data)
+    result = await product_service.create(db, data)
+    await cache_delete_pattern("products:featured:*")
+    return result
 
 
 @router.put("/{slug}", response_model=ProductResponse)
@@ -93,7 +108,9 @@ async def update_product(
     _admin: User = Depends(get_admin_user),
 ):
     """Update a product (admin only)."""
-    return await product_service.update(db, slug, data)
+    result = await product_service.update(db, slug, data)
+    await cache_delete_pattern("products:featured:*")
+    return result
 
 
 @router.delete("/{slug}", status_code=status.HTTP_204_NO_CONTENT)
@@ -104,6 +121,7 @@ async def delete_product(
 ):
     """Delete a product (admin only)."""
     await product_service.delete(db, slug)
+    await cache_delete_pattern("products:featured:*")
 
 
 @router.post(

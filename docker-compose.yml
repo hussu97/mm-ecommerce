@@ -1,4 +1,15 @@
 services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   postgres:
     image: postgres:16
     restart: unless-stopped
@@ -53,12 +64,15 @@ services:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mm_user}:${POSTGRES_PASSWORD:-mm_password}@postgres:5432/${POSTGRES_DB:-mm_ecommerce}
+      REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
     volumes:
       - ./apps/api:/app
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   web:

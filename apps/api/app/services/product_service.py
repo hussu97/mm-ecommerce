@@ -15,6 +15,10 @@ from app.schemas.product import (
 )
 
 
+def _escape_like(s: str) -> str:
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 _SORT_MAP = {
     "newest": Product.created_at.desc(),
     "oldest": Product.created_at.asc(),
@@ -62,7 +66,7 @@ async def get_all(
         stmt = stmt.join(Product.category).where(Category.slug.in_(category_slugs))
 
     if search:
-        stmt = stmt.where(Product.name.ilike(f"%{search}%"))
+        stmt = stmt.where(Product.name.ilike(f"%{_escape_like(search)}%", escape="\\"))
 
     if featured is not None:
         stmt = stmt.where(Product.is_featured == featured)

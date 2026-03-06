@@ -12,7 +12,12 @@ from app.models.user import User as UserModel
 router = APIRouter()
 
 
+def _escape_like(s: str) -> str:
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 # ─── Schemas ──────────────────────────────────────────────────────────────────
+
 
 class CustomerSummary(BaseModel):
     id: str
@@ -34,6 +39,7 @@ class PaginatedCustomers(BaseModel):
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
+
 
 @router.get("/admin/all", response_model=PaginatedCustomers)
 async def list_customers(
@@ -70,13 +76,16 @@ async def list_customers(
     )
 
     if search:
+        escaped = _escape_like(search)
         base = base.where(
-            UserModel.email.ilike(f"%{search}%")
-            | UserModel.first_name.ilike(f"%{search}%")
-            | UserModel.last_name.ilike(f"%{search}%")
+            UserModel.email.ilike(f"%{escaped}%", escape="\\")
+            | UserModel.first_name.ilike(f"%{escaped}%", escape="\\")
+            | UserModel.last_name.ilike(f"%{escaped}%", escape="\\")
         )
 
-    total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar() or 0
+    total = (
+        await db.execute(select(func.count()).select_from(base.subquery()))
+    ).scalar() or 0
 
     offset = (page - 1) * per_page
     rows = (

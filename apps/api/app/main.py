@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import logging
 import logging.config
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.core.deps import get_db
 from app.core.exceptions import AppError
 from app.core.limiter import limiter
 
@@ -28,6 +32,26 @@ logging.basicConfig(
 logger = logging.getLogger("mm.api")
 
 # ---------------------------------------------------------------------------
+# Lifespan
+# ---------------------------------------------------------------------------
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if settings.is_production:
+        if (
+            settings.SECRET_KEY
+            == "change-me-in-production-use-a-long-random-string-here"
+        ):
+            raise RuntimeError("SECRET_KEY must be changed in production")
+        if not settings.STRIPE_WEBHOOK_SECRET:
+            raise RuntimeError("STRIPE_WEBHOOK_SECRET must be set in production")
+    logger.info("Melting Moments API starting up [env=%s]", settings.APP_ENV)
+    yield
+    logger.info("Melting Moments API shutting down")
+
+
+# ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
 
@@ -38,6 +62,7 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
+    lifespan=lifespan,
 )
 
 # ---------------------------------------------------------------------------
@@ -63,6 +88,7 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "X-Session-Id"],
 )
 
+
 # 3. Request size limit (10 MB)
 class MaxBodySizeMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -72,6 +98,7 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
                 status_code=413, content={"detail": "Request body too large"}
             )
         return await call_next(request)
+
 
 app.add_middleware(MaxBodySizeMiddleware)
 
@@ -131,25 +158,12 @@ app.include_router(api_router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["System"], summary="Health check")
-async def health() -> dict:
-    return {"status": "ok", "service": "mm-api", "env": settings.APP_ENV}
-
-
-# ---------------------------------------------------------------------------
-# Startup / shutdown
-# ---------------------------------------------------------------------------
-
-
-@app.on_event("startup")
-async def startup() -> None:
-    if settings.is_production:
-        if settings.SECRET_KEY == "change-me-in-production-use-a-long-random-string-here":
-            raise RuntimeError("SECRET_KEY must be changed in production")
-        if not settings.STRIPE_WEBHOOK_SECRET:
-            raise RuntimeError("STRIPE_WEBHOOK_SECRET must be set in production")
-    logger.info("Melting Moments API starting up [env=%s]", settings.APP_ENV)
-
-
-@app.on_event("shutdown")
-async def shutdown() -> None:
-    logger.info("Melting Moments API shutting down")
+async def health(db: AsyncSession = Depends(get_db)) -> dict:
+    try:
+        await db.execute(text("SELECT 1"))
+        return {"status": "ok", "service": "mm-api", "env": settings.APP_ENV}
+    except Exception:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "service": "mm-api", "env": settings.APP_ENV},
+        )

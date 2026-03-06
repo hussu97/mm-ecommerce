@@ -79,6 +79,9 @@ class Settings(BaseSettings):
     WEB_URL: str = "http://localhost:3000"
     ADMIN_URL: str = "http://localhost:3001"
 
+    # Redis (optional — leave empty to disable caching)
+    REDIS_URL: str = ""
+
     # Umami analytics (optional — leave empty to disable traffic metrics)
     UMAMI_URL: str = ""
     UMAMI_WEBSITE_ID: str = ""

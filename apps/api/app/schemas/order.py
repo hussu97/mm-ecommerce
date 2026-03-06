@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import enum
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -8,6 +9,12 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.models.order import DeliveryMethodEnum, OrderStatusEnum
 from .address import AddressCreate
+
+
+class PaymentMethodEnum(str, enum.Enum):
+    STRIPE = "stripe"
+    TABBY = "tabby"
+    TAMARA = "tamara"
 
 
 class OrderItemResponse(BaseModel):
@@ -33,7 +40,7 @@ class OrderCreate(BaseModel):
         None  # required if delivery_method == delivery
     )
     promo_code: str | None = None
-    payment_method: str = Field(description="stripe | tabby | tamara")
+    payment_method: PaymentMethodEnum = Field(description="stripe | tabby | tamara")
     notes: str | None = None
     # Guest checkout: identify which cart to convert
     session_id: str | None = None

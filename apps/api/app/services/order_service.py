@@ -16,6 +16,10 @@ from app.schemas.order import OrderCreate, OrderListResponse, OrderResponse
 from app.services import delivery_service, promo_code_service
 
 
+def _escape_like(s: str) -> str:
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 # Valid status transitions
 VALID_TRANSITIONS: dict[OrderStatusEnum, set[OrderStatusEnum]] = {
     OrderStatusEnum.CREATED: {OrderStatusEnum.CONFIRMED, OrderStatusEnum.CANCELLED},
@@ -304,8 +308,10 @@ async def get_all_admin(
     if status:
         base_stmt = base_stmt.where(Order.status == status)
     if search:
+        escaped = _escape_like(search)
         base_stmt = base_stmt.where(
-            Order.order_number.ilike(f"%{search}%") | Order.email.ilike(f"%{search}%")
+            Order.order_number.ilike(f"%{escaped}%", escape="\\")
+            | Order.email.ilike(f"%{escaped}%", escape="\\")
         )
 
     count_result = await db.execute(
