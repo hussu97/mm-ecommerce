@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useCallback, useEffect, type ReactNode } from "react";
 
 interface TranslationContextValue {
   locale: string;
@@ -27,6 +27,11 @@ export function TranslationProvider({
   translations: Record<string, string>;
   children: ReactNode;
 }) {
+  useEffect(() => {
+    document.documentElement.lang = locale;
+    document.documentElement.dir = direction;
+  }, [locale, direction]);
+
   const t = useCallback(
     (key: string, params?: Record<string, string | number>): string => {
       let value = translations[key] ?? key;
