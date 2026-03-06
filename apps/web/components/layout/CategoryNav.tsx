@@ -1,32 +1,37 @@
+'use client';
+
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import type { Category } from '@/lib/types';
 
-const CATEGORIES = [
-  { href: '/brownies',    label: 'Brownies' },
-  { href: '/cookies',     label: 'Cookies' },
-  { href: '/cookie-melt', label: 'Cookie Melt' },
-  { href: '/mix-boxes',   label: 'Mix Boxes' },
-  { href: '/desserts',    label: 'Desserts' },
-];
+// ─── Client wrapper — knows which category is active ──────────────────────────
 
-// Rendered server-side — Next.js <Link> prefetches in viewport automatically.
-export function CategoryNav() {
+export function CategoryNavLinks({ categories }: { categories: Category[] }) {
+  const pathname = usePathname();
+
   return (
     <nav
       aria-label="Category navigation"
       className="hidden sm:block border-b border-gray-100 bg-white"
     >
       <ul className="max-w-7xl mx-auto px-4 flex items-center gap-6 h-9 overflow-x-auto scrollbar-none">
-        {CATEGORIES.map(({ href, label }) => (
-          <li key={href} className="shrink-0">
-            <Link
-              href={href}
-              prefetch={true}
-              className="font-body text-[11px] uppercase tracking-widest text-gray-500 hover:text-primary transition-colors whitespace-nowrap"
-            >
-              {label}
-            </Link>
-          </li>
-        ))}
+        {categories.map(({ slug, name }) => {
+          const active = pathname === `/${slug}` || pathname.startsWith(`/${slug}/`);
+          return (
+            <li key={slug} className="shrink-0">
+              <Link
+                href={`/${slug}`}
+                prefetch={true}
+                className={[
+                  'font-body text-[11px] uppercase tracking-widest transition-colors whitespace-nowrap',
+                  active ? 'text-primary font-semibold' : 'text-gray-500 hover:text-primary',
+                ].join(' ')}
+              >
+                {name}
+              </Link>
+            </li>
+          );
+        })}
       </ul>
     </nav>
   );

@@ -4,9 +4,23 @@ import Script from "next/script";
 import "./globals.css";
 import { Providers } from "./providers";
 import { Header } from "@/components/layout/Header";
-import { CategoryNav } from "@/components/layout/CategoryNav";
+import { CategoryNavLinks } from "@/components/layout/CategoryNav";
 import { Footer } from "@/components/layout/Footer";
 import { PromoBanner } from "@/components/layout/PromoBanner";
+import type { Category } from "@/lib/types";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
+
+async function getActiveCategories(): Promise<Category[]> {
+  try {
+    const res = await fetch(`${API_BASE}/categories`, { next: { revalidate: 300 } });
+    if (!res.ok) return [];
+    const data: Category[] = await res.json();
+    return data.filter((c) => c.is_active).sort((a, b) => a.display_order - b.display_order);
+  } catch {
+    return [];
+  }
+}
 
 const playfairDisplay = Playfair_Display({
   subsets: ["latin"],
@@ -44,11 +58,13 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const categories = await getActiveCategories();
+
   return (
     <html lang="en" className={`${playfairDisplay.variable} ${jost.variable}`}>
       <head>
@@ -66,7 +82,7 @@ export default function RootLayout({
         <Providers>
           <PromoBanner />
           <Header />
-          <CategoryNav />
+          <CategoryNavLinks categories={categories} />
           <main className="flex-1">
             {children}
           </main>
