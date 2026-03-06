@@ -1,8 +1,8 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import Image from 'next/image';
 import { Breadcrumb } from '@/components/ui';
 import { ProductDetailATC } from './ProductDetailATC';
+import { ProductImageGallery } from './ProductImageGallery';
 import type { Product } from '@/lib/types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api/v1';
@@ -51,7 +51,6 @@ export default async function ProductDetailPage({
   if (product.category && !product.category.is_active) notFound();
 
   const categoryName = product.category?.name ?? categorySlug;
-  const mainImage = product.image_urls?.[0];
   const galleryImages = product.image_urls ?? [];
 
   const jsonLd = {
@@ -87,41 +86,7 @@ export default async function ProductDetailPage({
 
         <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-12">
           {/* Images */}
-          <div className="flex flex-col gap-3">
-            <div className="relative aspect-square overflow-hidden bg-[#f9f5f0]">
-              {mainImage ? (
-                <Image
-                  src={mainImage}
-                  alt={product.name}
-                  fill
-                  sizes="(max-width: 1024px) 100vw, 50vw"
-                  className="object-cover"
-                  priority
-                />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center">
-                  <span className="material-icons text-8xl text-secondary">cake</span>
-                </div>
-              )}
-            </div>
-
-            {/* Thumbnails */}
-            {galleryImages.length > 1 && (
-              <div className="flex gap-2 overflow-x-auto">
-                {galleryImages.map((url, i) => (
-                  <div key={i} className="relative w-20 h-20 shrink-0 overflow-hidden bg-[#f9f5f0]">
-                    <Image
-                      src={url}
-                      alt={`${product.name} image ${i + 1}`}
-                      fill
-                      sizes="80px"
-                      className="object-cover"
-                    />
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <ProductImageGallery images={galleryImages} name={product.name} />
 
           {/* Details + ATC */}
           <div className="flex flex-col gap-6">

@@ -7,6 +7,7 @@ import { useCart } from '@/lib/cart-context';
 import { promoApi, authApi, getToken, setToken, ensureSessionId } from '@/lib/api';
 import { analytics } from '@/lib/analytics';
 import { Button } from '@/components/ui/Button';
+import { Breadcrumb } from '@/components/ui/Breadcrumb';
 import { Input } from '@/components/ui/Input';
 import { QuantitySelector } from '@/components/ui/QuantitySelector';
 import { Spinner } from '@/components/ui/Spinner';
@@ -119,6 +120,8 @@ export default function CartPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-10">
+
+      <Breadcrumb items={[{ label: 'Home', href: '/' }, { label: 'Cart' }]} />
 
       {/* Heading */}
       <header className="mb-8">

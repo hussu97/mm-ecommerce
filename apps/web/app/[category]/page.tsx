@@ -1,28 +1,35 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
+import Link from 'next/link';
 import type { Category, Product, ProductListResponse } from '@/lib/types';
 import { ProductGrid } from '@/components/category/ProductGrid';
 import { Breadcrumb } from '@/components/ui';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api/v1';
+const PER_PAGE = 12;
 
 async function getCategoryData(
   slug: string,
-): Promise<{ category: Category; products: Product[] } | null> {
+  page: number = 1,
+): Promise<{ category: Category; products: Product[]; total: number; pages: number } | null> {
   try {
     const [catRes, prodRes] = await Promise.all([
       fetch(`${API_BASE}/categories/${slug}`, { next: { revalidate: 300 } }),
-      fetch(`${API_BASE}/products?category=${slug}&per_page=50`, { next: { revalidate: 300 } }),
+      fetch(`${API_BASE}/products?category=${slug}&per_page=${PER_PAGE}&page=${page}`, {
+        next: { revalidate: 300 },
+      }),
     ]);
     if (!catRes.ok) return null;
 
     const category: Category = await catRes.json();
     if (!category.is_active) return null;
-    const products: Product[] = prodRes.ok
-      ? ((await prodRes.json()) as ProductListResponse).items ?? []
-      : [];
 
-    return { category, products };
+    const data: ProductListResponse | null = prodRes.ok ? await prodRes.json() : null;
+    const products = data?.items ?? [];
+    const total = data?.total ?? 0;
+    const pages = data?.pages ?? 1;
+
+    return { category, products, total, pages };
   } catch (error) {
     console.error('[category] Failed to load data for slug:', slug, error);
     return null;
@@ -57,17 +64,67 @@ export async function generateMetadata({
   };
 }
 
+function Pagination({
+  page,
+  pages,
+  basePath,
+}: {
+  page: number;
+  pages: number;
+  basePath: string;
+}) {
+  if (pages <= 1) return null;
+
+  return (
+    <nav
+      className="mt-12 flex items-center justify-center gap-6"
+      aria-label="Pagination"
+    >
+      {page > 1 ? (
+        <Link
+          href={page === 2 ? basePath : `${basePath}?page=${page - 1}`}
+          className="font-body text-sm text-primary uppercase tracking-widest hover:underline flex items-center gap-1"
+        >
+          ← Previous
+        </Link>
+      ) : (
+        <span className="font-body text-sm text-gray-300 uppercase tracking-widest">← Previous</span>
+      )}
+
+      <span className="font-body text-sm text-gray-500">
+        Page {page} of {pages}
+      </span>
+
+      {page < pages ? (
+        <Link
+          href={`${basePath}?page=${page + 1}`}
+          className="font-body text-sm text-primary uppercase tracking-widest hover:underline flex items-center gap-1"
+        >
+          Next →
+        </Link>
+      ) : (
+        <span className="font-body text-sm text-gray-300 uppercase tracking-widest">Next →</span>
+      )}
+    </nav>
+  );
+}
+
 export default async function CategoryPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ category: string }>;
+  searchParams: Promise<{ page?: string }>;
 }) {
   const { category: slug } = await params;
-  const data = await getCategoryData(slug);
+  const { page: pageStr } = await searchParams;
+  const page = Math.max(1, parseInt(pageStr ?? '1', 10) || 1);
+
+  const data = await getCategoryData(slug, page);
 
   if (!data) notFound();
 
-  const { category, products } = data;
+  const { category, products, pages } = data;
 
   const jsonLd = {
     '@context': 'https://schema.org',
@@ -123,6 +180,9 @@ export default async function CategoryPage({
 
         {/* Product grid */}
         <ProductGrid products={products} />
+
+        {/* Pagination */}
+        <Pagination page={page} pages={pages} basePath={`/${slug}`} />
 
       </div>
     </>

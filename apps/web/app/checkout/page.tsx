@@ -9,6 +9,7 @@ import {
   ordersApi, paymentsApi, promoApi, addressesApi,
   getToken, getSessionId, ensureSessionId, authApi, setToken,
 } from '@/lib/api';
+import { Breadcrumb } from '@/components/ui/Breadcrumb';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -212,7 +213,7 @@ function validateStep1(form: CheckoutForm): Record<string, string> {
     errors.email = 'Valid email is required';
   if (!form.firstName.trim()) errors.firstName = 'First name is required';
   if (!form.lastName.trim()) errors.lastName = 'Last name is required';
-  if (!form.phone.trim() || form.phone.trim().length < 7) errors.phone = 'Valid phone number is required';
+  if (!form.phone.trim() || !/^\+?[0-9\s()\-+]{7,15}$/.test(form.phone.trim())) errors.phone = 'Valid phone number is required';
   return errors;
 }
 
@@ -849,6 +850,8 @@ function CheckoutContent() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-10">
+      <Breadcrumb items={[{ label: 'Home', href: '/' }, { label: 'Cart', href: '/cart' }, { label: 'Checkout' }]} />
+
       {/* Heading */}
       <header className="mb-2">
         <h1 className="font-display text-3xl sm:text-4xl text-primary uppercase tracking-widest">Checkout</h1>

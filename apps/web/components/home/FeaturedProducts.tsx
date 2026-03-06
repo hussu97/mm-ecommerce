@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useCart } from '@/lib/cart-context';
@@ -17,7 +17,6 @@ function ProductCard({ product }: { product: Product }) {
 
   const handleAdd = async () => {
     if (hasModifiers) {
-      // Redirect to PDP for modifier selection
       window.location.href = `/${categorySlug}/${product.slug}`;
       return;
     }
@@ -53,7 +52,7 @@ function ProductCard({ product }: { product: Product }) {
       <div className="pt-3 flex flex-col gap-2">
         <Link
           href={`/${categorySlug}/${product.slug}`}
-          className="font-display text-sm text-gray-800 hover:text-primary transition-colors leading-snug"
+          className="font-body text-sm text-gray-800 hover:text-primary transition-colors leading-snug"
         >
           {product.name}
         </Link>
@@ -78,6 +77,26 @@ function ProductCard({ product }: { product: Product }) {
 export function FeaturedProducts({ products }: { products: Product[] }) {
   if (products.length === 0) return null;
 
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const updateArrows = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 0);
+    setCanScrollRight(el.scrollLeft < el.scrollWidth - el.clientWidth - 1);
+  };
+
+  useEffect(() => {
+    updateArrows();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [products.length]);
+
+  const scrollBy = (dir: 'left' | 'right') => {
+    scrollRef.current?.scrollBy({ left: dir === 'left' ? -280 : 280, behavior: 'smooth' });
+  };
+
   return (
     <section aria-label="Featured products" className="py-16 bg-white">
       <div className="max-w-7xl mx-auto px-4">
@@ -94,12 +113,43 @@ export function FeaturedProducts({ products }: { products: Product[] }) {
           </Link>
         </div>
 
-        {/* Horizontal scroll on mobile, grid on sm+ */}
-        <div className="flex gap-5 overflow-x-auto pb-4 sm:pb-0 sm:grid sm:grid-cols-2 lg:grid-cols-4 -mx-4 px-4 sm:mx-0 sm:px-0 snap-x snap-mandatory sm:snap-none">
+        {/* Mobile: horizontal scroll with arrows */}
+        <div className="relative sm:hidden">
+          {canScrollLeft && (
+            <button
+              onClick={() => scrollBy('left')}
+              className="absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-white/90 rounded-full p-1 shadow-md -ml-2"
+              aria-label="Scroll left"
+            >
+              <span className="material-icons text-primary text-xl">chevron_left</span>
+            </button>
+          )}
+          <div
+            ref={scrollRef}
+            onScroll={updateArrows}
+            className="flex gap-5 overflow-x-auto pb-4 -mx-4 px-4 snap-x snap-mandatory scrollbar-none"
+          >
+            {products.map((product) => (
+              <div key={product.id} className="snap-start">
+                <ProductCard product={product} />
+              </div>
+            ))}
+          </div>
+          {canScrollRight && (
+            <button
+              onClick={() => scrollBy('right')}
+              className="absolute right-0 top-1/2 -translate-y-1/2 z-10 bg-white/90 rounded-full p-1 shadow-md -mr-2"
+              aria-label="Scroll right"
+            >
+              <span className="material-icons text-primary text-xl">chevron_right</span>
+            </button>
+          )}
+        </div>
+
+        {/* Desktop: grid */}
+        <div className="hidden sm:grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
           {products.map((product) => (
-            <div key={product.id} className="snap-start">
-              <ProductCard product={product} />
-            </div>
+            <ProductCard key={product.id} product={product} />
           ))}
         </div>
 
