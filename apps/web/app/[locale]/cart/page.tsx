@@ -100,7 +100,7 @@ export default function CartPage() {
       addToast(t('cart.something_wrong'), 'error');
       setCheckoutLoading(false);
     }
-  }, [items.length, addToast, t]);
+  }, [items.length, subtotal, addToast, t]);
 
   // Empty cart
   if (!isLoading && items.length === 0) {

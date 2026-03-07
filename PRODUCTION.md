@@ -141,7 +141,7 @@ nano .env  # fill in all secrets (see .env.example for field descriptions)
 ```
 
 Key values to fill in `.env`:
-- `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` — choose your own values
+- `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` — choose your own values (required by docker-compose.prod.yml; must match the credentials in `DATABASE_URL`)
 - `SECRET_KEY` — generate with `openssl rand -hex 32`
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
 - `RESEND_API_KEY`
@@ -170,6 +170,9 @@ docker compose -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.prod.yml ps
 
 # Run migrations + seed admin user
+# If you get "Multiple head revisions" error, run the two commands below first:
+#   docker compose -f docker-compose.prod.yml exec api alembic upgrade heads
+#   docker compose -f docker-compose.prod.yml exec api alembic merge heads -m "merge_heads"
 docker compose -f docker-compose.prod.yml exec api alembic upgrade head
 docker compose -f docker-compose.prod.yml exec api python -m scripts.seed_db
 ```
