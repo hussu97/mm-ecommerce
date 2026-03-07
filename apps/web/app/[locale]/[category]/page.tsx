@@ -17,9 +17,10 @@ async function getCategoryData(
 ): Promise<{ category: Category; products: Product[]; total: number; pages: number } | null> {
   try {
     const [catRes, prodRes] = await Promise.all([
-      fetch(`${API_BASE}/categories/${slug}`, { next: { revalidate: 300 } }),
+      fetch(`${API_BASE}/categories/${slug}`, { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) }),
       fetch(`${API_BASE}/products?category=${slug}&per_page=${PER_PAGE}&page=${page}`, {
         next: { revalidate: 300 },
+        signal: AbortSignal.timeout(8000),
       }),
     ]);
     if (!catRes.ok) return null;

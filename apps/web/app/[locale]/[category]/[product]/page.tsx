@@ -12,7 +12,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api/v
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 
 async function getProduct(slug: string): Promise<Product | null> {
-  const res = await fetch(`${API_BASE}/products/${slug}`, { next: { revalidate: 300 } });
+  const res = await fetch(`${API_BASE}/products/${slug}`, { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) });
   if (!res.ok) return null;
   return res.json();
 }

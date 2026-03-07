@@ -232,7 +232,7 @@ export const cmsApi = {
   getPage: (slug: string, locale: string): Promise<{ slug: string; content: Record<string, unknown> }> => {
     // Server-side safe: uses absolute URL without client-only helpers
     const base = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
-    return fetch(`${base}/cms/public/${slug}?locale=${locale}`, { next: { revalidate: 300 } })
+    return fetch(`${base}/cms/public/${slug}?locale=${locale}`, { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) })
       .then(res => {
         if (!res.ok) throw new Error(`CMS fetch failed: ${res.status}`);
         return res.json();

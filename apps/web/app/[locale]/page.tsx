@@ -62,6 +62,7 @@ async function getFeaturedProducts(): Promise<Product[]> {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
     const res = await fetch(`${apiUrl}/api/v1/products/featured`, {
       next: { revalidate: 300 },
+      signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return [];
     return res.json();
