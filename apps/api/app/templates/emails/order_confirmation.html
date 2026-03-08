@@ -71,7 +71,7 @@
   <p class="label">Delivery Address</p>
   <p>{{ addr.get('first_name', '') }} {{ addr.get('last_name', '') }}<br/>
   {{ addr.get('address_line_1', '') }}{% if addr.get('address_line_2') %}, {{ addr.get('address_line_2') }}{% endif %}<br/>
-  {{ addr.get('city', '') }}, {{ addr.get('emirate', '') }}, UAE<br/>
+  {{ addr.get('region', '') }}, UAE<br/>
   {{ addr.get('phone', '') }}</p>
 </div>
 {% else %}

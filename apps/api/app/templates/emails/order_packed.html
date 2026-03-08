@@ -58,7 +58,7 @@
   <p class="label">Delivering To</p>
   <p>{{ addr.get('first_name', '') }} {{ addr.get('last_name', '') }}<br/>
   {{ addr.get('address_line_1', '') }}{% if addr.get('address_line_2') %}, {{ addr.get('address_line_2') }}{% endif %}<br/>
-  {{ addr.get('city', '') }}, {{ addr.get('emirate', '') }}, UAE</p>
+  {{ addr.get('region', '') }}, UAE</p>
 </div>
 {% else %}
 <div class="info-box">
