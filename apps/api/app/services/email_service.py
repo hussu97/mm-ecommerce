@@ -8,6 +8,8 @@ import resend
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app.core.config import settings
+from app.core.database import AsyncSessionFactory
+from app.models.email_log import EmailLog
 from app.schemas.order import OrderResponse
 
 logger = logging.getLogger(__name__)
@@ -30,11 +32,18 @@ def _render(template_name: str, recipient_email: str, **context) -> str:
     )
 
 
-def _send(to: str, subject: str, html: str) -> None:
-    """Send an email via Resend. Logs errors without raising so the main flow is unaffected."""
+def _send(to: str, subject: str, html: str) -> dict:
+    """
+    Send an email via Resend. Never raises — always returns a result dict:
+      {"status": "sent"|"failed"|"skipped", "resend_id": str|None, "error": str|None}
+    """
     if not settings.RESEND_API_KEY:
         logger.warning("RESEND_API_KEY not set — skipping email to %s: %s", to, subject)
-        return
+        return {
+            "status": "skipped",
+            "resend_id": None,
+            "error": "RESEND_API_KEY not configured",
+        }
 
     try:
         resend.api_key = settings.RESEND_API_KEY
@@ -45,34 +54,65 @@ def _send(to: str, subject: str, html: str) -> None:
             "html": html,
         }
         response = resend.Emails.send(params)
-        logger.info(
-            "Email sent: id=%s to=%s subject=%s", response.get("id"), to, subject
+        resend_id = response.get("id")
+        logger.info("Email sent: id=%s to=%s subject=%s", resend_id, to, subject)
+        return {"status": "sent", "resend_id": resend_id, "error": None}
+    except Exception as exc:
+        error_msg = str(exc)
+        logger.error(
+            "Email send failed to=%s subject=%s: %s",
+            to,
+            subject,
+            error_msg,
+            exc_info=True,
         )
-    except Exception:
-        logger.error("Email send failed to=%s subject=%s", to, subject, exc_info=True)
+        return {"status": "failed", "resend_id": None, "error": error_msg}
+
+
+async def _log(
+    template: str,
+    recipient: str,
+    subject: str,
+    result: dict,
+    order_number: str | None = None,
+) -> None:
+    """Persist an EmailLog row. Swallows all errors so logging never breaks email flow."""
+    try:
+        async with AsyncSessionFactory() as db:
+            db.add(
+                EmailLog(
+                    template=template,
+                    recipient=recipient,
+                    subject=subject,
+                    order_number=order_number,
+                    status=result["status"],
+                    resend_id=result.get("resend_id"),
+                    error=result.get("error"),
+                )
+            )
+            await db.commit()
+    except Exception as exc:
+        logger.error("EmailLog persist failed: %s", exc)
 
 
 # ─── Order Emails ─────────────────────────────────────────────────────────────
 
 
-def send_order_confirmation(order: OrderResponse) -> None:
+async def send_order_confirmation(order: OrderResponse) -> None:
     name = (
         order.shipping_address_snapshot.get("first_name", "there")
         if order.shipping_address_snapshot
         else "there"
     )
+    subject = f"Order Confirmed — {order.order_number} | Melting Moments"
     html = _render(
-        "order_confirmation.html",
-        recipient_email=order.email,
-        name=name,
-        order=order,
+        "order_confirmation.html", recipient_email=order.email, name=name, order=order
     )
-    _send(
-        order.email, f"Order Confirmed — {order.order_number} | Melting Moments", html
-    )
+    result = _send(order.email, subject, html)
+    await _log("order_confirmation", order.email, subject, result, order.order_number)
 
 
-def send_order_packed(order: OrderResponse) -> None:
+async def send_order_packed(order: OrderResponse) -> None:
     name = (
         order.shipping_address_snapshot.get("first_name", "there")
         if order.shipping_address_snapshot
@@ -83,49 +123,44 @@ def send_order_packed(order: OrderResponse) -> None:
     else:
         subject = f"Ready for Pickup — {order.order_number}"
     html = _render(
-        "order_packed.html",
-        recipient_email=order.email,
-        name=name,
-        order=order,
+        "order_packed.html", recipient_email=order.email, name=name, order=order
     )
-    _send(order.email, subject, html)
+    result = _send(order.email, subject, html)
+    await _log("order_packed", order.email, subject, result, order.order_number)
 
 
-def send_order_cancelled(order: OrderResponse) -> None:
+async def send_order_cancelled(order: OrderResponse) -> None:
     name = (
         order.shipping_address_snapshot.get("first_name", "there")
         if order.shipping_address_snapshot
         else "there"
     )
+    subject = f"Order Cancelled — {order.order_number} | Melting Moments"
     html = _render(
-        "order_cancelled.html",
-        recipient_email=order.email,
-        name=name,
-        order=order,
+        "order_cancelled.html", recipient_email=order.email, name=name, order=order
     )
-    _send(
-        order.email, f"Order Cancelled — {order.order_number} | Melting Moments", html
-    )
+    result = _send(order.email, subject, html)
+    await _log("order_cancelled", order.email, subject, result, order.order_number)
 
 
 # ─── User Emails ──────────────────────────────────────────────────────────────
 
 
-def send_welcome(email: str, first_name: str) -> None:
-    html = _render(
-        "welcome.html",
-        recipient_email=email,
-        first_name=first_name,
-    )
-    _send(email, "Welcome to Melting Moments!", html)
+async def send_welcome(email: str, first_name: str) -> None:
+    subject = "Welcome to Melting Moments!"
+    html = _render("welcome.html", recipient_email=email, first_name=first_name)
+    result = _send(email, subject, html)
+    await _log("welcome", email, subject, result)
 
 
-def send_password_reset(email: str, first_name: str, reset_token: str) -> None:
+async def send_password_reset(email: str, first_name: str, reset_token: str) -> None:
     reset_link = f"{settings.WEB_URL}/reset-password?token={reset_token}"
+    subject = "Reset Your Password — Melting Moments"
     html = _render(
         "password_reset.html",
         recipient_email=email,
         first_name=first_name,
         reset_link=reset_link,
     )
-    _send(email, "Reset Your Password — Melting Moments", html)
+    result = _send(email, subject, html)
+    await _log("password_reset", email, subject, result)

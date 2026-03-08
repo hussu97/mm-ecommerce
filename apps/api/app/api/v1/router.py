@@ -18,6 +18,7 @@ from .bulk import router as bulk_router
 from .export_data import router as export_router
 from .i18n import router as i18n_router
 from .cms import router as cms_router
+from .email_logs import router as email_logs_router
 
 api_router = APIRouter()
 
@@ -41,3 +42,4 @@ api_router.include_router(bulk_router, prefix="/bulk", tags=["Bulk"])
 api_router.include_router(export_router, prefix="/export", tags=["Export"])
 api_router.include_router(i18n_router, prefix="/i18n", tags=["i18n"])
 api_router.include_router(cms_router, prefix="/cms", tags=["CMS"])
+api_router.include_router(email_logs_router, prefix="/email-logs", tags=["Email Logs"])

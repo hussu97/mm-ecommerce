@@ -15,6 +15,7 @@ from .refresh_token import RefreshToken  # noqa: F401
 from .language import Language, UiTranslation  # noqa: F401
 from .cms import CmsPage  # noqa: F401
 from .webhook_event import WebhookEvent  # noqa: F401
+from .email_log import EmailLog  # noqa: F401
 
 __all__ = [
     "Base",
@@ -39,4 +40,5 @@ __all__ = [
     "UiTranslation",
     "CmsPage",
     "WebhookEvent",
+    "EmailLog",
 ]
