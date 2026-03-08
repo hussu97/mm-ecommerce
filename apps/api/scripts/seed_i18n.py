@@ -103,6 +103,8 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("cart", "invalid_promo", "Invalid promo code"),
     ("cart", "promo_error", "Failed to validate promo code. Please try again."),
     ("cart", "something_wrong", "Something went wrong. Please try again."),
+    # promo_banner
+    ("promo_banner", "text", "Free delivery on orders over 200 AED!"),
 ]
 
 AR_TRANSLATIONS: list[tuple[str, str, str]] = [
@@ -169,6 +171,8 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("cart", "invalid_promo", "رمز الخصم غير صحيح"),
     ("cart", "promo_error", "فشل التحقق من رمز الخصم. حاول مجدداً."),
     ("cart", "something_wrong", "حدث خطأ. حاول مجدداً."),
+    # promo_banner
+    ("promo_banner", "text", "توصيل مجاني للطلبات التي تتجاوز 200 درهم!"),
 ]
 
 ALL_TRANSLATIONS = [("en", *row) for row in EN_TRANSLATIONS] + [

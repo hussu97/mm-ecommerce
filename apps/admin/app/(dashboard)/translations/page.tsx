@@ -15,7 +15,7 @@ type TranslationMap = Record<string, Record<string, string>>; // locale -> key -
 
 export default function TranslationsPage() {
   const [languages, setLanguages] = useState<Language[]>([]);
-  const [namespace, setNamespace] = useState(NAMESPACES[0]);
+  const [namespace, setNamespace] = useState('');
   const [allTranslations, setAllTranslations] = useState<TranslationMap>({});
   const [edits, setEdits] = useState<TranslationMap>({});
   const [loading, setLoading] = useState(true);
@@ -49,7 +49,7 @@ export default function TranslationsPage() {
       for (const { code, data } of results) {
         map[code] = {};
         for (const [k, v] of Object.entries(data)) {
-          if (k.startsWith(`${namespace}.`)) {
+          if (!namespace || k.startsWith(`${namespace}.`)) {
             map[code][k] = v;
           }
         }
@@ -124,7 +124,18 @@ export default function TranslationsPage() {
           }
         }
         if (changed.length > 0) {
-          promises.push(translationsApi.bulkUpsert(locale, namespace, changed));
+          if (namespace) {
+            promises.push(translationsApi.bulkUpsert(locale, namespace, changed));
+          } else {
+            const byNs: Record<string, { key: string; value: string }[]> = {};
+            for (const item of changed) {
+              const ns = item.key.split('.')[0];
+              (byNs[ns] ??= []).push(item);
+            }
+            for (const [ns, items] of Object.entries(byNs)) {
+              promises.push(translationsApi.bulkUpsert(locale, ns, items));
+            }
+          }
         }
       }
       await Promise.all(promises);
@@ -158,7 +169,10 @@ export default function TranslationsPage() {
             label="Namespace"
             value={namespace}
             onChange={e => setNamespace(e.target.value)}
-            options={NAMESPACES.map(ns => ({ value: ns, label: ns }))}
+            options={[
+              { value: '', label: 'All Namespaces' },
+              ...NAMESPACES.map(ns => ({ value: ns, label: ns })),
+            ]}
           />
         </div>
         <div className="w-64">
@@ -214,7 +228,7 @@ export default function TranslationsPage() {
                 filteredKeys.map(key => (
                   <tr key={key} className="hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-1.5 font-body text-xs text-gray-600 sticky left-0 bg-white align-top pt-3">
-                      <span className="break-all">{key.replace(`${namespace}.`, '')}</span>
+                      <span className="break-all">{namespace ? key.replace(`${namespace}.`, '') : key}</span>
                     </td>
                     {languages.map(lang => (
                       <td key={lang.code} className="px-3 py-1.5">
@@ -238,7 +252,8 @@ export default function TranslationsPage() {
 
       {!loading && filteredKeys.length > 0 && (
         <div className="mt-3 text-xs font-body text-gray-400">
-          {filteredKeys.length} key{filteredKeys.length !== 1 ? 's' : ''} in <strong>{namespace}</strong>
+          {filteredKeys.length} key{filteredKeys.length !== 1 ? 's' : ''} in{' '}
+          <strong>{namespace || 'all namespaces'}</strong>
         </div>
       )}
     </div>

@@ -16,9 +16,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.core.database import AsyncSessionFactory
 from app.core.deps import get_db
 from app.core.exceptions import AppError
 from app.core.limiter import limiter
+from scripts.seed_i18n import seed as seed_i18n
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -46,6 +48,9 @@ async def lifespan(app: FastAPI):
             raise RuntimeError("SECRET_KEY must be changed in production")
         if not settings.STRIPE_WEBHOOK_SECRET:
             raise RuntimeError("STRIPE_WEBHOOK_SECRET must be set in production")
+    logger.info("Running i18n seed...")
+    async with AsyncSessionFactory() as session:
+        await seed_i18n(session)
     logger.info("Melting Moments API starting up [env=%s]", settings.APP_ENV)
     yield
     logger.info("Melting Moments API shutting down")
