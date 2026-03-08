@@ -23,7 +23,6 @@ from app.core.exceptions import AppError
 from app.core.limiter import limiter
 from scripts.seed_i18n import seed as seed_i18n
 
-
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
