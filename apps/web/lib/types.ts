@@ -94,8 +94,10 @@ export interface ProductListResponse {
 export interface SelectedOptionSnapshot {
   modifier_id: string;
   modifier_name: string;
+  modifier_translations?: Record<string, Record<string, string>>;
   option_id: string;
   option_name: string;
+  option_translations?: Record<string, Record<string, string>>;
   option_price: number;
 }
 
@@ -108,6 +110,7 @@ export interface CartItem {
   created_at: string;
   product_name: string | null;
   product_image: string | null;
+  product_translations?: Record<string, Record<string, string>>;
   unit_price: number | null;
   line_total: number | null;
 }

@@ -16,6 +16,7 @@ import { Select } from '@/components/ui/Select';
 import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { localizedField } from '@/lib/i18n/entity';
 import type { Address, Cart, CartItem, EmirateEnum } from '@/lib/types';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -126,7 +127,7 @@ function OrderSummarySidebar({
   form: CheckoutForm;
   step: number;
 }) {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const subtotal = cart?.subtotal ?? 0;
   const deliveryFee = step >= 2
     ? calcDeliveryFee(form.deliveryMethod, form.emirate, subtotal)
@@ -154,10 +155,10 @@ function OrderSummarySidebar({
                 </span>
               </div>
               <div className="flex-1 min-w-0">
-                <p className="font-body text-xs text-gray-800 leading-snug truncate">{item.product_name}</p>
+                <p className="font-body text-xs text-gray-800 leading-snug truncate">{localizedField({ translations: item.product_translations }, 'name', item.product_name ?? '', locale)}</p>
                 {item.selected_options && item.selected_options.length > 0 && (
                   <p className="font-body text-[11px] text-gray-400">
-                    {item.selected_options.map(o => o.option_name).join(', ')}
+                    {item.selected_options.map(o => localizedField({ translations: o.option_translations }, 'name', o.option_name, locale)).join(', ')}
                   </p>
                 )}
               </div>

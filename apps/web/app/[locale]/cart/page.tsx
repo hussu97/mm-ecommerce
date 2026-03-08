@@ -13,6 +13,7 @@ import { QuantitySelector } from '@/components/ui/QuantitySelector';
 import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { localizedField } from '@/lib/i18n/entity';
 
 const PLACEHOLDER_IMAGE = '/images/logos/main_logo.png';
 
@@ -176,11 +177,11 @@ export default function CartPage() {
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <p className="font-body font-medium text-sm text-gray-900 leading-snug">
-                          {item.product_name}
+                          {localizedField({ translations: item.product_translations }, 'name', item.product_name ?? '', locale)}
                         </p>
                         {item.selected_options && item.selected_options.length > 0 && (
                           <p className="font-body text-xs text-gray-400 mt-0.5">
-                            {item.selected_options.map(o => o.option_name).join(', ')}
+                            {item.selected_options.map(o => localizedField({ translations: o.option_translations }, 'name', o.option_name, locale)).join(', ')}
                           </p>
                         )}
                       </div>

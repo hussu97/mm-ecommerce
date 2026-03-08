@@ -7,12 +7,13 @@ import { ordersApi } from '@/lib/api';
 import { Order, OrderStatus } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { localizedField } from '@/lib/i18n/entity';
 
 const STATUS_ORDER: OrderStatus[] = ['created', 'confirmed', 'packed'];
 
 export default function OrderDetailPage({ params }: { params: Promise<{ orderNumber: string }> }) {
   const { orderNumber } = use(params);
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -139,10 +140,10 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
           {order.items.map(item => (
             <div key={item.id} className="flex items-center justify-between px-4 py-3">
               <div>
-                <p className="text-sm font-body text-gray-800">{item.product_name}</p>
+                <p className="text-sm font-body text-gray-800">{localizedField({ translations: item.product_translations }, 'name', item.product_name, locale)}</p>
                 {item.selected_options_snapshot && item.selected_options_snapshot.length > 0 && (
                   <p className="text-xs text-gray-400 font-body">
-                    {item.selected_options_snapshot.map(o => o.option_name).join(', ')}
+                    {item.selected_options_snapshot.map(o => localizedField({ translations: o.option_translations }, 'name', o.option_name, locale)).join(', ')}
                   </p>
                 )}
               </div>

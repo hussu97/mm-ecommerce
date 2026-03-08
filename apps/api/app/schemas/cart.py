@@ -35,6 +35,7 @@ class CartItemResponse(BaseModel):
     # Computed fields (populated by service layer)
     product_name: str | None = None
     product_image: str | None = None
+    product_translations: dict[str, Any] | None = None
     unit_price: float | None = None
     line_total: float | None = None
 

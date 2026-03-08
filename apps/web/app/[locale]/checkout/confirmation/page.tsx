@@ -8,12 +8,13 @@ import { analytics } from '@/lib/analytics';
 import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { localizedField } from '@/lib/i18n/entity';
 import type { Order } from '@/lib/types';
 
 function ConfirmationContent() {
   const searchParams = useSearchParams();
   const orderNumber = searchParams.get('order_number');
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
 
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
@@ -84,10 +85,10 @@ function ConfirmationContent() {
         {order.items.map((item) => (
           <div key={item.id} className="flex justify-between items-start px-4 py-3">
             <div>
-              <p className="font-body text-sm font-medium text-gray-800">{item.product_name}</p>
+              <p className="font-body text-sm font-medium text-gray-800">{localizedField({ translations: item.product_translations }, 'name', item.product_name, locale)}</p>
               <p className="font-body text-xs text-gray-400">
                 {item.selected_options_snapshot && item.selected_options_snapshot.length > 0
-                  ? item.selected_options_snapshot.map(o => o.option_name).join(', ') + ' × ' + item.quantity
+                  ? item.selected_options_snapshot.map(o => localizedField({ translations: o.option_translations }, 'name', o.option_name, locale)).join(', ') + ' × ' + item.quantity
                   : `× ${item.quantity}`}
               </p>
             </div>

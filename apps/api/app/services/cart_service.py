@@ -49,6 +49,7 @@ async def _build_response(cart: Cart) -> CartResponse:
         item_resp.product_image = (
             product.image_urls[0] if product and product.image_urls else None
         )
+        item_resp.product_translations = product.translations or {} if product else {}
         item_resp.unit_price = float(unit_price)
         item_resp.line_total = float(line_total)
 
@@ -133,8 +134,10 @@ async def _build_options_snapshot(
             {
                 "modifier_id": str(sel.modifier_id),
                 "modifier_name": mod.name if mod else "",
+                "modifier_translations": mod.translations if mod else {},
                 "option_id": str(sel.option_id),
                 "option_name": opt.name,
+                "option_translations": opt.translations or {},
                 "option_price": float(opt.price),
             }
         )
