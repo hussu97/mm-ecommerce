@@ -122,13 +122,12 @@ _Backlog — prioritize as bandwidth allows._
 ### Feature Requests (Platform & Operations)
 
 - [x] **Sales reports export** — CSV/Excel export for orders, revenue, and product performance from admin dashboard.
-- [ ] **Automated backup strategy** — Scheduled PostgreSQL backups to cloud storage (GCS/S3) with point-in-time recovery.
-- [ ] **API versioning strategy** — Current `/api/v1` has no plan for v2 migration. Document the versioning approach.
-- [ ] **Structured logging** — Replace basic `logging.basicConfig` with structured JSON logging for production (better for log aggregation in GCP).
+- [x] **API versioning strategy** — Current `/api/v1` has no plan for v2 migration. Document the versioning approach.
+- [x] **Structured logging** — Replace basic `logging.basicConfig` with structured JSON logging for production (better for log aggregation in GCP).
 - [x] **Database indexes audit** — Review query patterns and add missing indexes (e.g., `orders.email`, `orders.created_at`, `products.slug`, `users.email` if not already indexed).
 - [x] **Content management** — CMS model + API (`apps/api/app/api/v1/cms.py`), migrations 008–010, admin `/content` page; About, FAQ, Contact, Privacy all CMS-driven with EN + AR content.
-- [ ] **Webhook retry mechanism** — Payment webhooks (Stripe) should have retry logic and idempotency keys to handle transient failures.
-- [ ] **API request/response logging** — The logging middleware exists but verify it captures enough context for debugging without logging sensitive data (passwords, tokens).
+- [x] **Webhook retry mechanism** — Payment webhooks (Stripe) should have retry logic and idempotency keys to handle transient failures.
+- [x] **API request/response logging** — The logging middleware exists but verify it captures enough context for debugging without logging sensitive data (passwords, tokens).
 - [x] **Container image size optimization** — Review Dockerfiles for multi-stage build efficiency. Minimize final image size for faster deploys.
 - [x] **Missing DB indexes for common queries** — `orders.created_at` (analytics), `product_variants.stock_quantity` (cart validation), `users.is_guest` + `users.is_admin` (customer list filters) lack indexes. Add them for performance at scale.
 
@@ -143,6 +142,7 @@ _Backlog — prioritize as bandwidth allows._
 - [ ] **Shared UI package is empty** — `packages/ui/src/index.ts` exports nothing (just `export {}`). Both `apps/web` and `apps/admin` duplicate their own Button, Input, Modal, Badge, etc. Extract shared components.
 - [ ] **Inventory alerts** — Admin notification when stock runs low (configurable threshold per variant).
 - [ ] **No staging environment** — Only production deployment exists. Add a staging environment for pre-production validation.
+- [ ] **Automated backup strategy** — Scheduled PostgreSQL backups to cloud storage (GCS/S3) with point-in-time recovery.
 ---
 
-_Last updated: 2026-03-06_
+_Last updated: 2026-03-08_
