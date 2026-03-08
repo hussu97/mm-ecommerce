@@ -1,4 +1,4 @@
-"""Replace /brownies with /cat-brownies in CMS page content
+"""Replace /brownies with /all-products in CMS page content
 
 Revision ID: 015_fix_brownies_slug
 Revises: 014_email_logs
@@ -23,7 +23,7 @@ def upgrade() -> None:
     op.execute(
         """
         UPDATE cms_pages
-        SET content = replace(content::text, '"/brownies"', '"/cat-brownies"')::jsonb
+        SET content = replace(content::text, '"/brownies"', '"/all-products"')::jsonb
         WHERE content::text LIKE '%"/brownies"%'
         """
     )
@@ -33,7 +33,7 @@ def downgrade() -> None:
     op.execute(
         """
         UPDATE cms_pages
-        SET content = replace(content::text, '"/cat-brownies"', '"/brownies"')::jsonb
-        WHERE content::text LIKE '%"/cat-brownies"%'
+        SET content = replace(content::text, '"/all-products"', '"/brownies"')::jsonb
+        WHERE content::text LIKE '%"/all-products"%'
         """
     )

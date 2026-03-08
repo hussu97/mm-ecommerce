@@ -32,14 +32,14 @@ HOME_EN = {
             "Every bite is a little piece of home."
         ),
         "shop_button_text": "Shop Now",
-        "shop_button_href": "/cat-brownies",
+        "shop_button_href": "/all-products",
         "story_button_text": "Our Story",
         "story_button_href": "/about",
     },
     "featured": {
         "title": "Our Bestsellers",
         "view_all_text": "View All",
-        "view_all_href": "/cat-brownies",
+        "view_all_href": "/all-products",
     },
     "baker": {
         "label": "Meet the Baker",
@@ -82,14 +82,14 @@ HOME_AR = {
             "\u0643\u0644 \u0642\u0636\u0645\u0629 \u0642\u0637\u0639\u0629 \u0635\u063a\u064a\u0631\u0629 \u0645\u0646 \u0627\u0644\u062f\u0641\u0621."
         ),
         "shop_button_text": "\u062a\u0633\u0648\u0651\u0642 \u0627\u0644\u0622\u0646",
-        "shop_button_href": "/cat-brownies",
+        "shop_button_href": "/all-products",
         "story_button_text": "\u0642\u0635\u062a\u0646\u0627",
         "story_button_href": "/about",
     },
     "featured": {
         "title": "\u0627\u0644\u0623\u0643\u062b\u0631 \u0645\u0628\u064a\u0639\u0627\u064b",
         "view_all_text": "\u0639\u0631\u0636 \u0627\u0644\u0643\u0644",
-        "view_all_href": "/cat-brownies",
+        "view_all_href": "/all-products",
     },
     "baker": {
         "label": "\u062a\u0639\u0631\u0651\u0641 \u0639\u0644\u0649 \u0627\u0644\u062e\u0628\u0651\u0627\u0632\u0629",

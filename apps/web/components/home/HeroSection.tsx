@@ -31,7 +31,7 @@ export function HeroSection({ c, locale }: { c: HeroContent; locale: string }) {
           </p>
           <div className="flex flex-wrap gap-3 pt-2">
             <Link
-              href={`/${locale}${c.shop_button_href ?? '/cat-brownies'}`}
+              href={`/${locale}${c.shop_button_href ?? '/all-products'}`}
               className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-white text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity"
             >
               {c.shop_button_text}
