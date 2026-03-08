@@ -442,6 +442,7 @@ export function ProductForm({ product }: Props) {
                     <span className="text-[11px] text-gray-400 font-body">
                       min {pm.minimum_options} · max {pm.maximum_options}
                       {pm.free_options > 0 ? ` · ${pm.free_options} free` : ''}
+                      {' · '}{pm.unique_options ? 'unique' : 'multi-qty'}
                     </span>
                     <Button
                       type="button"

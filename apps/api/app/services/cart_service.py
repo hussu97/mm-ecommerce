@@ -104,6 +104,14 @@ async def _build_options_snapshot(
             raise BadRequestError(
                 f"Modifier '{pm.modifier.name}' allows at most {pm.maximum_options} option(s), got {count}"
             )
+        # Unique enforcement: stored flag OR single-pick shorthand (min==max==1)
+        effective_unique = pm.unique_options or (
+            pm.minimum_options == 1 and pm.maximum_options == 1
+        )
+        if effective_unique and len(set(mod_selections)) < len(mod_selections):
+            raise BadRequestError(
+                f"Modifier '{pm.modifier.name}' does not allow duplicate options"
+            )
 
     # Build snapshot
     snapshot = []

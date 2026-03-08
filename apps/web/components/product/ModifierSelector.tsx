@@ -19,18 +19,24 @@ function ModifierGroup({
   pm,
   selected,
   onSelect,
+  onIncrement,
+  onDecrement,
   t,
   locale,
 }: {
   pm: ProductModifier;
   selected: SelectedOption[];
   onSelect: (modifierId: string, optionId: string, checked: boolean) => void;
+  onIncrement: (modifierId: string, optionId: string) => void;
+  onDecrement: (modifierId: string, optionId: string) => void;
   t: (key: string, params?: Record<string, string | number>) => string;
   locale: string;
 }) {
   const activeOptions = pm.modifier.options.filter(o => o.is_active);
   const selectedForThis = selected.filter(s => s.modifier_id === pm.modifier_id);
   const isSingle = pm.maximum_options === 1;
+
+  const effectiveUnique = pm.unique_options || (pm.minimum_options === 1 && pm.maximum_options === 1);
 
   const modifierName = localizedField(pm.modifier, 'name', pm.modifier.name, locale);
 
@@ -45,6 +51,8 @@ function ModifierGroup({
     pickLabel = t('product.up_to', { n: pm.maximum_options });
   }
 
+  const total = selectedForThis.length;
+
   return (
     <div className="space-y-2">
       <div className="flex items-baseline justify-between">
@@ -53,8 +61,49 @@ function ModifierGroup({
       </div>
       <div className="space-y-1.5">
         {activeOptions.map(opt => {
-          const isSelected = selectedForThis.some(s => s.option_id === opt.id);
           const optionName = localizedField(opt, 'name', opt.name, locale);
+
+          if (!effectiveUnique) {
+            // Multi-qty stepper mode
+            const qty = selectedForThis.filter(s => s.option_id === opt.id).length;
+            return (
+              <div
+                key={opt.id}
+                className={`flex items-center justify-between p-2.5 border transition-colors ${
+                  qty > 0 ? 'border-primary bg-primary/5' : 'border-gray-200'
+                }`}
+              >
+                <span className="text-sm font-body text-gray-700">{optionName}</span>
+                <div className="flex items-center gap-3">
+                  {opt.price > 0 && (
+                    <span className="text-xs font-body text-primary">+{Number(opt.price).toFixed(2)} AED</span>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onDecrement(pm.modifier_id, opt.id)}
+                      disabled={qty === 0}
+                      className="w-6 h-6 flex items-center justify-center border border-gray-300 text-gray-600 disabled:opacity-30 hover:border-primary hover:text-primary transition-colors"
+                    >
+                      −
+                    </button>
+                    <span className="w-5 text-center text-sm font-body text-gray-700">{qty}</span>
+                    <button
+                      type="button"
+                      onClick={() => onIncrement(pm.modifier_id, opt.id)}
+                      disabled={total >= pm.maximum_options}
+                      className="w-6 h-6 flex items-center justify-center border border-gray-300 text-gray-600 disabled:opacity-30 hover:border-primary hover:text-primary transition-colors"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          // Unique mode: existing radio / checkbox UI
+          const isSelected = selectedForThis.some(s => s.option_id === opt.id);
           return (
             <label
               key={opt.id}
@@ -140,6 +189,26 @@ export function ModifierSelector({ product, onChange }: Props) {
     });
   };
 
+  const handleIncrement = (modifierId: string, optionId: string) => {
+    setSelected(prev => {
+      const pm = productModifiers.find(p => p.modifier_id === modifierId);
+      const total = prev.filter(s => s.modifier_id === modifierId).length;
+      if (pm && total >= pm.maximum_options) return prev;
+      return [...prev, { modifier_id: modifierId, option_id: optionId }];
+    });
+  };
+
+  const handleDecrement = (modifierId: string, optionId: string) => {
+    setSelected(prev => {
+      const idx = [...prev].reverse().findIndex(
+        s => s.modifier_id === modifierId && s.option_id === optionId
+      );
+      if (idx === -1) return prev;
+      const realIdx = prev.length - 1 - idx;
+      return [...prev.slice(0, realIdx), ...prev.slice(realIdx + 1)];
+    });
+  };
+
   return (
     <div className="space-y-5">
       {productModifiers.map(pm => (
@@ -148,6 +217,8 @@ export function ModifierSelector({ product, onChange }: Props) {
           pm={pm}
           selected={selected}
           onSelect={handleSelect}
+          onIncrement={handleIncrement}
+          onDecrement={handleDecrement}
           t={t}
           locale={locale}
         />
