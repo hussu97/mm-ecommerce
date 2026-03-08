@@ -26,11 +26,25 @@ from scripts.seed_i18n import seed as seed_i18n
 # Logging
 # ---------------------------------------------------------------------------
 
-logging.basicConfig(
-    level=logging.INFO if settings.is_production else logging.DEBUG,
-    format="%(asctime)s %(levelname)-8s %(name)s  %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+if settings.is_production:
+    from pythonjsonlogger.json import JsonFormatter
+
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(
+        JsonFormatter(
+            fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
+            rename_fields={"asctime": "timestamp", "levelname": "severity"},
+            datefmt="%Y-%m-%dT%H:%M:%S%z",
+        )
+    )
+    logging.root.handlers = [_handler]
+    logging.root.setLevel(logging.INFO)
+else:
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s %(levelname)-8s %(name)s  %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 logger = logging.getLogger("mm.api")
 
 # ---------------------------------------------------------------------------
