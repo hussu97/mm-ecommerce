@@ -4,7 +4,7 @@ import { API_BASE } from "@/lib/api";
 export async function getTranslations(locale: string): Promise<Record<string, string>> {
   try {
     const res = await fetch(`${API_BASE}/i18n/translations/${locale}`, {
-      next: { revalidate: 3600 },
+      next: { revalidate: 300 },
       signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return {};
@@ -17,7 +17,7 @@ export async function getTranslations(locale: string): Promise<Record<string, st
 export async function getLanguages(): Promise<Language[]> {
   try {
     const res = await fetch(`${API_BASE}/i18n/languages`, {
-      next: { revalidate: 3600 },
+      next: { revalidate: 300 },
       signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return [];
