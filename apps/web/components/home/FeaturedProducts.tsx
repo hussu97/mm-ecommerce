@@ -98,7 +98,7 @@ export function FeaturedProducts({
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
 
-  const viewAllHref = `/${locale}${c.view_all_href ?? '/brownies'}`;
+  const viewAllHref = `/${locale}${c.view_all_href ?? '/cat-brownies'}`;
 
   useEffect(() => {
     const el = scrollRef.current;

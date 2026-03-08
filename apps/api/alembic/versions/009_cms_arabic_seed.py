@@ -72,7 +72,7 @@ ABOUT_AR = {
         "title": "هل أنت مستعد للمتعة؟",
         "subtitle": "تصفّح تشكيلتنا من البراوني والكوكيز والحلويات المصنوعة يدوياً — طازجة خصيصاً لك.",
         "button_text": "تسوّق الآن",
-        "button_link": "/brownies",
+        "button_link": "/cat-brownies",
     },
     "seo": {
         "title": "من نحن",
