@@ -256,6 +256,45 @@ gsutil ls gs://melting-moments-cakes-backups/backups/
 
 ---
 
+## Step 9b: Cloudflare Tunnel (temporary — no domain yet)
+
+If you don't have the final domain yet, use a free Cloudflare Quick Tunnel to expose the API over HTTPS.
+
+```bash
+# Install cloudflared on the VM
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
+sudo dpkg -i cloudflared.deb
+
+# Run in background (survives SSH disconnect)
+nohup cloudflared tunnel --url http://localhost:8000 > ~/cloudflared.log 2>&1 &
+
+# Get the public URL
+tail -f ~/cloudflared.log
+# Look for a line like: https://xxxx-xxxx-xxxx.trycloudflare.com
+```
+
+Use the printed URL as `NEXT_PUBLIC_API_URL` in Vercel — **without** any path suffix:
+```
+NEXT_PUBLIC_API_URL=https://xxxx-xxxx-xxxx.trycloudflare.com
+```
+
+> **Note:** The tunnel URL changes every time `cloudflared` restarts. Update the Vercel env var and redeploy when that happens. Once you have the real domain, follow Step 12 and use `https://api.meltingmomentscakes.com` instead.
+
+Also update `.env` on the VM to allow the Vercel preview URLs in CORS:
+```env
+CORS_ORIGINS=["https://<web>.vercel.app","https://<admin>.vercel.app"]
+ALLOWED_HOSTS=["*"]
+WEB_URL=https://<web>.vercel.app
+ADMIN_URL=https://<admin>.vercel.app
+```
+
+Restart the API after updating `.env`:
+```bash
+docker compose -f docker-compose.prod.yml up -d api
+```
+
+---
+
 ## Step 10: Vercel — Web Storefront
 
 1. Go to [vercel.com](https://vercel.com) and sign in with GitHub
