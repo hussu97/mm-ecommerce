@@ -30,9 +30,11 @@ jobs:
             docker compose -f docker-compose.prod.yml up --build -d
 
             echo "Waiting for API to be healthy..."
-            sleep 10
-            docker compose -f docker-compose.prod.yml exec -T api \
-              sh -c "alembic upgrade head"
+            for i in $(seq 1 30); do
+              docker compose -f docker-compose.prod.yml exec -T api sh -c "alembic upgrade head" && break
+              echo "  API not ready yet, retrying in 3s... ($i/30)"
+              sleep 3
+            done
 
             echo "Pruning old images..."
             docker image prune -f
