@@ -21,6 +21,18 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      # Tuned for e2-micro: keep shared_buffers small to leave headroom for the app
+      POSTGRES_INITDB_ARGS: ""
+    command: >
+      postgres
+      -c shared_buffers=64MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=32MB
+      -c effective_cache_size=192MB
+      -c max_connections=20
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=4MB
+      -c synchronous_commit=off
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -28,7 +40,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 384m
+          memory: 320m
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -60,12 +72,13 @@ services:
       ADMIN_URL: ${ADMIN_URL}
       UMAMI_API_KEY: ${UMAMI_API_KEY:-}
       UMAMI_WEBSITE_ID: ${UMAMI_WEBSITE_ID:-}
+      UVICORN_WORKERS: "1"
     networks:
       - mm_network
     deploy:
       resources:
         limits:
-          memory: 512m
+          memory: 256m
     depends_on:
       postgres:
         condition: service_healthy

@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
@@ -78,13 +79,17 @@ async def lifespan(app: FastAPI):
 # App
 # ---------------------------------------------------------------------------
 
+_docs_url = None if settings.is_production else "/docs"
+_redoc_url = None if settings.is_production else "/redoc"
+_openapi_url = None if settings.is_production else "/openapi.json"
+
 app = FastAPI(
     title="Melting Moments API",
     description="Backend API for Melting Moments Cakes — UAE artisanal bakery",
     version="0.1.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json",
+    docs_url=_docs_url,
+    redoc_url=_redoc_url,
+    openapi_url=_openapi_url,
     lifespan=lifespan,
 )
 
@@ -102,7 +107,10 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # 1. Trusted host — outermost, reject unknown Host headers early
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.ALLOWED_HOSTS)
 
-# 2. CORS — restrict to specific methods and headers
+# 2. GZip — compress responses >= 1KB
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+# 3. CORS — restrict to specific methods and headers
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -112,7 +120,7 @@ app.add_middleware(
 )
 
 
-# 3. Request size limit (10 MB)
+# 4. Request size limit (10 MB)
 class MaxBodySizeMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         content_length = request.headers.get("content-length")
@@ -125,7 +133,7 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(MaxBodySizeMiddleware)
 
-# 4. Request ID + Logging (innermost of the add_middleware stack)
+# 5. Request ID + Logging (innermost of the add_middleware stack)
 from app.middleware import LoggingMiddleware, RequestIDMiddleware  # noqa: E402
 
 app.add_middleware(LoggingMiddleware)
@@ -180,7 +188,12 @@ app.include_router(api_router, prefix="/api/v1")
 # ---------------------------------------------------------------------------
 
 
-@app.get("/health", tags=["System"], summary="Health check")
+@app.get("/ping", tags=["System"], summary="Liveness probe — no dependencies")
+async def ping() -> dict:
+    return {"status": "ok"}
+
+
+@app.get("/health", tags=["System"], summary="Health check — verifies DB connectivity")
 async def health(db: AsyncSession = Depends(get_db)) -> dict:
     try:
         await db.execute(text("SELECT 1"))

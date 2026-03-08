@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -108,7 +109,7 @@ async def send_order_confirmation(order: OrderResponse) -> None:
     html = _render(
         "order_confirmation.html", recipient_email=order.email, name=name, order=order
     )
-    result = _send(order.email, subject, html)
+    result = await asyncio.to_thread(_send, order.email, subject, html)
     await _log("order_confirmation", order.email, subject, result, order.order_number)
 
 
@@ -125,7 +126,7 @@ async def send_order_packed(order: OrderResponse) -> None:
     html = _render(
         "order_packed.html", recipient_email=order.email, name=name, order=order
     )
-    result = _send(order.email, subject, html)
+    result = await asyncio.to_thread(_send, order.email, subject, html)
     await _log("order_packed", order.email, subject, result, order.order_number)
 
 
@@ -139,7 +140,7 @@ async def send_order_cancelled(order: OrderResponse) -> None:
     html = _render(
         "order_cancelled.html", recipient_email=order.email, name=name, order=order
     )
-    result = _send(order.email, subject, html)
+    result = await asyncio.to_thread(_send, order.email, subject, html)
     await _log("order_cancelled", order.email, subject, result, order.order_number)
 
 
@@ -149,7 +150,7 @@ async def send_order_cancelled(order: OrderResponse) -> None:
 async def send_welcome(email: str, first_name: str) -> None:
     subject = "Welcome to Melting Moments!"
     html = _render("welcome.html", recipient_email=email, first_name=first_name)
-    result = _send(email, subject, html)
+    result = await asyncio.to_thread(_send, email, subject, html)
     await _log("welcome", email, subject, result)
 
 
@@ -162,5 +163,5 @@ async def send_password_reset(email: str, first_name: str, reset_token: str) -> 
         first_name=first_name,
         reset_link=reset_link,
     )
-    result = _send(email, subject, html)
+    result = await asyncio.to_thread(_send, email, subject, html)
     await _log("password_reset", email, subject, result)

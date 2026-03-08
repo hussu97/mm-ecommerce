@@ -45,4 +45,4 @@ EXPOSE 8000
 
 # Migrations are NOT run automatically — run them manually before deploying:
 #   docker compose -f docker-compose.prod.yml run --rm api alembic upgrade head
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-2}"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-1} --log-level warning"]

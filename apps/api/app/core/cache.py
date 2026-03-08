@@ -59,12 +59,14 @@ async def cache_delete(key: str) -> None:
 
 
 async def cache_delete_pattern(pattern: str) -> None:
-    """Delete all keys matching a glob pattern. Use sparingly."""
+    """Delete all keys matching a glob pattern. Uses SCAN to avoid blocking Redis."""
     r = await _get_redis()
     if not r:
         return
     try:
-        keys = await r.keys(pattern)
+        keys = []
+        async for key in r.scan_iter(pattern):
+            keys.append(key)
         if keys:
             await r.delete(*keys)
     except Exception as e:
