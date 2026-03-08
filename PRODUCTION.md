@@ -352,15 +352,52 @@ In Cloudflare (or your registrar), create these records:
 
 ---
 
-## Step 13: GitHub Actions Secrets
+## Step 13: SSH Key Setup + GitHub Actions Secrets
+
+### 13a: Generate a dedicated deploy key
+
+Run this **locally** (not on the VM). Do not use your personal SSH key.
+
+```bash
+ssh-keygen -t ed25519 -C "mm-deploy-key" -f ~/.ssh/mm_deploy_key -N ""
+```
+
+This creates two files:
+- `~/.ssh/mm_deploy_key` — **private key** (goes into GitHub secrets)
+- `~/.ssh/mm_deploy_key.pub` — **public key** (goes into GCP metadata)
+
+### 13b: Add the public key to GCP VM metadata
+
+> **Important:** Do NOT manually edit `~/.ssh/authorized_keys` on the VM. GCP's guest agent periodically overwrites that file from instance metadata, removing any keys you added by hand. The only persistent way to add SSH keys is via GCP metadata.
+
+```bash
+# Get your VM username (the short name before the @ in your gcloud SSH prompt)
+gcloud compute ssh mm-backend --project=melting-moments-cakes --zone=me-central1-a --command="whoami"
+# e.g. output: hussain
+
+# Add the public key to the instance metadata (replace USERNAME with the output above)
+gcloud compute instances add-metadata mm-backend \
+  --project=melting-moments-cakes \
+  --zone=me-central1-a \
+  --metadata ssh-keys="USERNAME:$(cat ~/.ssh/mm_deploy_key.pub)"
+```
+
+Verify it works:
+```bash
+ssh -i ~/.ssh/mm_deploy_key USERNAME@$(gcloud compute instances describe mm-backend \
+  --project=melting-moments-cakes --zone=me-central1-a \
+  --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+```
+
+### 13c: Add secrets to GitHub Actions
 
 In GitHub → repo → **Settings → Secrets and variables → Actions → Environments → production**, add:
 
 | Secret | Value |
 |--------|-------|
-| `SERVER_HOST` | GCP VM external IP address |
-| `SERVER_USER` | Your VM username (e.g. `debian` or your username) |
-| `SERVER_SSH_KEY` | Private SSH key that can access the VM (generate with `ssh-keygen`, add public key to VM's `~/.ssh/authorized_keys`) |
+| `SERVER_HOST` | GCP VM external IP (`gcloud compute instances describe mm-backend --project=melting-moments-cakes --zone=me-central1-a --format="get(networkInterfaces[0].accessConfigs[0].natIP)"`) |
+| `SERVER_USER` | VM username from step 13b (e.g. `hussain`) |
+| `SERVER_SSH_KEY` | Contents of `~/.ssh/mm_deploy_key` (the private key — `cat ~/.ssh/mm_deploy_key`) |
 
 The `deploy.yml` workflow SSHes into the GCP VM on every push to `main` and runs migrations + restarts the API. Vercel handles web + admin deployments automatically via its GitHub integration.
 
