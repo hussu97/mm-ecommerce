@@ -107,7 +107,14 @@ async function request<T>(path: string, options: RequestInit = {}, _retry = true
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-    throw new ApiError(res.status, body.detail || `HTTP ${res.status}`);
+    // Pydantic 422 returns detail as an array of {loc, msg, type}
+    let message: string;
+    if (Array.isArray(body.detail)) {
+      message = body.detail.map((e: { msg: string }) => e.msg).join('; ');
+    } else {
+      message = body.detail || `HTTP ${res.status}`;
+    }
+    throw new ApiError(res.status, message);
   }
 
   if (res.status === 204) return undefined as T;

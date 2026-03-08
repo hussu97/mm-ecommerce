@@ -207,10 +207,19 @@ function OrderSummarySidebar({
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 
+function isValidEmail(email: string): boolean {
+  if (!email) return false;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return false;
+  const domain = email.split('@')[1]?.toLowerCase() ?? '';
+  if (/\.(local|localhost|example|test|invalid|internal)$/.test(domain)) return false;
+  if (domain === 'localhost') return false;
+  return true;
+}
+
 function validateStep1(form: CheckoutForm): Record<string, string> {
   const errors: Record<string, string> = {};
-  if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email))
-    errors.email = 'Valid email is required';
+  if (!isValidEmail(form.email))
+    errors.email = 'Valid email address is required';
   if (!form.firstName.trim()) errors.firstName = 'First name is required';
   if (!form.lastName.trim()) errors.lastName = 'Last name is required';
   if (!form.phone.trim() || !/^\+?[0-9\s()\-+]{7,15}$/.test(form.phone.trim())) errors.phone = 'Valid phone number is required';
@@ -315,16 +324,23 @@ function StepInformation({
                   name="savedAddress"
                   value={addr.id}
                   checked={form.selectedAddressId === addr.id}
-                  onChange={() => onChange({
-                    selectedAddressId: addr.id,
-                    firstName: addr.first_name,
-                    lastName: addr.last_name,
-                    phone: addr.phone,
-                    addressLine1: addr.address_line_1,
-                    addressLine2: addr.address_line_2 ?? '',
-                    city: addr.city,
-                    emirate: addr.emirate,
-                  })}
+                  onChange={() => {
+                    onChange({
+                      selectedAddressId: addr.id,
+                      firstName: addr.first_name,
+                      lastName: addr.last_name,
+                      phone: addr.phone,
+                      addressLine1: addr.address_line_1,
+                      addressLine2: addr.address_line_2 ?? '',
+                      city: addr.city,
+                      emirate: addr.emirate,
+                    });
+                    setErrors((prev) => {
+                      const next = { ...prev };
+                      delete next.addressLine1; delete next.city; delete next.emirate;
+                      return next;
+                    });
+                  }}
                   className="mt-0.5 accent-primary"
                 />
                 <div className="font-body text-xs">
@@ -634,6 +650,7 @@ function StepPayment({
             onChange={(e) => onChange({ notes: e.target.value })}
             placeholder="Any special requests or allergies?"
             rows={2}
+            maxLength={500}
             className="w-full px-3.5 py-2.5 text-sm font-body bg-white border border-gray-300 rounded-sm outline-none resize-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
           />
         </div>
@@ -740,15 +757,16 @@ function CheckoutContent() {
       .finally(() => setLoadingAddresses(false));
   }, []);
 
-  // Pre-fill email from API if authenticated
+  // Pre-fill contact info from API if authenticated (skip system-generated guest emails)
   useEffect(() => {
     if (!form.email && getToken()) {
       import('@/lib/api').then(({ api }) => {
         api.get<{ email: string; first_name: string; last_name: string; phone?: string }>('/auth/me')
           .then((user) => {
+            const isGuestEmail = /@guest\.local$/.test(user.email);
             setForm((prev) => ({
               ...prev,
-              email: user.email,
+              email: isGuestEmail ? prev.email : user.email,
               firstName: prev.firstName || user.first_name,
               lastName: prev.lastName || user.last_name,
               phone: prev.phone || (user.phone ?? ''),
@@ -804,7 +822,7 @@ function CheckoutContent() {
 
       // Create order
       const order = await ordersApi.create({
-        email: form.email,
+        email: form.email.trim().toLowerCase(),
         delivery_method: form.deliveryMethod,
         shipping_address: shippingAddress,
         promo_code: form.promoDiscount > 0 ? form.promoCode : undefined,
