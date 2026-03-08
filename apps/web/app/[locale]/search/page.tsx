@@ -1,9 +1,8 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { ProductListResponse } from '@/lib/types';
+import { API_BASE } from '@/lib/api';
 import { ProductGrid } from '@/components/category/ProductGrid';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api/v1';
 
 export const metadata: Metadata = {
   title: 'Search',

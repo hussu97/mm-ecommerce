@@ -6,7 +6,7 @@ import type {
   UploadResponse, User,
 } from './types';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
 // ─── Error ────────────────────────────────────────────────────────────────────
 
@@ -44,7 +44,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${API_URL}${path}`, { ...options, headers });
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
@@ -224,7 +224,7 @@ export const exportApi = {
     const token = getToken();
     const headers: Record<string, string> = {};
     if (token) headers['Authorization'] = `Bearer ${token}`;
-    const res = await fetch(`${API_URL}/export/${entity}`, { headers });
+    const res = await fetch(`${API_BASE}/export/${entity}`, { headers });
     if (!res.ok) throw new ApiError(res.status, `Export failed: HTTP ${res.status}`);
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
@@ -243,7 +243,7 @@ export const exportApi = {
           Object.entries(params).filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => [k, String(v)])
         ).toString()
       : '';
-    const res = await fetch(`${API_URL}/export/orders${qs}`, { headers });
+    const res = await fetch(`${API_BASE}/export/orders${qs}`, { headers });
     if (!res.ok) throw new ApiError(res.status, `Export failed: HTTP ${res.status}`);
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);

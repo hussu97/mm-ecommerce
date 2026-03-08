@@ -6,8 +6,7 @@ import Link from 'next/link';
 import { useRecentlyViewed } from '@/hooks/useRecentlyViewed';
 import { localizedField } from '@/lib/i18n/entity';
 import type { Product } from '@/lib/types';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api/v1';
+import { API_BASE } from '@/lib/api';
 
 export function RecentlyViewedProducts({
   currentSlug,

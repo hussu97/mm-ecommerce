@@ -1,6 +1,6 @@
 import { Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse } from './types';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
 // ─── Error ────────────────────────────────────────────────────────────────────
 
@@ -63,7 +63,7 @@ async function refreshAccessToken(): Promise<string | null> {
   const refreshToken = getRefreshToken();
   if (!refreshToken) return null;
 
-  const res = await fetch(`${API_URL}/auth/refresh`, {
+  const res = await fetch(`${API_BASE}/auth/refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refresh_token: refreshToken }),
@@ -95,7 +95,7 @@ async function request<T>(path: string, options: RequestInit = {}, _retry = true
   if (token) headers['Authorization'] = `Bearer ${token}`;
   if (sessionId) headers['X-Session-Id'] = sessionId;
 
-  const res = await fetch(`${API_URL}${path}`, { ...options, headers });
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
 
   if (res.status === 401 && _retry) {
     const newToken = await refreshAccessToken();
@@ -215,7 +215,7 @@ export const paymentsApi = {
 
 export const trackApi = {
   lookup: async (order_number: string, email: string) => {
-    const res = await fetch(`${API_URL}/orders/track`, {
+    const res = await fetch(`${API_BASE}/orders/track`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ order_number, email }),
@@ -230,9 +230,7 @@ export const trackApi = {
 
 export const cmsApi = {
   getPage: (slug: string, locale: string): Promise<{ slug: string; content: Record<string, unknown> }> => {
-    // Server-side safe: uses absolute URL without client-only helpers
-    const base = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
-    return fetch(`${base}/cms/public/${slug}?locale=${locale}`, { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) })
+    return fetch(`${API_BASE}/cms/public/${slug}?locale=${locale}`, { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) })
       .then(res => {
         if (!res.ok) throw new Error(`CMS fetch failed: ${res.status}`);
         return res.json();

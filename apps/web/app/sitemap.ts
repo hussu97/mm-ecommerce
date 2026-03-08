@@ -1,7 +1,8 @@
 import type { MetadataRoute } from 'next';
 
+import { API_BASE } from '@/lib/api';
+
 const BASE = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api/v1';
 const LOCALES = (process.env.NEXT_PUBLIC_SUPPORTED_LOCALES ?? 'en,ar').split(',');
 
 function localeAlternates(path: string) {

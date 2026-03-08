@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { cmsApi } from '@/lib/api';
+import { cmsApi, API_BASE } from '@/lib/api';
 import type { Product } from '@/lib/types';
 import { HeroSection, type HeroContent } from '@/components/home/HeroSection';
 import { FeaturedProducts, type FeaturedContent } from '@/components/home/FeaturedProducts';
@@ -59,8 +59,7 @@ async function getHomeContent(locale: string): Promise<HomeContent> {
 
 async function getFeaturedProducts(): Promise<Product[]> {
   try {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
-    const res = await fetch(`${apiUrl}/api/v1/products/featured`, {
+    const res = await fetch(`${API_BASE}/products/featured`, {
       next: { revalidate: 300 },
       signal: AbortSignal.timeout(8000),
     });

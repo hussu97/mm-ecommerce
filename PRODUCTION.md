@@ -273,9 +273,9 @@ tail -f ~/cloudflared.log
 # Look for a line like: https://xxxx-xxxx-xxxx.trycloudflare.com
 ```
 
-Use the printed URL as `NEXT_PUBLIC_API_URL` in Vercel — **without** any path suffix:
+Use the printed URL as `NEXT_PUBLIC_API_URL` in Vercel — **with** the `/api/v1` suffix:
 ```
-NEXT_PUBLIC_API_URL=https://xxxx-xxxx-xxxx.trycloudflare.com
+NEXT_PUBLIC_API_URL=https://xxxx-xxxx-xxxx.trycloudflare.com/api/v1
 ```
 
 > **Note:** The tunnel URL changes every time `cloudflared` restarts. Update the Vercel env var and redeploy when that happens. Once you have the real domain, follow Step 12 and use `https://api.meltingmomentscakes.com` instead.

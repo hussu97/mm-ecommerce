@@ -7,8 +7,7 @@ import { RecentlyViewedProducts } from '@/components/product/RecentlyViewedProdu
 import type { Product } from '@/lib/types';
 import { localizedField } from '@/lib/i18n/entity';
 import { getTranslations, createT } from '@/lib/i18n/server';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api/v1';
+import { API_BASE } from '@/lib/api';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 
 async function getProduct(slug: string): Promise<Product | null> {
