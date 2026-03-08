@@ -8,7 +8,17 @@ import { localizedField } from '@/lib/i18n/entity';
 
 // ─── Client wrapper — knows which category is active ──────────────────────────
 
-export function CategoryNavLinks({ categories, locale = 'en' }: { categories: Category[]; locale?: string }) {
+export function CategoryNavLinks({
+  categories,
+  locale = 'en',
+  allLabel = 'All',
+  allHref,
+}: {
+  categories: Category[];
+  locale?: string;
+  allLabel?: string;
+  allHref?: string;
+}) {
   const pathname = usePathname();
   const [showFade, setShowFade] = useState(true);
 
@@ -26,6 +36,22 @@ export function CategoryNavLinks({ categories, locale = 'en' }: { categories: Ca
         className="max-w-7xl mx-auto px-4 flex items-center gap-6 h-9 overflow-x-auto scrollbar-none"
         onScroll={handleScroll}
       >
+        {allHref && (
+          <li className="shrink-0">
+            <Link
+              href={allHref}
+              prefetch={true}
+              className={[
+                'font-body text-[11px] uppercase tracking-widest transition-colors whitespace-nowrap',
+                pathname.startsWith(`/${locale}/all-products`)
+                  ? 'text-primary font-semibold'
+                  : 'text-gray-500 hover:text-primary',
+              ].join(' ')}
+            >
+              {allLabel}
+            </Link>
+          </li>
+        )}
         {categories.map((cat) => {
           const { slug } = cat;
           const name = localizedField(cat, 'name', cat.name, locale);

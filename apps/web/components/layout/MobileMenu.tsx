@@ -106,6 +106,13 @@ export function MobileMenu({ isOpen, onClose, languages = [], categories = [], l
               {label}
             </Link>
           ))}
+          <Link
+            href={`/${locale}/all-products`}
+            onClick={onClose}
+            className="flex items-center px-6 py-3.5 text-sm font-body text-gray-700 hover:text-primary hover:bg-primary/5 transition-colors uppercase tracking-widest"
+          >
+            {t('nav.all')}
+          </Link>
           {categories.map((cat) => (
             <Link
               key={cat.slug}

@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { TranslationProvider } from "@/lib/i18n/TranslationProvider";
-import { getTranslations, getLanguages } from "@/lib/i18n/server";
+import { getTranslations, getLanguages, createT } from "@/lib/i18n/server";
 import { Header } from "@/components/layout/Header";
 import { CategoryNavLinks } from "@/components/layout/CategoryNav";
 import { Footer } from "@/components/layout/Footer";
@@ -47,12 +47,18 @@ export default async function LocaleLayout({
 
   const currentLang: Language | undefined = languages.find((l) => l.code === locale);
   const direction = (currentLang?.direction ?? "ltr") as "ltr" | "rtl";
+  const t = createT(translations);
 
   return (
     <TranslationProvider locale={locale} direction={direction} translations={translations}>
       <PromoBanner />
       <Header languages={languages} categories={categories} locale={locale} />
-      <CategoryNavLinks categories={categories} locale={locale} />
+      <CategoryNavLinks
+        categories={categories}
+        locale={locale}
+        allLabel={t('nav.all')}
+        allHref={`/${locale}/all-products`}
+      />
       <main className="flex-1">
         {children}
       </main>
