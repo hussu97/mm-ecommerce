@@ -172,7 +172,7 @@ export function MobileMenu({ isOpen, onClose, languages = [], categories = [], l
 
         {/* Tagline */}
         <p className="text-center text-xs text-gray-400 font-body italic pb-5">
-          Made with 100% Love
+          {t('footer.tagline')}
         </p>
       </aside>
     </>

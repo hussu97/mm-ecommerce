@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui';
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
 
 const EMIRATES: { value: string; label: string }[] = [
   { value: 'Dubai', label: 'Dubai' },
@@ -33,6 +34,7 @@ const BLANK_FORM: AddressCreate = {
 
 export default function AddressesPage() {
   const { addToast } = useToast();
+  const { t } = useTranslation();
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -80,12 +82,12 @@ export default function AddressesPage() {
 
   function validate() {
     const e: Partial<Record<keyof AddressCreate, string>> = {};
-    if (!form.first_name.trim()) e.first_name = 'Required';
-    if (!form.last_name.trim()) e.last_name = 'Required';
-    if (!form.phone.trim()) e.phone = 'Required';
-    if (!form.address_line_1.trim()) e.address_line_1 = 'Required';
-    if (!form.city.trim()) e.city = 'Required';
-    if (!form.emirate) e.emirate = 'Required';
+    if (!form.first_name.trim()) e.first_name = t('common.required');
+    if (!form.last_name.trim()) e.last_name = t('common.required');
+    if (!form.phone.trim()) e.phone = t('common.required');
+    if (!form.address_line_1.trim()) e.address_line_1 = t('common.required');
+    if (!form.city.trim()) e.city = t('common.required');
+    if (!form.emirate) e.emirate = t('common.required');
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -137,7 +139,7 @@ export default function AddressesPage() {
   if (loading) {
     return (
       <div>
-        <h1 className="font-display text-2xl text-primary mb-6">Addresses</h1>
+        <h1 className="font-display text-2xl text-primary mb-6">{t('address.title')}</h1>
         <div className="space-y-3">
           {[1, 2].map(i => <div key={i} className="h-28 bg-gray-100 animate-pulse rounded-sm" />)}
         </div>
@@ -148,11 +150,11 @@ export default function AddressesPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="font-display text-2xl text-primary">Addresses</h1>
+        <h1 className="font-display text-2xl text-primary">{t('address.title')}</h1>
         {!showForm && (
           <Button variant="ghost" size="sm" onClick={openAdd}>
             <span className="material-icons text-[16px]">add</span>
-            Add Address
+            {t('address.add_address')}
           </Button>
         )}
       </div>
@@ -160,56 +162,56 @@ export default function AddressesPage() {
       {showForm && (
         <div className="mb-8 border border-primary/30 p-5 bg-primary/5">
           <h2 className="text-xs font-body uppercase tracking-widest text-primary mb-4">
-            {editId ? 'Edit Address' : 'New Address'}
+            {editId ? t('address.edit_address') : t('address.new_address')}
           </h2>
           <div className="space-y-3">
             <Input
-              label="Label (e.g. Home, Work)"
+              label={t('address.label_hint')}
               value={form.label}
               onChange={e => setForm(f => ({ ...f, label: e.target.value }))}
             />
             <div className="grid grid-cols-2 gap-3">
               <Input
-                label="First Name"
+                label={t('common.first_name')}
                 value={form.first_name}
                 onChange={e => setForm(f => ({ ...f, first_name: e.target.value }))}
                 error={errors.first_name}
               />
               <Input
-                label="Last Name"
+                label={t('common.last_name')}
                 value={form.last_name}
                 onChange={e => setForm(f => ({ ...f, last_name: e.target.value }))}
                 error={errors.last_name}
               />
             </div>
             <Input
-              label="Phone"
+              label={t('common.phone')}
               type="tel"
               value={form.phone}
               onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
               error={errors.phone}
-              placeholder="+971 50 000 0000"
+              placeholder={t('common.phone_placeholder')}
             />
             <Input
-              label="Address Line 1"
+              label={t('common.address_line_1')}
               value={form.address_line_1}
               onChange={e => setForm(f => ({ ...f, address_line_1: e.target.value }))}
               error={errors.address_line_1}
             />
             <Input
-              label="Address Line 2 (optional)"
+              label={t('common.address_line_2_optional')}
               value={form.address_line_2}
               onChange={e => setForm(f => ({ ...f, address_line_2: e.target.value }))}
             />
             <div className="grid grid-cols-2 gap-3">
               <Input
-                label="City"
+                label={t('common.city')}
                 value={form.city}
                 onChange={e => setForm(f => ({ ...f, city: e.target.value }))}
                 error={errors.city}
               />
               <Select
-                label="Emirate"
+                label={t('common.emirate')}
                 value={form.emirate}
                 onChange={e => setForm(f => ({ ...f, emirate: e.target.value as EmirateEnum }))}
                 options={EMIRATES}
@@ -223,15 +225,15 @@ export default function AddressesPage() {
                 onChange={e => setForm(f => ({ ...f, is_default: e.target.checked }))}
                 className="accent-primary"
               />
-              <span className="text-xs text-gray-600 font-body uppercase tracking-widest">Set as default address</span>
+              <span className="text-xs text-gray-600 font-body uppercase tracking-widest">{t('address.set_as_default')}</span>
             </label>
           </div>
           <div className="flex gap-3 mt-5">
             <Button onClick={handleSave} loading={saving}>
-              {editId ? 'Save Changes' : 'Add Address'}
+              {editId ? t('common.save_changes') : t('address.add_address')}
             </Button>
             <Button variant="ghost" onClick={closeForm} disabled={saving}>
-              Cancel
+              {t('common.cancel')}
             </Button>
           </div>
         </div>
@@ -240,8 +242,8 @@ export default function AddressesPage() {
       {addresses.length === 0 && !showForm ? (
         <div className="text-center py-12 border border-dashed border-gray-200">
           <span className="material-icons text-4xl text-gray-300 block mb-3">location_off</span>
-          <p className="text-sm text-gray-500 font-body mb-4">No saved addresses yet.</p>
-          <Button variant="ghost" size="sm" onClick={openAdd}>Add Your First Address</Button>
+          <p className="text-sm text-gray-500 font-body mb-4">{t('address.no_addresses')}</p>
+          <Button variant="ghost" size="sm" onClick={openAdd}>{t('address.add_first')}</Button>
         </div>
       ) : (
         <div className="space-y-3">
@@ -258,7 +260,7 @@ export default function AddressesPage() {
                     </span>
                     {addr.is_default && (
                       <span className="text-[10px] bg-primary text-white px-1.5 py-0.5 uppercase tracking-wide font-body">
-                        Default
+                        {t('address.default_badge')}
                       </span>
                     )}
                   </div>
@@ -277,14 +279,14 @@ export default function AddressesPage() {
                     onClick={() => openEdit(addr)}
                     className="text-xs text-gray-500 hover:text-primary font-body uppercase tracking-wide transition-colors"
                   >
-                    Edit
+                    {t('common.edit')}
                   </button>
                   {!addr.is_default && (
                     <button
                       onClick={() => handleSetDefault(addr.id)}
                       className="text-xs text-gray-500 hover:text-primary font-body uppercase tracking-wide transition-colors"
                     >
-                      Set Default
+                      {t('address.set_default')}
                     </button>
                   )}
                   <button
@@ -292,7 +294,7 @@ export default function AddressesPage() {
                     disabled={deletingId === addr.id}
                     className="text-xs text-gray-400 hover:text-red-500 font-body uppercase tracking-wide transition-colors disabled:opacity-50"
                   >
-                    {deletingId === addr.id ? 'Removing...' : 'Remove'}
+                    {deletingId === addr.id ? t('address.removing') : t('common.remove')}
                   </button>
                 </div>
               </div>

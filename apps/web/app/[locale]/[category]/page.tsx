@@ -44,23 +44,25 @@ export async function generateMetadata({
 }: {
   params: Promise<{ locale: string; category: string }>;
 }): Promise<Metadata> {
-  const { category: slug } = await params;
+  const { locale, category: slug } = await params;
   const data = await getCategoryData(slug);
   if (!data) return {};
 
   const { category } = data;
+  const localizedName = localizedField(category, 'name', category.name, locale);
+  const localizedDesc = localizedField(category, 'description', category.description ?? '', locale);
   const description =
-    category.description ??
-    `Shop our range of handcrafted ${category.name.toLowerCase()} — made with love in the UAE.`;
+    localizedDesc ||
+    `Shop our range of handcrafted ${localizedName.toLowerCase()} — made with love in the UAE.`;
   const ogImage = category.image_url
-    ? [{ url: category.image_url, alt: category.name }]
+    ? [{ url: category.image_url, alt: localizedName }]
     : [{ url: '/images/logos/color_logo.jpeg', alt: 'Melting Moments Cakes' }];
 
   return {
-    title: category.name,
+    title: localizedName,
     description,
     openGraph: {
-      title: `${category.name} | Melting Moments Cakes`,
+      title: `${localizedName} | Melting Moments Cakes`,
       description,
       images: ogImage,
     },

@@ -5,8 +5,10 @@ import Link from 'next/link';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { authApi, ApiError } from '@/lib/api';
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
 
 export default function ForgotPasswordPage() {
+  const { t } = useTranslation();
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -14,7 +16,7 @@ export default function ForgotPasswordPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!email) { setError('Email is required'); return; }
+    if (!email) { setError(t('auth.email_required')); return; }
     setLoading(true);
     setError('');
     try {
@@ -32,12 +34,12 @@ export default function ForgotPasswordPage() {
       <div className="min-h-[70vh] flex items-center justify-center px-4 py-16">
         <div className="w-full max-w-md text-center">
           <span className="material-icons text-5xl text-primary mb-4 block">mark_email_read</span>
-          <h1 className="font-display text-3xl text-primary mb-3">Check Your Email</h1>
+          <h1 className="font-display text-3xl text-primary mb-3">{t('auth.check_email_title')}</h1>
           <p className="text-sm text-gray-600 font-body mb-6">
-            If an account exists for <strong>{email}</strong>, we&apos;ve sent a password reset link. Check your inbox (and spam folder).
+            {t('auth.check_email_body', { email })}
           </p>
           <Link href="/login" className="text-sm text-primary hover:underline font-body">
-            Back to Sign In
+            {t('auth.back_to_sign_in')}
           </Link>
         </div>
       </div>
@@ -48,9 +50,9 @@ export default function ForgotPasswordPage() {
     <div className="min-h-[70vh] flex items-center justify-center px-4 py-16">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="font-display text-3xl text-primary mb-2">Reset Password</h1>
+          <h1 className="font-display text-3xl text-primary mb-2">{t('auth.reset_password')}</h1>
           <p className="text-sm text-gray-500 font-body">
-            Enter your email and we&apos;ll send you a reset link.
+            {t('auth.reset_subtitle')}
           </p>
         </div>
 
@@ -61,20 +63,20 @@ export default function ForgotPasswordPage() {
             </div>
           )}
           <Input
-            label="Email"
+            label={t('common.email')}
             type="email"
             value={email}
             onChange={e => setEmail(e.target.value)}
             autoComplete="email"
           />
           <Button type="submit" fullWidth loading={loading} size="lg">
-            Send Reset Link
+            {t('auth.send_reset_link')}
           </Button>
         </form>
 
         <p className="text-center text-sm text-gray-600 font-body mt-6">
           <Link href="/login" className="text-primary hover:underline">
-            Back to Sign In
+            {t('auth.back_to_sign_in')}
           </Link>
         </p>
       </div>

@@ -8,11 +8,13 @@ import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/lib/auth-context';
 import { useCart } from '@/lib/cart-context';
 import { ApiError, getSessionId } from '@/lib/api';
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
 
 export default function SignupPage() {
   const router = useRouter();
   const { register } = useAuth();
   const { mergeCart } = useCart();
+  const { t } = useTranslation();
 
   const [form, setForm] = useState({
     email: '',
@@ -28,12 +30,12 @@ export default function SignupPage() {
 
   function validate() {
     const e: Record<string, string> = {};
-    if (!form.first_name.trim()) e.first_name = 'First name is required';
-    if (!form.last_name.trim()) e.last_name = 'Last name is required';
-    if (!form.email) e.email = 'Email is required';
-    if (!form.password) e.password = 'Password is required';
-    else if (form.password.length < 8) e.password = 'Password must be at least 8 characters';
-    if (form.password !== form.confirmPassword) e.confirmPassword = 'Passwords do not match';
+    if (!form.first_name.trim()) e.first_name = t('common.required');
+    if (!form.last_name.trim()) e.last_name = t('common.required');
+    if (!form.email) e.email = t('auth.email_required');
+    if (!form.password) e.password = t('auth.password_required');
+    else if (form.password.length < 8) e.password = t('auth.password_min_length');
+    if (form.password !== form.confirmPassword) e.confirmPassword = t('auth.passwords_no_match');
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -55,7 +57,7 @@ export default function SignupPage() {
       if (sessionId) await mergeCart(sessionId).catch(() => {});
       router.push('/account');
     } catch (err) {
-      setApiError(err instanceof ApiError ? err.message : 'Registration failed. Please try again.');
+      setApiError(err instanceof ApiError ? err.message : t('auth.registration_failed'));
     } finally {
       setLoading(false);
     }
@@ -65,8 +67,8 @@ export default function SignupPage() {
     <div className="min-h-[70vh] flex items-center justify-center px-4 py-16">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="font-display text-3xl text-primary mb-2">Create Account</h1>
-          <p className="text-sm text-gray-500 font-body">Join Melting Moments for a sweeter experience</p>
+          <h1 className="font-display text-3xl text-primary mb-2">{t('auth.create_account')}</h1>
+          <p className="text-sm text-gray-500 font-body">{t('auth.create_account_subtitle')}</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -77,14 +79,14 @@ export default function SignupPage() {
           )}
           <div className="grid grid-cols-2 gap-3">
             <Input
-              label="First Name"
+              label={t('common.first_name')}
               value={form.first_name}
               onChange={e => setForm(f => ({ ...f, first_name: e.target.value }))}
               error={errors.first_name}
               autoComplete="given-name"
             />
             <Input
-              label="Last Name"
+              label={t('common.last_name')}
               value={form.last_name}
               onChange={e => setForm(f => ({ ...f, last_name: e.target.value }))}
               error={errors.last_name}
@@ -92,7 +94,7 @@ export default function SignupPage() {
             />
           </div>
           <Input
-            label="Email"
+            label={t('common.email')}
             type="email"
             value={form.email}
             onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
@@ -100,25 +102,25 @@ export default function SignupPage() {
             autoComplete="email"
           />
           <Input
-            label="Phone (optional)"
+            label={t('settings.phone_optional')}
             type="tel"
             value={form.phone}
             onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
             error={errors.phone}
-            placeholder="+971 50 000 0000"
+            placeholder={t('common.phone_placeholder')}
             autoComplete="tel"
           />
           <Input
-            label="Password"
+            label={t('common.password')}
             type="password"
             value={form.password}
             onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
             error={errors.password}
             autoComplete="new-password"
-            helper="At least 8 characters"
+            helper={t('auth.password_helper')}
           />
           <Input
-            label="Confirm Password"
+            label={t('common.confirm_password')}
             type="password"
             value={form.confirmPassword}
             onChange={e => setForm(f => ({ ...f, confirmPassword: e.target.value }))}
@@ -126,21 +128,21 @@ export default function SignupPage() {
             autoComplete="new-password"
           />
           <Button type="submit" fullWidth loading={loading} size="lg">
-            Create Account
+            {t('auth.create_account')}
           </Button>
         </form>
 
         <p className="text-center text-xs text-gray-400 mt-4 font-body">
-          By signing up you agree to our{' '}
-          <Link href="/terms" className="underline">Terms</Link>{' '}
-          and{' '}
-          <Link href="/privacy" className="underline">Privacy Policy</Link>.
+          {t('auth.tos_text')}{' '}
+          <Link href="/terms" className="underline">{t('auth.tos_terms')}</Link>{' '}
+          {t('auth.tos_and')}{' '}
+          <Link href="/privacy" className="underline">{t('auth.tos_privacy')}</Link>.
         </p>
 
         <p className="text-center text-sm text-gray-600 font-body mt-6">
-          Already have an account?{' '}
+          {t('auth.already_have_account')}{' '}
           <Link href="/login" className="text-primary hover:underline font-medium">
-            Sign in
+            {t('nav.sign_in')}
           </Link>
         </p>
       </div>

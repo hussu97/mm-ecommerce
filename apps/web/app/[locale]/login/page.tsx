@@ -8,12 +8,14 @@ import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/lib/auth-context';
 import { useCart } from '@/lib/cart-context';
 import { ApiError, getSessionId } from '@/lib/api';
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
 
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { login } = useAuth();
   const { mergeCart } = useCart();
+  const { t } = useTranslation();
 
   const [form, setForm] = useState({ email: '', password: '' });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -22,8 +24,8 @@ function LoginForm() {
 
   function validate() {
     const e: Record<string, string> = {};
-    if (!form.email) e.email = 'Email is required';
-    if (!form.password) e.password = 'Password is required';
+    if (!form.email) e.email = t('auth.email_required');
+    if (!form.password) e.password = t('auth.password_required');
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -40,7 +42,7 @@ function LoginForm() {
       const redirect = searchParams.get('redirect') || '/account';
       router.push(redirect);
     } catch (err) {
-      setApiError(err instanceof ApiError ? err.message : 'Login failed. Please try again.');
+      setApiError(err instanceof ApiError ? err.message : t('auth.login_failed'));
     } finally {
       setLoading(false);
     }
@@ -50,8 +52,8 @@ function LoginForm() {
     <div className="min-h-[70vh] flex items-center justify-center px-4 py-16">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="font-display text-3xl text-primary mb-2">Welcome Back</h1>
-          <p className="text-sm text-gray-500 font-body">Sign in to your Melting Moments account</p>
+          <h1 className="font-display text-3xl text-primary mb-2">{t('auth.welcome_back')}</h1>
+          <p className="text-sm text-gray-500 font-body">{t('auth.sign_in_subtitle')}</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -61,7 +63,7 @@ function LoginForm() {
             </div>
           )}
           <Input
-            label="Email"
+            label={t('common.email')}
             type="email"
             value={form.email}
             onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
@@ -70,7 +72,7 @@ function LoginForm() {
           />
           <div>
             <Input
-              label="Password"
+              label={t('common.password')}
               type="password"
               value={form.password}
               onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
@@ -79,12 +81,12 @@ function LoginForm() {
             />
             <div className="flex justify-end mt-1.5">
               <Link href="/forgot-password" className="text-xs text-primary hover:underline font-body">
-                Forgot password?
+                {t('auth.forgot_password_link')}
               </Link>
             </div>
           </div>
           <Button type="submit" fullWidth loading={loading} size="lg">
-            Sign In
+            {t('nav.sign_in')}
           </Button>
         </form>
 
@@ -94,19 +96,19 @@ function LoginForm() {
               <div className="w-full border-t border-gray-200" />
             </div>
             <div className="relative flex justify-center">
-              <span className="bg-white px-3 text-xs text-gray-400 uppercase tracking-widest">or</span>
+              <span className="bg-white px-3 text-xs text-gray-400 uppercase tracking-widest">{t('auth.or_divider')}</span>
             </div>
           </div>
           <p className="text-center text-sm text-gray-600 font-body">
-            Don&apos;t have an account?{' '}
+            {t('auth.no_account')}{' '}
             <Link href="/signup" className="text-primary hover:underline font-medium">
-              Sign up
+              {t('auth.sign_up_link')}
             </Link>
           </p>
           <p className="text-center text-sm text-gray-600 font-body">
-            Just browsing?{' '}
+            {t('auth.just_browsing')}{' '}
             <Link href="/" className="text-primary hover:underline font-medium">
-              Continue as guest
+              {t('auth.continue_as_guest')}
             </Link>
           </p>
         </div>

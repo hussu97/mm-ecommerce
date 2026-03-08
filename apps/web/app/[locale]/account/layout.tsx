@@ -4,19 +4,21 @@ import { useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { cn } from '@/lib/utils';
-
-const NAV_ITEMS = [
-  { href: '/account',           label: 'My Profile',  icon: 'person' },
-  { href: '/account/orders',    label: 'My Orders',   icon: 'receipt_long' },
-  { href: '/account/addresses', label: 'Addresses',   icon: 'location_on' },
-  { href: '/account/settings',  label: 'Settings',    icon: 'settings' },
-];
 
 export default function AccountLayout({ children }: { children: React.ReactNode }) {
   const { user, isLoading, logout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const { t } = useTranslation();
+
+  const NAV_ITEMS = [
+    { href: '/account',           label: t('account.my_profile'),  icon: 'person' },
+    { href: '/account/orders',    label: t('account.my_orders'),   icon: 'receipt_long' },
+    { href: '/account/addresses', label: t('account.addresses'),   icon: 'location_on' },
+    { href: '/account/settings',  label: t('account.settings'),    icon: 'settings' },
+  ];
 
   useEffect(() => {
     if (!isLoading && !user) {
@@ -29,7 +31,7 @@ export default function AccountLayout({ children }: { children: React.ReactNode 
       <div className="min-h-[60vh] flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm text-gray-400 font-body uppercase tracking-widest">Loading</p>
+          <p className="text-sm text-gray-400 font-body uppercase tracking-widest">{t('common.loading')}</p>
         </div>
       </div>
     );
@@ -48,7 +50,7 @@ export default function AccountLayout({ children }: { children: React.ReactNode 
         {/* Sidebar */}
         <aside className="md:w-56 shrink-0">
           <div className="mb-5 px-1">
-            <p className="text-xs text-gray-400 uppercase tracking-widest font-body mb-0.5">Signed in as</p>
+            <p className="text-xs text-gray-400 uppercase tracking-widest font-body mb-0.5">{t('account.signed_in_as')}</p>
             <p className="text-sm font-medium text-gray-800 font-body truncate">{user.first_name} {user.last_name}</p>
           </div>
 
@@ -79,7 +81,7 @@ export default function AccountLayout({ children }: { children: React.ReactNode 
               className="flex items-center gap-3 px-4 py-3 w-full text-sm text-gray-500 hover:text-red-500 font-body transition-colors"
             >
               <span className="material-icons text-[18px]">logout</span>
-              Sign Out
+              {t('nav.sign_out')}
             </button>
           </div>
         </aside>

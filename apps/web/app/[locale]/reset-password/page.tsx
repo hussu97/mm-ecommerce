@@ -6,10 +6,12 @@ import { useSearchParams } from 'next/navigation';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { authApi, ApiError } from '@/lib/api';
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
 
 function ResetPasswordForm() {
   const searchParams = useSearchParams();
   const token = searchParams.get('token') || '';
+  const { t } = useTranslation();
 
   const [form, setForm] = useState({ password: '', confirm: '' });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -22,12 +24,12 @@ function ResetPasswordForm() {
       <div className="min-h-[70vh] flex items-center justify-center px-4 py-16">
         <div className="w-full max-w-md text-center">
           <span className="material-icons text-5xl text-red-400 mb-4 block">error_outline</span>
-          <h1 className="font-display text-2xl text-primary mb-3">Invalid Reset Link</h1>
+          <h1 className="font-display text-2xl text-primary mb-3">{t('auth.invalid_link')}</h1>
           <p className="text-sm text-gray-500 font-body mb-6">
-            This password reset link is invalid or has expired.
+            {t('auth.invalid_link_body')}
           </p>
           <Link href="/forgot-password" className="text-sm text-primary hover:underline font-body">
-            Request a new link
+            {t('auth.request_new_link')}
           </Link>
         </div>
       </div>
@@ -36,9 +38,9 @@ function ResetPasswordForm() {
 
   function validate() {
     const e: Record<string, string> = {};
-    if (!form.password) e.password = 'Password is required';
-    else if (form.password.length < 8) e.password = 'At least 8 characters';
-    if (form.password !== form.confirm) e.confirm = 'Passwords do not match';
+    if (!form.password) e.password = t('auth.password_required');
+    else if (form.password.length < 8) e.password = t('auth.password_min_length');
+    if (form.password !== form.confirm) e.confirm = t('auth.passwords_no_match');
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -52,7 +54,7 @@ function ResetPasswordForm() {
       await authApi.resetPassword(token, form.password);
       setDone(true);
     } catch (err) {
-      setApiError(err instanceof ApiError ? err.message : 'Reset failed. The link may have expired.');
+      setApiError(err instanceof ApiError ? err.message : t('auth.reset_failed'));
     } finally {
       setLoading(false);
     }
@@ -63,12 +65,12 @@ function ResetPasswordForm() {
       <div className="min-h-[70vh] flex items-center justify-center px-4 py-16">
         <div className="w-full max-w-md text-center">
           <span className="material-icons text-5xl text-green-500 mb-4 block">check_circle</span>
-          <h1 className="font-display text-3xl text-primary mb-3">Password Updated</h1>
+          <h1 className="font-display text-3xl text-primary mb-3">{t('auth.password_updated')}</h1>
           <p className="text-sm text-gray-600 font-body mb-6">
-            Your password has been changed. You can now sign in with your new password.
+            {t('auth.password_updated_body')}
           </p>
           <Link href="/login">
-            <Button size="lg">Sign In</Button>
+            <Button size="lg">{t('nav.sign_in')}</Button>
           </Link>
         </div>
       </div>
@@ -79,8 +81,8 @@ function ResetPasswordForm() {
     <div className="min-h-[70vh] flex items-center justify-center px-4 py-16">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="font-display text-3xl text-primary mb-2">Set New Password</h1>
-          <p className="text-sm text-gray-500 font-body">Choose a strong password for your account.</p>
+          <h1 className="font-display text-3xl text-primary mb-2">{t('auth.set_new_password')}</h1>
+          <p className="text-sm text-gray-500 font-body">{t('auth.set_password_subtitle')}</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -90,16 +92,16 @@ function ResetPasswordForm() {
             </div>
           )}
           <Input
-            label="New Password"
+            label={t('auth.new_password')}
             type="password"
             value={form.password}
             onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
             error={errors.password}
-            helper="At least 8 characters"
+            helper={t('auth.password_helper')}
             autoComplete="new-password"
           />
           <Input
-            label="Confirm Password"
+            label={t('common.confirm_password')}
             type="password"
             value={form.confirm}
             onChange={e => setForm(f => ({ ...f, confirm: e.target.value }))}
@@ -107,7 +109,7 @@ function ResetPasswordForm() {
             autoComplete="new-password"
           />
           <Button type="submit" fullWidth loading={loading} size="lg">
-            Update Password
+            {t('auth.update_password')}
           </Button>
         </form>
       </div>

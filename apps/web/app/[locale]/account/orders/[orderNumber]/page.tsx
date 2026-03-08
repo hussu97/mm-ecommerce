@@ -6,33 +6,36 @@ import { use } from 'react';
 import { ordersApi } from '@/lib/api';
 import { Order, OrderStatus } from '@/lib/types';
 import { cn } from '@/lib/utils';
-
-const STATUS_CONFIG: Record<OrderStatus, { label: string; classes: string; icon: string }> = {
-  created:   { label: 'Order Placed',  classes: 'text-yellow-600',  icon: 'pending' },
-  confirmed: { label: 'Confirmed',     classes: 'text-blue-600',    icon: 'check_circle' },
-  packed:    { label: 'Packed',        classes: 'text-purple-600',  icon: 'inventory_2' },
-  cancelled: { label: 'Cancelled',     classes: 'text-red-500',     icon: 'cancel' },
-};
-
-const TIMELINE_STEPS: { status: OrderStatus; label: string; icon: string }[] = [
-  { status: 'created',   label: 'Order Placed',      icon: 'receipt' },
-  { status: 'confirmed', label: 'Order Confirmed',   icon: 'check_circle' },
-  { status: 'packed',    label: 'Ready / Dispatched', icon: 'inventory_2' },
-];
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
 
 const STATUS_ORDER: OrderStatus[] = ['created', 'confirmed', 'packed'];
 
 export default function OrderDetailPage({ params }: { params: Promise<{ orderNumber: string }> }) {
   const { orderNumber } = use(params);
+  const { t } = useTranslation();
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  const STATUS_CONFIG: Record<OrderStatus, { label: string; classes: string; icon: string }> = {
+    created:   { label: t('order.timeline_placed'),    classes: 'text-yellow-600',  icon: 'pending' },
+    confirmed: { label: t('order.status_confirmed'),   classes: 'text-blue-600',    icon: 'check_circle' },
+    packed:    { label: t('order.status_packed'),      classes: 'text-purple-600',  icon: 'inventory_2' },
+    cancelled: { label: t('order.status_cancelled'),   classes: 'text-red-500',     icon: 'cancel' },
+  };
+
+  const TIMELINE_STEPS: { status: OrderStatus; label: string; icon: string }[] = [
+    { status: 'created',   label: t('order.timeline_placed'),    icon: 'receipt' },
+    { status: 'confirmed', label: t('order.timeline_confirmed'), icon: 'check_circle' },
+    { status: 'packed',    label: t('order.timeline_ready'),     icon: 'inventory_2' },
+  ];
+
   useEffect(() => {
     ordersApi.get(orderNumber)
       .then(setOrder)
-      .catch(() => setError('Order not found.'))
+      .catch(() => setError(t('order.not_found')))
       .finally(() => setLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderNumber]);
 
   if (loading) {
@@ -50,9 +53,9 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
     return (
       <div className="text-center py-16">
         <span className="material-icons text-4xl text-gray-300 block mb-3">search_off</span>
-        <p className="text-sm text-gray-500 font-body mb-4">{error || 'Order not found.'}</p>
+        <p className="text-sm text-gray-500 font-body mb-4">{error || t('order.not_found')}</p>
         <Link href="/account/orders" className="text-sm text-primary hover:underline font-body">
-          Back to Orders
+          {t('order.back_to_orders')}
         </Link>
       </div>
     );
@@ -72,7 +75,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
         <div>
           <h1 className="font-display text-2xl text-primary leading-tight">{order.order_number}</h1>
           <p className="text-xs text-gray-400 font-body">
-            Placed {new Date(order.created_at).toLocaleDateString('en-AE', { day: 'numeric', month: 'long', year: 'numeric' })}
+            {t('order.placed')} {new Date(order.created_at).toLocaleDateString('en-AE', { day: 'numeric', month: 'long', year: 'numeric' })}
           </p>
         </div>
         <span className={`ml-auto text-[11px] font-body uppercase tracking-wide px-2.5 py-1 border ${
@@ -88,7 +91,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
       {/* Status Timeline */}
       {!isCancelled && (
         <div className="mb-8 p-5 border border-gray-100 bg-gray-50">
-          <h2 className="text-xs font-body uppercase tracking-widest text-gray-500 mb-5">Order Progress</h2>
+          <h2 className="text-xs font-body uppercase tracking-widest text-gray-500 mb-5">{t('order.order_progress')}</h2>
           <div className="flex items-center">
             {TIMELINE_STEPS.map((step, idx) => {
               const done = currentIndex >= idx;
@@ -124,14 +127,14 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
 
       {isCancelled && order.admin_notes && (
         <div className="mb-6 bg-red-50 border border-red-200 p-4">
-          <p className="text-xs font-medium text-red-700 uppercase tracking-widest mb-1">Cancellation Note</p>
+          <p className="text-xs font-medium text-red-700 uppercase tracking-widest mb-1">{t('order.cancellation_note')}</p>
           <p className="text-sm text-red-600 font-body">{order.admin_notes}</p>
         </div>
       )}
 
       {/* Order Items */}
       <div className="mb-6">
-        <h2 className="text-xs font-body uppercase tracking-widest text-gray-500 mb-3">Items</h2>
+        <h2 className="text-xs font-body uppercase tracking-widest text-gray-500 mb-3">{t('order.items')}</h2>
         <div className="border border-gray-200 divide-y divide-gray-100">
           {order.items.map(item => (
             <div key={item.id} className="flex items-center justify-between px-4 py-3">
@@ -156,23 +159,23 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
 
       {/* Totals */}
       <div className="mb-6 border border-gray-200 p-4 space-y-2">
-        <h2 className="text-xs font-body uppercase tracking-widest text-gray-500 mb-3">Summary</h2>
+        <h2 className="text-xs font-body uppercase tracking-widest text-gray-500 mb-3">{t('order.summary')}</h2>
         <div className="flex justify-between text-sm font-body text-gray-600">
-          <span>Subtotal</span>
+          <span>{t('common.subtotal')}</span>
           <span>AED {Number(order.subtotal).toFixed(2)}</span>
         </div>
         {Number(order.discount_amount) > 0 && (
           <div className="flex justify-between text-sm font-body text-green-600">
-            <span>Discount {order.promo_code_used ? `(${order.promo_code_used})` : ''}</span>
+            <span>{t('common.discount')} {order.promo_code_used ? `(${order.promo_code_used})` : ''}</span>
             <span>− AED {Number(order.discount_amount).toFixed(2)}</span>
           </div>
         )}
         <div className="flex justify-between text-sm font-body text-gray-600">
-          <span>Delivery</span>
-          <span>{Number(order.delivery_fee) === 0 ? 'Free' : `AED ${Number(order.delivery_fee).toFixed(2)}`}</span>
+          <span>{t('common.delivery')}</span>
+          <span>{Number(order.delivery_fee) === 0 ? t('common.free') : `AED ${Number(order.delivery_fee).toFixed(2)}`}</span>
         </div>
         <div className="flex justify-between text-sm font-semibold font-body text-gray-900 pt-2 border-t border-gray-100">
-          <span>Total</span>
+          <span>{t('common.total')}</span>
           <span>AED {Number(order.total).toFixed(2)}</span>
         </div>
       </div>
@@ -180,9 +183,9 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
       {/* Delivery Info */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="border border-gray-200 p-4">
-          <h2 className="text-xs font-body uppercase tracking-widest text-gray-500 mb-2">Delivery</h2>
+          <h2 className="text-xs font-body uppercase tracking-widest text-gray-500 mb-2">{t('common.delivery')}</h2>
           {order.delivery_method === 'pickup' ? (
-            <p className="text-sm text-gray-700 font-body">Store Pickup</p>
+            <p className="text-sm text-gray-700 font-body">{t('order.store_pickup')}</p>
           ) : addr ? (
             <div className="text-sm text-gray-700 font-body space-y-0.5">
               <p>{addr.first_name} {addr.last_name}</p>
@@ -192,18 +195,18 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
               {addr.phone && <p className="text-gray-400">{addr.phone}</p>}
             </div>
           ) : (
-            <p className="text-sm text-gray-400 font-body">No address on file</p>
+            <p className="text-sm text-gray-400 font-body">{t('order.no_address')}</p>
           )}
         </div>
 
         <div className="border border-gray-200 p-4">
-          <h2 className="text-xs font-body uppercase tracking-widest text-gray-500 mb-2">Payment</h2>
+          <h2 className="text-xs font-body uppercase tracking-widest text-gray-500 mb-2">{t('order.payment')}</h2>
           <p className="text-sm text-gray-700 font-body capitalize">
             {order.payment_provider || order.payment_method || '—'}
           </p>
           {order.notes && (
             <div className="mt-3">
-              <p className="text-xs text-gray-400 uppercase tracking-widest font-body mb-1">Notes</p>
+              <p className="text-xs text-gray-400 uppercase tracking-widest font-body mb-1">{t('order.notes')}</p>
               <p className="text-sm text-gray-600 font-body">{order.notes}</p>
             </div>
           )}

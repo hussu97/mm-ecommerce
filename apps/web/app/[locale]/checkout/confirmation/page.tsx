@@ -7,11 +7,13 @@ import { ordersApi } from '@/lib/api';
 import { analytics } from '@/lib/analytics';
 import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import type { Order } from '@/lib/types';
 
 function ConfirmationContent() {
   const searchParams = useSearchParams();
   const orderNumber = searchParams.get('order_number');
+  const { t } = useTranslation();
 
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
@@ -38,7 +40,7 @@ function ConfirmationContent() {
     return (
       <div className="flex flex-col items-center gap-4 py-20">
         <Spinner size="lg" />
-        <p className="font-body text-sm text-gray-400">Loading your order…</p>
+        <p className="font-body text-sm text-gray-400">{t('confirmation.loading')}</p>
       </div>
     );
   }
@@ -47,11 +49,11 @@ function ConfirmationContent() {
     return (
       <div className="flex flex-col items-center gap-6 py-20 text-center">
         <span className="material-icons text-5xl text-secondary">receipt_long</span>
-        <h1 className="font-display text-2xl text-primary uppercase tracking-widest">Order not found</h1>
+        <h1 className="font-display text-2xl text-primary uppercase tracking-widest">{t('confirmation.not_found_title')}</h1>
         <p className="font-body text-sm text-gray-500 max-w-sm">
-          We couldn&apos;t retrieve your order details. If you completed payment, you&apos;ll receive a confirmation email shortly.
+          {t('confirmation.not_found_body')}
         </p>
-        <Link href="/"><Button variant="primary">Back to Home</Button></Link>
+        <Link href="/"><Button variant="primary">{t('confirmation.back_to_home')}</Button></Link>
       </div>
     );
   }
@@ -64,16 +66,16 @@ function ConfirmationContent() {
           <span className="material-icons text-3xl text-green-600">check_circle</span>
         </div>
         <h1 className="font-display text-3xl text-primary uppercase tracking-widest mb-2">
-          Order Placed!
+          {t('confirmation.title')}
         </h1>
         <p className="font-body text-sm text-gray-500">
-          Thank you for your order. We&apos;ll send a confirmation to <strong>{order.email}</strong>.
+          {t('confirmation.thank_you', { email: order.email })}
         </p>
       </div>
 
       {/* Order number */}
       <div className="bg-primary/5 border border-primary/20 rounded-sm px-6 py-4 text-center mb-6">
-        <p className="font-body text-xs uppercase tracking-widest text-gray-500 mb-1">Order Number</p>
+        <p className="font-body text-xs uppercase tracking-widest text-gray-500 mb-1">{t('confirmation.order_number')}</p>
         <p className="font-display text-2xl text-primary">{order.order_number}</p>
       </div>
 
@@ -97,26 +99,26 @@ function ConfirmationContent() {
       {/* Totals */}
       <div className="space-y-2 font-body text-sm mb-6 px-1">
         <div className="flex justify-between">
-          <span className="text-gray-500">Subtotal</span>
+          <span className="text-gray-500">{t('common.subtotal')}</span>
           <span>{Number(order.subtotal).toFixed(2)} AED</span>
         </div>
         {Number(order.discount_amount) > 0 && (
           <div className="flex justify-between text-green-700">
-            <span>Discount{order.promo_code_used ? ` (${order.promo_code_used})` : ''}</span>
+            <span>{t('common.discount')}{order.promo_code_used ? ` (${order.promo_code_used})` : ''}</span>
             <span>-{Number(order.discount_amount).toFixed(2)} AED</span>
           </div>
         )}
         <div className="flex justify-between">
           <span className="text-gray-500">
-            {order.delivery_method === 'pickup' ? 'Pickup' : 'Delivery'}
+            {order.delivery_method === 'pickup' ? t('checkout.store_pickup') : t('common.delivery')}
           </span>
           <span className={Number(order.delivery_fee) === 0 ? 'text-green-600' : ''}>
-            {Number(order.delivery_fee) === 0 ? 'Free' : `${Number(order.delivery_fee).toFixed(2)} AED`}
+            {Number(order.delivery_fee) === 0 ? t('common.free') : `${Number(order.delivery_fee).toFixed(2)} AED`}
           </span>
         </div>
         <div className="h-px bg-gray-200" />
         <div className="flex justify-between font-semibold text-base">
-          <span>Total Paid</span>
+          <span>{t('confirmation.total_paid')}</span>
           <span className="text-primary">{Number(order.total).toFixed(2)} AED</span>
         </div>
       </div>
@@ -124,7 +126,7 @@ function ConfirmationContent() {
       {/* Delivery info */}
       {order.delivery_method === 'delivery' && order.shipping_address_snapshot && (
         <div className="bg-gray-50 rounded-sm p-4 mb-6">
-          <p className="font-body text-xs uppercase tracking-widest text-gray-500 mb-2">Delivering to</p>
+          <p className="font-body text-xs uppercase tracking-widest text-gray-500 mb-2">{t('confirmation.delivering_to')}</p>
           <p className="font-body text-sm text-gray-800">
             {order.shipping_address_snapshot.address_line_1}
             {order.shipping_address_snapshot.address_line_2
@@ -140,7 +142,7 @@ function ConfirmationContent() {
         <div className="bg-gray-50 rounded-sm p-4 mb-6 flex gap-2 items-start">
           <span className="material-icons text-base text-primary mt-0.5">storefront</span>
           <p className="font-body text-sm text-gray-600">
-            You selected store pickup. We&apos;ll contact you via WhatsApp when your order is ready to collect.
+            {t('confirmation.pickup_note')}
           </p>
         </div>
       )}
@@ -149,12 +151,12 @@ function ConfirmationContent() {
       <div className="flex flex-col sm:flex-row gap-3">
         <Link href="/" className="flex-1">
           <Button variant="ghost" size="lg" fullWidth>
-            Continue Shopping
+            {t('confirmation.continue_shopping')}
           </Button>
         </Link>
         <Link href={`/account/orders`} className="flex-1">
           <Button variant="primary" size="lg" fullWidth>
-            View My Orders
+            {t('confirmation.view_orders')}
           </Button>
         </Link>
       </div>

@@ -21,22 +21,24 @@ export async function generateMetadata({
 }: {
   params: Promise<{ locale: string; category: string; product: string }>;
 }): Promise<Metadata> {
-  const { product: slug } = await params;
+  const { locale, product: slug } = await params;
   const product = await getProduct(slug);
   if (!product) return {};
 
+  const localizedName = localizedField(product, 'name', product.name, locale);
+  const localizedDesc = localizedField(product, 'description', product.description ?? '', locale);
   const description =
-    product.description ??
-    `Order ${product.name} — handcrafted with love in the UAE by Melting Moments Cakes.`;
+    localizedDesc ||
+    `Order ${localizedName} — handcrafted with love in the UAE by Melting Moments Cakes.`;
   const ogImages = product.image_urls?.length
-    ? product.image_urls.slice(0, 1).map(url => ({ url, alt: product.name }))
+    ? product.image_urls.slice(0, 1).map(url => ({ url, alt: localizedName }))
     : [{ url: '/images/logos/color_logo.jpeg', alt: 'Melting Moments Cakes' }];
 
   return {
-    title: product.name,
+    title: localizedName,
     description,
     openGraph: {
-      title: `${product.name} | Melting Moments Cakes`,
+      title: `${localizedName} | Melting Moments Cakes`,
       description,
       images: ogImages,
     },

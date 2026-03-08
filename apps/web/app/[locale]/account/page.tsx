@@ -2,40 +2,42 @@
 
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth-context';
-
-const QUICK_LINKS = [
-  {
-    href: '/account/orders',
-    icon: 'receipt_long',
-    label: 'My Orders',
-    description: 'Track and view your past orders',
-  },
-  {
-    href: '/account/addresses',
-    icon: 'location_on',
-    label: 'Addresses',
-    description: 'Manage your saved delivery addresses',
-  },
-  {
-    href: '/account/settings',
-    icon: 'settings',
-    label: 'Settings',
-    description: 'Edit your profile and password',
-  },
-];
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
 
 export default function AccountPage() {
   const { user } = useAuth();
+  const { t } = useTranslation();
   if (!user) return null;
+
+  const QUICK_LINKS = [
+    {
+      href: '/account/orders',
+      icon: 'receipt_long',
+      label: t('account.my_orders'),
+      description: t('account.my_orders_desc'),
+    },
+    {
+      href: '/account/addresses',
+      icon: 'location_on',
+      label: t('account.addresses'),
+      description: t('account.addresses_desc'),
+    },
+    {
+      href: '/account/settings',
+      icon: 'settings',
+      label: t('account.settings'),
+      description: t('account.settings_desc'),
+    },
+  ];
 
   return (
     <div>
       <div className="mb-8">
         <h1 className="font-display text-3xl text-primary mb-1">
-          Hello, {user.first_name}
+          {t('account.hello', { name: user.first_name })}
         </h1>
         <p className="text-sm text-gray-500 font-body">
-          Welcome to your Melting Moments account.
+          {t('account.welcome')}
         </p>
       </div>
 
@@ -60,7 +62,10 @@ export default function AccountPage() {
       <div className="mt-8 p-4 bg-primary/5 border border-primary/20">
         <p className="text-xs text-gray-600 font-body">
           <span className="font-medium text-primary">{user.email}</span>
-          {' · '}Member since {new Date(user.created_at).toLocaleDateString('en-AE', { month: 'long', year: 'numeric' })}
+          {' · '}
+          {t('account.member_since', {
+            date: new Date(user.created_at).toLocaleDateString('en-AE', { month: 'long', year: 'numeric' }),
+          })}
         </p>
       </div>
     </div>

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { ApiError, trackApi } from '@/lib/api';
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
 
 const STATUS_VARIANT: Record<string, string> = {
   created: 'bg-gray-100 text-gray-700',
@@ -21,6 +22,7 @@ interface TrackResult {
 }
 
 export default function TrackPage() {
+  const { t } = useTranslation();
   const [form, setForm] = useState({ order_number: '', email: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -29,7 +31,7 @@ export default function TrackPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.order_number || !form.email) {
-      setError('Please enter your order number and email.');
+      setError(t('track.validation_error'));
       return;
     }
     setLoading(true);
@@ -39,7 +41,7 @@ export default function TrackPage() {
       const data = await trackApi.lookup(form.order_number.trim(), form.email.trim());
       setResult(data);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.');
+      setError(err instanceof ApiError ? err.message : t('track.generic_error'));
     } finally {
       setLoading(false);
     }
@@ -50,10 +52,10 @@ export default function TrackPage() {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <h1 className="font-display text-3xl text-primary uppercase tracking-widest mb-2">
-            Track Your Order
+            {t('track.title')}
           </h1>
           <p className="text-sm text-gray-500 font-body">
-            Enter your order number and email to check the status.
+            {t('track.subtitle')}
           </p>
         </div>
 
@@ -64,35 +66,35 @@ export default function TrackPage() {
             </div>
           )}
           <Input
-            label="Order Number"
+            label={t('track.order_number')}
             value={form.order_number}
             onChange={e => setForm(f => ({ ...f, order_number: e.target.value }))}
             placeholder="e.g. MM-20260306-0001"
             autoComplete="off"
           />
           <Input
-            label="Email Address"
+            label={t('track.email_address')}
             type="email"
             value={form.email}
             onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-            placeholder="you@example.com"
+            placeholder={t('common.email_placeholder')}
             autoComplete="email"
           />
           <Button type="submit" fullWidth loading={loading} size="lg">
-            Track Order
+            {t('track.track_button')}
           </Button>
         </form>
 
         {result && (
           <div className="mt-8 bg-white border border-gray-200 p-6 space-y-4">
             <div className="text-center">
-              <p className="text-xs font-body uppercase tracking-widest text-gray-400 mb-1">Order</p>
+              <p className="text-xs font-body uppercase tracking-widest text-gray-400 mb-1">{t('track.order_label')}</p>
               <p className="font-display text-xl text-primary">{result.order_number}</p>
             </div>
             <div className="h-px bg-gray-100" />
             <dl className="space-y-3">
               <div className="flex justify-between items-center">
-                <dt className="text-xs font-body uppercase tracking-widest text-gray-400">Status</dt>
+                <dt className="text-xs font-body uppercase tracking-widest text-gray-400">{t('track.status')}</dt>
                 <dd>
                   <span className={`text-xs font-body font-medium px-2 py-1 rounded-sm ${STATUS_VARIANT[result.status] ?? 'bg-gray-100 text-gray-700'}`}>
                     {result.status.charAt(0).toUpperCase() + result.status.slice(1)}
@@ -100,15 +102,15 @@ export default function TrackPage() {
                 </dd>
               </div>
               <div className="flex justify-between items-center">
-                <dt className="text-xs font-body uppercase tracking-widest text-gray-400">Delivery</dt>
+                <dt className="text-xs font-body uppercase tracking-widest text-gray-400">{t('track.delivery')}</dt>
                 <dd className="text-sm font-body text-gray-700 capitalize">{result.delivery_method}</dd>
               </div>
               <div className="flex justify-between items-center">
-                <dt className="text-xs font-body uppercase tracking-widest text-gray-400">Items</dt>
+                <dt className="text-xs font-body uppercase tracking-widest text-gray-400">{t('track.items')}</dt>
                 <dd className="text-sm font-body text-gray-700">{result.items_count}</dd>
               </div>
               <div className="flex justify-between items-center">
-                <dt className="text-xs font-body uppercase tracking-widest text-gray-400">Placed</dt>
+                <dt className="text-xs font-body uppercase tracking-widest text-gray-400">{t('track.placed')}</dt>
                 <dd className="text-sm font-body text-gray-700">{result.created_at}</dd>
               </div>
             </dl>

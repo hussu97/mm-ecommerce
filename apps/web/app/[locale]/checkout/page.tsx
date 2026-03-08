@@ -86,9 +86,9 @@ const INITIAL_FORM: CheckoutForm = {
 
 // ─── Step indicator ───────────────────────────────────────────────────────────
 
-const STEPS = ['Information', 'Delivery', 'Payment'];
-
 function StepIndicator({ step }: { step: number }) {
+  const { t } = useTranslation();
+  const STEPS = [t('checkout.step_information'), t('checkout.step_delivery'), t('checkout.step_payment')];
   return (
     <nav className="flex items-center gap-2 mb-8 font-body text-xs uppercase tracking-widest">
       {STEPS.map((label, i) => {
@@ -126,6 +126,7 @@ function OrderSummarySidebar({
   form: CheckoutForm;
   step: number;
 }) {
+  const { t } = useTranslation();
   const subtotal = cart?.subtotal ?? 0;
   const deliveryFee = step >= 2
     ? calcDeliveryFee(form.deliveryMethod, form.emirate, subtotal)
@@ -135,7 +136,7 @@ function OrderSummarySidebar({
 
   return (
     <div className="bg-gray-50 border border-gray-100 rounded-sm p-5 space-y-4 sticky top-24">
-      <h2 className="font-display text-base text-primary uppercase tracking-widest">Order Summary</h2>
+      <h2 className="font-display text-base text-primary uppercase tracking-widest">{t('checkout.order_summary')}</h2>
 
       {/* Items */}
       {cart && cart.items.length > 0 ? (
@@ -167,7 +168,7 @@ function OrderSummarySidebar({
           ))}
         </ul>
       ) : (
-        <p className="font-body text-xs text-gray-400">No items</p>
+        <p className="font-body text-xs text-gray-400">{t('checkout.no_items')}</p>
       )}
 
       <div className="h-px bg-gray-200" />
@@ -175,21 +176,21 @@ function OrderSummarySidebar({
       {/* Totals */}
       <div className="space-y-1.5 font-body text-xs">
         <div className="flex justify-between">
-          <span className="text-gray-500">Subtotal</span>
+          <span className="text-gray-500">{t('common.subtotal')}</span>
           <span>{subtotal.toFixed(2)} AED</span>
         </div>
         {discount > 0 && (
           <div className="flex justify-between text-green-700">
-            <span>Discount{form.promoCode ? ` (${form.promoCode})` : ''}</span>
+            <span>{t('common.discount')}{form.promoCode ? ` (${form.promoCode})` : ''}</span>
             <span>-{discount.toFixed(2)} AED</span>
           </div>
         )}
         <div className="flex justify-between">
-          <span className="text-gray-500">Delivery</span>
+          <span className="text-gray-500">{t('common.delivery')}</span>
           {deliveryFee === null ? (
-            <span className="text-gray-400 italic">Next step</span>
+            <span className="text-gray-400 italic">{t('checkout.next_step')}</span>
           ) : deliveryFee === 0 ? (
-            <span className="text-green-600">Free</span>
+            <span className="text-green-600">{t('common.free')}</span>
           ) : (
             <span>{deliveryFee.toFixed(2)} AED</span>
           )}
@@ -199,7 +200,7 @@ function OrderSummarySidebar({
       <div className="h-px bg-gray-200" />
 
       <div className="flex justify-between font-body font-semibold text-sm">
-        <span>Total</span>
+        <span>{t('common.total')}</span>
         <span className="text-primary">{Math.max(0, total).toFixed(2)} AED</span>
       </div>
     </div>
@@ -217,24 +218,6 @@ function isValidEmail(email: string): boolean {
   return true;
 }
 
-function validateStep1(form: CheckoutForm): Record<string, string> {
-  const errors: Record<string, string> = {};
-  if (!isValidEmail(form.email))
-    errors.email = 'Valid email address is required';
-  if (!form.firstName.trim()) errors.firstName = 'First name is required';
-  if (!form.lastName.trim()) errors.lastName = 'Last name is required';
-  if (!form.phone.trim() || !/^\+?[0-9\s()\-+]{7,15}$/.test(form.phone.trim())) errors.phone = 'Valid phone number is required';
-  return errors;
-}
-
-function validateStep1Address(form: CheckoutForm): Record<string, string> {
-  const errors: Record<string, string> = {};
-  if (!form.addressLine1.trim()) errors.addressLine1 = 'Address is required';
-  if (!form.city.trim()) errors.city = 'City is required';
-  if (!form.emirate) errors.emirate = 'Emirate is required';
-  return errors;
-}
-
 // ─── Step 1: Information ──────────────────────────────────────────────────────
 
 function StepInformation({
@@ -249,9 +232,25 @@ function StepInformation({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { t } = useTranslation();
 
+  function validateStep1(f: CheckoutForm): Record<string, string> {
+    const errs: Record<string, string> = {};
+    if (!isValidEmail(f.email)) errs.email = t('checkout.valid_email_required');
+    if (!f.firstName.trim()) errs.firstName = t('checkout.first_name_required');
+    if (!f.lastName.trim()) errs.lastName = t('checkout.last_name_required');
+    if (!f.phone.trim() || !/^\+?[0-9\s()\-+]{7,15}$/.test(f.phone.trim())) errs.phone = t('checkout.valid_phone_required');
+    return errs;
+  }
+
+  function validateStep1Address(f: CheckoutForm): Record<string, string> {
+    const errs: Record<string, string> = {};
+    if (!f.addressLine1.trim()) errs.addressLine1 = t('checkout.address_required');
+    if (!f.city.trim()) errs.city = t('checkout.city_required');
+    if (!f.emirate) errs.emirate = t('checkout.emirate_required');
+    return errs;
+  }
+
   const handleNext = () => {
     const contactErrors = validateStep1(form);
-    // Only validate address if no saved address selected
     const needsAddress = !form.selectedAddressId;
     const addressErrors = needsAddress ? validateStep1Address(form) : {};
     const all = { ...contactErrors, ...addressErrors };
@@ -268,14 +267,14 @@ function StepInformation({
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="font-display text-xl text-primary uppercase tracking-widest mb-1">Contact Information</h2>
+        <h2 className="font-display text-xl text-primary uppercase tracking-widest mb-1">{t('checkout.contact_information')}</h2>
         <div className="h-px bg-secondary/30 mb-5" />
         <div className="space-y-4">
           <div>
             <Input
-              label="Email"
+              label={t('common.email')}
               type="email"
-              placeholder="you@example.com"
+              placeholder={t('common.email_placeholder')}
               value={form.email}
               onChange={field('email')}
               error={errors.email}
@@ -284,24 +283,24 @@ function StepInformation({
           </div>
           <div className="grid grid-cols-2 gap-4">
             <Input
-              label="First Name"
-              placeholder="Fatema"
+              label={t('common.first_name')}
+              placeholder={t('checkout.first_name_placeholder')}
               value={form.firstName}
               onChange={field('firstName')}
               error={errors.firstName}
             />
             <Input
-              label="Last Name"
-              placeholder="Abbasi"
+              label={t('common.last_name')}
+              placeholder={t('checkout.last_name_placeholder')}
               value={form.lastName}
               onChange={field('lastName')}
               error={errors.lastName}
             />
           </div>
           <Input
-            label="Phone"
+            label={t('common.phone')}
             type="tel"
-            placeholder="+971 50 000 0000"
+            placeholder={t('common.phone_placeholder')}
             value={form.phone}
             onChange={field('phone')}
             error={errors.phone}
@@ -311,14 +310,14 @@ function StepInformation({
 
       {/* Delivery address */}
       <div>
-        <h2 className="font-display text-xl text-primary uppercase tracking-widest mb-1">Delivery Address</h2>
-        <p className="font-body text-xs text-gray-400 mb-4">Required for home delivery. Skip if you plan to pick up.</p>
+        <h2 className="font-display text-xl text-primary uppercase tracking-widest mb-1">{t('checkout.delivery_address')}</h2>
+        <p className="font-body text-xs text-gray-400 mb-4">{t('checkout.address_hint')}</p>
         <div className="h-px bg-secondary/30 mb-5" />
 
         {/* Saved addresses for authenticated users */}
         {loadingAddresses ? (
           <div className="flex items-center gap-2 text-gray-400 mb-4">
-            <Spinner size="sm" /> <span className="font-body text-xs">Loading saved addresses…</span>
+            <Spinner size="sm" /> <span className="font-body text-xs">{t('checkout.loading_addresses')}</span>
           </div>
         ) : savedAddresses.length > 0 ? (
           <div className="space-y-2 mb-5">
@@ -363,7 +362,7 @@ function StepInformation({
                 onChange={() => onChange({ selectedAddressId: '' })}
                 className="mt-0.5 accent-primary"
               />
-              <span className="font-body text-xs text-gray-600">+ Enter a new address</span>
+              <span className="font-body text-xs text-gray-600">{t('checkout.new_address_option')}</span>
             </label>
           </div>
         ) : null}
@@ -372,28 +371,28 @@ function StepInformation({
         {form.selectedAddressId === '' && (
           <div className="space-y-4">
             <Input
-              label="Address Line 1"
-              placeholder="Building, Street"
+              label={t('common.address_line_1')}
+              placeholder={t('checkout.address_placeholder')}
               value={form.addressLine1}
               onChange={field('addressLine1')}
               error={errors.addressLine1}
             />
             <Input
-              label="Address Line 2 (optional)"
-              placeholder="Apartment, floor"
+              label={t('common.address_line_2_optional')}
+              placeholder={t('checkout.address2_placeholder')}
               value={form.addressLine2}
               onChange={field('addressLine2')}
             />
             <div className="grid grid-cols-2 gap-4">
               <Input
-                label="City"
-                placeholder="Dubai"
+                label={t('common.city')}
+                placeholder={t('checkout.city_placeholder')}
                 value={form.city}
                 onChange={field('city')}
                 error={errors.city}
               />
               <Select
-                label="Emirate"
+                label={t('common.emirate')}
                 options={EMIRATE_OPTIONS}
                 value={form.emirate}
                 onChange={field('emirate')}
@@ -405,7 +404,7 @@ function StepInformation({
       </div>
 
       <Button variant="primary" size="lg" fullWidth onClick={handleNext}>
-        Continue to Delivery →
+        {t('checkout.continue_to_delivery')} →
       </Button>
     </div>
   );
@@ -422,13 +421,14 @@ function StepDelivery({
   onNext: () => void;
   subtotal: number;
 }) {
+  const { t } = useTranslation();
   const deliveryFee = calcDeliveryFee('delivery', form.emirate, subtotal);
   const isFree = subtotal >= FREE_THRESHOLD;
 
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="font-display text-xl text-primary uppercase tracking-widest mb-1">Delivery Method</h2>
+        <h2 className="font-display text-xl text-primary uppercase tracking-widest mb-1">{t('checkout.delivery_method')}</h2>
         <div className="h-px bg-secondary/30 mb-5" />
 
         <div className="space-y-3">
@@ -452,11 +452,11 @@ function StepDelivery({
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="material-icons text-xl text-primary">local_shipping</span>
-                  <p className="font-body font-medium text-sm text-gray-800">Home Delivery</p>
+                  <p className="font-body font-medium text-sm text-gray-800">{t('checkout.home_delivery')}</p>
                 </div>
                 <p className="font-body font-semibold text-sm">
                   {isFree ? (
-                    <span className="text-green-600">Free</span>
+                    <span className="text-green-600">{t('common.free')}</span>
                   ) : (
                     <span>{deliveryFee} AED</span>
                   )}
@@ -464,12 +464,12 @@ function StepDelivery({
               </div>
               <p className="font-body text-xs text-gray-500 mt-1 ml-7">
                 {isFree
-                  ? 'Free delivery — your order qualifies!'
-                  : `Delivered to ${form.emirate || 'your address'} · 2–3 business days`}
+                  ? t('checkout.free_delivery_qualified')
+                  : t('checkout.delivery_time', { emirate: form.emirate || 'your address' })}
               </p>
               {!isFree && subtotal > 0 && (
                 <p className="font-body text-xs text-secondary mt-0.5 ml-7">
-                  Add {(FREE_THRESHOLD - subtotal).toFixed(2)} AED more for free delivery
+                  {t('checkout.free_delivery_upsell', { amount: (FREE_THRESHOLD - subtotal).toFixed(2) })}
                 </p>
               )}
             </div>
@@ -495,12 +495,12 @@ function StepDelivery({
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="material-icons text-xl text-primary">storefront</span>
-                  <p className="font-body font-medium text-sm text-gray-800">Store Pickup</p>
+                  <p className="font-body font-medium text-sm text-gray-800">{t('checkout.store_pickup')}</p>
                 </div>
-                <p className="font-body font-semibold text-sm text-green-600">Free</p>
+                <p className="font-body font-semibold text-sm text-green-600">{t('common.free')}</p>
               </div>
               <p className="font-body text-xs text-gray-500 mt-1 ml-7">
-                Pickup from our location · We&apos;ll notify you when your order is ready
+                {t('checkout.pickup_description')}
               </p>
             </div>
           </label>
@@ -510,17 +510,17 @@ function StepDelivery({
         <div className="mt-4 p-3 bg-secondary/10 rounded-sm flex gap-2">
           <span className="material-icons text-base text-secondary mt-0.5">info</span>
           <p className="font-body text-xs text-gray-600">
-            Orders placed before 12 PM are prepared the next day. We&apos;ll send you a WhatsApp confirmation once your order is packed.
+            {t('checkout.delivery_time_note')}
           </p>
         </div>
       </div>
 
       <div className="flex gap-3">
         <Button variant="ghost" size="lg" onClick={onBack} className="flex-1">
-          ← Back
+          ← {t('common.back')}
         </Button>
         <Button variant="primary" size="lg" onClick={onNext} className="flex-1">
-          Continue to Payment →
+          {t('checkout.continue_to_payment')} →
         </Button>
       </div>
     </div>
@@ -539,6 +539,7 @@ function StepPayment({
   onSubmit: () => void;
   isSubmitting: boolean;
 }) {
+  const { t } = useTranslation();
   const { addToast } = useToast();
   const [promoLoading, setPromoLoading] = useState(false);
   const [promoError, setPromoError] = useState<string | null>(null);
@@ -556,17 +557,17 @@ function StepPayment({
       const result = await promoApi.validate(code, subtotal);
       if (result.valid) {
         onChange({ promoCode: code, promoDiscount: Number(result.discount_amount), promoMessage: result.message ?? '' });
-        addToast(`Promo "${code}" applied!`, 'success');
+        addToast(t('checkout.promo_applied', { code }), 'success');
       } else {
-        setPromoError(result.message ?? 'Invalid promo code');
+        setPromoError(result.message ?? t('checkout.invalid_promo'));
         onChange({ promoDiscount: 0, promoMessage: '' });
       }
     } catch {
-      setPromoError('Could not validate promo code. Please try again.');
+      setPromoError(t('checkout.promo_error'));
     } finally {
       setPromoLoading(false);
     }
-  }, [form.promoCode, subtotal, onChange, addToast]);
+  }, [form.promoCode, subtotal, onChange, addToast, t]);
 
   const handleRemovePromo = () => {
     onChange({ promoCode: '', promoDiscount: 0, promoMessage: '' });
@@ -576,8 +577,8 @@ function StepPayment({
   const PAYMENT_METHODS = [
     {
       id: 'stripe' as const,
-      label: 'Credit / Debit Card',
-      sublabel: 'Visa, Mastercard · Apple Pay',
+      label: t('checkout.credit_debit_card'),
+      sublabel: t('checkout.payment_sublabel'),
       icon: 'credit_card',
       enabled: true,
     },
@@ -587,32 +588,32 @@ function StepPayment({
     <div className="space-y-6">
       {/* Order review */}
       <div>
-        <h2 className="font-display text-xl text-primary uppercase tracking-widest mb-1">Review & Pay</h2>
+        <h2 className="font-display text-xl text-primary uppercase tracking-widest mb-1">{t('checkout.review_and_pay')}</h2>
         <div className="h-px bg-secondary/30 mb-5" />
 
         {/* Totals review */}
         <div className="bg-gray-50 rounded-sm p-4 space-y-2 font-body text-sm mb-5">
           <div className="flex justify-between">
-            <span className="text-gray-500">Subtotal</span>
+            <span className="text-gray-500">{t('common.subtotal')}</span>
             <span>{subtotal.toFixed(2)} AED</span>
           </div>
           {form.promoDiscount > 0 && (
             <div className="flex justify-between text-green-700">
-              <span>Discount ({form.promoCode})</span>
+              <span>{t('common.discount')} ({form.promoCode})</span>
               <span>-{form.promoDiscount.toFixed(2)} AED</span>
             </div>
           )}
           <div className="flex justify-between">
             <span className="text-gray-500">
-              {form.deliveryMethod === 'pickup' ? 'Pickup' : 'Delivery'}
+              {form.deliveryMethod === 'pickup' ? t('checkout.store_pickup') : t('common.delivery')}
             </span>
             <span className={deliveryFee === 0 ? 'text-green-600' : ''}>
-              {deliveryFee === 0 ? 'Free' : `${deliveryFee.toFixed(2)} AED`}
+              {deliveryFee === 0 ? t('common.free') : `${deliveryFee.toFixed(2)} AED`}
             </span>
           </div>
           <div className="h-px bg-gray-200" />
           <div className="flex justify-between font-semibold text-base">
-            <span>Total</span>
+            <span>{t('common.total')}</span>
             <span className="text-primary">{total.toFixed(2)} AED</span>
           </div>
         </div>
@@ -624,7 +625,7 @@ function StepPayment({
               <p className="font-body text-xs font-medium text-green-800">{form.promoCode}</p>
               {form.promoMessage && <p className="font-body text-xs text-green-600">{form.promoMessage}</p>}
             </div>
-            <button onClick={handleRemovePromo} className="text-green-400 hover:text-green-700 transition-colors" aria-label="Remove promo">
+            <button onClick={handleRemovePromo} className="text-green-400 hover:text-green-700 transition-colors" aria-label={t('checkout.remove_promo')}>
               <span className="material-icons text-base">close</span>
             </button>
           </div>
@@ -632,7 +633,7 @@ function StepPayment({
           <div className="flex gap-2 items-start mb-4">
             <div className="flex-1 min-w-0">
               <Input
-                placeholder="Promo code"
+                placeholder={t('checkout.promo_placeholder')}
                 value={form.promoCode}
                 onChange={(e) => { onChange({ promoCode: e.target.value.toUpperCase() }); setPromoError(null); }}
                 onKeyDown={(e) => e.key === 'Enter' && handleApplyPromo()}
@@ -640,7 +641,7 @@ function StepPayment({
               />
             </div>
             <Button variant="ghost" size="sm" onClick={handleApplyPromo} loading={promoLoading} disabled={!form.promoCode.trim()} className="shrink-0">
-              Apply
+              {t('checkout.apply')}
             </Button>
           </div>
         )}
@@ -648,12 +649,12 @@ function StepPayment({
         {/* Notes */}
         <div className="mb-1">
           <label className="block text-xs font-medium uppercase tracking-wider text-gray-600 mb-1.5">
-            Order notes (optional)
+            {t('checkout.order_notes_label')}
           </label>
           <textarea
             value={form.notes}
             onChange={(e) => onChange({ notes: e.target.value })}
-            placeholder="Any special requests or allergies?"
+            placeholder={t('checkout.notes_placeholder')}
             rows={2}
             maxLength={500}
             className="w-full px-3.5 py-2.5 text-sm font-body bg-white border border-gray-300 rounded-sm outline-none resize-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
@@ -663,7 +664,7 @@ function StepPayment({
 
       {/* Payment method */}
       <div>
-        <h2 className="font-display text-xl text-primary uppercase tracking-widest mb-1">Payment Method</h2>
+        <h2 className="font-display text-xl text-primary uppercase tracking-widest mb-1">{t('checkout.payment_method')}</h2>
         <div className="h-px bg-secondary/30 mb-5" />
 
         <div className="space-y-3">
@@ -693,7 +694,7 @@ function StepPayment({
                   <p className="font-body font-medium text-sm text-gray-800">{label}</p>
                   {!enabled && (
                     <span className="font-body text-[10px] uppercase tracking-wider bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded-sm">
-                      Coming soon
+                      {t('checkout.coming_soon')}
                     </span>
                   )}
                 </div>
@@ -706,16 +707,16 @@ function StepPayment({
         {/* Security note */}
         <div className="mt-4 flex gap-2 items-center text-gray-400">
           <span className="material-icons text-base">lock</span>
-          <p className="font-body text-xs">Payments are processed securely via Stripe. We never store your card details.</p>
+          <p className="font-body text-xs">{t('checkout.security_note')}</p>
         </div>
       </div>
 
       <div className="flex gap-3">
         <Button variant="ghost" size="lg" onClick={onBack} className="flex-1" disabled={isSubmitting}>
-          ← Back
+          ← {t('common.back')}
         </Button>
         <Button variant="primary" size="lg" onClick={onSubmit} loading={isSubmitting} className="flex-1">
-          Pay Now — {total.toFixed(2)} AED
+          {t('checkout.pay_now', { total: total.toFixed(2) })}
         </Button>
       </div>
     </div>
@@ -728,6 +729,7 @@ function CheckoutContent() {
   const searchParams = useSearchParams();
   const { cart, refreshCart } = useCart();
   const { addToast } = useToast();
+  const { t } = useTranslation();
 
   const [step, setStep] = useState(1);
   const [form, setForm] = useState<CheckoutForm>(INITIAL_FORM);
@@ -747,7 +749,7 @@ function CheckoutContent() {
     const returnOrder = searchParams.get('order_number');
     if (returnStep === 'payment' && returnOrder) {
       setStep(3);
-      addToast('Payment was cancelled. Please try again.', 'warning');
+      addToast(t('checkout.payment_cancelled'), 'warning');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -798,7 +800,7 @@ function CheckoutContent() {
 
   const handleSubmit = useCallback(async () => {
     if (!cart || cart.items.length === 0) {
-      addToast('Your cart is empty', 'error');
+      addToast(t('checkout.cart_empty'), 'error');
       return;
     }
 
@@ -850,13 +852,13 @@ function CheckoutContent() {
       addToast(message, 'error');
       setSubmitting(false);
     }
-  }, [form, cart, addToast, refreshCart]);
+  }, [form, cart, addToast, refreshCart, t]);
 
   if (!cart && !submitting) {
     return (
       <div className="max-w-7xl mx-auto px-4 py-20 flex flex-col items-center gap-4">
         <Spinner size="lg" />
-        <p className="font-body text-sm text-gray-400">Loading your cart…</p>
+        <p className="font-body text-sm text-gray-400">{t('checkout.loading_cart')}</p>
       </div>
     );
   }
@@ -865,19 +867,19 @@ function CheckoutContent() {
     return (
       <div className="max-w-7xl mx-auto px-4 py-16 flex flex-col items-center text-center gap-4">
         <span className="material-icons text-5xl text-secondary">shopping_bag</span>
-        <h1 className="font-display text-2xl text-primary uppercase tracking-widest">Your cart is empty</h1>
-        <Link href="/"><Button variant="primary">Continue Shopping</Button></Link>
+        <h1 className="font-display text-2xl text-primary uppercase tracking-widest">{t('checkout.cart_empty')}</h1>
+        <Link href="/"><Button variant="primary">{t('cart.continue_shopping')}</Button></Link>
       </div>
     );
   }
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-10">
-      <Breadcrumb items={[{ label: 'Home', href: '/' }, { label: 'Cart', href: '/cart' }, { label: 'Checkout' }]} />
+      <Breadcrumb items={[{ label: t('breadcrumb.home'), href: '/' }, { label: t('breadcrumb.cart'), href: '/cart' }, { label: t('breadcrumb.checkout') }]} />
 
       {/* Heading */}
       <header className="mb-2">
-        <h1 className="font-display text-3xl sm:text-4xl text-primary uppercase tracking-widest">Checkout</h1>
+        <h1 className="font-display text-3xl sm:text-4xl text-primary uppercase tracking-widest">{t('breadcrumb.checkout')}</h1>
       </header>
 
       <StepIndicator step={step} />
