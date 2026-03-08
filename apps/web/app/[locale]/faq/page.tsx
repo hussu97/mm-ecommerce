@@ -15,6 +15,8 @@ interface FaqContent {
   seo?: { title?: string; description?: string };
 }
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
+
 export async function generateMetadata({
   params,
 }: {
@@ -27,6 +29,10 @@ export async function generateMetadata({
     return {
       title: c.seo?.title ?? 'FAQ',
       description: c.seo?.description ?? '',
+      alternates: {
+        canonical: `${SITE_URL}/${locale}/faq`,
+        languages: { en: `${SITE_URL}/en/faq`, ar: `${SITE_URL}/ar/faq` },
+      },
       openGraph: {
         title: `${c.seo?.title ?? 'FAQ'} | Melting Moments Cakes`,
         description: c.seo?.description ?? '',

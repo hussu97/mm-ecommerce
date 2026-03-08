@@ -15,6 +15,8 @@ interface ContactContent {
   seo?: { title?: string; description?: string };
 }
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
+
 export async function generateMetadata({
   params,
 }: {
@@ -27,6 +29,10 @@ export async function generateMetadata({
     return {
       title: c.seo?.title ?? 'Contact',
       description: c.seo?.description ?? '',
+      alternates: {
+        canonical: `${SITE_URL}/${locale}/contact`,
+        languages: { en: `${SITE_URL}/en/contact`, ar: `${SITE_URL}/ar/contact` },
+      },
       openGraph: {
         title: `${c.seo?.title ?? 'Contact Us'} | Melting Moments Cakes`,
         description: c.seo?.description ?? '',
@@ -94,9 +100,9 @@ export default async function ContactPage({
 
   const jsonLd = {
     '@context': 'https://schema.org',
-    '@type': 'LocalBusiness',
+    '@type': 'Bakery',
     name: 'Melting Moments Cakes',
-    url: process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com',
+    url: SITE_URL,
     telephone: info.phone,
     email: info.email,
     address: {
@@ -104,7 +110,18 @@ export default async function ContactPage({
       addressCountry: 'AE',
       addressRegion: 'Sharjah',
     },
-    openingHours: ['Mo Tu We Th Fr Sa 08:00-23:30', 'Su 15:00-23:30'],
+    geo: {
+      '@type': 'GeoCoordinates',
+      latitude: 25.3304,
+      longitude: 55.3710,
+    },
+    priceRange: 'AED 15–200',
+    servesCuisine: ['Brownies', 'Cookies', 'Desserts', 'Artisanal Baked Goods'],
+    paymentAccepted: 'Cash, Credit Card',
+    openingHoursSpecification: [
+      { '@type': 'OpeningHoursSpecification', dayOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'], opens: '08:00', closes: '23:30' },
+      { '@type': 'OpeningHoursSpecification', dayOfWeek: 'Sunday', opens: '15:00', closes: '23:30' },
+    ],
     sameAs: [
       'https://www.instagram.com/meltingmomentscakes',
       info.whatsapp,

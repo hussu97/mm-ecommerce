@@ -40,7 +40,12 @@ export const metadata: Metadata = {
   },
   description:
     "Handcrafted brownies, cookies, cookie melts, and desserts delivered across the UAE. Made with 100% love by Fatema Abbasi.",
-  keywords: ["brownies", "cookies", "bakery", "UAE", "Dubai", "Sharjah", "artisanal"],
+  keywords: [
+    "brownies", "cookies", "bakery", "UAE", "Dubai", "Sharjah", "artisanal",
+    "brownies Dubai", "brownies Sharjah", "bakery delivery UAE", "custom cakes UAE",
+    "dessert delivery Dubai", "best brownies Dubai", "homemade cookies UAE",
+    "Melting Moments Cakes", "Fatema Abbasi baker", "cookie melts UAE",
+  ],
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://meltingmomentscakes.com"),
   openGraph: {
     siteName: "Melting Moments Cakes",

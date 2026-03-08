@@ -18,6 +18,8 @@ interface AboutContent {
   seo?: { title?: string; description?: string };
 }
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
+
 export async function generateMetadata({
   params,
 }: {
@@ -30,6 +32,10 @@ export async function generateMetadata({
     return {
       title: c.seo?.title ?? 'About Me',
       description: c.seo?.description ?? '',
+      alternates: {
+        canonical: `${SITE_URL}/${locale}/about`,
+        languages: { en: `${SITE_URL}/en/about`, ar: `${SITE_URL}/ar/about` },
+      },
       openGraph: {
         title: `${c.seo?.title ?? 'About Me'} | Melting Moments Cakes`,
         description: c.seo?.description ?? '',

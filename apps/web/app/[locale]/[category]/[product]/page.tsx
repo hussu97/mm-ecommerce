@@ -21,7 +21,7 @@ export async function generateMetadata({
 }: {
   params: Promise<{ locale: string; category: string; product: string }>;
 }): Promise<Metadata> {
-  const { locale, product: slug } = await params;
+  const { locale, category: categorySlug, product: slug } = await params;
   const product = await getProduct(slug);
   if (!product) return {};
 
@@ -33,10 +33,15 @@ export async function generateMetadata({
   const ogImages = product.image_urls?.length
     ? product.image_urls.slice(0, 1).map(url => ({ url, alt: localizedName }))
     : [{ url: '/images/logos/color_logo.jpeg', alt: 'Melting Moments Cakes' }];
+  const path = `/${categorySlug}/${slug}`;
 
   return {
     title: localizedName,
     description,
+    alternates: {
+      canonical: `${SITE_URL}/${locale}${path}`,
+      languages: { en: `${SITE_URL}/en${path}`, ar: `${SITE_URL}/ar${path}` },
+    },
     openGraph: {
       title: `${localizedName} | Melting Moments Cakes`,
       description,
@@ -70,19 +75,49 @@ export default async function ProductDetailPage({
   const productDescription = localizedField(product, 'description', product.description ?? '', locale);
   const galleryImages = product.image_urls ?? [];
 
-  const jsonLd = {
-    '@context': 'https://schema.org',
+  const productSchema: Record<string, unknown> = {
     '@type': 'Product',
+    '@id': `${SITE_URL}/products/${productSlug}`,
     name: productName,
     description: product.description ?? undefined,
     image: galleryImages,
     url: `${SITE_URL}/${locale}/${categorySlug}/${productSlug}`,
+    brand: { '@type': 'Brand', name: 'Melting Moments Cakes' },
+    category: localizedCategoryName,
     offers: {
       '@type': 'Offer',
       price: Number(product.base_price).toFixed(2),
       priceCurrency: 'AED',
-      availability: 'https://schema.org/InStock',
+      availability: product.is_active
+        ? 'https://schema.org/InStock'
+        : 'https://schema.org/OutOfStock',
+      seller: { '@type': 'Organization', name: 'Melting Moments Cakes' },
+      url: `${SITE_URL}/${locale}/${categorySlug}/${productSlug}`,
+      itemCondition: 'https://schema.org/NewCondition',
+      priceValidUntil: '2027-03-09',
     },
+  };
+  if (product.sku) productSchema.sku = product.sku;
+  if (product.calories) {
+    productSchema.nutrition = {
+      '@type': 'NutritionInformation',
+      calories: `${product.calories} cal`,
+    };
+  }
+
+  const jsonLd = {
+    '@context': 'https://schema.org',
+    '@graph': [
+      productSchema,
+      {
+        '@type': 'BreadcrumbList',
+        itemListElement: [
+          { '@type': 'ListItem', position: 1, name: t('breadcrumb.home'), item: `${SITE_URL}/${locale}` },
+          { '@type': 'ListItem', position: 2, name: localizedCategoryName, item: `${SITE_URL}/${locale}/${categorySlug}` },
+          { '@type': 'ListItem', position: 3, name: productName },
+        ],
+      },
+    ],
   };
 
   return (

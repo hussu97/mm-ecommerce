@@ -61,6 +61,10 @@ export async function generateMetadata({
   return {
     title: localizedName,
     description,
+    alternates: {
+      canonical: `${SITE_URL}/${locale}/${slug}`,
+      languages: { en: `${SITE_URL}/en/${slug}`, ar: `${SITE_URL}/ar/${slug}` },
+    },
     openGraph: {
       title: `${localizedName} | Melting Moments Cakes`,
       description,
@@ -148,21 +152,26 @@ export default async function CategoryPage({
           { '@type': 'ListItem', position: 2, name: categoryName, item: `${SITE_URL}/${locale}/${slug}` },
         ],
       },
-      ...(products.length > 0
-        ? [
-            {
-              '@type': 'ItemList',
-              name: categoryName,
-              numberOfItems: products.length,
-              itemListElement: products.map((p, i) => ({
-                '@type': 'ListItem',
-                position: i + 1,
-                name: p.name,
-                url: `${SITE_URL}/${locale}/${slug}/${p.slug}`,
-              })),
-            },
-          ]
-        : []),
+      {
+        '@type': 'CollectionPage',
+        name: categoryName,
+        url: `${SITE_URL}/${locale}/${slug}`,
+        ...(products.length > 0
+          ? {
+              mainEntity: {
+                '@type': 'ItemList',
+                name: categoryName,
+                numberOfItems: products.length,
+                itemListElement: products.map((p, i) => ({
+                  '@type': 'ListItem',
+                  position: i + 1,
+                  name: p.name,
+                  url: `${SITE_URL}/${locale}/${slug}/${p.slug}`,
+                })),
+              },
+            }
+          : {}),
+      },
     ],
   };
 

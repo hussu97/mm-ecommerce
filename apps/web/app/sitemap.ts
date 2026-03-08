@@ -1,6 +1,7 @@
 import type { MetadataRoute } from 'next';
 
 import { API_BASE } from '@/lib/api';
+import type { ProductListResponse } from '@/lib/types';
 
 const BASE = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 const LOCALES = (process.env.NEXT_PUBLIC_SUPPORTED_LOCALES ?? 'en,ar').split(',');
@@ -18,10 +19,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   // Static routes — one entry per locale
   const staticPaths = [
-    { path: '',        priority: 1.0, changeFrequency: 'weekly' as const },
-    { path: '/about',  priority: 0.7, changeFrequency: 'monthly' as const },
-    { path: '/contact', priority: 0.7, changeFrequency: 'monthly' as const },
-    { path: '/faq',    priority: 0.6, changeFrequency: 'monthly' as const },
+    { path: '',              priority: 1.0, changeFrequency: 'weekly' as const },
+    { path: '/about',        priority: 0.7, changeFrequency: 'monthly' as const },
+    { path: '/contact',      priority: 0.7, changeFrequency: 'monthly' as const },
+    { path: '/faq',          priority: 0.6, changeFrequency: 'monthly' as const },
+    { path: '/all-products', priority: 0.8, changeFrequency: 'weekly' as const },
+    { path: '/privacy',      priority: 0.3, changeFrequency: 'yearly' as const },
   ];
 
   for (const { path, priority, changeFrequency } of staticPaths) {
@@ -51,6 +54,35 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
           alternates: localeAlternates(`/${c.slug}`),
         });
       }
+    }
+
+    // Product pages — paginate through all active products
+    let page = 1;
+    let hasMore = true;
+    while (hasMore) {
+      const prodRes = await fetch(
+        `${API_BASE}/products?per_page=100&page=${page}&is_active=true`,
+        { next: { revalidate: 3600 } },
+      );
+      if (!prodRes.ok) break;
+
+      const data: ProductListResponse = await prodRes.json();
+      for (const p of data.items) {
+        if (!p.category) continue;
+        const productPath = `/${p.category.slug}/${p.slug}`;
+        for (const locale of LOCALES) {
+          entries.push({
+            url: `${BASE}/${locale}${productPath}`,
+            lastModified: p.updated_at,
+            priority: 0.8,
+            changeFrequency: 'weekly',
+            alternates: localeAlternates(productPath),
+          });
+        }
+      }
+
+      hasMore = page < data.pages;
+      page++;
     }
   } catch {
     // fallback to static only

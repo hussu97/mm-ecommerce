@@ -14,6 +14,8 @@ interface PrivacyContent {
   seo?: { title?: string; description?: string };
 }
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
+
 export async function generateMetadata({
   params,
 }: {
@@ -26,6 +28,10 @@ export async function generateMetadata({
     return {
       title: c.seo?.title ?? 'Privacy Policy',
       description: c.seo?.description ?? '',
+      alternates: {
+        canonical: `${SITE_URL}/${locale}/privacy`,
+        languages: { en: `${SITE_URL}/en/privacy`, ar: `${SITE_URL}/ar/privacy` },
+      },
     };
   } catch {
     return { title: 'Privacy Policy' };
