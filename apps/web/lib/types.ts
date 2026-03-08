@@ -197,14 +197,16 @@ export interface PromoValidateResponse {
 
 // ─── Address ──────────────────────────────────────────────────────────────────
 
-export type EmirateEnum =
-  | 'Dubai'
-  | 'Sharjah'
-  | 'Ajman'
-  | 'Abu Dhabi'
-  | 'Ras Al Khaimah'
-  | 'Fujairah'
-  | 'Umm Al Quwain';
+export type RegionCode =
+  | 'dubai'
+  | 'sharjah'
+  | 'ajman'
+  | 'abu_dhabi'
+  | 'fujairah'
+  | 'ras_al_khaimah'
+  | 'umm_al_quwain'
+  | 'al_ain'
+  | 'rest_of_uae';
 
 export interface Address {
   id: string;
@@ -215,10 +217,11 @@ export interface Address {
   phone: string;
   address_line_1: string;
   address_line_2: string | null;
-  city: string;
-  emirate: EmirateEnum;
+  region: RegionCode;
   country: string;
   is_default: boolean;
+  latitude: number | null;
+  longitude: number | null;
   created_at: string;
 }
 
@@ -229,10 +232,11 @@ export interface AddressCreate {
   phone: string;
   address_line_1: string;
   address_line_2?: string;
-  city: string;
-  emirate: EmirateEnum;
+  region: RegionCode;
   country?: string;
   is_default?: boolean;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 // ─── Order (create) ───────────────────────────────────────────────────────────

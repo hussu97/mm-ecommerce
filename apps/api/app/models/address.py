@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import uuid
 import enum
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Enum, ForeignKey, String
+from sqlalchemy import Boolean, ForeignKey, Numeric, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -16,14 +17,16 @@ if TYPE_CHECKING:
     from .user import User
 
 
-class EmirateEnum(str, enum.Enum):
-    DUBAI = "Dubai"
-    SHARJAH = "Sharjah"
-    AJMAN = "Ajman"
-    ABU_DHABI = "Abu Dhabi"
-    RAS_AL_KHAIMAH = "Ras Al Khaimah"
-    FUJAIRAH = "Fujairah"
-    UMM_AL_QUWAIN = "Umm Al Quwain"
+class RegionEnum(str, enum.Enum):
+    DUBAI = "dubai"
+    SHARJAH = "sharjah"
+    AJMAN = "ajman"
+    ABU_DHABI = "abu_dhabi"
+    FUJAIRAH = "fujairah"
+    RAS_AL_KHAIMAH = "ras_al_khaimah"
+    UMM_AL_QUWAIN = "umm_al_quwain"
+    AL_AIN = "al_ain"
+    REST_OF_UAE = "rest_of_uae"
 
 
 class Address(Base, UUIDMixin):
@@ -41,18 +44,11 @@ class Address(Base, UUIDMixin):
     phone: Mapped[str] = mapped_column(String(20), nullable=False)
     address_line_1: Mapped[str] = mapped_column(String(255), nullable=False)
     address_line_2: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    city: Mapped[str] = mapped_column(String(100), nullable=False)
-    emirate: Mapped[EmirateEnum] = mapped_column(
-        Enum(
-            EmirateEnum,
-            name="emirateenum",
-            create_type=False,
-            values_callable=lambda obj: [e.value for e in obj],
-        ),
-        nullable=False,
-    )
+    region: Mapped[str] = mapped_column(String(30), nullable=False)
     country: Mapped[str] = mapped_column(String(2), nullable=False, default="AE")
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    latitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6), nullable=True)
+    longitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
@@ -61,4 +57,4 @@ class Address(Base, UUIDMixin):
     user: Mapped[User] = relationship("User", back_populates="addresses")
 
     def __repr__(self) -> str:
-        return f"<Address {self.label} - {self.emirate}>"
+        return f"<Address {self.label} - {self.region}>"

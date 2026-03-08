@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.address import EmirateEnum
+from app.models.address import RegionEnum
 
 
 class AddressCreate(BaseModel):
@@ -15,10 +16,11 @@ class AddressCreate(BaseModel):
     phone: str = Field(min_length=7, max_length=20)
     address_line_1: str = Field(min_length=1, max_length=255)
     address_line_2: str | None = Field(None, max_length=255)
-    city: str = Field(min_length=1, max_length=100)
-    emirate: EmirateEnum
+    region: RegionEnum
     country: str = Field(default="AE", max_length=2)
     is_default: bool = False
+    latitude: Decimal | None = None
+    longitude: Decimal | None = None
 
 
 class AddressUpdate(BaseModel):
@@ -28,9 +30,10 @@ class AddressUpdate(BaseModel):
     phone: str | None = Field(None, min_length=7, max_length=20)
     address_line_1: str | None = Field(None, min_length=1, max_length=255)
     address_line_2: str | None = None
-    city: str | None = Field(None, min_length=1, max_length=100)
-    emirate: EmirateEnum | None = None
+    region: RegionEnum | None = None
     is_default: bool | None = None
+    latitude: Decimal | None = None
+    longitude: Decimal | None = None
 
 
 class AddressResponse(BaseModel):
@@ -44,8 +47,9 @@ class AddressResponse(BaseModel):
     phone: str
     address_line_1: str
     address_line_2: str | None
-    city: str
-    emirate: EmirateEnum
+    region: RegionEnum
     country: str
     is_default: bool
+    latitude: Decimal | None
+    longitude: Decimal | None
     created_at: datetime

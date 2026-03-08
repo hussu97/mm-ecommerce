@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app.models.address import EmirateEnum
+from app.models.address import RegionEnum
 from app.models.order import DeliveryMethodEnum
 from app.services import delivery_service
 
@@ -15,7 +15,7 @@ router = APIRouter()
 
 class DeliveryCalculateRequest(BaseModel):
     delivery_method: DeliveryMethodEnum
-    emirate: EmirateEnum | None = None
+    region: RegionEnum | None = None
     subtotal: Decimal
 
 
@@ -33,9 +33,9 @@ async def get_rates():
 
 @router.post("/calculate", response_model=DeliveryCalculateResponse)
 async def calculate_delivery(data: DeliveryCalculateRequest):
-    """Calculate the delivery fee for a given emirate and order subtotal."""
+    """Calculate the delivery fee for a given region and order subtotal."""
     fee = delivery_service.calculate_fee(
-        data.delivery_method, data.emirate, data.subtotal
+        data.delivery_method, data.region, data.subtotal
     )
 
     if data.delivery_method == DeliveryMethodEnum.PICKUP:

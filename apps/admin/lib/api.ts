@@ -1,5 +1,5 @@
 import type {
-  AnalyticsOverview, Category, CmsPage, CustomerBreakdown, EmirateData,
+  AnalyticsOverview, Category, CmsPage, CustomerBreakdown, RegionData,
   FunnelData, ImportResult, Language, Modifier, Order, OrdersPoint, PaginatedCustomers,
   PaginatedEmailLogs, PaginatedOrders, Product, ProductListResponse, PromoCode,
   PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
@@ -180,8 +180,8 @@ export const analyticsApi = {
     api.get<CustomerBreakdown>(`/analytics/customers${buildQs(params)}`),
   revenueBreakdown: (params?: { start_date?: string; end_date?: string }) =>
     api.get<RevenueBreakdown>(`/analytics/revenue-breakdown${buildQs(params)}`),
-  emirates: (params?: { start_date?: string; end_date?: string }) =>
-    api.get<EmirateData[]>(`/analytics/emirates${buildQs(params)}`),
+  regions: (params?: { start_date?: string; end_date?: string }) =>
+    api.get<RegionData[]>(`/analytics/regions${buildQs(params)}`),
   promos: (params?: { start_date?: string; end_date?: string }) =>
     api.get<PromoPerformance[]>(`/analytics/promos${buildQs(params)}`),
 };

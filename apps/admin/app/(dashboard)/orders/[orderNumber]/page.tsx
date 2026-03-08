@@ -153,7 +153,7 @@ export default function OrderDetailPage() {
               <p>{order.shipping_address_snapshot.phone}</p>
               <p>{order.shipping_address_snapshot.line1}</p>
               {order.shipping_address_snapshot.line2 && <p>{order.shipping_address_snapshot.line2}</p>}
-              <p>{order.shipping_address_snapshot.city}, {order.shipping_address_snapshot.emirate}</p>
+              <p>{order.shipping_address_snapshot.region}</p>
             </div>
           )}
         </div>

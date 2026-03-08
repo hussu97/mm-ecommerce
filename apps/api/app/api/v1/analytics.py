@@ -120,8 +120,8 @@ class RevenueBreakdown(BaseModel):
     by_payment_provider: list[BreakdownItem]
 
 
-class EmirateData(BaseModel):
-    emirate: str
+class RegionData(BaseModel):
+    region: str
     orders: int
     revenue: float
 
@@ -641,26 +641,26 @@ async def get_revenue_breakdown(
     return result_obj
 
 
-@router.get("/emirates", response_model=list[EmirateData])
-async def get_emirates(
+@router.get("/regions", response_model=list[RegionData])
+async def get_regions(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_admin_user),
 ):
-    """Sales breakdown by UAE emirate (from shipping address snapshot)."""
+    """Sales breakdown by UAE region (from shipping address snapshot)."""
     start, end = _date_range(start_date, end_date)
 
-    cache_key = f"analytics:emirates:{start}:{end}"
+    cache_key = f"analytics:regions:{start}:{end}"
     cached = await cache_get(cache_key)
     if cached is not None:
-        return [EmirateData(**item) for item in cached]
+        return [RegionData(**item) for item in cached]
 
-    emirate_col = cast(Order.shipping_address_snapshot["emirate"], Text)
+    region_col = cast(Order.shipping_address_snapshot["region"], Text)
 
     stmt = (
         select(
-            emirate_col.label("emirate"),
+            region_col.label("region"),
             func.count(Order.id).label("orders"),
             func.coalesce(func.sum(Order.total), 0).label("revenue"),
         )
@@ -670,17 +670,15 @@ async def get_emirates(
             func.date(Order.created_at) >= start,
             func.date(Order.created_at) <= end,
         )
-        .group_by(emirate_col)
+        .group_by(region_col)
         .order_by(func.sum(Order.total).desc())
     )
     rows = (await db.execute(stmt)).all()
 
     result_list = [
-        EmirateData(
-            emirate=str(r.emirate), orders=int(r.orders), revenue=float(r.revenue)
-        )
+        RegionData(region=str(r.region), orders=int(r.orders), revenue=float(r.revenue))
         for r in rows
-        if r.emirate
+        if r.region
     ]
     await cache_set(
         cache_key,

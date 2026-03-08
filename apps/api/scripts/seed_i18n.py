@@ -411,6 +411,21 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("error", "tagline", "Made with 100% Love"),
     # promo_banner
     ("promo_banner", "text", "Free delivery on orders over 200 AED!"),
+    # regions
+    ("regions", "dubai", "Dubai"),
+    ("regions", "sharjah", "Sharjah"),
+    ("regions", "ajman", "Ajman"),
+    ("regions", "abu_dhabi", "Abu Dhabi"),
+    ("regions", "fujairah", "Fujairah"),
+    ("regions", "ras_al_khaimah", "Ras Al Khaimah"),
+    ("regions", "umm_al_quwain", "Umm Al Quwain"),
+    ("regions", "al_ain", "Al Ain"),
+    ("regions", "rest_of_uae", "Rest of UAE"),
+    # address labels
+    ("address", "region", "Region"),
+    ("address", "pin_location", "Pin Location (optional)"),
+    # checkout region validation
+    ("checkout", "region_required", "Region is required"),
 ]
 
 AR_TRANSLATIONS: list[tuple[str, str, str]] = [
@@ -777,6 +792,21 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("error", "tagline", "مصنوعة بـ 100% حب"),
     # promo_banner
     ("promo_banner", "text", "توصيل مجاني للطلبات التي تتجاوز 200 درهم!"),
+    # regions
+    ("regions", "dubai", "دبي"),
+    ("regions", "sharjah", "الشارقة"),
+    ("regions", "ajman", "عجمان"),
+    ("regions", "abu_dhabi", "أبوظبي"),
+    ("regions", "fujairah", "الفجيرة"),
+    ("regions", "ras_al_khaimah", "رأس الخيمة"),
+    ("regions", "umm_al_quwain", "أم القيوين"),
+    ("regions", "al_ain", "العين"),
+    ("regions", "rest_of_uae", "بقية الإمارات"),
+    # address labels
+    ("address", "region", "المنطقة"),
+    ("address", "pin_location", "تحديد الموقع على الخريطة (اختياري)"),
+    # checkout region validation
+    ("checkout", "region_required", "المنطقة مطلوبة"),
 ]
 
 ALL_TRANSLATIONS = [("en", *row) for row in EN_TRANSLATIONS] + [

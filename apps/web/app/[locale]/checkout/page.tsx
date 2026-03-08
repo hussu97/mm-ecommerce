@@ -17,25 +17,27 @@ import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
-import type { Address, Cart, CartItem, EmirateEnum } from '@/lib/types';
+import { LocationPicker } from '@/components/ui/LocationPicker';
+import type { Address, Cart, CartItem, RegionCode } from '@/lib/types';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const EMIRATES: EmirateEnum[] = [
-  'Dubai', 'Sharjah', 'Ajman', 'Abu Dhabi', 'Ras Al Khaimah', 'Fujairah', 'Umm Al Quwain',
+const REGION_CODES: RegionCode[] = [
+  'dubai', 'sharjah', 'ajman', 'abu_dhabi',
+  'fujairah', 'ras_al_khaimah', 'umm_al_quwain', 'al_ain', 'rest_of_uae',
 ];
-const EMIRATE_OPTIONS = EMIRATES.map((e) => ({ value: e, label: e }));
 
-const DELIVERY_FEES: Record<string, number> = {
-  Dubai: 35, Sharjah: 35, Ajman: 35,
-  'Abu Dhabi': 50, 'Ras Al Khaimah': 50, 'Fujairah': 50, 'Umm Al Quwain': 50,
+const DELIVERY_FEES: Record<RegionCode, number> = {
+  dubai: 35, sharjah: 35, ajman: 35,
+  abu_dhabi: 50, fujairah: 50, ras_al_khaimah: 50,
+  umm_al_quwain: 50, al_ain: 50, rest_of_uae: 50,
 };
 const FREE_THRESHOLD = 200;
 
-function calcDeliveryFee(method: string, emirate: string, subtotal: number): number {
+function calcDeliveryFee(method: string, region: string, subtotal: number): number {
   if (method === 'pickup') return 0;
   if (subtotal >= FREE_THRESHOLD) return 0;
-  return DELIVERY_FEES[emirate] ?? 50;
+  return DELIVERY_FEES[region as RegionCode] ?? 50;
 }
 
 // ─── Session persistence ──────────────────────────────────────────────────────
@@ -62,8 +64,9 @@ interface CheckoutForm {
   phone: string;
   addressLine1: string;
   addressLine2: string;
-  city: string;
-  emirate: string;
+  region: string;
+  locationLat: number | null;
+  locationLng: number | null;
   selectedAddressId: string; // '' = new address
   // Step 2
   deliveryMethod: 'delivery' | 'pickup';
@@ -77,7 +80,8 @@ interface CheckoutForm {
 
 const INITIAL_FORM: CheckoutForm = {
   email: '', firstName: '', lastName: '', phone: '',
-  addressLine1: '', addressLine2: '', city: '', emirate: 'Dubai',
+  addressLine1: '', addressLine2: '', region: 'dubai',
+  locationLat: null, locationLng: null,
   selectedAddressId: '',
   deliveryMethod: 'delivery',
   promoCode: '', promoDiscount: 0, promoMessage: '',
@@ -130,7 +134,7 @@ function OrderSummarySidebar({
   const { t, locale } = useTranslation();
   const subtotal = cart?.subtotal ?? 0;
   const deliveryFee = step >= 2
-    ? calcDeliveryFee(form.deliveryMethod, form.emirate, subtotal)
+    ? calcDeliveryFee(form.deliveryMethod, form.region, subtotal)
     : null;
   const discount = form.promoDiscount;
   const total = subtotal + (deliveryFee ?? 0) - discount;
@@ -233,6 +237,11 @@ function StepInformation({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { t } = useTranslation();
 
+  const REGION_OPTIONS = REGION_CODES.map((code) => ({
+    value: code,
+    label: t(`regions.${code}`),
+  }));
+
   function validateStep1(f: CheckoutForm): Record<string, string> {
     const errs: Record<string, string> = {};
     if (!isValidEmail(f.email)) errs.email = t('checkout.valid_email_required');
@@ -245,8 +254,7 @@ function StepInformation({
   function validateStep1Address(f: CheckoutForm): Record<string, string> {
     const errs: Record<string, string> = {};
     if (!f.addressLine1.trim()) errs.addressLine1 = t('checkout.address_required');
-    if (!f.city.trim()) errs.city = t('checkout.city_required');
-    if (!f.emirate) errs.emirate = t('checkout.emirate_required');
+    if (!f.region) errs.region = t('checkout.region_required');
     return errs;
   }
 
@@ -337,12 +345,13 @@ function StepInformation({
                       phone: addr.phone,
                       addressLine1: addr.address_line_1,
                       addressLine2: addr.address_line_2 ?? '',
-                      city: addr.city,
-                      emirate: addr.emirate,
+                      region: addr.region,
+                      locationLat: addr.latitude ?? null,
+                      locationLng: addr.longitude ?? null,
                     });
                     setErrors((prev) => {
                       const next = { ...prev };
-                      delete next.addressLine1; delete next.city; delete next.emirate;
+                      delete next.addressLine1; delete next.region;
                       return next;
                     });
                   }}
@@ -350,7 +359,7 @@ function StepInformation({
                 />
                 <div className="font-body text-xs">
                   <p className="font-medium text-gray-800">{addr.label}</p>
-                  <p className="text-gray-500">{addr.address_line_1}, {addr.city}, {addr.emirate}</p>
+                  <p className="text-gray-500">{addr.address_line_1}, {t(`regions.${addr.region}`)}</p>
                 </div>
               </label>
             ))}
@@ -384,20 +393,21 @@ function StepInformation({
               value={form.addressLine2}
               onChange={field('addressLine2')}
             />
-            <div className="grid grid-cols-2 gap-4">
-              <Input
-                label={t('common.city')}
-                placeholder={t('checkout.city_placeholder')}
-                value={form.city}
-                onChange={field('city')}
-                error={errors.city}
-              />
-              <Select
-                label={t('common.emirate')}
-                options={EMIRATE_OPTIONS}
-                value={form.emirate}
-                onChange={field('emirate')}
-                error={errors.emirate}
+            <Select
+              label={t('address.region')}
+              options={REGION_OPTIONS}
+              value={form.region}
+              onChange={field('region')}
+              error={errors.region}
+            />
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wider text-gray-600 mb-2">
+                {t('address.pin_location')}
+              </p>
+              <LocationPicker
+                lat={form.locationLat}
+                lng={form.locationLng}
+                onChange={(lat, lng) => onChange({ locationLat: lat, locationLng: lng })}
               />
             </div>
           </div>
@@ -423,7 +433,7 @@ function StepDelivery({
   subtotal: number;
 }) {
   const { t } = useTranslation();
-  const deliveryFee = calcDeliveryFee('delivery', form.emirate, subtotal);
+  const deliveryFee = calcDeliveryFee('delivery', form.region, subtotal);
   const isFree = subtotal >= FREE_THRESHOLD;
 
   return (
@@ -466,7 +476,7 @@ function StepDelivery({
               <p className="font-body text-xs text-gray-500 mt-1 ml-7">
                 {isFree
                   ? t('checkout.free_delivery_qualified')
-                  : t('checkout.delivery_time', { emirate: form.emirate || 'your address' })}
+                  : t('checkout.delivery_time', { emirate: t(`regions.${form.region}`) || 'your address' })}
               </p>
               {!isFree && subtotal > 0 && (
                 <p className="font-body text-xs text-secondary mt-0.5 ml-7">
@@ -546,7 +556,7 @@ function StepPayment({
   const [promoError, setPromoError] = useState<string | null>(null);
 
   const subtotal = cart?.subtotal ?? 0;
-  const deliveryFee = calcDeliveryFee(form.deliveryMethod, form.emirate, subtotal);
+  const deliveryFee = calcDeliveryFee(form.deliveryMethod, form.region, subtotal);
   const total = Math.max(0, subtotal + deliveryFee - form.promoDiscount);
 
   const handleApplyPromo = useCallback(async () => {
@@ -823,8 +833,9 @@ function CheckoutContent() {
             phone: form.phone,
             address_line_1: form.addressLine1,
             address_line_2: form.addressLine2 || undefined,
-            city: form.city,
-            emirate: form.emirate as EmirateEnum,
+            region: form.region as RegionCode,
+            latitude: form.locationLat ?? undefined,
+            longitude: form.locationLng ?? undefined,
           }
         : undefined;
 

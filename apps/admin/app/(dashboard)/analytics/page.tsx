@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { analyticsApi, exportApi } from '@/lib/api';
 import type {
-  AnalyticsOverview, CustomerBreakdown, EmirateData, FunnelData,
+  AnalyticsOverview, CustomerBreakdown, RegionData, FunnelData,
   OrdersPoint, PromoPerformance, RevenueBreakdown, RevenuePoint,
   TopProduct, TrafficData,
 } from '@/lib/types';
@@ -101,7 +101,7 @@ export default function AnalyticsPage() {
   const [traffic, setTraffic] = useState<TrafficData | null>(null);
   const [customers, setCustomers] = useState<CustomerBreakdown | null>(null);
   const [breakdown, setBreakdown] = useState<RevenueBreakdown | null>(null);
-  const [emirates, setEmirates] = useState<EmirateData[]>([]);
+  const [regions, setRegions] = useState<RegionData[]>([]);
   const [promos, setPromos] = useState<PromoPerformance[]>([]);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
@@ -119,7 +119,7 @@ export default function AnalyticsPage() {
         analyticsApi.traffic(params),
         analyticsApi.customers(params),
         analyticsApi.revenueBreakdown(params),
-        analyticsApi.emirates(params),
+        analyticsApi.regions(params),
         analyticsApi.promos(params),
       ]);
       setOverview(ov);
@@ -130,7 +130,7 @@ export default function AnalyticsPage() {
       setTraffic(tr);
       setCustomers(cu);
       setBreakdown(bd);
-      setEmirates(em);
+      setRegions(em);
       setPromos(pr);
     } catch {
       // silent — API may not be running
@@ -177,7 +177,7 @@ export default function AnalyticsPage() {
       ].filter(d => d.value > 0)
     : [];
 
-  const topEmiratesData = emirates.slice(0, 7);
+  const topRegionsData = regions.slice(0, 7);
 
   return (
     <div>
@@ -474,20 +474,20 @@ export default function AnalyticsPage() {
             </Section>
           </div>
 
-          {/* Row F — Sales by Emirate + Customer Type */}
+          {/* Row F — Sales by Region + Customer Type */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-            <Section title="Sales by Emirate">
-              {topEmiratesData.length === 0 ? (
+            <Section title="Sales by Region">
+              {topRegionsData.length === 0 ? (
                 <Empty />
               ) : (
-                <ResponsiveContainer width="100%" height={topEmiratesData.length * 52 + 20}>
+                <ResponsiveContainer width="100%" height={topRegionsData.length * 52 + 20}>
                   <BarChart
-                    data={topEmiratesData}
+                    data={topRegionsData}
                     layout="vertical"
                     margin={{ top: 4, right: 60, bottom: 0, left: 8 }}
                   >
                     <XAxis type="number" tick={{ fontSize: 10, fontFamily: 'Jost, sans-serif', fill: '#9ca3af' }} tickFormatter={v => `${v}`} />
-                    <YAxis type="category" dataKey="emirate" tick={{ fontSize: 10, fontFamily: 'Jost, sans-serif', fill: '#6b7280' }} width={80} />
+                    <YAxis type="category" dataKey="region" tick={{ fontSize: 10, fontFamily: 'Jost, sans-serif', fill: '#6b7280' }} width={90} />
                     <Tooltip
                       formatter={(v: unknown, name: unknown) => [
                         name === 'revenue' ? formatCurrency(Number(v)) : String(v),

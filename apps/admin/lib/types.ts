@@ -291,7 +291,7 @@ export interface RevenueBreakdown {
   by_payment_provider: BreakdownItem[];
 }
 
-export interface EmirateData { emirate: string; orders: number; revenue: number; }
+export interface RegionData { region: string; orders: number; revenue: number; }
 
 export interface PromoPerformance {
   code: string;

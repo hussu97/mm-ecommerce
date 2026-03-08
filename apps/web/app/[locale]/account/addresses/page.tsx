@@ -2,21 +2,17 @@
 
 import { useEffect, useState } from 'react';
 import { addressesApi, ApiError } from '@/lib/api';
-import { Address, AddressCreate, EmirateEnum } from '@/lib/types';
+import { Address, AddressCreate, RegionCode } from '@/lib/types';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { LocationPicker } from '@/components/ui/LocationPicker';
 
-const EMIRATES: { value: string; label: string }[] = [
-  { value: 'Dubai', label: 'Dubai' },
-  { value: 'Sharjah', label: 'Sharjah' },
-  { value: 'Ajman', label: 'Ajman' },
-  { value: 'Abu Dhabi', label: 'Abu Dhabi' },
-  { value: 'Ras Al Khaimah', label: 'Ras Al Khaimah' },
-  { value: 'Fujairah', label: 'Fujairah' },
-  { value: 'Umm Al Quwain', label: 'Umm Al Quwain' },
+const REGION_CODES: RegionCode[] = [
+  'dubai', 'sharjah', 'ajman', 'abu_dhabi',
+  'fujairah', 'ras_al_khaimah', 'umm_al_quwain', 'al_ain', 'rest_of_uae',
 ];
 
 const BLANK_FORM: AddressCreate = {
@@ -26,10 +22,11 @@ const BLANK_FORM: AddressCreate = {
   phone: '',
   address_line_1: '',
   address_line_2: '',
-  city: '',
-  emirate: 'Dubai',
+  region: 'dubai',
   country: 'AE',
   is_default: false,
+  latitude: null,
+  longitude: null,
 };
 
 export default function AddressesPage() {
@@ -43,6 +40,11 @@ export default function AddressesPage() {
   const [errors, setErrors] = useState<Partial<Record<keyof AddressCreate, string>>>({});
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const REGION_OPTIONS = REGION_CODES.map((code) => ({
+    value: code,
+    label: t(`regions.${code}`),
+  }));
 
   useEffect(() => {
     addressesApi.list()
@@ -66,10 +68,11 @@ export default function AddressesPage() {
       phone: addr.phone,
       address_line_1: addr.address_line_1,
       address_line_2: addr.address_line_2 || '',
-      city: addr.city,
-      emirate: addr.emirate,
+      region: addr.region,
       country: addr.country,
       is_default: addr.is_default,
+      latitude: addr.latitude,
+      longitude: addr.longitude,
     });
     setErrors({});
     setShowForm(true);
@@ -86,8 +89,7 @@ export default function AddressesPage() {
     if (!form.last_name.trim()) e.last_name = t('common.required');
     if (!form.phone.trim()) e.phone = t('common.required');
     if (!form.address_line_1.trim()) e.address_line_1 = t('common.required');
-    if (!form.city.trim()) e.city = t('common.required');
-    if (!form.emirate) e.emirate = t('common.required');
+    if (!form.region) e.region = t('common.required');
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -203,19 +205,21 @@ export default function AddressesPage() {
               value={form.address_line_2}
               onChange={e => setForm(f => ({ ...f, address_line_2: e.target.value }))}
             />
-            <div className="grid grid-cols-2 gap-3">
-              <Input
-                label={t('common.city')}
-                value={form.city}
-                onChange={e => setForm(f => ({ ...f, city: e.target.value }))}
-                error={errors.city}
-              />
-              <Select
-                label={t('common.emirate')}
-                value={form.emirate}
-                onChange={e => setForm(f => ({ ...f, emirate: e.target.value as EmirateEnum }))}
-                options={EMIRATES}
-                error={errors.emirate}
+            <Select
+              label={t('address.region')}
+              value={form.region}
+              onChange={e => setForm(f => ({ ...f, region: e.target.value as RegionCode }))}
+              options={REGION_OPTIONS}
+              error={errors.region}
+            />
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wider text-gray-600 mb-2">
+                {t('address.pin_location')}
+              </p>
+              <LocationPicker
+                lat={form.latitude ?? null}
+                lng={form.longitude ?? null}
+                onChange={(lat, lng) => setForm(f => ({ ...f, latitude: lat, longitude: lng }))}
               />
             </div>
             <label className="flex items-center gap-2 cursor-pointer">
@@ -271,7 +275,7 @@ export default function AddressesPage() {
                   {addr.address_line_2 && (
                     <p className="text-sm text-gray-600 font-body">{addr.address_line_2}</p>
                   )}
-                  <p className="text-sm text-gray-600 font-body">{addr.city}, {addr.emirate}</p>
+                  <p className="text-sm text-gray-600 font-body">{t(`regions.${addr.region}`)}</p>
                   <p className="text-xs text-gray-400 font-body mt-1">{addr.phone}</p>
                 </div>
                 <div className="flex flex-col gap-1.5 shrink-0">
