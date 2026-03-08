@@ -1,9 +1,9 @@
 import type {
   AnalyticsOverview, Category, CmsPage, CustomerBreakdown, EmirateData,
   FunnelData, ImportResult, Language, Modifier, Order, OrdersPoint, PaginatedCustomers,
-  PaginatedOrders, Product, ProductListResponse, PromoCode, PromoPerformance,
-  RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct, TrafficData,
-  UploadResponse, User,
+  PaginatedEmailLogs, PaginatedOrders, Product, ProductListResponse, PromoCode,
+  PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
+  TrafficData, UploadResponse, User,
 } from './types';
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
@@ -285,6 +285,21 @@ export const cmsApi = {
     api.put<CmsPage>(`/cms/pages/${slug}`, { content }),
   updateLocale: (slug: string, locale: string, content: Record<string, unknown>) =>
     api.put<CmsPage>(`/cms/pages/${slug}/${locale}`, { content }),
+};
+
+// ─── Email Logs ───────────────────────────────────────────────────────────────
+
+export const emailLogsApi = {
+  list: (params?: {
+    status?: string;
+    template?: string;
+    recipient?: string;
+    order_number?: string;
+    date_from?: string;
+    date_to?: string;
+    page?: number;
+    per_page?: number;
+  }) => api.get<PaginatedEmailLogs>(`/email-logs/admin/all${buildQs(params)}`),
 };
 
 // ─── Translations ──────────────────────────────────────────────────────────

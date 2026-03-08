@@ -299,3 +299,27 @@ export interface PromoPerformance {
   revenue_driven: number;
   discount_given: number;
 }
+
+// ─── Email Logs ───────────────────────────────────────────────────────────────
+
+export type EmailLogStatus = 'sent' | 'failed' | 'skipped';
+
+export interface EmailLog {
+  id: string;
+  template: string;
+  recipient: string;
+  subject: string;
+  order_number: string | null;
+  status: EmailLogStatus;
+  resend_id: string | null;
+  error: string | null;
+  sent_at: string;
+}
+
+export interface PaginatedEmailLogs {
+  items: EmailLog[];
+  total: number;
+  page: number;
+  per_page: number;
+  pages: number;
+}
