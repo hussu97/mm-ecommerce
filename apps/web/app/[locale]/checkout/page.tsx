@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import type { Address, Cart, CartItem, EmirateEnum } from '@/lib/types';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -246,6 +247,7 @@ function StepInformation({
   loadingAddresses: boolean;
 }) {
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const { t } = useTranslation();
 
   const handleNext = () => {
     const contactErrors = validateStep1(form);
@@ -269,14 +271,17 @@ function StepInformation({
         <h2 className="font-display text-xl text-primary uppercase tracking-widest mb-1">Contact Information</h2>
         <div className="h-px bg-secondary/30 mb-5" />
         <div className="space-y-4">
-          <Input
-            label="Email"
-            type="email"
-            placeholder="you@example.com"
-            value={form.email}
-            onChange={field('email')}
-            error={errors.email}
-          />
+          <div>
+            <Input
+              label="Email"
+              type="email"
+              placeholder="you@example.com"
+              value={form.email}
+              onChange={field('email')}
+              error={errors.email}
+            />
+            <p className="mt-1.5 text-xs text-foreground/50">{t('checkout.email_hint')}</p>
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <Input
               label="First Name"
