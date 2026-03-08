@@ -476,7 +476,7 @@ function StepDelivery({
               <p className="font-body text-xs text-gray-500 mt-1 ml-7">
                 {isFree
                   ? t('checkout.free_delivery_qualified')
-                  : t('checkout.delivery_time', { emirate: t(`regions.${form.region}`) || 'your address' })}
+                  : t('checkout.delivery_time', { region: t(`regions.${form.region}`) || 'your address' })}
               </p>
               {!isFree && subtotal > 0 && (
                 <p className="font-body text-xs text-secondary mt-0.5 ml-7">

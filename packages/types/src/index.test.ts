@@ -1,6 +1,6 @@
 import { describe, it, expectTypeOf } from 'vitest';
 import type {
-  Emirate,
+  RegionCode,
   OrderStatus,
   DeliveryMethod,
   PaymentProvider,
@@ -10,9 +10,9 @@ import type {
 } from './index';
 
 describe('Type definitions', () => {
-  it('Emirate accepts valid values', () => {
-    const e: Emirate = 'Dubai';
-    expectTypeOf(e).toEqualTypeOf<Emirate>();
+  it('RegionCode accepts valid values', () => {
+    const r: RegionCode = 'dubai';
+    expectTypeOf(r).toEqualTypeOf<RegionCode>();
   });
 
   it('OrderStatus accepts all valid values', () => {

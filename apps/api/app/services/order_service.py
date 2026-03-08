@@ -130,9 +130,9 @@ async def create_order(
 
     # ── 5. Calculate delivery fee ────────────────────────────────────────────
     discounted_subtotal = subtotal - discount_amount
-    emirate = data.shipping_address.emirate if data.shipping_address else None
+    region = data.shipping_address.region if data.shipping_address else None
     delivery_fee = delivery_service.calculate_fee(
-        data.delivery_method, emirate, discounted_subtotal
+        data.delivery_method, region, discounted_subtotal
     )
 
     # ── 6. Final total ───────────────────────────────────────────────────────

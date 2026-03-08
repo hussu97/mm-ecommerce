@@ -111,8 +111,6 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("common", "phone", "Phone"),
     ("common", "password", "Password"),
     ("common", "confirm_password", "Confirm Password"),
-    ("common", "city", "City"),
-    ("common", "emirate", "Emirate"),
     ("common", "address_line_1", "Address Line 1"),
     ("common", "address_line_2_optional", "Address Line 2 (optional)"),
     ("common", "subtotal", "Subtotal"),
@@ -149,13 +147,12 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "new_address_option", "+ Enter a new address"),
     ("checkout", "address_placeholder", "Building, Street"),
     ("checkout", "address2_placeholder", "Apartment, floor"),
-    ("checkout", "city_placeholder", "Dubai"),
     ("checkout", "first_name_placeholder", "Fatema"),
     ("checkout", "last_name_placeholder", "Abbasi"),
     ("checkout", "home_delivery", "Home Delivery"),
     ("checkout", "store_pickup", "Store Pickup"),
     ("checkout", "free_delivery_qualified", "Free delivery — your order qualifies!"),
-    ("checkout", "delivery_time", "Delivered to {emirate} · 2–3 business days"),
+    ("checkout", "delivery_time", "Delivered to {region} · 2–3 business days"),
     ("checkout", "free_delivery_upsell", "Add {amount} AED more for free delivery"),
     (
         "checkout",
@@ -187,8 +184,6 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "first_name_required", "First name is required"),
     ("checkout", "last_name_required", "Last name is required"),
     ("checkout", "address_required", "Address is required"),
-    ("checkout", "city_required", "City is required"),
-    ("checkout", "emirate_required", "Emirate is required"),
     ("checkout", "loading_cart", "Loading your cart…"),
     ("checkout", "cart_empty", "Your cart is empty"),
     ("checkout", "payment_cancelled", "Payment was cancelled. Please try again."),
@@ -500,8 +495,6 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("common", "phone", "الهاتف"),
     ("common", "password", "كلمة المرور"),
     ("common", "confirm_password", "تأكيد كلمة المرور"),
-    ("common", "city", "المدينة"),
-    ("common", "emirate", "الإمارة"),
     ("common", "address_line_1", "العنوان - السطر الأول"),
     ("common", "address_line_2_optional", "العنوان - السطر الثاني (اختياري)"),
     ("common", "subtotal", "المجموع الفرعي"),
@@ -538,13 +531,12 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "new_address_option", "+ إدخال عنوان جديد"),
     ("checkout", "address_placeholder", "المبنى، الشارع"),
     ("checkout", "address2_placeholder", "الشقة، الطابق"),
-    ("checkout", "city_placeholder", "دبي"),
     ("checkout", "first_name_placeholder", "فاطمة"),
     ("checkout", "last_name_placeholder", "عباسي"),
     ("checkout", "home_delivery", "التوصيل المنزلي"),
     ("checkout", "store_pickup", "الاستلام من المتجر"),
     ("checkout", "free_delivery_qualified", "توصيل مجاني — طلبك يستوفي الشرط!"),
-    ("checkout", "delivery_time", "التوصيل إلى {emirate} · 2–3 أيام عمل"),
+    ("checkout", "delivery_time", "التوصيل إلى {region} · 2–3 أيام عمل"),
     ("checkout", "free_delivery_upsell", "أضف {amount} درهم أكثر للتوصيل المجاني"),
     (
         "checkout",
@@ -576,8 +568,6 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "first_name_required", "الاسم الأول مطلوب"),
     ("checkout", "last_name_required", "اسم العائلة مطلوب"),
     ("checkout", "address_required", "العنوان مطلوب"),
-    ("checkout", "city_required", "المدينة مطلوبة"),
-    ("checkout", "emirate_required", "الإمارة مطلوبة"),
     ("checkout", "loading_cart", "جارٍ تحميل سلتك…"),
     ("checkout", "cart_empty", "سلتك فارغة"),
     ("checkout", "payment_cancelled", "تم إلغاء الدفع. يرجى المحاولة مجدداً."),
@@ -846,6 +836,9 @@ async def seed(session: AsyncSession) -> None:
                 UiTranslation(locale=locale, namespace=namespace, key=key, value=value)
             )
             print(f"  ✅ {locale}:{namespace}.{key}")
+        elif existing.value != value:
+            existing.value = value
+            print(f"  🔄 {locale}:{namespace}.{key} updated")
         else:
             print(f"  ⏭  {locale}:{namespace}.{key} already exists")
 

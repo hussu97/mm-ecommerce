@@ -176,14 +176,14 @@ async def export_orders(
             "Total",
             "Payment Provider",
             "Delivery Method",
-            "Emirate",
+            "Region",
             "Promo Code",
         ]
     )
     for r in rows:
-        emirate = ""
+        region = ""
         if r.shipping_address_snapshot:
-            emirate = r.shipping_address_snapshot.get("emirate", "")
+            region = r.shipping_address_snapshot.get("region", "")
         w.writerow(
             [
                 r.order_number,
@@ -197,7 +197,7 @@ async def export_orders(
                 str(r.total),
                 r.payment_provider or "",
                 r.delivery_method.value,
-                emirate,
+                region,
                 r.promo_code_used or "",
             ]
         )

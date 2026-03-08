@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from app.models.address import EmirateEnum
+from app.models.address import RegionEnum
 from app.schemas.address import AddressCreate
 
 
@@ -14,17 +14,16 @@ class TestAddressCreate:
             last_name="Doe",
             phone="0501234567",
             address_line_1="123 Test St",
-            city="Dubai",
-            emirate=EmirateEnum.DUBAI,
+            region=RegionEnum.DUBAI,
         )
 
     def test_valid_address(self):
         addr = AddressCreate(**self._valid_data())
-        assert addr.emirate == EmirateEnum.DUBAI
+        assert addr.region == RegionEnum.DUBAI
 
-    def test_invalid_emirate(self):
+    def test_invalid_region(self):
         data = self._valid_data()
-        data["emirate"] = "InvalidEmirate"
+        data["region"] = "InvalidRegion"
         with pytest.raises(ValidationError):
             AddressCreate(**data)
 
@@ -44,9 +43,9 @@ class TestAddressCreate:
         addr = AddressCreate(**self._valid_data())
         assert addr.country == "AE"
 
-    def test_all_emirates_valid(self):
+    def test_all_regions_valid(self):
         data = self._valid_data()
-        for emirate in EmirateEnum:
-            data["emirate"] = emirate
+        for region in RegionEnum:
+            data["region"] = region
             addr = AddressCreate(**data)
-            assert addr.emirate == emirate
+            assert addr.region == region

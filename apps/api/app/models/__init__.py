@@ -4,7 +4,7 @@ All SQLAlchemy models — imported here so Alembic can autodiscover them.
 
 from .base import Base  # noqa: F401 — must be first
 from .user import User  # noqa: F401
-from .address import Address, EmirateEnum  # noqa: F401
+from .address import Address, RegionEnum  # noqa: F401
 from .category import Category  # noqa: F401
 from .product import Product  # noqa: F401
 from .modifier import Modifier, ModifierOption, ProductModifier  # noqa: F401
@@ -21,7 +21,7 @@ __all__ = [
     "Base",
     "User",
     "Address",
-    "EmirateEnum",
+    "RegionEnum",
     "Category",
     "Product",
     "Modifier",

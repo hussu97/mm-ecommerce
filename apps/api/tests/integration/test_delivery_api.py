@@ -30,7 +30,7 @@ class TestDeliveryCalculate:
             "/api/v1/delivery/calculate",
             json={
                 "delivery_method": "delivery",
-                "emirate": "Dubai",
+                "region": "dubai",
                 "subtotal": "100.00",
             },
         )
@@ -42,7 +42,7 @@ class TestDeliveryCalculate:
             "/api/v1/delivery/calculate",
             json={
                 "delivery_method": "delivery",
-                "emirate": "Dubai",
+                "region": "dubai",
                 "subtotal": "200.00",
             },
         )
@@ -54,7 +54,7 @@ class TestDeliveryCalculate:
             "/api/v1/delivery/calculate",
             json={
                 "delivery_method": "delivery",
-                "emirate": "Abu Dhabi",
+                "region": "abu_dhabi",
                 "subtotal": "100.00",
             },
         )

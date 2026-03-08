@@ -135,7 +135,7 @@ function ConfirmationContent() {
               : ''}
           </p>
           <p className="font-body text-sm text-gray-600">
-            {order.shipping_address_snapshot.city}, {order.shipping_address_snapshot.emirate}
+            {order.shipping_address_snapshot.region}
           </p>
         </div>
       )}

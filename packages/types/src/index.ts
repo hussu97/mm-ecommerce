@@ -1,13 +1,15 @@
 // Shared TypeScript types — expanded in Prompt 2+
 
-export type Emirate =
-  | "Dubai"
-  | "Sharjah"
-  | "Ajman"
-  | "Abu Dhabi"
-  | "Ras Al Khaimah"
-  | "Fujairah"
-  | "Umm Al Quwain";
+export type RegionCode =
+  | "dubai"
+  | "sharjah"
+  | "ajman"
+  | "abu_dhabi"
+  | "fujairah"
+  | "ras_al_khaimah"
+  | "umm_al_quwain"
+  | "al_ain"
+  | "rest_of_uae";
 
 export type OrderStatus = "created" | "confirmed" | "packed" | "cancelled";
 
