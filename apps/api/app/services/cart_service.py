@@ -338,22 +338,29 @@ async def merge(
     )
     guest_items = guest_items_result.scalars().all()
 
-    for guest_item in guest_items:
-        # Check if user cart already has same product + options
-        user_items_result = await db.execute(
-            select(CartItem).where(
-                CartItem.cart_id == user_cart.id,
-                CartItem.product_id == guest_item.product_id,
-            )
-        )
-        user_items = user_items_result.scalars().all()
+    # Pre-load all user cart items and all needed products — 2 flat queries total
+    user_items_result = await db.execute(
+        select(CartItem).where(CartItem.cart_id == user_cart.id)
+    )
+    all_user_items = list(user_items_result.scalars().all())
 
+    guest_product_ids = list({item.product_id for item in guest_items})
+    products_result = await db.execute(
+        select(Product).where(Product.id.in_(guest_product_ids))
+    )
+    products_by_id = {p.id: p for p in products_result.scalars().all()}
+
+    for guest_item in guest_items:
+        # Check if user cart already has same product + options — no DB hit
         guest_key = _options_key(
             guest_item.product_id, guest_item.selected_options or []
         )
         existing = None
-        for ui in user_items:
-            if _options_key(ui.product_id, ui.selected_options or []) == guest_key:
+        for ui in all_user_items:
+            if (
+                ui.product_id == guest_item.product_id
+                and _options_key(ui.product_id, ui.selected_options or []) == guest_key
+            ):
                 existing = ui
                 break
 
@@ -363,11 +370,8 @@ async def merge(
         else:
             merged_qty = guest_item.quantity
 
-        # Cap at available stock for stock-tracked products
-        product_result = await db.execute(
-            select(Product).where(Product.id == guest_item.product_id)
-        )
-        product = product_result.scalar_one_or_none()
+        # Cap at available stock for stock-tracked products — no DB hit
+        product = products_by_id.get(guest_item.product_id)
         if product and product.is_stock_product and merged_qty > product.stock_quantity:
             merged_qty = product.stock_quantity
 

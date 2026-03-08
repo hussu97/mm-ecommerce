@@ -9,10 +9,13 @@ from pydantic import BaseModel
 from sqlalchemy import func, select, cast, Text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.cache import cache_get, cache_set, cache_delete_pattern  # noqa: F401
 from app.core.config import settings
 from app.core.deps import get_admin_user, get_db
 from app.models.order import Order, OrderItem, OrderStatusEnum
 from app.models.user import User
+
+_ANALYTICS_TTL = 300
 
 router = APIRouter()
 
@@ -143,6 +146,11 @@ async def get_overview(
     """Revenue, orders, customers, and growth vs prior period."""
     start, end = _date_range(start_date, end_date)
 
+    cache_key = f"analytics:overview:{start}:{end}"
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return OverviewResponse(**cached)
+
     stmt = select(
         func.coalesce(func.sum(Order.total), 0).label("revenue"),
         func.count(Order.id).label("orders"),
@@ -181,7 +189,7 @@ async def get_overview(
         ((total_orders - prev_orders) / prev_orders * 100) if prev_orders else 0.0
     )
 
-    return OverviewResponse(
+    result_obj = OverviewResponse(
         total_revenue=total_revenue,
         total_orders=total_orders,
         avg_order_value=round(avg, 2),
@@ -189,6 +197,8 @@ async def get_overview(
         revenue_growth=round(rev_growth, 1),
         orders_growth=round(orders_growth, 1),
     )
+    await cache_set(cache_key, result_obj.model_dump(mode="json"), ttl=_ANALYTICS_TTL)
+    return result_obj
 
 
 @router.get("/revenue", response_model=list[RevenuePoint])
@@ -201,6 +211,12 @@ async def get_revenue(
 ):
     """Daily/weekly/monthly revenue totals."""
     start, end = _date_range(start_date, end_date)
+
+    cache_key = f"analytics:revenue:{start}:{end}:{group_by}"
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return [RevenuePoint(**item) for item in cached]
+
     trunc = func.date_trunc(group_by, Order.created_at)
 
     stmt = (
@@ -218,13 +234,19 @@ async def get_revenue(
     )
     rows = (await db.execute(stmt)).all()
 
-    return [
+    result_list = [
         RevenuePoint(
             date=row.period.strftime("%Y-%m-%d") if row.period else "",
             revenue=float(row.revenue),
         )
         for row in rows
     ]
+    await cache_set(
+        cache_key,
+        [item.model_dump(mode="json") for item in result_list],
+        ttl=_ANALYTICS_TTL,
+    )
+    return result_list
 
 
 @router.get("/orders-chart", response_model=list[OrdersPoint])
@@ -237,6 +259,12 @@ async def get_orders_chart(
 ):
     """Daily/weekly/monthly order counts."""
     start, end = _date_range(start_date, end_date)
+
+    cache_key = f"analytics:orders-chart:{start}:{end}:{group_by}"
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return [OrdersPoint(**item) for item in cached]
+
     trunc = func.date_trunc(group_by, Order.created_at)
 
     stmt = (
@@ -250,13 +278,19 @@ async def get_orders_chart(
     )
     rows = (await db.execute(stmt)).all()
 
-    return [
+    result_list = [
         OrdersPoint(
             date=row.period.strftime("%Y-%m-%d") if row.period else "",
             count=int(row.count),
         )
         for row in rows
     ]
+    await cache_set(
+        cache_key,
+        [item.model_dump(mode="json") for item in result_list],
+        ttl=_ANALYTICS_TTL,
+    )
+    return result_list
 
 
 @router.get("/top-products", response_model=list[TopProduct])
@@ -269,6 +303,11 @@ async def get_top_products(
 ):
     """Top products by revenue."""
     start, end = _date_range(start_date, end_date)
+
+    cache_key = f"analytics:top-products:{start}:{end}:{limit}"
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return [TopProduct(**item) for item in cached]
 
     stmt = (
         select(
@@ -289,7 +328,7 @@ async def get_top_products(
     )
     rows = (await db.execute(stmt)).all()
 
-    return [
+    result_list = [
         TopProduct(
             product_name=row.product_name,
             product_sku=row.product_sku,
@@ -298,6 +337,12 @@ async def get_top_products(
         )
         for row in rows
     ]
+    await cache_set(
+        cache_key,
+        [item.model_dump(mode="json") for item in result_list],
+        ttl=_ANALYTICS_TTL,
+    )
+    return result_list
 
 
 @router.get("/funnel", response_model=FunnelData)
@@ -309,6 +354,11 @@ async def get_funnel(
 ):
     """Order counts by status (funnel)."""
     start, end = _date_range(start_date, end_date)
+
+    cache_key = f"analytics:funnel:{start}:{end}"
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return FunnelData(**cached)
 
     stmt = (
         select(Order.status, func.count(Order.id).label("count"))
@@ -329,13 +379,15 @@ async def get_funnel(
 
     conversion_rate = round(packed / total * 100, 1) if total else 0.0
 
-    return FunnelData(
+    result_obj = FunnelData(
         created=created,
         confirmed=confirmed,
         packed=packed,
         cancelled=cancelled,
         conversion_rate=conversion_rate,
     )
+    await cache_set(cache_key, result_obj.model_dump(mode="json"), ttl=_ANALYTICS_TTL)
+    return result_obj
 
 
 @router.get("/traffic", response_model=TrafficData)
@@ -449,6 +501,11 @@ async def get_customers(
     """Customer type breakdown: registered vs guest, new vs returning."""
     start, end = _date_range(start_date, end_date)
 
+    cache_key = f"analytics:customers:{start}:{end}"
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return CustomerBreakdown(**cached)
+
     # Registered vs guest — orders in range joined to users
     reg_stmt = (
         select(
@@ -509,12 +566,14 @@ async def get_customers(
     )
     returning_customers = int((await db.execute(returning_stmt)).scalar() or 0)
 
-    return CustomerBreakdown(
+    result_obj = CustomerBreakdown(
         registered=registered,
         guest=guest,
         new_customers=new_customers,
         returning_customers=returning_customers,
     )
+    await cache_set(cache_key, result_obj.model_dump(mode="json"), ttl=_ANALYTICS_TTL)
+    return result_obj
 
 
 @router.get("/revenue-breakdown", response_model=RevenueBreakdown)
@@ -526,6 +585,11 @@ async def get_revenue_breakdown(
 ):
     """Revenue split by delivery method and payment provider."""
     start, end = _date_range(start_date, end_date)
+
+    cache_key = f"analytics:revenue-breakdown:{start}:{end}"
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return RevenueBreakdown(**cached)
 
     base_filter = [
         Order.status != OrderStatusEnum.CANCELLED,
@@ -557,7 +621,7 @@ async def get_revenue_breakdown(
     )
     payment_rows = (await db.execute(payment_stmt)).all()
 
-    return RevenueBreakdown(
+    result_obj = RevenueBreakdown(
         by_delivery_method=[
             BreakdownItem(
                 label=str(r.label), orders=int(r.orders), revenue=float(r.revenue)
@@ -573,6 +637,8 @@ async def get_revenue_breakdown(
             for r in payment_rows
         ],
     )
+    await cache_set(cache_key, result_obj.model_dump(mode="json"), ttl=_ANALYTICS_TTL)
+    return result_obj
 
 
 @router.get("/emirates", response_model=list[EmirateData])
@@ -584,6 +650,11 @@ async def get_emirates(
 ):
     """Sales breakdown by UAE emirate (from shipping address snapshot)."""
     start, end = _date_range(start_date, end_date)
+
+    cache_key = f"analytics:emirates:{start}:{end}"
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return [EmirateData(**item) for item in cached]
 
     emirate_col = cast(Order.shipping_address_snapshot["emirate"], Text)
 
@@ -604,13 +675,19 @@ async def get_emirates(
     )
     rows = (await db.execute(stmt)).all()
 
-    return [
+    result_list = [
         EmirateData(
             emirate=str(r.emirate), orders=int(r.orders), revenue=float(r.revenue)
         )
         for r in rows
         if r.emirate
     ]
+    await cache_set(
+        cache_key,
+        [item.model_dump(mode="json") for item in result_list],
+        ttl=_ANALYTICS_TTL,
+    )
+    return result_list
 
 
 @router.get("/promos", response_model=list[PromoPerformance])
@@ -622,6 +699,11 @@ async def get_promos(
 ):
     """Promo code performance: uses, revenue driven, discount given."""
     start, end = _date_range(start_date, end_date)
+
+    cache_key = f"analytics:promos:{start}:{end}"
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return [PromoPerformance(**item) for item in cached]
 
     stmt = (
         select(
@@ -641,7 +723,7 @@ async def get_promos(
     )
     rows = (await db.execute(stmt)).all()
 
-    return [
+    result_list = [
         PromoPerformance(
             code=str(r.code),
             uses=int(r.uses),
@@ -650,3 +732,9 @@ async def get_promos(
         )
         for r in rows
     ]
+    await cache_set(
+        cache_key,
+        [item.model_dump(mode="json") for item in result_list],
+        ttl=_ANALYTICS_TTL,
+    )
+    return result_list

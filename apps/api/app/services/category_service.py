@@ -104,8 +104,21 @@ async def update(db: AsyncSession, slug: str, data: CategoryUpdate) -> CategoryR
         setattr(cat, key, val)
 
     await db.flush()
-    await db.refresh(cat)
-    return await _with_product_count(db, cat)
+
+    stmt = (
+        select(Category, func.count(Product.id).label("product_count"))
+        .outerjoin(
+            Product,
+            (Product.category_id == Category.id) & (Product.is_active == True),  # noqa: E712
+        )
+        .where(Category.id == cat.id)
+        .group_by(Category.id)
+    )
+    row = (await db.execute(stmt)).first()
+    updated_cat, count = row
+    response = CategoryResponse.model_validate(updated_cat)
+    response.product_count = count or 0
+    return response
 
 
 async def delete(db: AsyncSession, slug: str) -> None:

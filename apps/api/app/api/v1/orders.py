@@ -20,6 +20,7 @@ from app.schemas.order import (
     OrderResponse,
     OrderStatusUpdate,
 )
+from app.core.cache import cache_delete_pattern
 from app.services import email_service, order_service
 
 router = APIRouter()
@@ -45,7 +46,9 @@ async def create_order(
     For guests, provide session_id in the request body.
     """
     user_id = current_user.id if current_user else None
-    return await order_service.create_order(db, data, user_id)
+    order = await order_service.create_order(db, data, user_id)
+    await cache_delete_pattern("analytics:*")
+    return order
 
 
 @router.get("", response_model=PaginatedOrders)
