@@ -48,9 +48,12 @@ async def lifespan(app: FastAPI):
             raise RuntimeError("SECRET_KEY must be changed in production")
         if not settings.STRIPE_WEBHOOK_SECRET:
             raise RuntimeError("STRIPE_WEBHOOK_SECRET must be set in production")
-    logger.info("Running i18n seed...")
-    async with AsyncSessionFactory() as session:
-        await seed_i18n(session)
+    try:
+        logger.info("Running i18n seed...")
+        async with AsyncSessionFactory() as session:
+            await seed_i18n(session)
+    except Exception as exc:
+        logger.warning("i18n seed failed (non-fatal): %s", exc)
     logger.info("Melting Moments API starting up [env=%s]", settings.APP_ENV)
     yield
     logger.info("Melting Moments API shutting down")

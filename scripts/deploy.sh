@@ -11,19 +11,28 @@ cd "$DEPLOY_DIR"
 echo "==> Pulling latest code..."
 git pull origin main
 
-echo "==> Building and restarting API service..."
-# Build new image first (keeps old container running)
+echo "==> Building API image..."
 docker compose -f "$COMPOSE_FILE" build api
 
 echo "==> Restarting API with new image..."
 docker compose -f "$COMPOSE_FILE" up -d --no-deps api
-sleep 10
+
+echo "==> Waiting for API to become healthy..."
+for i in $(seq 1 12); do
+  if docker compose -f "$COMPOSE_FILE" exec -T api sh -c 'curl -sf http://localhost:8000/health' 2>/dev/null; then
+    echo "API is up."
+    break
+  fi
+  echo "  waiting... (${i}/12)"
+  sleep 5
+done
 
 echo "==> Running database migrations..."
 docker compose -f "$COMPOSE_FILE" exec -T api alembic upgrade head
 
-echo "==> Reloading nginx..."
-docker compose -f "$COMPOSE_FILE" exec nginx nginx -s reload
+echo "==> Ensuring nginx is up..."
+docker compose -f "$COMPOSE_FILE" up -d --no-deps nginx
+docker compose -f "$COMPOSE_FILE" exec -T nginx nginx -s reload || true
 
 echo "==> Pruning unused images..."
 docker image prune -f
