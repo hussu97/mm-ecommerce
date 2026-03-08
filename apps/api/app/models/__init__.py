@@ -14,6 +14,7 @@ from .promo_code import PromoCode, DiscountTypeEnum  # noqa: F401
 from .refresh_token import RefreshToken  # noqa: F401
 from .language import Language, UiTranslation  # noqa: F401
 from .cms import CmsPage  # noqa: F401
+from .webhook_event import WebhookEvent  # noqa: F401
 
 __all__ = [
     "Base",
@@ -37,4 +38,5 @@ __all__ = [
     "Language",
     "UiTranslation",
     "CmsPage",
+    "WebhookEvent",
 ]

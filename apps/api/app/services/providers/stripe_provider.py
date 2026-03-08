@@ -131,6 +131,7 @@ def handle_webhook(payload: bytes, signature: str) -> dict:
     logger.info("Stripe webhook: type=%s order=%s", event_type, order_number)
 
     return {
+        "event_id": event["id"],
         "event_type": event_type,
         "order_number": order_number,
         "payment_intent_id": payment_intent_id,

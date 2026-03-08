@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.order import Order, OrderStatusEnum
+from app.models.webhook_event import WebhookEvent
 from app.services.providers import stripe_provider, tabby_provider, tamara_provider
 
 logger = logging.getLogger(__name__)
@@ -86,9 +87,27 @@ async def handle_stripe_webhook(
     Always returns a dict for the HTTP response.
     """
     result = stripe_provider.handle_webhook(payload, signature)
+    event_id = result["event_id"]
     event_type = result["event_type"]
     order_number = result.get("order_number")
     payment_intent_id = result.get("payment_intent_id")
+
+    # Dedup: skip events we've already processed
+    existing = await db.execute(
+        select(WebhookEvent).where(WebhookEvent.event_id == event_id)
+    )
+    if existing.scalar_one_or_none():
+        logger.info("Duplicate webhook skipped: event_id=%s", event_id)
+        return {"received": True, "duplicate": True}
+
+    db.add(
+        WebhookEvent(
+            provider="stripe",
+            event_id=event_id,
+            event_type=event_type,
+            order_number=order_number,
+        )
+    )
 
     if event_type == "checkout.session.completed" and order_number:
         try:
