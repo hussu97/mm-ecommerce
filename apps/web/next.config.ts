@@ -1,16 +1,33 @@
 import type { NextConfig } from "next";
 
+// Build locale pattern from the same env var the middleware uses (e.g. "en|ar")
+const localePattern = (process.env.NEXT_PUBLIC_SUPPORTED_LOCALES ?? "en,ar")
+  .split(",")
+  .map((l) => l.trim())
+  .join("|");
+
 const nextConfig: NextConfig = {
   output: "standalone",
   async rewrites() {
     return [
       {
-        source: '/umami/script.js',
-        destination: 'https://cloud.umami.is/script.js',
+        source: "/umami/script.js",
+        destination: "https://cloud.umami.is/script.js",
       },
       {
-        source: '/umami/api/send',
-        destination: 'https://cloud.umami.is/api/send',
+        source: "/umami/api/send",
+        destination: "https://cloud.umami.is/api/send",
+      },
+      // Next.js i18n middleware prefixes paths with the active locale
+      // (e.g. /en/umami/api/send). Add explicit locale-prefixed rewrites so
+      // the proxy still works regardless of which locale is active.
+      {
+        source: `/:locale(${localePattern})/umami/script.js`,
+        destination: "https://cloud.umami.is/script.js",
+      },
+      {
+        source: `/:locale(${localePattern})/umami/api/send`,
+        destination: "https://cloud.umami.is/api/send",
       },
     ];
   },
