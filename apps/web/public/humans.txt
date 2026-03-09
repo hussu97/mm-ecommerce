@@ -1,0 +1,17 @@
+/* TEAM */
+Baker & Founder: Fatema Abbasi
+Location: UAE
+Contact: hello [at] meltingmomentscakes.com
+
+/* TECH */
+Framework: Next.js 15 (App Router)
+Backend: Python FastAPI
+Database: PostgreSQL
+Styling: Tailwind CSS v4
+Monorepo: Turborepo + pnpm
+Hosting: Vercel
+
+/* SITE */
+Last updated: 2026-03-09
+Language: English, Arabic
+Standards: HTML5, CSS3, ES2022

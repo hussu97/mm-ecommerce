@@ -4,10 +4,11 @@ import { Breadcrumb } from '@/components/ui';
 import { ProductDetailATC } from './ProductDetailATC';
 import { ProductImageGallery } from './ProductImageGallery';
 import { RecentlyViewedProducts } from '@/components/product/RecentlyViewedProducts';
-import type { Product } from '@/lib/types';
+import type { Product, ProductModifier } from '@/lib/types';
 import { localizedField } from '@/lib/i18n/entity';
 import { getTranslations, createT } from '@/lib/i18n/server';
 import { API_BASE } from '@/lib/api';
+import { BRAND, SHIPPING_DETAILS, RETURN_POLICY } from '@/lib/schema';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 
 async function getProduct(slug: string): Promise<Product | null> {
@@ -75,27 +76,63 @@ export default async function ProductDetailPage({
   const productDescription = localizedField(product, 'description', product.description ?? '', locale);
   const galleryImages = product.image_urls ?? [];
 
+  // Compute price range from modifier options
+  const basePrice = Number(product.base_price);
+  const hasModifierPrices = product.product_modifiers?.some(
+    (pm: ProductModifier) => pm.modifier.options.some(o => o.price > 0),
+  );
+
+  let offers: Record<string, unknown>;
+  const offerUrl = `${SITE_URL}/${locale}/${categorySlug}/${productSlug}`;
+  const availability = product.is_active
+    ? 'https://schema.org/InStock'
+    : 'https://schema.org/OutOfStock';
+
+  if (hasModifierPrices) {
+    // Sum the max option price from each modifier group to get the highest possible price
+    const maxExtra = product.product_modifiers.reduce(
+      (sum: number, pm: ProductModifier) => {
+        const maxOptionPrice = Math.max(0, ...pm.modifier.options.map(o => o.price));
+        return sum + maxOptionPrice;
+      },
+      0,
+    );
+    offers = {
+      '@type': 'AggregateOffer',
+      lowPrice: basePrice.toFixed(2),
+      highPrice: (basePrice + maxExtra).toFixed(2),
+      priceCurrency: 'AED',
+      availability,
+      offerCount: 2,
+      url: offerUrl,
+      shippingDetails: SHIPPING_DETAILS,
+      hasMerchantReturnPolicy: RETURN_POLICY,
+    };
+  } else {
+    offers = {
+      '@type': 'Offer',
+      price: basePrice.toFixed(2),
+      priceCurrency: 'AED',
+      availability,
+      seller: BRAND,
+      url: offerUrl,
+      itemCondition: 'https://schema.org/NewCondition',
+      priceValidUntil: '2027-03-09',
+      shippingDetails: SHIPPING_DETAILS,
+      hasMerchantReturnPolicy: RETURN_POLICY,
+    };
+  }
+
   const productSchema: Record<string, unknown> = {
     '@type': 'Product',
     '@id': `${SITE_URL}/products/${productSlug}`,
     name: productName,
     description: product.description ?? undefined,
     image: galleryImages,
-    url: `${SITE_URL}/${locale}/${categorySlug}/${productSlug}`,
-    brand: { '@type': 'Brand', name: 'Melting Moments Cakes' },
+    url: offerUrl,
+    brand: BRAND,
     category: localizedCategoryName,
-    offers: {
-      '@type': 'Offer',
-      price: Number(product.base_price).toFixed(2),
-      priceCurrency: 'AED',
-      availability: product.is_active
-        ? 'https://schema.org/InStock'
-        : 'https://schema.org/OutOfStock',
-      seller: { '@type': 'Organization', name: 'Melting Moments Cakes' },
-      url: `${SITE_URL}/${locale}/${categorySlug}/${productSlug}`,
-      itemCondition: 'https://schema.org/NewCondition',
-      priceValidUntil: '2027-03-09',
-    },
+    offers,
   };
   if (product.sku) productSchema.sku = product.sku;
   if (product.calories) {

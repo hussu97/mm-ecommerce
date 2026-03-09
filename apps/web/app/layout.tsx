@@ -75,6 +75,12 @@ export default async function RootLayout({
           href="https://fonts.googleapis.com/icon?family=Material+Icons"
           rel="stylesheet"
         />
+        <link
+          rel="search"
+          type="application/opensearchdescription+xml"
+          title="Melting Moments Cakes"
+          href="/opensearch.xml"
+        />
       </head>
       <body className="min-h-screen flex flex-col antialiased">
         <script
