@@ -19,6 +19,14 @@ function MapContent({ lat, lng, onChange, placeholder }: LocationPickerProps) {
   const placesLib = useMapsLibrary('places');
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Keep a stable ref to onChange so the autocomplete effect never needs to
+  // re-run (and tear down the input) just because the parent re-rendered.
+  const onChangeRef = useRef(onChange);
+  useEffect(() => { onChangeRef.current = onChange; });
+
+  const mapRef = useRef(map);
+  useEffect(() => { mapRef.current = map; });
+
   const position = lat !== null && lng !== null ? { lat, lng } : null;
 
   // Pan map when position is set externally (e.g. saved address loaded)
@@ -27,7 +35,8 @@ function MapContent({ lat, lng, onChange, placeholder }: LocationPickerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map]);
 
-  // Wire up PlaceAutocompleteElement once the library is ready
+  // Wire up PlaceAutocompleteElement once the library is ready.
+  // Deps exclude onChange/map so the element isn't torn down on every render.
   useEffect(() => {
     if (!placesLib || !containerRef.current) return;
 
@@ -48,9 +57,9 @@ function MapContent({ lat, lng, onChange, placeholder }: LocationPickerProps) {
       if (!loc) return;
       const newLat = loc.lat();
       const newLng = loc.lng();
-      onChange(newLat, newLng);
-      map?.panTo({ lat: newLat, lng: newLng });
-      map?.setZoom(15);
+      onChangeRef.current(newLat, newLng);
+      mapRef.current?.panTo({ lat: newLat, lng: newLng });
+      mapRef.current?.setZoom(15);
     };
 
     placeAc.addEventListener('gmp-placeselect', handler);
@@ -59,7 +68,8 @@ function MapContent({ lat, lng, onChange, placeholder }: LocationPickerProps) {
       placeAc.removeEventListener('gmp-placeselect', handler);
       if (containerRef.current) containerRef.current.innerHTML = '';
     };
-  }, [placesLib, onChange, map, placeholder]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [placesLib, placeholder]);
 
   const handleMapClick = useCallback(
     (e: MapMouseEvent) => {
