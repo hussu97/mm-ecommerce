@@ -14,11 +14,8 @@ export default function SettingsPage() {
   const { t } = useTranslation();
 
   const [profile, setProfile] = useState({
-    first_name: user?.first_name || '',
-    last_name: user?.last_name || '',
     phone: user?.phone || '',
   });
-  const [profileErrors, setProfileErrors] = useState<Record<string, string>>({});
   const [savingProfile, setSavingProfile] = useState(false);
 
   const [sendingReset, setSendingReset] = useState(false);
@@ -28,22 +25,11 @@ export default function SettingsPage() {
 
   if (!user) return null;
 
-  function validateProfile() {
-    const e: Record<string, string> = {};
-    if (!profile.first_name.trim()) e.first_name = t('common.required');
-    if (!profile.last_name.trim()) e.last_name = t('common.required');
-    setProfileErrors(e);
-    return Object.keys(e).length === 0;
-  }
-
   async function handleSaveProfile(e: React.FormEvent) {
     e.preventDefault();
-    if (!validateProfile()) return;
     setSavingProfile(true);
     try {
       const updated = await authApi.updateMe({
-        first_name: profile.first_name.trim(),
-        last_name: profile.last_name.trim(),
         phone: profile.phone || undefined,
       });
       setUser(updated);
@@ -79,22 +65,6 @@ export default function SettingsPage() {
           {t('settings.profile_info')}
         </h2>
         <form onSubmit={handleSaveProfile} className="space-y-4 max-w-md">
-          <div className="grid grid-cols-2 gap-3">
-            <Input
-              label={t('common.first_name')}
-              value={profile.first_name}
-              onChange={e => setProfile(p => ({ ...p, first_name: e.target.value }))}
-              error={profileErrors.first_name}
-              autoComplete="given-name"
-            />
-            <Input
-              label={t('common.last_name')}
-              value={profile.last_name}
-              onChange={e => setProfile(p => ({ ...p, last_name: e.target.value }))}
-              error={profileErrors.last_name}
-              autoComplete="family-name"
-            />
-          </div>
           <Input
             label={t('common.email')}
             value={user.email}

@@ -134,7 +134,7 @@ export const api = {
 // ─── Typed endpoints ──────────────────────────────────────────────────────────
 
 export const authApi = {
-  register: async (data: { email: string; password: string; first_name: string; last_name: string; phone?: string }) => {
+  register: async (data: { email: string; password: string; phone?: string }) => {
     const resp = await api.post<TokenResponse>('/auth/register', data);
     setToken(resp.access_token);
     setRefreshToken(resp.refresh_token);
@@ -162,7 +162,7 @@ export const authApi = {
     clearRefreshToken();
   },
   me: () => api.get<User>('/auth/me'),
-  updateMe: (data: { first_name?: string; last_name?: string; phone?: string }) =>
+  updateMe: (data: { phone?: string }) =>
     api.put<User>('/auth/me', data),
   forgotPassword: (email: string) =>
     api.post<{ message: string }>('/auth/forgot-password', { email }),

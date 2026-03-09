@@ -174,8 +174,6 @@ export interface Order {
 export interface User {
   id: string;
   email: string;
-  first_name: string;
-  last_name: string;
   phone: string | null;
   is_active: boolean;
   is_admin: boolean;

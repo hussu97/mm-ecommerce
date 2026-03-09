@@ -781,28 +781,49 @@ function CheckoutContent() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Load saved addresses for authenticated users
+  // Load saved addresses for authenticated users and auto-select default
   useEffect(() => {
     if (!getToken()) return;
     setLoadingAddresses(true);
     addressesApi.list()
-      .then(setSavedAddresses)
+      .then((list) => {
+        setSavedAddresses(list);
+        const defaultAddr = list.find(a => a.is_default) ?? list[0];
+        if (defaultAddr) {
+          setForm((prev) => {
+            if (prev.selectedAddressId !== '') return prev;
+            const next = {
+              ...prev,
+              selectedAddressId: defaultAddr.id,
+              firstName: defaultAddr.first_name,
+              lastName: defaultAddr.last_name,
+              phone: prev.phone || defaultAddr.phone,
+              addressLine1: defaultAddr.address_line_1,
+              addressLine2: defaultAddr.address_line_2 ?? '',
+              region: defaultAddr.region,
+              locationLat: defaultAddr.latitude ?? null,
+              locationLng: defaultAddr.longitude ?? null,
+            };
+            saveToSession(next);
+            return next;
+          });
+        }
+      })
       .catch(() => { /* not authenticated or no addresses */ })
       .finally(() => setLoadingAddresses(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Pre-fill contact info from API if authenticated (skip system-generated guest emails)
   useEffect(() => {
     if (!form.email && getToken()) {
       import('@/lib/api').then(({ api }) => {
-        api.get<{ email: string; first_name: string; last_name: string; phone?: string }>('/auth/me')
+        api.get<{ email: string; phone?: string }>('/auth/me')
           .then((user) => {
             const isGuestEmail = /@guest\.local$/.test(user.email);
             setForm((prev) => ({
               ...prev,
               email: isGuestEmail ? prev.email : user.email,
-              firstName: prev.firstName || user.first_name,
-              lastName: prev.lastName || user.last_name,
               phone: prev.phone || (user.phone ?? ''),
             }));
           })

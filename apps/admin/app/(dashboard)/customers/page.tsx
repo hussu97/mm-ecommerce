@@ -60,7 +60,7 @@ export default function CustomersPage() {
       {/* Search */}
       <div className="mb-4 max-w-xs">
         <Input
-          placeholder="Search by name or email…"
+          placeholder="Search by email…"
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
@@ -71,8 +71,8 @@ export default function CustomersPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-200 bg-gray-50">
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Name</th>
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden sm:table-cell">Email</th>
+              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Email</th>
+              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden sm:table-cell">Phone</th>
               <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500">Orders</th>
               <th className="px-4 py-3 text-right text-[11px] font-body uppercase tracking-widest text-gray-500">Total Spent</th>
               <th className="px-4 py-3 text-right text-[11px] font-body uppercase tracking-widest text-gray-500 hidden lg:table-cell">Joined</th>
@@ -100,12 +100,10 @@ export default function CustomersPage() {
               customers.map(c => (
                 <tr key={c.id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-3">
-                    <span className="text-xs font-body font-medium text-gray-800">
-                      {c.first_name} {c.last_name}
-                    </span>
+                    <span className="text-xs font-body font-medium text-gray-800">{c.email}</span>
                   </td>
                   <td className="px-4 py-3 hidden sm:table-cell">
-                    <span className="text-xs font-body text-gray-500">{c.email}</span>
+                    <span className="text-xs font-body text-gray-500">{c.phone ?? '—'}</span>
                   </td>
                   <td className="px-4 py-3 text-center">
                     <span className="text-xs font-body text-gray-700">{c.order_count}</span>

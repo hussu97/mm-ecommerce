@@ -86,7 +86,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <div className={cn('border-t border-gray-100 py-3', collapsed ? 'px-0' : 'px-4')}>
         {!collapsed && (
           <p className="text-[11px] text-gray-400 font-body mb-2 truncate">
-            {user.first_name} {user.last_name}
+            {user.email}
           </p>
         )}
         <button
@@ -156,7 +156,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
           <div className="flex items-center gap-2 text-xs font-body text-gray-500">
             <span className="material-icons text-[16px] text-primary">person</span>
-            {user.first_name} {user.last_name}
+            {user.email}
           </div>
         </header>
 

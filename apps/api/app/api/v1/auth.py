@@ -102,8 +102,6 @@ async def register(
         id=uuid.uuid4(),
         email=body.email.lower(),
         hashed_password=hash_password(body.password),
-        first_name=body.first_name,
-        last_name=body.last_name,
         phone=body.phone,
         is_active=True,
         is_admin=False,
@@ -113,7 +111,7 @@ async def register(
     await db.flush()
     await db.refresh(user)
 
-    background_tasks.add_task(email_service.send_welcome, user.email, user.first_name)
+    background_tasks.add_task(email_service.send_welcome, user.email)
     return await _make_token_response(user, db)
 
 
@@ -162,8 +160,6 @@ async def create_guest_session(
         id=uuid.uuid4(),
         email=email.lower(),
         hashed_password=None,
-        first_name="Guest",
-        last_name="User",
         is_active=True,
         is_admin=False,
         is_guest=True,
@@ -196,10 +192,6 @@ async def update_me(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ) -> UserResponse:
-    if body.first_name is not None:
-        current_user.first_name = body.first_name
-    if body.last_name is not None:
-        current_user.last_name = body.last_name
     if body.phone is not None:
         current_user.phone = body.phone
 
@@ -227,7 +219,7 @@ async def forgot_password(
     if user and user.hashed_password and not user.is_guest:
         reset_token = create_password_reset_token(str(user.id), user.email)
         background_tasks.add_task(
-            email_service.send_password_reset, user.email, user.first_name, reset_token
+            email_service.send_password_reset, user.email, reset_token
         )
 
     return {"message": "If this email exists, a password reset link has been sent"}

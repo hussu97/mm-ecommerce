@@ -34,7 +34,7 @@ export default function AccountPage() {
     <div>
       <div className="mb-8">
         <h1 className="font-display text-3xl text-primary mb-1">
-          {t('account.hello', { name: user.first_name })}
+          {t('account.hello', { name: user.email.split('@')[0] })}
         </h1>
         <p className="text-sm text-gray-500 font-body">
           {t('account.welcome')}

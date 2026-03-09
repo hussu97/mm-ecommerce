@@ -179,20 +179,19 @@ async def send_order_cancelled(order: OrderResponse) -> None:
 # ─── User Emails ──────────────────────────────────────────────────────────────
 
 
-async def send_welcome(email: str, first_name: str) -> None:
+async def send_welcome(email: str) -> None:
     subject = "Welcome to Melting Moments!"
-    html = _render("welcome.html", recipient_email=email, first_name=first_name)
+    html = _render("welcome.html", recipient_email=email)
     result = await asyncio.to_thread(_send, email, subject, html)
     await _log("welcome", email, subject, result)
 
 
-async def send_password_reset(email: str, first_name: str, reset_token: str) -> None:
+async def send_password_reset(email: str, reset_token: str) -> None:
     reset_link = f"{settings.WEB_URL}/reset-password?token={reset_token}"
     subject = "Reset Your Password — Melting Moments"
     html = _render(
         "password_reset.html",
         recipient_email=email,
-        first_name=first_name,
         reset_link=reset_link,
     )
     result = await asyncio.to_thread(_send, email, subject, html)

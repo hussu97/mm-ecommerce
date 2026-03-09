@@ -9,14 +9,10 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8)
-    first_name: str = Field(min_length=1, max_length=100)
-    last_name: str = Field(min_length=1, max_length=100)
     phone: str | None = None
 
 
 class UserUpdate(BaseModel):
-    first_name: str | None = Field(None, min_length=1, max_length=100)
-    last_name: str | None = Field(None, min_length=1, max_length=100)
     phone: str | None = None
 
 
@@ -25,8 +21,6 @@ class UserResponse(BaseModel):
 
     id: UUID
     email: str
-    first_name: str
-    last_name: str
     phone: str | None
     is_active: bool
     is_admin: bool

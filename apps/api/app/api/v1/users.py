@@ -22,8 +22,6 @@ def _escape_like(s: str) -> str:
 class CustomerSummary(BaseModel):
     id: str
     email: str
-    first_name: str
-    last_name: str
     phone: str | None
     order_count: int
     total_spent: float
@@ -77,11 +75,7 @@ async def list_customers(
 
     if search:
         escaped = _escape_like(search)
-        base = base.where(
-            UserModel.email.ilike(f"%{escaped}%", escape="\\")
-            | UserModel.first_name.ilike(f"%{escaped}%", escape="\\")
-            | UserModel.last_name.ilike(f"%{escaped}%", escape="\\")
-        )
+        base = base.where(UserModel.email.ilike(f"%{escaped}%", escape="\\"))
 
     total = (
         await db.execute(select(func.count()).select_from(base.subquery()))
@@ -98,8 +92,6 @@ async def list_customers(
         CustomerSummary(
             id=str(row.User.id),
             email=row.User.email,
-            first_name=row.User.first_name,
-            last_name=row.User.last_name,
             phone=row.User.phone,
             order_count=int(row.order_count),
             total_spent=float(row.total_spent),

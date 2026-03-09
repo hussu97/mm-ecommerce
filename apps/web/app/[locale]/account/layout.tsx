@@ -21,7 +21,7 @@ export default function AccountLayout({ children }: { children: React.ReactNode 
   ];
 
   useEffect(() => {
-    if (!isLoading && !user) {
+    if (!isLoading && (!user || user.is_guest)) {
       router.replace(`/login?redirect=${pathname}`);
     }
   }, [isLoading, user, router, pathname]);
@@ -37,7 +37,7 @@ export default function AccountLayout({ children }: { children: React.ReactNode 
     );
   }
 
-  if (!user) return null;
+  if (!user || user.is_guest) return null;
 
   function handleLogout() {
     logout();
@@ -51,7 +51,7 @@ export default function AccountLayout({ children }: { children: React.ReactNode 
         <aside className="md:w-56 shrink-0">
           <div className="mb-5 px-1">
             <p className="text-xs text-gray-400 uppercase tracking-widest font-body mb-0.5">{t('account.signed_in_as')}</p>
-            <p className="text-sm font-medium text-gray-800 font-body truncate">{user.first_name} {user.last_name}</p>
+            <p className="text-sm font-medium text-gray-800 font-body truncate">{user.email}</p>
           </div>
 
           <nav className="space-y-0.5">

@@ -1,8 +1,6 @@
 export interface User {
   id: string;
   email: string;
-  first_name: string;
-  last_name: string;
   phone: string | null;
   is_active: boolean;
   is_admin: boolean;
@@ -216,8 +214,6 @@ export interface ImportResult {
 export interface CustomerSummary {
   id: string;
   email: string;
-  first_name: string;
-  last_name: string;
   phone: string | null;
   order_count: number;
   total_spent: number;

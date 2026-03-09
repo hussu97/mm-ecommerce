@@ -127,7 +127,7 @@ export function MobileMenu({ isOpen, onClose, languages = [], categories = [], l
 
         {/* Auth links */}
         <div className="border-t border-gray-100 px-5 py-5 space-y-2">
-          {user ? (
+          {user && !user.is_guest ? (
             <>
               <Link
                 href={`/${locale}/account`}

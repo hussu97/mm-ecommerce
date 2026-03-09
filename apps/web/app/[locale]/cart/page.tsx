@@ -19,7 +19,7 @@ const PLACEHOLDER_IMAGE = '/images/logos/main_logo.png';
 
 export default function CartPage() {
   const { t, locale } = useTranslation();
-  const { cart, isLoading, updateItem, removeItem } = useCart();
+  const { cart, isLoading, updateItem, removeItem, mergeCart } = useCart();
   const { addToast } = useToast();
 
   const [promoCode, setPromoCode] = useState('');
@@ -93,15 +93,14 @@ export default function CartPage() {
         const sessionId = ensureSessionId();
         const res = await authApi.guest();
         setToken(res.access_token);
-        // Session ID is already set, merge will happen on login
-        void sessionId; // already stored in localStorage
+        await mergeCart(sessionId);
       }
       window.location.href = '/checkout';
     } catch {
       addToast(t('cart.something_wrong'), 'error');
       setCheckoutLoading(false);
     }
-  }, [items.length, subtotal, addToast, t]);
+  }, [items.length, subtotal, mergeCart, addToast, t]);
 
   // Empty cart
   if (!isLoading && items.length === 0) {

@@ -58,11 +58,11 @@ export function Header({ languages = [], categories = [], locale: localeProp }: 
           <div className="flex items-center justify-end gap-0.5">
             <LanguageSwitcher languages={languages} />
             <Link
-              href={user ? `/${locale}/account` : `/${locale}/login`}
+              href={user && !user.is_guest ? `/${locale}/account` : `/${locale}/login`}
               className="p-2 text-gray-600 hover:text-primary transition-colors"
-              aria-label={user ? t('nav.my_account') : t('nav.sign_in')}
+              aria-label={user && !user.is_guest ? t('nav.my_account') : t('nav.sign_in')}
             >
-              <span className="material-icons">{user ? 'person' : 'person_outline'}</span>
+              <span className="material-icons">{user && !user.is_guest ? 'person' : 'person_outline'}</span>
             </Link>
             <Link
               href={`/${locale}/cart`}

@@ -20,8 +20,6 @@ export default function SignupPage() {
     email: '',
     password: '',
     confirmPassword: '',
-    first_name: '',
-    last_name: '',
     phone: '',
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -30,8 +28,6 @@ export default function SignupPage() {
 
   function validate() {
     const e: Record<string, string> = {};
-    if (!form.first_name.trim()) e.first_name = t('common.required');
-    if (!form.last_name.trim()) e.last_name = t('common.required');
     if (!form.email) e.email = t('auth.email_required');
     if (!form.password) e.password = t('auth.password_required');
     else if (form.password.length < 8) e.password = t('auth.password_min_length');
@@ -49,8 +45,6 @@ export default function SignupPage() {
       await register({
         email: form.email,
         password: form.password,
-        first_name: form.first_name.trim(),
-        last_name: form.last_name.trim(),
         phone: form.phone || undefined,
       });
       const sessionId = getSessionId();
@@ -77,22 +71,6 @@ export default function SignupPage() {
               {apiError}
             </div>
           )}
-          <div className="grid grid-cols-2 gap-3">
-            <Input
-              label={t('common.first_name')}
-              value={form.first_name}
-              onChange={e => setForm(f => ({ ...f, first_name: e.target.value }))}
-              error={errors.first_name}
-              autoComplete="given-name"
-            />
-            <Input
-              label={t('common.last_name')}
-              value={form.last_name}
-              onChange={e => setForm(f => ({ ...f, last_name: e.target.value }))}
-              error={errors.last_name}
-              autoComplete="family-name"
-            />
-          </div>
           <Input
             label={t('common.email')}
             type="email"
