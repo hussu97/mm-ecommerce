@@ -311,7 +311,7 @@ docker compose -f docker-compose.prod.yml up -d api
    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_CHANGE_ME
    NEXT_PUBLIC_SUPPORTED_LOCALES=en,ar
    NEXT_PUBLIC_UMAMI_WEBSITE_ID=<from Umami Cloud dashboard>
-   NEXT_PUBLIC_UMAMI_URL=https://cloud.umami.is/script.js
+   NEXT_PUBLIC_UMAMI_URL=/umami/script.js
    NEXT_PUBLIC_SENTRY_DSN=<from Sentry project settings>  # optional
    ```
 5. Click **Deploy** and note the preview URL (e.g. `melting-moments-cakes-web.vercel.app`)
