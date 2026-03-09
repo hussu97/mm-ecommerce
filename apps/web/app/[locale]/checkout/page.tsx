@@ -133,10 +133,11 @@ function OrderSummarySidebar({
 }) {
   const { t, locale } = useTranslation();
   const subtotal = cart?.subtotal ?? 0;
-  const deliveryFee = step >= 2
-    ? calcDeliveryFee(form.deliveryMethod, form.region, subtotal)
-    : null;
   const discount = form.promoDiscount;
+  const effectiveSubtotal = Math.max(0, subtotal - discount);
+  const deliveryFee = step >= 2
+    ? calcDeliveryFee(form.deliveryMethod, form.region, effectiveSubtotal)
+    : null;
   const total = subtotal + (deliveryFee ?? 0) - discount;
 
   return (
@@ -445,8 +446,9 @@ function StepDelivery({
   subtotal: number;
 }) {
   const { t } = useTranslation();
-  const deliveryFee = calcDeliveryFee('delivery', form.region, subtotal);
-  const isFree = subtotal >= FREE_THRESHOLD;
+  const effectiveSubtotal = Math.max(0, subtotal - form.promoDiscount);
+  const deliveryFee = calcDeliveryFee('delivery', form.region, effectiveSubtotal);
+  const isFree = effectiveSubtotal >= FREE_THRESHOLD;
 
   return (
     <div className="space-y-6">
@@ -490,9 +492,9 @@ function StepDelivery({
                   ? t('checkout.free_delivery_qualified')
                   : t('checkout.delivery_time', { region: t(`regions.${form.region}`) || 'your address' })}
               </p>
-              {!isFree && subtotal > 0 && (
+              {!isFree && effectiveSubtotal > 0 && (
                 <p className="font-body text-xs text-secondary mt-0.5 ml-7">
-                  {t('checkout.free_delivery_upsell', { amount: (FREE_THRESHOLD - subtotal).toFixed(2) })}
+                  {t('checkout.free_delivery_upsell', { amount: (FREE_THRESHOLD - effectiveSubtotal).toFixed(2) })}
                 </p>
               )}
             </div>
@@ -568,7 +570,8 @@ function StepPayment({
   const [promoError, setPromoError] = useState<string | null>(null);
 
   const subtotal = cart?.subtotal ?? 0;
-  const deliveryFee = calcDeliveryFee(form.deliveryMethod, form.region, subtotal);
+  const effectiveSubtotal = Math.max(0, subtotal - form.promoDiscount);
+  const deliveryFee = calcDeliveryFee(form.deliveryMethod, form.region, effectiveSubtotal);
   const total = Math.max(0, subtotal + deliveryFee - form.promoDiscount);
 
   const handleApplyPromo = useCallback(async () => {
