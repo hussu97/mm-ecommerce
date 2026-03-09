@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 from app.models.promo_code import DiscountTypeEnum
 
@@ -53,3 +53,9 @@ class PromoCodeValidateResponse(BaseModel):
     valid: bool
     discount_amount: Decimal = Decimal("0.00")
     message: str | None = None
+
+    @field_serializer("discount_amount")
+    def _serialize_discount_amount(self, v: Decimal) -> float:
+        # JSON has no Decimal type; serialize as float so API consumers
+        # receive a number (e.g. 15.0) rather than a string ("15.00").
+        return float(v)
