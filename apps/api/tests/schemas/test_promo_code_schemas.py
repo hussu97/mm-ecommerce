@@ -6,7 +6,11 @@ import pytest
 from pydantic import ValidationError
 
 from app.models.promo_code import DiscountTypeEnum
-from app.schemas.promo_code import PromoCodeCreate, PromoCodeValidateRequest
+from app.schemas.promo_code import (
+    PromoCodeCreate,
+    PromoCodeValidateRequest,
+    PromoCodeValidateResponse,
+)
 
 
 class TestPromoCodeCreate:
@@ -72,3 +76,35 @@ class TestPromoCodeValidateRequest:
     def test_negative_subtotal_invalid(self):
         with pytest.raises(ValidationError):
             PromoCodeValidateRequest(code="TEST", order_subtotal=Decimal("-1.00"))
+
+
+class TestPromoCodeValidateResponseTypes:
+    """
+    Type-safety tests for PromoCodeValidateResponse.
+    Regression suite for: TypeError: unsupported operand type(s) for -:
+    'decimal.Decimal' and 'float' (discount_amount was typed as float).
+    """
+
+    def test_discount_amount_is_decimal(self):
+        resp = PromoCodeValidateResponse(valid=True, discount_amount=Decimal("15.00"))
+        assert isinstance(resp.discount_amount, Decimal)
+
+    def test_discount_amount_default_is_decimal_zero(self):
+        resp = PromoCodeValidateResponse(valid=False)
+        assert isinstance(resp.discount_amount, Decimal)
+        assert resp.discount_amount == Decimal("0.00")
+
+    def test_decimal_subtraction_does_not_raise(self):
+        """Core regression: Decimal subtotal - Decimal discount_amount must not raise TypeError."""
+        resp = PromoCodeValidateResponse(valid=True, discount_amount=Decimal("15.00"))
+        result = Decimal("100.00") - resp.discount_amount
+        assert result == Decimal("85.00")
+
+    def test_integer_input_coerced_to_decimal(self):
+        resp = PromoCodeValidateResponse(valid=True, discount_amount=10)
+        assert isinstance(resp.discount_amount, Decimal)
+
+    def test_string_decimal_input_accepted(self):
+        resp = PromoCodeValidateResponse(valid=True, discount_amount="25.50")
+        assert isinstance(resp.discount_amount, Decimal)
+        assert resp.discount_amount == Decimal("25.50")
