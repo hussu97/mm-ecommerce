@@ -15,6 +15,8 @@ class TestAddressCreate:
             phone="0501234567",
             address_line_1="123 Test St",
             region=RegionEnum.DUBAI,
+            latitude="25.2048",
+            longitude="55.2708",
         )
 
     def test_valid_address(self):
