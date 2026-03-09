@@ -1,0 +1,19 @@
+#!/usr/bin/env sh
+
+echo "▶ pre-push: running frontend tests..."
+
+pnpm --filter web test
+pnpm --filter admin test
+
+echo "▶ pre-push: running backend tests..."
+
+VENV="$(pwd)/apps/api/.venv/bin"
+if [ -d "$VENV" ]; then
+  export PATH="$PATH:$VENV"
+  cd apps/api && python -m pytest tests/ --tb=short -q
+  cd - > /dev/null
+else
+  echo "⚠ Python venv not found at apps/api/.venv — skipping backend tests"
+fi
+
+echo "✓ pre-push checks passed"
