@@ -14,6 +14,7 @@ import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
+import { FeaturedProductsCarousel } from '@/components/product/FeaturedProductsCarousel';
 
 const PLACEHOLDER_IMAGE = '/images/logos/main_logo.png';
 
@@ -105,17 +106,20 @@ export default function CartPage() {
   // Empty cart
   if (!isLoading && items.length === 0) {
     return (
-      <div className="max-w-7xl mx-auto px-4 py-16 flex flex-col items-center text-center gap-6">
-        <span className="material-icons text-6xl text-secondary">shopping_bag</span>
-        <h1 className="font-display text-3xl text-primary uppercase tracking-widest">{t('cart.empty_title')}</h1>
-        <p className="font-body text-sm text-gray-500 max-w-sm">
-          {t('cart.empty_body')}
-        </p>
-        <Link href={`/${locale}`}>
-          <Button variant="primary" size="lg">
-            {t('cart.continue_shopping')}
-          </Button>
-        </Link>
+      <div className="max-w-7xl mx-auto px-4 py-16 space-y-16">
+        <div className="flex flex-col items-center text-center gap-6">
+          <span className="material-icons text-6xl text-secondary">shopping_bag</span>
+          <h1 className="font-display text-3xl text-primary uppercase tracking-widest">{t('cart.empty_title')}</h1>
+          <p className="font-body text-sm text-gray-500 max-w-sm">
+            {t('cart.empty_body')}
+          </p>
+          <Link href={`/${locale}`}>
+            <Button variant="primary" size="lg">
+              {t('cart.continue_shopping')}
+            </Button>
+          </Link>
+        </div>
+        <FeaturedProductsCarousel />
       </div>
     );
   }
