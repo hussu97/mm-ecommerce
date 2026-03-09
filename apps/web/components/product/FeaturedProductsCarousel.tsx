@@ -2,16 +2,16 @@
 
 import { useEffect, useState } from 'react';
 import { productsApi } from '@/lib/api';
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { ProductCarousel } from './ProductCarousel';
 import type { Product } from '@/lib/types';
 
 export function FeaturedProductsCarousel({
-  title = 'You May Also Like',
   limit = 10,
 }: {
-  title?: string;
   limit?: number;
 }) {
+  const { t } = useTranslation();
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -34,5 +34,5 @@ export function FeaturedProductsCarousel({
 
   if (!products.length) return null;
 
-  return <ProductCarousel title={title} products={products} />;
+  return <ProductCarousel title={t('product.you_may_also_like')} products={products} />;
 }

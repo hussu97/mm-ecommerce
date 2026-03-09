@@ -77,6 +77,8 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("product", "up_to", "Up to {n}"),
     ("product", "add_short", "Add"),
     ("product", "select_short", "Select"),
+    ("product", "you_may_also_like", "You May Also Like"),
+    ("product", "recently_viewed", "Recently Viewed"),
     # cart
     ("cart", "title", "My Cart"),
     ("cart", "item", "item"),
@@ -472,6 +474,8 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("product", "up_to", "حتى {n}"),
     ("product", "add_short", "أضف"),
     ("product", "select_short", "اختر"),
+    ("product", "you_may_also_like", "قد يعجبك أيضاً"),
+    ("product", "recently_viewed", "شاهدت مؤخراً"),
     # cart
     ("cart", "title", "سلة التسوق"),
     ("cart", "item", "منتج"),

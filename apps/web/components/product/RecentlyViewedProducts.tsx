@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRecentlyViewed } from '@/hooks/useRecentlyViewed';
 import { API_BASE } from '@/lib/api';
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { ProductCarousel } from './ProductCarousel';
 import type { Product } from '@/lib/types';
 
@@ -12,6 +13,7 @@ export function RecentlyViewedProducts({
   currentSlug: string;
   locale?: string; // kept for backward compat, unused (ProductCard reads locale from context)
 }) {
+  const { t } = useTranslation();
   const slugs = useRecentlyViewed(currentSlug);
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -47,7 +49,7 @@ export function RecentlyViewedProducts({
 
   return (
     <div className="max-w-7xl mx-auto px-4 pb-16">
-      <ProductCarousel title="Recently Viewed" products={products} />
+      <ProductCarousel title={t('product.recently_viewed')} products={products} />
     </div>
   );
 }
