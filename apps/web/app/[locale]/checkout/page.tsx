@@ -257,7 +257,6 @@ function StepInformation({
 
   function validateStep1Address(f: CheckoutForm): Record<string, string> {
     const errs: Record<string, string> = {};
-    if (f.locationLat === null || f.locationLng === null) errs.locationLat = t('checkout.pin_location_required');
     if (!f.addressLine1.trim()) errs.addressLine1 = t('checkout.address_required');
     if (!f.region) errs.region = t('checkout.region_required');
     return errs;
@@ -266,8 +265,12 @@ function StepInformation({
   const handleNext = () => {
     const contactErrors = validateStep1(form);
     const needsAddress = !form.selectedAddressId;
-    const addressErrors = needsAddress ? validateStep1Address(form) : {};
-    const all = { ...contactErrors, ...addressErrors };
+    const addressFieldErrors = needsAddress ? validateStep1Address(form) : {};
+    // Location pin is always required, regardless of whether a saved address is selected
+    const locationError = (form.locationLat === null || form.locationLng === null)
+      ? { locationLat: t('checkout.pin_location_required') }
+      : {};
+    const all = { ...contactErrors, ...addressFieldErrors, ...locationError };
     if (Object.keys(all).length > 0) { setErrors(all); return; }
     setErrors({});
     onNext();
@@ -374,7 +377,7 @@ function StepInformation({
                 name="savedAddress"
                 value=""
                 checked={form.selectedAddressId === ''}
-                onChange={() => onChange({ selectedAddressId: '' })}
+                onChange={() => onChange({ selectedAddressId: '', locationLat: null, locationLng: null })}
                 className="mt-0.5 accent-primary"
               />
               <span className="font-body text-xs text-gray-600">{t('checkout.new_address_option')}</span>
