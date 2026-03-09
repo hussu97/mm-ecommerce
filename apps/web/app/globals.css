@@ -44,6 +44,23 @@ body {
   color: var(--color-text-light);
 }
 
+/* ─── PlaceAutocompleteElement (Google Maps) — MM brand overrides ──────────── */
+gmp-placeautocomplete {
+  width: 100%;
+  font-family: var(--font-body);
+
+  /* Material Design tokens exposed by the element */
+  --gmp-mat-color-primary: #8a5a64;
+  --gmp-mat-color-on-primary: #ffffff;
+  --gmp-mat-color-surface: #ffffff;
+  --gmp-mat-color-on-surface: #333333;
+  --gmp-mat-color-on-surface-variant: #666666;
+  --gmp-mat-color-outline: #d1d5db;
+  --gmp-mat-color-outline-variant: #d1d5db;
+  --gmp-mat-shape-extra-small: 2px;  /* rounded-sm */
+  --gmp-mat-shape-medium: 2px;
+}
+
 h1,
 h2,
 h3,
