@@ -1,10 +1,9 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
-import { GoogleMap, Marker, StandaloneSearchBox, useJsApiLoader } from '@react-google-maps/api';
+import { useCallback, useEffect, useRef } from 'react';
+import { APIProvider, Map, AdvancedMarker, useMapsLibrary, useMap, type MapMouseEvent } from '@vis.gl/react-google-maps';
 
 const DUBAI_CENTER = { lat: 25.2048, lng: 55.2708 };
-const LIBRARIES: ('places')[] = ['places'];
 
 interface LocationPickerProps {
   lat: number | null;
@@ -13,41 +12,92 @@ interface LocationPickerProps {
   placeholder?: string;
 }
 
-export function LocationPicker({ lat, lng, onChange, placeholder = 'Search for a location…' }: LocationPickerProps) {
-  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? '';
-  const { isLoaded, loadError } = useJsApiLoader({
-    googleMapsApiKey: apiKey,
-    libraries: LIBRARIES,
-  });
+// ─── Inner component (must live inside APIProvider) ───────────────────────────
 
-  const searchBoxRef = useRef<google.maps.places.SearchBox | null>(null);
-  const [mapCenter, setMapCenter] = useState(
-    lat !== null && lng !== null ? { lat, lng } : DUBAI_CENTER
-  );
+function MapContent({ lat, lng, onChange, placeholder }: LocationPickerProps) {
+  const map = useMap();
+  const placesLib = useMapsLibrary('places');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const position = lat !== null && lng !== null ? { lat, lng } : null;
+
+  // Pan map when position is set externally (e.g. saved address loaded)
+  useEffect(() => {
+    if (map && position) map.panTo(position);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map]);
+
+  // Wire up Places Autocomplete once the library is ready
+  useEffect(() => {
+    if (!placesLib || !inputRef.current) return;
+
+    const ac = new placesLib.Autocomplete(inputRef.current, {
+      fields: ['geometry'],
+    });
+
+    const listener = ac.addListener('place_changed', () => {
+      const place = ac.getPlace();
+      const loc = place.geometry?.location;
+      if (!loc) return;
+      const newLat = loc.lat();
+      const newLng = loc.lng();
+      onChange(newLat, newLng);
+      map?.panTo({ lat: newLat, lng: newLng });
+      map?.setZoom(15);
+    });
+
+    return () => {
+      google.maps.event.removeListener(listener);
+    };
+  }, [placesLib, onChange, map]);
 
   const handleMapClick = useCallback(
-    (e: google.maps.MapMouseEvent) => {
-      if (!e.latLng) return;
-      const newLat = e.latLng.lat();
-      const newLng = e.latLng.lng();
-      setMapCenter({ lat: newLat, lng: newLng });
-      onChange(newLat, newLng);
+    (e: MapMouseEvent) => {
+      if (!e.detail.latLng) return;
+      onChange(e.detail.latLng.lat, e.detail.latLng.lng);
     },
     [onChange]
   );
 
-  const handlePlacesChanged = useCallback(() => {
-    if (!searchBoxRef.current) return;
-    const places = searchBoxRef.current.getPlaces();
-    if (!places || places.length === 0) return;
-    const place = places[0];
-    const location = place.geometry?.location;
-    if (!location) return;
-    const newLat = location.lat();
-    const newLng = location.lng();
-    setMapCenter({ lat: newLat, lng: newLng });
-    onChange(newLat, newLng);
-  }, [onChange]);
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="text"
+        placeholder={placeholder}
+        className="w-full px-3.5 py-2.5 text-sm font-body bg-white border border-gray-300 rounded-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+      />
+
+      <Map
+        style={{ width: '100%', height: '200px', borderRadius: '2px' }}
+        defaultCenter={position ?? DUBAI_CENTER}
+        defaultZoom={13}
+        mapId={process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID}
+        disableDefaultUI
+        zoomControl
+        gestureHandling="cooperative"
+        onClick={handleMapClick}
+      >
+        {position && (
+          <AdvancedMarker
+            position={position}
+            draggable
+            onDragEnd={(e) => {
+              if (e.latLng) onChange(e.latLng.lat(), e.latLng.lng());
+            }}
+          />
+        )}
+      </Map>
+    </>
+  );
+}
+
+// ─── Public component ─────────────────────────────────────────────────────────
+
+export function LocationPicker({
+  lat, lng, onChange, placeholder = 'Search for a location…',
+}: LocationPickerProps) {
+  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? '';
 
   if (!apiKey) {
     return (
@@ -57,59 +107,11 @@ export function LocationPicker({ lat, lng, onChange, placeholder = 'Search for a
     );
   }
 
-  if (loadError) {
-    return (
-      <div className="h-48 flex items-center justify-center bg-gray-50 border border-dashed border-gray-200 rounded-sm">
-        <p className="text-xs text-red-400 font-body">Failed to load map</p>
-      </div>
-    );
-  }
-
-  if (!isLoaded) {
-    return (
-      <div className="h-48 flex items-center justify-center bg-gray-50 border border-dashed border-gray-200 rounded-sm animate-pulse">
-        <p className="text-xs text-gray-400 font-body">Loading map…</p>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-2">
-      <StandaloneSearchBox
-        onLoad={(ref) => { searchBoxRef.current = ref; }}
-        onPlacesChanged={handlePlacesChanged}
-      >
-        <input
-          type="text"
-          placeholder={placeholder}
-          className="w-full px-3.5 py-2.5 text-sm font-body bg-white border border-gray-300 rounded-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
-        />
-      </StandaloneSearchBox>
-
-      <GoogleMap
-        mapContainerStyle={{ width: '100%', height: '200px', borderRadius: '2px' }}
-        center={mapCenter}
-        zoom={13}
-        onClick={handleMapClick}
-        options={{
-          disableDefaultUI: true,
-          zoomControl: true,
-          streetViewControl: false,
-          fullscreenControl: false,
-        }}
-      >
-        {lat !== null && lng !== null && (
-          <Marker
-            position={{ lat, lng }}
-            draggable
-            onDragEnd={(e) => {
-              if (!e.latLng) return;
-              onChange(e.latLng.lat(), e.latLng.lng());
-            }}
-          />
-        )}
-      </GoogleMap>
-
+      <APIProvider apiKey={apiKey} libraries={['places']}>
+        <MapContent lat={lat} lng={lng} onChange={onChange} placeholder={placeholder} />
+      </APIProvider>
     </div>
   );
 }
