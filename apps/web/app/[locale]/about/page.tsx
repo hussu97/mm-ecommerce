@@ -208,7 +208,7 @@ export default async function AboutPage({
       {/* CTA Banner */}
       <section className="relative overflow-hidden">
         <Image
-          src="/images/photos/person_shot_4.png"
+          src="/images/photos/person_shot_4.jpg"
           alt="Melting Moments treats"
           fill
           sizes="100vw"
