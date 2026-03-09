@@ -47,8 +47,8 @@ class Address(Base, UUIDMixin):
     region: Mapped[str] = mapped_column(String(30), nullable=False)
     country: Mapped[str] = mapped_column(String(2), nullable=False, default="AE")
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    latitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6), nullable=True)
-    longitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6), nullable=True)
+    latitude: Mapped[Decimal] = mapped_column(Numeric(9, 6), nullable=False)
+    longitude: Mapped[Decimal] = mapped_column(Numeric(9, 6), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )

@@ -19,8 +19,8 @@ class AddressCreate(BaseModel):
     region: RegionEnum
     country: str = Field(default="AE", max_length=2)
     is_default: bool = False
-    latitude: Decimal | None = None
-    longitude: Decimal | None = None
+    latitude: Decimal
+    longitude: Decimal
 
 
 class AddressUpdate(BaseModel):
@@ -50,6 +50,6 @@ class AddressResponse(BaseModel):
     region: RegionEnum
     country: str
     is_default: bool
-    latitude: Decimal | None
-    longitude: Decimal | None
+    latitude: Decimal
+    longitude: Decimal
     created_at: datetime
