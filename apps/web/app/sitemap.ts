@@ -39,7 +39,10 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   }
 
   try {
-    const res = await fetch(`${API_BASE}/categories`, { next: { revalidate: 3600 } });
+    const res = await fetch(`${API_BASE}/categories`, {
+      next: { revalidate: 3600 },
+      signal: AbortSignal.timeout(5000),
+    });
     if (!res.ok) return entries;
 
     const categories: Array<{ slug: string; is_active: boolean; updated_at: string }> = await res.json();
@@ -62,7 +65,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     while (hasMore) {
       const prodRes = await fetch(
         `${API_BASE}/products?per_page=100&page=${page}&is_active=true`,
-        { next: { revalidate: 3600 } },
+        { next: { revalidate: 3600 }, signal: AbortSignal.timeout(5000) },
       );
       if (!prodRes.ok) break;
 

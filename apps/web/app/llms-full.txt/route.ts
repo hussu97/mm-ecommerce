@@ -70,7 +70,10 @@ export async function GET() {
 
 async function fetchCategories(): Promise<Category[]> {
   try {
-    const res = await fetch(`${API_BASE}/categories`, { next: { revalidate: 3600 } });
+    const res = await fetch(`${API_BASE}/categories`, {
+      next: { revalidate: 3600 },
+      signal: AbortSignal.timeout(5000),
+    });
     if (!res.ok) return [];
     return res.json();
   } catch {
@@ -86,7 +89,7 @@ async function fetchAllProducts(): Promise<Product[]> {
     while (hasMore) {
       const res = await fetch(
         `${API_BASE}/products?per_page=100&page=${page}&is_active=true`,
-        { next: { revalidate: 3600 } },
+        { next: { revalidate: 3600 }, signal: AbortSignal.timeout(5000) },
       );
       if (!res.ok) break;
       const data: ProductListResponse = await res.json();
@@ -102,7 +105,10 @@ async function fetchAllProducts(): Promise<Product[]> {
 
 async function fetchFaq(): Promise<FaqItem[]> {
   try {
-    const res = await fetch(`${API_BASE}/cms/public/faq?locale=en`, { next: { revalidate: 3600 } });
+    const res = await fetch(`${API_BASE}/cms/public/faq?locale=en`, {
+      next: { revalidate: 3600 },
+      signal: AbortSignal.timeout(5000),
+    });
     if (!res.ok) return [];
     const data = await res.json();
     return (data.content?.items as FaqItem[]) ?? [];
