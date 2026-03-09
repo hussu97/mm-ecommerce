@@ -69,6 +69,9 @@ class OrderResponse(BaseModel):
     payment_method: str | None
     payment_provider: str | None
     payment_id: str | None
+    vat_rate: float
+    vat_amount: float
+    total_excl_vat: float
     notes: str | None
     admin_notes: str | None
     created_at: datetime

@@ -208,6 +208,10 @@ function OrderSummarySidebar({
         <span>{t('common.total')}</span>
         <span className="text-primary">{Math.max(0, total).toFixed(2)} AED</span>
       </div>
+      <div className="flex justify-between text-xs text-gray-400 mt-1">
+        <span>VAT included (5%)</span>
+        <span>{((subtotal - discount) * 5 / 105).toFixed(2)} AED</span>
+      </div>
     </div>
   );
 }
@@ -631,6 +635,10 @@ function StepPayment({
           <div className="flex justify-between font-semibold text-base">
             <span>{t('common.total')}</span>
             <span className="text-primary">{total.toFixed(2)} AED</span>
+          </div>
+          <div className="flex justify-between text-xs text-gray-400 mt-1">
+            <span>VAT included (5%)</span>
+            <span>{((subtotal - form.promoDiscount) * 5 / 105).toFixed(2)} AED</span>
           </div>
         </div>
 

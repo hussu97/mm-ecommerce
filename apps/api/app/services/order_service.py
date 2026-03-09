@@ -138,6 +138,12 @@ async def create_order(
     # ── 6. Final total ───────────────────────────────────────────────────────
     total = discounted_subtotal + delivery_fee
 
+    # ── 6b. VAT back-calculation (goods only; delivery excluded) ─────────────
+    VAT_RATE = Decimal("0.05")
+    taxable = subtotal - discount_amount
+    vat_amount = (taxable * VAT_RATE / (1 + VAT_RATE)).quantize(Decimal("0.01"))
+    total_excl_vat = (taxable / (1 + VAT_RATE)).quantize(Decimal("0.01"))
+
     # ── 7. Build address snapshot ────────────────────────────────────────────
     address_snapshot: dict | None = None
     if data.shipping_address:
@@ -156,6 +162,9 @@ async def create_order(
         subtotal=subtotal,
         discount_amount=discount_amount,
         total=total,
+        vat_rate=VAT_RATE,
+        vat_amount=vat_amount,
+        total_excl_vat=total_excl_vat,
         status=OrderStatusEnum.CREATED,
         promo_code_used=promo_code_used,
         shipping_address_snapshot=address_snapshot,

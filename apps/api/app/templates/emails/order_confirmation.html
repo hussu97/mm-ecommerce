@@ -60,6 +60,10 @@
     <td class="label">Total</td>
     <td class="value">{{ "%.2f"|format(order.total) }} AED</td>
   </tr>
+  <tr>
+    <td class="label" style="font-size:12px;color:#888;">VAT included (5%)</td>
+    <td class="value" style="font-size:12px;color:#888;">{{ "%.2f"|format(order.vat_amount) }} AED</td>
+  </tr>
 </table>
 
 <hr class="divider" />

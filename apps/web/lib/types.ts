@@ -153,6 +153,9 @@ export interface Order {
   subtotal: number;
   discount_amount: number;
   total: number;
+  vat_rate: number;
+  vat_amount: number;
+  total_excl_vat: number;
   status: OrderStatus;
   promo_code_used: string | null;
   shipping_address_snapshot: Record<string, string> | null;

@@ -9,7 +9,7 @@ Create Date: 2026-03-09
 from alembic import op
 
 revision = "019"
-down_revision = "018"
+down_revision = "018_address_region_overhaul"
 branch_labels = None
 depends_on = None
 

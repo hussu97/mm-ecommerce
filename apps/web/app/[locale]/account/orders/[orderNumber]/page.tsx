@@ -179,6 +179,10 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
           <span>{t('common.total')}</span>
           <span>AED {Number(order.total).toFixed(2)}</span>
         </div>
+        <div className="flex justify-between text-xs font-body text-gray-400 mt-1">
+          <span>VAT included (5%)</span>
+          <span>AED {Number(order.vat_amount).toFixed(2)}</span>
+        </div>
       </div>
 
       {/* Delivery Info */}

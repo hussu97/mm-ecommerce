@@ -122,6 +122,10 @@ function ConfirmationContent() {
           <span>{t('confirmation.total_paid')}</span>
           <span className="text-primary">{Number(order.total).toFixed(2)} AED</span>
         </div>
+        <div className="flex justify-between text-xs text-gray-400 pt-1">
+          <span>VAT included (5%)</span>
+          <span>{Number(order.vat_amount).toFixed(2)} AED</span>
+        </div>
       </div>
 
       {/* Delivery info */}

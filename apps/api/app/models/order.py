@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 import enum
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Enum, ForeignKey, Integer, Numeric, String, Text
@@ -70,6 +71,15 @@ class Order(Base, UUIDMixin, TimestampMixin):
     payment_method: Mapped[str | None] = mapped_column(String(50), nullable=True)
     payment_provider: Mapped[str | None] = mapped_column(String(20), nullable=True)
     payment_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    vat_rate: Mapped[Any] = mapped_column(
+        Numeric(5, 4), nullable=False, default=Decimal("0.0500")
+    )
+    vat_amount: Mapped[Any] = mapped_column(
+        Numeric(10, 2), nullable=False, default=Decimal("0.00")
+    )
+    total_excl_vat: Mapped[Any] = mapped_column(
+        Numeric(10, 2), nullable=False, default=Decimal("0.00")
+    )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     admin_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 

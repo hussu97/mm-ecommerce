@@ -230,6 +230,9 @@ export default function OrderDetailPage() {
           <div className="flex justify-between text-sm font-body font-medium text-gray-800 pt-1 border-t border-gray-100">
             <span>Total</span><span>{formatCurrency(order.total)}</span>
           </div>
+          <div className="flex justify-between text-xs font-body text-gray-400 mt-1">
+            <span>VAT included (5%)</span><span>{formatCurrency(order.vat_amount)}</span>
+          </div>
         </div>
       </div>
 
