@@ -37,7 +37,8 @@ function MapContent({ lat, lng, onChange, placeholder }: LocationPickerProps) {
     const PlaceAutocompleteElement = (placesLib as any).PlaceAutocompleteElement;
     if (!PlaceAutocompleteElement) return;
 
-    const placeAc = new PlaceAutocompleteElement({ inputPlaceholder: placeholder });
+    const placeAc = new PlaceAutocompleteElement({});
+    placeAc.setAttribute('placeholder', placeholder ?? '');
     containerRef.current.appendChild(placeAc);
 
     const handler = async (event: Event) => {
