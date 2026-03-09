@@ -100,47 +100,79 @@ async def _log(
 
 
 async def send_order_confirmation(order: OrderResponse) -> None:
-    name = (
-        order.shipping_address_snapshot.get("first_name", "there")
-        if order.shipping_address_snapshot
-        else "there"
-    )
     subject = f"Order Confirmed — {order.order_number} | Melting Moments"
-    html = _render(
-        "order_confirmation.html", recipient_email=order.email, name=name, order=order
-    )
-    result = await asyncio.to_thread(_send, order.email, subject, html)
+    try:
+        name = (
+            order.shipping_address_snapshot.get("first_name", "there")
+            if order.shipping_address_snapshot
+            else "there"
+        )
+        html = _render(
+            "order_confirmation.html",
+            recipient_email=order.email,
+            name=name,
+            order=order,
+        )
+        result = await asyncio.to_thread(_send, order.email, subject, html)
+    except Exception as exc:
+        logger.error(
+            "order_confirmation render/send failed for %s: %s",
+            order.order_number,
+            exc,
+            exc_info=True,
+        )
+        result = {"status": "failed", "resend_id": None, "error": str(exc)}
     await _log("order_confirmation", order.email, subject, result, order.order_number)
 
 
 async def send_order_packed(order: OrderResponse) -> None:
-    name = (
-        order.shipping_address_snapshot.get("first_name", "there")
-        if order.shipping_address_snapshot
-        else "there"
+    is_delivery = order.delivery_method.value == "delivery"
+    subject = (
+        f"Your Order is On Its Way — {order.order_number}"
+        if is_delivery
+        else f"Ready for Pickup — {order.order_number}"
     )
-    if order.delivery_method.value == "delivery":
-        subject = f"Your Order is On Its Way — {order.order_number}"
-    else:
-        subject = f"Ready for Pickup — {order.order_number}"
-    html = _render(
-        "order_packed.html", recipient_email=order.email, name=name, order=order
-    )
-    result = await asyncio.to_thread(_send, order.email, subject, html)
+    try:
+        name = (
+            order.shipping_address_snapshot.get("first_name", "there")
+            if order.shipping_address_snapshot
+            else "there"
+        )
+        html = _render(
+            "order_packed.html", recipient_email=order.email, name=name, order=order
+        )
+        result = await asyncio.to_thread(_send, order.email, subject, html)
+    except Exception as exc:
+        logger.error(
+            "order_packed render/send failed for %s: %s",
+            order.order_number,
+            exc,
+            exc_info=True,
+        )
+        result = {"status": "failed", "resend_id": None, "error": str(exc)}
     await _log("order_packed", order.email, subject, result, order.order_number)
 
 
 async def send_order_cancelled(order: OrderResponse) -> None:
-    name = (
-        order.shipping_address_snapshot.get("first_name", "there")
-        if order.shipping_address_snapshot
-        else "there"
-    )
     subject = f"Order Cancelled — {order.order_number} | Melting Moments"
-    html = _render(
-        "order_cancelled.html", recipient_email=order.email, name=name, order=order
-    )
-    result = await asyncio.to_thread(_send, order.email, subject, html)
+    try:
+        name = (
+            order.shipping_address_snapshot.get("first_name", "there")
+            if order.shipping_address_snapshot
+            else "there"
+        )
+        html = _render(
+            "order_cancelled.html", recipient_email=order.email, name=name, order=order
+        )
+        result = await asyncio.to_thread(_send, order.email, subject, html)
+    except Exception as exc:
+        logger.error(
+            "order_cancelled render/send failed for %s: %s",
+            order.order_number,
+            exc,
+            exc_info=True,
+        )
+        result = {"status": "failed", "resend_id": None, "error": str(exc)}
     await _log("order_cancelled", order.email, subject, result, order.order_number)
 
 
