@@ -19,10 +19,11 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
   const [error, setError] = useState('');
 
   const STATUS_CONFIG: Record<OrderStatus, { label: string; classes: string; icon: string }> = {
-    created:   { label: t('order.timeline_placed'),    classes: 'text-yellow-600',  icon: 'pending' },
-    confirmed: { label: t('order.status_confirmed'),   classes: 'text-blue-600',    icon: 'check_circle' },
-    packed:    { label: t('order.status_packed'),      classes: 'text-purple-600',  icon: 'inventory_2' },
-    cancelled: { label: t('order.status_cancelled'),   classes: 'text-red-500',     icon: 'cancel' },
+    created:        { label: t('order.timeline_placed'),      classes: 'text-yellow-600',  icon: 'pending' },
+    confirmed:      { label: t('order.status_confirmed'),     classes: 'text-blue-600',    icon: 'check_circle' },
+    packed:         { label: t('order.status_packed'),        classes: 'text-purple-600',  icon: 'inventory_2' },
+    cancelled:      { label: t('order.status_cancelled'),     classes: 'text-red-500',     icon: 'cancel' },
+    payment_failed: { label: t('order.status_payment_failed'), classes: 'text-red-500',    icon: 'credit_card_off' },
   };
 
   const TIMELINE_STEPS: { status: OrderStatus; label: string; icon: string }[] = [

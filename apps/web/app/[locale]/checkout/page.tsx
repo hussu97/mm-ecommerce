@@ -125,27 +125,53 @@ function StepIndicator({ step }: { step: number }) {
 // ─── Order summary sidebar ────────────────────────────────────────────────────
 
 function OrderSummarySidebar({
-  cart, form, step,
+  cart, form, step, retryOrder,
 }: {
   cart: Cart | null;
   form: CheckoutForm;
   step: number;
+  retryOrder: import('@/lib/types').Order | null;
 }) {
   const { t, locale } = useTranslation();
-  const subtotal = cart?.subtotal ?? 0;
-  const discount = form.promoDiscount;
+
+  // In retry mode, use stored order totals; otherwise compute from cart
+  const subtotal = retryOrder ? Number(retryOrder.subtotal) : (cart?.subtotal ?? 0);
+  const discount = retryOrder ? Number(retryOrder.discount_amount) : form.promoDiscount;
   const effectiveSubtotal = Math.max(0, subtotal - discount);
-  const deliveryFee = step >= 2
-    ? calcDeliveryFee(form.deliveryMethod, form.region, effectiveSubtotal)
-    : null;
-  const total = subtotal + (deliveryFee ?? 0) - discount;
+  const deliveryFee = retryOrder
+    ? Number(retryOrder.delivery_fee)
+    : step >= 2
+      ? calcDeliveryFee(form.deliveryMethod, form.region, effectiveSubtotal)
+      : null;
+  const total = retryOrder ? Number(retryOrder.total) : subtotal + (deliveryFee ?? 0) - discount;
 
   return (
     <div className="bg-gray-50 border border-gray-100 rounded-sm p-5 space-y-4 sticky top-24">
       <h2 className="font-display text-base text-primary uppercase tracking-widest">{t('checkout.order_summary')}</h2>
 
       {/* Items */}
-      {cart && cart.items.length > 0 ? (
+      {retryOrder && retryOrder.items.length > 0 ? (
+        <ul className="space-y-3">
+          {retryOrder.items.map((item) => (
+            <li key={item.id} className="flex gap-3 items-start">
+              <div className="relative w-12 h-12 rounded-sm overflow-hidden bg-gray-100 shrink-0">
+                <div className="w-full h-full bg-secondary/20" />
+                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-primary text-white text-[10px] flex items-center justify-center font-body">
+                  {item.quantity}
+                </span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-body text-xs text-gray-800 leading-snug truncate">
+                  {localizedField({ translations: item.product_translations }, 'name', item.product_name, locale)}
+                </p>
+              </div>
+              <p className="font-body text-xs text-gray-700 shrink-0">
+                {Number(item.total_price).toFixed(2)} AED
+              </p>
+            </li>
+          ))}
+        </ul>
+      ) : cart && cart.items.length > 0 ? (
         <ul className="space-y-3">
           {cart.items.map((item: CartItem) => (
             <li key={item.id} className="flex gap-3 items-start">
@@ -187,7 +213,7 @@ function OrderSummarySidebar({
         </div>
         {discount > 0 && (
           <div className="flex justify-between text-green-700">
-            <span>{t('common.discount')}{form.promoCode ? ` (${form.promoCode})` : ''}</span>
+            <span>{t('common.discount')}{(retryOrder?.promo_code_used ?? form.promoCode) ? ` (${retryOrder?.promo_code_used ?? form.promoCode})` : ''}</span>
             <span>-{discount.toFixed(2)} AED</span>
           </div>
         )}
@@ -555,12 +581,13 @@ function StepDelivery({
 // ─── Step 3: Payment ──────────────────────────────────────────────────────────
 
 function StepPayment({
-  form, onChange, onBack, cart, onSubmit, isSubmitting,
+  form, onChange, onBack, cart, retryOrder, onSubmit, isSubmitting,
 }: {
   form: CheckoutForm;
   onChange: (patch: Partial<CheckoutForm>) => void;
   onBack: () => void;
   cart: Cart | null;
+  retryOrder: import('@/lib/types').Order | null;
   onSubmit: () => void;
   isSubmitting: boolean;
 }) {
@@ -569,10 +596,17 @@ function StepPayment({
   const [promoLoading, setPromoLoading] = useState(false);
   const [promoError, setPromoError] = useState<string | null>(null);
 
-  const subtotal = cart?.subtotal ?? 0;
-  const effectiveSubtotal = Math.max(0, subtotal - form.promoDiscount);
-  const deliveryFee = calcDeliveryFee(form.deliveryMethod, form.region, effectiveSubtotal);
-  const total = Math.max(0, subtotal + deliveryFee - form.promoDiscount);
+  // For retry mode, use the stored order totals directly
+  const subtotal = retryOrder ? Number(retryOrder.subtotal) : (cart?.subtotal ?? 0);
+  const effectiveSubtotal = retryOrder
+    ? Math.max(0, subtotal - Number(retryOrder.discount_amount))
+    : Math.max(0, subtotal - form.promoDiscount);
+  const deliveryFee = retryOrder
+    ? Number(retryOrder.delivery_fee)
+    : calcDeliveryFee(form.deliveryMethod, form.region, effectiveSubtotal);
+  const total = retryOrder
+    ? Number(retryOrder.total)
+    : Math.max(0, subtotal + deliveryFee - form.promoDiscount);
 
   const handleApplyPromo = useCallback(async () => {
     const code = form.promoCode.trim().toUpperCase();
@@ -766,20 +800,30 @@ function CheckoutContent() {
   const [savedAddresses, setSavedAddresses] = useState<Address[]>([]);
   const [loadingAddresses, setLoadingAddresses] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [retryOrder, setRetryOrder] = useState<import('@/lib/types').Order | null>(null);
 
-  // Restore from sessionStorage + handle cancelled Stripe return
+  // Restore from sessionStorage + handle cancelled/failed payment return
   useEffect(() => {
     const stored = loadFromSession();
     if (stored) {
       setForm((prev) => ({ ...prev, ...(stored as Partial<CheckoutForm>) }));
     }
 
-    // Stripe cancelled → resume at payment step
+    // Stripe cancelled or payment failed → resume at payment step
     const returnStep = searchParams.get('step');
     const returnOrder = searchParams.get('order_number');
     if (returnStep === 'payment' && returnOrder) {
       setStep(3);
-      addToast(t('checkout.payment_cancelled'), 'warning');
+      // Load the existing order so we can show correct totals and skip re-creation
+      ordersApi.get(returnOrder)
+        .then((order) => {
+          setRetryOrder(order);
+          addToast(t('checkout.payment_cancelled'), 'warning');
+        })
+        .catch(() => {
+          // Order not found or auth error — fall back to normal checkout
+          addToast(t('checkout.payment_cancelled'), 'warning');
+        });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -850,11 +894,6 @@ function CheckoutContent() {
   }, []);
 
   const handleSubmit = useCallback(async () => {
-    if (!cart || cart.items.length === 0) {
-      addToast(t('checkout.cart_empty'), 'error');
-      return;
-    }
-
     setSubmitting(true);
     try {
       // Ensure we have a token (guest session)
@@ -864,38 +903,52 @@ function CheckoutContent() {
         setToken(res.access_token);
       }
 
-      // Build shipping address snapshot
-      const needsAddress = form.deliveryMethod === 'delivery';
-      const shippingAddress = needsAddress
-        ? {
-            first_name: form.firstName,
-            last_name: form.lastName,
-            phone: form.phone,
-            address_line_1: form.addressLine1,
-            address_line_2: form.addressLine2 || undefined,
-            region: form.region as RegionCode,
-            latitude: form.locationLat ?? undefined,
-            longitude: form.locationLng ?? undefined,
-          }
-        : undefined;
+      let orderNumber: string;
 
-      // Create order
-      const order = await ordersApi.create({
-        email: form.email.trim().toLowerCase(),
-        delivery_method: form.deliveryMethod,
-        shipping_address: shippingAddress,
-        promo_code: form.promoDiscount > 0 ? form.promoCode : undefined,
-        payment_method: form.paymentMethod,
-        notes: form.notes || undefined,
-        session_id: getSessionId() ?? undefined,
-      });
+      if (retryOrder) {
+        // Retry payment: order already exists, skip creation
+        orderNumber = retryOrder.order_number;
+      } else {
+        if (!cart || cart.items.length === 0) {
+          addToast(t('checkout.cart_empty'), 'error');
+          setSubmitting(false);
+          return;
+        }
+
+        // Build shipping address snapshot
+        const needsAddress = form.deliveryMethod === 'delivery';
+        const shippingAddress = needsAddress
+          ? {
+              first_name: form.firstName,
+              last_name: form.lastName,
+              phone: form.phone,
+              address_line_1: form.addressLine1,
+              address_line_2: form.addressLine2 || undefined,
+              region: form.region as RegionCode,
+              latitude: form.locationLat ?? undefined,
+              longitude: form.locationLng ?? undefined,
+            }
+          : undefined;
+
+        // Create order
+        const order = await ordersApi.create({
+          email: form.email.trim().toLowerCase(),
+          delivery_method: form.deliveryMethod,
+          shipping_address: shippingAddress,
+          promo_code: form.promoDiscount > 0 ? form.promoCode : undefined,
+          payment_method: form.paymentMethod,
+          notes: form.notes || undefined,
+          session_id: getSessionId() ?? undefined,
+        });
+        orderNumber = order.order_number;
+
+        // Clear persisted checkout state and cart
+        clearCheckoutSession();
+        await refreshCart();
+      }
 
       // Create payment session
-      const session = await paymentsApi.createSession(order.order_number, form.paymentMethod);
-
-      // Clear persisted checkout state
-      clearCheckoutSession();
-      await refreshCart();
+      const session = await paymentsApi.createSession(orderNumber, form.paymentMethod);
 
       // Redirect to payment provider
       window.location.href = session.checkout_url;
@@ -904,7 +957,7 @@ function CheckoutContent() {
       addToast(message, 'error');
       setSubmitting(false);
     }
-  }, [form, cart, addToast, refreshCart, t]);
+  }, [form, cart, retryOrder, addToast, refreshCart, t]);
 
   if (!cart && !submitting) {
     return (
@@ -915,7 +968,7 @@ function CheckoutContent() {
     );
   }
 
-  if (cart && cart.items.length === 0 && !submitting) {
+  if (cart && cart.items.length === 0 && !submitting && !retryOrder) {
     return (
       <div className="max-w-7xl mx-auto px-4 py-16 flex flex-col items-center text-center gap-4">
         <span className="material-icons text-5xl text-secondary">shopping_bag</span>
@@ -963,6 +1016,7 @@ function CheckoutContent() {
               onChange={onChange}
               onBack={() => goToStep(2)}
               cart={cart}
+              retryOrder={retryOrder}
               onSubmit={handleSubmit}
               isSubmitting={submitting}
             />
@@ -971,7 +1025,7 @@ function CheckoutContent() {
 
         {/* Sidebar */}
         <aside className="lg:col-span-1 order-first lg:order-last">
-          <OrderSummarySidebar cart={cart} form={form} step={step} />
+          <OrderSummarySidebar cart={cart} form={form} step={step} retryOrder={retryOrder} />
         </aside>
       </div>
     </div>

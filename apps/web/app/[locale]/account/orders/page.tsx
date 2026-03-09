@@ -13,10 +13,11 @@ export default function OrdersPage() {
   const [error, setError] = useState('');
 
   const STATUS_CONFIG: Record<OrderStatus, { label: string; classes: string }> = {
-    created:   { label: t('order.status_pending'),   classes: 'bg-yellow-50 text-yellow-700 border-yellow-200' },
-    confirmed: { label: t('order.status_confirmed'), classes: 'bg-blue-50 text-blue-700 border-blue-200' },
-    packed:    { label: t('order.status_packed'),    classes: 'bg-purple-50 text-purple-700 border-purple-200' },
-    cancelled: { label: t('order.status_cancelled'), classes: 'bg-red-50 text-red-700 border-red-200' },
+    created:        { label: t('order.status_pending'),        classes: 'bg-yellow-50 text-yellow-700 border-yellow-200' },
+    confirmed:      { label: t('order.status_confirmed'),      classes: 'bg-blue-50 text-blue-700 border-blue-200' },
+    packed:         { label: t('order.status_packed'),         classes: 'bg-purple-50 text-purple-700 border-purple-200' },
+    cancelled:      { label: t('order.status_cancelled'),      classes: 'bg-red-50 text-red-700 border-red-200' },
+    payment_failed: { label: t('order.status_payment_failed'), classes: 'bg-red-50 text-red-700 border-red-200' },
   };
 
   useEffect(() => {

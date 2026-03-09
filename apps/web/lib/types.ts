@@ -126,7 +126,7 @@ export interface Cart {
 
 // ─── Order ────────────────────────────────────────────────────────────────────
 
-export type OrderStatus = 'created' | 'confirmed' | 'packed' | 'cancelled';
+export type OrderStatus = 'created' | 'confirmed' | 'packed' | 'cancelled' | 'payment_failed';
 export type DeliveryMethod = 'delivery' | 'pickup';
 
 export interface OrderItem {
