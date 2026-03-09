@@ -30,15 +30,54 @@ from scripts.seed_i18n import seed as seed_i18n
 if settings.is_production:
     from pythonjsonlogger.json import JsonFormatter
 
+    class _GCPFormatter(JsonFormatter):
+        """JSON formatter whose output GCP Cloud Logging understands out of the box.
+
+        GCP auto-parses stdout JSON lines and uses these fields:
+          - severity  → log level (maps to ERROR / WARNING / INFO etc.)
+          - message   → main log text
+          - time      → RFC-3339 timestamp
+          - stack_trace → exception traceback (shown in Error Reporting)
+          - httpRequest → structured HTTP request data
+        """
+
+        def add_fields(
+            self,
+            log_record: dict,
+            record: logging.LogRecord,
+            message_dict: dict,
+        ) -> None:
+            super().add_fields(log_record, record, message_dict)
+            # GCP severity field (levelname is already correct: INFO/WARNING/ERROR…)
+            log_record["severity"] = record.levelname
+            log_record.pop("levelname", None)
+            # Move exception traceback into stack_trace so Error Reporting picks it up
+            if record.exc_info:
+                log_record["stack_trace"] = self.formatException(record.exc_info)
+                log_record.pop("exc_info", None)
+                log_record.pop("exc_text", None)
+
     _handler = logging.StreamHandler()
     _handler.setFormatter(
-        JsonFormatter(
-            fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
-            rename_fields={"asctime": "timestamp", "levelname": "severity"},
+        _GCPFormatter(
+            fmt="%(asctime)s %(name)s %(message)s",
+            rename_fields={"asctime": "time"},
             datefmt="%Y-%m-%dT%H:%M:%S%z",
         )
     )
-    logging.root.handlers = [_handler]
+
+    # Apply to root logger AND uvicorn loggers so every log line is structured.
+    # Without this, uvicorn writes its own plain-text lines to stderr.
+    for _logger_name in (
+        "",
+        "uvicorn",
+        "uvicorn.access",
+        "uvicorn.error",
+        "uvicorn.asgi",
+    ):
+        _log = logging.getLogger(_logger_name)
+        _log.handlers = [_handler]
+        _log.propagate = False
     logging.root.setLevel(logging.INFO)
 else:
     logging.basicConfig(
@@ -170,9 +209,17 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     logger.exception("Unhandled exception: %s", exc)
+    # ServerErrorMiddleware sits outside CORSMiddleware, so its responses
+    # don't get CORS headers. Add them manually here.
+    origin = request.headers.get("origin", "")
+    headers = {}
+    if origin in settings.CORS_ORIGINS:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
     return JSONResponse(
         status_code=500,
         content={"detail": "An internal server error occurred"},
+        headers=headers,
     )
 
 

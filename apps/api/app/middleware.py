@@ -23,12 +23,16 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 
 
 class LoggingMiddleware(BaseHTTPMiddleware):
-    """Logs method, path, status code, duration, and context for every request."""
+    """Logs every request as a structured line GCP Cloud Logging understands.
+
+    The ``httpRequest`` key is a first-class GCP field — Cloud Logging renders
+    it as a proper HTTP request entry with method, status, latency, etc.
+    """
 
     async def dispatch(self, request: Request, call_next) -> Response:
         start = time.perf_counter()
         response = await call_next(request)
-        duration_ms = (time.perf_counter() - start) * 1000
+        latency_s = time.perf_counter() - start
 
         status = response.status_code
         level = (
@@ -38,19 +42,27 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             if status >= 400
             else logging.INFO
         )
+
+        url = str(request.url)
         logger.log(
             level,
-            "request",
+            "%s %s %s",
+            request.method,
+            request.url.path,
+            status,
             extra={
-                "method": request.method,
-                "path": request.url.path,
-                "query": str(request.url.query) if request.url.query else None,
-                "status": status,
-                "duration_ms": round(duration_ms, 1),
+                # GCP-native HTTP request structure
+                "httpRequest": {
+                    "requestMethod": request.method,
+                    "requestUrl": url,
+                    "status": status,
+                    "latency": f"{latency_s:.3f}s",
+                    "responseSize": response.headers.get("content-length"),
+                    "remoteIp": request.client.host if request.client else None,
+                    "userAgent": request.headers.get("user-agent", "")[:200],
+                    "protocol": request.scope.get("http_version", "HTTP/1.1"),
+                },
                 "request_id": getattr(request.state, "request_id", "-"),
-                "content_length": response.headers.get("content-length"),
-                "client_ip": request.client.host if request.client else None,
-                "user_agent": request.headers.get("user-agent", "")[:200],
             },
         )
         return response

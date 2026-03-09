@@ -51,5 +51,5 @@ class PromoCodeValidateRequest(BaseModel):
 
 class PromoCodeValidateResponse(BaseModel):
     valid: bool
-    discount_amount: float = 0.0
+    discount_amount: Decimal = Decimal("0.00")
     message: str | None = None
