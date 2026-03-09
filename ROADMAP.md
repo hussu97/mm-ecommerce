@@ -59,6 +59,16 @@ _Fix within 1-2 sprints._
 
 _Next quarter._
 
+### Dependency Upgrades
+
+- [ ] **Next.js 15 → 16** — Major version available (`eslint-config-next@16` confirms it). Requires migration pass before upgrading.
+- [ ] **ESLint 9 → 10 + eslint-config-next 15 → 16** — ESLint 10 ships config format changes; upgrade together with Next.js 16.
+- [ ] **Vitest 2 → 4** — Skips two major versions; verify test API compatibility before bumping.
+- [ ] **@vitejs/plugin-react 4 → 5** — Major; upgrade alongside Vitest.
+- [ ] **happy-dom 15 → 20** — Test-only; upgrade with Vitest/plugin-react to keep test stack aligned.
+- [ ] **lint-staged 15 → 16** — Check for pre-commit hook config changes before bumping.
+- [ ] **@types/node 22 → 25** — Types-only; safe once Node engine constraint is reviewed.
+
 ### Deprecations & Code Quality
 
 - [x] **Deprecated `@app.on_event` usage** — Replaced with `@asynccontextmanager lifespan` pattern in `apps/api/app/main.py`.
@@ -145,4 +155,4 @@ _Backlog — prioritize as bandwidth allows._
 - [ ] **Automated backup strategy** — Scheduled PostgreSQL backups to cloud storage (GCS/S3) with point-in-time recovery.
 ---
 
-_Last updated: 2026-03-08_
+_Last updated: 2026-03-09_
