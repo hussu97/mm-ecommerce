@@ -55,7 +55,7 @@ def _send(to: str, subject: str, html: str) -> dict:
             "html": html,
         }
         response = resend.Emails.send(params)
-        resend_id = response.get("id")
+        resend_id = response.id if hasattr(response, "id") else response.get("id")
         logger.info("Email sent: id=%s to=%s subject=%s", resend_id, to, subject)
         return {"status": "sent", "resend_id": resend_id, "error": None}
     except Exception as exc:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -133,7 +133,6 @@ async def get_order(
 async def update_order_status(
     order_number: str,
     data: OrderStatusUpdate,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_admin_user),
 ):
@@ -142,11 +141,13 @@ async def update_order_status(
         db, order_number, data.status, data.admin_notes
     )
 
+    # Send email inline (never raises — safe to await before response).
+    # Background tasks can be silently dropped on Cloud Run / serverless.
     if data.status == OrderStatusEnum.CONFIRMED:
-        background_tasks.add_task(email_service.send_order_confirmation, order)
+        await email_service.send_order_confirmation(order)
     elif data.status == OrderStatusEnum.PACKED:
-        background_tasks.add_task(email_service.send_order_packed, order)
+        await email_service.send_order_packed(order)
     elif data.status == OrderStatusEnum.CANCELLED:
-        background_tasks.add_task(email_service.send_order_cancelled, order)
+        await email_service.send_order_cancelled(order)
 
     return order
