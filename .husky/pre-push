@@ -1,7 +1,9 @@
 #!/usr/bin/env sh
 
-echo "▶ pre-push: running frontend tests..."
+echo "▶ pre-push: type-checking and running frontend tests..."
 
+pnpm --filter web exec tsc --noEmit
+pnpm --filter admin exec tsc --noEmit
 pnpm --filter web test
 pnpm --filter admin test
 

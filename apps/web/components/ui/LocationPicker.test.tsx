@@ -147,8 +147,9 @@ describe('LocationPicker', () => {
 
       renderLocationPicker({ placeholder: 'Search…' });
 
-      const [constructorArg] = PlaceAutocompleteElementSpy.mock.calls[0] ?? [{}];
-      expect((constructorArg as Record<string, unknown>)?.inputPlaceholder).toBeUndefined();
+      const calls = PlaceAutocompleteElementSpy.mock.calls as unknown[][];
+      const constructorArg = (calls[0]?.[0] ?? {}) as Record<string, unknown>;
+      expect(constructorArg.inputPlaceholder).toBeUndefined();
     });
 
     it('pans the map and sets zoom on place selection', async () => {
