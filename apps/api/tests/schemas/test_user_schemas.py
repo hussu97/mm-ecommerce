@@ -11,8 +11,6 @@ class TestUserCreate:
         user = UserCreate(
             email="test@example.com",
             password="password123",
-            first_name="John",
-            last_name="Doe",
         )
         assert user.email == "test@example.com"
 
@@ -21,8 +19,6 @@ class TestUserCreate:
             UserCreate(
                 email="not-an-email",
                 password="password123",
-                first_name="John",
-                last_name="Doe",
             )
 
     def test_password_too_short(self):
@@ -30,37 +26,19 @@ class TestUserCreate:
             UserCreate(
                 email="test@example.com",
                 password="short",
-                first_name="John",
-                last_name="Doe",
             )
 
     def test_password_exactly_8_chars_ok(self):
         user = UserCreate(
             email="test@example.com",
             password="12345678",
-            first_name="John",
-            last_name="Doe",
         )
         assert len(user.password) == 8
-
-    def test_first_name_required(self):
-        with pytest.raises(ValidationError):
-            UserCreate(
-                email="test@example.com", password="password123", last_name="Doe"
-            )
-
-    def test_last_name_required(self):
-        with pytest.raises(ValidationError):
-            UserCreate(
-                email="test@example.com", password="password123", first_name="John"
-            )
 
     def test_phone_optional(self):
         user = UserCreate(
             email="test@example.com",
             password="password123",
-            first_name="John",
-            last_name="Doe",
         )
         assert user.phone is None
 
