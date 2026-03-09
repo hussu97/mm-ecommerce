@@ -418,7 +418,13 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("regions", "rest_of_uae", "Rest of UAE"),
     # address labels
     ("address", "region", "Region"),
-    ("address", "pin_location", "Pin Location (optional)"),
+    ("address", "pin_location", "Pin Location"),
+    ("address", "search_location", "Search for a location…"),
+    (
+        "checkout",
+        "pin_location_required",
+        "Please drop a pin on the map to confirm your delivery location",
+    ),
     # checkout region validation
     ("checkout", "region_required", "Region is required"),
 ]
@@ -794,7 +800,13 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("regions", "rest_of_uae", "بقية الإمارات"),
     # address labels
     ("address", "region", "المنطقة"),
-    ("address", "pin_location", "تحديد الموقع على الخريطة (اختياري)"),
+    ("address", "pin_location", "تحديد الموقع على الخريطة"),
+    ("address", "search_location", "ابحث عن موقع…"),
+    (
+        "checkout",
+        "pin_location_required",
+        "يرجى تحديد الموقع على الخريطة لتأكيد عنوان التوصيل",
+    ),
     # checkout region validation
     ("checkout", "region_required", "المنطقة مطلوبة"),
 ]

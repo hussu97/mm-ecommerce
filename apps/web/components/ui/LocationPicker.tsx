@@ -10,9 +10,10 @@ interface LocationPickerProps {
   lat: number | null;
   lng: number | null;
   onChange: (lat: number, lng: number) => void;
+  placeholder?: string;
 }
 
-export function LocationPicker({ lat, lng, onChange }: LocationPickerProps) {
+export function LocationPicker({ lat, lng, onChange, placeholder = 'Search for a location…' }: LocationPickerProps) {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? '';
   const { isLoaded, loadError } = useJsApiLoader({
     googleMapsApiKey: apiKey,
@@ -80,7 +81,7 @@ export function LocationPicker({ lat, lng, onChange }: LocationPickerProps) {
       >
         <input
           type="text"
-          placeholder="Search for a location…"
+          placeholder={placeholder}
           className="w-full px-3.5 py-2.5 text-sm font-body bg-white border border-gray-300 rounded-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
         />
       </StandaloneSearchBox>
@@ -109,11 +110,6 @@ export function LocationPicker({ lat, lng, onChange }: LocationPickerProps) {
         )}
       </GoogleMap>
 
-      {lat !== null && lng !== null && (
-        <p className="text-xs text-gray-400 font-body">
-          {lat.toFixed(6)}, {lng.toFixed(6)}
-        </p>
-      )}
     </div>
   );
 }

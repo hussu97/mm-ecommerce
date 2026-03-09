@@ -253,6 +253,7 @@ function StepInformation({
 
   function validateStep1Address(f: CheckoutForm): Record<string, string> {
     const errs: Record<string, string> = {};
+    if (f.locationLat === null || f.locationLng === null) errs.locationLat = t('checkout.pin_location_required');
     if (!f.addressLine1.trim()) errs.addressLine1 = t('checkout.address_required');
     if (!f.region) errs.region = t('checkout.region_required');
     return errs;
@@ -380,6 +381,20 @@ function StepInformation({
         {/* New address form */}
         {form.selectedAddressId === '' && (
           <div className="space-y-4">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wider text-gray-600 mb-2">
+                {t('address.pin_location')}
+              </p>
+              <LocationPicker
+                lat={form.locationLat}
+                lng={form.locationLng}
+                onChange={(lat, lng) => onChange({ locationLat: lat, locationLng: lng })}
+                placeholder={t('address.search_location')}
+              />
+              {errors.locationLat && (
+                <p className="mt-1 text-xs text-red-500 font-body">{errors.locationLat}</p>
+              )}
+            </div>
             <Input
               label={t('common.address_line_1')}
               placeholder={t('checkout.address_placeholder')}
@@ -400,16 +415,6 @@ function StepInformation({
               onChange={field('region')}
               error={errors.region}
             />
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-gray-600 mb-2">
-                {t('address.pin_location')}
-              </p>
-              <LocationPicker
-                lat={form.locationLat}
-                lng={form.locationLng}
-                onChange={(lat, lng) => onChange({ locationLat: lat, locationLng: lng })}
-              />
-            </div>
           </div>
         )}
       </div>
