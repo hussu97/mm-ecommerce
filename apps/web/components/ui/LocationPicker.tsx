@@ -47,7 +47,7 @@ function MapContent({ lat, lng, onChange, placeholder }: LocationPickerProps) {
     });
 
     return () => {
-      google.maps.event.removeListener(listener);
+      listener.remove();
     };
   }, [placesLib, onChange, map]);
 
