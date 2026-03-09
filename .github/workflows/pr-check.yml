@@ -3,12 +3,41 @@ name: PR Check
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main]
 
 jobs:
-  js-checks:
-    name: Lint, Type-check & Build (JS)
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      web: ${{ steps.filter.outputs.web }}
+      admin: ${{ steps.filter.outputs.admin }}
+      api: ${{ steps.filter.outputs.api }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            web:
+              - 'apps/web/**'
+              - 'packages/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'turbo.json'
+            admin:
+              - 'apps/admin/**'
+              - 'packages/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'turbo.json'
+            api:
+              - 'apps/api/**'
+              - 'docker-compose*.yml'
+
+  lint-web:
+    name: Lint, Type-check & Build (Web)
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,26 +55,57 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Lint
-        run: pnpm lint
+        run: pnpm --filter web lint
 
       - name: Run tests
-        run: pnpm test
+        run: pnpm --filter web test
 
       - name: Type-check
-        run: pnpm --filter web exec tsc --noEmit && pnpm --filter admin exec tsc --noEmit
+        run: pnpm --filter web exec tsc --noEmit
 
-      - name: Build web
+      - name: Build
         run: pnpm --filter web build
         env:
           NEXT_TELEMETRY_DISABLED: "1"
 
-      - name: Build admin
+  lint-admin:
+    name: Lint, Type-check & Build (Admin)
+    needs: changes
+    if: needs.changes.outputs.admin == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm --filter admin lint
+
+      - name: Run tests
+        run: pnpm --filter admin test
+
+      - name: Type-check
+        run: pnpm --filter admin exec tsc --noEmit
+
+      - name: Build
         run: pnpm --filter admin build
         env:
           NEXT_TELEMETRY_DISABLED: "1"
 
-  python-checks:
-    name: Lint (Python)
+  lint-python:
+    name: Lint & Test (Python)
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
