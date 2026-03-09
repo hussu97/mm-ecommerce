@@ -9,6 +9,8 @@ from sqlalchemy.orm import selectinload
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.order import Order, OrderStatusEnum
 from app.models.webhook_event import WebhookEvent
+from app.schemas.order import OrderResponse
+from app.services import email_service
 from app.services.providers import stripe_provider, tabby_provider, tamara_provider
 
 logger = logging.getLogger(__name__)
@@ -51,6 +53,11 @@ async def create_session(db: AsyncSession, order_number: str, provider: str) -> 
 
     if order.status == OrderStatusEnum.CANCELLED:
         raise BadRequestError("Cannot create payment session for a cancelled order")
+
+    # Allow retry: reset payment_failed orders back to created
+    if order.status == OrderStatusEnum.PAYMENT_FAILED:
+        order.status = OrderStatusEnum.CREATED
+        await db.flush()
 
     # Idempotency: if already has a confirmed payment, reject
     if stripe_provider.is_confirmed_payment_id(order.payment_id):
@@ -114,12 +121,15 @@ async def handle_stripe_webhook(
             order = await _load_order(db, order_number)
             if payment_intent_id:
                 order.payment_id = payment_intent_id
+            order.status = OrderStatusEnum.CONFIRMED
             await db.flush()
+            order_response = OrderResponse.model_validate(order)
             logger.info(
                 "Payment confirmed: order=%s payment_intent=%s",
                 order_number,
                 payment_intent_id,
             )
+            await email_service.send_order_confirmation(order_response)
         except NotFoundError:
             logger.error("Webhook: order not found for order_number=%s", order_number)
 
@@ -127,6 +137,18 @@ async def handle_stripe_webhook(
         logger.warning(
             "Payment not completed: event=%s order=%s", event_type, order_number
         )
+        if order_number:
+            try:
+                order = await _load_order(db, order_number)
+                if order.status == OrderStatusEnum.CREATED:
+                    order.status = OrderStatusEnum.PAYMENT_FAILED
+                    await db.flush()
+                    order_response = OrderResponse.model_validate(order)
+                    await email_service.send_payment_failed(order_response)
+            except NotFoundError:
+                logger.error(
+                    "Webhook: order not found for order_number=%s", order_number
+                )
 
     return {"received": True, "event_type": event_type}
 

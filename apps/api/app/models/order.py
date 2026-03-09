@@ -20,6 +20,7 @@ class OrderStatusEnum(str, enum.Enum):
     CONFIRMED = "confirmed"
     PACKED = "packed"
     CANCELLED = "cancelled"
+    PAYMENT_FAILED = "payment_failed"
 
 
 class DeliveryMethodEnum(str, enum.Enum):

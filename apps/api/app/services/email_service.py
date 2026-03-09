@@ -153,6 +153,29 @@ async def send_order_packed(order: OrderResponse) -> None:
     await _log("order_packed", order.email, subject, result, order.order_number)
 
 
+async def send_payment_failed(order: OrderResponse) -> None:
+    subject = f"Payment Failed — {order.order_number} | Melting Moments"
+    try:
+        name = (
+            order.shipping_address_snapshot.get("first_name", "there")
+            if order.shipping_address_snapshot
+            else "there"
+        )
+        html = _render(
+            "payment_failed.html", recipient_email=order.email, name=name, order=order
+        )
+        result = await asyncio.to_thread(_send, order.email, subject, html)
+    except Exception as exc:
+        logger.error(
+            "payment_failed render/send failed for %s: %s",
+            order.order_number,
+            exc,
+            exc_info=True,
+        )
+        result = {"status": "failed", "resend_id": None, "error": str(exc)}
+    await _log("payment_failed", order.email, subject, result, order.order_number)
+
+
 async def send_order_cancelled(order: OrderResponse) -> None:
     subject = f"Order Cancelled — {order.order_number} | Melting Moments"
     try:

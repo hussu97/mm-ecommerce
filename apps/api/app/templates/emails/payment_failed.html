@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Payment Unsuccessful — {{ order.order_number }}{% endblock %}
+
+{% block content %}
+<h2>Payment Unsuccessful</h2>
+<p>Hi {{ name }},</p>
+<p>We weren't able to process your payment for order <strong>{{ order.order_number }}</strong>. Don't worry — your order is saved and you can try again.</p>
+
+<div style="text-align:center;margin:24px 0;">
+  <span class="status status-cancelled">&#10005; Payment Failed</span><br/>
+  <span class="order-badge">{{ order.order_number }}</span>
+</div>
+
+<!-- Items summary -->
+<table class="items-table" cellpadding="0" cellspacing="0">
+  <thead>
+    <tr>
+      <th>Item</th>
+      <th style="text-align:center;width:50px;">Qty</th>
+      <th class="right" style="width:80px;">Price</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in order.items %}
+    <tr>
+      <td>
+        {{ item.product_name }}
+        {% if item.selected_options_snapshot %}<span class="variant-label">{{ item.selected_options_snapshot | map(attribute='option_name') | join(', ') }}</span>{% endif %}
+      </td>
+      <td style="text-align:center;">{{ item.quantity }}</td>
+      <td class="right">{{ "%.2f"|format(item.total_price) }} AED</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<table class="totals" cellpadding="0" cellspacing="0">
+  <tr class="total-row">
+    <td class="label">Order Total</td>
+    <td class="value">{{ "%.2f"|format(order.total) }} AED</td>
+  </tr>
+  <tr>
+    <td class="label" style="font-size:12px;color:#888;">VAT included (5%)</td>
+    <td class="value" style="font-size:12px;color:#888;">{{ "%.2f"|format(order.vat_amount) }} AED</td>
+  </tr>
+</table>
+
+<hr class="divider" />
+
+<p>To complete your order, click the button below to retry your payment.</p>
+
+<div style="text-align:center;margin:28px 0;">
+  <a href="{{ web_url }}/checkout?order_number={{ order.order_number }}&step=payment" class="btn">Retry Payment</a>
+</div>
+
+<p class="muted" style="text-align:center;">Need help? Reply to this email or reach us on WhatsApp.</p>
+{% endblock %}

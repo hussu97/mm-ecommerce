@@ -22,7 +22,15 @@ def _escape_like(s: str) -> str:
 
 # Valid status transitions
 VALID_TRANSITIONS: dict[OrderStatusEnum, set[OrderStatusEnum]] = {
-    OrderStatusEnum.CREATED: {OrderStatusEnum.CONFIRMED, OrderStatusEnum.CANCELLED},
+    OrderStatusEnum.CREATED: {
+        OrderStatusEnum.CONFIRMED,
+        OrderStatusEnum.CANCELLED,
+        OrderStatusEnum.PAYMENT_FAILED,
+    },
+    OrderStatusEnum.PAYMENT_FAILED: {
+        OrderStatusEnum.CANCELLED,
+        OrderStatusEnum.CONFIRMED,
+    },
     OrderStatusEnum.CONFIRMED: {OrderStatusEnum.PACKED, OrderStatusEnum.CANCELLED},
     OrderStatusEnum.PACKED: set(),
     OrderStatusEnum.CANCELLED: set(),
