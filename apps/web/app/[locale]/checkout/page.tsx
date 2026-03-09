@@ -267,7 +267,7 @@ function StepInformation({
     const needsAddress = !form.selectedAddressId;
     const addressFieldErrors = needsAddress ? validateStep1Address(form) : {};
     // Location pin is always required, regardless of whether a saved address is selected
-    const locationError = (form.locationLat === null || form.locationLng === null)
+    const locationError: Record<string, string> = (form.locationLat === null || form.locationLng === null)
       ? { locationLat: t('checkout.pin_location_required') }
       : {};
     const all = { ...contactErrors, ...addressFieldErrors, ...locationError };
