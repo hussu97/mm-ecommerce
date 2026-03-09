@@ -41,8 +41,7 @@ function MapContent({ lat, lng, onChange, placeholder }: LocationPickerProps) {
     containerRef.current.appendChild(placeAc);
 
     const handler = async (event: Event) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { place } = (event as CustomEvent<{ place: any }>).detail;
+      const { place } = (event as CustomEvent<{ place: google.maps.places.Place }>).detail;
       await place.fetchFields({ fields: ['location'] });
       const loc = place.location;
       if (!loc) return;
