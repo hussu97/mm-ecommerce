@@ -97,9 +97,9 @@ export function ProductCard({ product }: { product: Product }) {
         </ConditionalLink>
 
         {/* Details */}
-        <div className="pt-4 flex flex-col gap-3">
+        <div className="pt-4 flex flex-col flex-1 gap-3">
           <ConditionalLink href={pdpHref}>
-            <h3 className="font-display text-base text-gray-800 leading-snug hover:text-primary transition-colors">
+            <h3 className="font-display text-base text-gray-800 leading-snug hover:text-primary transition-colors line-clamp-2 min-h-[2.75rem]">
               {productName}
             </h3>
           </ConditionalLink>
@@ -132,7 +132,7 @@ export function ProductCard({ product }: { product: Product }) {
                 disabled={adding}
                 className="flex-1 py-2.5 bg-primary text-white text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {adding ? t('product.adding') : t('product.add_to_cart')}
+                {adding ? t('product.adding') : t('product.add_short')}
               </button>
             </div>
           )}

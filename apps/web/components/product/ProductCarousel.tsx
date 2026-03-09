@@ -58,7 +58,7 @@ export function ProductCarousel({
           className="flex gap-5 overflow-x-auto scrollbar-none scroll-smooth snap-x snap-mandatory pb-2"
         >
           {products.map(product => (
-            <div key={product.id} className="w-52 shrink-0 snap-start">
+            <div key={product.id} className="w-56 shrink-0 snap-start">
               <ProductCard product={product} />
             </div>
           ))}
