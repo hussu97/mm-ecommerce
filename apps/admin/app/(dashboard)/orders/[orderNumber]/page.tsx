@@ -151,8 +151,8 @@ export default function OrderDetailPage() {
             <div className="mt-2 text-xs font-body text-gray-500 space-y-0.5">
               <p>{order.shipping_address_snapshot.first_name} {order.shipping_address_snapshot.last_name}</p>
               <p>{order.shipping_address_snapshot.phone}</p>
-              <p>{order.shipping_address_snapshot.line1}</p>
-              {order.shipping_address_snapshot.line2 && <p>{order.shipping_address_snapshot.line2}</p>}
+              <p>{order.shipping_address_snapshot.address_line_1}</p>
+              {order.shipping_address_snapshot.address_line_2 && <p>{order.shipping_address_snapshot.address_line_2}</p>}
               <p>{order.shipping_address_snapshot.region}</p>
             </div>
           )}
