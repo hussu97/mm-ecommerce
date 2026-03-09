@@ -26,15 +26,18 @@ jobs:
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'turbo.json'
+              - '.github/workflows/deploy.yml'
             admin:
               - 'apps/admin/**'
               - 'packages/**'
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'turbo.json'
+              - '.github/workflows/deploy.yml'
             api:
               - 'apps/api/**'
               - 'docker-compose*.yml'
+              - '.github/workflows/deploy.yml'
 
   lint-web:
     name: Lint, Type-check & Build (Web)
