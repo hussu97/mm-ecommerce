@@ -2,6 +2,18 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  async rewrites() {
+    return [
+      {
+        source: '/umami/script.js',
+        destination: 'https://cloud.umami.is/script.js',
+      },
+      {
+        source: '/umami/api/send',
+        destination: 'https://cloud.umami.is/api/send',
+      },
+    ];
+  },
   async headers() {
     return [
       {
