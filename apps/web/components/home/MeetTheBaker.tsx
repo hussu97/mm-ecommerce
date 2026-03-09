@@ -16,7 +16,7 @@ export function MeetTheBaker({ c, locale }: { c: BakerContent; locale: string })
 
         {/* Background photo */}
         <Image
-          src="/images/photos/person_shot_4.png"
+          src="/images/photos/person_shot_4.jpg"
           alt="Fatema Abbasi baking in her kitchen"
           fill
           sizes="100vw"

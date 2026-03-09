@@ -17,7 +17,11 @@ import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
-import { LocationPicker } from '@/components/ui/LocationPicker';
+import dynamic from 'next/dynamic';
+const LocationPicker = dynamic(
+  () => import('@/components/ui/LocationPicker').then(m => ({ default: m.LocationPicker })),
+  { ssr: false, loading: () => <div className="h-64 bg-gray-100 rounded-lg animate-pulse" /> },
+);
 import type { Address, Cart, CartItem, RegionCode } from '@/lib/types';
 
 // ─── Constants ────────────────────────────────────────────────────────────────

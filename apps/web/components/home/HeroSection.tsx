@@ -55,6 +55,8 @@ export function HeroSection({ c, locale }: { c: HeroContent; locale: string }) {
               sizes="(max-width: 1024px) 90vw, 45vw"
               className="object-cover object-top"
               priority
+              placeholder="blur"
+              blurDataURL="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxIDEiPjxyZWN0IHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiM4YTVhNjQiLz48L3N2Zz4="
             />
           </div>
           <div className="absolute -bottom-3 -right-3 w-full max-w-md mx-auto lg:max-w-none aspect-[4/5] border-2 border-secondary pointer-events-none" />
@@ -67,13 +69,14 @@ export function HeroSection({ c, locale }: { c: HeroContent; locale: string }) {
         {[
           { src: '/images/photos/person_shot_2.png', alt: 'Freshly baked brownies' },
           { src: '/images/photos/person_shot_3.png', alt: 'Handcrafted cookies' },
-          { src: '/images/photos/person_shot_4.png', alt: 'Artisanal desserts' },
+          { src: '/images/photos/person_shot_4.jpg', alt: 'Artisanal desserts' },
         ].map(({ src, alt }) => (
           <div key={src} className="relative aspect-square overflow-hidden">
             <Image
               src={src}
               alt={alt}
               fill
+              loading="lazy"
               sizes="(max-width: 640px) 33vw, (max-width: 1280px) 30vw, 400px"
               className="object-cover hover:scale-105 transition-transform duration-500"
             />

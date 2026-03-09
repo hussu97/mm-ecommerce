@@ -72,8 +72,9 @@ export default async function RootLayout({
     <html lang={locale} dir={dir} className={`${raleway.variable} ${jost.variable} ${tajawal.variable} ${cairo.variable}`}>
       <head>
         <link
+          rel="preload"
           href="https://fonts.googleapis.com/icon?family=Material+Icons"
-          rel="stylesheet"
+          as="style"
         />
         <link
           rel="search"
@@ -91,6 +92,9 @@ export default async function RootLayout({
         <Providers>
           {children}
         </Providers>
+
+        {/* Material Icons — loaded async to avoid render-blocking */}
+        <Script id="material-icons" strategy="afterInteractive">{`(function(){var l=document.createElement('link');l.rel='stylesheet';l.href='https://fonts.googleapis.com/icon?family=Material+Icons';document.head.appendChild(l)})()`}</Script>
 
         {/* Umami analytics — no-cookie, GDPR-friendly */}
         {process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID && (
