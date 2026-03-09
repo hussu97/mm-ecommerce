@@ -17,7 +17,7 @@ interface LocationPickerProps {
 function MapContent({ lat, lng, onChange, placeholder }: LocationPickerProps) {
   const map = useMap();
   const placesLib = useMapsLibrary('places');
-  const inputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const position = lat !== null && lng !== null ? { lat, lng } : null;
 
@@ -27,29 +27,38 @@ function MapContent({ lat, lng, onChange, placeholder }: LocationPickerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map]);
 
-  // Wire up Places Autocomplete once the library is ready
+  // Wire up PlaceAutocompleteElement once the library is ready
   useEffect(() => {
-    if (!placesLib || !inputRef.current) return;
+    if (!placesLib || !containerRef.current) return;
 
-    const ac = new placesLib.Autocomplete(inputRef.current, {
-      fields: ['geometry'],
-    });
+    containerRef.current.innerHTML = '';
 
-    const listener = ac.addListener('place_changed', () => {
-      const place = ac.getPlace();
-      const loc = place.geometry?.location;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const PlaceAutocompleteElement = (placesLib as any).PlaceAutocompleteElement;
+    if (!PlaceAutocompleteElement) return;
+
+    const placeAc = new PlaceAutocompleteElement({ inputPlaceholder: placeholder });
+    containerRef.current.appendChild(placeAc);
+
+    const handler = async (event: Event) => {
+      const { place } = (event as CustomEvent<{ place: google.maps.places.Place }>).detail;
+      await place.fetchFields({ fields: ['location'] });
+      const loc = place.location;
       if (!loc) return;
       const newLat = loc.lat();
       const newLng = loc.lng();
       onChange(newLat, newLng);
       map?.panTo({ lat: newLat, lng: newLng });
       map?.setZoom(15);
-    });
+    };
+
+    placeAc.addEventListener('gmp-placeselect', handler);
 
     return () => {
-      listener.remove();
+      placeAc.removeEventListener('gmp-placeselect', handler);
+      if (containerRef.current) containerRef.current.innerHTML = '';
     };
-  }, [placesLib, onChange, map]);
+  }, [placesLib, onChange, map, placeholder]);
 
   const handleMapClick = useCallback(
     (e: MapMouseEvent) => {
@@ -61,12 +70,7 @@ function MapContent({ lat, lng, onChange, placeholder }: LocationPickerProps) {
 
   return (
     <>
-      <input
-        ref={inputRef}
-        type="text"
-        placeholder={placeholder}
-        className="w-full px-3.5 py-2.5 text-sm font-body bg-white border border-gray-300 rounded-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
-      />
+      <div ref={containerRef} className="w-full" />
 
       <Map
         style={{ width: '100%', height: '200px', borderRadius: '2px' }}
