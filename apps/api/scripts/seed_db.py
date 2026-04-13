@@ -70,8 +70,6 @@ async def seed(session: AsyncSession) -> None:
         )
         session.add(admin)
         print("  ✅ Admin user created")
-    else:
-        print("  ⏭  Admin user already exists")
 
     # Promo codes
     for promo_data in PROMO_CODES:
@@ -79,7 +77,6 @@ async def seed(session: AsyncSession) -> None:
             select(PromoCode).where(PromoCode.code == promo_data["code"])
         )
         if result.scalar_one_or_none():
-            print(f"  ⏭  Promo code already exists: {promo_data['code']}")
             continue
 
         promo = PromoCode(

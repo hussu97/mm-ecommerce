@@ -833,8 +833,6 @@ async def seed(session: AsyncSession) -> None:
         if not existing:
             session.add(Language(**lang_data))
             print(f"  ✅ Language: {lang_data['code']} ({lang_data['name']})")
-        else:
-            print(f"  ⏭  Language already exists: {lang_data['code']}")
 
     await session.flush()
 
@@ -856,8 +854,6 @@ async def seed(session: AsyncSession) -> None:
         elif existing.value != value:
             existing.value = value
             print(f"  🔄 {locale}:{namespace}.{key} updated")
-        else:
-            print(f"  ⏭  {locale}:{namespace}.{key} already exists")
 
     await session.commit()
     print("\n✨ i18n seed complete!")
