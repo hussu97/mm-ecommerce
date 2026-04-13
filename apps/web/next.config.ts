@@ -7,7 +7,7 @@ const localePattern = (process.env.NEXT_PUBLIC_SUPPORTED_LOCALES ?? "en,ar")
   .join("|");
 
 const nextConfig: NextConfig = {
-  output: "standalone",
+  // output: "standalone" is for self-hosted Docker only — not needed on Vercel
   async rewrites() {
     return [
       {
