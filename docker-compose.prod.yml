@@ -89,7 +89,7 @@ services:
         limits:
           memory: 512m
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8000/ping"]
+      test: ["CMD", "curl", "-sf", "-H", "Host: api.meltingmomentscakes.com", "http://localhost:8000/ping"]
       interval: 10s
       timeout: 5s
       retries: 5

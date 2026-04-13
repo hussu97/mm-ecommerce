@@ -134,7 +134,7 @@ jobs:
           echo "Waiting for API to be healthy..."
           API_READY=false
           for i in $(seq 1 30); do
-            if docker compose -f docker-compose.prod.yml exec -T api curl -sf http://localhost:8000/ping > /dev/null 2>&1; then
+            if docker compose -f docker-compose.prod.yml exec -T api curl -sf -H "Host: api.meltingmomentscakes.com" http://localhost:8000/ping > /dev/null 2>&1; then
               echo "API is up."
               API_READY=true
               break
