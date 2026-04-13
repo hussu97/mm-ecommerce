@@ -1,6 +1,9 @@
 # ── Stage 1: builder ───────────────────────────────────────────────────────────
 FROM python:3.12-slim AS builder
 
+# Suppress debconf "unable to initialize frontend" warnings during apt-get
+ENV DEBIAN_FRONTEND=noninteractive
+
 WORKDIR /build
 
 # Install build dependencies
@@ -20,6 +23,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 # ── Stage 2: runner ────────────────────────────────────────────────────────────
 FROM python:3.12-slim AS runner
+
+ENV DEBIAN_FRONTEND=noninteractive
 
 WORKDIR /app
 
