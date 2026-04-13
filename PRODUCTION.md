@@ -212,12 +212,21 @@ gcloud projects add-iam-policy-binding melting-moments-cakes \
   --member="serviceAccount:mm-backup-sa@melting-moments-cakes.iam.gserviceaccount.com" \
   --role="roles/logging.logWriter"
 
+# The VM must be stopped before its service account can be changed.
+gcloud compute instances stop mm-backend \
+  --project=melting-moments-cakes \
+  --zone=me-central1-a
+
 # Attach the service account to the VM with both storage + logging scopes
 gcloud compute instances set-service-account mm-backend \
   --project=melting-moments-cakes \
   --zone=me-central1-a \
   --service-account=mm-backup-sa@melting-moments-cakes.iam.gserviceaccount.com \
   --scopes=https://www.googleapis.com/auth/devstorage.read_write,https://www.googleapis.com/auth/logging.write
+
+gcloud compute instances start mm-backend \
+  --project=melting-moments-cakes \
+  --zone=me-central1-a
 ```
 
 Then set `BACKUP_GCS_BUCKET=melting-moments-cakes-backups` in `.env`.
