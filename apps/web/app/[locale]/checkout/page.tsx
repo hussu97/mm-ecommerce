@@ -6,7 +6,7 @@ import { Suspense, useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useCart } from '@/lib/cart-context';
 import {
-  ordersApi, paymentsApi, addressesApi,
+  ordersApi, paymentsApi, addressesApi, deliveryApi,
   getToken, getSessionId, ensureSessionId, authApi, setToken,
 } from '@/lib/api';
 import { Breadcrumb } from '@/components/ui/Breadcrumb';
@@ -16,11 +16,10 @@ import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
-import { calcDeliveryFee } from '@mm/config/delivery';
 import { AddressForm } from './components/AddressForm';
 import { DeliveryCalculator } from './components/DeliveryCalculator';
 import { PromoCodeStep } from './components/PromoCodeStep';
-import type { Address, Cart, CartItem, RegionCode } from '@/lib/types';
+import type { Address, Cart, CartItem, RegionCode, DeliveryRates, PublicRegion } from '@/lib/types';
 
 // ─── Session persistence ──────────────────────────────────────────────────────
 
@@ -71,6 +70,22 @@ const INITIAL_FORM: CheckoutForm = {
   notes: '',
 };
 
+// ─── Delivery fee helper ──────────────────────────────────────────────────────
+
+function calcFeeFromRates(
+  rates: DeliveryRates | null,
+  method: 'delivery' | 'pickup',
+  region: string,
+  subtotal: number,
+): number {
+  if (method === 'pickup') return rates?.pickup_fee ?? 0;
+  if (!rates) return 0;
+  if (subtotal >= rates.free_threshold) return 0;
+  const r = rates.regions.find((reg) => reg.slug === region);
+  if (r) return r.delivery_fee;
+  return rates.regions.reduce((max, reg) => Math.max(max, reg.delivery_fee), 50);
+}
+
 // ─── Step indicator ───────────────────────────────────────────────────────────
 
 function StepIndicator({ step }: { step: number }) {
@@ -107,12 +122,13 @@ function StepIndicator({ step }: { step: number }) {
 // ─── Order summary sidebar ────────────────────────────────────────────────────
 
 function OrderSummarySidebar({
-  cart, form, step, retryOrder,
+  cart, form, step, retryOrder, deliveryRates,
 }: {
   cart: Cart | null;
   form: CheckoutForm;
   step: number;
   retryOrder: import('@/lib/types').Order | null;
+  deliveryRates: DeliveryRates | null;
 }) {
   const { t, locale } = useTranslation();
 
@@ -122,7 +138,7 @@ function OrderSummarySidebar({
   const deliveryFee = retryOrder
     ? Number(retryOrder.delivery_fee)
     : step >= 2
-      ? calcDeliveryFee(form.deliveryMethod, form.region, effectiveSubtotal)
+      ? calcFeeFromRates(deliveryRates, form.deliveryMethod, form.region, effectiveSubtotal)
       : null;
   const total = retryOrder ? Number(retryOrder.total) : subtotal + (deliveryFee ?? 0) - discount;
 
@@ -238,13 +254,14 @@ function isValidEmail(email: string): boolean {
 // ─── Step 1: Information ──────────────────────────────────────────────────────
 
 function StepInformation({
-  form, onChange, onNext, savedAddresses, loadingAddresses,
+  form, onChange, onNext, savedAddresses, loadingAddresses, regions,
 }: {
   form: CheckoutForm;
   onChange: (patch: Partial<CheckoutForm>) => void;
   onNext: () => void;
   savedAddresses: Address[];
   loadingAddresses: boolean;
+  regions: PublicRegion[];
 }) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { t } = useTranslation();
@@ -346,6 +363,7 @@ function StepInformation({
         onClearError={(key) => setErrors((prev) => { const next = { ...prev }; delete next[key]; return next; })}
         savedAddresses={savedAddresses}
         loadingAddresses={loadingAddresses}
+        regions={regions}
       />
 
       <Button variant="primary" size="lg" fullWidth onClick={handleNext}>
@@ -358,16 +376,19 @@ function StepInformation({
 // ─── Step 2: Delivery ─────────────────────────────────────────────────────────
 
 function StepDelivery({
-  form, onChange, onBack, onNext, subtotal,
+  form, onChange, onBack, onNext, subtotal, deliveryRates,
 }: {
   form: CheckoutForm;
   onChange: (patch: Partial<CheckoutForm>) => void;
   onBack: () => void;
   onNext: () => void;
   subtotal: number;
+  deliveryRates: DeliveryRates | null;
 }) {
   const { t } = useTranslation();
   const effectiveSubtotal = Math.max(0, subtotal - form.promoDiscount);
+  const deliveryFee = calcFeeFromRates(deliveryRates, form.deliveryMethod, form.region, effectiveSubtotal);
+  const freeThreshold = deliveryRates?.free_threshold ?? 200;
 
   return (
     <div className="space-y-6">
@@ -380,6 +401,8 @@ function StepDelivery({
           deliveryMethod={form.deliveryMethod}
           region={form.region}
           effectiveSubtotal={effectiveSubtotal}
+          deliveryFee={deliveryFee}
+          freeThreshold={freeThreshold}
           onChange={(method) => onChange({ deliveryMethod: method })}
         />
 
@@ -406,7 +429,7 @@ function StepDelivery({
 // ─── Step 3: Payment ──────────────────────────────────────────────────────────
 
 function StepPayment({
-  form, onChange, onBack, cart, retryOrder, onSubmit, isSubmitting,
+  form, onChange, onBack, cart, retryOrder, onSubmit, isSubmitting, deliveryRates,
 }: {
   form: CheckoutForm;
   onChange: (patch: Partial<CheckoutForm>) => void;
@@ -415,6 +438,7 @@ function StepPayment({
   retryOrder: import('@/lib/types').Order | null;
   onSubmit: () => void;
   isSubmitting: boolean;
+  deliveryRates: DeliveryRates | null;
 }) {
   const { t } = useTranslation();
 
@@ -424,7 +448,7 @@ function StepPayment({
     : Math.max(0, subtotal - form.promoDiscount);
   const deliveryFee = retryOrder
     ? Number(retryOrder.delivery_fee)
-    : calcDeliveryFee(form.deliveryMethod, form.region, effectiveSubtotal);
+    : calcFeeFromRates(deliveryRates, form.deliveryMethod, form.region, effectiveSubtotal);
   const total = retryOrder
     ? Number(retryOrder.total)
     : Math.max(0, subtotal + deliveryFee - form.promoDiscount);
@@ -573,6 +597,7 @@ function CheckoutContent() {
   const [loadingAddresses, setLoadingAddresses] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [retryOrder, setRetryOrder] = useState<import('@/lib/types').Order | null>(null);
+  const [deliveryRates, setDeliveryRates] = useState<DeliveryRates | null>(null);
 
   // Restore from sessionStorage + handle cancelled/failed payment return
   useEffect(() => {
@@ -595,6 +620,11 @@ function CheckoutContent() {
         });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Fetch delivery rates from backend
+  useEffect(() => {
+    deliveryApi.getRates().then(setDeliveryRates).catch(() => { /* use fallback calcFeeFromRates(null) */ });
   }, []);
 
   // Load saved addresses for authenticated users
@@ -759,6 +789,7 @@ function CheckoutContent() {
               onNext={() => goToStep(2)}
               savedAddresses={savedAddresses}
               loadingAddresses={loadingAddresses}
+              regions={deliveryRates?.regions ?? []}
             />
           )}
           {step === 2 && (
@@ -768,6 +799,7 @@ function CheckoutContent() {
               onBack={() => goToStep(1)}
               onNext={() => goToStep(3)}
               subtotal={cart?.subtotal ?? 0}
+              deliveryRates={deliveryRates}
             />
           )}
           {step === 3 && (
@@ -779,12 +811,13 @@ function CheckoutContent() {
               retryOrder={retryOrder}
               onSubmit={handleSubmit}
               isSubmitting={submitting}
+              deliveryRates={deliveryRates}
             />
           )}
         </section>
 
         <aside className="lg:col-span-1 order-first lg:order-last">
-          <OrderSummarySidebar cart={cart} form={form} step={step} retryOrder={retryOrder} />
+          <OrderSummarySidebar cart={cart} form={form} step={step} retryOrder={retryOrder} deliveryRates={deliveryRates} />
         </aside>
       </div>
     </div>

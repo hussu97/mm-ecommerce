@@ -6,17 +6,12 @@ import { Select } from '@/components/ui/Select';
 import { Spinner } from '@/components/ui/Spinner';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import dynamic from 'next/dynamic';
-import type { Address, RegionCode } from '@/lib/types';
+import type { Address, PublicRegion } from '@/lib/types';
 
 const LocationPicker = dynamic(
   () => import('@/components/ui/LocationPicker').then(m => ({ default: m.LocationPicker })),
   { ssr: false, loading: () => <div className="h-64 bg-gray-100 rounded-lg animate-pulse" /> },
 );
-
-const REGION_CODES: RegionCode[] = [
-  'dubai', 'sharjah', 'ajman', 'abu_dhabi',
-  'fujairah', 'ras_al_khaimah', 'umm_al_quwain', 'al_ain', 'rest_of_uae',
-];
 
 export interface AddressFormValues {
   selectedAddressId: string;
@@ -37,16 +32,17 @@ interface AddressFormProps {
   onClearError: (key: string) => void;
   savedAddresses: Address[];
   loadingAddresses: boolean;
+  regions: PublicRegion[];
 }
 
 export function AddressForm({
-  values, onChange, errors, onClearError, savedAddresses, loadingAddresses,
+  values, onChange, errors, onClearError, savedAddresses, loadingAddresses, regions,
 }: AddressFormProps) {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
 
-  const REGION_OPTIONS = REGION_CODES.map((code) => ({
-    value: code,
-    label: t(`regions.${code}`),
+  const REGION_OPTIONS = regions.map((r) => ({
+    value: r.slug,
+    label: r.name_translations[locale] ?? r.name_translations['en'] ?? r.slug,
   }));
 
   const field = (key: keyof AddressFormValues) =>

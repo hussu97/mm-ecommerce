@@ -1,26 +1,21 @@
 'use client';
 
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
-import { calcDeliveryFee, FREE_DELIVERY_THRESHOLD } from '@mm/config/delivery';
 
 interface DeliveryCalculatorProps {
   deliveryMethod: 'delivery' | 'pickup';
   region: string;
   effectiveSubtotal: number;
+  deliveryFee: number;
+  freeThreshold: number;
   onChange: (method: 'delivery' | 'pickup') => void;
 }
 
-/**
- * Renders the delivery-method selector (Step 2) with live fee preview.
- * Fee logic is pulled from the shared @mm/config/delivery constants so that
- * the frontend and backend always agree on the same thresholds.
- */
 export function DeliveryCalculator({
-  deliveryMethod, region, effectiveSubtotal, onChange,
+  deliveryMethod, region, effectiveSubtotal, deliveryFee, freeThreshold, onChange,
 }: DeliveryCalculatorProps) {
   const { t } = useTranslation();
-  const deliveryFee = calcDeliveryFee('delivery', region, effectiveSubtotal);
-  const isFree = effectiveSubtotal >= FREE_DELIVERY_THRESHOLD;
+  const isFree = effectiveSubtotal >= freeThreshold;
 
   return (
     <div className="space-y-3">
@@ -64,7 +59,7 @@ export function DeliveryCalculator({
           {!isFree && effectiveSubtotal > 0 && (
             <p className="font-body text-xs text-secondary mt-0.5 ml-7">
               {t('checkout.free_delivery_upsell', {
-                amount: (FREE_DELIVERY_THRESHOLD - effectiveSubtotal).toFixed(2),
+                amount: (freeThreshold - effectiveSubtotal).toFixed(2),
               })}
             </p>
           )}

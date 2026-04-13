@@ -278,6 +278,20 @@ export interface BlogPostListResponse {
   pages: number;
 }
 
+// ─── Delivery ─────────────────────────────────────────────────────────────────
+
+export interface PublicRegion {
+  slug: string;
+  name_translations: Record<string, string>;
+  delivery_fee: number;
+}
+
+export interface DeliveryRates {
+  regions: PublicRegion[];
+  free_threshold: number;
+  pickup_fee: number;
+}
+
 // ─── Payment ──────────────────────────────────────────────────────────────────
 
 export interface PaymentSessionResponse {

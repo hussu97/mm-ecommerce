@@ -1,4 +1,4 @@
-import { Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse } from './types';
+import { Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, PublicRegion, DeliveryRates } from './types';
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
@@ -233,6 +233,14 @@ export const trackApi = {
     }
     return res.json();
   },
+};
+
+export const deliveryApi = {
+  getRates: () => api.get<DeliveryRates>('/delivery/rates'),
+};
+
+export const regionsApi = {
+  getPublicRegions: () => api.get<PublicRegion[]>('/regions/public'),
 };
 
 export const cmsApi = {
