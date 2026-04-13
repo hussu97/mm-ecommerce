@@ -38,13 +38,15 @@ async def calculate_fee(
     region_slug: str | None,
     subtotal: Decimal,
     db: AsyncSession,
+    settings: DeliverySettings | None = None,
 ) -> Decimal:
     """Return the delivery fee in AED, reading rates from the database."""
-    if delivery_method == DeliveryMethodEnum.PICKUP:
+    if settings is None:
         settings = await get_settings(db)
+
+    if delivery_method == DeliveryMethodEnum.PICKUP:
         return settings.pickup_fee
 
-    settings = await get_settings(db)
     if subtotal >= settings.free_delivery_threshold:
         return Decimal("0.00")
 

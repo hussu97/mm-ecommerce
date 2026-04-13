@@ -38,11 +38,10 @@ async def calculate_delivery(
     db: AsyncSession = Depends(get_db),
 ):
     """Calculate the delivery fee for a given region and order subtotal."""
-    fee = await delivery_service.calculate_fee(
-        data.delivery_method, data.region, data.subtotal, db
-    )
-
     settings = await delivery_service.get_settings(db)
+    fee = await delivery_service.calculate_fee(
+        data.delivery_method, data.region, data.subtotal, db, settings=settings
+    )
 
     if data.delivery_method == DeliveryMethodEnum.PICKUP:
         reason = "Free pickup"

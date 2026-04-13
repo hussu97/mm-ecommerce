@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import { Raleway, Jost, Tajawal, Cairo } from "next/font/google";
 import Script from "next/script";
 import { cookies } from "next/headers";
@@ -92,6 +93,7 @@ export default async function RootLayout({
         <Providers>
           {children}
         </Providers>
+        <SpeedInsights />
 
         {/* Material Icons — loaded async to avoid render-blocking */}
         <Script id="material-icons" strategy="afterInteractive">{`(function(){var l=document.createElement('link');l.rel='stylesheet';l.href='https://fonts.googleapis.com/icon?family=Material+Icons';document.head.appendChild(l)})()`}</Script>
