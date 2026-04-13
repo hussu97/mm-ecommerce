@@ -327,7 +327,10 @@ jobs:
 
       - name: Deploy to GCP VM
         run: |
-          ssh -i ~/.ssh/deploy_key -o ConnectTimeout=30 \
+          ssh -i ~/.ssh/deploy_key \
+            -o ConnectTimeout=30 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=20 \
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} 'bash -s' <<'SCRIPT'
           set -e
 
@@ -340,7 +343,8 @@ jobs:
           docker pull ghcr.io/hussu97/mm-ecommerce-api:latest
 
           echo "Running database migrations..."
-          docker compose -f docker-compose.prod.yml run --rm --no-deps api alembic upgrade head
+          timeout 300 docker compose -f docker-compose.prod.yml run --rm --no-deps api alembic upgrade head \
+            || { echo "ERROR: Migration failed or timed out after 5 minutes"; exit 1; }
 
           echo "Restarting API with new image..."
           docker compose -f docker-compose.prod.yml up -d --no-deps api

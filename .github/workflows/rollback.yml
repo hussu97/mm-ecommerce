@@ -103,7 +103,10 @@ jobs:
         # ${{ }} expressions are expanded by GH Actions before the shell sees the heredoc,
         # so they work correctly even inside a single-quoted <<'SCRIPT' delimiter.
         run: |
-          ssh -i ~/.ssh/deploy_key -o ConnectTimeout=30 \
+          ssh -i ~/.ssh/deploy_key \
+            -o ConnectTimeout=30 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=20 \
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} 'bash -s' <<'SCRIPT'
           set -e
 
@@ -114,7 +117,8 @@ jobs:
 
           if [ "${{ inputs.run_migration_downgrade }}" = "true" ]; then
             echo "Running alembic downgrade -1..."
-            docker compose -f docker-compose.prod.yml exec -T api alembic downgrade -1
+            timeout 300 docker compose -f docker-compose.prod.yml exec -T api alembic downgrade -1 \
+              || { echo "ERROR: Migration downgrade failed or timed out after 5 minutes"; exit 1; }
           fi
 
           echo "Checking out $TARGET_SHA (for compose files, nginx, etc.)..."
@@ -150,7 +154,8 @@ jobs:
           fi
 
           echo "Running migrations for rolled-back version..."
-          docker compose -f docker-compose.prod.yml exec -T api alembic upgrade head
+          timeout 300 docker compose -f docker-compose.prod.yml exec -T api alembic upgrade head \
+            || { echo "ERROR: Migration failed or timed out after 5 minutes"; exit 1; }
 
           echo "Ensuring nginx is up..."
           docker compose -f docker-compose.prod.yml up -d --no-deps nginx
