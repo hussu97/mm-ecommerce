@@ -180,7 +180,7 @@ CLOUDFLARE_R2_ACCESS_KEY=
 CLOUDFLARE_R2_SECRET_KEY=
 CLOUDFLARE_R2_BUCKET=melting-moments-cakes
 CLOUDFLARE_R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
-CLOUDFLARE_R2_PUBLIC_URL=https://media.meltingmomentscakes.com
+CLOUDFLARE_R2_PUBLIC_URL=https://pub-<hash>.r2.dev
 
 TABBY_API_KEY=
 TABBY_PUBLIC_KEY=

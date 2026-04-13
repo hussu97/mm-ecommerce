@@ -7,7 +7,7 @@ Internet
 ├── meltingmomentscakes.com        → Vercel (web storefront)
 ├── admin.meltingmomentscakes.com  → Vercel (admin panel)
 ├── api.meltingmomentscakes.com    → GCP VM: FastAPI via Nginx + SSL
-└── media.meltingmomentscakes.com  → Cloudflare R2 (object storage)
+└── pub-<hash>.r2.dev              → Cloudflare R2 (object storage)
 ```
 
 **GCP VM** (e2-micro, 1 vCPU shared, 1 GB RAM) runs:
@@ -352,37 +352,10 @@ R2 stores product images and other uploaded assets.
 
 ### Enable public access
 
-R2 custom domains require the domain to be **on Cloudflare's DNS** (not just registered there). Since the domain is registered at Namecheap, choose one of these two paths:
-
-#### Option A — Use Cloudflare's free `r2.dev` subdomain (quick start)
-
 1. Open the bucket → **Settings** tab
 2. Under **Public access** → **R2.dev subdomain**, click **Allow Access**
-3. Confirm — Cloudflare shows a URL like `https://pub-<hash>.r2.dev`
-4. Set `CLOUDFLARE_R2_PUBLIC_URL=https://pub-<hash>.r2.dev` in Step 13c
-
-> Good for development and early production. The URL is permanent but not branded.
-
-#### Option B — Custom domain `media.meltingmomentscakes.com` (recommended for production)
-
-R2 custom domains only work when the domain's **DNS is managed by Cloudflare** (you can keep Namecheap as the registrar — just point nameservers to Cloudflare).
-
-1. **Add the domain to Cloudflare (free)**:
-   - Go to [dash.cloudflare.com](https://dash.cloudflare.com) → **Add a site** → enter `meltingmomentscakes.com`
-   - Select the **Free** plan
-   - Cloudflare scans existing DNS records — review and confirm them
-   - Cloudflare gives you two nameserver addresses (e.g. `art.ns.cloudflare.com`)
-2. **Update nameservers at Namecheap**:
-   - Log into Namecheap → **Domain List** → **Manage** → **Nameservers**
-   - Switch to **Custom DNS** and enter Cloudflare's two nameservers
-   - Propagation takes up to 24 hours (usually minutes)
-3. **Connect the custom domain to R2**:
-   - Open the bucket → **Settings** → **Public access** → **Custom Domains** → **Connect Domain**
-   - Enter `media.meltingmomentscakes.com` → **Connect**
-   - Cloudflare adds the CNAME automatically
-4. Set `CLOUDFLARE_R2_PUBLIC_URL=https://media.meltingmomentscakes.com` in Step 13c
-
-> **Note:** Once DNS is on Cloudflare, the DNS records in Step 12 are managed there instead of Namecheap.
+3. Confirm — Cloudflare shows a permanent URL like `https://pub-<hash>.r2.dev`
+4. Copy that URL — it goes into `CLOUDFLARE_R2_PUBLIC_URL` in Step 13c
 
 ### Create an R2 API token
 
@@ -414,15 +387,13 @@ The API needs write access to upload media files.
 | `CLOUDFLARE_R2_SECRET_KEY` | API token creation page (Secret Access Key) |
 | `CLOUDFLARE_R2_BUCKET` | `melting-moments-cakes` (literal) |
 | `CLOUDFLARE_R2_ENDPOINT` | `https://<account-id>.r2.cloudflarestorage.com` |
-| `CLOUDFLARE_R2_PUBLIC_URL` | `https://pub-<hash>.r2.dev` (Option A) or `https://media.meltingmomentscakes.com` (Option B) |
+| `CLOUDFLARE_R2_PUBLIC_URL` | `https://pub-<hash>.r2.dev` (from bucket Settings → R2.dev subdomain) |
 
 ---
 
 ## Step 12: DNS Configuration
 
-> **Where to add these records** depends on which path you chose in Step 11b:
-> - **Option A (r2.dev)**: add records at Namecheap → Domain → Advanced DNS
-> - **Option B (custom domain)**: DNS is now managed in Cloudflare — add records there instead
+Add these records at **Namecheap → Domain List → Manage → Advanced DNS**:
 
 | Type | Name | Value | Notes |
 |------|------|-------|-------|
@@ -430,7 +401,6 @@ The API needs write access to upload media files.
 | CNAME | `www` | `cname.vercel-dns.com` | Vercel redirect |
 | CNAME | `admin` | `cname.vercel-dns.com` | Admin panel |
 | A | `api` | GCP VM external IP | FastAPI backend |
-| CNAME | `media` | `pub-<hash>.r2.dev` | R2 media — **Option A only**; Option B adds this automatically |
 
 > **Vercel custom domains**: After adding a custom domain in Vercel, it will show you the exact DNS record needed (either A or CNAME depending on apex vs subdomain). Follow those instructions; the values above are typical.
 
@@ -545,7 +515,7 @@ The `deploy.yml` workflow SSHes into the GCP VM on every push to `main`, writes 
 | `CLOUDFLARE_R2_SECRET_KEY` | R2 token secret key | Same page as above |
 | `CLOUDFLARE_R2_BUCKET` | `melting-moments-cakes` | Literal |
 | `CLOUDFLARE_R2_ENDPOINT` | `https://<account_id>.r2.cloudflarestorage.com` | Cloudflare dashboard → R2 → bucket → Settings |
-| `CLOUDFLARE_R2_PUBLIC_URL` | `https://media.meltingmomentscakes.com` | Literal |
+| `CLOUDFLARE_R2_PUBLIC_URL` | `https://pub-<hash>.r2.dev` | From bucket Settings → R2.dev subdomain |
 
 #### BNPL — Tabby
 
