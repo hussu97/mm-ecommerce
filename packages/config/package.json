@@ -2,7 +2,10 @@
   "name": "@mm/config",
   "version": "0.1.0",
   "private": true,
+  "main": "./src/delivery.ts",
   "exports": {
+    ".": "./src/delivery.ts",
+    "./delivery": "./src/delivery.ts",
     "./eslint": "./eslint.config.js",
     "./tsconfig": "./tsconfig.base.json"
   }

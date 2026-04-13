@@ -547,6 +547,7 @@ The `deploy.yml` workflow SSHes into the GCP VM on every push to `main`, writes 
 |--------|-----------------|-------|
 | `BACKUP_GCS_BUCKET` | `melting-moments-cakes-backups` | GCS bucket created in Step 8 |
 | `GCP_PROJECT_ID` | `melting-moments-cakes` | Used by the `gcplogs` Docker driver to ship API logs to Cloud Logging. On GCE this is auto-detected — set it anyway so the `.env` write step is explicit. |
+| `SENTRY_DSN` | `https://...@sentry.io/...` | Sentry project → Settings → Client Keys (DSN). Used by both the API (`SENTRY_DSN`) and both Next.js apps (`NEXT_PUBLIC_SENTRY_DSN`). Leave empty to disable Sentry. |
 
 #### Analytics (optional — leave empty to disable)
 
