@@ -589,7 +589,7 @@ function CheckoutContent() {
   const searchParams = useSearchParams();
   const { cart, refreshCart } = useCart();
   const { addToast } = useToast();
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
 
   const [step, setStep] = useState(1);
   const [form, setForm] = useState<CheckoutForm>(INITIAL_FORM);
@@ -765,14 +765,14 @@ function CheckoutContent() {
       <div className="max-w-7xl mx-auto px-4 py-16 flex flex-col items-center text-center gap-4">
         <span className="material-icons text-5xl text-secondary">shopping_bag</span>
         <h1 className="font-display text-2xl text-primary uppercase tracking-widest">{t('checkout.cart_empty')}</h1>
-        <Link href="/"><Button variant="primary">{t('cart.continue_shopping')}</Button></Link>
+        <Link href={`/${locale}`}><Button variant="primary">{t('cart.continue_shopping')}</Button></Link>
       </div>
     );
   }
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-10">
-      <Breadcrumb items={[{ label: t('breadcrumb.home'), href: '/' }, { label: t('breadcrumb.cart'), href: '/cart' }, { label: t('breadcrumb.checkout') }]} />
+      <Breadcrumb items={[{ label: t('breadcrumb.home'), href: `/${locale}` }, { label: t('breadcrumb.cart'), href: `/${locale}/cart` }, { label: t('breadcrumb.checkout') }]} />
 
       <header className="mb-2">
         <h1 className="font-display text-3xl sm:text-4xl text-primary uppercase tracking-widest">{t('breadcrumb.checkout')}</h1>

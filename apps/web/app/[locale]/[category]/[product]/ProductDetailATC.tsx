@@ -10,9 +10,30 @@ import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
 import type { Product } from '@/lib/types';
 
+/** Minimum displayable price: base_price + cheapest required option, or cheapest any option if still 0 */
+function computeMinPrice(product: Product): number {
+  let price = Number(product.base_price);
+  for (const pm of product.product_modifiers ?? []) {
+    if (pm.minimum_options <= 0) continue;
+    const active = pm.modifier.options.filter(o => o.is_active);
+    if (active.length === 0) continue;
+    price += Math.min(...active.map(o => Number(o.price))) * Math.min(pm.minimum_options, 1);
+  }
+  if (price === 0 && (product.product_modifiers?.length ?? 0) > 0) {
+    for (const pm of product.product_modifiers ?? []) {
+      const active = pm.modifier.options.filter(o => o.is_active);
+      if (active.length === 0) continue;
+      const cheapest = Math.min(...active.map(o => Number(o.price)));
+      if (cheapest > 0) { price = cheapest; break; }
+    }
+  }
+  return price;
+}
+
 export function ProductDetailATC({ product }: { product: Product }) {
   const { t, locale } = useTranslation();
   const hasModifiers = product.product_modifiers && product.product_modifiers.length > 0;
+  const minPrice = hasModifiers ? computeMinPrice(product) : Number(product.base_price);
   const [qty, setQty] = useState(1);
   const [adding, setAdding] = useState(false);
   const [selectedOptions, setSelectedOptions] = useState<SelectedOption[]>([]);
@@ -54,10 +75,10 @@ export function ProductDetailATC({ product }: { product: Product }) {
     <div className="flex flex-col gap-5">
       {/* Price */}
       <span className="font-body text-2xl font-medium text-primary">
-        {Number(totalPrice).toFixed(2)} AED
-        {hasModifiers && totalPrice === Number(product.base_price) && (
-          <span className="text-base font-normal text-gray-400 ml-1">{t('product.from')}</span>
+        {hasModifiers && !isValid && (
+          <span className="text-base font-normal text-gray-400 mr-1">{t('product.from')}</span>
         )}
+        {(hasModifiers && !isValid ? minPrice : Number(totalPrice)).toFixed(2)} AED
       </span>
 
       {/* Modifier selectors */}

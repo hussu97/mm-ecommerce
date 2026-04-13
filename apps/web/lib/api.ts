@@ -235,8 +235,32 @@ export const trackApi = {
   },
 };
 
+// Normalise old format {standard_zones, standard_rate, remote_zones, remote_rate, pickup_rate}
+// into the current DeliveryRates shape {regions, free_threshold, pickup_fee}.
+function normaliseDeliveryRates(data: unknown): DeliveryRates {
+  const d = data as Record<string, unknown>;
+  if ('regions' in d) return d as unknown as DeliveryRates;
+  // Old format
+  const toRegion = (slug: string, fee: number): PublicRegion => ({
+    slug,
+    name_translations: {
+      en: slug.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
+    },
+    delivery_fee: fee,
+  });
+  const regions: PublicRegion[] = [
+    ...((d.standard_zones as string[]) ?? []).map((s) => toRegion(s, (d.standard_rate as number) ?? 35)),
+    ...((d.remote_zones as string[]) ?? []).map((s) => toRegion(s, (d.remote_rate as number) ?? 50)),
+  ];
+  return {
+    regions,
+    free_threshold: (d.free_threshold as number) ?? 200,
+    pickup_fee: (d.pickup_rate as number) ?? 0,
+  };
+}
+
 export const deliveryApi = {
-  getRates: () => api.get<DeliveryRates>('/delivery/rates'),
+  getRates: () => api.get<unknown>('/delivery/rates').then(normaliseDeliveryRates),
 };
 
 export const regionsApi = {

@@ -25,16 +25,26 @@ function ConditionalLink({
   return <Link href={href} className={className}>{children}</Link>;
 }
 
-/** Compute "from" price for a product: base_price + cheapest required option per modifier */
+/** Compute "from" price: base_price + cheapest required option per modifier.
+ *  If the result is still 0 (e.g. base_price=0 and all modifiers are optional),
+ *  fall back to the cheapest option across any modifier so the card never shows "From 0.00 AED". */
 function computeFromPrice(product: Product): number {
   let price = Number(product.base_price);
   for (const pm of product.product_modifiers ?? []) {
     if (pm.minimum_options <= 0) continue;
     const activeOptions = pm.modifier.options.filter(o => o.is_active);
     if (activeOptions.length === 0) continue;
-    // Pick cheapest option for required modifiers
     const cheapest = Math.min(...activeOptions.map(o => Number(o.price)));
     price += cheapest * Math.min(pm.minimum_options, 1);
+  }
+  // If price is still 0 but the product has modifier options, show the cheapest possible price
+  if (price === 0 && (product.product_modifiers?.length ?? 0) > 0) {
+    for (const pm of product.product_modifiers ?? []) {
+      const activeOptions = pm.modifier.options.filter(o => o.is_active);
+      if (activeOptions.length === 0) continue;
+      const cheapest = Math.min(...activeOptions.map(o => Number(o.price)));
+      if (cheapest > 0) { price = cheapest; break; }
+    }
   }
   return price;
 }
