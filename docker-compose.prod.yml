@@ -73,6 +73,17 @@ services:
       UMAMI_API_KEY: ${UMAMI_API_KEY:-}
       UMAMI_WEBSITE_ID: ${UMAMI_WEBSITE_ID:-}
       UVICORN_WORKERS: "1"
+    # Ship stdout/stderr directly to GCP Cloud Logging.
+    # The app emits structured JSON (severity/message/time/stack_trace) in
+    # production, which Cloud Logging auto-parses as jsonPayload.
+    # Prereq: VM service account needs roles/logging.logWriter.
+    # GCP_PROJECT_ID is auto-detected on GCE — only needed outside GCE.
+    logging:
+      driver: gcplogs
+      options:
+        gcp-project: ${GCP_PROJECT_ID:-}
+        tag: mm-api
+        labels: "com.docker.compose.service"
     networks:
       - mm_network
     deploy:
