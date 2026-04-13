@@ -135,22 +135,9 @@ sudo chown $USER:$USER /opt/melting-moments-cakes
 
 git clone https://github.com/your-org/melting-moments-cakes.git /opt/melting-moments-cakes
 cd /opt/melting-moments-cakes
-
-cp apps/api/.env.example .env
-nano .env  # fill in all secrets (see .env.example for field descriptions)
 ```
 
-Key values to fill in `.env`:
-- `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` — choose your own values (required by docker-compose.prod.yml; must match the credentials in `DATABASE_URL`)
-- `SECRET_KEY` — generate with `openssl rand -hex 32`
-- `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
-- `RESEND_API_KEY`
-- `CLOUDFLARE_R2_ACCESS_KEY`, `CLOUDFLARE_R2_SECRET_KEY`, `CLOUDFLARE_R2_BUCKET`, `CLOUDFLARE_R2_ENDPOINT`, `CLOUDFLARE_R2_PUBLIC_URL`
-- `WEB_URL=https://meltingmomentscakes.com`
-- `ADMIN_URL=https://admin.meltingmomentscakes.com`
-- `CORS_ORIGINS=["https://meltingmomentscakes.com","https://admin.meltingmomentscakes.com"]`
-- `ALLOWED_HOSTS=["api.meltingmomentscakes.com"]`
-- `BACKUP_GCS_BUCKET` — the GCS bucket name from Step 8
+> **No manual `.env` editing needed.** The `deploy.yml` workflow writes `/opt/melting-moments-cakes/.env` automatically on every deploy, sourcing all values from GitHub Actions secrets (see Step 13c). Before your first deploy, add all secrets to GitHub first.
 
 ---
 
@@ -391,15 +378,110 @@ ssh -i ~/.ssh/mm_deploy_key USERNAME@$(gcloud compute instances describe mm-back
 
 ### 13c: Add secrets to GitHub Actions
 
-In GitHub → repo → **Settings → Secrets and variables → Actions → Environments → production**, add:
+In GitHub → repo → **Settings → Secrets and variables → Actions → Environments → production**, add every secret in the table below.
 
-| Secret | Value |
-|--------|-------|
-| `SERVER_HOST` | GCP VM external IP (`gcloud compute instances describe mm-backend --project=melting-moments-cakes --zone=me-central1-a --format="get(networkInterfaces[0].accessConfigs[0].natIP)"`) |
-| `SERVER_USER` | VM username from step 13b (e.g. `hussain`) |
-| `SERVER_SSH_KEY` | Contents of `~/.ssh/mm_deploy_key` (the private key — `cat ~/.ssh/mm_deploy_key`) |
+The `deploy.yml` workflow SSHes into the GCP VM on every push to `main`, writes the `.env` file from these secrets, runs migrations, and restarts the API. Vercel handles web + admin deployments automatically via its GitHub integration.
 
-The `deploy.yml` workflow SSHes into the GCP VM on every push to `main` and runs migrations + restarts the API. Vercel handles web + admin deployments automatically via its GitHub integration.
+#### SSH connection
+
+| Secret | Value | How to get it |
+|--------|-------|---------------|
+| `SERVER_HOST` | GCP VM external IP | `gcloud compute instances describe mm-backend --project=melting-moments-cakes --zone=me-central1-a --format="get(networkInterfaces[0].accessConfigs[0].natIP)"` |
+| `SERVER_USER` | VM username | `gcloud compute ssh mm-backend --zone=me-central1-a --command="whoami"` |
+| `SERVER_SSH_KEY` | Private key contents | `cat ~/.ssh/mm_deploy_key` |
+
+#### App
+
+| Secret | Production value | Notes |
+|--------|-----------------|-------|
+| `APP_ENV` | `production` | Literal |
+| `USE_SSL` | `true` | Set to `false` until SSL certs are issued (Step 7) |
+
+#### Database
+
+| Secret | Production value | Notes |
+|--------|-----------------|-------|
+| `POSTGRES_USER` | e.g. `mm_user` | Choose your own — must match `DATABASE_URL` |
+| `POSTGRES_PASSWORD` | strong password | Choose your own — must match `DATABASE_URL` |
+| `POSTGRES_DB` | `mm_ecommerce` | Choose your own — must match `DATABASE_URL` |
+| `DATABASE_URL` | `postgresql+asyncpg://<user>:<password>@postgres:5432/<db>` | Use `postgres` (container hostname), not `localhost` |
+| `REDIS_URL` | `redis://redis:6379/0` | Use `redis` (container hostname), not `localhost` |
+
+#### Security
+
+| Secret | Production value | Notes |
+|--------|-----------------|-------|
+| `SECRET_KEY` | 64-char hex string | `openssl rand -hex 32` |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | Literal |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | `30` | Literal |
+| `PASSWORD_RESET_EXPIRE_MINUTES` | `60` | Literal |
+
+#### CORS & allowed hosts
+
+| Secret | Production value | Notes |
+|--------|-----------------|-------|
+| `CORS_ORIGINS` | `["https://meltingmomentscakes.com","https://admin.meltingmomentscakes.com"]` | JSON array, no spaces |
+| `ALLOWED_HOSTS` | `["api.meltingmomentscakes.com"]` | JSON array, no spaces |
+
+#### Stripe
+
+| Secret | Production value | Notes |
+|--------|-----------------|-------|
+| `STRIPE_SECRET_KEY` | `sk_live_...` | Stripe dashboard → Developers → API keys |
+| `STRIPE_PUBLISHABLE_KEY` | `pk_live_...` | Stripe dashboard → Developers → API keys |
+| `STRIPE_WEBHOOK_SECRET` | `whsec_...` | Stripe dashboard → Developers → Webhooks → signing secret |
+
+#### Email (Resend)
+
+| Secret | Production value | Notes |
+|--------|-----------------|-------|
+| `RESEND_API_KEY` | `re_...` | Resend dashboard → API Keys |
+| `FROM_EMAIL` | `orders@meltingmomentscakes.com` | Must match a verified Resend sending domain |
+
+#### Cloudflare R2 (media storage)
+
+| Secret | Production value | Notes |
+|--------|-----------------|-------|
+| `CLOUDFLARE_R2_ACCESS_KEY` | R2 token access key | Cloudflare dashboard → R2 → Manage R2 API Tokens |
+| `CLOUDFLARE_R2_SECRET_KEY` | R2 token secret key | Same page as above |
+| `CLOUDFLARE_R2_BUCKET` | `melting-moments-cakes` | Literal |
+| `CLOUDFLARE_R2_ENDPOINT` | `https://<account_id>.r2.cloudflarestorage.com` | Cloudflare dashboard → R2 → bucket → Settings |
+| `CLOUDFLARE_R2_PUBLIC_URL` | `https://media.meltingmomentscakes.com` | Literal |
+
+#### BNPL — Tabby
+
+| Secret | Production value | Notes |
+|--------|-----------------|-------|
+| `TABBY_API_KEY` | `sk_...` | Tabby merchant dashboard |
+| `TABBY_PUBLIC_KEY` | `pk_...` | Tabby merchant dashboard |
+| `TABBY_MERCHANT_CODE` | your code | Tabby merchant dashboard |
+
+#### BNPL — Tamara
+
+| Secret | Production value | Notes |
+|--------|-----------------|-------|
+| `TAMARA_API_KEY` | API key | Tamara merchant dashboard |
+| `TAMARA_API_URL` | `https://api.tamara.co` | Literal (use `https://api-sandbox.tamara.co` for staging) |
+
+#### Frontend URLs (used in email templates & CORS)
+
+| Secret | Production value | Notes |
+|--------|-----------------|-------|
+| `WEB_URL` | `https://meltingmomentscakes.com` | Literal |
+| `ADMIN_URL` | `https://admin.meltingmomentscakes.com` | Literal |
+
+#### Backups
+
+| Secret | Production value | Notes |
+|--------|-----------------|-------|
+| `BACKUP_GCS_BUCKET` | `melting-moments-cakes-backups` | GCS bucket created in Step 8 |
+
+#### Analytics (optional — leave empty to disable)
+
+| Secret | Production value | Notes |
+|--------|-----------------|-------|
+| `UMAMI_API_KEY` | API key | Umami Cloud dashboard → Settings → API Keys |
+| `UMAMI_WEBSITE_ID` | website UUID | Umami Cloud dashboard → website settings |
 
 **Rollback**: If a bad deploy reaches production, trigger the `rollback.yml` workflow manually from GitHub Actions → dispatch. It accepts a git SHA (defaults to `HEAD~1`) and optionally runs `alembic downgrade -1` before rolling back.
 
