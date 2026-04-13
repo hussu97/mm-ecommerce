@@ -287,6 +287,7 @@ jobs:
               'BACKUP_GCS_BUCKET=${{ secrets.BACKUP_GCS_BUCKET }}' \
               'UMAMI_API_KEY=${{ secrets.UMAMI_API_KEY }}' \
               'UMAMI_WEBSITE_ID=${{ secrets.UMAMI_WEBSITE_ID }}' \
+              'GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}' \
               > /opt/melting-moments-cakes/.env
 
       - name: Deploy to GCP VM

@@ -70,6 +70,14 @@ All paginated tables in `apps/admin` must use the following page size options, i
 5. **Document Results**: Add review to 'tasks/todo.md'
 6. **Capture Lessons**: Update 'tasks/lessons.md' after corrections
 
+### 9. Secret/Env Var Checklist
+When adding any new environment variable or secret, update ALL four locations or the secret will be missing in production:
+
+1. `apps/api/.env.example` — document it with a comment
+2. `PRODUCTION.md` Step 13c — add to the GitHub Actions secrets table
+3. `.github/workflows/deploy.yml` — add to the `printf` block in "Write .env on VM"
+4. `.github/workflows/rollback.yml` — same `printf` block (must stay in sync with deploy.yml)
+
 ## Core Principles
 
 - **Simplicity First**: Make every change as simple as possible. Impact minimal code.
