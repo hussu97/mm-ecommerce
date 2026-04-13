@@ -40,11 +40,8 @@ COPY --from=builder /install /usr/local
 # Create non-root user
 RUN groupadd -r api && useradd -r -g api -d /app -s /sbin/nologin api
 
-# Copy application source
-COPY apps/api/ .
-
-# Own app directory
-RUN chown -R api:api /app
+# Copy application source (chown avoids a separate RUN layer)
+COPY --chown=api:api apps/api/ .
 
 USER api
 

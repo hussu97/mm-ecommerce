@@ -17,8 +17,38 @@ jobs:
     name: Rollback via SSH
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: read
+      packages: read  # read GHCR to verify the image tag exists
 
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need full history to resolve HEAD~1 etc.
+
+      - name: Resolve target SHA
+        id: resolve
+        run: |
+          TARGET_SHA=$(git rev-parse "${{ inputs.git_sha }}")
+          echo "sha=${TARGET_SHA}" >> $GITHUB_OUTPUT
+          echo "Resolved '${{ inputs.git_sha }}' → ${TARGET_SHA}"
+
+      - name: Log in to GHCR (to inspect private package)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify image exists in GHCR
+        run: |
+          docker manifest inspect \
+            ghcr.io/hussu97/mm-ecommerce-api:${{ steps.resolve.outputs.sha }} || {
+            echo "ERROR: No image found for SHA ${{ steps.resolve.outputs.sha }}."
+            echo "Only commits that went through the deploy pipeline have a GHCR image."
+            exit 1
+          }
+
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
@@ -68,31 +98,36 @@ jobs:
           ENVEOF
 
       - name: Rollback on GCP VM
+        # ${{ }} expressions are expanded by GH Actions before the shell sees the heredoc,
+        # so they work correctly even inside a single-quoted <<'SCRIPT' delimiter.
         run: |
           ssh -i ~/.ssh/deploy_key -o ConnectTimeout=30 \
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} 'bash -s' <<'SCRIPT'
           set -e
 
+          TARGET_SHA="${{ steps.resolve.outputs.sha }}"
           cd /opt/melting-moments-cakes
 
-          echo "Current HEAD: $(git rev-parse HEAD)"
-          echo "Rolling back to: ${{ inputs.git_sha }}"
-
-          # Resolve the SHA in case HEAD~1 or similar expression was given
-          TARGET_SHA=$(git rev-parse "${{ inputs.git_sha }}")
-          echo "Resolved SHA: $TARGET_SHA"
+          echo "Rolling back to SHA: $TARGET_SHA"
 
           if [ "${{ inputs.run_migration_downgrade }}" = "true" ]; then
             echo "Running alembic downgrade -1..."
-            docker compose -f docker-compose.prod.yml exec -T api \
-              alembic downgrade -1
+            docker compose -f docker-compose.prod.yml exec -T api alembic downgrade -1
           fi
 
-          echo "Checking out $TARGET_SHA..."
+          echo "Checking out $TARGET_SHA (for compose files, nginx, etc.)..."
+          git fetch origin
           git checkout "$TARGET_SHA"
 
-          echo "Rebuilding and restarting services..."
-          docker compose -f docker-compose.prod.yml up --build -d --no-deps api
+          echo "Pulling pre-built image for $TARGET_SHA from GHCR..."
+          docker pull ghcr.io/hussu97/mm-ecommerce-api:"$TARGET_SHA"
+
+          echo "Tagging as :latest for compose..."
+          docker tag ghcr.io/hussu97/mm-ecommerce-api:"$TARGET_SHA" \
+                     ghcr.io/hussu97/mm-ecommerce-api:latest
+
+          echo "Restarting API with rolled-back image..."
+          docker compose -f docker-compose.prod.yml up -d --no-deps api
 
           echo "Waiting for API to be healthy..."
           API_READY=false
@@ -102,7 +137,7 @@ jobs:
               API_READY=true
               break
             fi
-            echo "  waiting... (${i}/30)"
+            echo "  waiting... ($i/30)"
             sleep 5
           done
 
@@ -112,13 +147,13 @@ jobs:
             exit 1
           fi
 
-          echo "Running database migrations..."
+          echo "Running migrations for rolled-back version..."
           docker compose -f docker-compose.prod.yml exec -T api alembic upgrade head
 
           echo "Ensuring nginx is up..."
           docker compose -f docker-compose.prod.yml up -d --no-deps nginx
 
-          echo "Rollback complete. Running at: $(git rev-parse HEAD)"
+          echo "Rollback complete. Running: $TARGET_SHA"
           docker compose -f docker-compose.prod.yml ps
           SCRIPT
 
