@@ -206,11 +206,30 @@ class TestStatusTransitionLogic:
             OrderStatusEnum.CREATED not in VALID_TRANSITIONS[OrderStatusEnum.CONFIRMED]
         )
 
-    def test_packed_is_terminal(self):
-        assert VALID_TRANSITIONS[OrderStatusEnum.PACKED] == set()
+    def test_packed_can_be_refunded_or_disputed(self):
+        # Packed is no longer strictly terminal — a packed order can still be
+        # refunded (e.g. customer refuses delivery) or disputed (chargeback)
+        assert OrderStatusEnum.REFUNDED in VALID_TRANSITIONS[OrderStatusEnum.PACKED]
+        assert OrderStatusEnum.DISPUTED in VALID_TRANSITIONS[OrderStatusEnum.PACKED]
+
+    def test_packed_cannot_go_back(self):
+        packed_allowed = VALID_TRANSITIONS[OrderStatusEnum.PACKED]
+        for status in (
+            OrderStatusEnum.CREATED,
+            OrderStatusEnum.CONFIRMED,
+            OrderStatusEnum.CANCELLED,
+            OrderStatusEnum.PAYMENT_FAILED,
+        ):
+            assert status not in packed_allowed
 
     def test_cancelled_is_terminal(self):
         assert VALID_TRANSITIONS[OrderStatusEnum.CANCELLED] == set()
+
+    def test_refunded_is_terminal(self):
+        assert VALID_TRANSITIONS[OrderStatusEnum.REFUNDED] == set()
+
+    def test_disputed_is_terminal(self):
+        assert VALID_TRANSITIONS[OrderStatusEnum.DISPUTED] == set()
 
     def test_all_statuses_have_an_entry(self):
         for status in OrderStatusEnum:

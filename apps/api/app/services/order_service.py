@@ -31,9 +31,20 @@ VALID_TRANSITIONS: dict[OrderStatusEnum, set[OrderStatusEnum]] = {
         OrderStatusEnum.CANCELLED,
         OrderStatusEnum.CONFIRMED,
     },
-    OrderStatusEnum.CONFIRMED: {OrderStatusEnum.PACKED, OrderStatusEnum.CANCELLED},
-    OrderStatusEnum.PACKED: set(),
+    OrderStatusEnum.CONFIRMED: {
+        OrderStatusEnum.PACKED,
+        OrderStatusEnum.CANCELLED,
+        OrderStatusEnum.REFUNDED,
+        OrderStatusEnum.DISPUTED,
+    },
+    OrderStatusEnum.PACKED: {
+        OrderStatusEnum.REFUNDED,
+        OrderStatusEnum.DISPUTED,
+    },
     OrderStatusEnum.CANCELLED: set(),
+    # Terminal states — set by Stripe webhooks only, no manual transitions out
+    OrderStatusEnum.REFUNDED: set(),
+    OrderStatusEnum.DISPUTED: set(),
 }
 
 
