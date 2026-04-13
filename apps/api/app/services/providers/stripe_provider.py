@@ -107,7 +107,12 @@ def create_session(order: Order) -> dict:
 def handle_webhook(payload: bytes, signature: str) -> dict:
     """
     Verify and parse a Stripe webhook event.
-    Returns {event_type, order_number, payment_intent_id, session_id}.
+
+    Returns a normalised dict with:
+      event_id, event_type, order_number, payment_intent_id
+
+    Parsing is event-type-aware — PaymentIntent, Charge, and Dispute objects
+    all have different structures, so each family is handled separately.
     """
     if not settings.STRIPE_WEBHOOK_SECRET:
         raise BadRequestError("Stripe webhook secret not configured")
@@ -123,19 +128,38 @@ def handle_webhook(payload: bytes, signature: str) -> dict:
         logger.error("Stripe webhook parsing error: %s", e)
         raise BadRequestError("Could not parse webhook payload")
 
-    event_type = event["type"]
-    session = event["data"]["object"]
-    order_number = session.get("metadata", {}).get("order_number")
-    payment_intent_id = session.get("payment_intent")
+    event_type: str = event["type"]
+    obj = event["data"]["object"]
 
-    logger.info("Stripe webhook: type=%s order=%s", event_type, order_number)
+    order_number: str | None = None
+    payment_intent_id: str | None = None
+
+    if event_type.startswith("payment_intent."):
+        # obj is a PaymentIntent — metadata is a direct field
+        payment_intent_id = obj.get("id")
+        order_number = obj.get("metadata", {}).get("order_number")
+
+    elif event_type == "charge.dispute.created":
+        # obj is a Dispute — no metadata, look up by payment_intent downstream
+        payment_intent_id = obj.get("payment_intent")
+
+    elif event_type.startswith("charge."):
+        # obj is a Charge — payment_intent is a foreign key, metadata may be present
+        payment_intent_id = obj.get("payment_intent")
+        order_number = obj.get("metadata", {}).get("order_number")
+
+    logger.info(
+        "Stripe webhook: type=%s order=%s payment_intent=%s",
+        event_type,
+        order_number,
+        payment_intent_id,
+    )
 
     return {
         "event_id": event["id"],
         "event_type": event_type,
         "order_number": order_number,
         "payment_intent_id": payment_intent_id,
-        "session_id": session.get("id"),
     }
 
 

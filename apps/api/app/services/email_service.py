@@ -176,6 +176,29 @@ async def send_payment_failed(order: OrderResponse) -> None:
     await _log("payment_failed", order.email, subject, result, order.order_number)
 
 
+async def send_refund_notification(order: OrderResponse) -> None:
+    subject = f"Refund Processed — {order.order_number} | Melting Moments"
+    try:
+        name = (
+            order.shipping_address_snapshot.get("first_name", "there")
+            if order.shipping_address_snapshot
+            else "there"
+        )
+        html = _render(
+            "order_refunded.html", recipient_email=order.email, name=name, order=order
+        )
+        result = await asyncio.to_thread(_send, order.email, subject, html)
+    except Exception as exc:
+        logger.error(
+            "order_refunded render/send failed for %s: %s",
+            order.order_number,
+            exc,
+            exc_info=True,
+        )
+        result = {"status": "failed", "resend_id": None, "error": str(exc)}
+    await _log("order_refunded", order.email, subject, result, order.order_number)
+
+
 async def send_order_cancelled(order: OrderResponse) -> None:
     subject = f"Order Cancelled — {order.order_number} | Melting Moments"
     try:

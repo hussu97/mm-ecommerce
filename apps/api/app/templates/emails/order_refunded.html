@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Refund Processed — {{ order.order_number }}{% endblock %}
+
+{% block content %}
+<h2>Refund Processed</h2>
+<p>Hi {{ name }},</p>
+<p>We've processed a refund for your order <strong>{{ order.order_number }}</strong>. The amount will be returned to your original payment method within 5–10 business days depending on your bank.</p>
+
+<div style="text-align:center;margin:24px 0;">
+  <span class="status status-cancelled">↩ Refunded</span><br/>
+  <span class="order-badge">{{ order.order_number }}</span>
+</div>
+
+<!-- Items summary -->
+<table class="items-table" cellpadding="0" cellspacing="0">
+  <thead>
+    <tr>
+      <th>Item</th>
+      <th style="text-align:center;width:50px;">Qty</th>
+      <th class="right" style="width:80px;">Price</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in order.items %}
+    <tr>
+      <td>
+        {{ item.product_name }}
+        {% if item.selected_options_snapshot %}<span class="variant-label">{{ item.selected_options_snapshot | map(attribute='option_name') | join(', ') }}</span>{% endif %}
+      </td>
+      <td style="text-align:center;">{{ item.quantity }}</td>
+      <td class="right">{{ "%.2f"|format(item.total_price) }} AED</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<table class="totals" cellpadding="0" cellspacing="0">
+  <tr class="total-row">
+    <td class="label">Refund Amount</td>
+    <td class="value">{{ "%.2f"|format(order.total) }} AED</td>
+  </tr>
+</table>
+
+<hr class="divider" />
+
+<p>We're sorry things didn't work out this time. If you have any questions about your refund, please don't hesitate to get in touch.</p>
+
+<p class="muted" style="text-align:center;">Questions? Reply to this email or reach us on WhatsApp.</p>
+{% endblock %}
