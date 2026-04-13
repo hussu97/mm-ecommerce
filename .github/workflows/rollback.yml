@@ -133,7 +133,7 @@ jobs:
                      ghcr.io/hussu97/mm-ecommerce-api:latest
 
           echo "Restarting API with rolled-back image..."
-          docker compose -f docker-compose.prod.yml up -d --no-deps api
+          docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate api
 
           echo "Waiting for API to be healthy..."
           API_READY=false

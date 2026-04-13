@@ -347,7 +347,7 @@ jobs:
             || { echo "ERROR: Migration failed or timed out after 5 minutes"; exit 1; }
 
           echo "Restarting API with new image..."
-          docker compose -f docker-compose.prod.yml up -d --no-deps api
+          docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate api
 
           echo "Waiting for API to be healthy..."
           API_READY=false
