@@ -6,7 +6,6 @@ Run: cd apps/api && python -m scripts.seed_i18n
 from __future__ import annotations
 
 import asyncio
-import os
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -865,11 +864,9 @@ async def seed(session: AsyncSession) -> None:
 
 
 async def main() -> None:
-    database_url = os.getenv(
-        "DATABASE_URL",
-        "postgresql+asyncpg://mm_user:mm_password@localhost:5432/mm_ecommerce",
-    )
-    engine = create_async_engine(database_url, echo=False)
+    from app.core.config import settings
+
+    engine = create_async_engine(settings.DATABASE_URL, echo=False)
     async_session = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
     )

@@ -1,5 +1,4 @@
 import asyncio
-import os
 from logging.config import fileConfig
 
 from sqlalchemy import pool
@@ -7,6 +6,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
+from app.core.config import settings
 
 # Alembic Config object
 config = context.config
@@ -15,12 +15,8 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Override sqlalchemy.url from environment variable
-database_url = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://mm_user:mm_password@localhost:5432/mm_ecommerce",
-)
-config.set_main_option("sqlalchemy.url", database_url)
+# Pull DATABASE_URL from the centralized settings object (reads .env / environment)
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 # Import models for autogenerate support
 # These will be populated in Prompt 2

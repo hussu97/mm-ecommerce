@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import (
@@ -9,14 +8,11 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://mm_user:mm_password@localhost:5432/mm_ecommerce",
-)
+from app.core.config import settings
 
 engine = create_async_engine(
-    DATABASE_URL,
-    echo=os.getenv("APP_ENV", "development") == "development",
+    settings.DATABASE_URL,
+    echo=settings.is_development,
     pool_pre_ping=True,
     pool_size=5,
     max_overflow=5,
