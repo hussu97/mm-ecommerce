@@ -361,23 +361,27 @@ R2 stores product images and other uploaded assets.
 
 The API needs write access to upload media files.
 
-1. In the R2 sidebar, click **Manage R2 API Tokens**
-2. Click **Create API Token**
+1. From the R2 overview page, find the **Account Details** panel on the right side
+2. Click **Manage** next to **API Tokens**
+3. Choose **Create API Token** (Account API token — not User API token)
+4. Configure the token:
    - **Token name**: `melting-moments-api`
    - **Permissions**: `Object Read & Write`
-   - **Specify bucket**: select `melting-moments-cakes` (restrict to this bucket only)
-   - **TTL**: No expiry (or set a long TTL and rotate periodically)
-3. Click **Create API Token**
-4. **Copy immediately** — you won't see the secret again:
+   - **Bucket**: select `melting-moments-cakes` (scope to this bucket only)
+5. Click **Create API Token**
+6. **Copy immediately** — the Secret Access Key is shown only once:
    - **Access Key ID** → `CLOUDFLARE_R2_ACCESS_KEY`
    - **Secret Access Key** → `CLOUDFLARE_R2_SECRET_KEY`
 
 ### Find your endpoint and account ID
 
-1. Go back to the R2 overview page
-2. Your **Account ID** is shown in the right panel (also visible in the URL: `dash.cloudflare.com/<account-id>/r2`)
-3. The S3-compatible endpoint is: `https://<account-id>.r2.cloudflarestorage.com`
-   - → `CLOUDFLARE_R2_ENDPOINT`
+Your **Account ID** is visible in the **Account Details** panel on the R2 overview page (also in the dashboard URL: `dash.cloudflare.com/<account-id>/r2`).
+
+The S3-compatible endpoint is:
+```
+https://<account-id>.r2.cloudflarestorage.com
+```
+→ `CLOUDFLARE_R2_ENDPOINT`
 
 ### Summary of values for Step 13c
 
