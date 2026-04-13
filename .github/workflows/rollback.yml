@@ -19,14 +19,18 @@ jobs:
     environment: production
 
     steps:
-      - name: Write .env on VM
+      - name: Rollback on GCP VM
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: 22
+          command_timeout: 20m
+          script_stop: true
           script: |
+            set -e
+
             printf '%s\n' \
               'APP_ENV=${{ secrets.APP_ENV }}' \
               'USE_SSL=${{ secrets.USE_SSL }}' \
@@ -62,17 +66,7 @@ jobs:
               'UMAMI_API_KEY=${{ secrets.UMAMI_API_KEY }}' \
               'UMAMI_WEBSITE_ID=${{ secrets.UMAMI_WEBSITE_ID }}' \
               'GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}' \
-              > /opt/melting-moments-cakes/.env
-
-      - name: Rollback on GCP VM
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          port: 22
-          script: |
-            set -e
+              | sudo tee /opt/melting-moments-cakes/.env > /dev/null
 
             cd /opt/melting-moments-cakes
 
