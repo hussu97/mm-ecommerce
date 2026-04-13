@@ -90,6 +90,12 @@ services:
       resources:
         limits:
           memory: 512m
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
@@ -116,7 +122,8 @@ services:
         limits:
           memory: 64m
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
   certbot:
     image: certbot/certbot:latest
