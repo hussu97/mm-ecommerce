@@ -19,98 +19,109 @@ jobs:
     environment: production
 
     steps:
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p 22 ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Write .env on VM
+        run: |
+          ssh -i ~/.ssh/deploy_key -o ConnectTimeout=30 \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            "cat > /opt/melting-moments-cakes/.env" <<'ENVEOF'
+          APP_ENV=${{ secrets.APP_ENV }}
+          USE_SSL=${{ secrets.USE_SSL }}
+          POSTGRES_USER=${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB=${{ secrets.POSTGRES_DB }}
+          DATABASE_URL=${{ secrets.DATABASE_URL }}
+          REDIS_URL=${{ secrets.REDIS_URL }}
+          SECRET_KEY=${{ secrets.SECRET_KEY }}
+          ACCESS_TOKEN_EXPIRE_MINUTES=${{ secrets.ACCESS_TOKEN_EXPIRE_MINUTES }}
+          REFRESH_TOKEN_EXPIRE_DAYS=${{ secrets.REFRESH_TOKEN_EXPIRE_DAYS }}
+          PASSWORD_RESET_EXPIRE_MINUTES=${{ secrets.PASSWORD_RESET_EXPIRE_MINUTES }}
+          CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}
+          ALLOWED_HOSTS=${{ secrets.ALLOWED_HOSTS }}
+          STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_PUBLISHABLE_KEY=${{ secrets.STRIPE_PUBLISHABLE_KEY }}
+          STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
+          FROM_EMAIL=${{ secrets.FROM_EMAIL }}
+          CLOUDFLARE_R2_ACCESS_KEY=${{ secrets.CLOUDFLARE_R2_ACCESS_KEY }}
+          CLOUDFLARE_R2_SECRET_KEY=${{ secrets.CLOUDFLARE_R2_SECRET_KEY }}
+          CLOUDFLARE_R2_BUCKET=${{ secrets.CLOUDFLARE_R2_BUCKET }}
+          CLOUDFLARE_R2_ENDPOINT=${{ secrets.CLOUDFLARE_R2_ENDPOINT }}
+          CLOUDFLARE_R2_PUBLIC_URL=${{ secrets.CLOUDFLARE_R2_PUBLIC_URL }}
+          TABBY_API_KEY=${{ secrets.TABBY_API_KEY }}
+          TABBY_PUBLIC_KEY=${{ secrets.TABBY_PUBLIC_KEY }}
+          TABBY_MERCHANT_CODE=${{ secrets.TABBY_MERCHANT_CODE }}
+          TAMARA_API_KEY=${{ secrets.TAMARA_API_KEY }}
+          TAMARA_API_URL=${{ secrets.TAMARA_API_URL }}
+          WEB_URL=${{ secrets.WEB_URL }}
+          ADMIN_URL=${{ secrets.ADMIN_URL }}
+          BACKUP_GCS_BUCKET=${{ secrets.BACKUP_GCS_BUCKET }}
+          UMAMI_API_KEY=${{ secrets.UMAMI_API_KEY }}
+          UMAMI_WEBSITE_ID=${{ secrets.UMAMI_WEBSITE_ID }}
+          GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
+          ENVEOF
+
       - name: Rollback on GCP VM
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          port: 22
-          command_timeout: 20m
-          script: |
-            set -e
+        run: |
+          ssh -i ~/.ssh/deploy_key -o ConnectTimeout=30 \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} 'bash -s' <<'SCRIPT'
+          set -e
 
-            printf '%s\n' \
-              'APP_ENV=${{ secrets.APP_ENV }}' \
-              'USE_SSL=${{ secrets.USE_SSL }}' \
-              'POSTGRES_USER=${{ secrets.POSTGRES_USER }}' \
-              'POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}' \
-              'POSTGRES_DB=${{ secrets.POSTGRES_DB }}' \
-              'DATABASE_URL=${{ secrets.DATABASE_URL }}' \
-              'REDIS_URL=${{ secrets.REDIS_URL }}' \
-              'SECRET_KEY=${{ secrets.SECRET_KEY }}' \
-              'ACCESS_TOKEN_EXPIRE_MINUTES=${{ secrets.ACCESS_TOKEN_EXPIRE_MINUTES }}' \
-              'REFRESH_TOKEN_EXPIRE_DAYS=${{ secrets.REFRESH_TOKEN_EXPIRE_DAYS }}' \
-              'PASSWORD_RESET_EXPIRE_MINUTES=${{ secrets.PASSWORD_RESET_EXPIRE_MINUTES }}' \
-              'CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}' \
-              'ALLOWED_HOSTS=${{ secrets.ALLOWED_HOSTS }}' \
-              'STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}' \
-              'STRIPE_PUBLISHABLE_KEY=${{ secrets.STRIPE_PUBLISHABLE_KEY }}' \
-              'STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}' \
-              'RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}' \
-              'FROM_EMAIL=${{ secrets.FROM_EMAIL }}' \
-              'CLOUDFLARE_R2_ACCESS_KEY=${{ secrets.CLOUDFLARE_R2_ACCESS_KEY }}' \
-              'CLOUDFLARE_R2_SECRET_KEY=${{ secrets.CLOUDFLARE_R2_SECRET_KEY }}' \
-              'CLOUDFLARE_R2_BUCKET=${{ secrets.CLOUDFLARE_R2_BUCKET }}' \
-              'CLOUDFLARE_R2_ENDPOINT=${{ secrets.CLOUDFLARE_R2_ENDPOINT }}' \
-              'CLOUDFLARE_R2_PUBLIC_URL=${{ secrets.CLOUDFLARE_R2_PUBLIC_URL }}' \
-              'TABBY_API_KEY=${{ secrets.TABBY_API_KEY }}' \
-              'TABBY_PUBLIC_KEY=${{ secrets.TABBY_PUBLIC_KEY }}' \
-              'TABBY_MERCHANT_CODE=${{ secrets.TABBY_MERCHANT_CODE }}' \
-              'TAMARA_API_KEY=${{ secrets.TAMARA_API_KEY }}' \
-              'TAMARA_API_URL=${{ secrets.TAMARA_API_URL }}' \
-              'WEB_URL=${{ secrets.WEB_URL }}' \
-              'ADMIN_URL=${{ secrets.ADMIN_URL }}' \
-              'BACKUP_GCS_BUCKET=${{ secrets.BACKUP_GCS_BUCKET }}' \
-              'UMAMI_API_KEY=${{ secrets.UMAMI_API_KEY }}' \
-              'UMAMI_WEBSITE_ID=${{ secrets.UMAMI_WEBSITE_ID }}' \
-              'GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}' \
-              | sudo tee /opt/melting-moments-cakes/.env > /dev/null
+          cd /opt/melting-moments-cakes
 
-            cd /opt/melting-moments-cakes
+          echo "Current HEAD: $(git rev-parse HEAD)"
+          echo "Rolling back to: ${{ inputs.git_sha }}"
 
-            echo "Current HEAD: $(git rev-parse HEAD)"
-            echo "Rolling back to: ${{ inputs.git_sha }}"
+          # Resolve the SHA in case HEAD~1 or similar expression was given
+          TARGET_SHA=$(git rev-parse "${{ inputs.git_sha }}")
+          echo "Resolved SHA: $TARGET_SHA"
 
-            # Resolve the SHA in case HEAD~1 or similar expression was given
-            TARGET_SHA=$(git rev-parse "${{ inputs.git_sha }}")
-            echo "Resolved SHA: $TARGET_SHA"
+          if [ "${{ inputs.run_migration_downgrade }}" = "true" ]; then
+            echo "Running alembic downgrade -1..."
+            docker compose -f docker-compose.prod.yml exec -T api \
+              alembic downgrade -1
+          fi
 
-            if [ "${{ inputs.run_migration_downgrade }}" = "true" ]; then
-              echo "Running alembic downgrade -1..."
-              docker compose -f docker-compose.prod.yml exec -T api \
-                alembic downgrade -1
+          echo "Checking out $TARGET_SHA..."
+          git checkout "$TARGET_SHA"
+
+          echo "Rebuilding and restarting services..."
+          docker compose -f docker-compose.prod.yml up --build -d --no-deps api
+
+          echo "Waiting for API to be healthy..."
+          API_READY=false
+          for i in $(seq 1 30); do
+            if docker compose -f docker-compose.prod.yml exec -T api curl -sf http://localhost:8000/ping > /dev/null 2>&1; then
+              echo "API is up."
+              API_READY=true
+              break
             fi
+            echo "  waiting... (${i}/30)"
+            sleep 5
+          done
 
-            echo "Checking out $TARGET_SHA..."
-            git checkout "$TARGET_SHA"
+          if [ "$API_READY" != "true" ]; then
+            echo "ERROR: API failed to start after rollback. Container logs:"
+            docker compose -f docker-compose.prod.yml logs --tail=50 api
+            exit 1
+          fi
 
-            echo "Rebuilding and restarting services..."
-            docker compose -f docker-compose.prod.yml up --build -d --no-deps api
+          echo "Running database migrations..."
+          docker compose -f docker-compose.prod.yml exec -T api alembic upgrade head
 
-            echo "Waiting for API to be healthy..."
-            API_READY=false
-            for i in $(seq 1 30); do
-              if docker compose -f docker-compose.prod.yml exec -T api curl -sf http://localhost:8000/ping > /dev/null 2>&1; then
-                echo "API is up."
-                API_READY=true
-                break
-              fi
-              echo "  waiting... (${i}/30)"
-              sleep 5
-            done
+          echo "Ensuring nginx is up..."
+          docker compose -f docker-compose.prod.yml up -d --no-deps nginx
 
-            if [ "$API_READY" != "true" ]; then
-              echo "ERROR: API failed to start after rollback. Container logs:"
-              docker compose -f docker-compose.prod.yml logs --tail=50 api
-              exit 1
-            fi
+          echo "Rollback complete. Running at: $(git rev-parse HEAD)"
+          docker compose -f docker-compose.prod.yml ps
+          SCRIPT
 
-            echo "Running database migrations..."
-            docker compose -f docker-compose.prod.yml exec -T api alembic upgrade head
-
-            echo "Ensuring nginx is up..."
-            docker compose -f docker-compose.prod.yml up -d --no-deps nginx
-
-            echo "Rollback complete. Running at: $(git rev-parse HEAD)"
-            docker compose -f docker-compose.prod.yml ps
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
