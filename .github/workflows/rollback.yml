@@ -27,41 +27,41 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: 22
           script: |
-            cat > /opt/melting-moments-cakes/.env << 'ENVEOF'
-            APP_ENV=${{ secrets.APP_ENV }}
-            USE_SSL=${{ secrets.USE_SSL }}
-            POSTGRES_USER=${{ secrets.POSTGRES_USER }}
-            POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
-            POSTGRES_DB=${{ secrets.POSTGRES_DB }}
-            DATABASE_URL=${{ secrets.DATABASE_URL }}
-            REDIS_URL=${{ secrets.REDIS_URL }}
-            SECRET_KEY=${{ secrets.SECRET_KEY }}
-            ACCESS_TOKEN_EXPIRE_MINUTES=${{ secrets.ACCESS_TOKEN_EXPIRE_MINUTES }}
-            REFRESH_TOKEN_EXPIRE_DAYS=${{ secrets.REFRESH_TOKEN_EXPIRE_DAYS }}
-            PASSWORD_RESET_EXPIRE_MINUTES=${{ secrets.PASSWORD_RESET_EXPIRE_MINUTES }}
-            CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}
-            ALLOWED_HOSTS=${{ secrets.ALLOWED_HOSTS }}
-            STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
-            STRIPE_PUBLISHABLE_KEY=${{ secrets.STRIPE_PUBLISHABLE_KEY }}
-            STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
-            RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
-            FROM_EMAIL=${{ secrets.FROM_EMAIL }}
-            CLOUDFLARE_R2_ACCESS_KEY=${{ secrets.CLOUDFLARE_R2_ACCESS_KEY }}
-            CLOUDFLARE_R2_SECRET_KEY=${{ secrets.CLOUDFLARE_R2_SECRET_KEY }}
-            CLOUDFLARE_R2_BUCKET=${{ secrets.CLOUDFLARE_R2_BUCKET }}
-            CLOUDFLARE_R2_ENDPOINT=${{ secrets.CLOUDFLARE_R2_ENDPOINT }}
-            CLOUDFLARE_R2_PUBLIC_URL=${{ secrets.CLOUDFLARE_R2_PUBLIC_URL }}
-            TABBY_API_KEY=${{ secrets.TABBY_API_KEY }}
-            TABBY_PUBLIC_KEY=${{ secrets.TABBY_PUBLIC_KEY }}
-            TABBY_MERCHANT_CODE=${{ secrets.TABBY_MERCHANT_CODE }}
-            TAMARA_API_KEY=${{ secrets.TAMARA_API_KEY }}
-            TAMARA_API_URL=${{ secrets.TAMARA_API_URL }}
-            WEB_URL=${{ secrets.WEB_URL }}
-            ADMIN_URL=${{ secrets.ADMIN_URL }}
-            BACKUP_GCS_BUCKET=${{ secrets.BACKUP_GCS_BUCKET }}
-            UMAMI_API_KEY=${{ secrets.UMAMI_API_KEY }}
-            UMAMI_WEBSITE_ID=${{ secrets.UMAMI_WEBSITE_ID }}
-            ENVEOF
+            printf '%s\n' \
+              'APP_ENV=${{ secrets.APP_ENV }}' \
+              'USE_SSL=${{ secrets.USE_SSL }}' \
+              'POSTGRES_USER=${{ secrets.POSTGRES_USER }}' \
+              'POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}' \
+              'POSTGRES_DB=${{ secrets.POSTGRES_DB }}' \
+              'DATABASE_URL=${{ secrets.DATABASE_URL }}' \
+              'REDIS_URL=${{ secrets.REDIS_URL }}' \
+              'SECRET_KEY=${{ secrets.SECRET_KEY }}' \
+              'ACCESS_TOKEN_EXPIRE_MINUTES=${{ secrets.ACCESS_TOKEN_EXPIRE_MINUTES }}' \
+              'REFRESH_TOKEN_EXPIRE_DAYS=${{ secrets.REFRESH_TOKEN_EXPIRE_DAYS }}' \
+              'PASSWORD_RESET_EXPIRE_MINUTES=${{ secrets.PASSWORD_RESET_EXPIRE_MINUTES }}' \
+              'CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}' \
+              'ALLOWED_HOSTS=${{ secrets.ALLOWED_HOSTS }}' \
+              'STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}' \
+              'STRIPE_PUBLISHABLE_KEY=${{ secrets.STRIPE_PUBLISHABLE_KEY }}' \
+              'STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}' \
+              'RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}' \
+              'FROM_EMAIL=${{ secrets.FROM_EMAIL }}' \
+              'CLOUDFLARE_R2_ACCESS_KEY=${{ secrets.CLOUDFLARE_R2_ACCESS_KEY }}' \
+              'CLOUDFLARE_R2_SECRET_KEY=${{ secrets.CLOUDFLARE_R2_SECRET_KEY }}' \
+              'CLOUDFLARE_R2_BUCKET=${{ secrets.CLOUDFLARE_R2_BUCKET }}' \
+              'CLOUDFLARE_R2_ENDPOINT=${{ secrets.CLOUDFLARE_R2_ENDPOINT }}' \
+              'CLOUDFLARE_R2_PUBLIC_URL=${{ secrets.CLOUDFLARE_R2_PUBLIC_URL }}' \
+              'TABBY_API_KEY=${{ secrets.TABBY_API_KEY }}' \
+              'TABBY_PUBLIC_KEY=${{ secrets.TABBY_PUBLIC_KEY }}' \
+              'TABBY_MERCHANT_CODE=${{ secrets.TABBY_MERCHANT_CODE }}' \
+              'TAMARA_API_KEY=${{ secrets.TAMARA_API_KEY }}' \
+              'TAMARA_API_URL=${{ secrets.TAMARA_API_URL }}' \
+              'WEB_URL=${{ secrets.WEB_URL }}' \
+              'ADMIN_URL=${{ secrets.ADMIN_URL }}' \
+              'BACKUP_GCS_BUCKET=${{ secrets.BACKUP_GCS_BUCKET }}' \
+              'UMAMI_API_KEY=${{ secrets.UMAMI_API_KEY }}' \
+              'UMAMI_WEBSITE_ID=${{ secrets.UMAMI_WEBSITE_ID }}' \
+              > /opt/melting-moments-cakes/.env
 
       - name: Rollback on GCP VM
         uses: appleboy/ssh-action@v1
