@@ -74,34 +74,61 @@ async def _generate_order_number(db: AsyncSession) -> str:
     return f"{prefix}{seq:03d}"
 
 
-async def create_order(
-    db: AsyncSession,
-    data: OrderCreate,
-    user_id: uuid.UUID | None,
-) -> OrderResponse:
-    # ── 1. Locate cart ──────────────────────────────────────────────────────
-    if user_id:
-        cart_stmt = select(Cart).where(Cart.user_id == user_id)
-    elif data.session_id:
-        cart_stmt = select(Cart).where(Cart.session_id == data.session_id)
-    else:
-        raise BadRequestError("No cart found — provide session_id for guest checkout")
+# ── Private helpers for create_order ──────────────────────────────────────────
 
-    cart_result = await db.execute(
-        cart_stmt.options(selectinload(Cart.items).joinedload(CartItem.product))
-    )
-    cart = cart_result.scalar_one_or_none()
+
+async def _locate_cart(
+    db: AsyncSession,
+    user_id: uuid.UUID | None,
+    session_id: str | None,
+) -> Cart:
+    """
+    Find the active cart for this user or session.
+
+    Priority: user_id cart → session_id cart (fallback).
+
+    The fallback matters for the guest-checkout flow: the frontend creates a
+    guest JWT just before submitting the order, so ``user_id`` is set in the
+    token but the cart was built using ``session_id``.  Without the fallback
+    the lookup would return nothing and raise "Cart is empty".
+    """
+    if not user_id and not session_id:
+        raise BadRequestError("session_id is required for guest checkout")
+
+    cart: Cart | None = None
+
+    if user_id:
+        result = await db.execute(
+            select(Cart)
+            .options(selectinload(Cart.items).joinedload(CartItem.product))
+            .where(Cart.user_id == user_id)
+        )
+        cart = result.scalar_one_or_none()
+
+    # Fallback to session-id cart (guest user who just received a JWT)
+    if (not cart or not cart.items) and session_id:
+        result = await db.execute(
+            select(Cart)
+            .options(selectinload(Cart.items).joinedload(CartItem.product))
+            .where(Cart.session_id == session_id)
+        )
+        session_cart = result.scalar_one_or_none()
+        if session_cart and session_cart.items:
+            cart = session_cart
+
     if not cart or not cart.items:
         raise BadRequestError("Cart is empty")
 
-    # ── 2. Validate delivery requirements ───────────────────────────────────
-    if (
-        data.delivery_method == DeliveryMethodEnum.DELIVERY
-        and not data.shipping_address
-    ):
-        raise BadRequestError("Shipping address is required for delivery orders")
+    return cart
 
-    # ── 3. Compute subtotal from cart items ─────────────────────────────────
+
+def _compute_item_totals(cart: Cart) -> tuple[list[dict], Decimal]:
+    """
+    Validate cart items and compute the order subtotal.
+
+    Returns (items_data, subtotal).
+    items_data is the list of dicts used to create OrderItem rows.
+    """
     subtotal = Decimal("0.00")
     items_data: list[dict] = []
 
@@ -134,44 +161,61 @@ async def create_order(
             }
         )
 
-    # ── 4. Apply promo code ──────────────────────────────────────────────────
-    discount_amount = Decimal("0.00")
-    promo_code_used: str | None = None
-    promo_obj: PromoCode | None = None
+    return items_data, subtotal
 
-    if data.promo_code:
-        validation = await promo_code_service.validate(db, data.promo_code, subtotal)
-        if not validation.valid:
-            raise BadRequestError(f"Promo code: {validation.message}")
-        discount_amount = validation.discount_amount
-        promo_code_used = data.promo_code.upper()
-        promo_obj = await promo_code_service.get_promo(db, data.promo_code)
 
-    # ── 5. Calculate delivery fee ────────────────────────────────────────────
+def _compute_order_totals(
+    data: OrderCreate,
+    subtotal: Decimal,
+    discount_amount: Decimal,
+) -> tuple[Decimal, Decimal, Decimal, Decimal]:
+    """
+    Compute delivery fee, order total, and VAT figures.
+
+    Returns (delivery_fee, total, vat_amount, total_excl_vat).
+    """
     discounted_subtotal = subtotal - discount_amount
     region = data.shipping_address.region if data.shipping_address else None
     delivery_fee = delivery_service.calculate_fee(
         data.delivery_method, region, discounted_subtotal
     )
-
-    # ── 6. Final total ───────────────────────────────────────────────────────
     total = discounted_subtotal + delivery_fee
 
-    # ── 6b. VAT back-calculation (goods only; delivery excluded) ─────────────
+    # VAT back-calculation (goods only; delivery excluded per UAE VAT rules)
     VAT_RATE = Decimal("0.05")
     taxable = subtotal - discount_amount
     vat_amount = (taxable * VAT_RATE / (1 + VAT_RATE)).quantize(Decimal("0.01"))
     total_excl_vat = (taxable / (1 + VAT_RATE)).quantize(Decimal("0.01"))
 
-    # ── 7. Build address snapshot ────────────────────────────────────────────
-    address_snapshot: dict | None = None
-    if data.shipping_address:
-        address_snapshot = data.shipping_address.model_dump(mode="json")
+    return delivery_fee, total, vat_amount, total_excl_vat
 
-    # ── 8. Generate order number ─────────────────────────────────────────────
+
+async def _persist_order(
+    db: AsyncSession,
+    data: OrderCreate,
+    user_id: uuid.UUID | None,
+    cart: Cart,
+    items_data: list[dict],
+    subtotal: Decimal,
+    discount_amount: Decimal,
+    promo_code_used: str | None,
+    promo_obj: PromoCode | None,
+    delivery_fee: Decimal,
+    total: Decimal,
+    vat_amount: Decimal,
+    total_excl_vat: Decimal,
+) -> OrderResponse:
+    """
+    Write the order, its items, and update promo usage atomically.
+    Clears the cart on success and returns the full OrderResponse.
+    """
+    VAT_RATE = Decimal("0.05")
+
+    address_snapshot: dict | None = (
+        data.shipping_address.model_dump(mode="json") if data.shipping_address else None
+    )
     order_number = await _generate_order_number(db)
 
-    # ── 9. Persist order ─────────────────────────────────────────────────────
     order = Order(
         order_number=order_number,
         user_id=user_id,
@@ -193,15 +237,13 @@ async def create_order(
     db.add(order)
     await db.flush()
 
-    # ── 10. Create order items ────────────────────────────────────────────────
     for item in items_data:
-        order_item = OrderItem(order_id=order.id, **item)
-        db.add(order_item)
+        db.add(OrderItem(order_id=order.id, **item))
 
-    # ── 11. Increment promo uses (atomic) ────────────────────────────────────
+    # Atomic promo-use increment
     if promo_obj:
         if promo_obj.max_uses is not None:
-            promo_result = await db.execute(
+            result = await db.execute(
                 sql_update(PromoCode)
                 .where(
                     PromoCode.id == promo_obj.id,
@@ -211,7 +253,7 @@ async def create_order(
                 .returning(PromoCode.id)
                 .execution_options(synchronize_session=False)
             )
-            if not promo_result.scalar_one_or_none():
+            if not result.scalar_one_or_none():
                 raise BadRequestError("Promo code has reached its usage limit")
         else:
             await db.execute(
@@ -221,18 +263,72 @@ async def create_order(
                 .execution_options(synchronize_session=False)
             )
 
-    # ── 12. Clear cart ────────────────────────────────────────────────────────
+    # Clear cart
     items_result = await db.execute(select(CartItem).where(CartItem.cart_id == cart.id))
     for ci in items_result.scalars().all():
         await db.delete(ci)
 
     await db.flush()
 
-    # Reload with items
     stmt = select(Order).options(*_order_load_options()).where(Order.id == order.id)
     result = await db.execute(stmt)
-    order = result.scalar_one()
-    return OrderResponse.model_validate(order)
+    return OrderResponse.model_validate(result.scalar_one())
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+
+async def create_order(
+    db: AsyncSession,
+    data: OrderCreate,
+    user_id: uuid.UUID | None,
+) -> OrderResponse:
+    # 1. Locate and validate cart (with session_id fallback for guest checkout)
+    cart = await _locate_cart(db, user_id, data.session_id)
+
+    if (
+        data.delivery_method == DeliveryMethodEnum.DELIVERY
+        and not data.shipping_address
+    ):
+        raise BadRequestError("Shipping address is required for delivery orders")
+
+    # 2. Compute item subtotals
+    items_data, subtotal = _compute_item_totals(cart)
+
+    # 3. Apply promo code
+    discount_amount = Decimal("0.00")
+    promo_code_used: str | None = None
+    promo_obj: PromoCode | None = None
+
+    if data.promo_code:
+        validation = await promo_code_service.validate(db, data.promo_code, subtotal)
+        if not validation.valid:
+            raise BadRequestError(f"Promo code: {validation.message}")
+        discount_amount = validation.discount_amount
+        promo_code_used = data.promo_code.upper()
+        promo_obj = await promo_code_service.get_promo(db, data.promo_code)
+
+    # 4. Compute delivery fee, total, VAT
+    delivery_fee, total, vat_amount, total_excl_vat = _compute_order_totals(
+        data, subtotal, discount_amount
+    )
+
+    # 5. Persist order rows and clear cart
+    return await _persist_order(
+        db,
+        data,
+        user_id,
+        cart,
+        items_data,
+        subtotal,
+        discount_amount,
+        promo_code_used,
+        promo_obj,
+        delivery_fee,
+        total,
+        vat_amount,
+        total_excl_vat,
+    )
 
 
 async def get_user_orders(
@@ -317,7 +413,6 @@ async def update_status(
     await db.flush()
     await db.refresh(order)
 
-    # Reload items
     stmt = select(Order).options(*_order_load_options()).where(Order.id == order.id)
     result = await db.execute(stmt)
     order = result.scalar_one()
