@@ -339,7 +339,7 @@ docker compose -f docker-compose.prod.yml up -d api
 
 ## Step 11b: Cloudflare R2 (Media Storage)
 
-R2 stores product images and other uploaded assets, served via `media.meltingmomentscakes.com`.
+R2 stores product images and other uploaded assets.
 
 ### Create the bucket
 
@@ -347,18 +347,42 @@ R2 stores product images and other uploaded assets, served via `media.meltingmom
 2. In the left sidebar, go to **R2 Object Storage**
 3. Click **Create bucket**
    - **Name**: `melting-moments-cakes`
-   - **Location**: choose a region close to the UAE (e.g. `ENAM` — Eastern North America is often fastest; or leave as automatic)
+   - **Location**: leave as automatic (Cloudflare picks the closest region to the first request)
 4. Click **Create bucket**
 
-### Enable public access via custom domain
+### Enable public access
+
+R2 custom domains require the domain to be **on Cloudflare's DNS** (not just registered there). Since the domain is registered at Namecheap, choose one of these two paths:
+
+#### Option A — Use Cloudflare's free `r2.dev` subdomain (quick start)
 
 1. Open the bucket → **Settings** tab
-2. Under **Public access** → **Custom Domains**, click **Connect Domain**
-3. Enter `media.meltingmomentscakes.com` and click **Connect**
-   - Cloudflare will automatically add the required DNS record (CNAME) since your domain is already on Cloudflare
-4. Confirm the domain is shown as **Active**
+2. Under **Public access** → **R2.dev subdomain**, click **Allow Access**
+3. Confirm — Cloudflare shows a URL like `https://pub-<hash>.r2.dev`
+4. Set `CLOUDFLARE_R2_PUBLIC_URL=https://pub-<hash>.r2.dev` in Step 13c
 
-> Objects uploaded to this bucket are now publicly readable at `https://media.meltingmomentscakes.com/<object-key>`. No further bucket policy changes are needed — the custom domain acts as a public CDN endpoint.
+> Good for development and early production. The URL is permanent but not branded.
+
+#### Option B — Custom domain `media.meltingmomentscakes.com` (recommended for production)
+
+R2 custom domains only work when the domain's **DNS is managed by Cloudflare** (you can keep Namecheap as the registrar — just point nameservers to Cloudflare).
+
+1. **Add the domain to Cloudflare (free)**:
+   - Go to [dash.cloudflare.com](https://dash.cloudflare.com) → **Add a site** → enter `meltingmomentscakes.com`
+   - Select the **Free** plan
+   - Cloudflare scans existing DNS records — review and confirm them
+   - Cloudflare gives you two nameserver addresses (e.g. `art.ns.cloudflare.com`)
+2. **Update nameservers at Namecheap**:
+   - Log into Namecheap → **Domain List** → **Manage** → **Nameservers**
+   - Switch to **Custom DNS** and enter Cloudflare's two nameservers
+   - Propagation takes up to 24 hours (usually minutes)
+3. **Connect the custom domain to R2**:
+   - Open the bucket → **Settings** → **Public access** → **Custom Domains** → **Connect Domain**
+   - Enter `media.meltingmomentscakes.com` → **Connect**
+   - Cloudflare adds the CNAME automatically
+4. Set `CLOUDFLARE_R2_PUBLIC_URL=https://media.meltingmomentscakes.com` in Step 13c
+
+> **Note:** Once DNS is on Cloudflare, the DNS records in Step 12 are managed there instead of Namecheap.
 
 ### Create an R2 API token
 
@@ -390,23 +414,27 @@ The API needs write access to upload media files.
 | `CLOUDFLARE_R2_SECRET_KEY` | API token creation page (Secret Access Key) |
 | `CLOUDFLARE_R2_BUCKET` | `melting-moments-cakes` (literal) |
 | `CLOUDFLARE_R2_ENDPOINT` | `https://<account-id>.r2.cloudflarestorage.com` |
-| `CLOUDFLARE_R2_PUBLIC_URL` | `https://media.meltingmomentscakes.com` (literal) |
+| `CLOUDFLARE_R2_PUBLIC_URL` | `https://pub-<hash>.r2.dev` (Option A) or `https://media.meltingmomentscakes.com` (Option B) |
 
 ---
 
 ## Step 12: DNS Configuration
 
-In Cloudflare (or your registrar), create these records:
+> **Where to add these records** depends on which path you chose in Step 11b:
+> - **Option A (r2.dev)**: add records at Namecheap → Domain → Advanced DNS
+> - **Option B (custom domain)**: DNS is now managed in Cloudflare — add records there instead
 
 | Type | Name | Value | Notes |
 |------|------|-------|-------|
-| A | `@` | GCP VM external IP | Web storefront root |
+| A | `@` | GCP VM external IP | Web storefront root (apex) |
 | CNAME | `www` | `cname.vercel-dns.com` | Vercel redirect |
 | CNAME | `admin` | `cname.vercel-dns.com` | Admin panel |
-| A | `api` | GCP VM external IP | FastAPI |
-| CNAME | `media` | `<your-r2-bucket>.r2.cloudflarestorage.com` | R2 media |
+| A | `api` | GCP VM external IP | FastAPI backend |
+| CNAME | `media` | `pub-<hash>.r2.dev` | R2 media — **Option A only**; Option B adds this automatically |
 
 > **Vercel custom domains**: After adding a custom domain in Vercel, it will show you the exact DNS record needed (either A or CNAME depending on apex vs subdomain). Follow those instructions; the values above are typical.
+
+> **Namecheap tip**: CNAME records for the apex domain (`@`) are not supported — use the A record for `@` pointing to the VM IP instead. For `www`, Namecheap supports CNAME fine.
 
 ---
 
