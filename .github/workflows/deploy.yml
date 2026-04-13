@@ -343,16 +343,18 @@ jobs:
           docker pull ghcr.io/hussu97/mm-ecommerce-api:latest
 
           echo "Running database migrations..."
-          timeout 300 docker compose -f docker-compose.prod.yml run --rm --no-deps -T api alembic upgrade head \
+          # Use < /dev/null to prevent stdin hijacking
+          timeout 300 docker compose -f docker-compose.prod.yml run --rm --no-deps -T api alembic upgrade head < /dev/null \
             || { echo "ERROR: Migration failed or timed out after 5 minutes"; exit 1; }
 
           echo "Restarting API with new image..."
-          docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate api
+          docker compose -f docker-compose.prod.yml up -d --force-recreate --remove-orphans api
 
           echo "Waiting for API to be healthy..."
           API_READY=false
           for i in $(seq 1 30); do
-            if docker compose -f docker-compose.prod.yml exec -T api curl -sf -H "Host: api.meltingmomentscakes.com" http://localhost:8000/ping > /dev/null 2>&1; then
+            # Redirecting stdin here as well for safety
+            if docker compose -f docker-compose.prod.yml exec -T api curl -sf -H "Host: api.meltingmomentscakes.com" http://localhost:8000/ping < /dev/null > /dev/null 2>&1; then
               echo "API is up."
               API_READY=true
               break
