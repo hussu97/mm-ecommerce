@@ -15,6 +15,18 @@ from app.schemas.order import OrderCreate
 from app.schemas.promo_code import PromoCodeValidateResponse
 from app.services.order_service import VALID_TRANSITIONS, create_order, update_status
 
+
+@pytest.fixture(autouse=True)
+def mock_calculate_fee():
+    """Patch delivery_service.calculate_fee to avoid DB calls in order_service tests."""
+    with patch(
+        "app.services.order_service.delivery_service.calculate_fee",
+        new_callable=AsyncMock,
+    ) as m:
+        m.return_value = Decimal("0.00")
+        yield m
+
+
 # ── Test helpers ─────────────────────────────────────────────────────────────
 
 
@@ -447,7 +459,8 @@ class TestCreateOrderCalculations:
         # 100 / 1.05 = 95.238... → 95.24
         assert order_arg.total_excl_vat == Decimal("95.24")
 
-    async def test_standard_zone_delivery_fee_is_35(self):
+    async def test_standard_zone_delivery_fee_is_35(self, mock_calculate_fee):
+        mock_calculate_fee.return_value = Decimal("35.00")
         cart = _cart(items=[_cart_item(_product("100.00"))])
         db = _db_for_create(cart, _order_mock(delivery_fee=Decimal("35.00")))
 
@@ -456,7 +469,8 @@ class TestCreateOrderCalculations:
         order_arg = db.add.call_args_list[0][0][0]
         assert order_arg.delivery_fee == Decimal("35.00")
 
-    async def test_remote_zone_delivery_fee_is_50(self):
+    async def test_remote_zone_delivery_fee_is_50(self, mock_calculate_fee):
+        mock_calculate_fee.return_value = Decimal("50.00")
         cart = _cart(items=[_cart_item(_product("100.00"))])
         db = _db_for_create(cart, _order_mock(delivery_fee=Decimal("50.00")))
 
