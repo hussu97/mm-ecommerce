@@ -24,8 +24,8 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default withSentryConfig(nextConfig, {
-  silent: !process.env.NEXT_PUBLIC_SENTRY_DSN,
-  disableServerWebpackPlugin: !process.env.NEXT_PUBLIC_SENTRY_DSN,
-  disableClientWebpackPlugin: !process.env.NEXT_PUBLIC_SENTRY_DSN,
-});
+const exportedConfig = process.env.NEXT_PUBLIC_SENTRY_DSN
+  ? withSentryConfig(nextConfig, { silent: true })
+  : nextConfig;
+
+export default exportedConfig;
