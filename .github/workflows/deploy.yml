@@ -39,8 +39,10 @@ jobs:
               - 'docker-compose*.yml'
               - '.github/workflows/deploy.yml'
 
+  # ── Lint / test (no build — vercel build handles that in the deploy job) ────
+
   lint-web:
-    name: Lint, Type-check & Build (Web)
+    name: Lint & Test (Web)
     needs: changes
     if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
@@ -62,19 +64,14 @@ jobs:
       - name: Lint
         run: pnpm --filter web lint
 
-      - name: Run tests
+      - name: Test
         run: pnpm --filter web test
 
       - name: Type-check
         run: pnpm --filter web exec tsc --noEmit
 
-      - name: Build
-        run: pnpm --filter web build
-        env:
-          NEXT_TELEMETRY_DISABLED: "1"
-
   lint-admin:
-    name: Lint, Type-check & Build (Admin)
+    name: Lint & Test (Admin)
     needs: changes
     if: needs.changes.outputs.admin == 'true'
     runs-on: ubuntu-latest
@@ -96,16 +93,11 @@ jobs:
       - name: Lint
         run: pnpm --filter admin lint
 
-      - name: Run tests
+      - name: Test
         run: pnpm --filter admin test
 
       - name: Type-check
         run: pnpm --filter admin exec tsc --noEmit
-
-      - name: Build
-        run: pnpm --filter admin build
-        env:
-          NEXT_TELEMETRY_DISABLED: "1"
 
   lint-python:
     name: Lint & Test (Python)
@@ -121,22 +113,45 @@ jobs:
           cache: "pip"
           cache-dependency-path: apps/api/pyproject.toml
 
+      - name: Cache ruff
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ruff
+          key: ruff-${{ runner.os }}-${{ hashFiles('apps/api/pyproject.toml') }}
+
+      - name: Cache pytest
+        uses: actions/cache@v4
+        with:
+          path: apps/api/.pytest_cache
+          key: pytest-${{ runner.os }}-${{ hashFiles('apps/api/pyproject.toml') }}
+          restore-keys: pytest-${{ runner.os }}-
+
       - name: Install dependencies
         run: |
           cd apps/api
           pip install -e ".[dev]"
-          pip install ruff
 
       - name: Ruff check
-        run: ruff check apps/api/
+        run: |
+          cd apps/api
+          ruff check .
+        env:
+          RUFF_CACHE_DIR: ~/.cache/ruff
 
       - name: Ruff format check
-        run: ruff format --check apps/api/
+        run: |
+          cd apps/api
+          ruff format --check .
+        env:
+          RUFF_CACHE_DIR: ~/.cache/ruff
 
       - name: Run pytest
         run: |
           cd apps/api
-          pytest tests/ -v --tb=short --cov=app --cov-report=term-missing
+          pytest tests/ -v --tb=short --cov=app --cov-report=term-missing \
+            --cache-dir=.pytest_cache
+
+  # ── Deploy ───────────────────────────────────────────────────────────────────
 
   deploy-web:
     name: Deploy Web to Vercel
@@ -147,6 +162,7 @@ jobs:
     env:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_WEB_PROJECT_ID }}
+      NEXT_TELEMETRY_DISABLED: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -159,20 +175,26 @@ jobs:
           node-version: "20"
           cache: "pnpm"
 
+      - name: Cache Next.js build
+        uses: actions/cache@v4
+        with:
+          path: apps/web/.next/cache
+          key: nextjs-web-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('apps/web/src/**/*.ts', 'apps/web/src/**/*.tsx', 'apps/web/**/*.ts', 'apps/web/**/*.tsx') }}
+          restore-keys: |
+            nextjs-web-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+            nextjs-web-${{ runner.os }}-
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install Vercel CLI
-        run: npm install -g vercel
-
       - name: Pull Vercel environment
-        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+        run: npx vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
 
-      - name: Build (once — artifact reused by Vercel)
-        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Build
+        run: npx vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
 
-      - name: Deploy prebuilt artifact
-        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Deploy
+        run: npx vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
 
   deploy-admin:
     name: Deploy Admin to Vercel
@@ -183,6 +205,7 @@ jobs:
     env:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_ADMIN_PROJECT_ID }}
+      NEXT_TELEMETRY_DISABLED: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -195,20 +218,26 @@ jobs:
           node-version: "20"
           cache: "pnpm"
 
+      - name: Cache Next.js build
+        uses: actions/cache@v4
+        with:
+          path: apps/admin/.next/cache
+          key: nextjs-admin-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('apps/admin/src/**/*.ts', 'apps/admin/src/**/*.tsx', 'apps/admin/**/*.ts', 'apps/admin/**/*.tsx') }}
+          restore-keys: |
+            nextjs-admin-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+            nextjs-admin-${{ runner.os }}-
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install Vercel CLI
-        run: npm install -g vercel
-
       - name: Pull Vercel environment
-        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+        run: npx vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
 
-      - name: Build (once — artifact reused by Vercel)
-        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Build
+        run: npx vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
 
-      - name: Deploy prebuilt artifact
-        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Deploy
+        run: npx vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
 
   deploy-gcp:
     name: Deploy API to GCP

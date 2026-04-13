@@ -47,31 +47,8 @@ services:
       redis:
         condition: service_healthy
 
-  web:
-    build:
-      context: .
-      dockerfile: apps/web/Dockerfile
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    environment:
-      NODE_ENV: development
-      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
-    depends_on:
-      - api
-
-  admin:
-    build:
-      context: .
-      dockerfile: apps/admin/Dockerfile
-    restart: unless-stopped
-    ports:
-      - "3001:3001"
-    environment:
-      NODE_ENV: development
-      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
-    depends_on:
-      - api
+# web (apps/web) and admin (apps/admin) are deployed to Vercel — not containerised.
+# Run them locally with: pnpm dev
 
 volumes:
   postgres_data:
