@@ -331,8 +331,8 @@ jobs:
             -o ConnectTimeout=30 \
             -o ServerAliveInterval=30 \
             -o ServerAliveCountMax=20 \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} 'bash -s' <<'SCRIPT'
-          set -e
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} 'stdbuf -oL -eL bash -s' <<'SCRIPT'
+          set -eo pipefail
 
           cd /opt/melting-moments-cakes
 
@@ -343,7 +343,7 @@ jobs:
           docker pull ghcr.io/hussu97/mm-ecommerce-api:latest
 
           echo "Running database migrations..."
-          timeout 300 docker compose -f docker-compose.prod.yml run --rm --no-deps api alembic upgrade head \
+          timeout 300 docker compose -f docker-compose.prod.yml run --rm --no-deps -T api alembic upgrade head \
             || { echo "ERROR: Migration failed or timed out after 5 minutes"; exit 1; }
 
           echo "Restarting API with new image..."
