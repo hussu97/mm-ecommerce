@@ -3,7 +3,7 @@ import type {
   FunnelData, ImportResult, Language, Modifier, Order, OrdersPoint, PaginatedCustomers,
   PaginatedEmailLogs, PaginatedOrders, Product, ProductListResponse, PromoCode,
   PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
-  TrafficData, UploadResponse, User,
+  TrafficData, UploadResponse, User, Region, DeliverySettings,
 } from './types';
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
@@ -285,6 +285,19 @@ export const cmsApi = {
     api.put<CmsPage>(`/cms/pages/${slug}`, { content }),
   updateLocale: (slug: string, locale: string, content: Record<string, unknown>) =>
     api.put<CmsPage>(`/cms/pages/${slug}/${locale}`, { content }),
+};
+
+// ─── Email Logs ───────────────────────────────────────────────────────────────
+
+// ─── Regions ──────────────────────────────────────────────────────────────────
+
+export const regionsApi = {
+  list: () => api.get<Region[]>('/regions'),
+  update: (slug: string, data: Partial<Pick<Region, 'name_translations' | 'delivery_fee' | 'is_active' | 'sort_order'>>) =>
+    api.put<Region>(`/regions/${slug}`, data),
+  getSettings: () => api.get<DeliverySettings>('/regions/settings'),
+  updateSettings: (data: Partial<Pick<DeliverySettings, 'free_delivery_threshold' | 'pickup_fee'>>) =>
+    api.put<DeliverySettings>('/regions/settings', data),
 };
 
 // ─── Email Logs ───────────────────────────────────────────────────────────────

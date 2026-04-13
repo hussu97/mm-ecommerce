@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Image from 'next/image';
 import Link from 'next/link';
 import { cmsApi } from '@/lib/api';
+import { Breadcrumb } from '@/components/ui';
 
 interface Value {
   icon: string;
@@ -10,10 +11,11 @@ interface Value {
 }
 
 interface AboutContent {
-  hero?: { title?: string; subtitle?: string };
+  hero?: { label?: string; title?: string; subtitle?: string };
   story_1?: { label?: string; title?: string; body?: string; image_url?: string };
-  story_2?: { label?: string; title?: string; body?: string; image_url?: string };
+  story_2?: { label?: string; title?: string; body?: string; image_url?: string; cta_text?: string };
   values?: Value[];
+  values_section?: { label?: string; title?: string };
   cta?: { title?: string; subtitle?: string; button_text?: string; button_link?: string };
   seo?: { title?: string; description?: string };
 }
@@ -63,15 +65,26 @@ export default async function AboutPage({
 
   const jsonLd = {
     '@context': 'https://schema.org',
-    '@type': 'Person',
-    name: 'Fatema Abbasi',
-    jobTitle: 'Founder & Baker',
-    worksFor: {
-      '@type': 'LocalBusiness',
-      name: 'Melting Moments Cakes',
-      url: process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com',
-    },
-    sameAs: ['https://www.instagram.com/meltingmomentscakes'],
+    '@graph': [
+      {
+        '@type': 'Person',
+        name: 'Fatema Abbasi',
+        jobTitle: 'Founder & Baker',
+        worksFor: {
+          '@type': 'LocalBusiness',
+          name: 'Melting Moments Cakes',
+          url: SITE_URL,
+        },
+        sameAs: ['https://www.instagram.com/meltingmomentscakes'],
+      },
+      {
+        '@type': 'BreadcrumbList',
+        itemListElement: [
+          { '@type': 'ListItem', position: 1, name: 'Home', item: `${SITE_URL}/${locale}` },
+          { '@type': 'ListItem', position: 2, name: 'About', item: `${SITE_URL}/${locale}/about` },
+        ],
+      },
+    ],
   };
 
   const values = c.values ?? [];
@@ -95,9 +108,11 @@ export default async function AboutPage({
         />
         <div className="absolute inset-0 bg-primary/70" />
         <div className="relative z-10 h-full flex flex-col items-center justify-center px-4 text-center text-white">
-          <span className="inline-block border border-white/60 text-[11px] font-body uppercase tracking-[0.3em] px-5 py-2 mb-5">
-            Our Story
-          </span>
+          {c.hero?.label && (
+            <span className="inline-block border border-white/60 text-[11px] font-body uppercase tracking-[0.3em] px-5 py-2 mb-5">
+              {c.hero.label}
+            </span>
+          )}
           <h1 className="font-display text-4xl sm:text-5xl lg:text-6xl leading-tight mb-4">
             {c.hero?.title ?? ''}
           </h1>
@@ -109,6 +124,7 @@ export default async function AboutPage({
 
       {/* Story Section 1 — text + photo */}
       <section className="max-w-6xl mx-auto px-4 py-16 lg:py-24">
+        <Breadcrumb items={[{ label: 'Home', href: `/${locale}` }, { label: 'About' }]} />
         <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
           <div>
             {c.story_1?.label && (
@@ -166,12 +182,14 @@ export default async function AboutPage({
                   <p key={i}>{p}</p>
                 ))}
               </div>
-              <Link
-                href="/contact"
-                className="inline-flex items-center gap-2 mt-6 text-xs font-body uppercase tracking-widest text-primary border border-primary px-5 py-2.5 hover:bg-primary hover:text-white transition-all duration-200"
-              >
-                Get in Touch
-              </Link>
+              {c.story_2?.cta_text && (
+                <Link
+                  href="/contact"
+                  className="inline-flex items-center gap-2 mt-6 text-xs font-body uppercase tracking-widest text-primary border border-primary px-5 py-2.5 hover:bg-primary hover:text-white transition-all duration-200"
+                >
+                  {c.story_2.cta_text}
+                </Link>
+              )}
             </div>
           </div>
         </div>
@@ -181,8 +199,16 @@ export default async function AboutPage({
       {values.length > 0 && (
         <section className="max-w-6xl mx-auto px-4 py-16 lg:py-24">
           <div className="text-center mb-12">
-            <p className="text-xs font-body uppercase tracking-widest text-secondary mb-3">Our Promise</p>
-            <h2 className="font-display text-3xl sm:text-4xl text-primary">What we stand for</h2>
+            {c.values_section?.label && (
+              <p className="text-xs font-body uppercase tracking-widest text-secondary mb-3">
+                {c.values_section.label}
+              </p>
+            )}
+            {c.values_section?.title && (
+              <h2 className="font-display text-3xl sm:text-4xl text-primary">
+                {c.values_section.title}
+              </h2>
+            )}
             <div className="h-px bg-secondary/40 max-w-xs mx-auto mt-5" />
           </div>
 

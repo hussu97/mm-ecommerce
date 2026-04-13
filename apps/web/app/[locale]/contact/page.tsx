@@ -1,8 +1,9 @@
 import type { Metadata } from 'next';
 import { cmsApi } from '@/lib/api';
+import { Breadcrumb } from '@/components/ui';
 
 interface ContactContent {
-  header?: { title?: string; subtitle?: string };
+  header?: { label?: string; title?: string; subtitle?: string };
   info?: {
     phone?: string;
     whatsapp?: string;
@@ -11,6 +12,20 @@ interface ContactContent {
     location_detail?: string;
     hours?: string;
     hours_detail?: string;
+  };
+  cards?: {
+    whatsapp_title?: string;
+    whatsapp_cta?: string;
+    email_title?: string;
+    email_cta?: string;
+    location_title?: string;
+    hours_title?: string;
+  };
+  social?: {
+    label?: string;
+    instagram_label?: string;
+    instagram_handle?: string;
+    instagram_url?: string;
   };
   seo?: { title?: string; description?: string };
 }
@@ -67,31 +82,32 @@ export default async function ContactPage({
   // Non-translatable contact details always come from 'en'
   const info = enInfo ?? c.info ?? {};
 
+  const cards = c.cards ?? {};
   const INFO_CARDS = [
     {
       icon: 'chat',
-      title: 'WhatsApp',
+      title: cards.whatsapp_title ?? 'WhatsApp',
       lines: [info.phone ?? ''],
       href: info.whatsapp ?? null,
-      cta: 'Message us',
+      cta: cards.whatsapp_cta ?? null,
     },
     {
       icon: 'mail',
-      title: 'Email',
+      title: cards.email_title ?? 'Email',
       lines: [info.email ?? ''],
       href: info.email ? `mailto:${info.email}` : null,
-      cta: 'Send email',
+      cta: cards.email_cta ?? null,
     },
     {
       icon: 'location_on',
-      title: 'Location',
+      title: cards.location_title ?? 'Location',
       lines: [info.location ?? '', info.location_detail ?? ''].filter(Boolean),
       href: null,
       cta: null,
     },
     {
       icon: 'schedule',
-      title: 'Hours',
+      title: cards.hours_title ?? 'Hours',
       lines: [info.hours ?? '', info.hours_detail ?? ''].filter(Boolean),
       href: null,
       cta: null,
@@ -130,17 +146,34 @@ export default async function ContactPage({
     currenciesAccepted: 'AED',
   };
 
+  const breadcrumbLd = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Home', item: `${SITE_URL}/${locale}` },
+      { '@type': 'ListItem', position: 2, name: 'Contact', item: `${SITE_URL}/${locale}/contact` },
+    ],
+  };
+
   return (
     <>
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbLd) }}
+      />
 
       {/* Header */}
       <div className="bg-[#f9f5f0] border-b border-secondary/30">
         <div className="max-w-3xl mx-auto px-4 py-14 text-center">
-          <p className="text-xs font-body uppercase tracking-widest text-secondary mb-3">Reach Out</p>
+          {c.header?.label && (
+            <p className="text-xs font-body uppercase tracking-widest text-secondary mb-3">
+              {c.header.label}
+            </p>
+          )}
           <h1 className="font-display text-4xl sm:text-5xl text-primary mb-4">{c.header?.title ?? ''}</h1>
           <p className="font-body text-sm text-gray-500 max-w-md mx-auto">
             {c.header?.subtitle ?? ''}
@@ -149,6 +182,7 @@ export default async function ContactPage({
       </div>
 
       <div className="max-w-6xl mx-auto px-4 py-14">
+        <Breadcrumb items={[{ label: 'Home', href: `/${locale}` }, { label: 'Contact' }]} />
 
         {/* Info Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-14">
@@ -198,28 +232,36 @@ export default async function ContactPage({
 
         {/* Social Links */}
         <div>
-          <h3 className="text-xs font-body uppercase tracking-widest text-gray-500 mb-4">Follow Along</h3>
+          {c.social?.label && (
+            <h3 className="text-xs font-body uppercase tracking-widest text-gray-500 mb-4">
+              {c.social.label}
+            </h3>
+          )}
           <div className="flex flex-wrap gap-3">
-            <a
-              href="https://www.instagram.com/meltingmomentscakes"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-3 border border-gray-200 hover:border-primary px-4 py-3 transition-colors group"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                className="w-5 h-5 text-gray-500 group-hover:text-primary transition-colors"
-                fill="currentColor"
+            {c.social?.instagram_url && (
+              <a
+                href={c.social.instagram_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-3 border border-gray-200 hover:border-primary px-4 py-3 transition-colors group"
               >
-                <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
-              </svg>
-              <div>
-                <p className="text-xs font-body font-medium text-gray-700 group-hover:text-primary transition-colors">
-                  Instagram
-                </p>
-                <p className="text-[11px] font-body text-gray-400">@meltingmomentscakes</p>
-              </div>
-            </a>
+                <svg
+                  viewBox="0 0 24 24"
+                  className="w-5 h-5 text-gray-500 group-hover:text-primary transition-colors"
+                  fill="currentColor"
+                >
+                  <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
+                </svg>
+                <div>
+                  <p className="text-xs font-body font-medium text-gray-700 group-hover:text-primary transition-colors">
+                    {c.social.instagram_label ?? 'Instagram'}
+                  </p>
+                  {c.social.instagram_handle && (
+                    <p className="text-[11px] font-body text-gray-400">{c.social.instagram_handle}</p>
+                  )}
+                </div>
+              </a>
+            )}
             {info.whatsapp && (
               <a
                 href={info.whatsapp}
@@ -236,7 +278,7 @@ export default async function ContactPage({
                 </svg>
                 <div>
                   <p className="text-xs font-body font-medium text-gray-700 group-hover:text-primary transition-colors">
-                    WhatsApp
+                    {cards.whatsapp_title ?? 'WhatsApp'}
                   </p>
                   <p className="text-[11px] font-body text-gray-400">{info.phone ?? ''}</p>
                 </div>

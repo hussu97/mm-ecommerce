@@ -164,10 +164,11 @@ def _compute_item_totals(cart: Cart) -> tuple[list[dict], Decimal]:
     return items_data, subtotal
 
 
-def _compute_order_totals(
+async def _compute_order_totals(
     data: OrderCreate,
     subtotal: Decimal,
     discount_amount: Decimal,
+    db: AsyncSession,
 ) -> tuple[Decimal, Decimal, Decimal, Decimal]:
     """
     Compute delivery fee, order total, and VAT figures.
@@ -176,8 +177,8 @@ def _compute_order_totals(
     """
     discounted_subtotal = subtotal - discount_amount
     region = data.shipping_address.region if data.shipping_address else None
-    delivery_fee = delivery_service.calculate_fee(
-        data.delivery_method, region, discounted_subtotal
+    delivery_fee = await delivery_service.calculate_fee(
+        data.delivery_method, region, discounted_subtotal, db
     )
     total = discounted_subtotal + delivery_fee
 
@@ -309,8 +310,8 @@ async def create_order(
         promo_obj = await promo_code_service.get_promo(db, data.promo_code)
 
     # 4. Compute delivery fee, total, VAT
-    delivery_fee, total, vat_amount, total_excl_vat = _compute_order_totals(
-        data, subtotal, discount_amount
+    delivery_fee, total, vat_amount, total_excl_vat = await _compute_order_totals(
+        data, subtotal, discount_amount, db
     )
 
     # 5. Persist order rows and clear cart

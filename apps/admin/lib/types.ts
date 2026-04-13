@@ -322,3 +322,18 @@ export interface PaginatedEmailLogs {
   per_page: number;
   pages: number;
 }
+
+export interface Region {
+  id: string;
+  slug: string;
+  name_translations: Record<string, string>;
+  delivery_fee: number;
+  is_active: boolean;
+  sort_order: number;
+}
+
+export interface DeliverySettings {
+  id: string;
+  free_delivery_threshold: number;
+  pickup_fee: number;
+}
