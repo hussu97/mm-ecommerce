@@ -26,10 +26,21 @@ export async function GET() {
 
 ## About
 - Home-based artisanal bakery in Sharjah, UAE
-- Delivery across all UAE Emirates
+- Founded and run by Fatema Abbasi
 - Specializes in brownies, cookies, cookie melts, mix boxes, and desserts
+- All products are handcrafted in small batches using premium ingredients
 - WhatsApp: +971 50 368 7757
 - Instagram: @meltingmomentscakes
+
+## Delivery & Ordering
+- Delivers to all UAE Emirates: Dubai, Sharjah, Ajman, Abu Dhabi, Fujairah, Ras Al Khaimah, Umm Al Quwain, Al Ain
+- Order online or via WhatsApp: +971 50 368 7757
+- Price range: AED 15 – AED 200
+- Payment: Cash on delivery or credit/debit card
+
+## Business Hours
+- Monday to Saturday: 8:00 AM – 11:30 PM (UAE time)
+- Sunday: 3:00 PM – 11:30 PM (UAE time)
 
 ## Categories
 ${categoryLines}
@@ -37,6 +48,7 @@ ${categoryLines}
 ## Links
 - [Website](${SITE_URL}/en)
 - [About](${SITE_URL}/en/about)
+- [Blog](${SITE_URL}/en/blog)
 - [FAQ](${SITE_URL}/en/faq)
 - [Contact](${SITE_URL}/en/contact)
 - [Full product details for LLMs](${SITE_URL}/llms-full.txt)

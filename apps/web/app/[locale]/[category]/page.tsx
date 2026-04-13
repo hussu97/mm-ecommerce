@@ -175,12 +175,17 @@ export default async function CategoryPage({
     ],
   };
 
+  const prevUrl = page === 2 ? `${SITE_URL}/${locale}/${slug}` : `${SITE_URL}/${locale}/${slug}?page=${page - 1}`;
+  const nextUrl = `${SITE_URL}/${locale}/${slug}?page=${page + 1}`;
+
   return (
     <>
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
+      {page > 1 && <link rel="prev" href={prevUrl} />}
+      {page < pages && <link rel="next" href={nextUrl} />}
 
       <div className="max-w-7xl mx-auto px-4 py-12">
 

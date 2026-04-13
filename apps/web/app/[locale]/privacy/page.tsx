@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { cmsApi } from '@/lib/api';
+import { Breadcrumb } from '@/components/ui';
 
 interface Section {
   title: string;
@@ -54,8 +55,22 @@ export default async function PrivacyPage({
 
   const sections = c.sections ?? [];
 
+  const breadcrumbLd = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Home', item: `${SITE_URL}/${locale}` },
+      { '@type': 'ListItem', position: 2, name: 'Privacy Policy', item: `${SITE_URL}/${locale}/privacy` },
+    ],
+  };
+
   return (
     <div className="max-w-3xl mx-auto px-4 py-16">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbLd) }}
+      />
+      <Breadcrumb items={[{ label: 'Home', href: `/${locale}` }, { label: 'Privacy Policy' }]} />
       {/* Header */}
       <h1 className="font-display text-3xl sm:text-4xl text-primary mb-2">
         {c.header?.title ?? 'Privacy Policy'}

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { cmsApi } from '@/lib/api';
 import { FaqAccordion } from './FaqAccordion';
+import { Breadcrumb } from '@/components/ui';
 
 interface FaqItem {
   question: string;
@@ -61,12 +62,23 @@ export default async function FaqPage({
 
   const jsonLd = {
     '@context': 'https://schema.org',
-    '@type': 'FAQPage',
-    mainEntity: items.map(({ question, answer }) => ({
-      '@type': 'Question',
-      name: question,
-      acceptedAnswer: { '@type': 'Answer', text: answer },
-    })),
+    '@graph': [
+      {
+        '@type': 'FAQPage',
+        mainEntity: items.map(({ question, answer }) => ({
+          '@type': 'Question',
+          name: question,
+          acceptedAnswer: { '@type': 'Answer', text: answer },
+        })),
+      },
+      {
+        '@type': 'BreadcrumbList',
+        itemListElement: [
+          { '@type': 'ListItem', position: 1, name: 'Home', item: `${SITE_URL}/${locale}` },
+          { '@type': 'ListItem', position: 2, name: 'FAQ', item: `${SITE_URL}/${locale}/faq` },
+        ],
+      },
+    ],
   };
 
   const faqs = items.map(item => ({ q: item.question, a: item.answer }));
@@ -93,6 +105,7 @@ export default async function FaqPage({
 
       {/* FAQ List */}
       <div className="max-w-3xl mx-auto px-4 py-14">
+        <Breadcrumb items={[{ label: 'Home', href: `/${locale}` }, { label: 'FAQ' }]} />
         {faqs.length > 0 && <FaqAccordion faqs={faqs} />}
 
         {/* CTA */}

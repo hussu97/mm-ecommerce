@@ -252,6 +252,32 @@ export interface OrderCreate {
   session_id?: string;
 }
 
+// ─── Blog ─────────────────────────────────────────────────────────────────────
+
+export interface BlogPostContent {
+  title?: string;
+  excerpt?: string;
+  body?: string;
+  cover_image?: string;
+  meta_description?: string;
+  tags?: string[];
+}
+
+export interface BlogPost {
+  slug: string;
+  content: BlogPostContent;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BlogPostListResponse {
+  items: BlogPost[];
+  total: number;
+  page: number;
+  per_page: number;
+  pages: number;
+}
+
 // ─── Payment ──────────────────────────────────────────────────────────────────
 
 export interface PaymentSessionResponse {

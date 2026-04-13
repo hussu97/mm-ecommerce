@@ -1,7 +1,7 @@
 import type { MetadataRoute } from 'next';
 
 import { API_BASE } from '@/lib/api';
-import type { ProductListResponse } from '@/lib/types';
+import type { BlogPostListResponse, ProductListResponse } from '@/lib/types';
 
 const BASE = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 const LOCALES = (process.env.NEXT_PUBLIC_SUPPORTED_LOCALES ?? 'en,ar').split(',');
@@ -24,6 +24,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { path: '/contact',      priority: 0.7, changeFrequency: 'monthly' as const },
     { path: '/faq',          priority: 0.6, changeFrequency: 'monthly' as const },
     { path: '/all-products', priority: 0.8, changeFrequency: 'weekly' as const },
+    { path: '/blog',         priority: 0.7, changeFrequency: 'weekly' as const },
     { path: '/privacy',      priority: 0.3, changeFrequency: 'yearly' as const },
   ];
 
@@ -86,6 +87,33 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
       hasMore = page < data.pages;
       page++;
+    }
+    // Blog posts
+    let blogPage = 1;
+    let blogHasMore = true;
+    while (blogHasMore) {
+      const blogRes = await fetch(
+        `${API_BASE}/blog/public?locale=en&per_page=50&page=${blogPage}`,
+        { next: { revalidate: 3600 }, signal: AbortSignal.timeout(5000) },
+      );
+      if (!blogRes.ok) break;
+
+      const blogData: BlogPostListResponse = await blogRes.json();
+      for (const post of blogData.items) {
+        const postPath = `/blog/${post.slug}`;
+        for (const locale of LOCALES) {
+          entries.push({
+            url: `${BASE}/${locale}${postPath}`,
+            lastModified: post.updated_at,
+            priority: 0.7,
+            changeFrequency: 'weekly',
+            alternates: localeAlternates(postPath),
+          });
+        }
+      }
+
+      blogHasMore = blogPage < blogData.pages;
+      blogPage++;
     }
   } catch {
     // fallback to static only
