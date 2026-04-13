@@ -337,6 +337,63 @@ docker compose -f docker-compose.prod.yml up -d api
 
 ---
 
+## Step 11b: Cloudflare R2 (Media Storage)
+
+R2 stores product images and other uploaded assets, served via `media.meltingmomentscakes.com`.
+
+### Create the bucket
+
+1. Log in to [dash.cloudflare.com](https://dash.cloudflare.com) and select your account
+2. In the left sidebar, go to **R2 Object Storage**
+3. Click **Create bucket**
+   - **Name**: `melting-moments-cakes`
+   - **Location**: choose a region close to the UAE (e.g. `ENAM` — Eastern North America is often fastest; or leave as automatic)
+4. Click **Create bucket**
+
+### Enable public access via custom domain
+
+1. Open the bucket → **Settings** tab
+2. Under **Public access** → **Custom Domains**, click **Connect Domain**
+3. Enter `media.meltingmomentscakes.com` and click **Connect**
+   - Cloudflare will automatically add the required DNS record (CNAME) since your domain is already on Cloudflare
+4. Confirm the domain is shown as **Active**
+
+> Objects uploaded to this bucket are now publicly readable at `https://media.meltingmomentscakes.com/<object-key>`. No further bucket policy changes are needed — the custom domain acts as a public CDN endpoint.
+
+### Create an R2 API token
+
+The API needs write access to upload media files.
+
+1. In the R2 sidebar, click **Manage R2 API Tokens**
+2. Click **Create API Token**
+   - **Token name**: `melting-moments-api`
+   - **Permissions**: `Object Read & Write`
+   - **Specify bucket**: select `melting-moments-cakes` (restrict to this bucket only)
+   - **TTL**: No expiry (or set a long TTL and rotate periodically)
+3. Click **Create API Token**
+4. **Copy immediately** — you won't see the secret again:
+   - **Access Key ID** → `CLOUDFLARE_R2_ACCESS_KEY`
+   - **Secret Access Key** → `CLOUDFLARE_R2_SECRET_KEY`
+
+### Find your endpoint and account ID
+
+1. Go back to the R2 overview page
+2. Your **Account ID** is shown in the right panel (also visible in the URL: `dash.cloudflare.com/<account-id>/r2`)
+3. The S3-compatible endpoint is: `https://<account-id>.r2.cloudflarestorage.com`
+   - → `CLOUDFLARE_R2_ENDPOINT`
+
+### Summary of values for Step 13c
+
+| Secret | Where to find it |
+|--------|-----------------|
+| `CLOUDFLARE_R2_ACCESS_KEY` | API token creation page (Access Key ID) |
+| `CLOUDFLARE_R2_SECRET_KEY` | API token creation page (Secret Access Key) |
+| `CLOUDFLARE_R2_BUCKET` | `melting-moments-cakes` (literal) |
+| `CLOUDFLARE_R2_ENDPOINT` | `https://<account-id>.r2.cloudflarestorage.com` |
+| `CLOUDFLARE_R2_PUBLIC_URL` | `https://media.meltingmomentscakes.com` (literal) |
+
+---
+
 ## Step 12: DNS Configuration
 
 In Cloudflare (or your registrar), create these records:
