@@ -202,17 +202,22 @@ gcloud iam service-accounts create mm-backup-sa \
   --project=melting-moments-cakes \
   --display-name="MM Backup Service Account"
 
-# Grant it permission to write to the bucket only
+# Grant it permission to write to the backup bucket
 gcloud storage buckets add-iam-policy-binding gs://melting-moments-cakes-backups \
   --member="serviceAccount:mm-backup-sa@melting-moments-cakes.iam.gserviceaccount.com" \
   --role="roles/storage.objectCreator"
 
-# Attach the service account to the VM
+# Grant it permission to write to Cloud Logging (required by the gcplogs Docker driver)
+gcloud projects add-iam-policy-binding melting-moments-cakes \
+  --member="serviceAccount:mm-backup-sa@melting-moments-cakes.iam.gserviceaccount.com" \
+  --role="roles/logging.logWriter"
+
+# Attach the service account to the VM with both storage + logging scopes
 gcloud compute instances set-service-account mm-backend \
   --project=melting-moments-cakes \
   --zone=me-central1-a \
   --service-account=mm-backup-sa@melting-moments-cakes.iam.gserviceaccount.com \
-  --scopes=https://www.googleapis.com/auth/devstorage.read_write
+  --scopes=https://www.googleapis.com/auth/devstorage.read_write,https://www.googleapis.com/auth/logging.write
 ```
 
 Then set `BACKUP_GCS_BUCKET=melting-moments-cakes-backups` in `.env`.
@@ -470,11 +475,12 @@ The `deploy.yml` workflow SSHes into the GCP VM on every push to `main`, writes 
 | `WEB_URL` | `https://meltingmomentscakes.com` | Literal |
 | `ADMIN_URL` | `https://admin.meltingmomentscakes.com` | Literal |
 
-#### Backups
+#### Backups & Observability
 
 | Secret | Production value | Notes |
 |--------|-----------------|-------|
 | `BACKUP_GCS_BUCKET` | `melting-moments-cakes-backups` | GCS bucket created in Step 8 |
+| `GCP_PROJECT_ID` | `melting-moments-cakes` | Used by the `gcplogs` Docker driver to ship API logs to Cloud Logging. On GCE this is auto-detected — set it anyway so the `.env` write step is explicit. |
 
 #### Analytics (optional — leave empty to disable)
 
