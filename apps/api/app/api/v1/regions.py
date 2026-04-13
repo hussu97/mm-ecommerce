@@ -91,35 +91,6 @@ async def admin_list_regions(
     return [RegionResponse.from_orm(r) for r in regions]
 
 
-@router.put("/{slug}", response_model=RegionResponse)
-async def admin_update_region(
-    slug: str,
-    data: RegionUpdate,
-    db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
-):
-    """Admin: update a region's name translations, fee, active status or sort order."""
-    result = await db.execute(select(Region).where(Region.slug == slug))
-    region = result.scalars().first()
-    if region is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Region not found."
-        )
-
-    if data.name_translations is not None:
-        region.name_translations = data.name_translations
-    if data.delivery_fee is not None:
-        region.delivery_fee = data.delivery_fee
-    if data.is_active is not None:
-        region.is_active = data.is_active
-    if data.sort_order is not None:
-        region.sort_order = data.sort_order
-
-    await db.commit()
-    await db.refresh(region)
-    return RegionResponse.from_orm(region)
-
-
 @router.get("/settings", response_model=DeliverySettingsResponse)
 async def admin_get_delivery_settings(
     db: AsyncSession = Depends(get_db),
@@ -149,3 +120,32 @@ async def admin_update_delivery_settings(
     await db.commit()
     await db.refresh(settings)
     return DeliverySettingsResponse.from_orm(settings)
+
+
+@router.put("/{slug}", response_model=RegionResponse)
+async def admin_update_region(
+    slug: str,
+    data: RegionUpdate,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    """Admin: update a region's name translations, fee, active status or sort order."""
+    result = await db.execute(select(Region).where(Region.slug == slug))
+    region = result.scalars().first()
+    if region is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Region not found."
+        )
+
+    if data.name_translations is not None:
+        region.name_translations = data.name_translations
+    if data.delivery_fee is not None:
+        region.delivery_fee = data.delivery_fee
+    if data.is_active is not None:
+        region.is_active = data.is_active
+    if data.sort_order is not None:
+        region.sort_order = data.sort_order
+
+    await db.commit()
+    await db.refresh(region)
+    return RegionResponse.from_orm(region)
