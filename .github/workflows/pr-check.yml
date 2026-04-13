@@ -169,5 +169,4 @@ jobs:
       - name: Run pytest
         run: |
           cd apps/api
-          pytest tests/ -v --tb=short --cov=app --cov-report=term-missing \
-            --cache-dir=.pytest_cache
+          pytest tests/ -v --tb=short --cov=app --cov-report=term-missing
