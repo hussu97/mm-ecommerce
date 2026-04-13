@@ -6,7 +6,7 @@ on:
 
 jobs:
   changes:
-    name: Detect - changed paths
+    name: Detect -changed paths
     runs-on: ubuntu-latest
     outputs:
       web: ${{ steps.filter.outputs.web }}
