@@ -57,3 +57,6 @@ coverage/
 branding/
 csv_templates/
 cloudflared.deb
+
+# code-review-graph
+.code-review-graph/
