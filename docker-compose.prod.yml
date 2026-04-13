@@ -82,7 +82,6 @@ services:
       driver: gcplogs
       options:
         gcp-project: ${GCP_PROJECT_ID:-}
-        tag: mm-api
         labels: "com.docker.compose.service"
     networks:
       - mm_network
