@@ -52,6 +52,9 @@ class Product(Base, UUIDMixin, TimestampMixin):
     is_stock_product: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
     )
+    stock_quantity: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, server_default="0"
+    )
     display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     # Relationships
