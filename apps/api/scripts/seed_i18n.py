@@ -163,7 +163,7 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     (
         "checkout",
         "delivery_time_note",
-        "Orders placed before 12 PM are prepared the next day. We'll send you a WhatsApp confirmation once your order is packed.",
+        "Orders placed before 12 PM are delivered the next day. We'll send you an email confirmation once your order is packed.",
     ),
     ("checkout", "credit_debit_card", "Credit / Debit Card"),
     ("checkout", "payment_sublabel", "Visa, Mastercard · Apple Pay"),
@@ -556,7 +556,7 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     (
         "checkout",
         "delivery_time_note",
-        "الطلبات قبل الساعة 12 ظهراً تُحضَّر في اليوم التالي. سنُرسل لك تأكيداً عبر واتساب حين يُعبَّأ طلبك.",
+        "الطلبات قبل الساعة 12 ظهراً تُسلَّم في اليوم التالي. سنُرسل لك تأكيداً عبر البريد الإلكتروني حين يُعبَّأ طلبك.",
     ),
     ("checkout", "credit_debit_card", "بطاقة ائتمانية / مدى"),
     ("checkout", "payment_sublabel", "فيزا، ماستركارد · آبل باي"),
