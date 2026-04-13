@@ -339,6 +339,9 @@ jobs:
           echo "Pulling pre-built API image from GHCR..."
           docker pull ghcr.io/hussu97/mm-ecommerce-api:latest
 
+          echo "Running database migrations..."
+          docker compose -f docker-compose.prod.yml run --rm --no-deps api alembic upgrade head
+
           echo "Restarting API with new image..."
           docker compose -f docker-compose.prod.yml up -d --no-deps api
 
@@ -359,9 +362,6 @@ jobs:
             docker compose -f docker-compose.prod.yml logs --tail=50 api
             exit 1
           fi
-
-          echo "Running database migrations..."
-          docker compose -f docker-compose.prod.yml exec -T api alembic upgrade head
 
           echo "Ensuring nginx is up..."
           docker compose -f docker-compose.prod.yml up -d --no-deps nginx
