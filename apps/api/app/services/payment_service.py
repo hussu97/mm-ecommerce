@@ -12,22 +12,24 @@ from app.models.order import Order, OrderStatusEnum
 from app.models.webhook_event import WebhookEvent
 from app.schemas.order import OrderResponse
 from app.services import email_service
-from app.services.providers import stripe_provider, tabby_provider, tamara_provider
+from app.services.providers.base import PaymentProvider
+from app.services.providers.stripe_provider import provider as stripe_provider
 
 logger = logging.getLogger(__name__)
 
-_PROVIDERS = {
+# Registry: only providers that are fully implemented.
+# Tabby and Tamara are stubs — add them here once integrated.
+_PROVIDERS: dict[str, PaymentProvider] = {
     "stripe": stripe_provider,
-    "tabby": tabby_provider,
-    "tamara": tamara_provider,
 }
 
 
-def _get_provider(name: str):
+def _get_provider(name: str) -> PaymentProvider:
     p = _PROVIDERS.get(name.lower())
     if not p:
         raise BadRequestError(
-            f"Unknown payment provider '{name}'. Supported: stripe, tabby, tamara"
+            f"Unknown payment provider '{name}'. Currently supported: "
+            + ", ".join(_PROVIDERS)
         )
     return p
 
@@ -345,7 +347,6 @@ async def get_status(db: AsyncSession, order_number: str) -> dict:
     order = await _load_order(db, order_number)
 
     paid = stripe_provider.is_confirmed_payment_id(order.payment_id)
-    # BNPL providers (Tabby/Tamara) require webhook confirmation — payment_id alone is not proof
 
     return {
         "order_number": order.order_number,

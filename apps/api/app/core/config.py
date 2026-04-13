@@ -92,6 +92,10 @@ class Settings(BaseSettings):
     UMAMI_API_KEY: str = ""
     UMAMI_WEBSITE_ID: str = ""
 
+    # ── Sentry (optional — leave empty to disable error tracking) ────────────
+    SENTRY_DSN: str = ""
+    SENTRY_ENVIRONMENT: str = "development"
+
     # ── Production guard ──────────────────────────────────────────────────────
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":

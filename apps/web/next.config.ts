@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { withSentryConfig } from "@sentry/nextjs";
 
 // Build locale pattern from the same env var the middleware uses (e.g. "en|ar")
 const localePattern = (process.env.NEXT_PUBLIC_SUPPORTED_LOCALES ?? "en,ar")
@@ -66,4 +67,10 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+// Skip Sentry instrumentation entirely when no DSN is set (local dev / CI without secrets).
+// withSentryConfig still wraps the config when DSN is present so source maps are uploaded.
+const exportedConfig = process.env.NEXT_PUBLIC_SENTRY_DSN
+  ? withSentryConfig(nextConfig, { silent: true })
+  : nextConfig;
+
+export default exportedConfig;

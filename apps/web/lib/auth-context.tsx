@@ -9,7 +9,7 @@ interface AuthContextType {
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (data: { email: string; password: string; phone?: string }) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   setUser: (user: User) => void;
 }
 
@@ -26,7 +26,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     authApi.me()
-      .then(setUser)
+      .then((u) => {
+        // Don't treat guest users as logged-in — they exist only for checkout.
+        // A guest account has no password and no persistent session intent.
+        if (u.is_guest) {
+          clearToken();
+          return;
+        }
+        setUser(u);
+      })
       .catch(() => clearToken())
       .finally(() => setIsLoading(false));
   }, []);
@@ -43,8 +51,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(res.user);
   }, []);
 
-  const logout = useCallback(() => {
-    clearToken();
+  /**
+   * Logs out the current user.
+   * Calls the backend to revoke the refresh token, then clears local storage.
+   * Using authApi.logout() ensures both access + refresh tokens are cleaned up.
+   */
+  const logout = useCallback(async () => {
+    await authApi.logout();
     setUser(null);
   }, []);
 

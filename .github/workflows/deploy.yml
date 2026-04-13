@@ -321,6 +321,8 @@ jobs:
           UMAMI_API_KEY=${{ secrets.UMAMI_API_KEY }}
           UMAMI_WEBSITE_ID=${{ secrets.UMAMI_WEBSITE_ID }}
           GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
+          SENTRY_DSN=${{ secrets.SENTRY_DSN }}
+          SENTRY_ENVIRONMENT=production
           ENVEOF
 
       - name: Deploy to GCP VM

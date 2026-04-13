@@ -6,43 +6,21 @@ import { Suspense, useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useCart } from '@/lib/cart-context';
 import {
-  ordersApi, paymentsApi, promoApi, addressesApi,
+  ordersApi, paymentsApi, addressesApi,
   getToken, getSessionId, ensureSessionId, authApi, setToken,
 } from '@/lib/api';
 import { Breadcrumb } from '@/components/ui/Breadcrumb';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Select } from '@/components/ui/Select';
 import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
-import dynamic from 'next/dynamic';
-const LocationPicker = dynamic(
-  () => import('@/components/ui/LocationPicker').then(m => ({ default: m.LocationPicker })),
-  { ssr: false, loading: () => <div className="h-64 bg-gray-100 rounded-lg animate-pulse" /> },
-);
+import { calcDeliveryFee } from '@mm/config/delivery';
+import { AddressForm } from './components/AddressForm';
+import { DeliveryCalculator } from './components/DeliveryCalculator';
+import { PromoCodeStep } from './components/PromoCodeStep';
 import type { Address, Cart, CartItem, RegionCode } from '@/lib/types';
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const REGION_CODES: RegionCode[] = [
-  'dubai', 'sharjah', 'ajman', 'abu_dhabi',
-  'fujairah', 'ras_al_khaimah', 'umm_al_quwain', 'al_ain', 'rest_of_uae',
-];
-
-const DELIVERY_FEES: Record<RegionCode, number> = {
-  dubai: 35, sharjah: 35, ajman: 35,
-  abu_dhabi: 50, fujairah: 50, ras_al_khaimah: 50,
-  umm_al_quwain: 50, al_ain: 50, rest_of_uae: 50,
-};
-const FREE_THRESHOLD = 200;
-
-function calcDeliveryFee(method: string, region: string, subtotal: number): number {
-  if (method === 'pickup') return 0;
-  if (subtotal >= FREE_THRESHOLD) return 0;
-  return DELIVERY_FEES[region as RegionCode] ?? 50;
-}
 
 // ─── Session persistence ──────────────────────────────────────────────────────
 
@@ -138,7 +116,6 @@ function OrderSummarySidebar({
 }) {
   const { t, locale } = useTranslation();
 
-  // In retry mode, use stored order totals; otherwise compute from cart
   const subtotal = retryOrder ? Number(retryOrder.subtotal) : (cart?.subtotal ?? 0);
   const discount = retryOrder ? Number(retryOrder.discount_amount) : form.promoDiscount;
   const effectiveSubtotal = Math.max(0, subtotal - discount);
@@ -272,11 +249,6 @@ function StepInformation({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { t } = useTranslation();
 
-  const REGION_OPTIONS = REGION_CODES.map((code) => ({
-    value: code,
-    label: t(`regions.${code}`),
-  }));
-
   function validateStep1(f: CheckoutForm): Record<string, string> {
     const errs: Record<string, string> = {};
     if (!isValidEmail(f.email)) errs.email = t('checkout.valid_email_required');
@@ -297,7 +269,6 @@ function StepInformation({
     const contactErrors = validateStep1(form);
     const needsAddress = !form.selectedAddressId;
     const addressFieldErrors = needsAddress ? validateStep1Address(form) : {};
-    // Location pin is always required, regardless of whether a saved address is selected
     const locationError: Record<string, string> = (form.locationLat === null || form.locationLng === null)
       ? { locationLat: t('checkout.pin_location_required') }
       : {};
@@ -314,6 +285,7 @@ function StepInformation({
 
   return (
     <div className="space-y-6">
+      {/* Contact information */}
       <div>
         <h2 className="font-display text-xl text-primary uppercase tracking-widest mb-1">{t('checkout.contact_information')}</h2>
         <div className="h-px bg-secondary/30 mb-5" />
@@ -356,106 +328,25 @@ function StepInformation({
         </div>
       </div>
 
-      {/* Delivery address */}
-      <div>
-        <h2 className="font-display text-xl text-primary uppercase tracking-widest mb-1">{t('checkout.delivery_address')}</h2>
-        <p className="font-body text-xs text-gray-400 mb-4">{t('checkout.address_hint')}</p>
-        <div className="h-px bg-secondary/30 mb-5" />
-
-        {/* Saved addresses for authenticated users */}
-        {loadingAddresses ? (
-          <div className="flex items-center gap-2 text-gray-400 mb-4">
-            <Spinner size="sm" /> <span className="font-body text-xs">{t('checkout.loading_addresses')}</span>
-          </div>
-        ) : savedAddresses.length > 0 ? (
-          <div className="space-y-2 mb-5">
-            {savedAddresses.map((addr) => (
-              <label key={addr.id} className="flex gap-3 items-start p-3 border rounded-sm cursor-pointer hover:border-primary/50 transition-colors">
-                <input
-                  type="radio"
-                  name="savedAddress"
-                  value={addr.id}
-                  checked={form.selectedAddressId === addr.id}
-                  onChange={() => {
-                    onChange({
-                      selectedAddressId: addr.id,
-                      firstName: addr.first_name,
-                      lastName: addr.last_name,
-                      phone: addr.phone,
-                      addressLine1: addr.address_line_1,
-                      addressLine2: addr.address_line_2 ?? '',
-                      region: addr.region,
-                      locationLat: addr.latitude ?? null,
-                      locationLng: addr.longitude ?? null,
-                    });
-                    setErrors((prev) => {
-                      const next = { ...prev };
-                      delete next.addressLine1; delete next.region;
-                      return next;
-                    });
-                  }}
-                  className="mt-0.5 accent-primary"
-                />
-                <div className="font-body text-xs">
-                  <p className="font-medium text-gray-800">{addr.label}</p>
-                  <p className="text-gray-500">{addr.address_line_1}, {t(`regions.${addr.region}`)}</p>
-                </div>
-              </label>
-            ))}
-            <label className="flex gap-3 items-start p-3 border rounded-sm cursor-pointer hover:border-primary/50 transition-colors">
-              <input
-                type="radio"
-                name="savedAddress"
-                value=""
-                checked={form.selectedAddressId === ''}
-                onChange={() => onChange({ selectedAddressId: '', locationLat: null, locationLng: null })}
-                className="mt-0.5 accent-primary"
-              />
-              <span className="font-body text-xs text-gray-600">{t('checkout.new_address_option')}</span>
-            </label>
-          </div>
-        ) : null}
-
-        {/* New address form */}
-        {form.selectedAddressId === '' && (
-          <div className="space-y-4">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-gray-600 mb-2">
-                {t('address.pin_location')}
-              </p>
-              <LocationPicker
-                lat={form.locationLat}
-                lng={form.locationLng}
-                onChange={(lat, lng) => onChange({ locationLat: lat, locationLng: lng })}
-                placeholder={t('address.search_location')}
-              />
-              {errors.locationLat && (
-                <p className="mt-1 text-xs text-red-500 font-body">{errors.locationLat}</p>
-              )}
-            </div>
-            <Input
-              label={t('common.address_line_1')}
-              placeholder={t('checkout.address_placeholder')}
-              value={form.addressLine1}
-              onChange={field('addressLine1')}
-              error={errors.addressLine1}
-            />
-            <Input
-              label={t('common.address_line_2_optional')}
-              placeholder={t('checkout.address2_placeholder')}
-              value={form.addressLine2}
-              onChange={field('addressLine2')}
-            />
-            <Select
-              label={t('address.region')}
-              options={REGION_OPTIONS}
-              value={form.region}
-              onChange={field('region')}
-              error={errors.region}
-            />
-          </div>
-        )}
-      </div>
+      {/* Delivery address — extracted component */}
+      <AddressForm
+        values={{
+          selectedAddressId: form.selectedAddressId,
+          firstName: form.firstName,
+          lastName: form.lastName,
+          phone: form.phone,
+          addressLine1: form.addressLine1,
+          addressLine2: form.addressLine2,
+          region: form.region,
+          locationLat: form.locationLat,
+          locationLng: form.locationLng,
+        }}
+        onChange={onChange}
+        errors={errors}
+        onClearError={(key) => setErrors((prev) => { const next = { ...prev }; delete next[key]; return next; })}
+        savedAddresses={savedAddresses}
+        loadingAddresses={loadingAddresses}
+      />
 
       <Button variant="primary" size="lg" fullWidth onClick={handleNext}>
         {t('checkout.continue_to_delivery')} →
@@ -477,8 +368,6 @@ function StepDelivery({
 }) {
   const { t } = useTranslation();
   const effectiveSubtotal = Math.max(0, subtotal - form.promoDiscount);
-  const deliveryFee = calcDeliveryFee('delivery', form.region, effectiveSubtotal);
-  const isFree = effectiveSubtotal >= FREE_THRESHOLD;
 
   return (
     <div className="space-y-6">
@@ -486,82 +375,14 @@ function StepDelivery({
         <h2 className="font-display text-xl text-primary uppercase tracking-widest mb-1">{t('checkout.delivery_method')}</h2>
         <div className="h-px bg-secondary/30 mb-5" />
 
-        <div className="space-y-3">
-          {/* Home Delivery */}
-          <label
-            className={`flex gap-4 p-4 border rounded-sm cursor-pointer transition-colors ${
-              form.deliveryMethod === 'delivery'
-                ? 'border-primary bg-primary/5'
-                : 'border-gray-200 hover:border-primary/40'
-            }`}
-          >
-            <input
-              type="radio"
-              name="deliveryMethod"
-              value="delivery"
-              checked={form.deliveryMethod === 'delivery'}
-              onChange={() => onChange({ deliveryMethod: 'delivery' })}
-              className="mt-0.5 accent-primary"
-            />
-            <div className="flex-1">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="material-icons text-xl text-primary">local_shipping</span>
-                  <p className="font-body font-medium text-sm text-gray-800">{t('checkout.home_delivery')}</p>
-                </div>
-                <p className="font-body font-semibold text-sm">
-                  {isFree ? (
-                    <span className="text-green-600">{t('common.free')}</span>
-                  ) : (
-                    <span>{deliveryFee} AED</span>
-                  )}
-                </p>
-              </div>
-              <p className="font-body text-xs text-gray-500 mt-1 ml-7">
-                {isFree
-                  ? t('checkout.free_delivery_qualified')
-                  : t('checkout.delivery_time', { region: t(`regions.${form.region}`) || 'your address' })}
-              </p>
-              {!isFree && effectiveSubtotal > 0 && (
-                <p className="font-body text-xs text-secondary mt-0.5 ml-7">
-                  {t('checkout.free_delivery_upsell', { amount: (FREE_THRESHOLD - effectiveSubtotal).toFixed(2) })}
-                </p>
-              )}
-            </div>
-          </label>
+        {/* Delivery method selector — extracted component */}
+        <DeliveryCalculator
+          deliveryMethod={form.deliveryMethod}
+          region={form.region}
+          effectiveSubtotal={effectiveSubtotal}
+          onChange={(method) => onChange({ deliveryMethod: method })}
+        />
 
-          {/* Store Pickup */}
-          <label
-            className={`flex gap-4 p-4 border rounded-sm cursor-pointer transition-colors ${
-              form.deliveryMethod === 'pickup'
-                ? 'border-primary bg-primary/5'
-                : 'border-gray-200 hover:border-primary/40'
-            }`}
-          >
-            <input
-              type="radio"
-              name="deliveryMethod"
-              value="pickup"
-              checked={form.deliveryMethod === 'pickup'}
-              onChange={() => onChange({ deliveryMethod: 'pickup' })}
-              className="mt-0.5 accent-primary"
-            />
-            <div className="flex-1">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="material-icons text-xl text-primary">storefront</span>
-                  <p className="font-body font-medium text-sm text-gray-800">{t('checkout.store_pickup')}</p>
-                </div>
-                <p className="font-body font-semibold text-sm text-green-600">{t('common.free')}</p>
-              </div>
-              <p className="font-body text-xs text-gray-500 mt-1 ml-7">
-                {t('checkout.pickup_description')}
-              </p>
-            </div>
-          </label>
-        </div>
-
-        {/* Delivery time note */}
         <div className="mt-4 p-3 bg-secondary/10 rounded-sm flex gap-2">
           <span className="material-icons text-base text-secondary mt-0.5">info</span>
           <p className="font-body text-xs text-gray-600">
@@ -596,11 +417,7 @@ function StepPayment({
   isSubmitting: boolean;
 }) {
   const { t } = useTranslation();
-  const { addToast } = useToast();
-  const [promoLoading, setPromoLoading] = useState(false);
-  const [promoError, setPromoError] = useState<string | null>(null);
 
-  // For retry mode, use the stored order totals directly
   const subtotal = retryOrder ? Number(retryOrder.subtotal) : (cart?.subtotal ?? 0);
   const effectiveSubtotal = retryOrder
     ? Math.max(0, subtotal - Number(retryOrder.discount_amount))
@@ -611,32 +428,6 @@ function StepPayment({
   const total = retryOrder
     ? Number(retryOrder.total)
     : Math.max(0, subtotal + deliveryFee - form.promoDiscount);
-
-  const handleApplyPromo = useCallback(async () => {
-    const code = form.promoCode.trim().toUpperCase();
-    if (!code) return;
-    setPromoLoading(true);
-    setPromoError(null);
-    try {
-      const result = await promoApi.validate(code, subtotal);
-      if (result.valid) {
-        onChange({ promoCode: code, promoDiscount: Number(result.discount_amount), promoMessage: result.message ?? '' });
-        addToast(t('checkout.promo_applied', { code }), 'success');
-      } else {
-        setPromoError(result.message ?? t('checkout.invalid_promo'));
-        onChange({ promoDiscount: 0, promoMessage: '' });
-      }
-    } catch {
-      setPromoError(t('checkout.promo_error'));
-    } finally {
-      setPromoLoading(false);
-    }
-  }, [form.promoCode, subtotal, onChange, addToast, t]);
-
-  const handleRemovePromo = () => {
-    onChange({ promoCode: '', promoDiscount: 0, promoMessage: '' });
-    setPromoError(null);
-  };
 
   const PAYMENT_METHODS = [
     {
@@ -686,32 +477,15 @@ function StepPayment({
           </div>
         </div>
 
-        {/* Promo code */}
-        {form.promoDiscount > 0 ? (
-          <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-sm px-3 py-2 mb-4">
-            <div>
-              <p className="font-body text-xs font-medium text-green-800">{form.promoCode}</p>
-              {form.promoMessage && <p className="font-body text-xs text-green-600">{form.promoMessage}</p>}
-            </div>
-            <button onClick={handleRemovePromo} className="text-green-400 hover:text-green-700 transition-colors" aria-label={t('checkout.remove_promo')}>
-              <span className="material-icons text-base">close</span>
-            </button>
-          </div>
-        ) : (
-          <div className="flex gap-2 items-start mb-4">
-            <div className="flex-1 min-w-0">
-              <Input
-                placeholder={t('checkout.promo_placeholder')}
-                value={form.promoCode}
-                onChange={(e) => { onChange({ promoCode: e.target.value.toUpperCase() }); setPromoError(null); }}
-                onKeyDown={(e) => e.key === 'Enter' && handleApplyPromo()}
-                error={promoError ?? undefined}
-              />
-            </div>
-            <Button variant="ghost" size="sm" onClick={handleApplyPromo} loading={promoLoading} disabled={!form.promoCode.trim()} className="shrink-0">
-              {t('checkout.apply')}
-            </Button>
-          </div>
+        {/* Promo code — extracted component */}
+        {!retryOrder && (
+          <PromoCodeStep
+            promoCode={form.promoCode}
+            promoDiscount={form.promoDiscount}
+            promoMessage={form.promoMessage}
+            subtotal={subtotal}
+            onChange={(patch) => onChange(patch)}
+          />
         )}
 
         {/* Notes */}
@@ -760,11 +534,6 @@ function StepPayment({
                 <div className="flex items-center gap-2">
                   <span className="material-icons text-xl text-primary">{icon}</span>
                   <p className="font-body font-medium text-sm text-gray-800">{label}</p>
-                  {!enabled && (
-                    <span className="font-body text-[10px] uppercase tracking-wider bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded-sm">
-                      {t('checkout.coming_soon')}
-                    </span>
-                  )}
                 </div>
                 <p className="font-body text-xs text-gray-500 mt-0.5 ml-7">{sublabel}</p>
               </div>
@@ -772,7 +541,6 @@ function StepPayment({
           ))}
         </div>
 
-        {/* Security note */}
         <div className="mt-4 flex gap-2 items-center text-gray-400">
           <span className="material-icons text-base">lock</span>
           <p className="font-body text-xs">{t('checkout.security_note')}</p>
@@ -813,26 +581,23 @@ function CheckoutContent() {
       setForm((prev) => ({ ...prev, ...(stored as Partial<CheckoutForm>) }));
     }
 
-    // Stripe cancelled or payment failed → resume at payment step
     const returnStep = searchParams.get('step');
     const returnOrder = searchParams.get('order_number');
     if (returnStep === 'payment' && returnOrder) {
       setStep(3);
-      // Load the existing order so we can show correct totals and skip re-creation
       ordersApi.get(returnOrder)
         .then((order) => {
           setRetryOrder(order);
           addToast(t('checkout.payment_cancelled'), 'warning');
         })
         .catch(() => {
-          // Order not found or auth error — fall back to normal checkout
           addToast(t('checkout.payment_cancelled'), 'warning');
         });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Load saved addresses for authenticated users and auto-select default
+  // Load saved addresses for authenticated users
   useEffect(() => {
     if (!getToken()) return;
     setLoadingAddresses(true);
@@ -865,7 +630,7 @@ function CheckoutContent() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Pre-fill contact info from API if authenticated (skip system-generated guest emails)
+  // Pre-fill contact info from API if authenticated (skip guest-generated emails)
   useEffect(() => {
     if (!form.email && getToken()) {
       import('@/lib/api').then(({ api }) => {
@@ -910,7 +675,6 @@ function CheckoutContent() {
       let orderNumber: string;
 
       if (retryOrder) {
-        // Retry payment: order already exists, skip creation
         orderNumber = retryOrder.order_number;
       } else {
         if (!cart || cart.items.length === 0) {
@@ -919,7 +683,6 @@ function CheckoutContent() {
           return;
         }
 
-        // Build shipping address snapshot
         const needsAddress = form.deliveryMethod === 'delivery';
         const shippingAddress = needsAddress
           ? {
@@ -934,7 +697,6 @@ function CheckoutContent() {
             }
           : undefined;
 
-        // Create order
         const order = await ordersApi.create({
           email: form.email.trim().toLowerCase(),
           delivery_method: form.deliveryMethod,
@@ -946,15 +708,11 @@ function CheckoutContent() {
         });
         orderNumber = order.order_number;
 
-        // Clear persisted checkout state and cart
         clearCheckoutSession();
         await refreshCart();
       }
 
-      // Create payment session
       const session = await paymentsApi.createSession(orderNumber, form.paymentMethod);
-
-      // Redirect to payment provider
       window.location.href = session.checkout_url;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Something went wrong. Please try again.';
@@ -986,7 +744,6 @@ function CheckoutContent() {
     <div className="max-w-7xl mx-auto px-4 py-10">
       <Breadcrumb items={[{ label: t('breadcrumb.home'), href: '/' }, { label: t('breadcrumb.cart'), href: '/cart' }, { label: t('breadcrumb.checkout') }]} />
 
-      {/* Heading */}
       <header className="mb-2">
         <h1 className="font-display text-3xl sm:text-4xl text-primary uppercase tracking-widest">{t('breadcrumb.checkout')}</h1>
       </header>
@@ -994,7 +751,6 @@ function CheckoutContent() {
       <StepIndicator step={step} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
-        {/* Step content */}
         <section className="lg:col-span-2">
           {step === 1 && (
             <StepInformation
@@ -1027,7 +783,6 @@ function CheckoutContent() {
           )}
         </section>
 
-        {/* Sidebar */}
         <aside className="lg:col-span-1 order-first lg:order-last">
           <OrderSummarySidebar cart={cart} form={form} step={step} retryOrder={retryOrder} />
         </aside>

@@ -39,8 +39,8 @@ export default function AccountLayout({ children }: { children: React.ReactNode 
 
   if (!user || user.is_guest) return null;
 
-  function handleLogout() {
-    logout();
+  async function handleLogout() {
+    await logout();
     router.push('/');
   }
 

@@ -15,6 +15,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.base import BaseHTTPMiddleware
 
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
@@ -22,6 +26,23 @@ from app.core.deps import get_db
 from app.core.exceptions import AppError
 from app.core.limiter import limiter
 from scripts.seed_i18n import seed as seed_i18n
+
+# ---------------------------------------------------------------------------
+# Sentry — initialised before app creation so all errors are captured
+# ---------------------------------------------------------------------------
+
+if settings.SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=settings.SENTRY_DSN,
+        environment=settings.SENTRY_ENVIRONMENT,
+        integrations=[
+            FastApiIntegration(),
+            SqlalchemyIntegration(),
+        ],
+        # Capture 10 % of transactions in production; 100 % elsewhere
+        traces_sample_rate=0.1 if settings.is_production else 1.0,
+        send_default_pii=False,
+    )
 
 # ---------------------------------------------------------------------------
 # Logging

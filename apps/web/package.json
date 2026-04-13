@@ -12,6 +12,8 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@mm/config": "workspace:*",
+    "@sentry/nextjs": "^8.0.0",
     "@vis.gl/react-google-maps": "^1.7.1",
     "next": "^15.1.0",
     "react": "^19.0.0",

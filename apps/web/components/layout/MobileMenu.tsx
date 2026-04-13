@@ -37,8 +37,8 @@ export function MobileMenu({ isOpen, onClose, languages = [], categories = [], l
     }
   }, [isOpen]);
 
-  function handleLogout() {
-    logout();
+  async function handleLogout() {
+    await logout();
     onClose();
     router.push(`/${locale}`);
   }
