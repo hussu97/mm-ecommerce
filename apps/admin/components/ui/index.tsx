@@ -3,7 +3,7 @@ import { InputHTMLAttributes, SelectHTMLAttributes, TextareaHTMLAttributes, forw
 
 // ─── Button ───────────────────────────────────────────────────────────────────
 
-type BtnVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
+type BtnVariant = 'primary' | 'secondary' | 'ghost' | 'outline' | 'danger';
 type BtnSize = 'sm' | 'md';
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -16,6 +16,7 @@ const BtnVariants: Record<BtnVariant, string> = {
   primary:   'bg-primary text-white hover:opacity-90',
   secondary: 'bg-gray-100 text-gray-700 hover:bg-gray-200',
   ghost:     'border border-gray-300 text-gray-600 hover:bg-gray-50',
+  outline:   'border border-gray-300 text-gray-600 hover:bg-gray-50',
   danger:    'bg-red-50 text-red-600 border border-red-200 hover:bg-red-100',
 };
 const BtnSizes: Record<BtnSize, string> = {
