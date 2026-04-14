@@ -7,6 +7,12 @@ export const BRAND = {
   logo: `${SITE_URL}/images/logos/color_logo.jpeg`,
 };
 
+// For Product.brand — Google Merchant listings requires @type: Brand (not Organization)
+export const PRODUCT_BRAND = {
+  '@type': 'Brand' as const,
+  name: 'Melting Moments Cakes',
+};
+
 export const SHIPPING_DETAILS = {
   '@type': 'OfferShippingDetails' as const,
   shippingDestination: {

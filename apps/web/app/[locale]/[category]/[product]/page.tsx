@@ -8,7 +8,7 @@ import type { Product, ProductModifier } from '@/lib/types';
 import { localizedField } from '@/lib/i18n/entity';
 import { getTranslations, createT } from '@/lib/i18n/server';
 import { API_BASE } from '@/lib/api';
-import { BRAND, SHIPPING_DETAILS, RETURN_POLICY } from '@/lib/schema';
+import { BRAND, PRODUCT_BRAND, SHIPPING_DETAILS, RETURN_POLICY } from '@/lib/schema';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 
 async function getProduct(slug: string): Promise<Product | null> {
@@ -105,6 +105,7 @@ export default async function ProductDetailPage({
       availability,
       offerCount: 2,
       url: offerUrl,
+      seller: BRAND,
       shippingDetails: SHIPPING_DETAILS,
       hasMerchantReturnPolicy: RETURN_POLICY,
     };
@@ -130,11 +131,16 @@ export default async function ProductDetailPage({
     description: product.description ?? undefined,
     image: galleryImages,
     url: offerUrl,
-    brand: BRAND,
+    brand: PRODUCT_BRAND,
     category: localizedCategoryName,
     offers,
   };
-  if (product.sku) productSchema.sku = product.sku;
+  if (product.sku) {
+    productSchema.sku = product.sku;
+    productSchema.mpn = product.sku;
+  } else {
+    productSchema.mpn = productSlug;
+  }
   if (product.calories) {
     productSchema.nutrition = {
       '@type': 'NutritionInformation',
