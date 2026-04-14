@@ -63,7 +63,8 @@ describe('LocationPicker', () => {
     vi.clearAllMocks();
     mockPlaceAutocompleteElement = makeMockElement();
     mockUseMapsLibrary.mockReturnValue({
-      PlaceAutocompleteElement: vi.fn(() => mockPlaceAutocompleteElement),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      PlaceAutocompleteElement: vi.fn(function (this: any) { return mockPlaceAutocompleteElement; }),
     });
   });
 
@@ -142,7 +143,8 @@ describe('LocationPicker', () => {
     });
 
     it('does not pass inputPlaceholder to the PlaceAutocompleteElement constructor', () => {
-      const PlaceAutocompleteElementSpy = vi.fn(() => mockPlaceAutocompleteElement);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const PlaceAutocompleteElementSpy = vi.fn(function (this: any) { return mockPlaceAutocompleteElement; });
       mockUseMapsLibrary.mockReturnValue({ PlaceAutocompleteElement: PlaceAutocompleteElementSpy });
 
       renderLocationPicker({ placeholder: 'Search…' });
