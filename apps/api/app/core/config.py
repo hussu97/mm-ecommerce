@@ -153,5 +153,15 @@ class Settings(BaseSettings):
     def is_development(self) -> bool:
         return self.APP_ENV == "development"
 
+    @property
+    def cookie_secure(self) -> bool:
+        """Cookies must be Secure in production (HTTPS-only)."""
+        return self.is_production
+
+    @property
+    def cookie_samesite(self) -> str:
+        """Use 'lax' for same-site browsing; works for cross-port localhost and same-domain prod."""
+        return "lax"
+
 
 settings = Settings()
