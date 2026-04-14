@@ -384,6 +384,10 @@ async def merge(
         if product and product.is_stock_product and merged_qty > product.stock_quantity:
             merged_qty = product.stock_quantity
 
+        # Skip items with no available stock — don't create 0-quantity cart items
+        if merged_qty <= 0:
+            continue
+
         if existing:
             existing.quantity = merged_qty
         else:

@@ -191,7 +191,7 @@ function OrderSummarySidebar({
                 )}
               </div>
               <p className="font-body text-xs text-gray-700 shrink-0">
-                {(item.line_total ?? 0).toFixed(2)} AED
+                {((item.line_total ?? (item.unit_price ?? 0) * item.quantity)).toFixed(2)} AED
               </p>
             </li>
           ))}
