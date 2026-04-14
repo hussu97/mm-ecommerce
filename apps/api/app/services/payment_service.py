@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -83,6 +84,33 @@ async def create_session(db: AsyncSession, order_number: str, provider: str) -> 
     # Idempotency: if already has a confirmed payment, reject
     if stripe_provider.is_confirmed_payment_id(order.payment_id):
         raise BadRequestError("Order has already been paid")
+
+    # Zero-total orders (100% discount) are confirmed immediately — no payment needed.
+    order_total = (
+        Decimal(str(order.total))
+        if not isinstance(order.total, Decimal)
+        else order.total
+    )
+    if order_total <= Decimal("0.00"):
+        order.status = OrderStatusEnum.CONFIRMED
+        await db.flush()
+        order_response = OrderResponse.model_validate(order)
+        await email_service.send_order_confirmation(order_response)
+        return {
+            "provider": "none",
+            "session_id": None,
+            "checkout_url": None,
+            "confirmed": True,
+        }
+
+    # Stripe AED minimum is 2.00 AED. Orders below this threshold cannot be charged.
+    _STRIPE_AED_MINIMUM = Decimal("2.00")
+    if provider == "stripe" and order_total < _STRIPE_AED_MINIMUM:
+        raise BadRequestError(
+            f"The order total after discount (AED {order_total:.2f}) is below the minimum "
+            f"chargeable amount of AED {_STRIPE_AED_MINIMUM:.2f}. "
+            "Please add more items or adjust your discount."
+        )
 
     p = _get_provider(provider)
     result = p.create_session(order)

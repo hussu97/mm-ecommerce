@@ -296,6 +296,7 @@ export interface DeliveryRates {
 
 export interface PaymentSessionResponse {
   provider: string;
-  session_id: string;
-  checkout_url: string;
+  session_id: string | null;
+  checkout_url: string | null;
+  confirmed?: boolean;
 }

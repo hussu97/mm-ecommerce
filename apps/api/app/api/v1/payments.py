@@ -22,8 +22,9 @@ class CreateSessionRequest(BaseModel):
 
 class CreateSessionResponse(BaseModel):
     provider: str
-    session_id: str
-    checkout_url: str
+    session_id: str | None = None
+    checkout_url: str | None = None
+    confirmed: bool = False
 
 
 class PaymentStatusResponse(BaseModel):

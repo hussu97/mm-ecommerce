@@ -694,6 +694,7 @@ function CheckoutContent() {
 
   const handleSubmit = useCallback(async () => {
     setSubmitting(true);
+    let createdOrder: import('@/lib/types').Order | null = null;
     try {
       // Ensure we have a token (guest session)
       if (!getToken()) {
@@ -736,6 +737,7 @@ function CheckoutContent() {
           notes: form.notes || undefined,
           session_id: getSessionId() ?? undefined,
         });
+        createdOrder = order;
         orderNumber = order.order_number;
 
         clearCheckoutSession();
@@ -743,13 +745,25 @@ function CheckoutContent() {
       }
 
       const session = await paymentsApi.createSession(orderNumber, form.paymentMethod);
-      window.location.href = session.checkout_url;
+
+      // Zero-total order: backend auto-confirmed it, redirect straight to confirmation.
+      if (session.confirmed) {
+        window.location.href = `/${locale}/checkout/confirmation?order_number=${orderNumber}`;
+        return;
+      }
+
+      window.location.href = session.checkout_url!;
     } catch (err) {
+      // If the order was created but payment session setup failed, preserve it so the
+      // user can retry payment without needing a cart (cart was already cleared).
+      if (createdOrder) {
+        setRetryOrder(createdOrder);
+      }
       const message = err instanceof Error ? err.message : 'Something went wrong. Please try again.';
       addToast(message, 'error');
       setSubmitting(false);
     }
-  }, [form, cart, retryOrder, addToast, refreshCart, t]);
+  }, [form, cart, retryOrder, locale, addToast, refreshCart, t]);
 
   if (!cart && !submitting) {
     return (
