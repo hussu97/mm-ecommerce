@@ -17,9 +17,21 @@ export class ApiError extends Error {
   }
 }
 
+// ─── Refresh access token ─────────────────────────────────────────────────────
+
+async function refreshAccessToken(): Promise<boolean> {
+  const res = await fetch(`${API_BASE}/auth/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({}),
+  });
+  return res.ok;
+}
+
 // ─── Core fetch ───────────────────────────────────────────────────────────────
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, options: RequestInit = {}, _retry = true): Promise<T> {
   const isFormData = options.body instanceof FormData;
 
   const headers: Record<string, string> = {
@@ -28,6 +40,14 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   };
 
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include' });
+
+  if (res.status === 401 && _retry) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) {
+      return request<T>(path, options, false);
+    }
+    throw new ApiError(401, 'Session expired. Please log in again.');
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
