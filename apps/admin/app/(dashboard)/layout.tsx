@@ -21,6 +21,7 @@ const NAV = [
   { href: '/content',       label: 'Content',       icon: 'edit_note' },
   { href: '/regions',       label: 'Regions',       icon: 'local_shipping' },
   { href: '/email-logs',    label: 'Email Logs',    icon: 'mail' },
+  { href: '/audit-logs',    label: 'Audit Logs',    icon: 'manage_history' },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {

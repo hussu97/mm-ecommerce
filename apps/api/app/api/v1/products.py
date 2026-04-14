@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fastapi import Request
+
 from app.core.cache import cache_delete_pattern, cache_get, cache_set
 from app.core.deps import get_admin_user, get_db
 from app.models.user import User
@@ -15,7 +17,7 @@ from app.schemas.product import (
     ProductResponse,
     ProductUpdate,
 )
-from app.services import product_service
+from app.services import audit_service, product_service
 
 router = APIRouter()
 
@@ -91,38 +93,71 @@ async def get_product(slug: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
 async def create_product(
+    request: Request,
     data: ProductCreate,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    admin: User = Depends(get_admin_user),
 ):
     """Create a new product (admin only)."""
     result = await product_service.create(db, data)
     await cache_delete_pattern("products:featured:*")
+    await audit_service.log_action(
+        db,
+        action="CREATE",
+        entity_type="product",
+        entity_id=result.slug,
+        entity_label=result.name,
+        admin=admin,
+        changes={"created": data.model_dump(mode="json")},
+        request=request,
+    )
     return result
 
 
 @router.put("/{slug}", response_model=ProductResponse)
 async def update_product(
+    request: Request,
     slug: str,
     data: ProductUpdate,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    admin: User = Depends(get_admin_user),
 ):
     """Update a product (admin only)."""
     result = await product_service.update(db, slug, data)
     await cache_delete_pattern("products:featured:*")
+    await audit_service.log_action(
+        db,
+        action="UPDATE",
+        entity_type="product",
+        entity_id=slug,
+        entity_label=result.name,
+        admin=admin,
+        changes={"data": data.model_dump(mode="json", exclude_unset=True)},
+        request=request,
+    )
     return result
 
 
 @router.delete("/{slug}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_product(
+    request: Request,
     slug: str,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    admin: User = Depends(get_admin_user),
 ):
     """Delete a product (admin only)."""
     await product_service.delete(db, slug)
     await cache_delete_pattern("products:featured:*")
+    await audit_service.log_action(
+        db,
+        action="DELETE",
+        entity_type="product",
+        entity_id=slug,
+        entity_label=slug,
+        admin=admin,
+        changes={"deleted_slug": slug},
+        request=request,
+    )
 
 
 @router.post(

@@ -337,3 +337,28 @@ export interface DeliverySettings {
   free_delivery_threshold: number;
   pickup_fee: number;
 }
+
+// ─── Audit Logs ───────────────────────────────────────────────────────────────
+
+export type AuditAction = 'CREATE' | 'UPDATE' | 'DELETE' | 'STATUS_CHANGE';
+
+export interface AuditLog {
+  id: string;
+  action: AuditAction;
+  entity_type: string;
+  entity_id: string;
+  entity_label: string;
+  admin_id: string;
+  admin_email: string;
+  changes: Record<string, unknown> | null;
+  ip_address: string | null;
+  created_at: string;
+}
+
+export interface PaginatedAuditLogs {
+  items: AuditLog[];
+  total: number;
+  page: number;
+  per_page: number;
+  pages: number;
+}

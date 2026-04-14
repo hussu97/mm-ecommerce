@@ -20,8 +20,10 @@ from app.schemas.order import (
     OrderResponse,
     OrderStatusUpdate,
 )
+from fastapi import Request
+
 from app.core.cache import cache_delete_pattern
-from app.services import email_service, order_service
+from app.services import audit_service, email_service, order_service
 
 router = APIRouter()
 
@@ -131,12 +133,16 @@ async def get_order(
 
 @router.put("/{order_number}/status", response_model=OrderResponse)
 async def update_order_status(
+    request: Request,
     order_number: str,
     data: OrderStatusUpdate,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    admin: User = Depends(get_admin_user),
 ):
     """Update order status with validated transitions (admin only). Triggers email notification."""
+    old_order = await order_service.get_by_order_number(db, order_number, admin=True)
+    old_status = old_order.status.value
+
     order = await order_service.update_status(
         db, order_number, data.status, data.admin_notes
     )
@@ -153,5 +159,20 @@ async def update_order_status(
         await email_service.send_payment_failed(order)
     elif data.status == OrderStatusEnum.REFUNDED:
         await email_service.send_refund_notification(order)
+
+    await audit_service.log_action(
+        db,
+        action="STATUS_CHANGE",
+        entity_type="order",
+        entity_id=order_number,
+        entity_label=order_number,
+        admin=admin,
+        changes={
+            "from": old_status,
+            "to": data.status.value,
+            **({"admin_notes": data.admin_notes} if data.admin_notes else {}),
+        },
+        request=request,
+    )
 
     return order

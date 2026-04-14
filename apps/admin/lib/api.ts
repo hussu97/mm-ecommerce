@@ -1,8 +1,8 @@
 import type {
-  AnalyticsOverview, Category, CmsPage, CustomerBreakdown, RegionData,
-  FunnelData, ImportResult, Language, Modifier, Order, OrdersPoint, PaginatedCustomers,
-  PaginatedEmailLogs, PaginatedOrders, Product, ProductListResponse, PromoCode,
-  PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
+  AnalyticsOverview, AuditLog, Category, CmsPage, CustomerBreakdown, RegionData,
+  FunnelData, ImportResult, Language, Modifier, Order, OrdersPoint, PaginatedAuditLogs,
+  PaginatedCustomers, PaginatedEmailLogs, PaginatedOrders, Product, ProductListResponse,
+  PromoCode, PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
   TrafficData, UploadResponse, User, Region, DeliverySettings,
 } from './types';
 
@@ -313,6 +313,22 @@ export const emailLogsApi = {
     page?: number;
     per_page?: number;
   }) => api.get<PaginatedEmailLogs>(`/email-logs/admin/all${buildQs(params)}`),
+};
+
+// ─── Audit Logs ───────────────────────────────────────────────────────────────
+
+export const auditLogsApi = {
+  list: (params?: {
+    action?: string;
+    entity_type?: string;
+    admin_id?: string;
+    search?: string;
+    date_from?: string;
+    date_to?: string;
+    page?: number;
+    per_page?: number;
+  }) => api.get<PaginatedAuditLogs>(`/audit-logs${buildQs(params)}`),
+  get: (id: string) => api.get<AuditLog>(`/audit-logs/${id}`),
 };
 
 // ─── Translations ──────────────────────────────────────────────────────────

@@ -18,6 +18,7 @@ from .blog import BlogPost  # noqa: F401
 from .webhook_event import WebhookEvent  # noqa: F401
 from .email_log import EmailLog  # noqa: F401
 from .region import Region, DeliverySettings  # noqa: F401
+from .audit_log import AuditLog  # noqa: F401
 
 __all__ = [
     "Base",
@@ -46,4 +47,5 @@ __all__ = [
     "EmailLog",
     "Region",
     "DeliverySettings",
+    "AuditLog",
 ]
