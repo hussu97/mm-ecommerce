@@ -4,11 +4,6 @@ import {
   ensureSessionId,
   getSessionId,
   clearSessionId,
-  getToken,
-  setToken,
-  clearToken,
-  setRefreshToken,
-  clearRefreshToken,
   api,
   authApi,
   productsApi,
@@ -93,8 +88,6 @@ function makeMockFetch(status: number, body: unknown, ok = true) {
 describe('api', () => {
   beforeEach(() => {
     clearSessionId();
-    clearToken();
-    clearRefreshToken();
   });
 
   afterEach(() => {
@@ -121,18 +114,17 @@ describe('api', () => {
     expect(options.headers['Content-Type']).toBe('application/json');
   });
 
-  it('api.get includes Authorization header when token is set', async () => {
-    setToken('my-jwt-token');
+  it('api.get sends credentials: include', async () => {
     const mockFetch = makeMockFetch(200, {});
     vi.stubGlobal('fetch', mockFetch);
 
     await api.get('/test');
 
     const [, options] = mockFetch.mock.calls[0];
-    expect(options.headers['Authorization']).toBe('Bearer my-jwt-token');
+    expect(options.credentials).toBe('include');
   });
 
-  it('api.get omits Authorization header when no token', async () => {
+  it('api.get does not send Authorization header', async () => {
     const mockFetch = makeMockFetch(200, {});
     vi.stubGlobal('fetch', mockFetch);
 
@@ -193,22 +185,20 @@ describe('api', () => {
     expect(thrown?.status).toBe(404);
   });
 
-  it('throws session expired error on 401 when no refresh token', async () => {
+  it('throws session expired error on 401 when cookie refresh fails', async () => {
     const mockFetch = makeMockFetch(401, { detail: 'Unauthorized' }, false);
     vi.stubGlobal('fetch', mockFetch);
 
     await expect(api.get('/test')).rejects.toThrow('Session expired');
   });
 
-  it('retries request after successful token refresh on 401', async () => {
+  it('retries request after successful cookie-based token refresh on 401', async () => {
     const refreshResponse = {
       access_token: 'new-access-token',
       refresh_token: 'new-refresh-token',
       token_type: 'bearer',
       user: {},
     };
-
-    setRefreshToken('valid-refresh-token');
 
     const mockFetch = vi.fn()
       // First call: original request → 401
@@ -217,7 +207,7 @@ describe('api', () => {
         status: 401,
         json: () => Promise.resolve({ detail: 'Unauthorized' }),
       })
-      // Second call: refresh token request → 200
+      // Second call: refresh token request → 200 (sets new cookies)
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -241,16 +231,11 @@ describe('api', () => {
 // ─── authApi ──────────────────────────────────────────────────────────────────
 
 describe('authApi', () => {
-  beforeEach(() => {
-    clearToken();
-    clearRefreshToken();
-  });
-
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('authApi.login calls /auth/login and stores tokens', async () => {
+  it('authApi.login calls /auth/login with correct credentials', async () => {
     const tokenData = {
       access_token: 'acc-token',
       refresh_token: 'ref-token',
@@ -268,11 +253,12 @@ describe('authApi', () => {
 
     const [url, options] = mockFetch.mock.calls[0];
     expect(url).toContain('/auth/login');
-    expect(JSON.parse(options.body)).toEqual({
+    expect(JSON.parse(options.body as string)).toEqual({
       email: 'test@example.com',
       password: 'password123',
     });
-    expect(getToken()).toBe('acc-token');
+    // Tokens are now managed by httpOnly cookies, not localStorage
+    expect(options.credentials).toBe('include');
   });
 });
 

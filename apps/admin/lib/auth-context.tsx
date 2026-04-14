@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { authApi, clearToken, getToken, setToken, ApiError } from './api';
+import { authApi, ApiError } from './api';
 import type { User } from './types';
 
 interface AuthContextType {
@@ -18,15 +18,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const token = getToken();
-    if (!token) { setIsLoading(false); return; }
-
     authApi.me()
       .then(u => {
-        if (!u.is_admin) { clearToken(); }
-        else setUser(u);
+        if (u.is_admin) setUser(u);
       })
-      .catch(() => clearToken())
+      .catch(() => {/* no-op — no valid session */})
       .finally(() => setIsLoading(false));
   }, []);
 
@@ -35,12 +31,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!res.user.is_admin) {
       throw new ApiError(403, 'You do not have admin access.');
     }
-    setToken(res.access_token);
     setUser(res.user);
   }, []);
 
   const logout = useCallback(() => {
-    clearToken();
+    authApi.logout();
     setUser(null);
   }, []);
 

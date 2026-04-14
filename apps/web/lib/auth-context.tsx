@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { authApi, clearToken, getToken, setToken } from './api';
+import { authApi } from './api';
 import { User } from './types';
 
 interface AuthContextType {
@@ -20,41 +20,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const token = getToken();
-    if (!token) {
-      setIsLoading(false);
-      return;
-    }
     authApi.me()
       .then((u) => {
         // Don't treat guest users as logged-in — they exist only for checkout.
-        // A guest account has no password and no persistent session intent.
-        if (u.is_guest) {
-          clearToken();
-          return;
-        }
-        setUser(u);
+        if (!u.is_guest) setUser(u);
       })
-      .catch(() => clearToken())
+      .catch(() => {/* no-op — no valid session */})
       .finally(() => setIsLoading(false));
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
     const res = await authApi.login(email, password);
-    setToken(res.access_token);
     setUser(res.user);
   }, []);
 
   const register = useCallback(async (data: { email: string; password: string; phone?: string }) => {
     const res = await authApi.register(data);
-    setToken(res.access_token);
     setUser(res.user);
   }, []);
 
   /**
    * Logs out the current user.
-   * Calls the backend to revoke the refresh token, then clears local storage.
-   * Using authApi.logout() ensures both access + refresh tokens are cleaned up.
+   * Calls the backend to revoke the refresh token and clear httpOnly cookies.
    */
   const logout = useCallback(async () => {
     await authApi.logout();

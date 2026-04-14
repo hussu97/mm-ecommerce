@@ -4,7 +4,7 @@ import hashlib
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
 from jose import JWTError
 from pydantic import BaseModel
 from sqlalchemy import delete, select
@@ -42,6 +42,44 @@ from app.schemas.user import (
 )
 
 router = APIRouter()
+
+
+# ---------------------------------------------------------------------------
+# Cookie helpers
+# ---------------------------------------------------------------------------
+
+_ACCESS_COOKIE = "mm_access_token"
+_REFRESH_COOKIE = "mm_refresh_token"
+
+
+def _set_auth_cookies(
+    response: Response,
+    access_token: str,
+    refresh_token: str,
+) -> None:
+    response.set_cookie(
+        key=_ACCESS_COOKIE,
+        value=access_token,
+        httponly=True,
+        samesite=settings.cookie_samesite,
+        secure=settings.cookie_secure,
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        path="/",
+    )
+    response.set_cookie(
+        key=_REFRESH_COOKIE,
+        value=refresh_token,
+        httponly=True,
+        samesite=settings.cookie_samesite,
+        secure=settings.cookie_secure,
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        path="/api/v1/auth",
+    )
+
+
+def _clear_auth_cookies(response: Response) -> None:
+    response.delete_cookie(key=_ACCESS_COOKIE, path="/")
+    response.delete_cookie(key=_REFRESH_COOKIE, path="/api/v1/auth")
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +128,7 @@ async def _make_token_response(user: User, db: AsyncSession) -> TokenResponse:
 @limiter.limit("5/minute")
 async def register(
     request: Request,
+    response: Response,
     body: UserCreate,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
@@ -112,7 +151,9 @@ async def register(
     await db.refresh(user)
 
     background_tasks.add_task(email_service.send_welcome, user.email)
-    return await _make_token_response(user, db)
+    token_resp = await _make_token_response(user, db)
+    _set_auth_cookies(response, token_resp.access_token, token_resp.refresh_token)
+    return token_resp
 
 
 @router.post(
@@ -123,6 +164,7 @@ async def register(
 @limiter.limit("5/minute")
 async def login(
     request: Request,
+    response: Response,
     body: LoginRequest,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
@@ -141,7 +183,9 @@ async def login(
     if user.is_guest:
         user.is_guest = False
 
-    return await _make_token_response(user, db)
+    token_resp = await _make_token_response(user, db)
+    _set_auth_cookies(response, token_resp.access_token, token_resp.refresh_token)
+    return token_resp
 
 
 @router.post(
@@ -151,6 +195,7 @@ async def login(
     summary="Create a guest session",
 )
 async def create_guest_session(
+    response: Response,
     body: GuestSessionRequest,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
@@ -168,7 +213,9 @@ async def create_guest_session(
     await db.flush()
     await db.refresh(guest)
 
-    return await _make_token_response(guest, db)
+    token_resp = await _make_token_response(guest, db)
+    _set_auth_cookies(response, token_resp.access_token, token_resp.refresh_token)
+    return token_resp
 
 
 @router.get(
@@ -257,7 +304,7 @@ async def reset_password(
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    refresh_token: str | None = None
 
 
 @router.post(
@@ -266,10 +313,16 @@ class RefreshRequest(BaseModel):
     summary="Rotate refresh token and issue a new access token",
 )
 async def refresh_token(
+    request: Request,
+    response: Response,
     body: RefreshRequest,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
-    token_hash = hashlib.sha256(body.refresh_token.encode()).hexdigest()
+    raw = body.refresh_token or request.cookies.get(_REFRESH_COOKIE)
+    if not raw:
+        raise UnauthorizedError("Invalid or expired refresh token")
+
+    token_hash = hashlib.sha256(raw.encode()).hexdigest()
 
     result = await db.execute(
         select(RefreshToken).where(RefreshToken.token_hash == token_hash)
@@ -287,7 +340,9 @@ async def refresh_token(
     if not user or not user.is_active:
         raise UnauthorizedError("User not found or inactive")
 
-    return await _make_token_response(user, db)
+    token_resp = await _make_token_response(user, db)
+    _set_auth_cookies(response, token_resp.access_token, token_resp.refresh_token)
+    return token_resp
 
 
 # ---------------------------------------------------------------------------
@@ -296,7 +351,7 @@ async def refresh_token(
 
 
 class LogoutRequest(BaseModel):
-    refresh_token: str
+    refresh_token: str | None = None
 
 
 @router.post(
@@ -305,17 +360,22 @@ class LogoutRequest(BaseModel):
     summary="Revoke refresh token (logout)",
 )
 async def logout(
+    request: Request,
+    response: Response,
     body: LogoutRequest,
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    token_hash = hashlib.sha256(body.refresh_token.encode()).hexdigest()
-    result = await db.execute(
-        select(RefreshToken).where(RefreshToken.token_hash == token_hash)
-    )
-    rt = result.scalar_one_or_none()
-    if rt and not rt.is_revoked:
-        rt.is_revoked = True
-        await db.flush()
+    raw = body.refresh_token or request.cookies.get(_REFRESH_COOKIE)
+    if raw:
+        token_hash = hashlib.sha256(raw.encode()).hexdigest()
+        result = await db.execute(
+            select(RefreshToken).where(RefreshToken.token_hash == token_hash)
+        )
+        rt = result.scalar_one_or_none()
+        if rt and not rt.is_revoked:
+            rt.is_revoked = True
+            await db.flush()
+    _clear_auth_cookies(response)
 
 
 # ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncGenerator
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 from sqlalchemy import select
@@ -77,10 +77,12 @@ async def _get_user_from_token(
 
 
 async def get_current_user(
+    request: Request,
     token: str | None = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    return await _get_user_from_token(token, db, required=True)  # type: ignore[return-value]
+    resolved = request.cookies.get("mm_access_token") or token
+    return await _get_user_from_token(resolved, db, required=True)  # type: ignore[return-value]
 
 
 async def get_current_active_user(
@@ -104,8 +106,10 @@ async def get_admin_user(
 
 
 async def get_optional_user(
+    request: Request,
     token: str | None = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> User | None:
     """Returns the current user if authenticated, otherwise None (for guest browsing)."""
-    return await _get_user_from_token(token, db, required=False)
+    resolved = request.cookies.get("mm_access_token") or token
+    return await _get_user_from_token(resolved, db, required=False)

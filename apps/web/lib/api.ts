@@ -11,33 +11,7 @@ export class ApiError extends Error {
   }
 }
 
-// ─── Token & Session helpers ──────────────────────────────────────────────────
-
-export function getToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('mm_token');
-}
-
-export function setToken(token: string): void {
-  localStorage.setItem('mm_token', token);
-}
-
-export function clearToken(): void {
-  localStorage.removeItem('mm_token');
-}
-
-export function getRefreshToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('mm_refresh_token');
-}
-
-export function setRefreshToken(token: string): void {
-  localStorage.setItem('mm_refresh_token', token);
-}
-
-export function clearRefreshToken(): void {
-  localStorage.removeItem('mm_refresh_token');
-}
+// ─── Session helpers ──────────────────────────────────────────────────────────
 
 export function getSessionId(): string | null {
   if (typeof window === 'undefined') return null;
@@ -59,32 +33,19 @@ export function clearSessionId(): void {
 
 // ─── Refresh access token ─────────────────────────────────────────────────────
 
-async function refreshAccessToken(): Promise<string | null> {
-  const refreshToken = getRefreshToken();
-  if (!refreshToken) return null;
-
+async function refreshAccessToken(): Promise<boolean> {
   const res = await fetch(`${API_BASE}/auth/refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refresh_token: refreshToken }),
+    credentials: 'include',
+    body: JSON.stringify({}),
   });
-
-  if (!res.ok) {
-    clearToken();
-    clearRefreshToken();
-    return null;
-  }
-
-  const data: TokenResponse = await res.json();
-  setToken(data.access_token);
-  setRefreshToken(data.refresh_token);
-  return data.access_token;
+  return res.ok;
 }
 
 // ─── Core fetch ───────────────────────────────────────────────────────────────
 
 async function request<T>(path: string, options: RequestInit = {}, _retry = true): Promise<T> {
-  const token = getToken();
   const sessionId = getSessionId();
 
   const headers: Record<string, string> = {
@@ -92,14 +53,13 @@ async function request<T>(path: string, options: RequestInit = {}, _retry = true
     ...(options.headers as Record<string, string>),
   };
 
-  if (token) headers['Authorization'] = `Bearer ${token}`;
   if (sessionId) headers['X-Session-Id'] = sessionId;
 
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include' });
 
   if (res.status === 401 && _retry) {
-    const newToken = await refreshAccessToken();
-    if (newToken) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) {
       return request<T>(path, options, false);
     }
     throw new ApiError(401, 'Session expired. Please log in again.');
@@ -134,33 +94,14 @@ export const api = {
 // ─── Typed endpoints ──────────────────────────────────────────────────────────
 
 export const authApi = {
-  register: async (data: { email: string; password: string; phone?: string }) => {
-    const resp = await api.post<TokenResponse>('/auth/register', data);
-    setToken(resp.access_token);
-    setRefreshToken(resp.refresh_token);
-    return resp;
-  },
-  login: async (email: string, password: string) => {
-    const resp = await api.post<TokenResponse>('/auth/login', { email, password });
-    setToken(resp.access_token);
-    setRefreshToken(resp.refresh_token);
-    return resp;
-  },
-  guest: async (email?: string) => {
-    const resp = await api.post<TokenResponse>('/auth/guest', { email });
-    setToken(resp.access_token);
-    setRefreshToken(resp.refresh_token);
-    return resp;
-  },
-  refresh: () => api.post<TokenResponse>('/auth/refresh', { refresh_token: getRefreshToken() }),
-  logout: async () => {
-    const refreshToken = getRefreshToken();
-    if (refreshToken) {
-      await api.post<void>('/auth/logout', { refresh_token: refreshToken }).catch(() => {});
-    }
-    clearToken();
-    clearRefreshToken();
-  },
+  register: (data: { email: string; password: string; phone?: string }) =>
+    api.post<TokenResponse>('/auth/register', data),
+  login: (email: string, password: string) =>
+    api.post<TokenResponse>('/auth/login', { email, password }),
+  guest: (email?: string) =>
+    api.post<TokenResponse>('/auth/guest', { email }),
+  refresh: () => api.post<TokenResponse>('/auth/refresh', {}),
+  logout: () => api.post<void>('/auth/logout', {}).catch(() => {}),
   me: () => api.get<User>('/auth/me'),
   updateMe: (data: { phone?: string }) =>
     api.put<User>('/auth/me', data),
@@ -225,6 +166,7 @@ export const trackApi = {
     const res = await fetch(`${API_BASE}/orders/track`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ order_number, email }),
     });
     if (!res.ok) {

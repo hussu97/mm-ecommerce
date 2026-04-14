@@ -4,7 +4,8 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useState, useCallback } from 'react';
 import { useCart } from '@/lib/cart-context';
-import { promoApi, authApi, getToken, setToken, ensureSessionId } from '@/lib/api';
+import { promoApi, authApi, ensureSessionId } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import { analytics } from '@/lib/analytics';
 import { Button } from '@/components/ui/Button';
 import { Breadcrumb } from '@/components/ui/Breadcrumb';
@@ -22,6 +23,7 @@ export default function CartPage() {
   const { t, locale } = useTranslation();
   const { cart, isLoading, updateItem, removeItem, mergeCart } = useCart();
   const { addToast } = useToast();
+  const { user } = useAuth();
 
   const [promoCode, setPromoCode] = useState('');
   const [promoLoading, setPromoLoading] = useState(false);
@@ -90,10 +92,9 @@ export default function CartPage() {
     setCheckoutLoading(true);
     try {
       // Create guest session if not authenticated
-      if (!getToken()) {
+      if (!user) {
         const sessionId = ensureSessionId();
-        const res = await authApi.guest();
-        setToken(res.access_token);
+        await authApi.guest();
         await mergeCart(sessionId);
       }
       // Persist applied promo so checkout page picks it up from sessionStorage

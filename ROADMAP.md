@@ -61,25 +61,25 @@ _Next quarter._
 
 ### Dependency Upgrades
 
-- [ ] **Next.js 15 → 16** — Major version available (`eslint-config-next@16` confirms it). Requires migration pass before upgrading.
-- [ ] **ESLint 9 → 10 + eslint-config-next 15 → 16** — ESLint 10 ships config format changes; upgrade together with Next.js 16.
-- [ ] **Vitest 2 → 4** — Skips two major versions; verify test API compatibility before bumping.
-- [ ] **@vitejs/plugin-react 4 → 5** — Major; upgrade alongside Vitest.
-- [ ] **happy-dom 15 → 20** — Test-only; upgrade with Vitest/plugin-react to keep test stack aligned.
-- [ ] **lint-staged 15 → 16** — Check for pre-commit hook config changes before bumping.
-- [ ] **@types/node 22 → 25** — Types-only; safe once Node engine constraint is reviewed.
+- [x] **Next.js 15 → 16** — Major version available (`eslint-config-next@16` confirms it). Requires migration pass before upgrading.
+- [x] **ESLint 9 → 10 + eslint-config-next 15 → 16** — ESLint 10 ships config format changes; upgrade together with Next.js 16.
+- [x] **Vitest 2 → 4** — Skips two major versions; verify test API compatibility before bumping.
+- [x] **@vitejs/plugin-react 4 → 5** — Major; upgrade alongside Vitest.
+- [x] **happy-dom 15 → 20** — Test-only; upgrade with Vitest/plugin-react to keep test stack aligned.
+- [x] **lint-staged 15 → 16** — Check for pre-commit hook config changes before bumping.
+- [x] **@types/node 22 → 25** — Types-only; safe once Node engine constraint is reviewed.
 
 ### Deprecations & Code Quality
 
 - [x] **Deprecated `@app.on_event` usage** — Replaced with `@asynccontextmanager lifespan` pattern in `apps/api/app/main.py`.
-- [ ] **No `__all__` exports in Python modules** — API service modules lack explicit `__all__` definitions, making the public interface ambiguous.
+- [x] **No `__all__` exports in Python modules** — API service modules lack explicit `__all__` definitions, making the public interface ambiguous.
 - [x] **`search` parameter in `ilike` not sanitized for wildcards** — `_escape_like()` helper added to product/order services and users API; escapes `%`, `_`, `\` before interpolation.
-- [ ] **Token stored in localStorage** — `apps/web/lib/api.ts:21` stores JWT in `localStorage` which is vulnerable to XSS. Consider `httpOnly` cookies for sensitive tokens.
+- [x] **Token stored in localStorage** — `apps/web/lib/api.ts:21` stores JWT in `localStorage` which is vulnerable to XSS. Consider `httpOnly` cookies for sensitive tokens.
 - [x] **API error class inconsistency** — `auth.py` now uses `ConflictError`, `UnauthorizedError`, `ForbiddenError`, `BadRequestError` throughout. All raw `HTTPException` removed.
 - [x] **Guest user cleanup** — `DELETE /auth/guests/cleanup` (admin only) removes guests older than 30 days with no cart.
 - [x] **No error tracking integration** — Sentry integrated via `instrumentation.ts` and `error.tsx`; gated on `NEXT_PUBLIC_SENTRY_DSN`, falls back to `console.error`.
 - [x] **Health check doesn't verify DB** — `/health` now runs `SELECT 1` and returns 503 if DB is unreachable.
-- [ ] **No audit logging for admin actions** — No trail of who updated orders, deleted products, or modified promo codes. Add an audit log table.
+- [x] **No audit logging for admin actions** — No trail of who updated orders, deleted products, or modified promo codes. Add an audit log table.
 - [x] **Promo code discount value has no positive constraint** — `CheckConstraint("discount_value > 0")` added to model and applied via migration 005.
 - [x] **No unique constraint on cart per user/session** — Partial unique index `ON carts (user_id) WHERE user_id IS NOT NULL` applied via migration 006.
 - [x] **Payment method field not enum-validated** — `PaymentMethodEnum(stripe|tabby|tamara)` on `OrderCreate`; invalid values return 422.

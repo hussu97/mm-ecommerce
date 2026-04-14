@@ -7,8 +7,9 @@ import { useSearchParams } from 'next/navigation';
 import { useCart } from '@/lib/cart-context';
 import {
   ordersApi, paymentsApi, addressesApi, deliveryApi,
-  getToken, getSessionId, ensureSessionId, authApi, setToken,
+  getSessionId, ensureSessionId, authApi,
 } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import { Breadcrumb } from '@/components/ui/Breadcrumb';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -590,6 +591,7 @@ function CheckoutContent() {
   const { cart, refreshCart } = useCart();
   const { addToast } = useToast();
   const { t, locale } = useTranslation();
+  const { user } = useAuth();
 
   const [step, setStep] = useState(1);
   const [form, setForm] = useState<CheckoutForm>(INITIAL_FORM);
@@ -629,7 +631,7 @@ function CheckoutContent() {
 
   // Load saved addresses for authenticated users
   useEffect(() => {
-    if (!getToken()) return;
+    if (!user) return;
     setLoadingAddresses(true);
     addressesApi.list()
       .then((list) => {
@@ -662,7 +664,7 @@ function CheckoutContent() {
 
   // Pre-fill contact info from API if authenticated (skip guest-generated emails)
   useEffect(() => {
-    if (!form.email && getToken()) {
+    if (!form.email && user) {
       import('@/lib/api').then(({ api }) => {
         api.get<{ email: string; phone?: string }>('/auth/me')
           .then((user) => {
@@ -696,11 +698,10 @@ function CheckoutContent() {
     setSubmitting(true);
     let createdOrder: import('@/lib/types').Order | null = null;
     try {
-      // Ensure we have a token (guest session)
-      if (!getToken()) {
+      // Ensure we have an auth session (create guest session if not logged in)
+      if (!user) {
         ensureSessionId();
-        const res = await authApi.guest();
-        setToken(res.access_token);
+        await authApi.guest();
       }
 
       let orderNumber: string;

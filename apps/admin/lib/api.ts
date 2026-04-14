@@ -17,34 +17,17 @@ export class ApiError extends Error {
   }
 }
 
-// ─── Token helpers ────────────────────────────────────────────────────────────
-
-export function getToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('mm_admin_token');
-}
-
-export function setToken(token: string): void {
-  localStorage.setItem('mm_admin_token', token);
-}
-
-export function clearToken(): void {
-  localStorage.removeItem('mm_admin_token');
-}
-
 // ─── Core fetch ───────────────────────────────────────────────────────────────
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = getToken();
   const isFormData = options.body instanceof FormData;
 
   const headers: Record<string, string> = {
     ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     ...(options.headers as Record<string, string>),
   };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include' });
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
@@ -68,6 +51,7 @@ const api = {
 export const authApi = {
   login: (email: string, password: string) =>
     api.post<TokenResponse>('/auth/login', { email, password }),
+  logout: () => api.post<void>('/auth/logout', {}).catch(() => {}),
   me: () => api.get<User>('/auth/me'),
 };
 
@@ -221,10 +205,7 @@ const EXPORT_FILENAMES: Record<string, string> = {
 
 export const exportApi = {
   download: async (entity: string) => {
-    const token = getToken();
-    const headers: Record<string, string> = {};
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    const res = await fetch(`${API_BASE}/export/${entity}`, { headers });
+    const res = await fetch(`${API_BASE}/export/${entity}`, { credentials: 'include' });
     if (!res.ok) throw new ApiError(res.status, `Export failed: HTTP ${res.status}`);
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
@@ -235,15 +216,12 @@ export const exportApi = {
     URL.revokeObjectURL(url);
   },
   exportOrders: async (params?: { start_date?: string; end_date?: string; status?: string }) => {
-    const token = getToken();
-    const headers: Record<string, string> = {};
-    if (token) headers['Authorization'] = `Bearer ${token}`;
     const qs = params
       ? '?' + new URLSearchParams(
           Object.entries(params).filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => [k, String(v)])
         ).toString()
       : '';
-    const res = await fetch(`${API_BASE}/export/orders${qs}`, { headers });
+    const res = await fetch(`${API_BASE}/export/orders${qs}`, { credentials: 'include' });
     if (!res.ok) throw new ApiError(res.status, `Export failed: HTTP ${res.status}`);
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
