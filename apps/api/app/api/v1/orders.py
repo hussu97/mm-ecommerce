@@ -151,5 +151,7 @@ async def update_order_status(
         await email_service.send_order_cancelled(order)
     elif data.status == OrderStatusEnum.PAYMENT_FAILED:
         await email_service.send_payment_failed(order)
+    elif data.status == OrderStatusEnum.REFUNDED:
+        await email_service.send_refund_notification(order)
 
     return order
