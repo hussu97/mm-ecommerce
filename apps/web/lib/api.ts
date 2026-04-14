@@ -1,6 +1,13 @@
 import { Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, PublicRegion, DeliveryRates } from './types';
 
-export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
+
+// Server Components (RSC) need an absolute URL for fetch — relative paths don't
+// work in Node.js. When API_BASE is a relative proxied path (dev), fall back to
+// the direct backend URL. In production API_BASE is already absolute.
+const RSC_API_BASE = API_BASE.startsWith('http')
+  ? API_BASE
+  : (process.env.NEXT_PRIVATE_API_HOST ?? 'http://localhost:8000') + '/api/v1';
 
 // ─── Error ────────────────────────────────────────────────────────────────────
 
@@ -211,7 +218,7 @@ export const regionsApi = {
 
 export const cmsApi = {
   getPage: (slug: string, locale: string): Promise<{ slug: string; content: Record<string, unknown> }> => {
-    return fetch(`${API_BASE}/cms/public/${slug}?locale=${locale}`, { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) })
+    return fetch(`${RSC_API_BASE}/cms/public/${slug}?locale=${locale}`, { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) })
       .then(res => {
         if (!res.ok) throw new Error(`CMS fetch failed: ${res.status}`);
         return res.json();

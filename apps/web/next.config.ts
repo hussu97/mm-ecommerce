@@ -11,6 +11,14 @@ const nextConfig: NextConfig = {
   // output: "standalone" is for self-hosted Docker only — not needed on Vercel
   async rewrites() {
     return [
+      // Proxy API requests through Next.js so auth cookies are same-origin.
+      // Only active when NEXT_PUBLIC_API_URL is a relative path (dev mode).
+      // In production the env var is an absolute HTTPS URL, so the rewrite
+      // never triggers and the browser calls the API domain directly.
+      {
+        source: "/api/v1/:path*",
+        destination: `${process.env.NEXT_PRIVATE_API_HOST ?? "http://localhost:8000"}/api/v1/:path*`,
+      },
       {
         source: "/umami/script.js",
         destination: "https://cloud.umami.is/script.js",
