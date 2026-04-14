@@ -223,6 +223,10 @@ async def add_item(
     if not product:
         raise NotFoundError(f"Product '{data.product_id}' not found or inactive")
 
+    # Block out-of-stock items
+    if product.is_stock_product and product.stock_quantity <= 0:
+        raise BadRequestError(f"Product '{product.name}' is out of stock")
+
     # Build + validate options snapshot
     options_snapshot = await _build_options_snapshot(db, product, data.selected_options)
 
@@ -243,12 +247,18 @@ async def add_item(
             break
 
     if duplicate:
-        duplicate.quantity += data.quantity
+        new_qty = duplicate.quantity + data.quantity
+        if product.is_stock_product and new_qty > product.stock_quantity:
+            new_qty = product.stock_quantity
+        duplicate.quantity = new_qty
     else:
+        quantity = data.quantity
+        if product.is_stock_product:
+            quantity = min(quantity, product.stock_quantity)
         item = CartItem(
             cart_id=cart.id,
             product_id=data.product_id,
-            quantity=data.quantity,
+            quantity=quantity,
             selected_options=options_snapshot,
         )
         db.add(item)

@@ -52,6 +52,7 @@ function computeFromPrice(product: Product): number {
 export function ProductCard({ product }: { product: Product }) {
   const { t, locale } = useTranslation();
   const hasModifiers = product.product_modifiers && product.product_modifiers.length > 0;
+  const isOutOfStock = product.is_stock_product && product.stock_quantity <= 0;
   const [qty, setQty] = useState(1);
   const [adding, setAdding] = useState(false);
   const [showModal, setShowModal] = useState(false);
@@ -121,7 +122,14 @@ export function ProductCard({ product }: { product: Product }) {
           </span>
 
           {/* Add to cart controls */}
-          {hasModifiers ? (
+          {isOutOfStock ? (
+            <button
+              disabled
+              className="w-full py-2.5 bg-gray-100 text-gray-400 text-xs font-body uppercase tracking-widest cursor-not-allowed"
+            >
+              {t('product.out_of_stock')}
+            </button>
+          ) : hasModifiers ? (
             <button
               onClick={() => setShowModal(true)}
               className="w-full py-2.5 bg-primary text-white text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity"

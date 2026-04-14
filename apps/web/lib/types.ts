@@ -71,6 +71,7 @@ export interface Product {
   preparation_time: number | null;
   is_sold_by_weight: boolean;
   is_stock_product: boolean;
+  stock_quantity: number;
   image_urls: string[];
   is_active: boolean;
   is_featured: boolean;

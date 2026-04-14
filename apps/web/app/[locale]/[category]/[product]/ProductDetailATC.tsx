@@ -33,6 +33,7 @@ function computeMinPrice(product: Product): number {
 export function ProductDetailATC({ product }: { product: Product }) {
   const { t, locale } = useTranslation();
   const hasModifiers = product.product_modifiers && product.product_modifiers.length > 0;
+  const isOutOfStock = product.is_stock_product && product.stock_quantity <= 0;
   const minPrice = hasModifiers ? computeMinPrice(product) : Number(product.base_price);
   const [qty, setQty] = useState(1);
   const [adding, setAdding] = useState(false);
@@ -87,22 +88,31 @@ export function ProductDetailATC({ product }: { product: Product }) {
       )}
 
       {/* Quantity + ATC */}
-      <div className="flex items-center gap-3">
-        <QuantitySelector
-          value={qty}
-          onChange={setQty}
-          min={1}
-          max={99}
-          disabled={adding || !isValid}
-        />
+      {isOutOfStock ? (
         <button
-          onClick={handleAdd}
-          disabled={adding || !isValid}
-          className="flex-1 py-3 bg-primary text-white text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled
+          className="w-full py-3 bg-gray-100 text-gray-400 text-xs font-body uppercase tracking-widest cursor-not-allowed"
         >
-          {adding ? t('product.adding') : !isValid ? t('product.select_required_options') : t('product.add_to_cart')}
+          {t('product.out_of_stock')}
         </button>
-      </div>
+      ) : (
+        <div className="flex items-center gap-3">
+          <QuantitySelector
+            value={qty}
+            onChange={setQty}
+            min={1}
+            max={99}
+            disabled={adding || !isValid}
+          />
+          <button
+            onClick={handleAdd}
+            disabled={adding || !isValid}
+            className="flex-1 py-3 bg-primary text-white text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {adding ? t('product.adding') : !isValid ? t('product.select_required_options') : t('product.add_to_cart')}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -68,6 +68,7 @@ class ProductResponse(BaseModel):
     preparation_time: int | None
     is_sold_by_weight: bool
     is_stock_product: bool
+    stock_quantity: int
     image_urls: list[str]
     is_active: bool
     is_featured: bool
