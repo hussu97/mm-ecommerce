@@ -90,7 +90,7 @@ class TestAuthEndpoints:
         )
         assert response.status_code == 401
 
-    async def test_logout_missing_body_returns_422(self, client):
-        """Logout requires refresh_token in body; missing body returns 422."""
+    async def test_logout_empty_body_returns_204(self, client):
+        """Logout accepts empty body — refresh_token is optional (also read from cookie)."""
         response = await client.post("/api/v1/auth/logout", json={})
-        assert response.status_code == 422
+        assert response.status_code == 204
