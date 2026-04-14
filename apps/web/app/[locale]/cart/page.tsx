@@ -96,12 +96,24 @@ export default function CartPage() {
         setToken(res.access_token);
         await mergeCart(sessionId);
       }
+      // Persist applied promo so checkout page picks it up from sessionStorage
+      if (appliedPromo) {
+        try {
+          const existing = JSON.parse(sessionStorage.getItem('mm_checkout') ?? '{}');
+          sessionStorage.setItem('mm_checkout', JSON.stringify({
+            ...existing,
+            promoCode: appliedPromo.code,
+            promoDiscount: appliedPromo.discount,
+            promoMessage: appliedPromo.message,
+          }));
+        } catch { /* noop */ }
+      }
       window.location.href = '/checkout';
     } catch {
       addToast(t('cart.something_wrong'), 'error');
       setCheckoutLoading(false);
     }
-  }, [items.length, subtotal, mergeCart, addToast, t]);
+  }, [items.length, subtotal, appliedPromo, mergeCart, addToast, t]);
 
   // Empty cart
   if (!isLoading && items.length === 0) {
