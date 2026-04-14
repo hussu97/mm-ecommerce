@@ -7,49 +7,33 @@ import { useAuth } from '@/lib/auth-context';
 import { cn } from '@/lib/utils';
 
 const NAV = [
-  { href: '/',              label: 'Dashboard',     icon: 'dashboard' },
-  { href: '/products',      label: 'Products',      icon: 'inventory_2' },
-  { href: '/categories',    label: 'Categories',    icon: 'category' },
-  { href: '/modifiers',     label: 'Modifiers',     icon: 'tune' },
-  { href: '/orders',        label: 'Orders',        icon: 'receipt_long' },
-  { href: '/promo-codes',   label: 'Promo Codes',   icon: 'local_offer' },
-  { href: '/customers',     label: 'Customers',     icon: 'people' },
-  { href: '/analytics',     label: 'Analytics',     icon: 'bar_chart' },
+  { href: '/',              label: 'Dashboard',       icon: 'dashboard' },
+  { href: '/products',      label: 'Products',        icon: 'inventory_2' },
+  { href: '/categories',    label: 'Categories',      icon: 'category' },
+  { href: '/modifiers',     label: 'Modifiers',       icon: 'tune' },
+  { href: '/orders',        label: 'Orders',          icon: 'receipt_long' },
+  { href: '/promo-codes',   label: 'Promo Codes',     icon: 'local_offer' },
+  { href: '/customers',     label: 'Customers',       icon: 'people' },
+  { href: '/analytics',     label: 'Analytics',       icon: 'bar_chart' },
   { href: '/import',        label: 'Import / Export', icon: 'sync_alt' },
-  { href: '/languages',     label: 'Languages',     icon: 'translate' },
-  { href: '/translations',  label: 'Translations',  icon: 'text_fields' },
-  { href: '/content',       label: 'Content',       icon: 'edit_note' },
-  { href: '/regions',       label: 'Regions',       icon: 'local_shipping' },
-  { href: '/email-logs',    label: 'Email Logs',    icon: 'mail' },
-  { href: '/audit-logs',    label: 'Audit Logs',    icon: 'manage_history' },
+  { href: '/languages',     label: 'Languages',       icon: 'translate' },
+  { href: '/translations',  label: 'Translations',    icon: 'text_fields' },
+  { href: '/content',       label: 'Content',         icon: 'edit_note' },
+  { href: '/regions',       label: 'Regions',         icon: 'local_shipping' },
+  { href: '/email-logs',    label: 'Email Logs',      icon: 'mail' },
+  { href: '/audit-logs',    label: 'Audit Logs',      icon: 'manage_history' },
 ];
 
-export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const { user, isLoading, logout } = useAuth();
-  const router = useRouter();
-  const pathname = usePathname();
-  const [collapsed, setCollapsed] = useState(false);
-  const [mobileOpen, setMobileOpen] = useState(false);
+interface SidebarContentProps {
+  collapsed: boolean;
+  pathname: string;
+  user: { email: string };
+  setMobileOpen: (open: boolean) => void;
+  onLogout: () => void;
+}
 
-  useEffect(() => {
-    if (!isLoading && !user) router.replace('/login');
-  }, [isLoading, user, router]);
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="w-7 h-7 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
-  if (!user) return null;
-
-  function handleLogout() {
-    logout();
-    router.push('/login');
-  }
-
-  const SidebarContent = () => (
+function SidebarContent({ collapsed, pathname, user, setMobileOpen, onLogout }: SidebarContentProps) {
+  return (
     <>
       {/* Logo */}
       <div className={cn('flex items-center h-14 px-4 border-b border-gray-100', collapsed ? 'justify-center' : 'gap-3')}>
@@ -92,7 +76,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </p>
         )}
         <button
-          onClick={handleLogout}
+          onClick={onLogout}
           title={collapsed ? 'Sign out' : undefined}
           className={cn(
             'flex items-center gap-2 text-xs text-gray-400 hover:text-red-500 font-body transition-colors',
@@ -105,6 +89,32 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </div>
     </>
   );
+}
+
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const { user, isLoading, logout } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
+  const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  useEffect(() => {
+    if (!isLoading && !user) router.replace('/login');
+  }, [isLoading, user, router]);
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="w-7 h-7 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+  if (!user) return null;
+
+  function handleLogout() {
+    logout();
+    router.push('/login');
+  }
 
   return (
     <div className="flex min-h-screen">
@@ -115,7 +125,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           collapsed ? 'w-14' : 'w-52',
         )}
       >
-        <SidebarContent />
+        <SidebarContent
+          collapsed={collapsed}
+          pathname={pathname}
+          user={user}
+          setMobileOpen={setMobileOpen}
+          onLogout={handleLogout}
+        />
       </aside>
 
       {/* Mobile Sidebar */}
@@ -126,7 +142,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             onClick={() => setMobileOpen(false)}
           />
           <aside className="fixed top-0 left-0 z-50 w-52 h-full bg-white border-r border-gray-200 flex flex-col">
-            <SidebarContent />
+            <SidebarContent
+              collapsed={collapsed}
+              pathname={pathname}
+              user={user}
+              setMobileOpen={setMobileOpen}
+              onLogout={handleLogout}
+            />
           </aside>
         </>
       )}

@@ -1,16 +1,15 @@
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import { FlatCompat } from "@eslint/eslintrc";
+import coreWebVitals from "eslint-config-next/core-web-vitals";
+import typescript from "eslint-config-next/typescript";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const compat = new FlatCompat({
-  baseDirectory: __dirname,
-});
-
-const eslintConfig = [
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+export default [
+  ...coreWebVitals,
+  ...typescript,
+  {
+    rules: {
+      // react-hooks v7 added this rule but it flags intentional patterns like
+      // setMounted(true) in effects (SSR hydration safety) and animation state
+      // transitions. Downgrade to warn so CI doesn't hard-fail on valid code.
+      "react-hooks/set-state-in-effect": "warn",
+    },
+  },
 ];
-
-export default eslintConfig;
