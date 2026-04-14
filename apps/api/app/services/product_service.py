@@ -15,6 +15,19 @@ from app.schemas.product import (
     ProductUpdate,
 )
 
+__all__ = [
+    "create",
+    "delete",
+    "get_all",
+    "get_by_slug",
+    "get_by_slug_admin",
+    "get_by_sku",
+    "get_featured",
+    "link_modifier",
+    "unlink_modifier",
+    "update",
+]
+
 
 def _escape_like(s: str) -> str:
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

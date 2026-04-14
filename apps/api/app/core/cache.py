@@ -6,6 +6,13 @@ from typing import Any
 
 from app.core.config import settings
 
+__all__ = [
+    "cache_delete",
+    "cache_delete_pattern",
+    "cache_get",
+    "cache_set",
+]
+
 logger = logging.getLogger("mm.cache")
 
 _redis: Any = None

@@ -8,6 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.order import DeliveryMethodEnum
 from app.models.region import DeliverySettings, Region
 
+__all__ = [
+    "calculate_fee",
+    "get_active_regions",
+    "get_all_regions",
+    "get_delivery_rates",
+    "get_settings",
+]
+
 
 async def get_active_regions(db: AsyncSession) -> list[Region]:
     result = await db.execute(

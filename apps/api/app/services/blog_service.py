@@ -16,6 +16,16 @@ from app.schemas.blog import (
     BlogPostUpdate,
 )
 
+__all__ = [
+    "create_post",
+    "get_post_admin",
+    "get_post_public",
+    "list_posts_admin",
+    "list_posts_public",
+    "update_post",
+    "update_post_locale",
+]
+
 _BLOG_TTL = 300  # 5 minutes
 
 

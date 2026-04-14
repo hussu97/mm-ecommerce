@@ -19,6 +19,15 @@ from app.schemas.cart import (
     SelectedOption,
 )
 
+__all__ = [
+    "add_item",
+    "clear",
+    "get_or_create",
+    "merge",
+    "remove_item",
+    "update_item",
+]
+
 
 def _cart_load_options():
     return [selectinload(Cart.items).joinedload(CartItem.product)]

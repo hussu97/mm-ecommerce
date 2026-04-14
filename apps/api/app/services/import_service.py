@@ -17,6 +17,14 @@ from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.product import Product
 from app.schemas.import_data import ImportError, ImportResult
 
+__all__ = [
+    "import_categories",
+    "import_modifier_options",
+    "import_modifiers",
+    "import_product_modifiers",
+    "import_products",
+]
+
 
 def _slugify(text: str) -> str:
     text = text.lower().strip()

@@ -13,6 +13,15 @@ from app.core.database import AsyncSessionFactory
 from app.core.security import decode_token
 from app.models import User
 
+__all__ = [
+    "get_admin_user",
+    "get_current_active_user",
+    "get_current_user",
+    "get_db",
+    "get_optional_user",
+    "oauth2_scheme",
+]
+
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 
 

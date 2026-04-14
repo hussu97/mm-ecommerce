@@ -8,6 +8,14 @@ from app.models.category import Category
 from app.models.product import Product
 from app.schemas.category import CategoryCreate, CategoryResponse, CategoryUpdate
 
+__all__ = [
+    "create",
+    "delete",
+    "get_all",
+    "get_by_slug",
+    "update",
+]
+
 
 async def _with_product_count(db: AsyncSession, cat: Category) -> CategoryResponse:
     count_result = await db.execute(

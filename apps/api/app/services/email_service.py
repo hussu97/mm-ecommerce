@@ -13,6 +13,16 @@ from app.core.database import AsyncSessionFactory
 from app.models.email_log import EmailLog
 from app.schemas.order import OrderResponse
 
+__all__ = [
+    "send_order_cancelled",
+    "send_order_confirmation",
+    "send_order_packed",
+    "send_password_reset",
+    "send_payment_failed",
+    "send_refund_notification",
+    "send_welcome",
+]
+
 logger = logging.getLogger(__name__)
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates" / "emails"

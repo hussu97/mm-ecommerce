@@ -10,6 +10,12 @@ from sqlalchemy.ext.asyncio import (
 
 from app.core.config import settings
 
+__all__ = [
+    "AsyncSessionFactory",
+    "engine",
+    "get_db",
+]
+
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.is_development,

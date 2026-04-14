@@ -6,6 +6,10 @@ from abc import ABC, abstractmethod
 
 from app.models.order import Order
 
+__all__ = [
+    "PaymentProvider",
+]
+
 
 class PaymentProvider(ABC):
     """Interface every payment provider must satisfy."""

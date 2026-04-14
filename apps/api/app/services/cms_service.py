@@ -8,6 +8,14 @@ from app.core.exceptions import NotFoundError
 from app.models.cms import CmsPage
 from app.schemas.cms import CmsPagePublicResponse, CmsPageResponse
 
+__all__ = [
+    "get_page_admin",
+    "get_page_public",
+    "list_pages",
+    "update_page",
+    "update_page_locale",
+]
+
 _CMS_TTL = 300  # 5 minutes
 
 

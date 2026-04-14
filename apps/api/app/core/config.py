@@ -12,6 +12,11 @@ _DEV_DATABASE_URL = (
 )
 _DEV_SECRET_KEY = "change-me-in-production-use-a-long-random-string-here"
 
+__all__ = [
+    "Settings",
+    "settings",
+]
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

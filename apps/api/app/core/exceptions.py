@@ -1,5 +1,15 @@
 from __future__ import annotations
 
+__all__ = [
+    "AppError",
+    "BadRequestError",
+    "ConflictError",
+    "ForbiddenError",
+    "NotFoundError",
+    "UnauthorizedError",
+    "UnprocessableError",
+]
+
 
 class AppError(Exception):
     """Base application error."""

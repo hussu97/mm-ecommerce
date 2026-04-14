@@ -9,6 +9,15 @@ from app.core.exceptions import ForbiddenError, NotFoundError
 from app.models.address import Address
 from app.schemas.address import AddressCreate, AddressResponse, AddressUpdate
 
+__all__ = [
+    "create",
+    "delete",
+    "get_all",
+    "get_by_id",
+    "set_default",
+    "update",
+]
+
 
 async def get_all(db: AsyncSession, user_id: uuid.UUID) -> list[AddressResponse]:
     result = await db.execute(

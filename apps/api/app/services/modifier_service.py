@@ -16,6 +16,17 @@ from app.schemas.modifier import (
     ModifierUpdate,
 )
 
+__all__ = [
+    "add_option",
+    "create",
+    "delete",
+    "delete_option",
+    "get_all",
+    "get_by_id",
+    "update",
+    "update_option",
+]
+
 
 def _modifier_load_options():
     return [selectinload(Modifier.options)]
