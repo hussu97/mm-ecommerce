@@ -97,9 +97,18 @@ export default async function ProductDetailPage({
       },
       0,
     );
+    // Sum the min option price from required groups (minimum_options > 0) for the lowest possible price
+    const minExtra = product.product_modifiers.reduce(
+      (sum: number, pm: ProductModifier) => {
+        if (pm.minimum_options === 0) return sum;
+        const minOptionPrice = Math.min(...pm.modifier.options.map(o => o.price));
+        return sum + Math.max(0, minOptionPrice);
+      },
+      0,
+    );
     offers = {
       '@type': 'AggregateOffer',
-      lowPrice: basePrice.toFixed(2),
+      lowPrice: (basePrice + minExtra).toFixed(2),
       highPrice: (basePrice + maxExtra).toFixed(2),
       priceCurrency: 'AED',
       availability,
