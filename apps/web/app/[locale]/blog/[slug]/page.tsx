@@ -72,9 +72,9 @@ function BlogBody({ body }: { body: string }) {
         }
         if (block.startsWith('# ')) {
           return (
-            <h1 key={i} className="font-display text-3xl text-primary mt-8 mb-2">
+            <h2 key={i} className="font-display text-3xl text-primary mt-8 mb-2">
               {block.replace(/^# /, '')}
-            </h1>
+            </h2>
           );
         }
         return (

@@ -25,6 +25,12 @@ export async function generateMetadata({
       canonical: `${SITE_URL}/${locale}/all-products`,
       languages: { en: `${SITE_URL}/en/all-products`, ar: `${SITE_URL}/ar/all-products` },
     },
+    openGraph: {
+      title: `${locale === 'ar' ? 'جميع المنتجات' : 'All Products'} | Melting Moments Cakes`,
+      description: 'Browse our full range of handcrafted treats — made with love in the UAE.',
+      images: [{ url: '/images/logos/color_logo.jpeg', alt: 'Melting Moments Cakes' }],
+      locale: locale === 'ar' ? 'ar_AE' : 'en_AE',
+    },
   };
 }
 
@@ -210,7 +216,7 @@ export default async function AllProductsPage({
         <Breadcrumb items={[{ label: t('breadcrumb.home'), href: `/${locale}` }, { label: t('nav.all') }]} />
         <header className="mb-8">
           <h1 className="font-display text-3xl sm:text-4xl text-primary uppercase tracking-widest mb-3">
-            {t('nav.all')}
+            {locale === 'ar' ? 'جميع المنتجات' : 'All Products'}
           </h1>
           <div className="h-px bg-secondary/40 mt-4" />
         </header>

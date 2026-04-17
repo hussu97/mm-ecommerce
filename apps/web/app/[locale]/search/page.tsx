@@ -40,6 +40,7 @@ export async function generateMetadata({
   return {
     title: t('search.title'),
     description: 'Search our handcrafted brownies, cookies and desserts.',
+    robots: { index: false, follow: true },
   };
 }
 

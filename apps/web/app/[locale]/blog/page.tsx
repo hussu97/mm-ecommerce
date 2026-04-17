@@ -23,6 +23,8 @@ export async function generateMetadata({
     openGraph: {
       title: 'Blog | Melting Moments Cakes',
       description: 'Stories, recipes, and inspiration from the Melting Moments kitchen.',
+      images: [{ url: '/images/logos/color_logo.jpeg', alt: 'Melting Moments Cakes' }],
+      locale: locale === 'ar' ? 'ar_AE' : 'en_AE',
     },
   };
 }

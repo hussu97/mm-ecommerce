@@ -47,6 +47,7 @@ export async function generateMetadata({
       title: `${localizedName} | Melting Moments Cakes`,
       description,
       images: ogImages,
+      locale: locale === 'ar' ? 'ar_AE' : 'en_AE',
     },
   };
 }
@@ -127,7 +128,7 @@ export default async function ProductDetailPage({
       seller: BRAND,
       url: offerUrl,
       itemCondition: 'https://schema.org/NewCondition',
-      priceValidUntil: '2027-03-09',
+      priceValidUntil: '2100-01-01',
       shippingDetails: SHIPPING_DETAILS,
       hasMerchantReturnPolicy: RETURN_POLICY,
     };
@@ -169,6 +170,14 @@ export default async function ProductDetailPage({
           { '@type': 'ListItem', position: 3, name: productName },
         ],
       },
+      {
+        '@type': 'WebPage',
+        '@id': `${offerUrl}#webpage`,
+        speakable: {
+          '@type': 'SpeakableSpecification',
+          cssSelector: ['h1', '#product-description'],
+        },
+      },
     ],
   };
 
@@ -202,7 +211,7 @@ export default async function ProductDetailPage({
             </div>
 
             {productDescription && (
-              <p className="font-body text-sm text-gray-600 leading-relaxed">
+              <p id="product-description" className="font-body text-sm text-gray-600 leading-relaxed">
                 {productDescription}
               </p>
             )}

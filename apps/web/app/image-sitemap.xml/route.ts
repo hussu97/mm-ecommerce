@@ -16,10 +16,11 @@ export async function GET() {
     if (catRes.ok) {
       const categories: Category[] = await catRes.json();
       for (const c of categories.filter(cat => cat.is_active && cat.image_url)) {
+        const imgProxy = `${SITE_URL}/_next/image?url=${encodeURIComponent(c.image_url!)}&w=1200&q=75`;
         urls += `  <url>
     <loc>${SITE_URL}/en/${c.slug}</loc>
     <image:image>
-      <image:loc>${escapeXml(c.image_url!)}</image:loc>
+      <image:loc>${escapeXml(imgProxy)}</image:loc>
       <image:title>${escapeXml(c.name)}</image:title>
     </image:image>
   </url>\n`;

@@ -65,6 +65,10 @@ export default async function FaqPage({
     '@graph': [
       {
         '@type': 'FAQPage',
+        speakable: {
+          '@type': 'SpeakableSpecification',
+          cssSelector: ['h1'],
+        },
         mainEntity: items.map(({ question, answer }) => ({
           '@type': 'Question',
           name: question,
