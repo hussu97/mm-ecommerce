@@ -17,6 +17,7 @@ import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
+import { analytics } from '@/lib/analytics';
 import { AddressForm } from './components/AddressForm';
 import { DeliveryCalculator } from './components/DeliveryCalculator';
 import { PromoCodeStep } from './components/PromoCodeStep';
@@ -291,8 +292,13 @@ function StepInformation({
       ? { locationLat: t('checkout.pin_location_required') }
       : {};
     const all = { ...contactErrors, ...addressFieldErrors, ...locationError };
-    if (Object.keys(all).length > 0) { setErrors(all); return; }
+    if (Object.keys(all).length > 0) {
+      setErrors(all);
+      analytics.checkoutError({ step: 1, field: Object.keys(all)[0] });
+      return;
+    }
     setErrors({});
+    analytics.checkoutStepComplete({ step: 1 });
     onNext();
   };
 
@@ -749,10 +755,12 @@ function CheckoutContent() {
 
       // Zero-total order: backend auto-confirmed it, redirect straight to confirmation.
       if (session.confirmed) {
+        analytics.checkoutStepComplete({ step: 3 });
         window.location.href = `/${locale}/checkout/confirmation?order_number=${orderNumber}`;
         return;
       }
 
+      analytics.checkoutStepComplete({ step: 3 });
       window.location.href = session.checkout_url!;
     } catch (err) {
       // If the order was created but payment session setup failed, preserve it so the
@@ -761,6 +769,10 @@ function CheckoutContent() {
         setRetryOrder(createdOrder);
       }
       const message = err instanceof Error ? err.message : 'Something went wrong. Please try again.';
+      analytics.paymentFailed({
+        order_number: createdOrder?.order_number ?? retryOrder?.order_number ?? '',
+        error_message: message,
+      });
       addToast(message, 'error');
       setSubmitting(false);
     }
@@ -812,7 +824,7 @@ function CheckoutContent() {
               form={form}
               onChange={onChange}
               onBack={() => goToStep(1)}
-              onNext={() => goToStep(3)}
+              onNext={() => { analytics.checkoutStepComplete({ step: 2, delivery_method: form.deliveryMethod }); goToStep(3); }}
               subtotal={cart?.subtotal ?? 0}
               deliveryRates={deliveryRates}
             />

@@ -3,6 +3,7 @@
 import { usePathname, useRouter } from 'next/navigation';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import type { Language } from '@/lib/types';
+import { analytics } from '@/lib/analytics';
 
 export function LanguageSwitcher({ languages }: { languages: Language[] }) {
   const { locale } = useTranslation();
@@ -12,7 +13,7 @@ export function LanguageSwitcher({ languages }: { languages: Language[] }) {
   if (languages.length <= 1) return null;
 
   function switchLocale(newLocale: string) {
-    // Replace current locale prefix with new one
+    analytics.localeChanged({ from: locale, to: newLocale });
     const pathWithoutLocale = pathname.replace(/^\/[a-z]{2}/, '') || '/';
     document.cookie = `mm_locale=${newLocale};path=/;max-age=${365 * 24 * 60 * 60}`;
     router.push(`/${newLocale}${pathWithoutLocale}`);

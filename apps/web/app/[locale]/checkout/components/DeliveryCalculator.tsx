@@ -1,6 +1,7 @@
 'use client';
 
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { analytics } from '@/lib/analytics';
 
 interface DeliveryCalculatorProps {
   deliveryMethod: 'delivery' | 'pickup';
@@ -32,7 +33,7 @@ export function DeliveryCalculator({
           name="deliveryMethod"
           value="delivery"
           checked={deliveryMethod === 'delivery'}
-          onChange={() => onChange('delivery')}
+          onChange={() => { analytics.selectDeliveryMethod({ method: 'delivery', fee: isFree ? 0 : deliveryFee }); onChange('delivery'); }}
           className="mt-0.5 accent-primary"
         />
         <div className="flex-1">
@@ -79,7 +80,7 @@ export function DeliveryCalculator({
           name="deliveryMethod"
           value="pickup"
           checked={deliveryMethod === 'pickup'}
-          onChange={() => onChange('pickup')}
+          onChange={() => { analytics.selectDeliveryMethod({ method: 'pickup', fee: 0 }); onChange('pickup'); }}
           className="mt-0.5 accent-primary"
         />
         <div className="flex-1">

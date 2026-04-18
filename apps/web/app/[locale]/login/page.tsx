@@ -9,6 +9,7 @@ import { useAuth } from '@/lib/auth-context';
 import { useCart } from '@/lib/cart-context';
 import { ApiError, getSessionId } from '@/lib/api';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { analytics } from '@/lib/analytics';
 
 function LoginForm() {
   const router = useRouter();
@@ -37,6 +38,7 @@ function LoginForm() {
     setApiError('');
     try {
       await login(form.email, form.password);
+      analytics.userLogin();
       const sessionId = getSessionId();
       if (sessionId) await mergeCart(sessionId).catch(() => {});
       const redirect = searchParams.get('redirect') || '/account';

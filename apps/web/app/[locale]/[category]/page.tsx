@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import type { Category, Product, ProductListResponse } from '@/lib/types';
 import { ProductGrid } from '@/components/category/ProductGrid';
+import { CategoryTracker } from '@/components/analytics/CategoryTracker';
 import { Breadcrumb } from '@/components/ui';
 import { localizedField } from '@/lib/i18n/entity';
 import { getTranslations, createT } from '@/lib/i18n/server';
@@ -189,6 +190,7 @@ export default async function CategoryPage({
 
       <div className="max-w-7xl mx-auto px-4 py-12">
 
+        <CategoryTracker categoryName={categoryName} productCount={data.total} />
         <Breadcrumb items={[{ label: t('breadcrumb.home'), href: `/${locale}` }, { label: categoryName }]} />
 
         {/* Category header */}

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { promoApi } from '@/lib/api';
 import { useToast } from '@/components/ui/Toast';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { analytics } from '@/lib/analytics';
 
 interface PromoCodeStepProps {
   promoCode: string;
@@ -36,13 +37,17 @@ export function PromoCodeStep({
       const result = await promoApi.validate(code, subtotal);
       if (result.valid) {
         onChange({ promoCode: code, promoDiscount: Number(result.discount_amount), promoMessage: result.message ?? '' });
+        analytics.promoApplied({ code, discount: Number(result.discount_amount) });
         addToast(t('checkout.promo_applied', { code }), 'success');
       } else {
-        setError(result.message ?? t('checkout.invalid_promo'));
+        const reason = result.message ?? t('checkout.invalid_promo');
+        setError(reason);
+        analytics.promoFailed({ code, reason });
         onChange({ promoCode: code, promoDiscount: 0, promoMessage: '' });
       }
     } catch {
       setError(t('checkout.promo_error'));
+      analytics.promoFailed({ code, reason: 'network_error' });
     } finally {
       setLoading(false);
     }

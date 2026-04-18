@@ -3,6 +3,7 @@ import Link from 'next/link';
 import type { ProductListResponse } from '@/lib/types';
 import { API_BASE } from '@/lib/api';
 import { ProductGrid } from '@/components/category/ProductGrid';
+import { SearchTracker } from '@/components/analytics/SearchTracker';
 import { getTranslations, createT } from '@/lib/i18n/server';
 
 interface SearchParams {
@@ -99,6 +100,8 @@ export default async function SearchPage({
           </p>
         </div>
       )}
+
+      {q && <SearchTracker query={q} resultCount={data?.total ?? 0} />}
 
       {q && data && data.items.length > 0 && (
         <>

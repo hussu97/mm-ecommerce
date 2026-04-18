@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { ApiError, trackApi } from '@/lib/api';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { analytics } from '@/lib/analytics';
 
 const STATUS_VARIANT: Record<string, string> = {
   created: 'bg-gray-100 text-gray-700',
@@ -39,6 +40,7 @@ export default function TrackPage() {
     setResult(null);
     try {
       const data = await trackApi.lookup(form.order_number.trim(), form.email.trim());
+      analytics.orderTracked({ order_number: data.order_number, status: data.status });
       setResult(data);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t('track.generic_error'));

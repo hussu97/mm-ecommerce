@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { cmsApi } from '@/lib/api';
 import { Breadcrumb } from '@/components/ui';
+import { ContactLink } from '@/components/analytics/ContactLink';
 
 interface ContactContent {
   header?: { label?: string; title?: string; subtitle?: string };
@@ -90,6 +91,7 @@ export default async function ContactPage({
       lines: [info.phone ?? ''],
       href: info.whatsapp ?? null,
       cta: cards.whatsapp_cta ?? null,
+      channel: 'whatsapp' as const,
     },
     {
       icon: 'mail',
@@ -97,6 +99,7 @@ export default async function ContactPage({
       lines: [info.email ?? ''],
       href: info.email ? `mailto:${info.email}` : null,
       cta: cards.email_cta ?? null,
+      channel: 'email' as const,
     },
     {
       icon: 'location_on',
@@ -104,6 +107,7 @@ export default async function ContactPage({
       lines: [info.location ?? '', info.location_detail ?? ''].filter(Boolean),
       href: null,
       cta: null,
+      channel: null,
     },
     {
       icon: 'schedule',
@@ -111,6 +115,7 @@ export default async function ContactPage({
       lines: [info.hours ?? '', info.hours_detail ?? ''].filter(Boolean),
       href: null,
       cta: null,
+      channel: null,
     },
   ];
 
@@ -186,7 +191,7 @@ export default async function ContactPage({
 
         {/* Info Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-14">
-          {INFO_CARDS.map(({ icon, title, lines, href, cta }) => (
+          {INFO_CARDS.map(({ icon, title, lines, href, cta, channel }) => (
             <div
               key={title}
               className="border border-gray-200 p-5 text-center hover:border-primary transition-colors group"
@@ -202,15 +207,16 @@ export default async function ContactPage({
                   {line}
                 </p>
               ))}
-              {href && cta && (
-                <a
+              {href && cta && channel && (
+                <ContactLink
                   href={href}
+                  channel={channel}
                   target={href.startsWith('http') ? '_blank' : undefined}
                   rel={href.startsWith('http') ? 'noopener noreferrer' : undefined}
                   className="inline-block mt-3 text-[11px] font-body uppercase tracking-widest text-primary hover:underline transition-colors"
                 >
                   {cta} →
-                </a>
+                </ContactLink>
               )}
             </div>
           ))}
@@ -239,8 +245,9 @@ export default async function ContactPage({
           )}
           <div className="flex flex-wrap gap-3">
             {c.social?.instagram_url && (
-              <a
+              <ContactLink
                 href={c.social.instagram_url}
+                channel="instagram"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-3 border border-gray-200 hover:border-primary px-4 py-3 transition-colors group"
@@ -260,11 +267,12 @@ export default async function ContactPage({
                     <p className="text-[11px] font-body text-gray-400">{c.social.instagram_handle}</p>
                   )}
                 </div>
-              </a>
+              </ContactLink>
             )}
             {info.whatsapp && (
-              <a
+              <ContactLink
                 href={info.whatsapp}
+                channel="whatsapp"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-3 border border-gray-200 hover:border-primary px-4 py-3 transition-colors group"
@@ -282,7 +290,7 @@ export default async function ContactPage({
                   </p>
                   <p className="text-[11px] font-body text-gray-400">{info.phone ?? ''}</p>
                 </div>
-              </a>
+              </ContactLink>
             )}
           </div>
         </div>

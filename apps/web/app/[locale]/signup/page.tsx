@@ -9,6 +9,7 @@ import { useAuth } from '@/lib/auth-context';
 import { useCart } from '@/lib/cart-context';
 import { ApiError, getSessionId } from '@/lib/api';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { analytics } from '@/lib/analytics';
 
 export default function SignupPage() {
   const router = useRouter();
@@ -47,6 +48,7 @@ export default function SignupPage() {
         password: form.password,
         phone: form.phone || undefined,
       });
+      analytics.userSignup();
       const sessionId = getSessionId();
       if (sessionId) await mergeCart(sessionId).catch(() => {});
       router.push('/account');

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useCart } from '@/lib/cart-context';
 import { useToast, QuantitySelector } from '@/components/ui';
 import { ApiError } from '@/lib/api';
@@ -38,6 +38,16 @@ export function ProductDetailATC({ product }: { product: Product }) {
   const [qty, setQty] = useState(1);
   const [adding, setAdding] = useState(false);
   const [selectedOptions, setSelectedOptions] = useState<SelectedOption[]>([]);
+
+  useEffect(() => {
+    analytics.viewProduct({
+      product_name: localizedField(product, 'name', product.name, locale),
+      category: (product.category as { name?: string } | undefined)?.name ?? '',
+      price: minPrice,
+      has_modifiers: !!hasModifiers,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [totalPrice, setTotalPrice] = useState(Number(product.base_price));
   const [isValid, setIsValid] = useState(!hasModifiers);
 
