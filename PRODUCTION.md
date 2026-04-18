@@ -330,8 +330,10 @@ docker compose -f docker-compose.prod.yml up -d api
    - **Output Directory**: `.next`
 3. Add **Environment Variables**:
    ```
-   NEXT_PUBLIC_API_URL=https://api.meltingmomentscakes.com/api/v1
+   NEXT_PUBLIC_API_URL=/api/v1
+   NEXT_PRIVATE_API_HOST=https://api.meltingmomentscakes.com
    ```
+   > **Why `/api/v1` and not the full URL?** The admin app is deployed on `vercel.app` (a different eTLD+1 from `api.meltingmomentscakes.com`). Browsers block `SameSite=Lax` cookies on cross-site JS fetch calls, so every API call after login would return 401. Using a relative path routes requests through the built-in Next.js proxy (`next.config.ts`), keeping cookies same-origin. Once you add the custom domain `admin.meltingmomentscakes.com` (same site as the API), you may switch to the absolute URL if desired.
 4. Click **Deploy** and verify the preview URL
 5. Go to **Settings → Domains** → add `admin.meltingmomentscakes.com`
 
