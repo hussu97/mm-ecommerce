@@ -57,7 +57,7 @@ Navigate to: **Umami dashboard → [Website] → Funnels → Create funnel**
 
 | Step | Match type | Value |
 |---|---|---|
-| 1. Any landing | URL | `/` |
+| 1. Any landing | URL | `/*` |
 | 2. Product page | URL | `/*/*` |
 | 3. Cart | URL | `/*/cart` |
 | 4. Checkout | URL | `/*/checkout` |
@@ -88,3 +88,4 @@ Navigate to: **Umami dashboard → [Website] → Funnels → Create funnel**
 | Date | Change |
 |---|---|
 | 2026-04-18 | Initial setup — 15 events, 7 goals, 3 funnels across 3 phases |
+| 2026-04-18 | Fix Main Purchase Funnel step 1: `/` → `/*` to match locale-prefixed homepages (`/en`, `/ar`) |
