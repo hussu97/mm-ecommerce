@@ -8,6 +8,11 @@
             "type": "command",
             "command": "code-review-graph update --skip-flows",
             "timeout": 5000
+          },
+          {
+            "type": "command",
+            "command": "if echo \"$CLAUDE_FILE_PATH\" | grep -qE '\\.(ts|tsx)$'; then npx tsc --noEmit 2>&1 | head -20; fi",
+            "timeout": 5000
           }
         ]
       }
