@@ -78,6 +78,16 @@ When adding any new environment variable or secret, update ALL four locations or
 3. `.github/workflows/deploy.yml` — add to the `printf` block in "Write .env on VM"
 4. `.github/workflows/rollback.yml` — same `printf` block (must stay in sync with deploy.yml)
 
+### 10. Analytics Tracking Rule
+Whenever you add, remove, or rename any event in `apps/web/lib/analytics.ts`, you **must** also update `docs/umami-analytics-setup.md`:
+
+1. Add/remove the event row in the **Custom Events Reference** table (include payload fields, phase, and the file it fires from)
+2. Add/remove any related **Goals** entries if the event is used as a goal trigger
+3. Add/remove any related **Funnels** steps
+4. Append a row to the **Changelog** table with today's date and a summary of what changed
+
+Failure to keep this file in sync means the Umami dashboard will be misconfigured in production.
+
 ## Core Principles
 
 - **Simplicity First**: Make every change as simple as possible. Impact minimal code.
