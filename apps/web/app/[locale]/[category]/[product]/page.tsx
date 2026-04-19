@@ -90,14 +90,6 @@ export default async function ProductDetailPage({
     : 'https://schema.org/OutOfStock';
 
   if (hasModifierPrices) {
-    // Sum the max option price from each modifier group to get the highest possible price
-    const maxExtra = product.product_modifiers.reduce(
-      (sum: number, pm: ProductModifier) => {
-        const maxOptionPrice = Math.max(0, ...pm.modifier.options.map(o => o.price));
-        return sum + maxOptionPrice;
-      },
-      0,
-    );
     // Sum the min option price from required groups (minimum_options > 0) for the lowest possible price
     const minExtra = product.product_modifiers.reduce(
       (sum: number, pm: ProductModifier) => {
@@ -107,15 +99,17 @@ export default async function ProductDetailPage({
       },
       0,
     );
+    // Google Merchant Center requires `price` on Offer — AggregateOffer has no `price` attribute
+    // so we use Offer with the minimum reachable price (base + cheapest required modifiers)
     offers = {
-      '@type': 'AggregateOffer',
-      lowPrice: (basePrice + minExtra).toFixed(2),
-      highPrice: (basePrice + maxExtra).toFixed(2),
+      '@type': 'Offer',
+      price: (basePrice + minExtra).toFixed(2),
       priceCurrency: 'AED',
       availability,
-      offerCount: 2,
       url: offerUrl,
       seller: BRAND,
+      itemCondition: 'https://schema.org/NewCondition',
+      priceValidUntil: '2100-01-01',
       shippingDetails: SHIPPING_DETAILS,
       hasMerchantReturnPolicy: RETURN_POLICY,
     };
