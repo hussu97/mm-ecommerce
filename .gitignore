@@ -53,6 +53,10 @@ coverage/
 *.tgz
 *.log
 
+# Certbot runtime state and issued certificates
+certbot/conf/
+certbot/www/
+
 # Branding
 branding/
 csv_templates/
