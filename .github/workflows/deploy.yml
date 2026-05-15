@@ -373,6 +373,7 @@ jobs:
 
           echo "Ensuring nginx is up..."
           docker compose -f docker-compose.prod.yml up -d --no-deps nginx
+          docker compose -f docker-compose.prod.yml exec -T nginx nginx -s reload
 
           echo "Pruning old images..."
           docker image prune -f
