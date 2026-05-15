@@ -49,6 +49,9 @@ const nextConfig: NextConfig = {
     ];
   },
   images: {
+    // Product/category images are already CDN-hosted; avoid burning Vercel's
+    // limited Image Optimization transformations on every storefront variant.
+    unoptimized: true,
     deviceSizes: [640, 750, 828, 1080, 1200, 1920],
     imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
     formats: ["image/avif", "image/webp"],
