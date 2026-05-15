@@ -32,6 +32,7 @@ jobs:
               - 'turbo.json'
             api:
               - 'apps/api/**'
+              - 'nginx/**'
               - 'docker-compose*.yml'
 
   lint-web:
