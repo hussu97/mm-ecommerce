@@ -46,8 +46,26 @@ const nextConfig: NextConfig = {
   },
 };
 
-const exportedConfig = process.env.NEXT_PUBLIC_SENTRY_DSN
-  ? withSentryConfig(nextConfig, { silent: true })
+const sentryEnabled = Boolean(
+  process.env.NEXT_PUBLIC_SENTRY_DSN ?? process.env.SENTRY_DSN ?? process.env.SENTRY_AUTH_TOKEN,
+);
+
+const exportedConfig = sentryEnabled
+  ? withSentryConfig(nextConfig, {
+      org: process.env.SENTRY_ORG,
+      project: process.env.SENTRY_PROJECT ?? "mm-admin",
+      authToken: process.env.SENTRY_AUTH_TOKEN,
+      silent: !process.env.CI,
+      widenClientFileUpload: true,
+      webpack: {
+        treeshake: {
+          removeDebugLogging: true,
+        },
+      },
+      sourcemaps: {
+        disable: !process.env.SENTRY_AUTH_TOKEN,
+      },
+    })
   : nextConfig;
 
 export default exportedConfig;

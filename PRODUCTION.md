@@ -397,97 +397,92 @@ https://<account-id>.r2.cloudflarestorage.com
 
 ---
 
-## Step 11c: Sentry Error Monitoring (optional)
+## Step 11c: Sentry Error Monitoring
 
-Sentry captures unhandled exceptions and performance traces from both Next.js apps and the FastAPI backend. All three apps are already instrumented in code — you only need to supply environment variables.
+Sentry captures unhandled exceptions, React render errors, App Router request errors, source maps, and FastAPI 500s. Use separate Sentry projects so storefront, admin, and API issues stay separated.
 
 ### Create Sentry projects
 
-1. Sign up / log in at [sentry.io](https://sentry.io) and create an organisation (e.g. `melting-moments`)
-2. Create **two projects** inside that organisation:
+Create these projects in the same Sentry org:
 
-   | Project name | Platform |
-   |---|---|
-   | `mm-web` | Next.js |
-   | `mm-api` | Python → FastAPI |
-
-   > The admin panel shares the same Next.js DSN as the web storefront — no third project needed.
-
-3. For each project, go to **Settings → Client Keys (DSN)** and copy the DSN.
-
-### Create a Sentry auth token (source-map uploads)
-
-Sentry's webpack plugin (`withSentryConfig` in `next.config.ts`) uploads source maps at build time so stack traces in the dashboard show your original TypeScript code instead of minified JS.
-
-1. In Sentry, go to **Settings → Auth Tokens → Create New Token**
-2. Grant the scopes: `project:releases`, `org:read`
-3. Copy the token — it goes into Vercel and GitHub as `SENTRY_AUTH_TOKEN`
-
-### Environment variables — Vercel (web storefront)
-
-Add these in Vercel → web project → **Settings → Environment Variables**:
-
-| Variable | Value | Notes |
+| Runtime | Sentry project slug | Platform |
 |---|---|---|
-| `NEXT_PUBLIC_SENTRY_DSN` | DSN from `mm-web` project | Enables runtime error capture |
-| `NEXT_PUBLIC_APP_ENV` | `production` | Controls trace sample rate (10 % prod, 100 % dev) |
-| `SENTRY_AUTH_TOKEN` | auth token from above | Allows source-map upload at build time |
-| `SENTRY_ORG` | your Sentry org slug | e.g. `melting-moments` — visible in Sentry org settings URL |
-| `SENTRY_PROJECT` | `mm-web` | Must match the project slug in Sentry |
+| Storefront frontend | `mm-frontend` | Next.js |
+| Admin frontend | `mm-admin` | Next.js |
+| Ecommerce API | `mm-backend` | Python / FastAPI |
 
-### Environment variables — Vercel (admin panel)
+For each project, copy the DSN from **Project Settings → Client Keys (DSN)**.
 
-Same values as above but add them to the **admin** project in Vercel:
+### Create a Sentry auth token
+
+This token is only for source-map upload during Vercel builds.
+
+1. Go to Sentry → **Settings → Auth Tokens → Create New Token**
+2. Grant `project:releases` and `org:read`
+3. Add the token as `SENTRY_AUTH_TOKEN` in each Vercel project
+
+### Vercel env — storefront
+
+Add these in Vercel → storefront project → **Settings → Environment Variables**:
 
 | Variable | Value |
 |---|---|
-| `NEXT_PUBLIC_SENTRY_DSN` | Same DSN as web (shares the `mm-web` project) |
+| `NEXT_PUBLIC_SENTRY_DSN` | DSN from `mm-frontend` |
 | `NEXT_PUBLIC_APP_ENV` | `production` |
-| `SENTRY_AUTH_TOKEN` | same token |
-| `SENTRY_ORG` | same org slug |
-| `SENTRY_PROJECT` | `mm-web` |
+| `NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE` | `0.02` |
+| `NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE` | `0` |
+| `SENTRY_AUTH_TOKEN` | Sentry auth token |
+| `SENTRY_ORG` | Sentry org slug |
+| `SENTRY_PROJECT` | `mm-frontend` |
 
-### GitHub Actions secret — API backend
+### Vercel env — admin
 
-The `SENTRY_DSN` secret is already wired into `deploy.yml` and `rollback.yml`. Add it to GitHub → repo → **Settings → Secrets → production**:
+Add these in Vercel → admin project:
+
+| Variable | Value |
+|---|---|
+| `NEXT_PUBLIC_SENTRY_DSN` | DSN from `mm-admin` |
+| `NEXT_PUBLIC_APP_ENV` | `production` |
+| `NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE` | `0.02` |
+| `NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE` | `0` |
+| `SENTRY_AUTH_TOKEN` | Sentry auth token |
+| `SENTRY_ORG` | Sentry org slug |
+| `SENTRY_PROJECT` | `mm-admin` |
+
+### GitHub secret — ecommerce API
+
+Add this to GitHub → `hussu97/mm-ecommerce` → **Settings → Environments → production → Secrets**:
 
 | Secret | Value |
 |---|---|
-| `SENTRY_DSN` | DSN from `mm-api` project |
+| `SENTRY_DSN` | DSN from `mm-backend` |
 
-The `SENTRY_ENVIRONMENT` is hardcoded to `production` in the deploy workflow — no separate secret needed.
+The deploy workflow writes `SENTRY_DSN` and `SENTRY_ENVIRONMENT=production` into `/opt/melting-moments-cakes/.env`, and `docker-compose.prod.yml` passes them into the API container.
+The API defaults to `SENTRY_TRACES_SAMPLE_RATE=0.02` in production; add that secret only if you want to override the free-tier-friendly default.
 
-### How it works in each app
+### How it works
 
-**Web & Admin (Next.js)**
-- `sentry.client.config.ts` — initialises Sentry in the browser; enables Session Replay (10 % of sessions, 100 % of error sessions)
-- `sentry.server.config.ts` — initialises Sentry on the Node.js server-side render path
-- `next.config.ts` wraps the build with `withSentryConfig` **only when `NEXT_PUBLIC_SENTRY_DSN` is set**, so local dev and CI without secrets are unaffected
+**Next.js apps**
+- `instrumentation-client.ts` initializes browser Sentry and exports `onRouterTransitionStart`.
+- `instrumentation.ts` registers Node/Edge Sentry and exports `onRequestError`.
+- `app/error.tsx` and `app/global-error.tsx` capture React render errors.
+- `next.config.ts` wraps with `withSentryConfig` only when Sentry env exists; source-map upload is enabled only when `SENTRY_AUTH_TOKEN` is present.
 
-**API (FastAPI)**
-- `sentry_sdk.init()` runs in `app/main.py` before the app is created, with `FastApiIntegration` (automatic request breadcrumbs) and `SqlalchemyIntegration` (query tracing)
-- PII is never sent (`send_default_pii=False`)
-- Trace sample rate: 10 % in production, 100 % otherwise
+**FastAPI API**
+- `sentry_sdk.init()` runs before app creation in `apps/api/app/main.py`.
+- The custom 500 handler explicitly calls `sentry_sdk.capture_exception()` so JSON 500 responses are still reported.
+- PII is disabled with `send_default_pii=False`.
 
 ### Verification
 
-After deploying, trigger a test error to confirm the pipeline is working:
+After deploying, trigger an authenticated backend smoke test:
 
 ```bash
-# Force a test event from the API (replace <token> with a valid admin JWT)
 curl -X POST https://api.meltingmomentscakes.com/api/v1/sentry-debug \
-  -H "Authorization: Bearer <token>"
-# Expected: 500 response — the error should appear in Sentry within seconds
+  -H "Authorization: Bearer <admin-access-token>"
 ```
 
-Or, in the browser, open DevTools console on `meltingmomentscakes.com` and run:
-
-```js
-// Manually send a test event
-import('/sentry-sdk').then(s => s.captureMessage('Sentry smoke test'))
-// Simpler: just throw an unhandled promise rejection
-Promise.reject(new Error('Sentry smoke test'))
-```
+Expected: HTTP 500, followed by a new issue in Sentry project `mm-backend`.
 
 Check **Sentry → Issues** for your organisation — the event should appear within a few seconds.
 
@@ -647,7 +642,7 @@ The `deploy.yml` workflow SSHes into the GCP VM on every push to `main`, writes 
 |--------|-----------------|-------|
 | `BACKUP_GCS_BUCKET` | `melting-moments-cakes-backups` | GCS bucket created in Step 8 |
 | `GCP_PROJECT_ID` | `melting-moments-cakes` | Used by the `gcplogs` Docker driver to ship API logs to Cloud Logging. On GCE this is auto-detected — set it anyway so the `.env` write step is explicit. |
-| `SENTRY_DSN` | `https://...@sentry.io/...` | Sentry project → Settings → Client Keys (DSN). Used by both the API (`SENTRY_DSN`) and both Next.js apps (`NEXT_PUBLIC_SENTRY_DSN`). Leave empty to disable Sentry. |
+| `SENTRY_DSN` | `https://...@sentry.io/...` | DSN from Sentry project `mm-backend`. Used by the ecommerce API container. Frontend DSNs are configured directly in Vercel. |
 
 #### Analytics (optional — leave empty to disable)
 

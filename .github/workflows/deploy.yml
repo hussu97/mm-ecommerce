@@ -324,6 +324,7 @@ jobs:
           GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
           SENTRY_DSN=${{ secrets.SENTRY_DSN }}
           SENTRY_ENVIRONMENT=production
+          SENTRY_TRACES_SAMPLE_RATE=0.02
           ENVEOF
 
       - name: Deploy to GCP VM

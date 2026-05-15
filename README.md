@@ -195,6 +195,11 @@ ADMIN_URL=http://localhost:3001
 # Umami Cloud — leave empty to disable traffic analytics (see Umami section below)
 UMAMI_API_KEY=
 UMAMI_WEBSITE_ID=
+
+# Sentry — leave empty locally unless testing error capture
+SENTRY_DSN=
+SENTRY_ENVIRONMENT=development
+SENTRY_TRACES_SAMPLE_RATE=1.0
 ```
 
 ### Web storefront (`apps/web/.env`)
@@ -206,13 +211,37 @@ NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_...
 # Umami Cloud — leave empty to disable client-side page tracking
 NEXT_PUBLIC_UMAMI_WEBSITE_ID=
 NEXT_PUBLIC_UMAMI_URL=https://cloud.umami.is/script.js
+
+# Sentry project: mm-frontend
+NEXT_PUBLIC_SENTRY_DSN=
+NEXT_PUBLIC_APP_ENV=development
+NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE=1.0
+NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE=0
 ```
 
 ### Admin (`apps/admin/.env`)
 
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
+
+# Sentry project: mm-admin
+NEXT_PUBLIC_SENTRY_DSN=
+NEXT_PUBLIC_APP_ENV=development
+NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE=1.0
+NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE=0
 ```
+
+For production, the storefront and admin Sentry values live in their Vercel projects. The ecommerce API uses GitHub production secret `SENTRY_DSN` from Sentry project `mm-backend`; deployment writes it to the VM and passes it into the API container.
+
+Production Sentry values for the free tier should use:
+
+```env
+NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE=0.02
+NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE=0
+SENTRY_TRACES_SAMPLE_RATE=0.02
+```
+
+Errors are still captured normally; normal session replay is off, while replay-on-error remains enabled in code.
 
 ---
 

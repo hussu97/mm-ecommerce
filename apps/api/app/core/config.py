@@ -100,6 +100,7 @@ class Settings(BaseSettings):
     # ── Sentry (optional — leave empty to disable error tracking) ────────────
     SENTRY_DSN: str = ""
     SENTRY_ENVIRONMENT: str = "development"
+    SENTRY_TRACES_SAMPLE_RATE: float = 0.02
 
     # ── Production guard ──────────────────────────────────────────────────────
     @model_validator(mode="after")

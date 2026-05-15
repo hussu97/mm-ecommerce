@@ -71,6 +71,9 @@ services:
       ADMIN_URL: ${ADMIN_URL}
       UMAMI_API_KEY: ${UMAMI_API_KEY:-}
       UMAMI_WEBSITE_ID: ${UMAMI_WEBSITE_ID:-}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
+      SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.02}
       UVICORN_WORKERS: "1"
     # Ship stdout/stderr directly to GCP Cloud Logging.
     # The app emits structured JSON (severity/message/time/stack_trace) in

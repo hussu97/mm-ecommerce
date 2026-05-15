@@ -22,7 +22,7 @@ from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
-from app.core.deps import get_db
+from app.core.deps import get_admin_user, get_db
 from app.core.exceptions import AppError
 from app.core.limiter import limiter
 from scripts.seed_i18n import seed as seed_i18n
@@ -39,8 +39,9 @@ if settings.SENTRY_DSN:
             FastApiIntegration(),
             SqlalchemyIntegration(),
         ],
-        # Capture 10 % of transactions in production; 100 % elsewhere
-        traces_sample_rate=0.1 if settings.is_production else 1.0,
+        traces_sample_rate=(
+            settings.SENTRY_TRACES_SAMPLE_RATE if settings.is_production else 1.0
+        ),
         send_default_pii=False,
     )
 
@@ -229,6 +230,7 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    sentry_sdk.capture_exception(exc)
     logger.exception("Unhandled exception: %s", exc)
     # ServerErrorMiddleware sits outside CORSMiddleware, so its responses
     # don't get CORS headers. Add them manually here.
@@ -249,6 +251,17 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 # ---------------------------------------------------------------------------
 
 app.include_router(api_router, prefix="/api/v1")
+
+
+@app.post(
+    "/api/v1/sentry-debug",
+    tags=["System"],
+    summary="Force a Sentry test exception",
+    include_in_schema=False,
+)
+async def sentry_debug(_admin=Depends(get_admin_user)) -> None:
+    raise RuntimeError("Sentry debug exception from mm-backend")
+
 
 # ---------------------------------------------------------------------------
 # System endpoints

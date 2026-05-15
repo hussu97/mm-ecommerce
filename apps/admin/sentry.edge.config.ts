@@ -1,4 +1,4 @@
-import * as Sentry from '@sentry/nextjs';
+import * as Sentry from "@sentry/nextjs";
 
 const SENTRY_DSN = process.env.SENTRY_DSN ?? process.env.NEXT_PUBLIC_SENTRY_DSN;
 const SENTRY_ENVIRONMENT =
@@ -6,8 +6,8 @@ const SENTRY_ENVIRONMENT =
   process.env.NEXT_PUBLIC_APP_ENV ??
   process.env.VERCEL_ENV ??
   process.env.NODE_ENV ??
-  'development';
-const isProduction = SENTRY_ENVIRONMENT === 'production';
+  "development";
+const isProduction = SENTRY_ENVIRONMENT === "production";
 
 function sampleRate(name: string, fallback: number): number {
   const value = process.env[name];
@@ -23,6 +23,6 @@ if (SENTRY_DSN) {
     dsn: SENTRY_DSN,
     environment: SENTRY_ENVIRONMENT,
     sendDefaultPii: false,
-    tracesSampleRate: isProduction ? sampleRate('SENTRY_TRACES_SAMPLE_RATE', 0.02) : 1.0,
+    tracesSampleRate: isProduction ? sampleRate("SENTRY_TRACES_SAMPLE_RATE", 0.02) : 1.0,
   });
 }
