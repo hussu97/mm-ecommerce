@@ -22,6 +22,7 @@ export class ApiError extends Error {
 async function refreshAccessToken(): Promise<boolean> {
   const res = await fetch(`${API_BASE}/auth/refresh`, {
     method: 'POST',
+    cache: 'no-store',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
     body: JSON.stringify({}),
