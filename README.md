@@ -297,6 +297,14 @@ Key tables: `users`, `categories`, `products`, `product_variants`, `carts`, `car
 
 ---
 
+## Aggregator Dashboard Auth
+
+The separate `mm-aggregator-automation` dashboard uses this API as the admin identity source. It calls `/api/v1/auth/login` and `/api/v1/auth/me`, then requires `is_admin=true` before showing aggregator data or platform settings.
+
+No customer storefront or ecommerce admin code path depends on the aggregator. The aggregator is only an auth consumer of the existing API contract.
+
+---
+
 ## Umami Cloud Analytics (optional)
 
 Analytics uses [Umami Cloud](https://cloud.umami.is) (free tier) — no self-hosted service required. All traffic metrics on the admin analytics dashboard come from it.
