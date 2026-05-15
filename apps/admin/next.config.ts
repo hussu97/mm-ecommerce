@@ -3,6 +3,19 @@ import { withSentryConfig } from "@sentry/nextjs";
 
 const nextConfig: NextConfig = {
   // output: "standalone" is for self-hosted Docker only — not needed on Vercel
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          {
+            key: "X-Robots-Tag",
+            value: "noindex, nofollow, noarchive, nosnippet, noimageindex",
+          },
+        ],
+      },
+    ];
+  },
   async rewrites() {
     return [
       // Proxy API requests through Next.js so auth cookies are same-origin (dev).

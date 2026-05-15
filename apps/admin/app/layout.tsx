@@ -23,7 +23,23 @@ export const metadata: Metadata = {
     template: "%s | MM Admin",
   },
   description: "Admin dashboard for Melting Moments Cakes",
-  robots: "noindex, nofollow",
+  icons: {
+    icon: "/favicon.ico",
+    shortcut: "/favicon.ico",
+  },
+  robots: {
+    index: false,
+    follow: false,
+    nocache: true,
+    googleBot: {
+      index: false,
+      follow: false,
+      noimageindex: true,
+      "max-snippet": -1,
+      "max-image-preview": "none",
+      "max-video-preview": -1,
+    },
+  },
 };
 
 export default function RootLayout({
