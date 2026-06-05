@@ -222,6 +222,15 @@ async def _handle_payment_succeeded(
         )
         return
 
+    if order.status == OrderStatusEnum.CONFIRMED:
+        if payment_intent_id:
+            order.payment_id = payment_intent_id
+        logger.info(
+            "Payment succeeded webhook skipped — order %s is already confirmed",
+            order_number,
+        )
+        return
+
     if payment_intent_id:
         order.payment_id = payment_intent_id
     order.status = OrderStatusEnum.CONFIRMED

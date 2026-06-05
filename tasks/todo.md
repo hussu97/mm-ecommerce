@@ -1,5 +1,21 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ✅ 2026-06-05: Umami Funnel + Guest Order Email Investigation — DONE
+- [x] Trace frontend Umami script/config and custom event calls for product → cart → checkout → confirmation
+- [x] Verify production Umami proxy/script behavior and recent live payloads
+- [x] Audit checkout/order/payment/email code paths for guest order notification timing
+- [x] Check production RESEND_API_KEY presence and Resend API health without exposing secrets
+- [x] Inspect recent production order/email logs for the guest order
+- [x] Patch missing behavior if root cause is in code, then verify and commit
+- [x] Document findings and verification results
+
+### Findings / Result
+- Umami script is present on production and browser-level validation sent `/en/cart` pageview plus `codex_umami_probe` through `/umami/api/send` → locale redirect → 200. The production Umami read API key returned 403, so dashboard-side reads could not be queried from the VM.
+- Custom frontend events previously dropped silently if called before `window.umami` was available; added a short retry queue in `apps/web/lib/analytics.ts`.
+- Stripe was posting production webhooks to `/api/v1/webhooks/stripe`, but the app only exposed `/api/v1/payments/webhooks/stripe`; production returned 404, so paid order `MM-20260605-001` stayed `created` and did not send confirmation email.
+- Added `/api/v1/webhooks/stripe` compatibility route and an idempotency guard for already-confirmed Stripe success events.
+- Directly reconciled paid order `MM-20260605-001`: set status to `confirmed`, set payment id to the Stripe payment intent, and sent the order confirmation email. `email_logs` shows status `sent` with a Resend id.
+
 ## ✅ Prompt 1: Project Scaffolding & Monorepo Setup — DONE
 - [x] Initialize Turborepo with pnpm workspaces (root package.json, pnpm-workspace.yaml, turbo.json)
 - [x] Create Next.js 15 `apps/web` (App Router, TypeScript, Tailwind CSS v4)

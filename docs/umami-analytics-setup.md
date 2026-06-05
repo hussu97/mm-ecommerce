@@ -8,6 +8,7 @@ Update it whenever `apps/web/lib/analytics.ts` changes.
 ## Custom Events Reference
 
 All events are fired via `window.umami.track(name, data)` from `apps/web/lib/analytics.ts`.
+Events fired before the Umami script finishes loading are queued briefly and retried.
 Umami records them automatically — no dashboard config needed for events to appear under the **Events** tab.
 
 | Event | Payload fields | Phase | Fired from |
@@ -89,3 +90,4 @@ Navigate to: **Umami dashboard → [Website] → Funnels → Create funnel**
 |---|---|
 | 2026-04-18 | Initial setup — 15 events, 7 goals, 3 funnels across 3 phases |
 | 2026-04-18 | Fix Main Purchase Funnel step 1: `/` → `/*` to match locale-prefixed homepages (`/en`, `/ar`) |
+| 2026-06-05 | Queue custom events briefly when the Umami script has not loaded yet; no event names or payload fields changed |

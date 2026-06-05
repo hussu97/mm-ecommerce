@@ -10,6 +10,7 @@ from .promo_codes import router as promo_codes_router
 from .orders import router as orders_router
 from .addresses import router as addresses_router
 from .payments import router as payments_router
+from .webhooks import router as webhooks_router
 from .analytics import router as analytics_router
 from .users import router as users_router
 from .modifiers import router as modifiers_router
@@ -39,6 +40,7 @@ api_router.include_router(
 api_router.include_router(orders_router, prefix="/orders", tags=["Orders"])
 api_router.include_router(addresses_router, prefix="/addresses", tags=["Addresses"])
 api_router.include_router(payments_router, prefix="/payments", tags=["Payments"])
+api_router.include_router(webhooks_router, prefix="/webhooks", tags=["Webhooks"])
 api_router.include_router(analytics_router, prefix="/analytics", tags=["Analytics"])
 api_router.include_router(users_router, prefix="/users", tags=["Users"])
 api_router.include_router(bulk_router, prefix="/bulk", tags=["Bulk"])

@@ -10,10 +10,49 @@ declare global {
   }
 }
 
-function track(event: string, data?: Record<string, unknown>) {
-  if (typeof window !== 'undefined' && window.umami) {
-    window.umami.track(event, data);
+type QueuedEvent = {
+  event: string;
+  data?: Record<string, unknown>;
+};
+
+const queuedEvents: QueuedEvent[] = [];
+const retryDelays = [100, 500, 1500, 3000];
+let flushScheduled = false;
+
+function flushQueuedEvents(): boolean {
+  if (typeof window === 'undefined' || !window.umami) return false;
+
+  while (queuedEvents.length > 0) {
+    const queued = queuedEvents.shift()!;
+    window.umami.track(queued.event, queued.data);
   }
+  return true;
+}
+
+function scheduleFlush() {
+  if (flushScheduled || typeof window === 'undefined') return;
+  flushScheduled = true;
+
+  retryDelays.forEach((delay, index) => {
+    window.setTimeout(() => {
+      const flushed = flushQueuedEvents();
+      if (flushed || index === retryDelays.length - 1) {
+        flushScheduled = false;
+      }
+    }, delay);
+  });
+}
+
+function track(event: string, data?: Record<string, unknown>) {
+  if (typeof window === 'undefined') return;
+
+  if (window.umami) {
+    window.umami.track(event, data);
+    return;
+  }
+
+  queuedEvents.push({ event, data });
+  scheduleFlush();
 }
 
 export const analytics = {
