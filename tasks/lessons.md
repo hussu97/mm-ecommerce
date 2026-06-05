@@ -31,6 +31,11 @@
   2. **API merge**: Skip (continue) items where stock cap reduces `merged_qty` to 0 — never persist a zero-quantity cart item
   3. **Frontend**: Show disabled "Out of Stock" button when `is_stock_product=True` and `stock_quantity <= 0`; expose `stock_quantity` in `ProductResponse` schema so the frontend can act on it
 
+### [2026-06-05] Admin product "Order" is display_order, not stock_quantity
+- **What went wrong**: Interpreted the admin product edit screen's `Order` input (`10000` for Gift Note Card) as stock quantity during an OOS investigation.
+- **Reality**: `ProductForm.tsx` maps `Order` to `display_order`; the admin form exposes `Track Stock` but does not expose a `stock_quantity` input.
+- **Rule**: When investigating stock status, verify `stock_quantity` from the API/DB or an explicit stock field. Do not infer inventory from the admin `Order` control.
+
 ### [2026-03-05] Python: Don't use passlib with Python 3.14+
 - **What went wrong**: `passlib[bcrypt]` crashes on Python 3.14 — `bcrypt.__about__` attribute was removed in bcrypt 4.x, causing passlib's backend detection to fail
 - **Why**: passlib is largely unmaintained; it hasn't caught up with newer bcrypt API changes

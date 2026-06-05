@@ -32,6 +32,7 @@ export function ProductForm({ product }: Props) {
     is_featured: product?.is_featured ?? false,
     is_active: product?.is_active ?? true,
     is_stock_product: product?.is_stock_product ?? false,
+    stock_quantity: String(product?.stock_quantity ?? 0),
     display_order: String(product?.display_order ?? 0),
   });
   const [translations, setTranslations] = useState<Record<string, Record<string, string>>>(product?.translations ?? {});
@@ -70,6 +71,9 @@ export function ProductForm({ product }: Props) {
     if (!form.name.trim()) e.name = 'Required';
     if (!form.slug.trim()) e.slug = 'Required';
     if (form.base_price === '' || isNaN(Number(form.base_price))) e.base_price = 'Valid price required (0 or more)';
+    if (form.is_stock_product && (form.stock_quantity === '' || isNaN(Number(form.stock_quantity)) || Number(form.stock_quantity) < 0)) {
+      e.stock_quantity = 'Valid stock quantity required (0 or more)';
+    }
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -133,6 +137,7 @@ export function ProductForm({ product }: Props) {
       is_featured: form.is_featured,
       is_active: form.is_active,
       is_stock_product: form.is_stock_product,
+      stock_quantity: Number(form.stock_quantity) || 0,
       display_order: Number(form.display_order) || 0,
     };
 
@@ -267,6 +272,19 @@ export function ProductForm({ product }: Props) {
             />
             Track Stock
           </label>
+          {form.is_stock_product && (
+            <div className="w-36">
+              <Input
+                label="Stock Quantity"
+                type="number"
+                min="0"
+                step="1"
+                value={form.stock_quantity}
+                onChange={e => setForm(f => ({ ...f, stock_quantity: e.target.value }))}
+                error={errors.stock_quantity}
+              />
+            </div>
+          )}
           <div className="w-24">
             <Input
               label="Order"

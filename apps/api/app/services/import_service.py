@@ -188,6 +188,12 @@ async def import_products(db: AsyncSession, rows: list[dict]) -> ImportResult:
             image_url = (row.get("image") or "").strip() or None
             is_active = _parse_bool(row.get("is_active", "1"))
             is_stock_product = _parse_bool(row.get("is_stock_product", "0"))
+            stock_quantity_raw = row.get("stock_quantity")
+            stock_quantity = (
+                max(_parse_int(stock_quantity_raw), 0)
+                if stock_quantity_raw is not None and str(stock_quantity_raw).strip()
+                else None
+            )
             calories = (
                 _parse_int(row.get("calories", ""))
                 if row.get("calories", "").strip()
@@ -236,6 +242,8 @@ async def import_products(db: AsyncSession, rows: list[dict]) -> ImportResult:
                 existing.category_id = category_id
                 existing.is_active = is_active
                 existing.is_stock_product = is_stock_product
+                if stock_quantity is not None:
+                    existing.stock_quantity = stock_quantity
                 if calories is not None:
                     existing.calories = calories
                 if prep_time is not None:
@@ -274,6 +282,7 @@ async def import_products(db: AsyncSession, rows: list[dict]) -> ImportResult:
                     category_id=category_id,
                     is_active=is_active,
                     is_stock_product=is_stock_product,
+                    stock_quantity=stock_quantity or 0,
                     calories=calories,
                     preparation_time=prep_time,
                     image_urls=[image_url] if image_url else [],

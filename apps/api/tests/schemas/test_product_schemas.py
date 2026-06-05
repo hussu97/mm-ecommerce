@@ -14,6 +14,26 @@ class TestProductCreate:
             name="Test Product", slug="test-product", base_price=Decimal("10.00")
         )
         assert p.name == "Test Product"
+        assert p.stock_quantity == 0
+
+    def test_stock_quantity_valid_for_stock_product(self):
+        p = ProductCreate(
+            name="Test Product",
+            slug="test-product",
+            base_price=Decimal("10.00"),
+            is_stock_product=True,
+            stock_quantity=12,
+        )
+        assert p.stock_quantity == 12
+
+    def test_negative_stock_quantity_invalid(self):
+        with pytest.raises(ValidationError):
+            ProductCreate(
+                name="Test",
+                slug="test",
+                base_price=Decimal("10.00"),
+                stock_quantity=-1,
+            )
 
     def test_negative_price_invalid(self):
         with pytest.raises(ValidationError):

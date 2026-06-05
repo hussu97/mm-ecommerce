@@ -274,3 +274,31 @@
 - [ ] Scripts: setup.sh, deploy.sh, backup-db.sh, restore-db.sh
 - [ ] Health check endpoints for all services
 - [ ] **Verify**: `docker compose up` runs full stack, nginx proxies work
+
+## Investigation: Gift Note Card OOS (2026-06-05)
+- [x] Review local code paths for product stock, add-to-cart checks, and seed/admin defaults
+- [x] Connect read-only to the MM production VM/DB via GCP credentials and inspect the gift note product row
+- [x] Compare live DB state with code expectations and identify why the storefront reports OOS
+- [x] Document verified root cause, recommended fix, and any follow-up verification
+
+### Review
+- Production DB row `gift-note-card` is active but has `is_stock_product=true` and `stock_quantity=0`.
+- Public API returns the same values, and storefront code treats `is_stock_product && stock_quantity <= 0` as out of stock.
+- This is isolated in production: 1 active stock-tracked OOS product (`Gift Note Card`), 0 active stock-tracked in-stock products, 38 active non-stock-tracked products.
+- Likely data/process cause: `stock_quantity` defaults to 0 and is exposed in responses, but product create/update schemas, the admin product form, and import/export do not currently allow setting it. Imports can set `is_stock_product=true` while leaving quantity at 0.
+- Recommended immediate data fix: set `gift-note-card.is_stock_product=false` if gift notes should not be inventory-gated, or set a positive `stock_quantity` if physical stock should be tracked.
+- Recommended code follow-up: add `stock_quantity` support to product schema/admin/import/export before using `Track Stock` for active products.
+
+## Feature: Product Stock Quantity Admin Support (2026-06-05)
+- [x] Update production Gift Note Card row to `stock_quantity=10000`
+- [x] Add `stock_quantity` to API product create/update schemas
+- [x] Add `stock_quantity` to admin product type and product form, shown when `Track Stock` is enabled
+- [x] Add `stock_quantity` to product CSV import/export/template guidance
+- [x] Verify schema tests and admin build
+- [x] Commit the feature change with the required author
+
+### Review
+- Production API now returns `gift-note-card.stock_quantity=10000`.
+- `apps/api/tests/schemas/test_product_schemas.py` passed: 8 tests.
+- `pnpm --filter admin build` passed.
+- `pnpm --filter admin lint` passed with one pre-existing warning in `apps/admin/eslint.config.mjs`.

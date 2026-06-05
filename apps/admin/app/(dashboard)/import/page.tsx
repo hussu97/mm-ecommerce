@@ -142,7 +142,7 @@ export default function ImportPage() {
         exportKey: 'products',
         title: '2. Products',
         description: 'Import products. Categories must be imported first.',
-        columns: ['id', 'name', 'sku', 'category_reference', 'price', 'description', 'image', prodLang, 'is_active', 'is_stock_product', 'calories', 'preparation_time'].filter(Boolean).join(', '),
+        columns: ['id', 'name', 'sku', 'category_reference', 'price', 'description', 'image', prodLang, 'is_active', 'is_stock_product', 'stock_quantity', 'calories', 'preparation_time'].filter(Boolean).join(', '),
       },
       {
         key: 'modifiers',

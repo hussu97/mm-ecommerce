@@ -67,7 +67,15 @@ async def export_products(db: AsyncSession, languages: list[str]) -> str:
     ]
     for code in languages:
         header.extend([f"name_{code}", f"description_{code}"])
-    header.extend(["is_active", "is_stock_product", "calories", "preparation_time"])
+    header.extend(
+        [
+            "is_active",
+            "is_stock_product",
+            "stock_quantity",
+            "calories",
+            "preparation_time",
+        ]
+    )
     w.writerow(header)
     for r in rows:
         category_ref = (
@@ -91,6 +99,7 @@ async def export_products(db: AsyncSession, languages: list[str]) -> str:
             [
                 str(r.is_active),
                 str(r.is_stock_product),
+                str(r.stock_quantity),
                 str(r.calories) if r.calories else "",
                 str(r.preparation_time) if r.preparation_time else "",
             ]
