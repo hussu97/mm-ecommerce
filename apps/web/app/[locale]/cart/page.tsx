@@ -4,8 +4,9 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useState, useCallback } from 'react';
 import { useCart } from '@/lib/cart-context';
-import { promoApi, authApi, ensureSessionId } from '@/lib/api';
+import { promoApi, ensureSessionId } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import { ensureCheckoutAuth } from '@/lib/checkout-auth';
 import { analytics } from '@/lib/analytics';
 import { Button } from '@/components/ui/Button';
 import { Breadcrumb } from '@/components/ui/Breadcrumb';
@@ -94,7 +95,7 @@ export default function CartPage() {
       // Create guest session if not authenticated
       if (!user) {
         const sessionId = ensureSessionId();
-        await authApi.guest();
+        await ensureCheckoutAuth(user);
         await mergeCart(sessionId);
       }
       // Persist applied promo so checkout page picks it up from sessionStorage
@@ -114,7 +115,7 @@ export default function CartPage() {
       addToast(t('cart.something_wrong'), 'error');
       setCheckoutLoading(false);
     }
-  }, [items.length, subtotal, appliedPromo, mergeCart, addToast, t]);
+  }, [items.length, subtotal, appliedPromo, user, mergeCart, addToast, t]);
 
   // Empty cart
   if (!isLoading && items.length === 0) {

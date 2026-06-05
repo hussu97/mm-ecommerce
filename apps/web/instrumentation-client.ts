@@ -17,6 +17,7 @@ function sampleRate(name: string, fallback: number): number {
 if (SENTRY_DSN) {
   Sentry.init({
     dsn: SENTRY_DSN,
+    tunnel: "/monitoring",
     environment: SENTRY_ENVIRONMENT,
     sendDefaultPii: false,
     tracesSampleRate: isProduction

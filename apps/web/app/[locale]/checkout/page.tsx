@@ -7,9 +7,10 @@ import { useSearchParams } from 'next/navigation';
 import { useCart } from '@/lib/cart-context';
 import {
   ordersApi, paymentsApi, addressesApi, deliveryApi,
-  getSessionId, ensureSessionId, authApi,
+  getSessionId,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import { ensureCheckoutAuth } from '@/lib/checkout-auth';
 import { Breadcrumb } from '@/components/ui/Breadcrumb';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -706,8 +707,7 @@ function CheckoutContent() {
     try {
       // Ensure we have an auth session (create guest session if not logged in)
       if (!user) {
-        ensureSessionId();
-        await authApi.guest();
+        await ensureCheckoutAuth(user);
       }
 
       let orderNumber: string;
@@ -776,7 +776,7 @@ function CheckoutContent() {
       addToast(message, 'error');
       setSubmitting(false);
     }
-  }, [form, cart, retryOrder, locale, addToast, refreshCart, t]);
+  }, [form, cart, retryOrder, user, locale, addToast, refreshCart, t]);
 
   if (!cart && !submitting) {
     return (

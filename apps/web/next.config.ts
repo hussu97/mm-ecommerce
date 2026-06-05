@@ -82,6 +82,7 @@ const exportedConfig = sentryEnabled
       project: process.env.SENTRY_PROJECT ?? "mm-frontend",
       authToken: process.env.SENTRY_AUTH_TOKEN,
       silent: !process.env.CI,
+      tunnelRoute: "/monitoring",
       widenClientFileUpload: true,
       webpack: {
         treeshake: {

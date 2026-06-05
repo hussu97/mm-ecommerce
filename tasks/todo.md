@@ -302,3 +302,19 @@
 - `apps/api/tests/schemas/test_product_schemas.py` passed: 8 tests.
 - `pnpm --filter admin build` passed.
 - `pnpm --filter admin lint` passed with one pre-existing warning in `apps/admin/eslint.config.mjs`.
+
+## Bug: Checkout Cart Empty for Session (2026-06-05)
+- [x] Inspect checkout/cart/auth code paths for guest sessions and cart ownership
+- [x] Query production DB for `sess_ec3a8be6f7d2423c93d90080e62e77a3` cart and related user/cart rows
+- [x] Identify why checkout sees an empty cart after item add
+- [x] Patch the root cause and Sentry setup if blocked by app configuration
+- [x] Verify with focused tests/build and commit with required author
+
+### Review
+- Root cause: `AuthProvider` intentionally hides guest users, so cart/checkout treated an existing guest cookie as unauthenticated and minted a fresh guest user. That overwrote checkout identity and made the backend look at a new empty guest cart.
+- Production DB evidence: the supplied session had no cart; the item was on guest user `2145e572-a349-470c-804d-cd09419e2b4a`, while several newer empty guest users were created immediately after.
+- Production recovery: created a session cart for `sess_ec3a8be6f7d2423c93d90080e62e77a3` and copied the Gift Note Card line into it.
+- Code fix: cart and checkout now call `ensureCheckoutAuth`, which reuses `/auth/me` guest cookies before creating a guest.
+- Sentry fix: web/admin browser Sentry now uses `/monitoring` tunnel routes instead of direct `ingest.../envelope` calls.
+- Verified: `pnpm --filter web test -- lib/checkout-auth.test.ts lib/api.test.ts` passed; `pnpm --filter web lint` passed with existing warnings; `pnpm --filter admin build` passed.
+- Residual: `pnpm --filter web build` compiled and typechecked, then failed because unrelated `/ar/signup` and `/track` prerender attempts exceeded 60s.
