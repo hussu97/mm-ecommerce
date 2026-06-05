@@ -4,6 +4,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlencode
 
 import resend
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -41,6 +42,11 @@ def _render(template_name: str, recipient_email: str, **context) -> str:
         recipient_email=recipient_email,
         **context,
     )
+
+
+def _order_tracking_url(order_number: str, email: str) -> str:
+    query = urlencode({"order_number": order_number, "email": email})
+    return f"{settings.WEB_URL.rstrip('/')}/en/track?{query}"
 
 
 def _send(to: str, subject: str, html: str) -> dict:
@@ -122,6 +128,7 @@ async def send_order_confirmation(order: OrderResponse) -> None:
             recipient_email=order.email,
             name=name,
             order=order,
+            tracking_url=_order_tracking_url(order.order_number, order.email),
         )
         result = await asyncio.to_thread(_send, order.email, subject, html)
     except Exception as exc:

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { ApiError, trackApi } from '@/lib/api';
@@ -22,16 +22,28 @@ interface TrackResult {
   created_at: string;
 }
 
+function getDeeplinkForm() {
+  if (typeof window === 'undefined') return { order_number: '', email: '' };
+  const params = new URLSearchParams(window.location.search);
+  return {
+    order_number: params.get('order_number') ?? '',
+    email: params.get('email') ?? '',
+  };
+}
+
 export default function TrackPage() {
   const { t } = useTranslation();
-  const [form, setForm] = useState({ order_number: '', email: '' });
+  const deeplinkAttempted = useRef(false);
+
+  const [form, setForm] = useState(getDeeplinkForm);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<TrackResult | null>(null);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!form.order_number || !form.email) {
+  const lookupOrder = useCallback(async (orderNumber: string, email: string) => {
+    const trimmedOrderNumber = orderNumber.trim();
+    const trimmedEmail = email.trim();
+    if (!trimmedOrderNumber || !trimmedEmail) {
       setError(t('track.validation_error'));
       return;
     }
@@ -39,7 +51,7 @@ export default function TrackPage() {
     setError('');
     setResult(null);
     try {
-      const data = await trackApi.lookup(form.order_number.trim(), form.email.trim());
+      const data = await trackApi.lookup(trimmedOrderNumber, trimmedEmail);
       analytics.orderTracked({ order_number: data.order_number, status: data.status });
       setResult(data);
     } catch (err) {
@@ -47,6 +59,24 @@ export default function TrackPage() {
     } finally {
       setLoading(false);
     }
+  }, [t]);
+
+  useEffect(() => {
+    const deeplinkForm = getDeeplinkForm();
+    if (
+      deeplinkAttempted.current ||
+      !deeplinkForm.order_number ||
+      !deeplinkForm.email
+    ) {
+      return;
+    }
+    deeplinkAttempted.current = true;
+    void lookupOrder(deeplinkForm.order_number, deeplinkForm.email);
+  }, [lookupOrder]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    await lookupOrder(form.order_number, form.email);
   }
 
   return (

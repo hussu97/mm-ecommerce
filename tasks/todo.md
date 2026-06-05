@@ -1,5 +1,17 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ✅ 2026-06-05: Email Tracking Deeplink + Deliverability — DONE
+- [x] Add signed or parameterized tracking link in order emails for guest and registered customers
+- [x] Update tracking page to consume deeplink query params and load the order directly
+- [x] Verify email template rendering and tracking page behavior with tests
+- [x] Check production email domain/DNS deliverability signals
+- [x] Commit the scoped change
+
+### Findings / Result
+- Order confirmation email CTA now points to public `/en/track?order_number=...&email=...`, so it works for guest and registered customers without requiring account login.
+- `/track` pre-fills and automatically looks up the order when both query params are present; manual lookup still works.
+- DNS checks: root DKIM selector `resend._domainkey.meltingmomentscakes.com` exists; `send.meltingmomentscakes.com` has SPF include for Amazon SES and MX to `feedback-smtp.eu-west-1.amazonses.com`; root DMARC is present but relaxed (`p=none`) and has no reporting address.
+
 ## ✅ 2026-06-05: Umami Funnel + Guest Order Email Investigation — DONE
 - [x] Trace frontend Umami script/config and custom event calls for product → cart → checkout → confirmation
 - [x] Verify production Umami proxy/script behavior and recent live payloads
