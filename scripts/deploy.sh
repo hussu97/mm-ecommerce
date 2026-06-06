@@ -9,7 +9,8 @@ COMPOSE_FILE="docker-compose.prod.yml"
 cd "$DEPLOY_DIR"
 
 echo "==> Pulling latest code..."
-git pull origin main
+git fetch origin main
+git reset --hard origin/main
 
 echo "==> Building API image..."
 docker compose -f "$COMPOSE_FILE" build api

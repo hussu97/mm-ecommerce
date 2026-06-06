@@ -339,7 +339,8 @@ jobs:
           cd /opt/melting-moments-cakes
 
           echo "Pulling latest code (compose files, nginx config, etc.)..."
-          git pull origin main
+          git fetch origin main
+          git reset --hard origin/main
 
           echo "Pulling pre-built API image from GHCR..."
           docker pull ghcr.io/hussu97/mm-ecommerce-api:latest
