@@ -15,6 +15,32 @@ export interface TokenResponse {
   user: User;
 }
 
+export interface AdminLoginOptions {
+  email: string;
+  is_admin: boolean;
+  has_passkey: boolean;
+  password_enabled: boolean;
+  passkey_allowed: boolean;
+  is_superadmin: boolean;
+}
+
+export interface AdminPasskey {
+  id: string;
+  name: string | null;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+export interface AdminUserSummary {
+  id: string;
+  email: string;
+  phone: string | null;
+  is_active: boolean;
+  is_superadmin: boolean;
+  passkey_count: number;
+  created_at: string;
+}
+
 export interface Language {
   code: string;
   name: string;

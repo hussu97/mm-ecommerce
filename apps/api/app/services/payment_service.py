@@ -104,6 +104,7 @@ async def create_session(db: AsyncSession, order_number: str, provider: str) -> 
         await db.flush()
         order_response = OrderResponse.model_validate(order)
         await email_service.send_order_confirmation(order_response)
+        await email_service.send_owner_order_notification(order_response)
         return {
             "provider": "none",
             "session_id": None,
@@ -244,9 +245,10 @@ async def _handle_payment_succeeded(
 
     try:
         await email_service.send_order_confirmation(order_response)
+        await email_service.send_owner_order_notification(order_response)
     except Exception as exc:
         logger.error(
-            "Failed to send order confirmation email for %s: %s",
+            "Failed to send order confirmation emails for %s: %s",
             order_number,
             exc,
         )

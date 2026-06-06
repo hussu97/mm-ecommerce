@@ -8,6 +8,7 @@ interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  loginWithPasskey: (email: string, credential: unknown) => Promise<void>;
   logout: () => void;
 }
 
@@ -34,13 +35,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(res.user);
   }, []);
 
+  const loginWithPasskey = useCallback(async (email: string, credential: unknown) => {
+    const res = await authApi.passkeyLoginVerify(email, credential);
+    if (!res.user.is_admin) {
+      throw new ApiError(403, 'You do not have admin access.');
+    }
+    setUser(res.user);
+  }, []);
+
   const logout = useCallback(() => {
     authApi.logout();
     setUser(null);
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout }}>
+    <AuthContext.Provider value={{ user, isLoading, login, loginWithPasskey, logout }}>
       {children}
     </AuthContext.Provider>
   );

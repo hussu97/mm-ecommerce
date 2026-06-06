@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_admin_user, get_db
+from app.models.admin_passkey import AdminPasskey
 from app.models.order import Order, OrderStatusEnum
 from app.models.user import User as UserModel
 
@@ -34,6 +35,16 @@ class PaginatedCustomers(BaseModel):
     page: int
     per_page: int
     pages: int
+
+
+class AdminUserSummary(BaseModel):
+    id: str
+    email: str
+    phone: str | None
+    is_active: bool
+    is_superadmin: bool
+    passkey_count: int
+    created_at: str
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
@@ -108,3 +119,43 @@ async def list_customers(
         per_page=per_page,
         pages=pages,
     )
+
+
+@router.get("/admin/admin-users", response_model=list[AdminUserSummary])
+async def list_admin_users(
+    db: AsyncSession = Depends(get_db),
+    _admin: UserModel = Depends(get_admin_user),
+) -> list[AdminUserSummary]:
+    """List admin users and passkey registration status."""
+    passkey_counts = (
+        select(
+            AdminPasskey.user_id,
+            func.count(AdminPasskey.id).label("passkey_count"),
+        )
+        .group_by(AdminPasskey.user_id)
+        .subquery()
+    )
+    rows = (
+        await db.execute(
+            select(
+                UserModel,
+                func.coalesce(passkey_counts.c.passkey_count, 0).label("passkey_count"),
+            )
+            .outerjoin(passkey_counts, passkey_counts.c.user_id == UserModel.id)
+            .where(UserModel.is_admin == True)  # noqa: E712
+            .order_by(UserModel.email.asc())
+        )
+    ).all()
+
+    return [
+        AdminUserSummary(
+            id=str(row.User.id),
+            email=row.User.email,
+            phone=row.User.phone,
+            is_active=row.User.is_active,
+            is_superadmin=row.User.email == "admin@meltingmomentscakes.com",
+            passkey_count=int(row.passkey_count),
+            created_at=row.User.created_at.isoformat(),
+        )
+        for row in rows
+    ]

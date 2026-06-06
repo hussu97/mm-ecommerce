@@ -1,10 +1,15 @@
 import type {
+  AdminLoginOptions, AdminPasskey, AdminUserSummary,
   AnalyticsOverview, AuditLog, Category, CmsPage, CustomerBreakdown, RegionData,
   FunnelData, ImportResult, Language, Modifier, Order, OrdersPoint, PaginatedAuditLogs,
   PaginatedCustomers, PaginatedEmailLogs, PaginatedOrders, Product, ProductListResponse,
   PromoCode, PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
   TrafficData, UploadResponse, User, Region, DeliverySettings,
 } from './types';
+import type {
+  PublicKeyCredentialCreationOptionsJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+} from '@simplewebauthn/browser';
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
@@ -72,6 +77,18 @@ const api = {
 export const authApi = {
   login: (email: string, password: string) =>
     api.post<TokenResponse>('/auth/login', { email, password }),
+  adminLoginOptions: (email: string) =>
+    api.post<AdminLoginOptions>('/auth/admin/login-options', { email }),
+  passkeyRegistrationOptions: () =>
+    api.post<{ options: PublicKeyCredentialCreationOptionsJSON }>('/auth/admin/passkeys/register/options', {}),
+  passkeyRegistrationVerify: (credential: unknown, name?: string) =>
+    api.post<AdminPasskey>('/auth/admin/passkeys/register/verify', { credential, name }),
+  passkeyLoginOptions: (email: string) =>
+    api.post<{ options: PublicKeyCredentialRequestOptionsJSON }>('/auth/admin/passkeys/login/options', { email }),
+  passkeyLoginVerify: (email: string, credential: unknown) =>
+    api.post<TokenResponse>('/auth/admin/passkeys/login/verify', { email, credential }),
+  passkeys: () => api.get<AdminPasskey[]>('/auth/admin/passkeys'),
+  deletePasskey: (id: string) => api.delete<void>(`/auth/admin/passkeys/${id}`),
   logout: () => api.post<void>('/auth/logout', {}).catch(() => {}),
   me: () => api.get<User>('/auth/me'),
 };
@@ -196,6 +213,10 @@ export const analyticsApi = {
 export const customersApi = {
   list: (params?: { search?: string; page?: number; per_page?: number }) =>
     api.get<PaginatedCustomers>(`/users/admin/all${buildQs(params)}`),
+};
+
+export const adminUsersApi = {
+  list: () => api.get<AdminUserSummary[]>('/users/admin/admin-users'),
 };
 
 // ─── Promo Codes ──────────────────────────────────────────────────────────────

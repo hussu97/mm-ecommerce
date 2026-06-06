@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { loginPathFor } from '@/lib/auth-redirect';
 import { cn } from '@/lib/utils';
 
 const NAV = [
@@ -14,12 +15,14 @@ const NAV = [
   { href: '/orders',        label: 'Orders',          icon: 'receipt_long' },
   { href: '/promo-codes',   label: 'Promo Codes',     icon: 'local_offer' },
   { href: '/customers',     label: 'Customers',       icon: 'people' },
+  { href: '/admin-users',   label: 'Admin Users',     icon: 'admin_panel_settings' },
   { href: '/analytics',     label: 'Analytics',       icon: 'bar_chart' },
   { href: '/import',        label: 'Import / Export', icon: 'sync_alt' },
   { href: '/languages',     label: 'Languages',       icon: 'translate' },
   { href: '/translations',  label: 'Translations',    icon: 'text_fields' },
   { href: '/content',       label: 'Content',         icon: 'edit_note' },
   { href: '/regions',       label: 'Regions',         icon: 'local_shipping' },
+  { href: '/security',      label: 'Security',        icon: 'vpn_key' },
   { href: '/email-logs',    label: 'Email Logs',      icon: 'mail' },
   { href: '/audit-logs',    label: 'Audit Logs',      icon: 'manage_history' },
 ];
@@ -102,7 +105,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
-    if (!isLoading && !user) router.replace('/login');
+    if (!isLoading && !user) {
+      router.replace(loginPathFor(window.location.pathname, window.location.search));
+    }
   }, [isLoading, user, router]);
 
   if (isLoading) {

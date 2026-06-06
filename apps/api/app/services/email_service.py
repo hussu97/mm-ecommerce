@@ -17,6 +17,7 @@ from app.schemas.order import OrderResponse
 __all__ = [
     "send_order_cancelled",
     "send_order_confirmation",
+    "send_owner_order_notification",
     "send_order_packed",
     "send_password_reset",
     "send_payment_failed",
@@ -27,6 +28,10 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates" / "emails"
+OWNER_ORDER_RECIPIENTS = (
+    "fatema_f@hotmail.co.uk",
+    "fahimakhtarabbasi@gmail.com",
+)
 
 _jinja_env = Environment(
     loader=FileSystemLoader(str(TEMPLATES_DIR)),
@@ -47,6 +52,10 @@ def _render(template_name: str, recipient_email: str, **context) -> str:
 def _order_tracking_url(order_number: str, email: str) -> str:
     query = urlencode({"order_number": order_number, "email": email})
     return f"{settings.WEB_URL.rstrip('/')}/en/track?{query}"
+
+
+def _admin_order_url(order_number: str) -> str:
+    return f"{settings.ADMIN_URL.rstrip('/')}/orders/{order_number}"
 
 
 def _send(to: str, subject: str, html: str) -> dict:
@@ -140,6 +149,36 @@ async def send_order_confirmation(order: OrderResponse) -> None:
         )
         result = {"status": "failed", "resend_id": None, "error": str(exc)}
     await _log("order_confirmation", order.email, subject, result, order.order_number)
+
+
+async def send_owner_order_notification(order: OrderResponse) -> None:
+    subject = f"New Order — {order.order_number} | Melting Moments"
+    admin_order_url = _admin_order_url(order.order_number)
+    for recipient in OWNER_ORDER_RECIPIENTS:
+        try:
+            html = _render(
+                "owner_order_notification.html",
+                recipient_email=recipient,
+                order=order,
+                admin_order_url=admin_order_url,
+            )
+            result = await asyncio.to_thread(_send, recipient, subject, html)
+        except Exception as exc:
+            logger.error(
+                "owner_order_notification render/send failed for %s to %s: %s",
+                order.order_number,
+                recipient,
+                exc,
+                exc_info=True,
+            )
+            result = {"status": "failed", "resend_id": None, "error": str(exc)}
+        await _log(
+            "owner_order_notification",
+            recipient,
+            subject,
+            result,
+            order.order_number,
+        )
 
 
 async def send_order_packed(order: OrderResponse) -> None:

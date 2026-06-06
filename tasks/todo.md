@@ -1,5 +1,35 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ✅ 2026-06-06: Admin Credential Bootstrap Correction — DONE
+- [x] Confirm admin reset gap and capture lesson
+- [x] Directly update production DB for immediate admin access
+- [x] Verify admin password login behavior
+- [x] Remove credential values and hashes from repo docs/migrations
+
+### Findings / Result
+- Corrected the bootstrap gap with an out-of-band production DB update.
+- Production DB was directly updated and verified: all three rows are active admins with a password set.
+- Public API login smoke test returned `200` and `is_admin=true` for all three accounts.
+
+## ✅ 2026-06-06: Admin Order Notifications + Passkey Admin Auth — DONE
+- [x] Audit current admin auth, order, and email flows
+- [x] Add owner order notification email with full order/item details
+- [x] Add admin order deeplink and preserve return URL through admin login
+- [x] Add admin user list endpoint/page for active admin users
+- [x] Seed/ensure admin users: Fatema, Fahim, Hussain, while keeping `admin@meltingmomentscakes.com` as password-only superadmin
+- [x] Add passkey credential storage and WebAuthn registration/login endpoints
+- [x] Update admin login: email first, then password-only or password/passkey depending on passkey availability
+- [x] Add optional passkey setup for logged-in admin users
+- [x] Verify API/admin behavior with focused tests and production-safe checks
+- [x] Commit the scoped change with required author
+
+### Findings / Result
+- Confirmed order flows now send the customer confirmation plus owner notifications to `fatema_f@hotmail.co.uk` and `fahimakhtarabbasi@gmail.com`; the owner template includes customer, delivery/pickup, notes, item/options, payment, totals, and a direct admin order link.
+- Admin order deep links use `/orders/{order_number}` and unauthenticated admin users are redirected through `/login?next=...`, then back to the exact order after password or passkey login.
+- Added `admin_passkeys` and short-lived `webauthn_challenges` tables, plus a migration that ensures `admin@meltingmomentscakes.com`, `fatema_f@hotmail.co.uk`, `fahimakhtarabbasi@gmail.com`, and `h_abbasi97@hotmail.com` are active admin users. The superadmin account remains password-only.
+- Added admin `/admin-users` visibility and `/security` passkey setup/removal screens. Login is now email-first and offers passkey only when that admin has one.
+- Verification: API full suite `211 passed`; admin tests `16 passed`; admin production build passed; API ruff passed with the existing redis-extra warning; admin lint passed with one pre-existing `eslint.config.mjs` warning.
+
 ## ✅ 2026-06-05: Email Tracking Deeplink + Deliverability — DONE
 - [x] Add signed or parameterized tracking link in order emails for guest and registered customers
 - [x] Update tracking page to consume deeplink query params and load the order directly

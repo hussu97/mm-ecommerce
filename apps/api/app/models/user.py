@@ -9,6 +9,7 @@ from .base import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
     from .address import Address
+    from .admin_passkey import AdminPasskey
     from .cart import Cart
     from .order import Order
 
@@ -31,6 +32,9 @@ class User(Base, UUIDMixin, TimestampMixin):
     )
     carts: Mapped[list[Cart]] = relationship("Cart", back_populates="user")
     orders: Mapped[list[Order]] = relationship("Order", back_populates="user")
+    admin_passkeys: Mapped[list[AdminPasskey]] = relationship(
+        "AdminPasskey", back_populates="user", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:
         return f"<User {self.email}>"

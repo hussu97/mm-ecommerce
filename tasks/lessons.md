@@ -36,6 +36,11 @@
 - **Reality**: `ProductForm.tsx` maps `Order` to `display_order`; the admin form exposes `Track Stock` but does not expose a `stock_quantity` input.
 - **Rule**: When investigating stock status, verify `stock_quantity` from the API/DB or an explicit stock field. Do not infer inventory from the admin `Order` control.
 
+### [2026-06-06] Never commit admin passwords or password hashes
+- **What went wrong**: Documented an admin bootstrap password in task notes and added password hashes to migrations.
+- **Reality**: Passwords and password hashes are credentials. Even if production needs a direct credential update, it must be performed out-of-band and kept out of git, docs, migrations, logs, and final summaries.
+- **Rule**: When adding admin users, implement a proper onboarding/reset flow or perform a one-time DB update without committing the password or hash anywhere in the repo.
+
 ### [2026-03-05] Python: Don't use passlib with Python 3.14+
 - **What went wrong**: `passlib[bcrypt]` crashes on Python 3.14 — `bcrypt.__about__` attribute was removed in bcrypt 4.x, causing passlib's backend detection to fail
 - **Why**: passlib is largely unmaintained; it hasn't caught up with newer bcrypt API changes

@@ -23,6 +23,7 @@ dependencies = [
     "redis[asyncio]>=5.0.0",
     "python-json-logger>=3.0.0",
     "sentry-sdk[fastapi]>=2.0.0",
+    "webauthn>=2.5.0",
 ]
 
 [project.optional-dependencies]

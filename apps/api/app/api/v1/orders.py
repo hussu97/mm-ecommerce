@@ -151,6 +151,7 @@ async def update_order_status(
     # Background tasks can be silently dropped on Cloud Run / serverless.
     if data.status == OrderStatusEnum.CONFIRMED:
         await email_service.send_order_confirmation(order)
+        await email_service.send_owner_order_notification(order)
     elif data.status == OrderStatusEnum.PACKED:
         await email_service.send_order_packed(order)
     elif data.status == OrderStatusEnum.CANCELLED:

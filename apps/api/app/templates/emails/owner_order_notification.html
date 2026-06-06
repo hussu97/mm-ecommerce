@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}New Order — {{ order.order_number }}{% endblock %}
+
+{% block content %}
+<h2>New Order</h2>
+<p>A customer order is confirmed and ready to prepare.</p>
+
+<div style="text-align:center;margin:24px 0;">
+  <span class="status status-confirmed">&#10003; Confirmed</span><br/>
+  <span class="order-badge">{{ order.order_number }}</span>
+</div>
+
+<div class="info-box">
+  <p class="label">Customer</p>
+  <p>{{ order.email }}</p>
+  {% if order.shipping_address_snapshot %}
+  {% set addr = order.shipping_address_snapshot %}
+  <p>{{ addr.get('first_name', '') }} {{ addr.get('last_name', '') }}<br/>
+  {{ addr.get('phone', '') }}</p>
+  {% endif %}
+</div>
+
+{% if order.delivery_method.value == "delivery" and order.shipping_address_snapshot %}
+{% set addr = order.shipping_address_snapshot %}
+<div class="info-box">
+  <p class="label">Delivery Address</p>
+  <p>{{ addr.get('address_line_1', '') }}{% if addr.get('address_line_2') %}, {{ addr.get('address_line_2') }}{% endif %}<br/>
+  {{ addr.get('region') or addr.get('city') or addr.get('emirate') or '' }}{% if addr.get('emirate') and addr.get('city') and addr.get('emirate') != addr.get('city') %}, {{ addr.get('emirate') }}{% endif %}, UAE</p>
+</div>
+{% else %}
+<div class="info-box">
+  <p class="label">Collection</p>
+  <p>The customer selected store pickup.</p>
+</div>
+{% endif %}
+
+{% if order.notes %}
+<div class="info-box">
+  <p class="label">Customer Notes</p>
+  <p>{{ order.notes }}</p>
+</div>
+{% endif %}
+
+<table class="items-table" cellpadding="0" cellspacing="0">
+  <thead>
+    <tr>
+      <th>Item</th>
+      <th style="text-align:center;width:50px;">Qty</th>
+      <th class="right" style="width:80px;">Total</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in order.items %}
+    <tr>
+      <td>
+        {{ item.product_name }}
+        {% if item.product_sku %}<span class="variant-label">SKU: {{ item.product_sku }}</span>{% endif %}
+        {% if item.selected_options_snapshot %}<span class="variant-label">{{ item.selected_options_snapshot | map(attribute='option_name') | join(', ') }}</span>{% endif %}
+      </td>
+      <td style="text-align:center;">{{ item.quantity }}</td>
+      <td class="right">{{ "%.2f"|format(item.total_price) }} AED</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<table class="totals" cellpadding="0" cellspacing="0">
+  <tr>
+    <td class="label">Payment</td>
+    <td class="value">{{ order.payment_provider or order.payment_method or "Not recorded" }}</td>
+  </tr>
+  <tr>
+    <td class="label">Subtotal</td>
+    <td class="value">{{ "%.2f"|format(order.subtotal) }} AED</td>
+  </tr>
+  {% if order.discount_amount and order.discount_amount > 0 %}
+  <tr class="discount-row">
+    <td class="label">Discount{% if order.promo_code_used %} ({{ order.promo_code_used }}){% endif %}</td>
+    <td class="value">&minus;{{ "%.2f"|format(order.discount_amount) }} AED</td>
+  </tr>
+  {% endif %}
+  <tr>
+    <td class="label">Delivery</td>
+    <td class="value">{% if order.delivery_fee == 0 %}Free{% else %}{{ "%.2f"|format(order.delivery_fee) }} AED{% endif %}</td>
+  </tr>
+  <tr class="total-row">
+    <td class="label">Total Paid</td>
+    <td class="value">{{ "%.2f"|format(order.total) }} AED</td>
+  </tr>
+</table>
+
+<div style="text-align:center;margin:28px 0;">
+  <a href="{{ admin_order_url }}" class="btn">Open in Admin</a>
+</div>
+{% endblock %}
