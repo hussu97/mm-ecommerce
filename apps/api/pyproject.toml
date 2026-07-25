@@ -32,7 +32,10 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
     "httpx>=0.28.0",
-    "ruff>=0.4.0",
+    # Pinned to a minor range. Ruff was previously unpinned, so a release that
+    # widened the default ruleset turned CI red across the whole package without
+    # a single line of source changing. Bump this deliberately, not by accident.
+    "ruff>=0.15.13,<0.16",
 ]
 
 [build-system]
