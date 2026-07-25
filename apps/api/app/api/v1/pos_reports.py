@@ -157,3 +157,14 @@ async def menu_engineering(
     """Star / plough-horse / puzzle / dog classification by volume and margin."""
     _require(user, "reports.menu_cost")
     return await pos_reports_service.menu_engineering(db, limit=limit, **window.kwargs)
+
+
+@router.get("/speed-of-service")
+async def speed_of_service(
+    window: _Window = Depends(),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Kitchen acknowledge, prep and total times over the window."""
+    _require(user, "reports.other")
+    return await pos_reports_service.speed_of_service(db, **window.kwargs)

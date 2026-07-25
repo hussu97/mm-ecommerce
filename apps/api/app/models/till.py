@@ -146,6 +146,7 @@ class DrawerOperationTypeEnum(str, enum.Enum):
     OPEN_DRAWER = "open_drawer"  # no-sale, audit only
     SALES = "sales"  # cash taken as payment
     RETURN = "return"  # cash refunded
+    SPOT_CHECK = "spot_check"  # mid-shift count, audit only
 
 
 #: Sign each operation type contributes to the expected cash in the drawer.
@@ -156,6 +157,8 @@ DRAWER_SIGN: dict[str, int] = {
     DrawerOperationTypeEnum.CASH_DROP.value: -1,
     DrawerOperationTypeEnum.RETURN.value: -1,
     DrawerOperationTypeEnum.OPEN_DRAWER.value: 0,
+    # A spot check counts the drawer, it does not move anything in or out.
+    DrawerOperationTypeEnum.SPOT_CHECK.value: 0,
 }
 
 

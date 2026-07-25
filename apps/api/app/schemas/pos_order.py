@@ -47,6 +47,26 @@ class AddItemRequest(BaseModel):
     kitchen_notes: str | None = None
 
 
+class SplitOrderRequest(BaseModel):
+    #: The lines to move onto the new check.
+    item_ids: list[UUID] = Field(min_length=1)
+
+
+class SplitOrderResponse(BaseModel):
+    original: "PosOrderResponse"
+    split: "PosOrderResponse"
+
+
+class JoinOrderRequest(BaseModel):
+    #: The check being absorbed; the one in the path survives.
+    source_order_id: UUID
+
+
+class ChangeTableRequest(BaseModel):
+    #: Null lifts the check off the floor plan without closing it.
+    table_id: UUID | None = None
+
+
 class VoidItemRequest(BaseModel):
     reason_id: UUID | None = None
 
@@ -153,6 +173,9 @@ class PosOrderResponse(ORMModel):
     id: UUID
     order_number: str
     check_number: int | None
+    #: Set on the child of a split, and on a check that was joined into
+    #: another, so a terminal can show where a check came from or went.
+    original_order_id: UUID | None = None
     branch_id: UUID | None
     table_id: UUID | None
     device_id: UUID | None

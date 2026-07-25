@@ -834,6 +834,129 @@ async def void_order(
     return await get_order(db, order.id)
 
 
+async def split_order(
+    db: AsyncSession,
+    *,
+    order: Order,
+    user: User,
+    item_ids: list[uuid.UUID],
+) -> tuple[Order, Order]:
+    """
+    Move some lines onto a new check, for a table that wants to pay separately.
+
+    The new check inherits the table, so both halves stay seated, and points
+    back at the original through `original_order_id` so the pair can be traced
+    after the fact. Order-level discounts and charges are deliberately not
+    carried across: they were negotiated against a basket that no longer
+    exists, and apportioning them silently would change what each guest owes.
+    The cashier re-applies them to whichever check should bear them.
+    """
+    _assert_open(order)
+    if order.payments:
+        raise ConflictError("Take the split before any payment is recorded")
+
+    wanted = set(item_ids)
+    if not wanted:
+        raise BadRequestError("Choose at least one item to move")
+
+    moving = [i for i in order.items if i.id in wanted]
+    if len(moving) != len(wanted):
+        raise BadRequestError("Some of those items are not on this check")
+    if len(moving) == len(order.items):
+        raise BadRequestError("Move fewer items — a split cannot empty the check")
+
+    branch = await db.get(Branch, order.branch_id)
+    child = await open_order(
+        db,
+        branch=branch,
+        user=user,
+        order_type=order.order_type,
+        till=await db.get(Till, order.till_id) if order.till_id else None,
+        device_id=order.device_id,
+        # Both checks stay on the table; it is one party, not two seatings.
+        table_id=order.table_id,
+        guests=1,
+        customer_name=order.customer_name,
+        customer_phone=order.customer_phone,
+    )
+    child.original_order_id = order.id
+
+    for item in moving:
+        item.order_id = child.id
+    await db.flush()
+
+    return await recalculate(db, await get_order(db, order.id)), await recalculate(
+        db, await get_order(db, child.id)
+    )
+
+
+async def join_orders(
+    db: AsyncSession, *, target: Order, source: Order, user: User
+) -> Order:
+    """
+    Merge `source` into `target` — one table, one bill.
+
+    The source is marked `joined` rather than deleted so the check number it
+    burned stays accounted for; a gap in the sequence is the kind of thing an
+    auditor asks about.
+    """
+    _assert_open(target)
+    _assert_open(source)
+    if target.id == source.id:
+        raise BadRequestError("Cannot join a check to itself")
+    if source.payments or target.payments:
+        raise ConflictError("Join before either check takes a payment")
+    if source.branch_id != target.branch_id:
+        raise BadRequestError("Checks are at different branches")
+
+    for item in list(source.items):
+        item.order_id = target.id
+    source.pos_status = PosOrderStatusEnum.JOINED.value
+    source.status = "cancelled"
+    source.original_order_id = target.id
+    source.closer_id = user.id
+    source.closed_at = utcnow()
+    target.guests = (target.guests or 1) + (source.guests or 0)
+
+    # Only free the table if the source was sitting somewhere else; the target
+    # may well be on the same one.
+    if source.table_id and source.table_id != target.table_id:
+        await _release_table(db, source)
+
+    await db.flush()
+    await recalculate(db, await get_order(db, source.id))
+    return await recalculate(db, await get_order(db, target.id))
+
+
+async def change_table(
+    db: AsyncSession, *, order: Order, table_id: uuid.UUID | None
+) -> Order:
+    """Move an open check to another table, or off the floor entirely."""
+    _assert_open(order)
+    if order.order_type != OrderTypeEnum.DINE_IN.value:
+        raise BadRequestError("Only a dine-in check sits at a table")
+
+    previous_id = order.table_id
+    if table_id is not None:
+        table = await db.get(PosTable, table_id)
+        if table is None:
+            raise BadRequestError("Table not found")
+        if table.id != previous_id and table.status == TableStatusEnum.OCCUPIED.value:
+            raise ConflictError(f"Table {table.name} already has an open check")
+        table.status = TableStatusEnum.OCCUPIED.value
+
+    order.table_id = table_id
+    # Free the old table only after the new one is claimed, so a failure part
+    # way through cannot leave the party with no table at all.
+    if previous_id and previous_id != table_id:
+        previous = await db.get(PosTable, previous_id)
+        if previous is not None:
+            previous.status = TableStatusEnum.FREE.value
+
+    await db.flush()
+    return await get_order(db, order.id)
+
+
 async def _release_table(db: AsyncSession, order: Order) -> None:
     if order.table_id is None:
         return

@@ -28,6 +28,7 @@ from app.models.inventory import (
 from app.models.order import Order, OrderItem
 from app.models.payment_method import PaymentMethod
 from app.models.pos_order import (
+    KitchenTicket,
     OrderPayment,
     OrderTax,
     PosOrderStatusEnum,
@@ -656,3 +657,78 @@ async def menu_engineering(
             else "dog"
         )
     return enriched
+
+
+async def speed_of_service(
+    db: AsyncSession,
+    *,
+    branch_id: uuid.UUID | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> dict:
+    """
+    How long the kitchen and the counter actually take.
+
+    Three spans, each measured only over the tickets that reached that stage,
+    so a ticket still cooking does not drag the "prep" average down:
+
+      * acknowledge — sent to the kitchen until someone started it
+      * prep        — started until marked ready
+      * total       — sent until ready, the number a customer feels
+
+    Averages alone hide the bad days, so the slowest ticket is reported too.
+    """
+    started = KitchenTicket.started_at.isnot(None)
+    completed = KitchenTicket.completed_at.isnot(None)
+
+    def seconds(start, end):
+        return func.extract("epoch", end - start)
+
+    stmt = (
+        select(
+            func.count(KitchenTicket.id),
+            func.count(KitchenTicket.id).filter(started),
+            func.count(KitchenTicket.id).filter(completed),
+            func.avg(seconds(KitchenTicket.sent_at, KitchenTicket.started_at)).filter(
+                started
+            ),
+            func.avg(
+                seconds(KitchenTicket.started_at, KitchenTicket.completed_at)
+            ).filter(completed & started),
+            func.avg(seconds(KitchenTicket.sent_at, KitchenTicket.completed_at)).filter(
+                completed
+            ),
+            func.max(seconds(KitchenTicket.sent_at, KitchenTicket.completed_at)).filter(
+                completed
+            ),
+        )
+        .select_from(KitchenTicket)
+        .join(Order, Order.id == KitchenTicket.order_id)
+        .where(KitchenTicket.sent_at.isnot(None))
+    )
+    stmt = _scope(stmt, branch_id=branch_id, date_from=date_from, date_to=date_to)
+
+    (
+        tickets,
+        acknowledged,
+        finished,
+        avg_ack,
+        avg_prep,
+        avg_total,
+        slowest,
+    ) = (await db.execute(stmt)).one()
+
+    def minutes(value) -> Decimal:
+        return _q(Decimal(str(value or 0)) / Decimal(60))
+
+    return {
+        "tickets": int(tickets or 0),
+        "acknowledged": int(acknowledged or 0),
+        "completed": int(finished or 0),
+        # Still open at the end of the window — the queue, not a delay.
+        "outstanding": int((tickets or 0) - (finished or 0)),
+        "avg_acknowledge_minutes": minutes(avg_ack),
+        "avg_prep_minutes": minutes(avg_prep),
+        "avg_total_minutes": minutes(avg_total),
+        "slowest_ticket_minutes": minutes(slowest),
+    }

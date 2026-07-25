@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import uuid
 
+from decimal import Decimal
+
 from fastapi import APIRouter, Depends, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastapi import Request
 
 from app.core.cache import cache_delete_pattern, cache_get, cache_set
-from app.core.deps import get_admin_user, get_db
+from app.core.deps import get_admin_user, get_current_active_user, get_db
+from app.core.exceptions import ForbiddenError
+from app.models.menu import BranchProduct
 from app.models.user import User
 from app.schemas.product import (
     ProductCreate,
@@ -184,3 +189,89 @@ async def unlink_modifier(
 ):
     """Unlink a modifier from a product (admin only)."""
     return await product_service.unlink_modifier(db, slug, modifier_id)
+
+
+# ─── Per-branch availability ──────────────────────────────────────────────────
+
+
+class BranchProductResponse(BaseModel):
+    branch_id: uuid.UUID
+    product_id: uuid.UUID
+    is_in_stock: bool
+    is_active: bool
+    price: Decimal | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class SetAvailabilityRequest(BaseModel):
+    branch_id: uuid.UUID
+    is_in_stock: bool | None = None
+    is_active: bool | None = None
+    #: A branch-specific price; null leaves the catalogue price in force.
+    price: Decimal | None = Field(None, ge=0)
+
+
+@router.get("/availability/{branch_id}", response_model=list[BranchProductResponse])
+async def list_branch_availability(
+    branch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_active_user),
+):
+    """
+    Every product this branch has overridden.
+
+    Absent means "as the catalogue says" — only differences are stored, so a
+    branch that sells the standard menu has no rows here at all.
+    """
+    rows = (
+        (
+            await db.execute(
+                select(BranchProduct).where(BranchProduct.branch_id == branch_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [BranchProductResponse.model_validate(r) for r in rows]
+
+
+@router.put("/{product_id}/availability", response_model=BranchProductResponse)
+async def set_branch_availability(
+    product_id: uuid.UUID,
+    data: SetAvailabilityRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """
+    Mark a product in or out of stock at one branch, from the terminal.
+
+    This is the "86 it" button: the kitchen runs out of pistachio kunafa and
+    the cashier needs it off the menu at this branch within seconds, without
+    touching the catalogue every other branch sells from.
+    """
+    if not user.can("pos.products.availability"):
+        raise ForbiddenError("You do not have permission to change availability")
+
+    row = (
+        await db.execute(
+            select(BranchProduct).where(
+                BranchProduct.branch_id == data.branch_id,
+                BranchProduct.product_id == product_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        row = BranchProduct(branch_id=data.branch_id, product_id=product_id)
+        db.add(row)
+
+    if data.is_in_stock is not None:
+        row.is_in_stock = data.is_in_stock
+    if data.is_active is not None:
+        row.is_active = data.is_active
+    if data.price is not None:
+        row.price = data.price
+
+    await db.flush()
+    await db.refresh(row)
+    return BranchProductResponse.model_validate(row)

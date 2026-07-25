@@ -34,6 +34,10 @@ from app.schemas.pos_order import (
     PosOrderResponse,
     ReturnItemRequest,
     VoidItemRequest,
+    SplitOrderRequest,
+    SplitOrderResponse,
+    JoinOrderRequest,
+    ChangeTableRequest,
     VoidOrderRequest,
 )
 from app.services import crud_service, pos_order_service
@@ -335,6 +339,53 @@ async def void_order(
         await pos_order_service.void_order(
             db, order=order, user=user, reason_id=data.reason_id
         )
+    )
+
+
+@router.post("/{order_id}/split", response_model=SplitOrderResponse)
+async def split_order(
+    order_id: uuid.UUID,
+    data: SplitOrderRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Move lines onto a second check so a table can pay separately."""
+    await _require_permission(user, "pos.orders.split")
+    order = await _load(db, order_id)
+    original, split = await pos_order_service.split_order(
+        db, order=order, user=user, item_ids=data.item_ids
+    )
+    return SplitOrderResponse(original=_serialise(original), split=_serialise(split))
+
+
+@router.post("/{order_id}/join", response_model=PosOrderResponse)
+async def join_orders(
+    order_id: uuid.UUID,
+    data: JoinOrderRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Absorb another open check into this one."""
+    await _require_permission(user, "pos.orders.join")
+    target = await _load(db, order_id)
+    source = await _load(db, data.source_order_id)
+    return _serialise(
+        await pos_order_service.join_orders(db, target=target, source=source, user=user)
+    )
+
+
+@router.post("/{order_id}/table", response_model=PosOrderResponse)
+async def change_table(
+    order_id: uuid.UUID,
+    data: ChangeTableRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Move an open check to a different table."""
+    await _require_permission(user, "pos.tables.change_owner")
+    order = await _load(db, order_id)
+    return _serialise(
+        await pos_order_service.change_table(db, order=order, table_id=data.table_id)
     )
 
 

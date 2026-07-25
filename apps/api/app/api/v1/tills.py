@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import uuid
 
+from decimal import Decimal
+
 from fastapi import APIRouter, Depends, Query, Request, status
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -153,6 +156,58 @@ async def till_report(
     till = await till_service.require_till(db, till_id)
     _assert_can_touch(till, user)
     return await till_service.build_report(db, till)
+
+
+class SpotCheckRequest(BaseModel):
+    counted_amount: Decimal = Field(ge=0)
+    notes: str | None = None
+
+
+class SpotCheckResult(BaseModel):
+    counted_amount: Decimal
+    expected_amount: Decimal
+    variance: Decimal
+
+
+@router.post("/{till_id}/spot-check", response_model=SpotCheckResult)
+async def cash_spot_check(
+    till_id: uuid.UUID,
+    data: SpotCheckRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """
+    Count the drawer mid-shift without closing it.
+
+    A manager wants to know the drawer balances now, not at midnight. The
+    count is recorded as a zero-signed drawer operation so it appears in the
+    audit trail and on the Z report's movement list, but does not itself move
+    any cash — the expected balance is unchanged by having been looked at.
+    """
+    if not user.can("pos.spot_check"):
+        raise ForbiddenError("You do not have permission to run a cash spot check")
+
+    till = await till_service.require_till(db, till_id)
+    if till.status != "open":
+        raise ConflictError("This till is already closed")
+
+    expected = await till_service.estimated_cash(db, till)
+    variance = data.counted_amount - expected
+
+    note = f"Counted {data.counted_amount}, expected {expected}, variance {variance}"
+    await till_service.add_drawer_operation(
+        db,
+        till=till,
+        user=user,
+        op_type="spot_check",
+        amount=data.counted_amount,
+        notes=f"{note}. {data.notes}" if data.notes else note,
+    )
+    return SpotCheckResult(
+        counted_amount=data.counted_amount,
+        expected_amount=expected,
+        variance=variance,
+    )
 
 
 # ─── Drawer operations ────────────────────────────────────────────────────────
