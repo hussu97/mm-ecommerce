@@ -57,6 +57,31 @@ class Product(Base, UUIDMixin, TimestampMixin):
     )
     display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
+    # ─── POS fields ───────────────────────────────────────────────────────────
+    name_localized: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Which taxes apply. Null means the product is untaxed.
+    tax_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tax_groups.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # "fixed" uses base_price; "open" makes the cashier key the price at sale time.
+    pricing_method: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="fixed"
+    )
+    # "fixed" uses `cost`; "ingredients" derives it from the recipe.
+    costing_method: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="fixed"
+    )
+    # Staff meals, comps and packaging: never taxed, never counted as revenue.
+    is_non_revenue: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
+    walking_minutes_to_burn_calories: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+
     # Relationships
     category: Mapped[Category] = relationship("Category", back_populates="products")
     product_modifiers: Mapped[list[ProductModifier]] = relationship(

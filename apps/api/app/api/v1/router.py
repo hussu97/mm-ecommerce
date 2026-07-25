@@ -37,6 +37,7 @@ from .pos_config import (
     tax_groups_router,
     taxes_router,
 )
+from .pos_orders import kitchen_router, router as pos_orders_router
 from .staff import roles_router, router as staff_router
 from .tills import router as tills_router
 
@@ -89,3 +90,5 @@ api_router.include_router(tills_router, prefix="/tills", tags=["Tills"])
 api_router.include_router(
     business_settings_router, prefix="/business-settings", tags=["Business Settings"]
 )
+api_router.include_router(pos_orders_router, prefix="/pos/orders", tags=["POS Orders"])
+api_router.include_router(kitchen_router, prefix="/pos/kitchen", tags=["Kitchen"])
