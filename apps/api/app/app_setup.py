@@ -38,6 +38,94 @@ logger = logging.getLogger("mm.api")
 MAX_BODY_BYTES = 10 * 1024 * 1024
 
 
+def configure_observability(*, service: str) -> None:
+    """
+    Structured logging and Sentry, for whichever app is booting.
+
+    Both of these used to live at import time in `main.py`, so the register —
+    which does not import it — ran with neither: its logs reached Cloud
+    Logging as unparsed text, and `capture_exception` in the error handler
+    below was a silent no-op. Every error at a till went nowhere.
+
+    `service` is tagged on each event, because "an error in production" is not
+    actionable when two applications share a database and a DSN.
+    """
+    _configure_logging()
+
+    if not settings.SENTRY_DSN:
+        return
+
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+    from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+
+    sentry_sdk.init(
+        dsn=settings.SENTRY_DSN,
+        environment=settings.SENTRY_ENVIRONMENT,
+        integrations=[FastApiIntegration(), SqlalchemyIntegration()],
+        traces_sample_rate=(
+            settings.SENTRY_TRACES_SAMPLE_RATE if settings.is_production else 1.0
+        ),
+        send_default_pii=False,
+    )
+    sentry_sdk.set_tag("service", service)
+
+
+def _configure_logging() -> None:
+    if not settings.is_production:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="%(asctime)s %(levelname)-8s %(name)s  %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        return
+
+    from pythonjsonlogger.json import JsonFormatter
+
+    class _GCPFormatter(JsonFormatter):
+        """JSON formatter whose output GCP Cloud Logging understands out of the box.
+
+        GCP auto-parses stdout JSON lines and uses these fields:
+          - severity  → log level (maps to ERROR / WARNING / INFO etc.)
+          - message   → main log text
+          - time      → RFC-3339 timestamp
+          - stack_trace → exception traceback (shown in Error Reporting)
+          - httpRequest → structured HTTP request data
+        """
+
+        def add_fields(
+            self,
+            log_record: dict,
+            record: logging.LogRecord,
+            message_dict: dict,
+        ) -> None:
+            super().add_fields(log_record, record, message_dict)
+            # GCP severity field (levelname is already correct: INFO/WARNING/ERROR…)
+            log_record["severity"] = record.levelname
+            log_record.pop("levelname", None)
+            # Move exception traceback into stack_trace so Error Reporting picks it up
+            if record.exc_info:
+                log_record["stack_trace"] = self.formatException(record.exc_info)
+                log_record.pop("exc_info", None)
+                log_record.pop("exc_text", None)
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        _GCPFormatter(
+            fmt="%(asctime)s %(name)s %(message)s",
+            rename_fields={"asctime": "time"},
+            datefmt="%Y-%m-%dT%H:%M:%S%z",
+        )
+    )
+
+    # Apply to root logger AND uvicorn loggers so every log line is structured.
+    # Without this, uvicorn writes its own plain-text lines to stderr.
+    for name in ("", "uvicorn", "uvicorn.access", "uvicorn.error", "uvicorn.asgi"):
+        log = logging.getLogger(name)
+        log.handlers = [handler]
+        log.propagate = False
+    logging.root.setLevel(logging.INFO)
+
+
 def make_lifespan(service: str, *, seed: bool):
     """
     Startup checks, and the i18n seed for whichever app owns it.

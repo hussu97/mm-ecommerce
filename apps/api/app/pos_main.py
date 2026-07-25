@@ -21,8 +21,17 @@ import logging
 from fastapi import FastAPI
 
 from app.api.v1.pos_router import pos_api_router
-from app.app_setup import add_system_endpoints, configure, make_lifespan
+from app.app_setup import (
+    add_system_endpoints,
+    configure,
+    configure_observability,
+    make_lifespan,
+)
 from app.core.config import settings
+
+# Structured logging and Sentry, before the app exists, so a failure during
+# construction is still reported.
+configure_observability(service="mm-pos-api")
 
 logger = logging.getLogger("mm.pos")
 
