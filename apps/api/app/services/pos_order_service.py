@@ -232,11 +232,15 @@ async def _resolve_tax(
         .unique()
         .one_or_none()
     )
-    if group is None or not group.taxes:
+    # A deactivated tax must not be charged. Without this filter, switching a
+    # tax off leaves it silently summing into every order that uses its group —
+    # which is how a duplicate 5% VAT row would have billed customers 10%.
+    links = [link for link in (group.taxes if group else []) if link.tax.is_active]
+    if group is None or not links:
         return Decimal("0"), "No tax", None, True
     # Groups in practice carry a single rate; combine if more are configured.
-    first = group.taxes[0].tax
-    rate = sum((Decimal(str(link.tax.rate)) for link in group.taxes), Decimal("0"))
+    first = links[0].tax
+    rate = sum((Decimal(str(link.tax.rate)) for link in links), Decimal("0"))
     return rate, first.name, str(first.id), first.type == "inclusive"
 
 

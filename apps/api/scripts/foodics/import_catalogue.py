@@ -171,12 +171,26 @@ class Importer:
     async def import_taxes(self) -> None:
         by_foodics_id: dict[str, Tax] = {}
         for row in self.export.get("taxes", []):
+            rate = money(row.get("rate")) / Decimal(100)
+            # Match on the rate, not the name. Production already called its
+            # 5% VAT "VAT" while Foodics calls it "UAE VAT"; matching by name
+            # created a second 5% row, and both landed in the same group —
+            # which would have charged every customer 10%.
+            existing = (
+                (
+                    await self.db.execute(
+                        select(Tax).where(Tax.rate == rate, Tax.deleted_at.is_(None))
+                    )
+                )
+                .scalars()
+                .first()
+            )
             tax = await self.upsert(
                 Tax,
-                {"name": row["name"]},
+                {"name": existing.name if existing else row["name"]},
                 {
                     # Foodics states the rate as a percentage; we store a fraction.
-                    "rate": money(row.get("rate")) / Decimal(100),
+                    "rate": rate,
                     # UAE menu prices are quoted VAT-inclusive.
                     "type": "inclusive",
                     "is_active": True,
