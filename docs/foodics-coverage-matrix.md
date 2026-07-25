@@ -124,7 +124,7 @@ plan.
 | Promotions (basic + advanced, triggers/rewards) | ✅ | `Promotion` |
 | Timed events | ✅ | `TimedEvent`, midnight-crossing tested |
 | Coupons | ✅ | pre-existing `PromoCode` |
-| Bulk coupon creation | ⬜ | single create only |
+| Bulk coupon creation | ✅ | `POST /promo-codes/bulk` — unique single-use codes, unambiguous alphabet |
 | Sales by section / revenue centre / modifier option / tags / coupon | ✅ | `GET /pos/reports/sales/by` — 24 dimensions |
 | Branches trend | ✅ | `GET /pos/reports/branches-trend` |
 | Table utilization | ✅ | `GET /pos/reports/table-utilization` — covers, turns, dwell, sales per seat |

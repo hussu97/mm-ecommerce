@@ -19,6 +19,32 @@ class PromoCodeCreate(BaseModel):
     valid_until: datetime | None = None
 
 
+class PromoCodeBulkCreate(BaseModel):
+    """
+    Generate a batch of one-per-customer coupons.
+
+    Foodics calls this bulk coupon creation: a campaign hands out 500 unique
+    codes rather than one shared code, so a single leak cannot be redeemed by
+    everyone.
+    """
+
+    #: Prepended to every generated code, e.g. "EID" -> "EID-7QK4M2".
+    prefix: str = Field(min_length=1, max_length=12, pattern=r"^[A-Z0-9]+$")
+    count: int = Field(ge=1, le=1000)
+    discount_type: DiscountTypeEnum
+    discount_value: Decimal = Field(gt=0, decimal_places=2)
+    min_order_amount: Decimal | None = Field(None, ge=0)
+    #: Defaults to single-use, which is the point of issuing unique codes.
+    max_uses: int | None = Field(1, ge=1)
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
+
+
+class PromoCodeBulkResponse(BaseModel):
+    created: int
+    codes: list[str]
+
+
 class PromoCodeUpdate(BaseModel):
     discount_value: Decimal | None = Field(None, gt=0)
     min_order_amount: Decimal | None = None

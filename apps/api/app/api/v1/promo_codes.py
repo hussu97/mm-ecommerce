@@ -4,6 +4,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_admin_user, get_db
 from app.models.user import User
 from app.schemas.promo_code import (
+    PromoCodeBulkCreate,
+    PromoCodeBulkResponse,
     PromoCodeCreate,
     PromoCodeResponse,
     PromoCodeUpdate,
@@ -98,3 +100,33 @@ async def delete_promo_code(
         changes={"deleted_code": code},
         request=request,
     )
+
+
+@router.post(
+    "/bulk",
+    response_model=PromoCodeBulkResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_promo_codes_bulk(
+    request: Request,
+    data: PromoCodeBulkCreate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+):
+    """
+    Generate a batch of unique single-use coupons.
+
+    Declared before `/{code}` so "bulk" is not read as a coupon code.
+    """
+    codes = await promo_code_service.create_bulk(db, data)
+    await audit_service.log_action(
+        db,
+        action="CREATE",
+        entity_type="promo_code",
+        entity_id=data.prefix,
+        entity_label=f"{len(codes)} codes with prefix {data.prefix}",
+        admin=admin,
+        changes={"prefix": data.prefix, "count": len(codes)},
+        request=request,
+    )
+    return PromoCodeBulkResponse(created=len(codes), codes=codes)
