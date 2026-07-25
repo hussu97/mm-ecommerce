@@ -105,6 +105,23 @@ jobs:
     needs: changes
     if: needs.changes.outputs.api == 'true'
     runs-on: ubuntu-latest
+    # A real database, because the bugs that reached production were a lazy
+    # load in async context and a stale read after commit. Neither is visible
+    # without a live session and a round trip.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: mm
+          POSTGRES_PASSWORD: mm
+          POSTGRES_DB: mm_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -146,7 +163,16 @@ jobs:
         env:
           RUFF_CACHE_DIR: ~/.cache/ruff
 
+      - name: Prepare the test database
+        env:
+          TEST_DATABASE_URL: postgresql+asyncpg://mm:mm@localhost:5432/mm_test
+        run: |
+          cd apps/api
+          DATABASE_URL="$TEST_DATABASE_URL" alembic upgrade head
+
       - name: Run pytest
+        env:
+          TEST_DATABASE_URL: postgresql+asyncpg://mm:mm@localhost:5432/mm_test
         run: |
           cd apps/api
           pytest tests/ -v --tb=short --cov=app --cov-report=term-missing

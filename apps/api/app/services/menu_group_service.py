@@ -159,6 +159,13 @@ async def get(db: AsyncSession, group_id: uuid.UUID) -> MenuGroup:
         await db.execute(
             select(MenuGroup)
             .options(selectinload(MenuGroup.members))
+            # The session is configured with expire_on_commit=False, so a group
+            # already in the identity map is handed back with the collection it
+            # was loaded with — which, when this runs straight after a write, is
+            # the membership from *before* it. The console would show the old
+            # contents the instant you saved. This forces the row and its
+            # collections to be re-read.
+            .execution_options(populate_existing=True)
             .where(MenuGroup.id == group_id, MenuGroup.deleted_at.is_(None))
         )
     ).scalar_one_or_none()
@@ -229,7 +236,20 @@ async def _set_products(
     if missing:
         raise BadRequestError(f"No such product: {', '.join(missing)}")
 
-    existing = {m.product_id: m for m in group.members}
+    # Query the link rows rather than reading `group.members`. On a group that
+    # was only just added and flushed the relationship is unloaded, so touching
+    # it emits a lazy load — which raises under asyncio rather than returning
+    # the empty list it looks like it should.
+    existing = {
+        link.product_id: link
+        for link in (
+            await db.execute(
+                select(MenuGroupProduct).where(MenuGroupProduct.group_id == group.id)
+            )
+        )
+        .scalars()
+        .all()
+    }
     for product_id in existing.keys() - set(product_ids):
         await db.delete(existing[product_id])
     for order, product_id in enumerate(product_ids):
