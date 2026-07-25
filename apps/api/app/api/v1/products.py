@@ -113,8 +113,22 @@ async def list_featured(
 
 
 @router.get("/{slug}", response_model=ProductResponse)
-async def get_product(slug: str, db: AsyncSession = Depends(get_db)):
-    """Get a product by slug with all modifiers."""
+async def get_product(
+    slug: str,
+    db: AsyncSession = Depends(get_db),
+    viewer: User | None = Depends(get_optional_user),
+):
+    """
+    Get a product by slug with all modifiers.
+
+    Staff see the product whatever its channel or status; a shopper sees it
+    only if it is live on the website. Without the distinction the console
+    could list a counter item and then 404 trying to open it — and every
+    inactive product was unreachable for editing, which is precisely when
+    someone needs to reach it.
+    """
+    if viewer is not None and (viewer.is_staff or viewer.is_admin):
+        return await product_service.get_by_slug_admin(db, slug)
     return await product_service.get_by_slug(db, slug)
 
 

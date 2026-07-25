@@ -17,6 +17,9 @@ import { Button, Input } from '@/components/ui';
 
 const BLANK = { name: '', name_localized: '', parent_id: null as string | null, is_active: true };
 
+/** The API rejects anything above 100 outright, so page rather than ask for more. */
+const CATALOGUE_PAGE_SIZE = 100;
+
 /** Flattened, depth-annotated, for the parent picker. */
 function flatten(nodes: MenuGroupNode[], depth = 0): { node: MenuGroupNode; depth: number }[] {
   return nodes.flatMap(node => [{ node, depth }, ...flatten(node.children, depth + 1)]);
@@ -39,24 +42,51 @@ export default function MenuGroupsPage() {
   const [productSearch, setProductSearch] = useState('');
   const [saving, setSaving] = useState(false);
   const [apiError, setApiError] = useState('');
+  const [loadError, setLoadError] = useState('');
+
+  /**
+   * The whole catalogue, a page at a time.
+   *
+   * The API caps `per_page` at 100 and returns 422 above it, so asking for
+   * everything in one request fails outright rather than returning a short
+   * page — which is how a group editor ends up with no products to pick from.
+   */
+  const loadEveryProduct = useCallback(async () => {
+    const all: Product[] = [];
+    let page = 1;
+    for (;;) {
+      const chunk = await productsApi.list({
+        include_inactive: true,
+        per_page: CATALOGUE_PAGE_SIZE,
+        page,
+      });
+      all.push(...chunk.items);
+      if (page >= chunk.pages) return all;
+      page += 1;
+    }
+  }, []);
 
   const load = useCallback(async () => {
-    const [groups, catalogue] = await Promise.all([
-      menuGroupsApi.tree(true),
-      productsApi.list({ include_inactive: true, per_page: 1000 }),
-    ]);
-    setTree(groups);
-    setProducts(catalogue.items);
-    setLoading(false);
-  }, []);
+    setLoadError('');
+    try {
+      const [groups, catalogue] = await Promise.all([
+        menuGroupsApi.tree(true),
+        loadEveryProduct(),
+      ]);
+      setTree(groups);
+      setProducts(catalogue);
+    } catch (e) {
+      // Without this the screen sits on "Loading…" for ever and says nothing
+      // about why, which is indistinguishable from the page being broken.
+      setLoadError(e instanceof ApiError ? e.message : 'Could not load the menu');
+    } finally {
+      setLoading(false);
+    }
+  }, [loadEveryProduct]);
 
   useEffect(() => { load(); }, [load]);
 
   const flat = useMemo(() => flatten(tree), [tree]);
-  const productsById = useMemo(
-    () => new Map(products.map(p => [p.id, p])),
-    [products],
-  );
 
   function openAdd(parent: MenuGroupNode | null) {
     setEditing(null);
@@ -109,7 +139,11 @@ export default function MenuGroupsPage() {
       ? `Switching "${node.name}" off also hides ${count} group${count > 1 ? 's' : ''} nested inside it. Continue?`
       : null;
     if (node.is_active && warning && !confirm(warning)) return;
-    await menuGroupsApi.update(node.id, { is_active: !node.is_active });
+    try {
+      await menuGroupsApi.update(node.id, { is_active: !node.is_active });
+    } catch (e) {
+      setLoadError(e instanceof ApiError ? e.message : 'Could not change the group');
+    }
     await load();
   }
 
@@ -117,7 +151,11 @@ export default function MenuGroupsPage() {
     const count = subtreeIds(node).length - 1;
     const extra = count ? ` and ${count} group${count > 1 ? 's' : ''} nested inside it` : '';
     if (!confirm(`Delete "${node.name}"${extra}?`)) return;
-    await menuGroupsApi.delete(node.id);
+    try {
+      await menuGroupsApi.delete(node.id);
+    } catch (e) {
+      setLoadError(e instanceof ApiError ? e.message : 'Could not delete the group');
+    }
     await load();
   }
 
@@ -210,6 +248,14 @@ export default function MenuGroupsPage() {
         cashier through one. Groups nest — switching a parent off hides everything
         inside it.
       </p>
+
+      {loadError && (
+        <div className="mb-4 flex items-center gap-3 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded font-body text-sm">
+          <span className="material-symbols-outlined text-base">error</span>
+          <span>{loadError}</span>
+          <button onClick={load} className="ml-auto underline">Retry</button>
+        </div>
+      )}
 
       <div className="bg-white rounded-lg shadow-sm overflow-hidden">
         <table className="w-full">

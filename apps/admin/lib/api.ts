@@ -143,9 +143,18 @@ export const menuGroupsApi = {
 // ─── Products ─────────────────────────────────────────────────────────────────
 
 export const productsApi = {
-  list: (params?: { search?: string; category?: string[]; page?: number; per_page?: number; include_inactive?: boolean; is_active?: boolean; sort?: string }) => {
-    if (!params) return api.get<ProductListResponse>('/products');
+  /**
+   * The console manages every product, so these default to `channel: 'all'`.
+   *
+   * The API defaults to `web` — deliberately, so a forgotten parameter cannot
+   * put counter items on a cake website. That default is wrong here in the
+   * opposite direction: without this the console could only see the 39
+   * web-visible products and had no way to reach the 92 sold only at the till.
+   */
+  list: (params?: { search?: string; category?: string[]; page?: number; per_page?: number; include_inactive?: boolean; is_active?: boolean; sort?: string; channel?: 'web' | 'pos' | 'all' }) => {
+    if (!params) return api.get<ProductListResponse>('/products?channel=all');
     const p = new URLSearchParams();
+    p.set('channel', params.channel ?? 'all');
     if (params.search) p.set('search', params.search);
     params.category?.forEach(c => p.append('category', c));
     if (params.page !== undefined) p.set('page', String(params.page));
