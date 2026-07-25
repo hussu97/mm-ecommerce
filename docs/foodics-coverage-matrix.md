@@ -198,18 +198,36 @@ notification rules, and the live branches + inventory dashboards.
 
 ## Genuinely still open
 
-Small, and each is a UI or endpoint over data that already exists:
-
 | Gap | Note |
 |---|---|
-| Split / join checks | `original_order_id` is modelled; needs two endpoints |
-| Mark out of stock from the terminal | `BranchProduct.is_in_stock` exists; needs an endpoint |
-| Cost adjustment | transaction type exists; needs an endpoint |
-| Inventory count workflow | variance capture exists; needs the draft→close flow |
-| Change table owner | permission exists; needs an endpoint |
-| Speed of service report | needs aggregation over kitchen ticket timings |
-| Bulk coupon creation | single create today |
-| Delivery zone polygons | `Region` covers fees, not geofences |
-| Scale integration for weighed items | hardware, needs a device |
+| Delivery zone polygons | `Region` covers fees and a named zone, not a drawn geofence |
+| Scale integration for weighed items | The weight reaches the line and the receipt; reading it off a scale needs the hardware |
+| Recipe costing | Product cost is currently a food-cost estimate, not derived from ingredients |
 
-| Sales predictions | ✅ | `GET /pos/reports/sales-predictions` — weekday averages with an honest confidence |
+Everything else once listed here shipped: split and join checks, marking an
+item out of stock from the terminal, cost adjustment, the count draft→close
+flow, change table owner, the speed-of-service report and bulk coupons.
+
+## Production data
+
+Loaded from the live Foodics account and verified against it:
+
+| | |
+|---|---|
+| Products | 131 — 39 on the website, 92 counter-only |
+| Pricing | 81 fixed, 49 priced by a required size modifier, 1 open price |
+| Categories / modifiers | 19 / 58 groups, 220 options |
+| Branches / devices / printers | 2 / 2 / 4 (receipt + kitchen each) |
+| Staff / roles | 9 — 3 Super_Admin, 6 Cashier (44 permissions, no back office) |
+| Tenders / taxes | 11 / one 5% VAT, tax-inclusive |
+| Suppliers / stock items | 11 / 98, across 8 categories and 2 warehouses |
+| Floor plan | 2 sections, 16 tables |
+
+Two figures are estimates rather than Foodics values, and are marked as such
+where they are set: product cost (32% of price) and the printer IP addresses.
+
+### Verified end to end in production
+
+Pair → PIN → open till → ring up an espresso at 12.00 through its size
+modifier → add an open-price cake at 250.00 → pay 262.00 cash (VAT 12.47 on a
+249.53 net) → refund → void → close till at **variance 0.00**.
