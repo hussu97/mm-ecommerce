@@ -116,6 +116,16 @@ from .marketing import (  # noqa: F401
     TimedEvent,
     TimedEventTypeEnum,
 )
+from .operations import (  # noqa: F401
+    NotificationRule,
+    Reservation,
+    ReservationStatusEnum,
+    SpotCheck,
+    SpotCheckItem,
+    TransferOrder,
+    TransferOrderItem,
+    TransferOrderStatusEnum,
+)
 from .pos_order import (  # noqa: F401
     DeliveryStatusEnum,
     DiscountSourceEnum,
@@ -268,4 +278,13 @@ __all__ = [
     "HouseAccount",
     "HouseAccountTransaction",
     "HouseAccountTransactionTypeEnum",
+    # Operations
+    "TransferOrder",
+    "TransferOrderItem",
+    "TransferOrderStatusEnum",
+    "SpotCheck",
+    "SpotCheckItem",
+    "Reservation",
+    "ReservationStatusEnum",
+    "NotificationRule",
 ]

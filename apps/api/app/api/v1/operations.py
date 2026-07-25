@@ -1,0 +1,826 @@
+"""
+Transfer orders, production, spot checks, reservations, notification rules,
+and the live branches dashboard.
+
+These close the last verified gaps against the Foodics audit — see
+docs/foodics-coverage-matrix.md.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Literal
+
+from fastapi import APIRouter, Depends, Query, status
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.deps import get_current_active_user, get_db
+from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError
+from app.models import (
+    Branch,
+    Device,
+    InventoryItem,
+    InventoryLevel,
+    NotificationRule,
+    Order,
+    PosOrderStatusEnum,
+    PosTable,
+    Reservation,
+    Section,
+    SpotCheck,
+    SpotCheckItem,
+    TableStatusEnum,
+    Till,
+    TillStatusEnum,
+    TransferOrder,
+    TransferOrderItem,
+    Warehouse,
+)
+from app.models.base import utcnow
+from app.models.user import User
+from app.services import (
+    business_day_service,
+    crud_service,
+    inventory_service,
+    transfer_service,
+)
+
+from .pos_config import build_crud_router
+
+
+class ORMModel(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+
+def _require(user: User, permission: str) -> None:
+    if not user.can(permission):
+        raise ForbiddenError(f"You do not have permission to {permission}")
+
+
+# ─── Transfer orders ──────────────────────────────────────────────────────────
+
+transfer_orders_router = APIRouter()
+
+
+class TransferLineInput(BaseModel):
+    item_id: uuid.UUID
+    quantity: Decimal = Field(gt=0)
+    unit: Literal["storage", "ingredient"] = "storage"
+    notes: str | None = None
+
+
+class TransferOrderCreate(BaseModel):
+    branch_id: uuid.UUID
+    source_branch_id: uuid.UUID
+    warehouse_id: uuid.UUID | None = None
+    source_warehouse_id: uuid.UUID | None = None
+    required_date: date | None = None
+    notes: str | None = None
+    items: list[TransferLineInput] = Field(min_length=1)
+
+
+class QuantityDecision(BaseModel):
+    transfer_order_item_id: uuid.UUID
+    quantity: Decimal = Field(ge=0)
+
+
+class AcceptTransfer(BaseModel):
+    lines: list[QuantityDecision] = Field(default_factory=list)
+
+
+class TransferOrderLineResponse(ORMModel):
+    id: uuid.UUID
+    item_id: uuid.UUID
+    quantity: Decimal
+    approved_quantity: Decimal | None
+    sent_quantity: Decimal
+    received_quantity: Decimal
+    unit: str
+    notes: str | None
+    item_name: str | None = None
+    item_sku: str | None = None
+
+
+class TransferOrderResponse(ORMModel):
+    id: uuid.UUID
+    reference: str
+    status: str
+    branch_id: uuid.UUID
+    source_branch_id: uuid.UUID
+    business_date: str
+    required_date: date | None
+    notes: str | None
+    submitted_at: datetime | None
+    responded_at: datetime | None
+    sent_transaction_id: uuid.UUID | None
+    received_transaction_id: uuid.UUID | None
+    created_at: datetime
+    items: list[TransferOrderLineResponse] = []
+
+
+async def _serialise_transfer(
+    db: AsyncSession, order: TransferOrder
+) -> TransferOrderResponse:
+    payload = TransferOrderResponse.model_validate(order)
+    ids = {line.item_id for line in order.items}
+    if ids:
+        rows = (
+            (await db.execute(select(InventoryItem).where(InventoryItem.id.in_(ids))))
+            .scalars()
+            .all()
+        )
+        lookup = {r.id: r for r in rows}
+        for line in payload.items:
+            item = lookup.get(line.item_id)
+            if item:
+                line.item_name = item.name
+                line.item_sku = item.sku
+    return payload
+
+
+@transfer_orders_router.get("", response_model=list[TransferOrderResponse])
+async def list_transfer_orders(
+    branch_id: uuid.UUID | None = None,
+    source_branch_id: uuid.UUID | None = None,
+    status_filter: str | None = Query(None, alias="status"),
+    limit: int = Query(100, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    _require(user, "inventory.transfer_orders.create")
+    stmt = select(TransferOrder)
+    if branch_id:
+        stmt = stmt.where(TransferOrder.branch_id == branch_id)
+    if source_branch_id:
+        stmt = stmt.where(TransferOrder.source_branch_id == source_branch_id)
+    if status_filter:
+        stmt = stmt.where(TransferOrder.status == status_filter)
+    stmt = stmt.order_by(TransferOrder.created_at.desc()).limit(limit)
+    orders = list((await db.execute(stmt)).scalars().unique().all())
+    return [await _serialise_transfer(db, o) for o in orders]
+
+
+@transfer_orders_router.post(
+    "", response_model=TransferOrderResponse, status_code=status.HTTP_201_CREATED
+)
+async def create_transfer_order(
+    data: TransferOrderCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    _require(user, "inventory.transfer_orders.create")
+    if data.branch_id == data.source_branch_id:
+        raise BadRequestError("A branch cannot transfer to itself")
+
+    destination = await crud_service.get_or_404(db, Branch, data.branch_id)
+    await crud_service.get_or_404(db, Branch, data.source_branch_id)
+
+    order = TransferOrder(
+        reference=await transfer_service.next_transfer_reference(db),
+        branch_id=data.branch_id,
+        source_branch_id=data.source_branch_id,
+        warehouse_id=data.warehouse_id,
+        source_warehouse_id=data.source_warehouse_id,
+        business_date=await business_day_service.current_business_date(db, destination),
+        required_date=data.required_date,
+        notes=data.notes,
+        creator_id=user.id,
+    )
+    db.add(order)
+    await db.flush()
+
+    for line in data.items:
+        item = await db.get(InventoryItem, line.item_id)
+        if item is None:
+            raise BadRequestError(f"Inventory item {line.item_id} not found")
+        db.add(
+            TransferOrderItem(
+                transfer_order_id=order.id,
+                item_id=line.item_id,
+                quantity=line.quantity,
+                unit=line.unit,
+                conversion_factor=(
+                    Decimal("1")
+                    if line.unit == "ingredient"
+                    else Decimal(str(item.storage_to_ingredient_factor))
+                ),
+                notes=line.notes,
+            )
+        )
+    await db.flush()
+    return await _serialise_transfer(
+        db, await transfer_service.load_transfer_order(db, order.id)
+    )
+
+
+@transfer_orders_router.post("/{order_id}/submit", response_model=TransferOrderResponse)
+async def submit_transfer(
+    order_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    _require(user, "inventory.transfer_orders.submit")
+    order = await transfer_service.load_transfer_order(db, order_id)
+    await transfer_service.submit_transfer_order(db, order=order, user=user)
+    return await _serialise_transfer(db, order)
+
+
+@transfer_orders_router.post("/{order_id}/accept", response_model=TransferOrderResponse)
+async def accept_transfer(
+    order_id: uuid.UUID,
+    data: AcceptTransfer,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Accept a request, optionally granting less than was asked for."""
+    _require(user, "inventory.transfers.send_receive")
+    order = await transfer_service.load_transfer_order(db, order_id)
+    approved = {line.transfer_order_item_id: line.quantity for line in data.lines}
+    await transfer_service.accept_transfer_order(
+        db, order=order, user=user, approved=approved or None
+    )
+    return await _serialise_transfer(db, order)
+
+
+@transfer_orders_router.post(
+    "/{order_id}/decline", response_model=TransferOrderResponse
+)
+async def decline_transfer(
+    order_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    _require(user, "inventory.transfers.send_receive")
+    order = await transfer_service.load_transfer_order(db, order_id)
+    await transfer_service.decline_transfer_order(db, order=order, user=user)
+    return await _serialise_transfer(db, order)
+
+
+@transfer_orders_router.post("/{order_id}/send", response_model=TransferOrderResponse)
+async def send_transfer(
+    order_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Ship the goods — decrements the source location."""
+    _require(user, "inventory.transfers.send_receive")
+    order = await transfer_service.load_transfer_order(db, order_id)
+    await transfer_service.send_transfer(db, order=order, user=user)
+    return await _serialise_transfer(db, order)
+
+
+@transfer_orders_router.post(
+    "/{order_id}/receive", response_model=TransferOrderResponse
+)
+async def receive_transfer(
+    order_id: uuid.UUID,
+    data: AcceptTransfer,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Book the goods in. A shortfall against what was sent stays visible."""
+    _require(user, "inventory.transfers.send_receive")
+    order = await transfer_service.load_transfer_order(db, order_id)
+    received = {line.transfer_order_item_id: line.quantity for line in data.lines}
+    await transfer_service.receive_transfer(
+        db, order=order, user=user, received=received or None
+    )
+    return await _serialise_transfer(db, order)
+
+
+# ─── Production ───────────────────────────────────────────────────────────────
+
+production_router = APIRouter()
+
+
+class ProduceRequest(BaseModel):
+    branch_id: uuid.UUID
+    item_id: uuid.UUID
+    quantity: Decimal = Field(gt=0)
+    warehouse_id: uuid.UUID | None = None
+    notes: str | None = None
+
+
+class ProduceResponse(BaseModel):
+    production_reference: str
+    consumption_reference: str | None
+    produced_quantity: Decimal
+    unit_cost: Decimal
+    total_cost: Decimal
+
+
+@production_router.post("", response_model=ProduceResponse)
+async def produce(
+    data: ProduceRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """
+    Produce a batch, consuming its bill of materials in the same step.
+    Yield loss is applied to the output, so cost per unit rises with waste
+    rather than the loss disappearing.
+    """
+    _require(user, "inventory.production.create")
+    branch = await crud_service.get_or_404(db, Branch, data.branch_id)
+    production, consumption = await transfer_service.produce(
+        db,
+        branch=branch,
+        user=user,
+        item_id=data.item_id,
+        quantity=data.quantity,
+        warehouse_id=data.warehouse_id,
+        notes=data.notes,
+    )
+    line = production.items[0] if production.items else None
+    return ProduceResponse(
+        production_reference=production.reference,
+        consumption_reference=consumption.reference if consumption else None,
+        produced_quantity=Decimal(str(line.quantity)) if line else Decimal("0"),
+        unit_cost=Decimal(str(line.unit_cost)) if line else Decimal("0"),
+        total_cost=Decimal(str(production.total_cost)),
+    )
+
+
+# ─── Spot checks ──────────────────────────────────────────────────────────────
+
+spot_checks_router = APIRouter()
+
+
+class SpotCheckLine(BaseModel):
+    item_id: uuid.UUID
+    counted_quantity: Decimal = Field(ge=0)
+    notes: str | None = None
+
+
+class SpotCheckCreate(BaseModel):
+    branch_id: uuid.UUID
+    warehouse_id: uuid.UUID | None = None
+    notes: str | None = None
+    items: list[SpotCheckLine] = Field(min_length=1)
+
+
+class SpotCheckLineResponse(ORMModel):
+    id: uuid.UUID
+    item_id: uuid.UUID
+    counted_quantity: Decimal
+    system_quantity: Decimal
+    variance: Decimal
+    notes: str | None
+    item_name: str | None = None
+
+
+class SpotCheckResponse(ORMModel):
+    id: uuid.UUID
+    reference: str
+    branch_id: uuid.UUID
+    business_date: str
+    status: str
+    notes: str | None
+    created_at: datetime
+    items: list[SpotCheckLineResponse] = []
+
+
+@spot_checks_router.post(
+    "", response_model=SpotCheckResponse, status_code=status.HTTP_201_CREATED
+)
+async def create_spot_check(
+    data: SpotCheckCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """
+    Record an audit count. Deliberately does **not** move stock — it captures
+    the variance against the system for investigation, nothing more.
+    """
+    _require(user, "inventory.spot_check.create")
+    branch = await crud_service.get_or_404(db, Branch, data.branch_id)
+    warehouse_id = (
+        data.warehouse_id
+        or (await inventory_service.default_warehouse(db, branch.id)).id
+    )
+
+    count = int(
+        (await db.execute(select(func.count()).select_from(SpotCheck))).scalar_one()
+    )
+    check = SpotCheck(
+        reference=f"SC-{count + 1:06d}",
+        branch_id=branch.id,
+        warehouse_id=warehouse_id,
+        business_date=await business_day_service.current_business_date(db, branch),
+        status="closed",
+        creator_id=user.id,
+        closed_at=utcnow(),
+        notes=data.notes,
+    )
+    db.add(check)
+    await db.flush()
+
+    for line in data.items:
+        level = await inventory_service.level_for(db, line.item_id, warehouse_id)
+        system = Decimal(str(level.quantity))
+        counted = Decimal(str(line.counted_quantity))
+        db.add(
+            SpotCheckItem(
+                spot_check_id=check.id,
+                item_id=line.item_id,
+                counted_quantity=counted,
+                system_quantity=system,
+                variance=counted - system,
+                notes=line.notes,
+            )
+        )
+    await db.flush()
+    await db.refresh(check)
+
+    payload = SpotCheckResponse.model_validate(check)
+    ids = {line.item_id for line in check.items}
+    if ids:
+        rows = (
+            (await db.execute(select(InventoryItem).where(InventoryItem.id.in_(ids))))
+            .scalars()
+            .all()
+        )
+        lookup = {r.id: r.name for r in rows}
+        for line in payload.items:
+            line.item_name = lookup.get(line.item_id)
+    return payload
+
+
+@spot_checks_router.get("", response_model=list[SpotCheckResponse])
+async def list_spot_checks(
+    branch_id: uuid.UUID | None = None,
+    limit: int = Query(100, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    _require(user, "inventory.spot_check.create")
+    stmt = select(SpotCheck)
+    if branch_id:
+        stmt = stmt.where(SpotCheck.branch_id == branch_id)
+    stmt = stmt.order_by(SpotCheck.created_at.desc()).limit(limit)
+    return list((await db.execute(stmt)).scalars().unique().all())
+
+
+# ─── Reservations ─────────────────────────────────────────────────────────────
+
+
+class ReservationCreate(BaseModel):
+    branch_id: uuid.UUID
+    customer_name: str = Field(min_length=1, max_length=150)
+    customer_phone: str | None = Field(None, max_length=30)
+    customer_id: uuid.UUID | None = None
+    table_id: uuid.UUID | None = None
+    guests: int = Field(2, ge=1, le=100)
+    starts_at: datetime
+    duration_minutes: int = Field(60, ge=15, le=600)
+    notes: str | None = None
+
+
+class ReservationUpdate(BaseModel):
+    table_id: uuid.UUID | None = None
+    guests: int | None = Field(None, ge=1, le=100)
+    starts_at: datetime | None = None
+    duration_minutes: int | None = Field(None, ge=15, le=600)
+    status: (
+        Literal["pending", "confirmed", "seated", "completed", "cancelled", "no_show"]
+        | None
+    ) = None
+    notes: str | None = None
+
+
+class ReservationResponse(ORMModel):
+    id: uuid.UUID
+    reference: str
+    branch_id: uuid.UUID
+    table_id: uuid.UUID | None
+    customer_id: uuid.UUID | None
+    customer_name: str
+    customer_phone: str | None
+    guests: int
+    starts_at: datetime
+    duration_minutes: int
+    status: str
+    notes: str | None
+    created_at: datetime
+
+
+reservations_router = APIRouter()
+
+
+@reservations_router.get("", response_model=list[ReservationResponse])
+async def list_reservations(
+    branch_id: uuid.UUID | None = None,
+    status_filter: str | None = Query(None, alias="status"),
+    limit: int = Query(100, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    _require(user, "admin.reservations.manage")
+    stmt = select(Reservation)
+    if branch_id:
+        stmt = stmt.where(Reservation.branch_id == branch_id)
+    if status_filter:
+        stmt = stmt.where(Reservation.status == status_filter)
+    stmt = stmt.order_by(Reservation.starts_at).limit(limit)
+    return list((await db.execute(stmt)).scalars().all())
+
+
+@reservations_router.post(
+    "", response_model=ReservationResponse, status_code=status.HTTP_201_CREATED
+)
+async def create_reservation(
+    data: ReservationCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    _require(user, "admin.reservations.manage")
+    branch = await crud_service.get_or_404(db, Branch, data.branch_id)
+    if not branch.accepts_reservations:
+        raise ConflictError(f"{branch.name} does not accept reservations")
+
+    count = int(
+        (await db.execute(select(func.count()).select_from(Reservation))).scalar_one()
+    )
+    reservation = Reservation(
+        reference=f"RES-{count + 1:06d}",
+        created_by_id=user.id,
+        **data.model_dump(),
+    )
+    db.add(reservation)
+    await db.flush()
+    await db.refresh(reservation)
+    return reservation
+
+
+@reservations_router.put("/{reservation_id}", response_model=ReservationResponse)
+async def update_reservation(
+    reservation_id: uuid.UUID,
+    data: ReservationUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    _require(user, "admin.reservations.manage")
+    reservation = await crud_service.get_or_404(db, Reservation, reservation_id)
+    reservation = await crud_service.update(db, reservation, data)
+
+    # Seating a reservation marks its table reserved so the floor plan agrees.
+    if reservation.table_id and reservation.status in ("confirmed", "seated"):
+        table = await db.get(PosTable, reservation.table_id)
+        if table and table.status == TableStatusEnum.FREE.value:
+            table.status = TableStatusEnum.RESERVED.value
+            await db.flush()
+    return reservation
+
+
+# ─── Notification rules ───────────────────────────────────────────────────────
+
+
+class NotificationRuleCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    event: str = Field(min_length=1, max_length=60)
+    threshold: Decimal | None = None
+    branch_ids: list[uuid.UUID] = Field(default_factory=list)
+    recipient_user_ids: list[uuid.UUID] = Field(default_factory=list)
+    recipient_emails: list[str] = Field(default_factory=list)
+    channels: list[Literal["email", "sms", "push"]] = Field(
+        default_factory=lambda: ["email"]
+    )
+    is_active: bool = True
+
+
+class NotificationRuleUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=150)
+    event: str | None = Field(None, min_length=1, max_length=60)
+    threshold: Decimal | None = None
+    branch_ids: list[uuid.UUID] | None = None
+    recipient_user_ids: list[uuid.UUID] | None = None
+    recipient_emails: list[str] | None = None
+    channels: list[Literal["email", "sms", "push"]] | None = None
+    is_active: bool | None = None
+
+
+class NotificationRuleResponse(ORMModel):
+    id: uuid.UUID
+    name: str
+    event: str
+    threshold: Decimal | None
+    branch_ids: list[uuid.UUID]
+    recipient_user_ids: list[uuid.UUID]
+    recipient_emails: list[str]
+    channels: list[str]
+    is_active: bool
+    deleted_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+notification_rules_router = build_crud_router(
+    model=NotificationRule,
+    create_schema=NotificationRuleCreate,
+    update_schema=NotificationRuleUpdate,
+    response_schema=NotificationRuleResponse,
+    entity_type="notification_rule",
+)
+
+
+# ─── Live branches dashboard ──────────────────────────────────────────────────
+
+dashboard_router = APIRouter()
+
+
+class BranchLive(BaseModel):
+    branch_id: uuid.UUID
+    branch_name: str
+    reference: str
+    active_orders: int
+    active_orders_amount: Decimal
+    occupied_tables: int
+    total_tables: int
+    open_tills: int
+    total_devices: int
+    offline_devices: int
+    last_order_at: datetime | None
+    last_device_seen_at: datetime | None
+
+
+class BranchesDashboard(BaseModel):
+    active_orders: int
+    active_orders_amount: Decimal
+    occupied_tables: int
+    offline_devices: int
+    branches: list[BranchLive]
+
+
+#: A terminal that has not checked in for this long is treated as offline.
+OFFLINE_AFTER_SECONDS = 300
+
+
+@dashboard_router.get("/branches", response_model=BranchesDashboard)
+async def branches_dashboard(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """
+    The "what is happening right now" view: open checks, occupied tables, open
+    tills and terminals that have gone quiet.
+    """
+    _require(user, "dashboard.branches")
+
+    branches = await crud_service.list_all(db, Branch, include_inactive=False)
+    rows: list[BranchLive] = []
+    now = utcnow()
+
+    for branch in branches:
+        active = (
+            await db.execute(
+                select(
+                    func.count(Order.id), func.coalesce(func.sum(Order.total), 0)
+                ).where(
+                    Order.is_pos.is_(True),
+                    Order.branch_id == branch.id,
+                    Order.pos_status == PosOrderStatusEnum.ACTIVE.value,
+                )
+            )
+        ).one()
+
+        tables = (
+            await db.execute(
+                select(
+                    func.count(PosTable.id),
+                    func.count(PosTable.id).filter(
+                        PosTable.status == TableStatusEnum.OCCUPIED.value
+                    ),
+                )
+                .select_from(PosTable)
+                .join(Section, Section.id == PosTable.section_id)
+                .where(
+                    Section.branch_id == branch.id,
+                    PosTable.deleted_at.is_(None),
+                )
+            )
+        ).one()
+
+        open_tills = int(
+            (
+                await db.execute(
+                    select(func.count())
+                    .select_from(Till)
+                    .where(
+                        Till.branch_id == branch.id,
+                        Till.status == TillStatusEnum.OPEN.value,
+                    )
+                )
+            ).scalar_one()
+        )
+
+        devices = list(
+            (
+                await db.execute(
+                    select(Device).where(
+                        Device.branch_id == branch.id,
+                        Device.deleted_at.is_(None),
+                        Device.type.in_(["cashier", "sub_cashier"]),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        offline = sum(
+            1
+            for d in devices
+            if d.last_seen_at is None
+            or (now - d.last_seen_at).total_seconds() > OFFLINE_AFTER_SECONDS
+        )
+        last_seen = max(
+            (d.last_seen_at for d in devices if d.last_seen_at), default=None
+        )
+
+        last_order = (
+            await db.execute(
+                select(func.max(Order.opened_at)).where(
+                    Order.is_pos.is_(True), Order.branch_id == branch.id
+                )
+            )
+        ).scalar_one_or_none()
+
+        rows.append(
+            BranchLive(
+                branch_id=branch.id,
+                branch_name=branch.name,
+                reference=branch.reference,
+                active_orders=int(active[0] or 0),
+                active_orders_amount=Decimal(str(active[1] or 0)),
+                total_tables=int(tables[0] or 0),
+                occupied_tables=int(tables[1] or 0),
+                open_tills=open_tills,
+                total_devices=len(devices),
+                offline_devices=offline,
+                last_order_at=last_order,
+                last_device_seen_at=last_seen,
+            )
+        )
+
+    return BranchesDashboard(
+        active_orders=sum(r.active_orders for r in rows),
+        active_orders_amount=sum(
+            (r.active_orders_amount for r in rows), start=Decimal("0")
+        ),
+        occupied_tables=sum(r.occupied_tables for r in rows),
+        offline_devices=sum(r.offline_devices for r in rows),
+        branches=rows,
+    )
+
+
+@dashboard_router.get("/inventory")
+async def inventory_dashboard(
+    branch_id: uuid.UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Stock health at a glance: value on hand and what needs reordering."""
+    _require(user, "dashboard.inventory")
+
+    stmt = (
+        select(InventoryLevel, InventoryItem)
+        .join(InventoryItem, InventoryItem.id == InventoryLevel.item_id)
+        .where(InventoryItem.deleted_at.is_(None))
+    )
+    if branch_id:
+        stmt = stmt.join(Warehouse, Warehouse.id == InventoryLevel.warehouse_id).where(
+            Warehouse.branch_id == branch_id
+        )
+
+    total_value = Decimal("0")
+    below = 0
+    out_of_stock = 0
+    tracked = 0
+    for level, item in (await db.execute(stmt)).all():
+        tracked += 1
+        quantity = Decimal(str(level.quantity))
+        total_value += quantity * Decimal(str(level.average_cost))
+        if quantity <= 0:
+            out_of_stock += 1
+        elif quantity < Decimal(str(item.minimum_level)):
+            below += 1
+
+    return {
+        "items_tracked": tracked,
+        "stock_value": total_value.quantize(Decimal("0.01")),
+        "below_minimum": below,
+        "out_of_stock": out_of_stock,
+    }
+
+
+__all__ = [
+    "dashboard_router",
+    "notification_rules_router",
+    "production_router",
+    "reservations_router",
+    "spot_checks_router",
+    "transfer_orders_router",
+]

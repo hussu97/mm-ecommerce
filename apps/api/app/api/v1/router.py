@@ -55,6 +55,14 @@ from .marketing import (
     promotions_router,
     timed_events_router,
 )
+from .operations import (
+    dashboard_router,
+    notification_rules_router,
+    production_router,
+    reservations_router,
+    spot_checks_router,
+    transfer_orders_router,
+)
 from .pos_orders import kitchen_router, router as pos_orders_router
 from .pos_reports import router as pos_reports_router
 from .staff import roles_router, router as staff_router
@@ -157,4 +165,24 @@ api_router.include_router(gift_cards_router, prefix="/gift-cards", tags=["Market
 api_router.include_router(loyalty_router, prefix="/loyalty", tags=["Marketing"])
 api_router.include_router(
     house_accounts_router, prefix="/house-accounts", tags=["Marketing"]
+)
+
+# ─── Operations ───────────────────────────────────────────────────────────────
+api_router.include_router(
+    transfer_orders_router, prefix="/inventory/transfer-orders", tags=["Inventory"]
+)
+api_router.include_router(
+    production_router, prefix="/inventory/production", tags=["Inventory"]
+)
+api_router.include_router(
+    spot_checks_router, prefix="/inventory/spot-checks", tags=["Inventory"]
+)
+api_router.include_router(
+    reservations_router, prefix="/reservations", tags=["Reservations"]
+)
+api_router.include_router(
+    notification_rules_router, prefix="/notification-rules", tags=["Notifications"]
+)
+api_router.include_router(
+    dashboard_router, prefix="/pos/dashboard", tags=["POS Dashboard"]
 )

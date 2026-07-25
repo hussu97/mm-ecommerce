@@ -50,6 +50,12 @@ class User(Base, UUIDMixin, TimestampMixin):
     is_driver: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="false"
     )
+    # Blocks a customer from placing further orders. Kept as a flag rather than
+    # a delete so their history stays intact and the block is reversible.
+    is_blacklisted: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false", index=True
+    )
+    blacklist_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Relationships
     addresses: Mapped[list[Address]] = relationship(
