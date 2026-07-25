@@ -548,3 +548,142 @@ async def load_transaction(
     if transaction is None:
         raise NotFoundError("Inventory transaction not found")
     return transaction
+
+
+async def record_waste(
+    db: AsyncSession,
+    *,
+    branch: Branch,
+    user: User,
+    item_id: uuid.UUID,
+    quantity: Decimal,
+    from_production: bool = False,
+    reason_id: uuid.UUID | None = None,
+    notes: str | None = None,
+) -> InventoryTransaction:
+    """
+    Write off stock that was thrown away.
+
+    Kept distinct from a quantity adjustment even though both reduce stock: a
+    correction means the count was wrong, waste means the food is in the bin.
+    Only the second belongs in a wastage cost report, so conflating them would
+    hide the number a kitchen is actually managed on.
+    """
+    if quantity <= 0:
+        raise BadRequestError("Waste quantity must be positive")
+
+    kind = (
+        InventoryTransactionTypeEnum.WASTE_FROM_PRODUCTION
+        if from_production
+        else InventoryTransactionTypeEnum.WASTE_FROM_ORDERS
+    )
+    business_date = await business_day_service.current_business_date(db, branch)
+    if await db.get(InventoryItem, item_id) is None:
+        raise NotFoundError("Inventory item not found")
+
+    item = await db.get(InventoryItem, item_id)
+    transaction = InventoryTransaction(
+        reference=await next_reference(db, kind.value),
+        type=kind.value,
+        status=TransactionStatusEnum.DRAFT.value,
+        branch_id=branch.id,
+        business_date=business_date,
+        reason_id=reason_id,
+        notes=notes,
+        creator_id=user.id,
+    )
+    db.add(transaction)
+    await db.flush()
+
+    db.add(
+        InventoryTransactionItem(
+            transaction_id=transaction.id,
+            item_id=item_id,
+            # Positive: the waste transaction type already carries sign -1,
+            # so negating here as well would put stock back on the shelf.
+            quantity=_q(abs(quantity)),
+            unit="ingredient",
+            conversion_factor=Decimal("1"),
+            unit_cost=_c(item.cost),
+        )
+    )
+    await db.flush()
+    await db.refresh(transaction)
+    return await post_transaction(db, transaction=transaction, user=user)
+
+
+async def adjust_cost(
+    db: AsyncSession,
+    *,
+    branch: Branch,
+    item_id: uuid.UUID,
+    warehouse_id: uuid.UUID | None,
+    new_average_cost: Decimal,
+    user: User,
+    notes: str | None = None,
+) -> dict:
+    """
+    Restate what stock on hand is worth, without moving any of it.
+
+    A supplier reprices, or a cost was keyed wrong, and the valuation is now
+    misleading. Quantity is deliberately untouched — this only moves money,
+    and the previous cost is returned so the caller can record the delta.
+    """
+    if new_average_cost < 0:
+        raise BadRequestError("Cost cannot be negative")
+    branch_id = branch.id
+    business_date = await business_day_service.current_business_date(db, branch)
+
+    stmt = select(InventoryLevel).where(InventoryLevel.item_id == item_id)
+    if warehouse_id is not None:
+        stmt = stmt.where(InventoryLevel.warehouse_id == warehouse_id)
+    level = (await db.execute(stmt)).scalars().first()
+    if level is None:
+        raise NotFoundError("This item has no stock level to revalue")
+
+    previous = Decimal(str(level.average_cost or 0))
+    quantity = Decimal(str(level.quantity or 0))
+    level.average_cost = new_average_cost
+
+    # Booked as a transaction, not just a field write. Its type carries sign 0
+    # so posting it cannot move stock, but it leaves the trail the cost
+    # adjustment report reads — a revaluation that only edits a column is
+    # invisible the moment anyone asks why the valuation changed.
+    item = await db.get(InventoryItem, item_id)
+    transaction = InventoryTransaction(
+        reference=await next_reference(
+            db, InventoryTransactionTypeEnum.COST_ADJUSTMENT.value
+        ),
+        type=InventoryTransactionTypeEnum.COST_ADJUSTMENT.value,
+        status=TransactionStatusEnum.CLOSED.value,
+        branch_id=branch_id,
+        business_date=business_date,
+        notes=notes,
+        creator_id=user.id,
+    )
+    db.add(transaction)
+    await db.flush()
+    db.add(
+        InventoryTransactionItem(
+            transaction_id=transaction.id,
+            item_id=item_id,
+            quantity=_q(quantity),
+            unit="ingredient",
+            conversion_factor=Decimal("1"),
+            unit_cost=_c(new_average_cost),
+        )
+    )
+    await db.flush()
+    del item
+
+    return {
+        "item_id": str(item_id),
+        "warehouse_id": str(level.warehouse_id) if level.warehouse_id else None,
+        "quantity_on_hand": quantity,
+        "previous_average_cost": previous,
+        "new_average_cost": new_average_cost,
+        # What the revaluation did to the books, which is the point of it.
+        "value_change": (new_average_cost - previous) * quantity,
+        "adjusted_by": user.display_name or user.email,
+        "notes": notes,
+    }

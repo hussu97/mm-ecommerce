@@ -207,7 +207,7 @@ async def sales_by_dimension(
             limit=limit,
         )
 
-    if dimension in {"product_tag", "order_tag"}:
+    if dimension in _ENTITY_TAG_DIMENSIONS:
         return await _sales_by_tag(
             db,
             dimension=dimension,
@@ -300,12 +300,20 @@ _DISCOUNT_SOURCES = {
 #: Dimensions reached through the table an order was seated at.
 _TABLE_DIMENSIONS = {"section", "revenue_center"}
 
+#: Tags attached to something other than the order or the product.
+_ENTITY_TAG_DIMENSIONS = {
+    "branch_tag": "branch",
+    "product_tag": "product",
+    "order_tag": "order",
+}
+
 SUPPORTED_DIMENSIONS = (
     set(_ORDER_DIMENSIONS)
     | _LINE_DIMENSIONS
     | set(_DISCOUNT_SOURCES)
     | _TABLE_DIMENSIONS
-    | {"product", "category", "modifier_option", "product_tag", "order_tag"}
+    | set(_ENTITY_TAG_DIMENSIONS)
+    | {"product", "category", "modifier_option"}
 )
 
 
@@ -1052,7 +1060,27 @@ async def _sales_by_tag(
     product tag must not claim the whole check — a "vegan" tag on one slice
     says nothing about the coffee next to it.
     """
-    if dimension == "product_tag":
+    if dimension == "branch_tag":
+        stmt = (
+            _scope(
+                select(
+                    Tag.name.label("key"),
+                    func.count(func.distinct(Order.id)),
+                    func.coalesce(func.sum(Order.total), 0),
+                ),
+                branch_id=branch_id,
+                date_from=date_from,
+                date_to=date_to,
+            )
+            .select_from(Order)
+            .join(
+                TaggedEntity,
+                (TaggedEntity.entity_id == Order.branch_id)
+                & (TaggedEntity.entity_type == "branch"),
+            )
+            .join(Tag, Tag.id == TaggedEntity.tag_id)
+        )
+    elif dimension == "product_tag":
         stmt = (
             _scope(
                 select(
@@ -1247,4 +1275,71 @@ async def suppliers_analysis(
             "total_spend": _q(total),
         }
         for name, count, total in rows
+    ]
+
+
+async def cost_adjustment_history(
+    db: AsyncSession,
+    *,
+    branch_id: uuid.UUID | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = 200,
+) -> list[dict]:
+    """
+    Every stock revaluation, newest first.
+
+    Cost adjustments move money without moving stock, so they never show up in
+    a quantity report — which is exactly why they need their own trail.
+    """
+    stmt = (
+        select(
+            InventoryTransaction.reference,
+            InventoryTransaction.business_date,
+            InventoryTransaction.notes,
+            InventoryItem.name,
+            InventoryItem.sku,
+            InventoryTransactionItem.quantity,
+            InventoryTransactionItem.unit_cost,
+            InventoryTransactionItem.total_cost,
+        )
+        .select_from(InventoryTransaction)
+        .join(
+            InventoryTransactionItem,
+            InventoryTransactionItem.transaction_id == InventoryTransaction.id,
+        )
+        .join(InventoryItem, InventoryItem.id == InventoryTransactionItem.item_id)
+        .where(
+            InventoryTransaction.type.in_(
+                [
+                    InventoryTransactionTypeEnum.COST_ADJUSTMENT.value,
+                    InventoryTransactionTypeEnum.WASTE_FROM_ORDERS.value,
+                    InventoryTransactionTypeEnum.WASTE_FROM_PRODUCTION.value,
+                    InventoryTransactionTypeEnum.QUANTITY_ADJUSTMENT.value,
+                ]
+            )
+        )
+        .order_by(InventoryTransaction.created_at.desc())
+        .limit(limit)
+    )
+    if branch_id:
+        stmt = stmt.where(InventoryTransaction.branch_id == branch_id)
+    if date_from:
+        stmt = stmt.where(InventoryTransaction.business_date >= date_from)
+    if date_to:
+        stmt = stmt.where(InventoryTransaction.business_date <= date_to)
+
+    rows = (await db.execute(stmt)).all()
+    return [
+        {
+            "reference": ref,
+            "business_date": day,
+            "item": name,
+            "sku": sku,
+            "quantity": _q(qty),
+            "unit_cost": _q(unit),
+            "total_cost": _q(total),
+            "notes": notes,
+        }
+        for ref, day, notes, name, sku, qty, unit, total in rows
     ]

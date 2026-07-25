@@ -92,9 +92,9 @@ plan.
 | Transfer orders (request→accept/decline→close) | ✅ | `TransferOrder`, `transfer_service` |
 | Transfers (send / receive) | ✅ | paired flow; in-flight stock is visible |
 | Production (+ auto-consumption of ingredients) | ✅ | `produce()`, yield-aware costing, tested |
-| Waste (from orders, from production) | ⚠️ | types exist; no dedicated endpoint |
+| Waste (from orders, from production) | ✅ | `POST /inventory/transactions/waste` — kept distinct from a correction |
 | Quantity adjustment | ✅ | `/inventory/transactions/adjust` |
-| Cost adjustment | ⚠️ | type exists; no endpoint |
+| Cost adjustment | ✅ | `POST /inventory/items/cost-adjustment` — revalues without moving stock |
 | Inventory count (draft → closed, variance) | ⚠️ | type + variance capture; no count workflow endpoint |
 | Spot check (reference only, does not move stock) | ✅ | `SpotCheck`, records variance only |
 | Count sheets | ⬜ | not modelled |
@@ -168,7 +168,7 @@ plan.
 | Inventory levels | ✅ |
 | Inventory control / history | ✅ transactions report |
 | Purchase orders / transfers / purchasing | ⚠️ list endpoints, not formatted reports |
-| Cost adjustment history | ⬜ |
+| Cost adjustment history | ✅ `GET /pos/reports/cost-adjustment-history` |
 | Menu engineering | ✅ |
 | Inventory cost analysis / COGS | ✅ |
 | Product & item cost | ✅ |

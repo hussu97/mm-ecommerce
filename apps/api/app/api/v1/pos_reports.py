@@ -209,3 +209,14 @@ async def suppliers_analysis(
     return await pos_reports_service.suppliers_analysis(
         db, date_from=date_from, date_to=date_to
     )
+
+
+@router.get("/cost-adjustment-history")
+async def cost_adjustment_history(
+    window: _Window = Depends(),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Stock write-offs and revaluations, newest first."""
+    _require(user, "reports.cost_adjustment_history")
+    return await pos_reports_service.cost_adjustment_history(db, **window.kwargs)

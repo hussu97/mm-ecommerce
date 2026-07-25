@@ -432,6 +432,36 @@ class RecipeResponse(BaseModel):
 # ─── Adjustments & counts ─────────────────────────────────────────────────────
 
 
+class WasteRequest(BaseModel):
+    branch_id: UUID
+    item_id: UUID
+    #: Always written off; the sign is not the caller's to choose.
+    quantity: Decimal = Field(gt=0)
+    #: Waste during prep rather than from a sold order.
+    from_production: bool = False
+    reason_id: UUID | None = None
+    notes: str | None = None
+
+
+class CostAdjustmentRequest(BaseModel):
+    branch_id: UUID
+    item_id: UUID
+    warehouse_id: UUID | None = None
+    new_average_cost: Decimal = Field(ge=0)
+    notes: str | None = None
+
+
+class CostAdjustmentResponse(BaseModel):
+    item_id: str
+    warehouse_id: str | None
+    quantity_on_hand: Decimal
+    previous_average_cost: Decimal
+    new_average_cost: Decimal
+    value_change: Decimal
+    adjusted_by: str | None
+    notes: str | None
+
+
 class QuantityAdjustmentRequest(BaseModel):
     branch_id: UUID
     item_id: UUID

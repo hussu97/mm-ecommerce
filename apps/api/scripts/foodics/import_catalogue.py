@@ -36,6 +36,7 @@ sys.path.insert(
 
 from app.models import (  # noqa: E402
     Branch,
+    InventoryItem,
     BusinessSettings,
     Category,
     Charge,
@@ -498,6 +499,27 @@ class Importer:
                     "is_active": row.get("is_active", True),
                 },
             )
+        for row in self.export.get("inventory_items", []):
+            # Foodics exports the stock item, not its unit or level; those are
+            # per-warehouse operational data the shop sets up here. Cost stays
+            # untouched on re-import so a revaluation is not undone.
+            sku = row.get("sku") or slugify(row["name"], row["id"][:8])
+            await self.upsert(
+                InventoryItem,
+                {"sku": sku},
+                {
+                    "name": row["name"],
+                    "name_localized": row.get("name_localized"),
+                    "is_active": True,
+                },
+                create_only={
+                    "storage_unit": "unit",
+                    "ingredient_unit": "unit",
+                    "storage_to_ingredient_factor": Decimal("1"),
+                    "cost": money(row.get("cost")),
+                },
+            )
+
         for row in self.export.get("suppliers", []):
             await self.upsert(
                 Supplier,

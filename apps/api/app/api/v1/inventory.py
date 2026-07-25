@@ -34,6 +34,9 @@ from app.models import (
 from app.models.base import utcnow
 from app.models.user import User
 from app.schemas.inventory import (
+    CostAdjustmentRequest,
+    CostAdjustmentResponse,
+    WasteRequest,
     InventoryCategoryCreate,
     InventoryCategoryResponse,
     InventoryCategoryUpdate,
@@ -888,3 +891,52 @@ __all__ = [
     "transactions_router",
     "warehouses_router",
 ]
+
+
+@transactions_router.post("/waste", response_model=InventoryTransactionResponse)
+async def record_waste(
+    data: WasteRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """
+    Write off stock that went in the bin.
+
+    Separate from a quantity adjustment on purpose: a correction means the
+    count was wrong, waste means the food was thrown away, and only the second
+    belongs in the number a kitchen is managed on.
+    """
+    _require(user, "inventory.quantity_adjustment.create")
+    branch = await crud_service.get_or_404(db, Branch, data.branch_id)
+    transaction = await inventory_service.record_waste(
+        db,
+        branch=branch,
+        user=user,
+        item_id=data.item_id,
+        quantity=data.quantity,
+        from_production=data.from_production,
+        reason_id=data.reason_id,
+        notes=data.notes,
+    )
+    transaction = await inventory_service.load_transaction(db, transaction.id)
+    return _serialise_transaction(transaction, await _item_lookup(db, transaction))
+
+
+@items_router.post("/cost-adjustment", response_model=CostAdjustmentResponse)
+async def adjust_cost(
+    data: CostAdjustmentRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Restate what stock on hand is worth, without moving any of it."""
+    _require(user, "inventory.cost_adjustment.create")
+    branch = await crud_service.get_or_404(db, Branch, data.branch_id)
+    return await inventory_service.adjust_cost(
+        db,
+        branch=branch,
+        item_id=data.item_id,
+        warehouse_id=data.warehouse_id,
+        new_average_cost=data.new_average_cost,
+        user=user,
+        notes=data.notes,
+    )
