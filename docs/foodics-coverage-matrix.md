@@ -125,6 +125,10 @@ plan.
 | Timed events | ✅ | `TimedEvent`, midnight-crossing tested |
 | Coupons | ✅ | pre-existing `PromoCode` |
 | Bulk coupon creation | ⬜ | single create only |
+| Sales by section / revenue centre / modifier option / tags / coupon | ✅ | `GET /pos/reports/sales/by` — 24 dimensions |
+| Branches trend | ✅ | `GET /pos/reports/branches-trend` |
+| Table utilization | ✅ | `GET /pos/reports/table-utilization` — covers, turns, dwell, sales per seat |
+| Suppliers analysis | ✅ | `GET /pos/reports/suppliers-analysis` |
 
 ## 7. Administration
 
@@ -168,7 +172,7 @@ plan.
 | Menu engineering | ✅ |
 | Inventory cost analysis / COGS | ✅ |
 | Product & item cost | ✅ |
-| Branches trend | ⚠️ sales-by-day exists, not per-branch trend |
+| Branches trend | ✅ per-branch per-day trend |
 | Speed of service | ✅ `GET /pos/reports/speed-of-service` — acknowledge / prep / total, plus slowest ticket |
 | Live branches dashboard (active orders, occupied tables, offline cashiers, open tills, last sync) | ✅ `/pos/dashboard/branches` |
 | Zatca reports | ⛔️ Saudi e-invoicing; UAE business |

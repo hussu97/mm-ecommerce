@@ -13,7 +13,9 @@ import uuid
 from decimal import Decimal
 from typing import Any, Sequence
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Numeric, Select, func, select
+from sqlalchemy import true as sa_true
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.category import Category
@@ -23,6 +25,8 @@ from app.models.inventory import (
     InventoryTransaction,
     InventoryTransactionItem,
     InventoryTransactionTypeEnum,
+    PurchaseOrder,
+    Supplier,
     Warehouse,
 )
 from app.models.order import Order, OrderItem
@@ -36,7 +40,8 @@ from app.models.pos_order import (
     OrderTax,
     PosOrderStatusEnum,
 )
-from app.models.pos_table import PosTable
+from app.models.pos_table import PosTable, Section
+from app.models.tag import Tag, TaggedEntity
 from app.models.product import Product
 from app.models.till import DrawerOperation, Till
 from app.models.user import User
@@ -187,7 +192,32 @@ async def sales_by_dimension(
             limit=limit,
         )
 
-    if dimension in _LINE_DIMENSIONS:
+    if dimension == "modifier_option":
+        return await _sales_by_modifier_option(
+            db, branch_id=branch_id, date_from=date_from, date_to=date_to, limit=limit
+        )
+
+    if dimension in _TABLE_DIMENSIONS:
+        return await _sales_by_seating(
+            db,
+            dimension=dimension,
+            branch_id=branch_id,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
+        )
+
+    if dimension in {"product_tag", "order_tag"}:
+        return await _sales_by_tag(
+            db,
+            dimension=dimension,
+            branch_id=branch_id,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
+        )
+
+    if dimension in _DISCOUNT_SOURCES or dimension in _LINE_DIMENSIONS:
         return await _sales_by_related(
             db,
             dimension=dimension,
@@ -259,8 +289,23 @@ _ORDER_DIMENSIONS = {
 #: must not count its full value against each of them.
 _LINE_DIMENSIONS = {"discount", "charge", "tax"}
 
+#: Discounts carry where they came from, so coupon, promotion and timed-event
+#: are the same grouping narrowed to one source.
+_DISCOUNT_SOURCES = {
+    "coupon": "coupon",
+    "promotion": "promotion",
+    "timed_event": "timed_event",
+}
+
+#: Dimensions reached through the table an order was seated at.
+_TABLE_DIMENSIONS = {"section", "revenue_center"}
+
 SUPPORTED_DIMENSIONS = (
-    set(_ORDER_DIMENSIONS) | _LINE_DIMENSIONS | {"product", "category"}
+    set(_ORDER_DIMENSIONS)
+    | _LINE_DIMENSIONS
+    | set(_DISCOUNT_SOURCES)
+    | _TABLE_DIMENSIONS
+    | {"product", "category", "modifier_option", "product_tag", "order_tag"}
 )
 
 
@@ -321,7 +366,7 @@ async def _sales_by_related(
         "discount": (OrderDiscount, OrderDiscount.amount),
         "charge": (OrderCharge, OrderCharge.amount),
         "tax": (OrderTax, OrderTax.amount),
-    }[dimension]
+    }.get(dimension, (OrderDiscount, OrderDiscount.amount))
 
     stmt = (
         _scope(
@@ -337,6 +382,11 @@ async def _sales_by_related(
         .select_from(Order)
         .join(model, model.order_id == Order.id)
         .where(Order.pos_status == CLOSED)
+        .where(
+            OrderDiscount.source == _DISCOUNT_SOURCES[dimension]
+            if dimension in _DISCOUNT_SOURCES
+            else sa_true()
+        )
         .group_by(model.name)
         .order_by(func.coalesce(func.sum(amount), 0).desc())
         .limit(limit)
@@ -861,3 +911,340 @@ async def speed_of_service(
         "avg_total_minutes": minutes(avg_total),
         "slowest_ticket_minutes": minutes(slowest),
     }
+
+
+async def _sales_by_modifier_option(
+    db: AsyncSession,
+    *,
+    branch_id: uuid.UUID | None,
+    date_from: str | None,
+    date_to: str | None,
+    limit: int,
+) -> list[dict]:
+    """
+    Which modifier options actually sell — oat milk versus full fat.
+
+    The chosen options are a JSON snapshot on the line rather than rows, so
+    they are expanded here. The snapshot is deliberate: it records what the
+    customer was charged at the time, and must not change when someone later
+    edits the modifier's price.
+    """
+    option = func.jsonb_array_elements(
+        func.cast(OrderItem.selected_options_snapshot, JSONB)
+    ).alias("option")
+    name = func.coalesce(option.column.op("->>")("name"), "Unknown")
+    price = func.coalesce(
+        func.cast(func.nullif(option.column.op("->>")("price"), ""), Numeric), 0
+    )
+    quantity = OrderItem.quantity - OrderItem.returned_quantity
+
+    stmt = (
+        _scope(
+            select(
+                name.label("key"),
+                func.sum(quantity),
+                func.coalesce(func.sum(price * quantity), 0),
+            ),
+            branch_id=branch_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        .select_from(Order)
+        .join(OrderItem, OrderItem.order_id == Order.id)
+        .join(option, sa_true())
+        .where(Order.pos_status == CLOSED)
+        .group_by(name)
+        .order_by(func.sum(quantity).desc())
+        .limit(limit)
+    )
+    rows = (await db.execute(stmt)).all()
+    return [
+        {
+            "key": key,
+            "label": key,
+            "quantity": int(qty or 0),
+            "orders": int(qty or 0),
+            "net_sales": _q(total),
+            "discounts": _q(0),
+        }
+        for key, qty, total in rows
+    ]
+
+
+async def _sales_by_seating(
+    db: AsyncSession,
+    *,
+    dimension: str,
+    branch_id: uuid.UUID | None,
+    date_from: str | None,
+    date_to: str | None,
+    limit: int,
+) -> list[dict]:
+    """Sales by the section, or revenue centre, an order was seated in."""
+    if dimension == "section":
+        key, label = Section.id, Section.name
+        joined = (
+            select()
+            .join(PosTable, PosTable.id == Order.table_id)
+            .join(Section, Section.id == PosTable.section_id)
+        )
+    else:
+        # Foodics models a revenue centre as a tag on the table, and so do we.
+        key, label = Tag.id, Tag.name
+        joined = (
+            select()
+            .join(PosTable, PosTable.id == Order.table_id)
+            .join(Tag, Tag.id == PosTable.revenue_center_tag_id)
+        )
+
+    stmt = (
+        _scope(
+            select(
+                label.label("key"),
+                func.count(func.distinct(Order.id)),
+                func.coalesce(func.sum(Order.total), 0),
+                func.coalesce(func.sum(Order.discount_amount), 0),
+            ),
+            branch_id=branch_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        .select_from(Order)
+        .join(PosTable, PosTable.id == Order.table_id)
+        .join(
+            Section if dimension == "section" else Tag,
+            (Section.id == PosTable.section_id)
+            if dimension == "section"
+            else (Tag.id == PosTable.revenue_center_tag_id),
+        )
+        .where(Order.pos_status == CLOSED)
+        .group_by(label)
+        .order_by(func.coalesce(func.sum(Order.total), 0).desc())
+        .limit(limit)
+    )
+    del key, joined
+    rows = (await db.execute(stmt)).all()
+    return [
+        {
+            "key": k or "unknown",
+            "label": k or "Unknown",
+            "orders": int(c or 0),
+            "net_sales": _q(t),
+            "discounts": _q(d),
+        }
+        for k, c, t, d in rows
+    ]
+
+
+async def _sales_by_tag(
+    db: AsyncSession,
+    *,
+    dimension: str,
+    branch_id: uuid.UUID | None,
+    date_from: str | None,
+    date_to: str | None,
+    limit: int,
+) -> list[dict]:
+    """
+    Sales grouped by a tag on the product, or on the order itself.
+
+    Product tags sum the lines carrying them; order tags sum whole orders. A
+    product tag must not claim the whole check — a "vegan" tag on one slice
+    says nothing about the coffee next to it.
+    """
+    if dimension == "product_tag":
+        stmt = (
+            _scope(
+                select(
+                    Tag.name.label("key"),
+                    func.count(func.distinct(Order.id)),
+                    func.coalesce(func.sum(OrderItem.total_price), 0),
+                ),
+                branch_id=branch_id,
+                date_from=date_from,
+                date_to=date_to,
+            )
+            .select_from(Order)
+            .join(OrderItem, OrderItem.order_id == Order.id)
+            .join(
+                TaggedEntity,
+                (TaggedEntity.entity_id == OrderItem.product_id)
+                & (TaggedEntity.entity_type == "product"),
+            )
+            .join(Tag, Tag.id == TaggedEntity.tag_id)
+        )
+    else:
+        stmt = (
+            _scope(
+                select(
+                    Tag.name.label("key"),
+                    func.count(func.distinct(Order.id)),
+                    func.coalesce(func.sum(Order.total), 0),
+                ),
+                branch_id=branch_id,
+                date_from=date_from,
+                date_to=date_to,
+            )
+            .select_from(Order)
+            .join(
+                TaggedEntity,
+                (TaggedEntity.entity_id == Order.id)
+                & (TaggedEntity.entity_type == "order"),
+            )
+            .join(Tag, Tag.id == TaggedEntity.tag_id)
+        )
+
+    stmt = (
+        stmt.where(Order.pos_status == CLOSED)
+        .group_by(Tag.name)
+        .order_by(func.count(func.distinct(Order.id)).desc())
+        .limit(limit)
+    )
+    rows = (await db.execute(stmt)).all()
+    return [
+        {
+            "key": k,
+            "label": k,
+            "orders": int(c or 0),
+            "net_sales": _q(t),
+            "discounts": _q(0),
+        }
+        for k, c, t in rows
+    ]
+
+
+async def branches_trend(
+    db: AsyncSession,
+    *,
+    branch_id: uuid.UUID | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[dict]:
+    """
+    Each branch's sales per business day, for comparing sites over time.
+
+    Returned long rather than pivoted: the caller decides whether to draw one
+    line per branch or a table, and a pivot would have to guess the date range
+    that happens to have data.
+    """
+    stmt = (
+        _scope(
+            select(
+                Branch.name,
+                Order.business_date,
+                func.count(Order.id),
+                func.coalesce(func.sum(Order.total), 0),
+            ),
+            branch_id=branch_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        .select_from(Order)
+        .join(Branch, Branch.id == Order.branch_id)
+        .where(Order.pos_status == CLOSED)
+        .group_by(Branch.name, Order.business_date)
+        .order_by(Order.business_date.asc(), Branch.name.asc())
+    )
+    rows = (await db.execute(stmt)).all()
+    return [
+        {
+            "branch": name,
+            "business_date": day,
+            "orders": int(count or 0),
+            "net_sales": _q(total),
+            "average_order_value": _q(Decimal(str(total or 0)) / count)
+            if count
+            else ZERO,
+        }
+        for name, day, count, total in rows
+    ]
+
+
+async def table_utilization(
+    db: AsyncSession,
+    *,
+    branch_id: uuid.UUID | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[dict]:
+    """
+    How hard each table works: covers, turns and how long a party sits.
+
+    Only dine-in checks count. A takeaway order has no table, and counting it
+    would flatter every number here.
+    """
+    minutes = func.extract("epoch", Order.closed_at - Order.opened_at) / 60
+
+    stmt = (
+        _scope(
+            select(
+                Section.name,
+                PosTable.name,
+                PosTable.seats,
+                func.count(Order.id),
+                func.coalesce(func.sum(Order.guests), 0),
+                func.coalesce(func.sum(Order.total), 0),
+                func.avg(minutes),
+            ),
+            branch_id=branch_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        .select_from(Order)
+        .join(PosTable, PosTable.id == Order.table_id)
+        .outerjoin(Section, Section.id == PosTable.section_id)
+        .where(Order.pos_status == CLOSED, Order.closed_at.isnot(None))
+        .group_by(Section.name, PosTable.name, PosTable.seats)
+        .order_by(func.coalesce(func.sum(Order.total), 0).desc())
+    )
+    rows = (await db.execute(stmt)).all()
+    return [
+        {
+            "section": section or "Unassigned",
+            "table": table,
+            "seats": int(seats or 0),
+            # "Turns" is covers per seat: how many parties that seat served.
+            "turns": int(turns or 0),
+            "covers": int(covers or 0),
+            "net_sales": _q(total),
+            "average_minutes": _q(Decimal(str(avg_minutes or 0))),
+            "sales_per_seat": _q(Decimal(str(total or 0)) / seats) if seats else ZERO,
+        }
+        for section, table, seats, turns, covers, total, avg_minutes in rows
+    ]
+
+
+async def suppliers_analysis(
+    db: AsyncSession,
+    *,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    """What each supplier has been paid, and how much was ordered from them."""
+    stmt = (
+        select(
+            Supplier.name,
+            func.count(func.distinct(PurchaseOrder.id)),
+            func.coalesce(func.sum(PurchaseOrder.total_cost), 0),
+        )
+        .select_from(PurchaseOrder)
+        .join(Supplier, Supplier.id == PurchaseOrder.supplier_id)
+        .group_by(Supplier.name)
+        .order_by(func.coalesce(func.sum(PurchaseOrder.total_cost), 0).desc())
+        .limit(limit)
+    )
+    if date_from:
+        stmt = stmt.where(PurchaseOrder.business_date >= date_from)
+    if date_to:
+        stmt = stmt.where(PurchaseOrder.business_date <= date_to)
+
+    rows = (await db.execute(stmt)).all()
+    return [
+        {
+            "supplier": name,
+            "purchase_orders": int(count or 0),
+            "total_spend": _q(total),
+        }
+        for name, count, total in rows
+    ]

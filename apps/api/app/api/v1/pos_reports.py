@@ -173,3 +173,39 @@ async def speed_of_service(
     """Kitchen acknowledge, prep and total times over the window."""
     _require(user, "reports.other")
     return await pos_reports_service.speed_of_service(db, **window.kwargs)
+
+
+@router.get("/branches-trend")
+async def branches_trend(
+    window: _Window = Depends(),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Sales per branch per business day."""
+    _require(user, "reports.sales")
+    return await pos_reports_service.branches_trend(db, **window.kwargs)
+
+
+@router.get("/table-utilization")
+async def table_utilization(
+    window: _Window = Depends(),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Covers, turns, dwell time and sales per seat, for dine-in only."""
+    _require(user, "reports.other")
+    return await pos_reports_service.table_utilization(db, **window.kwargs)
+
+
+@router.get("/suppliers-analysis")
+async def suppliers_analysis(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Purchase-order count and spend per supplier."""
+    _require(user, "reports.cost_analysis")
+    return await pos_reports_service.suppliers_analysis(
+        db, date_from=date_from, date_to=date_to
+    )
