@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -29,6 +30,8 @@ class ProductCreate(BaseModel):
     calories: int | None = None
     preparation_time: int | None = None
     is_sold_by_weight: bool = False
+    #: "fixed" sells at base_price; "open" makes the cashier key the price in.
+    pricing_method: Literal["fixed", "open"] = "fixed"
     is_stock_product: bool = False
     stock_quantity: int = Field(default=0, ge=0)
     image_urls: list[str] = Field(default_factory=list)
@@ -51,6 +54,7 @@ class ProductUpdate(BaseModel):
     calories: int | None = None
     preparation_time: int | None = None
     is_sold_by_weight: bool | None = None
+    pricing_method: Literal["fixed", "open"] | None = None
     is_stock_product: bool | None = None
     stock_quantity: int | None = Field(None, ge=0)
     image_urls: list[str] | None = None
@@ -76,6 +80,11 @@ class ProductResponse(BaseModel):
     calories: int | None
     preparation_time: int | None
     is_sold_by_weight: bool
+    # The terminal needs this to know whether to prompt for a price. Without
+    # it an open-price product looks like an ordinary one, the cashier adds it
+    # with no amount, and the order engine rejects the line with no way for
+    # them to satisfy it.
+    pricing_method: str = "fixed"
     is_stock_product: bool
     stock_quantity: int
     image_urls: list[str]
