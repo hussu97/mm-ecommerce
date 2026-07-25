@@ -10,6 +10,7 @@ mid-edit and replays its queue cannot drift the bill.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from decimal import Decimal
 
@@ -44,7 +45,12 @@ from app.models.product import Product
 from app.models.tax import TaxGroup
 from app.models.till import DrawerOperationTypeEnum, Till
 from app.models.user import User
-from app.services import business_day_service, pos_pricing, till_service
+from app.services import (
+    business_day_service,
+    inventory_service,
+    pos_pricing,
+    till_service,
+)
 from app.services.pos_pricing import (
     ChargeInput,
     DiscountInput,
@@ -65,6 +71,8 @@ __all__ = [
     "void_item",
     "void_order",
 ]
+
+logger = logging.getLogger(__name__)
 
 OPEN_STATUSES = {
     PosOrderStatusEnum.DRAFT.value,
@@ -766,6 +774,15 @@ async def close_order(db: AsyncSession, *, order: Order, user: User) -> Order:
 
     await _release_table(db, order)
     await db.flush()
+
+    # Consume recipe ingredients. Deliberately after the order is marked closed
+    # and deliberately swallowing failures: a stock problem must never strand a
+    # paid check in an open state. Depletion is idempotent, so it can be retried.
+    try:
+        await inventory_service.deplete_for_order(db, order=order, user=user)
+    except Exception:  # noqa: BLE001 — closing the sale outranks stock accuracy
+        logger.exception("Inventory depletion failed for order %s", order.order_number)
+
     return await get_order(db, order.id)
 
 
