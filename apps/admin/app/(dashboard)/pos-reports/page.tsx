@@ -4,19 +4,32 @@ import { useEffect, useRef, useState } from 'react';
 import { branchesApi, posReportsApi } from '@/lib/pos-api';
 import type {
   Branch,
+  BranchTrendRow,
   CostOfGoods,
   InventoryValuation,
   MenuEngineeringRow,
   PaymentReportRow,
   SalesBreakdownRow,
   SalesSummary,
+  SpeedOfServiceReport,
+  SupplierAnalysisRow,
+  TableUtilizationRow,
   TaxReportRow,
 } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Input, Select, Spinner, TabBar } from '@/components/ui';
 import { money } from '@/components/pos/ResourcePage';
 
-type TabKey = 'sales' | 'payments' | 'taxes' | 'menu' | 'inventory';
+type TabKey =
+  | 'sales'
+  | 'payments'
+  | 'taxes'
+  | 'menu'
+  | 'service'
+  | 'branches'
+  | 'tables'
+  | 'inventory'
+  | 'suppliers';
 
 /** Default window: the last 7 trading days, which is what a manager checks. */
 function defaultWindow() {
@@ -80,7 +93,11 @@ export default function PosReportsPage() {
             { key: 'payments', label: 'Payments' },
             { key: 'taxes', label: 'Taxes' },
             { key: 'menu', label: 'Menu Engineering' },
+            { key: 'service', label: 'Speed of Service' },
+            { key: 'branches', label: 'Branches Trend' },
+            { key: 'tables', label: 'Tables' },
             { key: 'inventory', label: 'Inventory' },
+            { key: 'suppliers', label: 'Suppliers' },
           ]}
           active={tab}
           onChange={(k) => setTab(k as TabKey)}
@@ -92,6 +109,10 @@ export default function PosReportsPage() {
         {tab === 'payments' && <PaymentsTab window={window} />}
         {tab === 'taxes' && <TaxesTab window={window} />}
         {tab === 'menu' && <MenuTab window={window} />}
+        {tab === 'service' && <SpeedOfServiceTab window={window} />}
+        {tab === 'branches' && <BranchesTrendTab window={window} />}
+        {tab === 'tables' && <TableUtilizationTab window={window} />}
+        {tab === 'suppliers' && <SuppliersTab window={window} />}
         {tab === 'inventory' && <InventoryTab window={window} branchId={branchId} />}
       </div>
     </div>
@@ -263,11 +284,27 @@ function SalesTab({ window }: { window: Window }) {
             options={[
               { value: 'product', label: 'Product' },
               { value: 'category', label: 'Category' },
+              { value: 'modifier_option', label: 'Modifier option' },
+              { value: 'product_tag', label: 'Product tag' },
               { value: 'order_type', label: 'Order type' },
-              { value: 'source', label: 'Source' },
+              { value: 'order_tag', label: 'Order tag' },
+              { value: 'source', label: 'Order source' },
               { value: 'business_date', label: 'Day' },
-              { value: 'staff', label: 'Staff' },
               { value: 'hour', label: 'Hour of day' },
+              { value: 'branch', label: 'Branch' },
+              { value: 'section', label: 'Section' },
+              { value: 'table', label: 'Table' },
+              { value: 'revenue_center', label: 'Revenue centre' },
+              { value: 'cashier', label: 'Cashier' },
+              { value: 'creator', label: 'Created by' },
+              { value: 'driver', label: 'Driver' },
+              { value: 'customer', label: 'Customer' },
+              { value: 'discount', label: 'Discount' },
+              { value: 'coupon', label: 'Coupon' },
+              { value: 'promotion', label: 'Promotion' },
+              { value: 'timed_event', label: 'Timed event' },
+              { value: 'charge', label: 'Charge' },
+              { value: 'tax', label: 'Tax' },
             ]}
             className="w-52"
           />
@@ -486,5 +523,143 @@ function InventoryTab({ window, branchId }: { window: Window; branchId: string }
         )}
       </Panel>
     </div>
+  );
+}
+
+
+/** A plain report table, for the reports whose shape is just rows. */
+function ReportTable({
+  head,
+  rows,
+}: {
+  head: string[];
+  rows: (string | number)[][];
+}) {
+  return (
+    <div className="overflow-x-auto rounded border border-gray-200 bg-white">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-gray-200 bg-gray-50 text-[11px] uppercase tracking-widest text-gray-500 font-body">
+            {head.map((h, i) => (
+              <th key={h} className={`px-3 py-2 ${i === 0 ? 'text-left' : 'text-right'}`}>
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, ri) => (
+            <tr key={ri} className="border-b border-gray-100 last:border-0">
+              {r.map((c, ci) => (
+                <td
+                  key={ci}
+                  className={`px-3 py-2 ${ci === 0 ? 'font-medium' : 'text-right'}`}
+                >
+                  {c}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/**
+ * Kitchen timings.
+ *
+ * Outstanding tickets sit beside the averages on purpose: each average covers
+ * only the tickets that reached that stage, so a fast prep time with a long
+ * queue behind it would otherwise read as good service.
+ */
+function SpeedOfServiceTab({ window }: { window: Window }) {
+  const { data, loading, error } = useReport<SpeedOfServiceReport>(
+    () => posReportsApi.speedOfService(window),
+    windowKey(window),
+  );
+
+  return (
+    <Panel loading={loading} error={error} empty={!data?.tickets}>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+        <Stat label="Tickets" value={String(data?.tickets ?? 0)} />
+        <Stat
+          label="Completed"
+          value={String(data?.completed ?? 0)}
+          hint={`${data?.outstanding ?? 0} still open`}
+        />
+        <Stat label="Slowest ticket" value={`${data?.slowest_ticket_minutes ?? 0} min`} />
+        <Stat
+          label="Acknowledge"
+          value={`${data?.avg_acknowledge_minutes ?? 0} min`}
+          hint="sent → started"
+        />
+        <Stat label="Prep" value={`${data?.avg_prep_minutes ?? 0} min`} hint="started → ready" />
+        <Stat label="Total" value={`${data?.avg_total_minutes ?? 0} min`} hint="sent → ready" />
+      </div>
+    </Panel>
+  );
+}
+
+function BranchesTrendTab({ window }: { window: Window }) {
+  const { data, loading, error } = useReport<BranchTrendRow[]>(
+    () => posReportsApi.branchesTrend(window),
+    windowKey(window),
+  );
+
+  return (
+    <Panel loading={loading} error={error} empty={!data?.length}>
+      <ReportTable
+        head={['Branch', 'Day', 'Orders', 'Net sales', 'Avg order']}
+        rows={(data ?? []).map((r) => [
+          r.branch,
+          r.business_date,
+          r.orders,
+          money(r.net_sales),
+          money(r.average_order_value),
+        ])}
+      />
+    </Panel>
+  );
+}
+
+function TableUtilizationTab({ window }: { window: Window }) {
+  const { data, loading, error } = useReport<TableUtilizationRow[]>(
+    () => posReportsApi.tableUtilization(window),
+    windowKey(window),
+  );
+
+  return (
+    <Panel loading={loading} error={error} empty={!data?.length}>
+      <ReportTable
+        head={['Table', 'Section', 'Seats', 'Turns', 'Covers', 'Avg mins', 'Net sales', 'Per seat']}
+        rows={(data ?? []).map((r) => [
+          r.table,
+          r.section,
+          r.seats,
+          r.turns,
+          r.covers,
+          r.average_minutes,
+          money(r.net_sales),
+          money(r.sales_per_seat),
+        ])}
+      />
+    </Panel>
+  );
+}
+
+function SuppliersTab({ window }: { window: Window }) {
+  const { data, loading, error } = useReport<SupplierAnalysisRow[]>(
+    () => posReportsApi.suppliersAnalysis(window),
+    windowKey(window),
+  );
+
+  return (
+    <Panel loading={loading} error={error} empty={!data?.length}>
+      <ReportTable
+        head={['Supplier', 'Purchase orders', 'Total spend']}
+        rows={(data ?? []).map((r) => [r.supplier, r.purchase_orders, money(r.total_spend)])}
+      />
+    </Panel>
   );
 }

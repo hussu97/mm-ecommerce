@@ -7,7 +7,8 @@ import type {
   InventoryCategory, InventoryItem, InventoryLevel, InventoryTransaction,
   InventoryValuation, KitchenFlow, MenuEngineeringRow, PaymentMethod,
   PaymentReportRow, PermissionCatalogue, PosOrder, Printer, PurchaseOrder,
-  Reason, Role, SalesBreakdownRow, SalesSummary, Staff, Supplier, Tag, Tax,
+  Reason, Role, SalesBreakdownRow, SalesSummary, SpeedOfServiceReport, Staff,
+  SupplierAnalysisRow, Supplier, Tag, TableUtilizationRow, Tax, BranchTrendRow,
   TaxGroup, TaxReportRow, Till, Warehouse,
 } from './pos-types';
 
@@ -241,6 +242,14 @@ export const posReportsApi = {
   salesBy: (dimension: string, w: Window, limit = 100) =>
     api.get<SalesBreakdownRow[]>(`/pos/reports/sales/by${qs({ dimension, limit, ...w })}`),
   payments: (w: Window) => api.get<PaymentReportRow[]>(`/pos/reports/payments${qs(w)}`),
+  speedOfService: (w: Window) =>
+    api.get<SpeedOfServiceReport>(`/pos/reports/speed-of-service${qs(w)}`),
+  branchesTrend: (w: Window) =>
+    api.get<BranchTrendRow[]>(`/pos/reports/branches-trend${qs(w)}`),
+  tableUtilization: (w: Window) =>
+    api.get<TableUtilizationRow[]>(`/pos/reports/table-utilization${qs(w)}`),
+  suppliersAnalysis: (w: Window) =>
+    api.get<SupplierAnalysisRow[]>(`/pos/reports/suppliers-analysis${qs(w)}`),
   taxes: (w: Window) => api.get<TaxReportRow[]>(`/pos/reports/taxes${qs(w)}`),
   voidsReturns: (w: Window) => api.get<Record<string, unknown>[]>(`/pos/reports/voids-returns${qs(w)}`),
   tills: (w: Window) => api.get<Record<string, unknown>[]>(`/pos/reports/tills${qs(w)}`),
