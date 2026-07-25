@@ -372,15 +372,21 @@ jobs:
             exit 1
           fi
 
+          # Every docker command here needs `< /dev/null`. This whole script is
+          # piped into `bash -s`, and docker reads stdin, so a command without
+          # it swallows the rest of the script. That is not hypothetical: the
+          # nginx reload below had no guard, so for months every deploy ended
+          # silently at this point — "Deployment complete" has never once been
+          # printed — while the job still reported success.
           echo "Ensuring nginx is up..."
-          docker compose -f docker-compose.prod.yml up -d --no-deps nginx
-          docker compose -f docker-compose.prod.yml exec -T nginx nginx -s reload
+          docker compose -f docker-compose.prod.yml up -d --no-deps nginx < /dev/null
+          docker compose -f docker-compose.prod.yml exec -T nginx nginx -s reload < /dev/null
 
           # The deploy only ever started api and nginx, so when the certbot
           # renewal loop died it stayed dead through every subsequent deploy
           # and the certificate silently expired. Bring it up here too.
           echo "Ensuring the certificate renewal loop is up..."
-          docker compose -f docker-compose.prod.yml up -d --no-deps certbot
+          docker compose -f docker-compose.prod.yml up -d --no-deps certbot < /dev/null
 
           echo "Certificate expiry:"
           docker compose -f docker-compose.prod.yml exec -T nginx sh -c '
@@ -391,13 +397,13 @@ jobs:
               # discovering it from a browser error after it has expired.
               openssl x509 -checkend 604800 -noout -in "$c" \
                 || echo "  WARNING: expires within 7 days"
-            done' || true
+            done' < /dev/null || true
 
           echo "Pruning old images..."
-          docker image prune -f
+          docker image prune -f < /dev/null
 
           echo "Deployment complete."
-          docker compose -f docker-compose.prod.yml ps
+          docker compose -f docker-compose.prod.yml ps < /dev/null
           SCRIPT
 
       - name: Cleanup SSH key
