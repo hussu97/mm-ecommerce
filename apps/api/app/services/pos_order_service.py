@@ -119,6 +119,19 @@ def _assert_open(order: Order) -> None:
         )
 
 
+def _net_paid(order: Order) -> Decimal:
+    """What the shop is still holding for this order, refunds netted off."""
+    return money(
+        sum(
+            (
+                (-money(p.amount) if p.is_refund else money(p.amount))
+                for p in order.payments
+            ),
+            Decimal("0"),
+        )
+    )
+
+
 # ─── Opening ──────────────────────────────────────────────────────────────────
 
 
@@ -861,7 +874,12 @@ async def void_order(
     db: AsyncSession, *, order: Order, user: User, reason_id: uuid.UUID | None = None
 ) -> Order:
     _assert_open(order)
-    if order.payments:
+    # What blocks a void is money still held against the order, not the fact
+    # that money once moved. Testing for payment rows means an order that has
+    # been fully refunded — net zero, nothing owed to anyone — can never be
+    # voided, and the refund itself is a payment row, so following the error's
+    # own instruction leaves the cashier exactly where they started.
+    if _net_paid(order) != 0:
         raise ConflictError("This order has payments — refund them before voiding")
 
     order.pos_status = PosOrderStatusEnum.VOID.value
