@@ -51,6 +51,8 @@ class AddItemRequest(BaseModel):
     kitchen_notes: str | None = None
     #: Fire this line with a named course rather than immediately.
     course_id: UUID | None = None
+    #: Required for a product priced per kilo; rejected for anything else.
+    weight: Decimal | None = Field(None, gt=0, decimal_places=3)
 
 
 class SplitOrderRequest(BaseModel):
@@ -129,6 +131,7 @@ class OrderItemResponse(ORMModel):
     product_sku: str
     quantity: int
     returned_quantity: int
+    weight: Decimal | None = None
     base_price: Decimal
     options_price: Decimal
     unit_price: Decimal

@@ -246,6 +246,9 @@ class OrderItem(Base, UUIDMixin):
         JSONB, nullable=False, server_default="{}"
     )
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: Weight sold, for products priced per kilo. Quantity stays whole —
+    #: a 0.4 kg line is still one line on the check.
+    weight: Mapped[Any | None] = mapped_column(Numeric(10, 3), nullable=True)
     base_price: Mapped[Any] = mapped_column(Numeric(10, 2), nullable=False)
     options_price: Mapped[Any] = mapped_column(
         Numeric(10, 2), nullable=False, server_default="0"

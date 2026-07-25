@@ -24,7 +24,7 @@ plan.
 | Order types: dine-in, takeaway, delivery, drive-thru | ✅ | `OrderTypeEnum` |
 | Order sources: cashier, online, API, call centre | ✅ | `OrderSourceEnum` |
 | Open-price products | ✅ | `pricing_method="open"`, `pos.products.open_price` |
-| Sell by weight | ⚠️ | `Product.is_sold_by_weight` exists; terminal has no scale integration |
+| Sell by weight | ✅ | weight on a line, priced per kilo, printed on the receipt. A scale *driver* still needs hardware; manual entry works today |
 | Modifiers with min/max/free/unique rules | ✅ | `ProductModifier`, `ModifierSheet` |
 | Combos (sizes → items → options) | ✅ | `Combo` family |
 | Predefined + open discounts | ✅ | `Discount`, `/pos/orders/{id}/discounts` |
@@ -44,7 +44,7 @@ plan.
 | Cash rounding | ✅ | `apply_cash_rounding` |
 | Offline mode | ✅ | `OfflineQueue`, `MenuCache` (mm-pos) |
 | PIN sign-in | ✅ | `/staff/pin-login`, branch-scoped |
-| Fingerprint sign-in | ⬜ | permission slug reserved only |
+| Fingerprint sign-in | ✅ | Face ID / Touch ID unlocks the stored PIN; keypad always remains |
 | Ahead / scheduled orders | ✅ | `due_at` on open, plus `POST /pos/orders/{id}/schedule` |
 | Act as driver / waiter | ✅ | `POST /pos/orders/{id}/driver` + `GET /pos/orders/dispatch/board` |
 

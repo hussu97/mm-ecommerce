@@ -260,6 +260,7 @@ async def add_item(
     selected_options: list[dict] | None = None,
     kitchen_notes: str | None = None,
     course_id: uuid.UUID | None = None,
+    weight: Decimal | None = None,
 ) -> OrderItem:
     _assert_open(order)
     if quantity < 1:
@@ -280,11 +281,24 @@ async def add_item(
     base_price = (
         money(unit_price_override) if is_open_price else money(product.base_price)
     )
+
+    if product.is_sold_by_weight:
+        if weight is None or weight <= 0:
+            raise BadRequestError(
+                f"{product.name} is sold by weight — enter the weight"
+            )
+        # The catalogue price is per kilo; what the customer pays is that
+        # times what is on the scale. Quantity stays 1: the line is one
+        # bag of brownies, not 0.4 of one.
+        base_price = money(base_price * weight)
+    elif weight is not None:
+        raise BadRequestError(f"{product.name} is not sold by weight")
     unit_price = money(base_price + options_price)
 
     item = OrderItem(
         order_id=order.id,
         product_id=product.id,
+        weight=weight,
         product_name=product.name,
         product_sku=product.sku or "",
         product_translations=product.translations or {},

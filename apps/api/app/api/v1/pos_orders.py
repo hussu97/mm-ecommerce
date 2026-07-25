@@ -180,6 +180,7 @@ async def add_item(
         selected_options=[o.model_dump(mode="json") for o in data.selected_options],
         kitchen_notes=data.kitchen_notes,
         course_id=data.course_id,
+        weight=data.weight,
     )
     return _serialise(await _load(db, order_id))
 
