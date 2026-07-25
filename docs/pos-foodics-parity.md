@@ -241,11 +241,11 @@ Offline‑first with a local queue and sync. Melting Moments visual language
 | 1 | **Foundation** — branches + business days, taxes/tax groups, payment methods, charges, reasons, tags, kitchen flows, devices + printers, sections/tables, roles + staff (PIN), tills/shifts/drawer operations, business settings | ✅ done |
 | 2 | **Menu** — price tags, groups, allergens, combos, branch-level overrides | ⏳ partial — product `tax_group_id`, `pricing_method`, `costing_method`, `is_non_revenue` landed; the rest outstanding |
 | 3 | **POS ops** — POS order engine, pricing/tax, split tender, kitchen tickets + KDS | ✅ done |
-| 4 | **Inventory** | ⬜ not started |
+| 4 | **Inventory** — items, levels, suppliers, transaction ledger, POs, recipes, auto-depletion | ✅ done |
 | 5 | **Marketing** — discounts, promotions, timed events, gift cards, loyalty, house accounts | ⬜ not started |
-| 6 | **Reports** | ⬜ not started (till X/Z report done) |
-| 7 | **Admin UI** | ⬜ not started |
-| 8 | **iPad POS app** (`mm-pos`) | ⏳ in progress — domain, API client, ESC/POS printing, receipt/kitchen/Z renderers, LAN transport, cash drawer done and tested; SwiftUI screens and offline queue outstanding |
+| 6 | **Reports** — sales, payments, tax, voids, tills, drawer, inventory valuation, COGS, menu engineering | ✅ done |
+| 7 | **Admin UI** | ✅ done for everything built |
+| 8 | **iPad POS app** (`mm-pos`) | ⏳ core flows working — pairing, PIN, till, register, payment, ESC/POS printing; KDS screen and offline queue outstanding |
 
 ### Delivered so far
 
@@ -253,10 +253,14 @@ Offline‑first with a local queue and sync. Melting Moments visual language
 (6 tables + 28 order columns + 15 order-item columns),
 `036_product_pos_fields` (seeds the UAE VAT group and backfills every product).
 
-**Endpoints** ~120 new, under `/branches`, `/taxes`, `/tax-groups`,
+**Endpoints** ~155 new, under `/branches`, `/taxes`, `/tax-groups`,
 `/payment-methods`, `/charges`, `/reasons`, `/tags`, `/kitchen-flows`,
 `/devices`, `/printers`, `/roles`, `/staff`, `/tills`, `/business-settings`,
-`/pos/orders`, `/pos/kitchen`.
+`/pos/orders`, `/pos/kitchen`, `/pos/reports`, `/inventory/*`.
+
+**Admin pages** Branches, Staff & Roles (with the full permission editor),
+Devices & Printers, POS Config, POS Orders, Inventory, Purchase Orders,
+POS Reports.
 
 **Key invariants**
 - `business_date` derives from each branch's cut-off, so post-midnight trading
@@ -266,7 +270,8 @@ Offline‑first with a local queue and sync. Melting Moments visual language
   are apportioned across lines so per-rate VAT stays correct on mixed-rate checks.
 - Every POS endpoint is gated on the role authority matrix in §2.
 
-**Tests** 257 Python (24 covering pricing alone) + 11 Swift, all green.
+**Tests** 267 Python (24 pricing, 10 inventory costing) + 11 Swift + 142
+frontend, all green.
 
 ### Note on repository drift
 
