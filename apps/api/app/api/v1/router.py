@@ -24,6 +24,22 @@ from .email_logs import router as email_logs_router
 from .regions import router as regions_router
 from .audit_logs import router as audit_logs_router
 
+# POS domain
+from .branches import router as branches_router
+from .business_settings import router as business_settings_router
+from .devices import printers_router, router as devices_router
+from .pos_config import (
+    charges_router,
+    kitchen_flows_router,
+    payment_methods_router,
+    reasons_router,
+    tags_router,
+    tax_groups_router,
+    taxes_router,
+)
+from .staff import roles_router, router as staff_router
+from .tills import router as tills_router
+
 api_router = APIRouter()
 
 api_router.include_router(auth_router, prefix="/auth", tags=["Authentication"])
@@ -51,3 +67,25 @@ api_router.include_router(blog_router, prefix="/blog", tags=["Blog"])
 api_router.include_router(email_logs_router, prefix="/email-logs", tags=["Email Logs"])
 api_router.include_router(regions_router, prefix="/regions", tags=["Regions"])
 api_router.include_router(audit_logs_router, prefix="/audit-logs", tags=["Audit Logs"])
+
+# ─── POS ──────────────────────────────────────────────────────────────────────
+api_router.include_router(branches_router, prefix="/branches", tags=["Branches"])
+api_router.include_router(taxes_router, prefix="/taxes", tags=["Taxes"])
+api_router.include_router(tax_groups_router, prefix="/tax-groups", tags=["Taxes"])
+api_router.include_router(
+    payment_methods_router, prefix="/payment-methods", tags=["Payment Methods"]
+)
+api_router.include_router(charges_router, prefix="/charges", tags=["Charges"])
+api_router.include_router(reasons_router, prefix="/reasons", tags=["Reasons"])
+api_router.include_router(tags_router, prefix="/tags", tags=["Tags"])
+api_router.include_router(
+    kitchen_flows_router, prefix="/kitchen-flows", tags=["Kitchen Flows"]
+)
+api_router.include_router(devices_router, prefix="/devices", tags=["Devices"])
+api_router.include_router(printers_router, prefix="/printers", tags=["Printers"])
+api_router.include_router(roles_router, prefix="/roles", tags=["Roles"])
+api_router.include_router(staff_router, prefix="/staff", tags=["Staff"])
+api_router.include_router(tills_router, prefix="/tills", tags=["Tills"])
+api_router.include_router(
+    business_settings_router, prefix="/business-settings", tags=["Business Settings"]
+)
