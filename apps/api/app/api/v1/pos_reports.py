@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import uuid
-from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,10 +13,6 @@ from app.models.user import User
 from app.services import pos_reports_service
 
 router = APIRouter()
-
-DimensionLiteral = Literal[
-    "product", "category", "order_type", "source", "business_date", "staff", "hour"
-]
 
 
 def _require(user: User, permission: str) -> None:
@@ -61,14 +56,24 @@ async def sales_summary(
 
 @router.get("/sales/by")
 async def sales_by(
-    dimension: DimensionLiteral,
+    dimension: str,
     limit: int = Query(100, ge=1, le=1000),
     window: _Window = Depends(),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_active_user),
 ):
-    """Sales grouped by product, category, order type, source, day, staff or hour."""
+    """
+    Sales grouped by any supported dimension.
+
+    The allowed set comes from the service rather than a literal repeated
+    here, so adding a dimension cannot leave the route rejecting it.
+    """
     _require(user, "reports.sales")
+    if dimension not in pos_reports_service.SUPPORTED_DIMENSIONS:
+        raise BadRequestError(
+            f"Unsupported dimension '{dimension}'. Try one of: "
+            f"{', '.join(sorted(pos_reports_service.SUPPORTED_DIMENSIONS))}"
+        )
     return await pos_reports_service.sales_by_dimension(
         db, dimension=dimension, limit=limit, **window.kwargs
     )

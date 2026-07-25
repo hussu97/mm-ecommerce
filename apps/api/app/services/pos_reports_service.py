@@ -27,12 +27,16 @@ from app.models.inventory import (
 )
 from app.models.order import Order, OrderItem
 from app.models.payment_method import PaymentMethod
+from app.models.branch import Branch
 from app.models.pos_order import (
     KitchenTicket,
+    OrderCharge,
+    OrderDiscount,
     OrderPayment,
     OrderTax,
     PosOrderStatusEnum,
 )
+from app.models.pos_table import PosTable
 from app.models.product import Product
 from app.models.till import DrawerOperation, Till
 from app.models.user import User
@@ -166,8 +170,12 @@ async def sales_by_dimension(
     limit: int = 100,
 ) -> list[dict]:
     """
-    Sales grouped by product, category, order type, source, staff, or hour.
-    One function because the shape is identical and only the grouping differs.
+    Sales grouped by any of the dimensions a GM actually asks about.
+
+    One function rather than a route per dimension: the query shape is
+    identical and only the grouping column changes. Foodics ships this as
+    twenty-odd separate `sales-by-*` screens; the same answers come out of
+    one endpoint with a `dimension` parameter.
     """
     if dimension in {"product", "category"}:
         return await _sales_by_item(
@@ -179,15 +187,22 @@ async def sales_by_dimension(
             limit=limit,
         )
 
-    column = {
-        "order_type": Order.order_type,
-        "source": Order.source,
-        "business_date": Order.business_date,
-        "staff": Order.closer_id,
-        "hour": func.to_char(Order.closed_at, "HH24"),
-    }.get(dimension)
+    if dimension in _LINE_DIMENSIONS:
+        return await _sales_by_related(
+            db,
+            dimension=dimension,
+            branch_id=branch_id,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
+        )
+
+    column = _ORDER_DIMENSIONS.get(dimension)
     if column is None:
-        raise ValueError(f"Unsupported dimension '{dimension}'")
+        raise ValueError(
+            f"Unsupported dimension '{dimension}'. "
+            f"Try one of: {', '.join(sorted(SUPPORTED_DIMENSIONS))}"
+        )
 
     stmt = (
         _scope(
@@ -208,7 +223,7 @@ async def sales_by_dimension(
     )
 
     rows = (await db.execute(stmt)).all()
-    labels = await _staff_labels(db, rows) if dimension == "staff" else {}
+    labels = await _labels_for(db, dimension, rows)
     return [
         {
             "key": str(key) if key is not None else "unknown",
@@ -221,12 +236,126 @@ async def sales_by_dimension(
     ]
 
 
+#: Dimensions that group the order rows themselves.
+_ORDER_DIMENSIONS = {
+    "order_type": Order.order_type,
+    "source": Order.source,
+    "business_date": Order.business_date,
+    # Foodics separates "cashier" (who closed it) from "creator" (who rang it
+    # up); on a single-terminal shift they are the same person, on a busy one
+    # they are not, and the split is how a manager spots a hand-off.
+    "staff": Order.closer_id,
+    "cashier": Order.closer_id,
+    "creator": Order.creator_id,
+    "driver": Order.driver_id,
+    "customer": Order.user_id,
+    "branch": Order.branch_id,
+    "table": Order.table_id,
+    "hour": func.to_char(Order.closed_at, "HH24"),
+}
+
+#: Dimensions that live on a child row, so they need a join and a sum of the
+#: child's own amount rather than the order total — a check with two discounts
+#: must not count its full value against each of them.
+_LINE_DIMENSIONS = {"discount", "charge", "tax"}
+
+SUPPORTED_DIMENSIONS = (
+    set(_ORDER_DIMENSIONS) | _LINE_DIMENSIONS | {"product", "category"}
+)
+
+
 async def _staff_labels(db: AsyncSession, rows: Sequence[Any]) -> dict[str, str]:
+    """Display names for grouped user ids, keyed by id string."""
     ids = {r[0] for r in rows if r[0] is not None}
     if not ids:
         return {}
     users = (await db.execute(select(User).where(User.id.in_(ids)))).scalars().all()
     return {str(u.id): (u.display_name or u.email) for u in users}
+
+
+async def _labels_for(
+    db: AsyncSession, dimension: str, rows: Sequence[Any]
+) -> dict[str, str]:
+    """Turn grouped foreign keys into names a human recognises."""
+    ids = {r[0] for r in rows if r[0] is not None}
+    if not ids:
+        return {}
+
+    if dimension in {"staff", "cashier", "creator", "driver", "customer"}:
+        return await _staff_labels(db, rows)
+
+    if dimension == "branch":
+        branches = (
+            (await db.execute(select(Branch).where(Branch.id.in_(ids)))).scalars().all()
+        )
+        return {str(b.id): b.name for b in branches}
+
+    if dimension == "table":
+        tables = (
+            (await db.execute(select(PosTable).where(PosTable.id.in_(ids))))
+            .scalars()
+            .all()
+        )
+        return {str(t.id): t.name for t in tables}
+
+    return {}
+
+
+async def _sales_by_related(
+    db: AsyncSession,
+    *,
+    dimension: str,
+    branch_id: uuid.UUID | None,
+    date_from: str | None,
+    date_to: str | None,
+    limit: int,
+) -> list[dict]:
+    """
+    Group by something attached to the order rather than on it.
+
+    The amount summed is the child's own — the discount given, the charge
+    levied — not the order total, so two discounts on one check do not each
+    claim the whole check's value.
+    """
+    model, amount = {
+        "discount": (OrderDiscount, OrderDiscount.amount),
+        "charge": (OrderCharge, OrderCharge.amount),
+        "tax": (OrderTax, OrderTax.amount),
+    }[dimension]
+
+    stmt = (
+        _scope(
+            select(
+                model.name.label("key"),
+                func.count(func.distinct(Order.id)),
+                func.coalesce(func.sum(amount), 0),
+            ),
+            branch_id=branch_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        .select_from(Order)
+        .join(model, model.order_id == Order.id)
+        .where(Order.pos_status == CLOSED)
+        .group_by(model.name)
+        .order_by(func.coalesce(func.sum(amount), 0).desc())
+        .limit(limit)
+    )
+
+    rows = (await db.execute(stmt)).all()
+    return [
+        {
+            "key": name or "unknown",
+            "label": name or "Unknown",
+            "orders": int(count or 0),
+            # For these dimensions the money *is* the discount or charge, so
+            # it is reported under both keys rather than inventing a new one
+            # the admin table would have to special-case.
+            "net_sales": _q(total),
+            "discounts": _q(total) if dimension == "discount" else _q(0),
+        }
+        for name, count, total in rows
+    ]
 
 
 async def _sales_by_item(

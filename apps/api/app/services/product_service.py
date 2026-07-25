@@ -63,7 +63,16 @@ async def get_all(
     per_page: int = 20,
     include_inactive: bool = False,
     is_active: bool | None = None,
+    channel: str = "web",
 ) -> tuple[list[ProductResponse], int]:
+    """
+    List products for one sales channel.
+
+    `channel` defaults to "web" on purpose. The storefront and the terminal
+    share this query, and defaulting the other way would mean a forgotten
+    parameter puts bottled water on a cake website. Asking for the POS
+    catalogue is explicit; leaking to the web is not possible by omission.
+    """
     stmt = select(Product).options(*_product_load_options())
 
     if sort == "category":
@@ -77,6 +86,9 @@ async def get_all(
         stmt = stmt.where(Product.is_active == is_active)  # noqa: E712
     elif not include_inactive:
         stmt = stmt.where(Product.is_active == True)  # noqa: E712
+
+    if channel == "web":
+        stmt = stmt.where(Product.is_web_visible == True)  # noqa: E712
 
     if category_slugs:
         if sort != "category":
@@ -108,7 +120,11 @@ async def get_by_slug(db: AsyncSession, slug: str) -> ProductResponse:
     stmt = (
         select(Product)
         .options(*_product_load_options())
-        .where(Product.slug == slug, Product.is_active == True)  # noqa: E712
+        .where(
+            Product.slug == slug,
+            Product.is_active == True,  # noqa: E712
+            Product.is_web_visible == True,  # noqa: E712
+        )
     )
     result = await db.execute(stmt)
     product = result.scalar_one_or_none()
@@ -131,7 +147,11 @@ async def get_featured(db: AsyncSession, limit: int = 8) -> list[ProductResponse
     stmt = (
         select(Product)
         .options(*_product_load_options())
-        .where(Product.is_active == True, Product.is_featured == True)  # noqa: E712
+        .where(
+            Product.is_active == True,  # noqa: E712
+            Product.is_featured == True,  # noqa: E712
+            Product.is_web_visible == True,  # noqa: E712
+        )
         .order_by(Product.display_order, Product.created_at.desc())
         .limit(limit)
     )

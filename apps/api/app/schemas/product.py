@@ -33,6 +33,8 @@ class ProductCreate(BaseModel):
     stock_quantity: int = Field(default=0, ge=0)
     image_urls: list[str] = Field(default_factory=list)
     is_featured: bool = False
+    #: Listed on the public website. POS-only items are false.
+    is_web_visible: bool = True
     display_order: int = 0
 
 
@@ -52,6 +54,7 @@ class ProductUpdate(BaseModel):
     image_urls: list[str] | None = None
     is_active: bool | None = None
     is_featured: bool | None = None
+    is_web_visible: bool | None = None
     display_order: int | None = None
 
 
@@ -74,6 +77,7 @@ class ProductResponse(BaseModel):
     image_urls: list[str]
     is_active: bool
     is_featured: bool
+    is_web_visible: bool = True
     display_order: int
     created_at: datetime
     updated_at: datetime

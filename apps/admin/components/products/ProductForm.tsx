@@ -30,6 +30,7 @@ export function ProductForm({ product }: Props) {
     calories: String(product?.calories ?? ''),
     preparation_time: String(product?.preparation_time ?? ''),
     is_featured: product?.is_featured ?? false,
+    is_web_visible: product?.is_web_visible ?? true,
     is_active: product?.is_active ?? true,
     is_stock_product: product?.is_stock_product ?? false,
     stock_quantity: String(product?.stock_quantity ?? 0),
@@ -135,6 +136,7 @@ export function ProductForm({ product }: Props) {
       preparation_time: form.preparation_time.trim() ? Number(form.preparation_time) : null,
       image_urls: imageUrls,
       is_featured: form.is_featured,
+      is_web_visible: form.is_web_visible,
       is_active: form.is_active,
       is_stock_product: form.is_stock_product,
       stock_quantity: Number(form.stock_quantity) || 0,
@@ -253,6 +255,16 @@ export function ProductForm({ product }: Props) {
               className="accent-primary"
             />
             Featured
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer text-xs font-body text-gray-600 uppercase tracking-wider">
+            <input
+              type="checkbox"
+              checked={form.is_web_visible}
+              onChange={e => setForm(f => ({ ...f, is_web_visible: e.target.checked }))}
+              className="accent-primary"
+            />
+            {/* Counter-only items (coffee, bottled water) stay off the website. */}
+            Sell on website
           </label>
           <label className="flex items-center gap-2 cursor-pointer text-xs font-body text-gray-600 uppercase tracking-wider">
             <input

@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 
 from decimal import Decimal
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field
@@ -50,6 +51,14 @@ async def list_products(
     per_page: int = Query(20, ge=1, le=100),
     include_inactive: bool = Query(False),
     is_active: bool | None = Query(None),
+    channel: Literal["web", "pos", "all"] = Query(
+        "web",
+        description=(
+            "Which catalogue to list. 'web' is the storefront and is the "
+            "default so POS-only items can never leak onto the website by a "
+            "forgotten parameter; the terminal asks for 'pos'."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """List products with filtering, search, and pagination."""
@@ -63,6 +72,7 @@ async def list_products(
         per_page=per_page,
         include_inactive=include_inactive,
         is_active=is_active,
+        channel=channel,
     )
     pages = max(1, (total + per_page - 1) // per_page)
     return ProductListResponse(

@@ -272,6 +272,7 @@ export default function ProductsPage() {
                   </td>
                   <td className="px-4 py-2.5 text-center hidden lg:table-cell">
                     {product.is_featured && <Badge variant="info">Featured</Badge>}
+                    {!product.is_web_visible && <Badge variant="warning">POS only</Badge>}
                   </td>
                   <td className="px-4 py-2.5 text-right">
                     <div className="flex items-center justify-end gap-2">

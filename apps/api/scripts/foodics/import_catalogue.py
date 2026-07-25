@@ -108,7 +108,15 @@ def money(value: Any) -> Decimal:
 
 
 class Importer:
-    def __init__(self, db, export: dict, images: dict[str, str], dry_run: bool):
+    def __init__(
+        self,
+        db,
+        export: dict,
+        images: dict[str, str],
+        dry_run: bool,
+        web_visible_on_import: bool = False,
+    ):
+        self.web_visible_on_import = web_visible_on_import
         self.db = db
         self.export = export
         self.images = images
@@ -246,6 +254,7 @@ class Importer:
             tax_group = self.tax_groups.get(row.get("tax_group_id"))
             hosted = self.hosted_image(row.get("image"))
 
+            existing = await self.one(Product, sku=sku)
             product = await self.upsert(
                 Product,
                 {"sku": sku},
@@ -267,6 +276,12 @@ class Importer:
                     "display_order": order,
                 },
             )
+            # Counter items — coffee, juices, bottled water — belong on the
+            # terminal, not the cake website. Only decided on first import: a
+            # product the site already sells keeps whatever it was set to,
+            # and anything genuinely wanted online is opted in from the admin.
+            if existing is None:
+                product.is_web_visible = self.web_visible_on_import
             self.products[row["id"]] = product
             await self.link_modifiers(row, product)
 
@@ -529,6 +544,11 @@ async def main() -> int:
         help="First placeholder PIN to issue to imported staff",
     )
     parser.add_argument("--dry-run", action="store_true", help="roll back at the end")
+    parser.add_argument(
+        "--web-visible",
+        action="store_true",
+        help="also list newly imported products on the website (default: POS only)",
+    )
     args = parser.parse_args()
 
     if not args.database_url:
@@ -541,7 +561,7 @@ async def main() -> int:
     Session = async_sessionmaker(engine, expire_on_commit=False)
 
     async with Session() as db:
-        importer = Importer(db, export, images, args.dry_run)
+        importer = Importer(db, export, images, args.dry_run, args.web_visible)
         pins = await importer.run(args.pin_start)
 
         if args.dry_run:

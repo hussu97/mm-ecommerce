@@ -49,6 +49,15 @@ class Product(Base, UUIDMixin, TimestampMixin):
     is_sold_by_weight: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
     )
+    #: Whether this product is sold on the public website.
+    #:
+    #: The POS catalogue and the storefront catalogue are not the same list.
+    #: A coffee shop sells lattes and bottled water over the counter that the
+    #: cake website has no business listing, so imported POS items land with
+    #: this false and are opted in deliberately.
+    is_web_visible: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true", default=True
+    )
     is_stock_product: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
     )
