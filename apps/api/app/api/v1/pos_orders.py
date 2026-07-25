@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.deps import get_current_active_user, get_db
-from app.core.exceptions import ForbiddenError, NotFoundError
+from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.models import (
     Branch,
     KitchenTicket,
@@ -38,6 +38,8 @@ from app.schemas.pos_order import (
     SplitOrderResponse,
     JoinOrderRequest,
     ChangeTableRequest,
+    AssignDriverRequest,
+    ScheduleOrderRequest,
     VoidOrderRequest,
 )
 from app.services import crud_service, pos_order_service
@@ -142,6 +144,7 @@ async def open_order(
         customer_phone=data.customer_phone,
         notes=data.notes,
         source=data.source,
+        due_at=data.due_at,
     )
     return _serialise(order)
 
@@ -387,6 +390,81 @@ async def change_table(
     return _serialise(
         await pos_order_service.change_table(db, order=order, table_id=data.table_id)
     )
+
+
+@router.post("/{order_id}/driver", response_model=PosOrderResponse)
+async def assign_driver(
+    order_id: uuid.UUID,
+    data: AssignDriverRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """
+    Put a delivery order on a driver, or take it back off one.
+
+    Only delivery orders can be dispatched; assigning a driver to a takeaway
+    would put it on a dispatch board it should never appear on.
+    """
+    await _require_permission(user, "pos.driver.act_as")
+    order = await _load(db, order_id)
+    if order.order_type != "delivery":
+        raise BadRequestError("Only a delivery order can be given to a driver")
+    if data.driver_id is not None:
+        driver = await db.get(User, data.driver_id)
+        if driver is None or not driver.is_driver:
+            raise BadRequestError("That user is not a driver")
+    order.driver_id = data.driver_id
+    await db.flush()
+    return _serialise(await _load(db, order_id))
+
+
+@router.post("/{order_id}/schedule", response_model=PosOrderResponse)
+async def schedule_order(
+    order_id: uuid.UUID,
+    data: ScheduleOrderRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Set when an ahead order is wanted — a cake for 4pm tomorrow."""
+    await _require_permission(user, "pos.register.access")
+    order = await _load(db, order_id)
+    order.due_at = data.due_at
+    await db.flush()
+    return _serialise(await _load(db, order_id))
+
+
+@router.get("/dispatch/board", response_model=list[PosOrderResponse])
+async def dispatch_board(
+    branch_id: uuid.UUID | None = None,
+    unassigned_only: bool = False,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """
+    Open delivery orders, oldest first — the driver dispatch queue.
+
+    Declared before nothing else claims `/dispatch`, and ordered by when the
+    order was opened because the longest-waiting customer goes out first.
+    """
+    await _require_permission(user, "orders.read")
+    stmt = select(Order).where(
+        Order.is_pos.is_(True),
+        Order.order_type == "delivery",
+        Order.pos_status.in_(sorted(pos_order_service.OPEN_STATUSES)),
+    )
+    if branch_id:
+        stmt = stmt.where(Order.branch_id == branch_id)
+    if unassigned_only:
+        stmt = stmt.where(Order.driver_id.is_(None))
+    stmt = stmt.options(
+        selectinload(Order.items),
+        selectinload(Order.payments),
+        selectinload(Order.order_charges),
+        selectinload(Order.order_discounts),
+        selectinload(Order.order_taxes),
+    ).order_by(Order.opened_at.asc().nullslast())
+    orders = list((await db.execute(stmt)).scalars().unique().all())
+    return [_serialise(o) for o in orders]
 
 
 # ─── Kitchen display ──────────────────────────────────────────────────────────

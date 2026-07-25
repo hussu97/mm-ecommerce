@@ -34,6 +34,8 @@ from app.models import (
 from app.models.base import utcnow
 from app.models.user import User
 from app.schemas.inventory import (
+    CloseCountRequest,
+    OpenCountRequest,
     CostAdjustmentRequest,
     CostAdjustmentResponse,
     WasteRequest,
@@ -63,6 +65,7 @@ from app.schemas.inventory import (
     WarehouseResponse,
     WarehouseUpdate,
 )
+from app.models.inventory import InventoryTransactionTypeEnum
 from app.services import (
     audit_service,
     business_day_service,
@@ -939,4 +942,84 @@ async def adjust_cost(
         new_average_cost=data.new_average_cost,
         user=user,
         notes=data.notes,
+    )
+
+
+# ─── Stock counts ─────────────────────────────────────────────────────────────
+
+counts_router = APIRouter()
+
+
+@counts_router.post("", response_model=InventoryTransactionResponse, status_code=201)
+async def open_count(
+    data: OpenCountRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """
+    Start a count, freezing what the system believes right now.
+
+    Counting takes time and sales carry on during it, so the comparison has
+    to be against the figure at the moment the sheet was printed.
+    """
+    _require(user, "inventory.counts.create")
+    branch = await crud_service.get_or_404(db, Branch, data.branch_id)
+    transaction = await inventory_service.open_count(
+        db,
+        branch=branch,
+        user=user,
+        warehouse_id=data.warehouse_id,
+        item_ids=data.item_ids,
+        notes=data.notes,
+    )
+    transaction = await inventory_service.load_transaction(db, transaction.id)
+    return _serialise_transaction(transaction, await _item_lookup(db, transaction))
+
+
+@counts_router.get("", response_model=list[InventoryTransactionResponse])
+async def list_counts(
+    branch_id: uuid.UUID | None = None,
+    status_filter: str | None = Query(None, alias="status"),
+    limit: int = Query(50, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Open and completed counts — this is also the count-sheet list."""
+    _require(user, "inventory.counts.create")
+    stmt = select(InventoryTransaction).where(
+        InventoryTransaction.type == InventoryTransactionTypeEnum.INVENTORY_COUNT.value
+    )
+    if branch_id:
+        stmt = stmt.where(InventoryTransaction.branch_id == branch_id)
+    if status_filter:
+        stmt = stmt.where(InventoryTransaction.status == status_filter)
+    stmt = (
+        stmt.options(selectinload(InventoryTransaction.items))
+        .order_by(InventoryTransaction.created_at.desc())
+        .limit(limit)
+    )
+    rows = list((await db.execute(stmt)).scalars().unique().all())
+    return [_serialise_transaction(t, await _item_lookup(db, t)) for t in rows]
+
+
+@counts_router.post("/{count_id}/close")
+async def close_count(
+    count_id: uuid.UUID,
+    data: CloseCountRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """
+    Post the count: write the variance to stock and report it line by line.
+
+    What posts is the difference, not the counted figure — posting the count
+    itself would add a second copy of everything on the shelf.
+    """
+    _require(user, "inventory.counts.submit")
+    transaction = await inventory_service.load_transaction(db, count_id)
+    return await inventory_service.close_count(
+        db,
+        transaction=transaction,
+        user=user,
+        counted={line.item_id: line.counted_quantity for line in data.items},
     )

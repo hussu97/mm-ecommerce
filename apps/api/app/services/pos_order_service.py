@@ -160,6 +160,7 @@ async def open_order(
     customer_phone: str | None = None,
     notes: str | None = None,
     source: str = OrderSourceEnum.CASHIER.value,
+    due_at=None,
 ) -> Order:
     if order_type not in {t.value for t in OrderTypeEnum}:
         raise BadRequestError(f"Unknown order type '{order_type}'")
@@ -203,6 +204,8 @@ async def open_order(
         customer_name=customer_name,
         customer_phone=customer_phone,
         notes=notes,
+        # Ahead orders: when the customer wants it, not when it was rung up.
+        due_at=due_at,
         opened_at=utcnow(),
     )
     db.add(order)

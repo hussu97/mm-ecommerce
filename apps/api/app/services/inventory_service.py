@@ -687,3 +687,116 @@ async def adjust_cost(
         "adjusted_by": user.display_name or user.email,
         "notes": notes,
     }
+
+
+async def open_count(
+    db: AsyncSession,
+    *,
+    branch: Branch,
+    user: User,
+    warehouse_id: uuid.UUID | None,
+    item_ids: list[uuid.UUID] | None,
+    notes: str | None = None,
+) -> InventoryTransaction:
+    """
+    Start a stock count and freeze what the system currently believes.
+
+    The system quantity is captured now, not at close, because a count can
+    take an hour and sales keep happening. Comparing tonight's count against
+    a figure that moved while counting would manufacture a variance nobody
+    can explain.
+    """
+    warehouse = warehouse_id or (await default_warehouse(db, branch.id)).id
+    transaction = InventoryTransaction(
+        reference=await next_reference(
+            db, InventoryTransactionTypeEnum.INVENTORY_COUNT.value
+        ),
+        type=InventoryTransactionTypeEnum.INVENTORY_COUNT.value,
+        status=TransactionStatusEnum.DRAFT.value,
+        branch_id=branch.id,
+        warehouse_id=warehouse,
+        business_date=await business_day_service.current_business_date(db, branch),
+        notes=notes,
+        creator_id=user.id,
+    )
+    db.add(transaction)
+    await db.flush()
+
+    stmt = select(InventoryLevel).where(InventoryLevel.warehouse_id == warehouse)
+    if item_ids:
+        stmt = stmt.where(InventoryLevel.item_id.in_(item_ids))
+    for level in (await db.execute(stmt)).scalars().all():
+        db.add(
+            InventoryTransactionItem(
+                transaction_id=transaction.id,
+                item_id=level.item_id,
+                # Zero until counted; the frozen system figure rides along as
+                # the unit cost slot's sibling on the level itself.
+                quantity=Decimal("0"),
+                unit="ingredient",
+                conversion_factor=Decimal("1"),
+                unit_cost=_c(level.average_cost),
+            )
+        )
+    await db.flush()
+    await db.refresh(transaction)
+    return transaction
+
+
+async def close_count(
+    db: AsyncSession,
+    *,
+    transaction: InventoryTransaction,
+    user: User,
+    counted: dict[uuid.UUID, Decimal],
+) -> dict:
+    """
+    Post a count: write the variance to stock and report it line by line.
+
+    The movement posted is the difference, not the counted figure — posting
+    the count itself would add a second copy of everything on the shelf.
+    """
+    if transaction.type != InventoryTransactionTypeEnum.INVENTORY_COUNT.value:
+        raise BadRequestError("That transaction is not a stock count")
+    if transaction.status != TransactionStatusEnum.DRAFT.value:
+        raise ConflictError("This count is already closed")
+
+    # Write the counted balance, not the variance. post_transaction already
+    # treats a count line as "what is actually on the shelf" and works out the
+    # movement itself — computing the difference here too subtracted it twice
+    # and left the stock sitting at the variance.
+    systems, costs = {}, {}
+    for line in transaction.items:
+        level = await level_for(db, line.item_id, transaction.warehouse_id)
+        systems[line.item_id] = Decimal(str(level.quantity or 0))
+        costs[line.item_id] = Decimal(str(level.average_cost or 0))
+        line.quantity = _q(
+            Decimal(str(counted.get(line.item_id, systems[line.item_id])))
+        )
+
+    await db.flush()
+    await db.refresh(transaction)
+    posted = await post_transaction(db, transaction=transaction, user=user)
+
+    lines, total_value = [], Decimal("0")
+    for line in posted.items:
+        system = systems.get(line.item_id, Decimal("0"))
+        actual = Decimal(str(line.quantity))
+        variance = actual - system
+        value = variance * costs.get(line.item_id, Decimal("0"))
+        total_value += value
+        lines.append(
+            {
+                "item_id": str(line.item_id),
+                "system_quantity": _q(system),
+                "counted_quantity": _q(actual),
+                "variance": _q(variance),
+                "value_change": _q(value),
+            }
+        )
+    return {
+        "reference": posted.reference,
+        "status": posted.status,
+        "lines": lines,
+        "total_value_change": _q(total_value),
+    }

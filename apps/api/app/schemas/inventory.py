@@ -432,6 +432,23 @@ class RecipeResponse(BaseModel):
 # ─── Adjustments & counts ─────────────────────────────────────────────────────
 
 
+class OpenCountRequest(BaseModel):
+    branch_id: UUID
+    warehouse_id: UUID | None = None
+    #: Limit the count to these items; omit to count everything on hand.
+    item_ids: list[UUID] | None = None
+    notes: str | None = None
+
+
+class CountLine(BaseModel):
+    item_id: UUID
+    counted_quantity: Decimal = Field(ge=0)
+
+
+class CloseCountRequest(BaseModel):
+    items: list[CountLine] = Field(min_length=1)
+
+
 class WasteRequest(BaseModel):
     branch_id: UUID
     item_id: UUID

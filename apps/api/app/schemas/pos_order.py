@@ -36,6 +36,8 @@ class OpenOrderRequest(BaseModel):
     customer_phone: str | None = Field(None, max_length=30)
     notes: str | None = None
     source: Literal["cashier", "online", "api", "call_center"] = "cashier"
+    #: Ahead orders — a cake wanted at 4pm tomorrow.
+    due_at: datetime | None = None
 
 
 class AddItemRequest(BaseModel):
@@ -65,6 +67,16 @@ class JoinOrderRequest(BaseModel):
 class ChangeTableRequest(BaseModel):
     #: Null lifts the check off the floor plan without closing it.
     table_id: UUID | None = None
+
+
+class AssignDriverRequest(BaseModel):
+    #: Null takes the order back off the driver, e.g. a shift change.
+    driver_id: UUID | None = None
+
+
+class ScheduleOrderRequest(BaseModel):
+    #: When the customer wants it; null clears the schedule.
+    due_at: datetime | None = None
 
 
 class VoidItemRequest(BaseModel):

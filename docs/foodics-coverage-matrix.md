@@ -45,8 +45,8 @@ plan.
 | Offline mode | ✅ | `OfflineQueue`, `MenuCache` (mm-pos) |
 | PIN sign-in | ✅ | `/staff/pin-login`, branch-scoped |
 | Fingerprint sign-in | ⬜ | permission slug reserved only |
-| Ahead / scheduled orders | ⚠️ | `Order.due_at` exists; no scheduling UI |
-| Act as driver / waiter | ⚠️ | permissions + `Order.driver_id`; no dispatch flow |
+| Ahead / scheduled orders | ✅ | `due_at` on open, plus `POST /pos/orders/{id}/schedule` |
+| Act as driver / waiter | ✅ | `POST /pos/orders/{id}/driver` + `GET /pos/orders/dispatch/board` |
 
 ## 2. Cash control
 
@@ -95,9 +95,9 @@ plan.
 | Waste (from orders, from production) | ✅ | `POST /inventory/transactions/waste` — kept distinct from a correction |
 | Quantity adjustment | ✅ | `/inventory/transactions/adjust` |
 | Cost adjustment | ✅ | `POST /inventory/items/cost-adjustment` — revalues without moving stock |
-| Inventory count (draft → closed, variance) | ⚠️ | type + variance capture; no count workflow endpoint |
+| Inventory count (draft → closed, variance) | ✅ | open freezes the system figure, close posts the variance |
 | Spot check (reference only, does not move stock) | ✅ | `SpotCheck`, records variance only |
-| Count sheets | ⬜ | not modelled |
+| Count sheets | ✅ | `GET /inventory/counts` lists open and closed sheets |
 | Order transactions (stock consumed by sales) | ✅ | auto-depletion on close |
 | Recipes / BOM (product, modifier, produced item) | ✅ | three ingredient tables |
 | Prevent negative stock | ✅ | `BusinessSettings.prevent_negative_stock` |

@@ -44,6 +44,7 @@ from .inventory import (
     purchase_orders_router,
     recipes_router,
     suppliers_router,
+    counts_router as inventory_counts_router,
     transactions_router as inventory_transactions_router,
     warehouses_router,
 )
@@ -139,6 +140,9 @@ api_router.include_router(
     inventory_transactions_router,
     prefix="/inventory/transactions",
     tags=["Inventory"],
+)
+api_router.include_router(
+    inventory_counts_router, prefix="/inventory/counts", tags=["Inventory"]
 )
 api_router.include_router(
     warehouses_router, prefix="/inventory/warehouses", tags=["Inventory"]
