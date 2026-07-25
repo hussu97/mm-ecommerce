@@ -16,7 +16,17 @@ from app.pos_main import app as pos_app
 
 
 def _paths(app) -> set[str]:
-    return {getattr(r, "path", "") for r in app.routes}
+    """
+    Every path an app serves, read from its OpenAPI schema.
+
+    Not `app.routes`: FastAPI 0.140 stopped flattening `include_router` into
+    it and keeps an opaque wrapper around the sub-router instead, so walking
+    that attribute saw only the handful of endpoints declared directly on the
+    app — and quietly reported the register as carrying nothing. The schema is
+    the public description of what the app serves and is stable across both
+    layouts.
+    """
+    return set(app.openapi()["paths"])
 
 
 def test_the_register_does_not_carry_the_storefront():
