@@ -124,7 +124,11 @@ async def sales_summary(
                     func.coalesce(
                         func.sum(OrderItem.returned_quantity * OrderItem.unit_price), 0
                     )
-                ).join(OrderItem, OrderItem.order_id == Order.id),
+                )
+                # The select list only mentions OrderItem, so the left side of the
+                # join has to be stated explicitly or SQLAlchemy cannot infer it.
+                .select_from(Order)
+                .join(OrderItem, OrderItem.order_id == Order.id),
                 branch_id=branch_id,
                 date_from=date_from,
                 date_to=date_to,

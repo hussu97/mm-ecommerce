@@ -529,6 +529,18 @@ class DevicePairResponse(BaseModel):
     branch: BranchResponse
 
 
+class DeviceSessionResponse(BaseModel):
+    """
+    What a terminal needs to come back up knowing only its device token.
+
+    The branch travels with the heartbeat because no cashier is signed in at
+    that point, and every branch-scoped endpoint requires a user token.
+    """
+
+    device: DeviceResponse
+    branch: BranchResponse
+
+
 class PrinterCreate(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     branch_id: UUID

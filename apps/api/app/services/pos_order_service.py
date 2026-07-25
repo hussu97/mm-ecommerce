@@ -101,6 +101,10 @@ async def get_order(db: AsyncSession, order_id: uuid.UUID) -> Order:
             selectinload(Order.order_discounts),
             selectinload(Order.order_taxes),
         )
+        # Without this the identity map hands back the order with whatever
+        # collections it was first loaded with, so a line added moments ago is
+        # invisible and the recalculated totals lag one operation behind.
+        .execution_options(populate_existing=True)
     )
     order = (await db.execute(stmt)).scalars().unique().one_or_none()
     if order is None:
@@ -674,7 +678,25 @@ async def send_to_kitchen(db: AsyncSession, *, order: Order) -> list[KitchenTick
         tickets.append(ticket)
 
     await db.flush()
-    return tickets
+
+    # Re-load with items eagerly attached. The tickets were just constructed, so
+    # their `items` collections are unloaded, and serialising them would trigger
+    # a lazy load with no greenlet to run it on.
+    ticket_ids = [t.id for t in tickets]
+    refreshed = (
+        (
+            await db.execute(
+                select(KitchenTicket)
+                .where(KitchenTicket.id.in_(ticket_ids))
+                .options(selectinload(KitchenTicket.items))
+                .order_by(KitchenTicket.sequence)
+            )
+        )
+        .scalars()
+        .unique()
+        .all()
+    )
+    return list(refreshed)
 
 
 def _summarise_options(item: OrderItem) -> str | None:
@@ -733,6 +755,10 @@ async def record_payment(
     db.add(payment)
 
     # Cash movements must hit the drawer ledger, or the till will not reconcile.
+    # What stays in the drawer is `amount`: the customer hands over `tendered`
+    # and takes `change` back, and tendered - change == amount by construction.
+    # Recording amount - change would understate every over-tendered sale and
+    # can even go negative.
     if method.type == PaymentMethodTypeEnum.CASH.value and till is not None:
         await till_service.add_drawer_operation(
             db,
@@ -743,7 +769,7 @@ async def record_payment(
                 if is_refund
                 else DrawerOperationTypeEnum.SALES.value
             ),
-            amount=money(amount - change) if not is_refund else amount,
+            amount=amount,
             order_id=order.id,
             notes=f"Order {order.order_number}",
         )

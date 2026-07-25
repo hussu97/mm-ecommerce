@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.deps import get_admin_user, get_db
+from app.core.deps import get_admin_user, get_current_active_user, get_db
 from app.core.exceptions import ConflictError
 from app.models import (
     Branch,
@@ -46,7 +46,7 @@ async def list_branches(
     include_deleted: bool = False,
     include_inactive: bool = True,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(get_current_active_user),
 ):
     return await crud_service.list_all(
         db,
@@ -83,7 +83,7 @@ async def create_branch(
 async def get_branch(
     branch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(get_current_active_user),
 ):
     return await crud_service.get_or_404(db, Branch, branch_id, include_deleted=True)
 

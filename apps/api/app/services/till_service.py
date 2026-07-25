@@ -29,6 +29,9 @@ from app.models.till import (
     Till,
     TillStatusEnum,
 )
+from app.models.order import Order, OrderItem
+from app.models.payment_method import PaymentMethod
+from app.models.pos_order import OrderPayment, PosOrderStatusEnum
 from app.models.user import User
 from app.services import business_day_service
 
@@ -269,50 +272,81 @@ async def _payment_breakdown(
     """
     Sales and tender breakdown for a till.
 
-    Implemented against the drawer ledger so the till is reconcilable today; the
-    POS order engine extends this with per-tender and per-tax detail.
+    Read from the orders closed on this till, not from the drawer ledger: the
+    ledger only ever sees cash, so a shift paid half on card reported no card
+    tender, no VAT and no discounts on its X and Z reports. Cash reconciliation
+    still comes from the ledger — see `estimated_cash` — because that is the
+    only thing the drawer contents can be checked against.
+
+    Figures use the same definitions as `pos_reports_service.sales_summary`, so
+    a Z report and the day's sales report agree.
     """
-    cash_in = _q(
-        (
-            await db.execute(
-                select(func.sum(DrawerOperation.amount)).where(
-                    DrawerOperation.till_id == till.id,
-                    DrawerOperation.type == DrawerOperationTypeEnum.SALES.value,
-                )
+    row = (
+        await db.execute(
+            select(
+                func.count(Order.id),
+                func.coalesce(func.sum(Order.subtotal), 0),
+                func.coalesce(func.sum(Order.discount_amount), 0),
+                func.coalesce(func.sum(Order.charges_amount), 0),
+                func.coalesce(func.sum(Order.vat_amount), 0),
+                func.coalesce(func.sum(Order.tips_amount), 0),
+                func.coalesce(func.sum(Order.total), 0),
+            ).where(
+                Order.till_id == till.id,
+                Order.pos_status == PosOrderStatusEnum.CLOSED.value,
             )
-        ).scalar_one_or_none()
-    )
-    cash_out = _q(
+        )
+    ).one()
+    orders_count, subtotal, discounts, charges, vat, tips, total = row
+
+    returns = _q(
         (
             await db.execute(
-                select(func.sum(DrawerOperation.amount)).where(
-                    DrawerOperation.till_id == till.id,
-                    DrawerOperation.type == DrawerOperationTypeEnum.RETURN.value,
+                select(
+                    func.coalesce(
+                        func.sum(OrderItem.returned_quantity * OrderItem.unit_price), 0
+                    )
                 )
-            )
-        ).scalar_one_or_none()
-    )
-    orders_count = int(
-        (
-            await db.execute(
-                select(func.count(func.distinct(DrawerOperation.order_id))).where(
-                    DrawerOperation.till_id == till.id,
-                    DrawerOperation.order_id.isnot(None),
+                # The select list only mentions OrderItem, so the left side of
+                # the join has to be stated explicitly.
+                .select_from(Order)
+                .join(OrderItem, OrderItem.order_id == Order.id)
+                .where(
+                    Order.till_id == till.id,
+                    Order.pos_status == PosOrderStatusEnum.CLOSED.value,
                 )
             )
         ).scalar_one()
     )
 
-    payments_by_method = {"cash": _q(cash_in - cash_out)} if cash_in or cash_out else {}
+    # Every tender that touched this till, named as the cashier saw it.
+    tender_rows = (
+        await db.execute(
+            select(
+                PaymentMethod.name,
+                func.coalesce(func.sum(OrderPayment.amount), 0),
+            )
+            .select_from(OrderPayment)
+            .join(Order, Order.id == OrderPayment.order_id)
+            .join(PaymentMethod, PaymentMethod.id == OrderPayment.payment_method_id)
+            .where(
+                Order.till_id == till.id,
+                Order.pos_status == PosOrderStatusEnum.CLOSED.value,
+            )
+            .group_by(PaymentMethod.name)
+        )
+    ).all()
+
+    payments_by_method = {name: _q(amount) for name, amount in tender_rows}
     sales = {
-        "orders_count": orders_count,
-        "gross_sales": _q(cash_in),
-        "discounts": ZERO,
-        "returns": _q(cash_out),
-        "charges": ZERO,
-        "taxes": ZERO,
-        "net_sales": _q(cash_in - cash_out),
-        "tips": ZERO,
+        "orders_count": int(orders_count or 0),
+        "gross_sales": _q(subtotal),
+        "discounts": _q(discounts),
+        "returns": returns,
+        "charges": _q(charges),
+        "taxes": _q(vat),
+        "net_sales": _q(total),
+        "tips": _q(tips),
     }
     return payments_by_method, sales
 

@@ -27,6 +27,7 @@ from app.schemas.pos import (
     DevicePairRequest,
     DevicePairResponse,
     DeviceResponse,
+    DeviceSessionResponse,
     DeviceUpdate,
     PrinterCreate,
     PrinterResponse,
@@ -282,16 +283,26 @@ async def pair_device(
     )
 
 
-@router.post("/heartbeat", response_model=DeviceResponse)
+@router.post("/heartbeat", response_model=DeviceSessionResponse)
 async def device_heartbeat(
     device: Device = Depends(get_current_device),
     db: AsyncSession = Depends(get_db),
 ):
-    """Terminals ping this so the console can show which are online."""
+    """
+    Terminals ping this so the console can show which are online.
+
+    It doubles as the terminal's cold-start call: it returns the branch too, so
+    a paired-but-signed-out terminal can render its own name without a user
+    token it does not yet have.
+    """
     device.last_seen_at = utcnow()
     await db.flush()
     await db.refresh(device)
-    return device
+    branch = await crud_service.get_or_404(db, Branch, device.branch_id)
+    return DeviceSessionResponse(
+        device=DeviceResponse.model_validate(device),
+        branch=BranchResponse.model_validate(branch),
+    )
 
 
 # ─── Printers ─────────────────────────────────────────────────────────────────

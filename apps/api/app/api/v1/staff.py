@@ -203,6 +203,20 @@ async def _branch_ids(db: AsyncSession, user_id: uuid.UUID) -> list[uuid.UUID]:
     return list(rows)
 
 
+def _permissions_for(user: User) -> list[str]:
+    """
+    Every permission the user holds.
+
+    Admins and super-admins hold the whole catalogue; everyone else holds
+    exactly what their role grants. One definition, because a terminal that
+    computes this differently from `/pin-login` fails permission checks the
+    server would have allowed.
+    """
+    if user.is_admin or (user.role and user.role.is_super_admin):
+        return list(ALL_PERMISSIONS)
+    return list(user.role.permissions if user.role else [])
+
+
 async def _staff_response(db: AsyncSession, user: User) -> StaffResponse:
     payload = StaffResponse.model_validate(user)
     payload.branch_ids = await _branch_ids(db, user.id)
@@ -317,6 +331,31 @@ async def staff_for_device(
     if device is None:
         raise BadRequestError(f"No device with reference '{device_reference}'")
     return await list_staff(device.branch_id, True, db, admin)
+
+
+@router.get("/me", response_model=PinLoginResponse)
+async def my_session(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """
+    Who the bearer token belongs to, and what they may do.
+
+    The terminal keeps its token in the keychain and is relaunched constantly —
+    on a crash, an OS eviction, a shift handover. Without this it would restore
+    the token but lose the identity and permission set that came back from
+    `/pin-login`, and every permission check would silently fail closed.
+
+    Declared before `/{user_id}`: FastAPI matches in declaration order, so the
+    literal segment must come first or `me` is parsed as a user id.
+    """
+    return PinLoginResponse(
+        # The caller already holds this token; re-issuing nothing avoids
+        # extending a session that should expire when the shift does.
+        access_token="",
+        staff=await _staff_response(db, user),
+        permissions=_permissions_for(user),
+    )
 
 
 @router.get("/{user_id}", response_model=StaffResponse)
@@ -455,23 +494,16 @@ async def pin_login(
         is_admin=matched.is_admin,
         expires_delta=timedelta(minutes=PIN_TOKEN_MINUTES),
     )
-    permissions = (
-        ALL_PERMISSIONS
-        if (matched.is_admin or (matched.role and matched.role.is_super_admin))
-        else list(matched.role.permissions if matched.role else [])
-    )
     return PinLoginResponse(
         access_token=token,
         staff=await _staff_response(db, matched),
-        permissions=permissions,
+        permissions=_permissions_for(matched),
     )
 
 
 @router.get("/me/permissions", response_model=list[str])
 async def my_permissions(user: User = Depends(get_current_active_user)):
-    if user.is_admin or (user.role and user.role.is_super_admin):
-        return ALL_PERMISSIONS
-    return list(user.role.permissions if user.role else [])
+    return _permissions_for(user)
 
 
 @router.get("/me/branches", response_model=list[uuid.UUID])
