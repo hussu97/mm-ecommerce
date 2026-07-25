@@ -512,6 +512,8 @@ class DeviceCreate(BaseModel):
     type: DeviceTypeLiteral
     branch_id: UUID
     category_ids: list[UUID] = Field(default_factory=list)
+    #: Online orders for this branch land on this terminal.
+    receives_online_orders: bool = False
 
 
 class DeviceUpdate(BaseModel):
@@ -521,6 +523,8 @@ class DeviceUpdate(BaseModel):
     branch_id: UUID | None = None
     status: Literal["available", "used", "disabled"] | None = None
     category_ids: list[UUID] | None = None
+    #: Online orders for this branch land on this terminal.
+    receives_online_orders: bool = False
 
 
 class DeviceResponse(ORMModel):
@@ -537,6 +541,8 @@ class DeviceResponse(ORMModel):
     os_version: str | None
     model_identifier: str | None
     category_ids: list[UUID]
+    #: Online orders for this branch land on this terminal.
+    receives_online_orders: bool = False
     deleted_at: datetime | None
     created_at: datetime
     updated_at: datetime

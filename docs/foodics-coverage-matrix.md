@@ -34,7 +34,7 @@ plan.
 | **Join orders** | ✅ | `POST /pos/orders/{id}/join` — source marked `joined`, never deleted |
 | Void order / void line, with reasons | ✅ | `/void`, `Reason(void_return)` |
 | Return order / partial line return | ✅ | `/items/{id}/return` |
-| Park / draft a check | ⚠️ | `pos_status="draft"` exists; no terminal UI |
+| Park / draft a check | ✅ | `POST /pos/orders/{id}/park` and `/resume`, listed via `?pos_status=draft` |
 | Send to kitchen (fire) | ✅ | `/send-to-kitchen`, `KitchenTicket` |
 | Kitchen reprint | ✅ | `/pos/kitchen/tickets/{id}/reprint` |
 | Coursing (staged firing) | ✅ | `/courses` CRUD, `course_id` on a line, `send-to-kitchen?course_id=` |
@@ -141,12 +141,12 @@ plan.
 | Taxes & tax groups | ✅ | `Tax`, `TaxGroup` |
 | Payment methods | ✅ | `PaymentMethod` |
 | Charges | ✅ | `Charge` |
-| Delivery zones | ⚠️ | `Region` covers fees; no polygon/branch mapping |
+| Delivery zones | ✅ | branch↔zone mapping, `region_id` on an order, sales-by-delivery_zone |
 | Tags | ✅ | `Tag` |
 | Reasons (3 types) | ✅ | `Reason` |
 | Kitchen flows | ✅ | `KitchenFlow` + routing |
 | Reservations | ✅ | `Reservation`, seats the table on confirm |
-| Online ordering settings (per-branch device) | ⚠️ | `receives_online_orders`; no device assignment |
+| Online ordering settings (per-branch device) | ✅ | `Device.receives_online_orders` routes web orders to a terminal |
 | Notification rules | ✅ | `NotificationRule` (event + threshold + recipients) |
 | Receipt / kitchen / inventory settings | ✅ | `BusinessSettings` |
 | Activity log | ✅ | pre-existing `AuditLog` |

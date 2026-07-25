@@ -161,6 +161,7 @@ async def open_order(
     notes: str | None = None,
     source: str = OrderSourceEnum.CASHIER.value,
     due_at=None,
+    region_id=None,
 ) -> Order:
     if order_type not in {t.value for t in OrderTypeEnum}:
         raise BadRequestError(f"Unknown order type '{order_type}'")
@@ -192,6 +193,7 @@ async def open_order(
         is_pos=True,
         branch_id=branch.id,
         table_id=table_id,
+        region_id=region_id,
         device_id=device_id,
         till_id=till.id if till else None,
         order_type=order_type,
@@ -971,6 +973,32 @@ async def change_table(
         if previous is not None:
             previous.status = TableStatusEnum.FREE.value
 
+    await db.flush()
+    return await get_order(db, order.id)
+
+
+async def park_order(db: AsyncSession, *, order: Order) -> Order:
+    """
+    Set a check aside without closing it.
+
+    A queue forms, the customer is still deciding, and the till is needed for
+    the person behind them. The table stays held — the party has not left —
+    and the lines already fired stay fired, because the kitchen has started
+    them.
+    """
+    _assert_open(order)
+    if order.payments:
+        raise ConflictError("Cannot park a check that already has a payment")
+    order.pos_status = PosOrderStatusEnum.DRAFT.value
+    await db.flush()
+    return await get_order(db, order.id)
+
+
+async def resume_order(db: AsyncSession, *, order: Order) -> Order:
+    """Bring a parked check back to the register."""
+    if order.pos_status != PosOrderStatusEnum.DRAFT.value:
+        raise ConflictError("That check is not parked")
+    order.pos_status = PosOrderStatusEnum.ACTIVE.value
     await db.flush()
     return await get_order(db, order.id)
 

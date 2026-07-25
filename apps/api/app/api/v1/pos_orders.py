@@ -145,6 +145,7 @@ async def open_order(
         notes=data.notes,
         source=data.source,
         due_at=data.due_at,
+        region_id=data.region_id,
     )
     return _serialise(order)
 
@@ -476,6 +477,30 @@ async def dispatch_board(
     ).order_by(Order.opened_at.asc().nullslast())
     orders = list((await db.execute(stmt)).scalars().unique().all())
     return [_serialise(o) for o in orders]
+
+
+@router.post("/{order_id}/park", response_model=PosOrderResponse)
+async def park_order(
+    order_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Set a check aside so the till is free for the next customer."""
+    await _require_permission(user, "pos.register.access")
+    order = await _load(db, order_id)
+    return _serialise(await pos_order_service.park_order(db, order=order))
+
+
+@router.post("/{order_id}/resume", response_model=PosOrderResponse)
+async def resume_order(
+    order_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Bring a parked check back to the register."""
+    await _require_permission(user, "pos.register.access")
+    order = await _load(db, order_id)
+    return _serialise(await pos_order_service.resume_order(db, order=order))
 
 
 # ─── Kitchen display ──────────────────────────────────────────────────────────

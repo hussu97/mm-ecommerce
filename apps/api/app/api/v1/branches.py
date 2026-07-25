@@ -5,13 +5,18 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, Request, status
-from sqlalchemy import func, select
+from decimal import Decimal
+
+from pydantic import BaseModel, Field
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.deps import get_admin_user, get_current_active_user, get_db
-from app.core.exceptions import ConflictError
+from app.core.exceptions import BadRequestError, ConflictError
 from app.models import (
+    BranchRegion,
+    Region,
     Branch,
     BranchBusinessDay,
     Device,
@@ -345,3 +350,72 @@ async def branch_device_count(
         ).scalar_one()
     )
     return {"branch_id": str(branch_id), "device_count": total}
+
+
+# ─── Delivery zones ───────────────────────────────────────────────────────────
+
+
+class BranchRegionAssignment(BaseModel):
+    region_ids: list[uuid.UUID]
+    #: Overrides each region's own fee for this branch; null keeps it.
+    delivery_fee: Decimal | None = Field(None, ge=0)
+
+
+class BranchRegionResponse(BaseModel):
+    region_id: uuid.UUID
+    region_slug: str | None = None
+    delivery_fee: Decimal | None = None
+
+
+@router.get("/{branch_id}/regions", response_model=list[BranchRegionResponse])
+async def list_branch_regions(
+    branch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_active_user),
+):
+    """The delivery zones this branch serves."""
+    rows = (
+        await db.execute(
+            select(BranchRegion, Region)
+            .join(Region, Region.id == BranchRegion.region_id)
+            .where(BranchRegion.branch_id == branch_id)
+        )
+    ).all()
+    return [
+        BranchRegionResponse(
+            region_id=link.region_id,
+            region_slug=region.slug,
+            delivery_fee=link.delivery_fee,
+        )
+        for link, region in rows
+    ]
+
+
+@router.put("/{branch_id}/regions", response_model=list[BranchRegionResponse])
+async def set_branch_regions(
+    branch_id: uuid.UUID,
+    data: BranchRegionAssignment,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_admin_user),
+):
+    """
+    Replace the zones this branch delivers to.
+
+    A full replace rather than add/remove: the caller is editing a map, and
+    diffing it here would let a stale client silently resurrect a zone the
+    branch stopped serving.
+    """
+    await crud_service.get_or_404(db, Branch, branch_id)
+    await db.execute(delete(BranchRegion).where(BranchRegion.branch_id == branch_id))
+    for region_id in dict.fromkeys(data.region_ids):
+        if await db.get(Region, region_id) is None:
+            raise BadRequestError(f"Region {region_id} does not exist")
+        db.add(
+            BranchRegion(
+                branch_id=branch_id,
+                region_id=region_id,
+                delivery_fee=data.delivery_fee,
+            )
+        )
+    await db.flush()
+    return await list_branch_regions(branch_id, db, user)

@@ -115,6 +115,10 @@ class Order(Base, UUIDMixin, TimestampMixin):
         nullable=True,
         index=True,
     )
+    #: Delivery zone this order went to; null for anything not delivered.
+    region_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("regions.id", ondelete="SET NULL"), nullable=True
+    )
     table_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tables.id", ondelete="SET NULL"), nullable=True
     )

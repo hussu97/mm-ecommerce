@@ -74,6 +74,10 @@ class Device(Base, UUIDMixin, TimestampMixin):
     model_identifier: Mapped[str | None] = mapped_column(String(60), nullable=True)
 
     # KDS/display devices only serve the categories listed here (empty = all).
+    #: This terminal is where online orders for the branch land.
+    receives_online_orders: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
     category_ids: Mapped[list[uuid.UUID]] = mapped_column(
         ARRAY(UUID(as_uuid=True)), nullable=False, default=list, server_default="{}"
     )

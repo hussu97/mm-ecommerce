@@ -42,6 +42,7 @@ from app.models.pos_order import (
     PosOrderStatusEnum,
 )
 from app.models.pos_table import PosTable, Section
+from app.models.region import Region
 from app.models.tag import Tag, TaggedEntity
 from app.models.product import Product
 from app.models.till import DrawerOperation, Till
@@ -208,6 +209,11 @@ async def sales_by_dimension(
             limit=limit,
         )
 
+    if dimension == "delivery_zone":
+        return await _sales_by_delivery_zone(
+            db, branch_id=branch_id, date_from=date_from, date_to=date_to, limit=limit
+        )
+
     if dimension in _ENTITY_TAG_DIMENSIONS:
         return await _sales_by_tag(
             db,
@@ -314,7 +320,7 @@ SUPPORTED_DIMENSIONS = (
     | set(_DISCOUNT_SOURCES)
     | _TABLE_DIMENSIONS
     | set(_ENTITY_TAG_DIMENSIONS)
-    | {"product", "category", "modifier_option"}
+    | {"product", "category", "modifier_option", "delivery_zone"}
 )
 
 
@@ -1486,4 +1492,53 @@ async def transfers_report(
             "value": _q(value),
         }
         for ref, kind, status, day, branch, lines, value in rows
+    ]
+
+
+async def _sales_by_delivery_zone(
+    db: AsyncSession,
+    *,
+    branch_id: uuid.UUID | None,
+    date_from: str | None,
+    date_to: str | None,
+    limit: int,
+) -> list[dict]:
+    """
+    Delivery sales grouped by zone, with the fees collected.
+
+    Only delivery orders count. A takeaway has no zone, and including it
+    would drop every counter sale into an "Unzoned" bucket that swamps the
+    real ones.
+    """
+    zone = func.coalesce(Region.slug, "unzoned")
+    stmt = (
+        _scope(
+            select(
+                zone.label("key"),
+                func.count(Order.id),
+                func.coalesce(func.sum(Order.total), 0),
+                func.coalesce(func.sum(Order.delivery_fee), 0),
+            ),
+            branch_id=branch_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        .select_from(Order)
+        .outerjoin(Region, Region.id == Order.region_id)
+        .where(Order.pos_status == CLOSED, Order.order_type == "delivery")
+        .group_by(zone)
+        .order_by(func.coalesce(func.sum(Order.total), 0).desc())
+        .limit(limit)
+    )
+    rows = (await db.execute(stmt)).all()
+    return [
+        {
+            "key": key,
+            "label": key,
+            "orders": int(count or 0),
+            "net_sales": _q(total),
+            "discounts": _q(0),
+            "delivery_fees": _q(fees),
+        }
+        for key, count, total, fees in rows
     ]
