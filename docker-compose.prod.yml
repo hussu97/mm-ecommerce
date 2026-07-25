@@ -103,6 +103,69 @@ services:
       redis:
         condition: service_healthy
 
+  pos-api:
+    image: ghcr.io/hussu97/mm-ecommerce-api:latest
+    pull_policy: always
+    restart: always
+    # The same image as the storefront API — one build, two applications.
+    command: >
+      sh -c "uvicorn app.pos_main:app --host 0.0.0.0 --port 8000
+      --workers ${POS_UVICORN_WORKERS:-1} --log-level warning"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      APP_ENV: ${APP_ENV:-production}
+      SECRET_KEY: ${SECRET_KEY}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      FROM_EMAIL: ${FROM_EMAIL:-orders@meltingmomentscakes.com}
+      CLOUDFLARE_R2_ACCESS_KEY: ${CLOUDFLARE_R2_ACCESS_KEY}
+      CLOUDFLARE_R2_SECRET_KEY: ${CLOUDFLARE_R2_SECRET_KEY}
+      CLOUDFLARE_R2_BUCKET: ${CLOUDFLARE_R2_BUCKET}
+      CLOUDFLARE_R2_ENDPOINT: ${CLOUDFLARE_R2_ENDPOINT}
+      CLOUDFLARE_R2_PUBLIC_URL: ${CLOUDFLARE_R2_PUBLIC_URL}
+      POS_CORS_ORIGINS: ${POS_CORS_ORIGINS:-}
+      POS_ALLOWED_HOSTS: ${POS_ALLOWED_HOSTS:-*}
+      WEB_URL: ${WEB_URL}
+      ADMIN_URL: ${ADMIN_URL}
+      UMAMI_API_KEY: ${UMAMI_API_KEY:-}
+      UMAMI_WEBSITE_ID: ${UMAMI_WEBSITE_ID:-}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
+      SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.02}
+    # Ship stdout/stderr directly to GCP Cloud Logging.
+    # The app emits structured JSON (severity/message/time/stack_trace) in
+    # production, which Cloud Logging auto-parses as jsonPayload.
+    # Prereq: VM service account needs roles/logging.logWriter.
+    # GCP_PROJECT_ID is auto-detected on GCE — only needed outside GCE.
+    logging:
+      driver: gcplogs
+      options:
+        gcp-project: ${GCP_PROJECT_ID:-}
+        labels: "com.docker.compose.service"
+    networks:
+      - mm_network
+    deploy:
+      resources:
+        limits:
+          # Deliberately tighter than the storefront API: this VM is an
+          # e2-micro and the register serves a handful of terminals, not the
+          # public. A cap Postgres can survive matters more than headroom the
+          # till will never use.
+          memory: 256m
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-H", "Host: pos.meltingmomentscakes.com", "http://localhost:8000/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   nginx:
     build:
       context: ./nginx
@@ -124,6 +187,8 @@ services:
           memory: 64m
     depends_on:
       api:
+        condition: service_healthy
+      pos-api:
         condition: service_healthy
 
   certbot:

@@ -18,6 +18,7 @@ const NAV: Array<
   { href: '/products',      label: 'Products',        icon: 'inventory_2' },
   { href: '/categories',    label: 'Categories',      icon: 'category' },
   { href: '/modifiers',     label: 'Modifiers',       icon: 'tune' },
+  { href: '/menu-groups',   label: 'Menu Groups',     icon: 'account_tree' },
 
   { section: 'Point of Sale' },
   { href: '/pos-orders',    label: 'POS Orders',      icon: 'point_of_sale' },

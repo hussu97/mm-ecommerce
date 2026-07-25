@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-from typing import Union
+from typing import Annotated, Union
 
 from pydantic import field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Sentinel values that must NOT reach production
 _DEV_DATABASE_URL = (
@@ -56,6 +56,38 @@ class Settings(BaseSettings):
                 return json.loads(v)
             except json.JSONDecodeError:
                 return [origin.strip() for origin in v.split(",")]
+        return v
+
+    # ── The register API ─────────────────────────────────────────────────────
+    #: Hostnames the POS app answers to. Kept separate from ALLOWED_HOSTS so
+    #: the storefront's host list and the terminal's cannot drift into each
+    #: other: a bug that exposed the register on the public API host would
+    #: otherwise be one careless edit away.
+    #: `NoDecode` because pydantic-settings JSON-decodes a list field in the
+    #: env source *before* any validator runs, so a plain
+    #: "pos.example.com,localhost" would raise on boot rather than reach the
+    #: parser below. The other list settings only survive because production
+    #: happens to feed them JSON.
+    POS_ALLOWED_HOSTS: Annotated[list[str], NoDecode] = ["*"]
+    #: A native iPad app sends no Origin, so this is normally empty. It exists
+    #: for a browser-based terminal or a local development console.
+    POS_CORS_ORIGINS: Annotated[list[str], NoDecode] = []
+    #: Once the register has its own hostname, refuse device tokens anywhere
+    #: else. Off by default because turning it on before pos.* resolves would
+    #: strand every terminal with nowhere to authenticate — the cutover has to
+    #: be a deliberate flip after DNS is live, not a side effect of a deploy.
+    POS_REQUIRE_POS_HOST: bool = False
+
+    @field_validator("POS_ALLOWED_HOSTS", "POS_CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_pos_lists(cls, v: Union[str, list]) -> list[str]:
+        if isinstance(v, str):
+            if not v.strip():
+                return []
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return [item.strip() for item in v.split(",") if item.strip()]
         return v
 
     # ── Stripe ────────────────────────────────────────────────────────────────

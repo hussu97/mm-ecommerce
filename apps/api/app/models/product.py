@@ -58,6 +58,13 @@ class Product(Base, UUIDMixin, TimestampMixin):
     is_web_visible: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true", default=True
     )
+    #: The counterpart for the register. The menu tree decides how the terminal
+    #: lays a menu out and lets a whole branch be switched off at once; this is
+    #: the per-product override, and answers "why can I not see this item"
+    #: without an operator having to walk the tree to find out.
+    is_pos_visible: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true", default=True
+    )
     is_stock_product: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
     )

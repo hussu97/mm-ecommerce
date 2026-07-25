@@ -132,6 +132,7 @@ export interface Product {
   is_featured: boolean;
   /** Listed on the public website; POS-only items are false. */
   is_web_visible: boolean;
+  is_pos_visible: boolean;
   display_order: number;
   created_at: string;
   updated_at: string;

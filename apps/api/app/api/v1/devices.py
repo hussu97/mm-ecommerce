@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 import uuid
 from datetime import timedelta
@@ -11,6 +12,7 @@ from fastapi import APIRouter, Depends, Header, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.deps import get_admin_user, get_db
 from app.core.exceptions import ConflictError, UnauthorizedError
 from app.models import (
@@ -34,6 +36,8 @@ from app.schemas.pos import (
     PrinterUpdate,
 )
 from app.services import audit_service, crud_service
+
+logger = logging.getLogger("mm.pos.devices")
 
 router = APIRouter()
 
@@ -67,9 +71,29 @@ async def authenticate_device(db: AsyncSession, token: str | None) -> Device:
 
 
 async def get_current_device(
+    request: Request,
     x_device_token: str | None = Header(None, alias="X-Device-Token"),
     db: AsyncSession = Depends(get_db),
 ) -> Device:
+    """
+    Resolve a paired device, and only on the register API.
+
+    A device token is a long-lived credential sitting on a shop counter, and
+    the register has its own application and hostname precisely so that
+    credential has one place it works. Honouring it on the public storefront
+    host as well would give that boundary away for nothing — the terminal
+    never calls there, so refusing costs no real client anything.
+    """
+    on_pos_app = getattr(request.app.state, "is_pos_app", False)
+    if not on_pos_app:
+        if settings.POS_REQUIRE_POS_HOST:
+            raise UnauthorizedError(
+                "Device tokens are only accepted by the register API"
+            )
+        logger.warning(
+            "Device token used against the storefront API — point this terminal "
+            "at the register host, then set POS_REQUIRE_POS_HOST=true"
+        )
     return await authenticate_device(db, x_device_token)
 
 

@@ -99,8 +99,12 @@ class ProductPrice(Base, UUIDMixin, TimestampMixin):
 
 class MenuGroup(Base, UUIDMixin, TimestampMixin):
     """
-    A curated collection of products, independent of category. Categories are
-    taxonomy ("Cakes"); groups are merchandising ("New In", "Ramadan").
+    A node in the register's menu tree.
+
+    Categories are taxonomy ("Cakes"); groups are how the menu is laid out on
+    the terminal, and they nest — "Drinks" holds "Hot Coffee" and "Cold
+    Coffee", each holding products. Deactivating a group hides everything
+    beneath it in one move, which is the point of the tree.
     """
 
     __tablename__ = "menu_groups"
@@ -114,6 +118,15 @@ class MenuGroup(Base, UUIDMixin, TimestampMixin):
         String(50), unique=True, nullable=True, index=True
     )
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    #: Null for a top-level group. Self-referential, so groups nest to any
+    #: depth; the database rejects a group parenting itself and the service
+    #: rejects longer cycles.
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("menu_groups.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     display_order: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="0"
     )
@@ -122,6 +135,16 @@ class MenuGroup(Base, UUIDMixin, TimestampMixin):
     )
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+    children: Mapped[list[MenuGroup]] = relationship(
+        "MenuGroup",
+        back_populates="parent",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    parent: Mapped[MenuGroup | None] = relationship(
+        "MenuGroup", back_populates="children", remote_side="MenuGroup.id"
     )
 
     members: Mapped[list[MenuGroupProduct]] = relationship(

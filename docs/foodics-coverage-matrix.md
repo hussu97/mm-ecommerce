@@ -71,7 +71,8 @@ plan.
 | Pricing / selling / costing method | ✅ | migration 036 |
 | Modifiers + options | ✅ | pre-existing |
 | Combos | ✅ | migration 038 |
-| Menu groups | ✅ | `MenuGroup` |
+| Menu groups | ✅ | Nested to any depth; the register's menu is built from the tree, and switching a group off hides everything beneath it |
+| Channel visibility | ✅ | `is_web_visible` / `is_pos_visible` per product, with a bulk action for each |
 | Price tags (alternate price lists) | ✅ | `PriceTag`, `ProductPrice` |
 | Allergens | ✅ | `Allergen`, `ProductAllergen` |
 | Per-branch price / availability override | ✅ | `BranchProduct` |

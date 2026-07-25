@@ -4,10 +4,18 @@ is_active is filtered on every active-region query and every delivery-fee
 calculation; sort_order is the ORDER BY column.  Without this index each
 query performs a full sequential scan of the regions table.
 
-Uses CREATE INDEX CONCURRENTLY so that live app connections are not blocked
-during the build.  CONCURRENTLY cannot run inside a transaction, so this
-migration switches the connection to AUTOCOMMIT before executing, which
-causes Alembic to commit the version-table update separately afterwards.
+This originally used CREATE INDEX CONCURRENTLY to avoid locking the table
+while the index built. That needs the statement to run outside a transaction,
+and the contortions to arrange it — commit Alembic's transaction, switch the
+connection to AUTOCOMMIT — quietly broke the migration run as a whole: the
+committed outer transaction meant every later migration reported success and
+then vanished on exit, and `alembic upgrade head` could not build an empty
+database at all.
+
+`regions` holds nine rows. The index builds in well under a millisecond and
+the lock is not observable, so the plain form is both correct and faster to
+reason about. Reach for CONCURRENTLY on a table where the lock would actually
+be felt, and give it a migration of its own.
 
 Revision ID: 030_regions_is_active_index
 Revises: 029_blog_posts
@@ -16,7 +24,6 @@ Create Date: 2026-04-14
 
 from typing import Sequence, Union
 
-import sqlalchemy as sa
 from alembic import op
 
 revision: str = "030_regions_is_active_index"
@@ -26,30 +33,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # CONCURRENTLY avoids a ShareLock that would block reads/writes on regions.
-    # It must run outside a transaction — switch to AUTOCOMMIT for this statement.
-    #
-    # Alembic has already opened a transaction on this connection by the time a
-    # migration runs, and SQLAlchemy 2.0 refuses to change the isolation level
-    # of a connection with one in flight. Commit it first: without this the
-    # migration raises InvalidRequestError, which made `alembic upgrade head`
-    # fail on any empty database — so a new environment or a restore from
-    # backup could not be built at all.
-    connection = op.get_bind()
-    connection.commit()
-    connection.execution_options(isolation_level="AUTOCOMMIT")
-    connection.execute(
-        sa.text(
-            "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_regions_active_sort"
-            " ON regions (is_active, sort_order)"
-        )
+    op.create_index(
+        "ix_regions_active_sort",
+        "regions",
+        ["is_active", "sort_order"],
+        if_not_exists=True,
     )
 
 
 def downgrade() -> None:
-    connection = op.get_bind()
-    connection.commit()
-    connection.execution_options(isolation_level="AUTOCOMMIT")
-    connection.execute(
-        sa.text("DROP INDEX CONCURRENTLY IF EXISTS ix_regions_active_sort")
-    )
+    op.drop_index("ix_regions_active_sort", table_name="regions", if_exists=True)

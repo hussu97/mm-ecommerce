@@ -588,6 +588,37 @@ The `deploy.yml` workflow SSHes into the GCP VM on every push to `main`, writes 
 |--------|-----------------|-------|
 | `CORS_ORIGINS` | `["https://meltingmomentscakes.com","https://admin.meltingmomentscakes.com"]` | JSON array, no spaces |
 | `ALLOWED_HOSTS` | `["api.meltingmomentscakes.com"]` | JSON array, no spaces |
+| `POS_CORS_ORIGINS` | *(leave empty)* | Only needed for a browser-based terminal — a native iPad sends no Origin |
+
+`POS_ALLOWED_HOSTS` is **not** a secret and is written directly by the deploy
+workflow. It is kept apart from `ALLOWED_HOSTS` so the storefront's host list
+and the register's cannot drift into one another.
+
+#### Bringing pos.meltingmomentscakes.com online
+
+The register runs as its own application (`app.pos_main`) in its own container,
+carrying only what a till needs. Three steps, in order:
+
+1. **DNS** — add an `A` record for `pos.meltingmomentscakes.com` pointing at the
+   VM's external IP, at the same registrar that serves the other records.
+   Everything else is already deployed and waiting on this.
+2. **Certificate** — once DNS resolves, issue one:
+   ```
+   docker compose -f docker-compose.prod.yml run --rm --entrypoint sh certbot -c \
+     "certbot certonly --webroot -w /var/www/certbot -d pos.meltingmomentscakes.com \
+      --non-interactive --agree-tos -m orders@meltingmomentscakes.com"
+   ```
+   nginx notices the new certificate by itself within five minutes and starts
+   serving the host — no deploy needed. Its server block is deliberately absent
+   until the certificate exists, because nginx refuses to start when a
+   configured certificate file is missing and that would take the storefront
+   API down with it.
+3. **Cut the terminals over** — point each iPad at
+   `https://pos.meltingmomentscakes.com/api/v1`, then set
+   `POS_REQUIRE_POS_HOST=true` so the storefront API stops accepting device
+   tokens altogether. Until that flag is set the old host still works and logs
+   a warning on every such request, so you can watch the log go quiet before
+   flipping it.
 
 #### Stripe
 

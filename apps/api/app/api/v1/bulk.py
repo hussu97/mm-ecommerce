@@ -53,3 +53,46 @@ async def bulk_update_status(
     )
     result = await db.execute(stmt)
     return {"updated": result.rowcount}
+
+
+class BulkVisibilityRequest(BaseModel):
+    ids: list[uuid.UUID]
+    #: Omit a channel to leave it as it is — the two are set independently, so
+    #: putting the coffee menu on the register must not also decide whether it
+    #: belongs on a cake website.
+    is_web_visible: bool | None = None
+    is_pos_visible: bool | None = None
+
+
+@router.post("/products/visibility")
+async def bulk_update_visibility(
+    body: BulkVisibilityRequest,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    """
+    Put products on the website, the register, or both.
+
+    Separate from the status endpoint because "not sold here" and "not sold at
+    all" are different decisions: deactivating a product withdraws it
+    everywhere, which is not what someone means when they take lattes off the
+    cake site.
+    """
+    values = {
+        field: getattr(body, field)
+        for field in ("is_web_visible", "is_pos_visible")
+        if getattr(body, field) is not None
+    }
+    if not values:
+        raise BadRequestError("Choose at least one of the website or the register")
+    if not body.ids:
+        return {"updated": 0}
+
+    stmt = (
+        update(Product)
+        .where(Product.id.in_(body.ids))
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    result = await db.execute(stmt)
+    return {"updated": result.rowcount}

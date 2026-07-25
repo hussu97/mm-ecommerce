@@ -318,6 +318,11 @@ jobs:
           TAMARA_API_URL=${{ secrets.TAMARA_API_URL }}
           WEB_URL=${{ secrets.WEB_URL }}
           ADMIN_URL=${{ secrets.ADMIN_URL }}
+          # Not secrets — the register's hostname is public. Kept apart from
+          # ALLOWED_HOSTS so the storefront's host list and the terminal's
+          # cannot drift into one another.
+          POS_ALLOWED_HOSTS=pos.meltingmomentscakes.com,localhost,127.0.0.1
+          POS_CORS_ORIGINS=${{ secrets.POS_CORS_ORIGINS }}
           BACKUP_GCS_BUCKET=${{ secrets.BACKUP_GCS_BUCKET }}
           UMAMI_API_KEY=${{ secrets.UMAMI_API_KEY }}
           UMAMI_WEBSITE_ID=${{ secrets.UMAMI_WEBSITE_ID }}
@@ -350,8 +355,8 @@ jobs:
           timeout 300 docker compose -f docker-compose.prod.yml run --rm --no-deps -T api alembic upgrade head < /dev/null \
             || { echo "ERROR: Migration failed or timed out after 5 minutes"; exit 1; }
 
-          echo "Restarting API with new image..."
-          docker compose -f docker-compose.prod.yml up -d --force-recreate --remove-orphans api
+          echo "Restarting the APIs with the new image..."
+          docker compose -f docker-compose.prod.yml up -d --force-recreate --remove-orphans api pos-api
 
           echo "Waiting for API to be healthy..."
           API_READY=false
@@ -369,6 +374,24 @@ jobs:
           if [ "$API_READY" != "true" ]; then
             echo "ERROR: API failed to start. Container logs:"
             docker compose -f docker-compose.prod.yml logs --tail=50 api
+            exit 1
+          fi
+
+          echo "Waiting for the register API to be healthy..."
+          POS_READY=false
+          for i in $(seq 1 30); do
+            if docker compose -f docker-compose.prod.yml exec -T pos-api curl -sf -H "Host: pos.meltingmomentscakes.com" http://localhost:8000/ping < /dev/null > /dev/null 2>&1; then
+              echo "Register API is up."
+              POS_READY=true
+              break
+            fi
+            echo "  waiting... (${i}/30)"
+            sleep 5
+          done
+
+          if [ "$POS_READY" != "true" ]; then
+            echo "ERROR: the register API failed to start. Container logs:"
+            docker compose -f docker-compose.prod.yml logs --tail=50 pos-api
             exit 1
           fi
 

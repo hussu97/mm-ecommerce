@@ -65,6 +65,7 @@ from .operations import (
     spot_checks_router,
     transfer_orders_router,
 )
+from .menu_groups import router as menu_groups_router
 from .pos_orders import kitchen_router, router as pos_orders_router
 from .pos_reports import router as pos_reports_router
 from .staff import roles_router, router as staff_router
@@ -108,6 +109,7 @@ api_router.include_router(
 api_router.include_router(charges_router, prefix="/charges", tags=["Charges"])
 api_router.include_router(reasons_router, prefix="/reasons", tags=["Reasons"])
 api_router.include_router(courses_router, prefix="/courses", tags=["Menu"])
+api_router.include_router(menu_groups_router, prefix="/menu-groups", tags=["Menu"])
 api_router.include_router(tags_router, prefix="/tags", tags=["Tags"])
 api_router.include_router(
     kitchen_flows_router, prefix="/kitchen-flows", tags=["Kitchen Flows"]

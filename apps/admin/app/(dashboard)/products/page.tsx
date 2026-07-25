@@ -123,6 +123,27 @@ export default function ProductsPage() {
     }
   }
 
+  /**
+   * Put the selection on or off one channel, leaving the other alone.
+   *
+   * Separate from activate/deactivate on purpose: taking lattes off the cake
+   * website should not withdraw them from the counter too.
+   */
+  async function handleBulkVisibility(channel: 'web' | 'pos', visible: boolean) {
+    setBulking(true);
+    try {
+      await bulkApi.updateVisibility(
+        Array.from(selectedIds),
+        channel === 'web' ? { is_web_visible: visible } : { is_pos_visible: visible },
+      );
+      await load();
+    } catch (err) {
+      alert((err as Error).message);
+    } finally {
+      setBulking(false);
+    }
+  }
+
   const categoryOptions = categories.map(c => ({ value: c.slug, label: `${c.name} (${c.product_count})` }));
 
   return (
@@ -177,6 +198,13 @@ export default function ProductsPage() {
           <button onClick={() => setSelectedIds(new Set(products.map(p => p.id)))} className="text-xs font-body text-gray-500 hover:text-primary underline">All</button>
           <button onClick={() => setSelectedIds(new Set())} className="text-xs font-body text-gray-500 hover:text-primary underline">None</button>
           <div className="flex-1" />
+          <span className="text-xs font-body text-gray-500">Website</span>
+          <Button size="sm" variant="ghost" loading={bulking} onClick={() => handleBulkVisibility('web', true)}>Show</Button>
+          <Button size="sm" variant="ghost" loading={bulking} onClick={() => handleBulkVisibility('web', false)}>Hide</Button>
+          <span className="text-xs font-body text-gray-500 ml-2">Register</span>
+          <Button size="sm" variant="ghost" loading={bulking} onClick={() => handleBulkVisibility('pos', true)}>Show</Button>
+          <Button size="sm" variant="ghost" loading={bulking} onClick={() => handleBulkVisibility('pos', false)}>Hide</Button>
+          <div className="w-px h-5 bg-primary/30 mx-1" />
           <Button size="sm" loading={bulking} onClick={() => handleBulkStatus(true)}>Activate</Button>
           <Button size="sm" variant="ghost" loading={bulking} onClick={() => handleBulkStatus(false)}>Deactivate</Button>
         </div>
@@ -273,6 +301,7 @@ export default function ProductsPage() {
                   <td className="px-4 py-2.5 text-center hidden lg:table-cell">
                     {product.is_featured && <Badge variant="info">Featured</Badge>}
                     {!product.is_web_visible && <Badge variant="warning">POS only</Badge>}
+                    {!product.is_pos_visible && <Badge variant="warning">Web only</Badge>}
                   </td>
                   <td className="px-4 py-2.5 text-right">
                     <div className="flex items-center justify-end gap-2">

@@ -91,6 +91,11 @@ jobs:
           TAMARA_API_URL=${{ secrets.TAMARA_API_URL }}
           WEB_URL=${{ secrets.WEB_URL }}
           ADMIN_URL=${{ secrets.ADMIN_URL }}
+          # Not secrets — the register's hostname is public. Kept apart from
+          # ALLOWED_HOSTS so the storefront's host list and the terminal's
+          # cannot drift into one another.
+          POS_ALLOWED_HOSTS=pos.meltingmomentscakes.com,localhost,127.0.0.1
+          POS_CORS_ORIGINS=${{ secrets.POS_CORS_ORIGINS }}
           BACKUP_GCS_BUCKET=${{ secrets.BACKUP_GCS_BUCKET }}
           UMAMI_API_KEY=${{ secrets.UMAMI_API_KEY }}
           UMAMI_WEBSITE_ID=${{ secrets.UMAMI_WEBSITE_ID }}
@@ -134,7 +139,7 @@ jobs:
                      ghcr.io/hussu97/mm-ecommerce-api:latest
 
           echo "Restarting API with rolled-back image..."
-          docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate api
+          docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate api pos-api
 
           echo "Waiting for API to be healthy..."
           API_READY=false

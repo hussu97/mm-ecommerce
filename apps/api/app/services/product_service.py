@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.core.exceptions import ConflictError, NotFoundError
+from app.services import menu_group_service
 from app.models.category import Category
 from app.models.modifier import Modifier, ProductModifier
 from app.models.product import Product
@@ -89,6 +90,11 @@ async def get_all(
 
     if channel == "web":
         stmt = stmt.where(Product.is_web_visible == True)  # noqa: E712
+    elif channel == "pos":
+        # The per-product flag and the menu tree together — see
+        # menu_group_service.pos_visibility_clause for why membership only
+        # gates once a tree actually exists.
+        stmt = stmt.where(menu_group_service.pos_visibility_clause())
 
     if category_slugs:
         if sort != "category":

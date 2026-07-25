@@ -68,6 +68,7 @@ const api = {
   get:    <T>(path: string)                         => request<T>(path),
   post:   <T>(path: string, data?: unknown)         => request<T>(path, { method: 'POST', body: JSON.stringify(data) }),
   put:    <T>(path: string, data?: unknown)         => request<T>(path, { method: 'PUT', body: JSON.stringify(data) }),
+  patch:  <T>(path: string, data?: unknown)         => request<T>(path, { method: 'PATCH', body: JSON.stringify(data) }),
   delete: <T>(path: string)                         => request<T>(path, { method: 'DELETE' }),
   upload: <T>(path: string, formData: FormData)     => request<T>(path, { method: 'POST', body: formData }),
 };
@@ -101,6 +102,42 @@ export const categoriesApi = {
   create: (data: Partial<Category>) => api.post<Category>('/categories', data),
   update: (slug: string, data: Partial<Category>) => api.put<Category>(`/categories/${slug}`, data),
   delete: (slug: string) => api.delete<void>(`/categories/${slug}`),
+};
+
+// ─── Menu groups ──────────────────────────────────────────────────────────────
+
+/** A node of the register's menu tree, with its descendants nested inside. */
+export interface MenuGroupNode {
+  id: string;
+  name: string;
+  name_localized?: string | null;
+  reference?: string | null;
+  image_url?: string | null;
+  parent_id?: string | null;
+  display_order: number;
+  is_active: boolean;
+  product_ids: string[];
+  product_count: number;
+  children: MenuGroupNode[];
+}
+
+export interface MenuGroupInput {
+  name: string;
+  name_localized?: string | null;
+  parent_id?: string | null;
+  display_order?: number;
+  is_active?: boolean;
+  product_ids?: string[];
+}
+
+export const menuGroupsApi = {
+  tree: (includeInactive = true) =>
+    api.get<MenuGroupNode[]>(`/menu-groups/tree?include_inactive=${includeInactive}`),
+  create: (data: MenuGroupInput) => api.post<MenuGroupNode>('/menu-groups', data),
+  update: (id: string, data: Partial<MenuGroupInput>) =>
+    api.patch<MenuGroupNode>(`/menu-groups/${id}`, data),
+  // Takes every group nested underneath it with it.
+  delete: (id: string) => api.delete<void>(`/menu-groups/${id}`),
 };
 
 // ─── Products ─────────────────────────────────────────────────────────────────
@@ -233,6 +270,11 @@ export const promoApi = {
 export const bulkApi = {
   updateStatus: (entity: string, ids: string[], is_active: boolean) =>
     api.post<{ updated: number }>(`/bulk/${entity}/status`, { ids, is_active }),
+  /** Put products on the website, the register, or both. Omitted channels are left alone. */
+  updateVisibility: (
+    ids: string[],
+    channels: { is_web_visible?: boolean; is_pos_visible?: boolean },
+  ) => api.post<{ updated: number }>('/bulk/products/visibility', { ids, ...channels }),
 };
 
 // ─── Export ───────────────────────────────────────────────────────────────────

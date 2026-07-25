@@ -39,6 +39,8 @@ from app.models import (  # noqa: E402
     Combo,
     ComboSize,
     Discount,
+    MenuGroup,
+    MenuGroupProduct,
     InventoryItem,
     BusinessSettings,
     Category,
@@ -282,6 +284,55 @@ class Importer:
                 create_only={"slug": slugify(row["name"], reference)},
             )
             self.categories[row["id"]] = category
+
+    async def build_menu_tree(self) -> None:
+        """
+        Mirror the categories into the register's menu tree.
+
+        The terminal builds its menu from groups, not from the category
+        taxonomy the website uses, so without this a freshly imported shop has
+        a catalogue and an empty till. One group per category is the sensible
+        starting shape; nesting it further is a merchandising decision the
+        console makes, and re-running here never disturbs it — a group is only
+        created when its category has none.
+        """
+        for category in self.categories.values():
+            reference = f"cat-{str(category.id)[:8]}"
+            group = await self.upsert(
+                MenuGroup,
+                {"reference": reference},
+                {},
+                create_only={
+                    "name": category.name,
+                    "translations": category.translations or {},
+                    "image_url": category.image_url,
+                    "display_order": category.display_order,
+                    "is_active": True,
+                },
+            )
+            members = {
+                row.product_id
+                for row in (
+                    await self.db.execute(
+                        select(MenuGroupProduct).where(
+                            MenuGroupProduct.group_id == group.id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            }
+            for product in self.products.values():
+                if product.category_id == category.id and product.id not in members:
+                    self.db.add(
+                        MenuGroupProduct(
+                            group_id=group.id,
+                            product_id=product.id,
+                            display_order=product.display_order,
+                        )
+                    )
+                    self.record("MenuGroupProduct", created=True)
+            await self.db.flush()
 
     async def import_modifiers(self) -> None:
         for row in self.export.get("modifiers", []):
@@ -777,6 +828,7 @@ class Importer:
         await self.import_branches()
         await self.import_payment_methods()
         await self.import_reference_data()
+        await self.build_menu_tree()
         await self.import_marketing()
         await self.import_business_settings()
         return await self.import_staff(pin_start)

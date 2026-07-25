@@ -38,6 +38,9 @@ class ProductCreate(BaseModel):
     is_featured: bool = False
     #: Listed on the public website. POS-only items are false.
     is_web_visible: bool = True
+    #: Sellable on the register. The menu tree decides layout and can hide a
+    #: whole branch; this is the per-product switch.
+    is_pos_visible: bool = True
     #: Free-form nutrition panel: protein, carbs, fat, salt, allergens.
     nutrition: dict | None = None
     display_order: int = 0
@@ -61,6 +64,7 @@ class ProductUpdate(BaseModel):
     is_active: bool | None = None
     is_featured: bool | None = None
     is_web_visible: bool | None = None
+    is_pos_visible: bool | None = None
     #: Free-form nutrition panel: protein, carbs, fat, salt, allergens.
     nutrition: dict | None = None
     display_order: int | None = None
@@ -91,6 +95,7 @@ class ProductResponse(BaseModel):
     is_active: bool
     is_featured: bool
     is_web_visible: bool = True
+    is_pos_visible: bool = True
     nutrition: dict | None = None
     display_order: int
     created_at: datetime
