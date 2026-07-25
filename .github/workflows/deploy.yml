@@ -388,15 +388,18 @@ jobs:
           echo "Ensuring the certificate renewal loop is up..."
           docker compose -f docker-compose.prod.yml up -d --no-deps certbot < /dev/null
 
+          # Run this in the certbot image, not nginx: nginx:alpine ships no
+          # openssl, so the check there reported no dates and warned on every
+          # certificate unconditionally — noise that would soon be ignored.
           echo "Certificate expiry:"
-          docker compose -f docker-compose.prod.yml exec -T nginx sh -c '
+          docker compose -f docker-compose.prod.yml run --rm --no-deps --entrypoint sh -T certbot -c '
             for c in /etc/letsencrypt/live/*/cert.pem; do
               [ -e "$c" ] || continue
-              echo "  $c: $(openssl x509 -enddate -noout -in "$c" | cut -d= -f2)"
-              # Fail loudly while there is still time to act, rather than
-              # discovering it from a browser error after it has expired.
-              openssl x509 -checkend 604800 -noout -in "$c" \
-                || echo "  WARNING: expires within 7 days"
+              echo "  $(basename $(dirname $c)): $(openssl x509 -enddate -noout -in "$c" | cut -d= -f2)"
+              # Say so while there is still time to act, rather than finding
+              # out from a browser error after it has expired.
+              openssl x509 -checkend 604800 -noout -in "$c" > /dev/null \
+                || echo "    WARNING: expires within 7 days"
             done' < /dev/null || true
 
           echo "Pruning old images..."
