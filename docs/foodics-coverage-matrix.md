@@ -211,3 +211,5 @@ Small, and each is a UI or endpoint over data that already exists:
 | Bulk coupon creation | single create today |
 | Delivery zone polygons | `Region` covers fees, not geofences |
 | Scale integration for weighed items | hardware, needs a device |
+
+| Sales predictions | ✅ | `GET /pos/reports/sales-predictions` — weekday averages with an honest confidence |

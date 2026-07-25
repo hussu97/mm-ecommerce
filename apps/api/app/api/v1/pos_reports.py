@@ -242,3 +242,17 @@ async def transfers_report(
     """Stock moved between branches, both legs."""
     _require(user, "reports.cost_analysis")
     return await pos_reports_service.transfers_report(db, **window.kwargs)
+
+
+@router.get("/sales-predictions")
+async def sales_predictions(
+    days_ahead: int = Query(7, ge=1, le=30),
+    branch_id: uuid.UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Forecast the coming days from each weekday's own history."""
+    _require(user, "reports.sales")
+    return await pos_reports_service.sales_predictions(
+        db, branch_id=branch_id, days_ahead=days_ahead
+    )

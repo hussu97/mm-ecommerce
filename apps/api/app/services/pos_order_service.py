@@ -282,6 +282,17 @@ async def add_item(
         money(unit_price_override) if is_open_price else money(product.base_price)
     )
 
+    # Open price is a property of the product, not a per-line choice. Keeping
+    # the two in step closes a hole at each end: a catalogue item priced by the
+    # cashier ("Cake - Customer Specification") would otherwise ring up at
+    # 0.00 if the price were simply left out, and an override on an ordinary
+    # item would let anyone reprice the menu at the till, sidestepping the
+    # discount rules and every report that reconciles against them.
+    if product.pricing_method == "open" and not is_open_price:
+        raise BadRequestError(f"{product.name} is sold at an open price — enter it")
+    if is_open_price and product.pricing_method != "open":
+        raise BadRequestError(f"{product.name} has a set price — use a discount")
+
     if product.is_sold_by_weight:
         if weight is None or weight <= 0:
             raise BadRequestError(

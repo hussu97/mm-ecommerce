@@ -28,7 +28,15 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     # CONCURRENTLY avoids a ShareLock that would block reads/writes on regions.
     # It must run outside a transaction — switch to AUTOCOMMIT for this statement.
+    #
+    # Alembic has already opened a transaction on this connection by the time a
+    # migration runs, and SQLAlchemy 2.0 refuses to change the isolation level
+    # of a connection with one in flight. Commit it first: without this the
+    # migration raises InvalidRequestError, which made `alembic upgrade head`
+    # fail on any empty database — so a new environment or a restore from
+    # backup could not be built at all.
     connection = op.get_bind()
+    connection.commit()
     connection.execution_options(isolation_level="AUTOCOMMIT")
     connection.execute(
         sa.text(
@@ -40,6 +48,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     connection = op.get_bind()
+    connection.commit()
     connection.execution_options(isolation_level="AUTOCOMMIT")
     connection.execute(
         sa.text("DROP INDEX CONCURRENTLY IF EXISTS ix_regions_active_sort")
