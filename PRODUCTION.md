@@ -7,15 +7,18 @@ Internet
 ├── meltingmomentscakes.com        → Vercel (web storefront)
 ├── admin.meltingmomentscakes.com  → Vercel (admin panel)
 ├── api.meltingmomentscakes.com    → GCP VM: FastAPI via Nginx + SSL
+├── pos.meltingmomentscakes.com    → GCP VM: the register API, its own app + container
 └── pub-<hash>.r2.dev              → Cloudflare R2 (object storage)
 ```
 
 **GCP VM** (e2-micro, 1 vCPU shared, 1 GB RAM) runs:
 - PostgreSQL 16
 - Redis 7 (response caching)
-- FastAPI (Uvicorn)
-- Nginx (reverse proxy for `api.*`)
-- Certbot (SSL for `api.*`)
+- FastAPI (Uvicorn) — the storefront/admin API
+- FastAPI (Uvicorn) — the register API (`app.pos_main`), a narrower route table
+- Nginx (reverse proxy for `api.*` and `pos.*`)
+- Certbot (SSL for both)
+- 2 GB swapfile — an e2-micro has no headroom for a second app process
 
 **Vercel** hosts both Next.js apps — free Hobby plan, global CDN, automatic deployments on push to `main`.
 
@@ -594,14 +597,15 @@ The `deploy.yml` workflow SSHes into the GCP VM on every push to `main`, writes 
 workflow. It is kept apart from `ALLOWED_HOSTS` so the storefront's host list
 and the register's cannot drift into one another.
 
-#### Bringing pos.meltingmomentscakes.com online
+#### pos.meltingmomentscakes.com
 
-The register runs as its own application (`app.pos_main`) in its own container,
-carrying only what a till needs. Three steps, in order:
+**Live since 26 July 2026.** The register runs as its own application
+(`app.pos_main`) in its own container, carrying only what a till needs, and
+`POS_REQUIRE_POS_HOST=true` means the storefront API refuses device tokens
+outright. The steps below are kept for rebuilding the host from scratch.
 
 1. **DNS** — add an `A` record for `pos.meltingmomentscakes.com` pointing at the
    VM's external IP, at the same registrar that serves the other records.
-   Everything else is already deployed and waiting on this.
 2. **Certificate** — once DNS resolves, issue one:
    ```
    docker compose -f docker-compose.prod.yml run --rm --entrypoint sh certbot -c \
@@ -618,7 +622,7 @@ carrying only what a till needs. Three steps, in order:
    `POS_REQUIRE_POS_HOST=true` so the storefront API stops accepting device
    tokens altogether. Until that flag is set the old host still works and logs
    a warning on every such request, so you can watch the log go quiet before
-   flipping it.
+   flipping it — which is how this cutover was done.
 
 #### Stripe
 

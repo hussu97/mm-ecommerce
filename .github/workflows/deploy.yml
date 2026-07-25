@@ -349,6 +349,10 @@ jobs:
           # cannot drift into one another.
           POS_ALLOWED_HOSTS=pos.meltingmomentscakes.com,localhost,127.0.0.1
           POS_CORS_ORIGINS=${{ secrets.POS_CORS_ORIGINS }}
+          # The register has its own host and every terminal is on it, so the
+          # storefront API no longer honours device tokens. Set only after
+          # pos.* was live and its log had gone quiet.
+          POS_REQUIRE_POS_HOST=true
           BACKUP_GCS_BUCKET=${{ secrets.BACKUP_GCS_BUCKET }}
           UMAMI_API_KEY=${{ secrets.UMAMI_API_KEY }}
           UMAMI_WEBSITE_ID=${{ secrets.UMAMI_WEBSITE_ID }}
