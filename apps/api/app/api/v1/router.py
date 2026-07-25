@@ -24,6 +24,42 @@ from .email_logs import router as email_logs_router
 from .regions import router as regions_router
 from .audit_logs import router as audit_logs_router
 
+# POS domain
+from .branches import router as branches_router
+from .business_settings import router as business_settings_router
+from .devices import printers_router, router as devices_router
+from .pos_config import (
+    charges_router,
+    kitchen_flows_router,
+    payment_methods_router,
+    reasons_router,
+    tags_router,
+    tax_groups_router,
+    taxes_router,
+)
+from .inventory import (
+    categories_router as inventory_categories_router,
+    items_router as inventory_items_router,
+    levels_router as inventory_levels_router,
+    purchase_orders_router,
+    recipes_router,
+    suppliers_router,
+    transactions_router as inventory_transactions_router,
+    warehouses_router,
+)
+from .marketing import (
+    discounts_router,
+    gift_cards_router,
+    house_accounts_router,
+    loyalty_router,
+    promotions_router,
+    timed_events_router,
+)
+from .pos_orders import kitchen_router, router as pos_orders_router
+from .pos_reports import router as pos_reports_router
+from .staff import roles_router, router as staff_router
+from .tills import router as tills_router
+
 api_router = APIRouter()
 
 api_router.include_router(auth_router, prefix="/auth", tags=["Authentication"])
@@ -51,3 +87,74 @@ api_router.include_router(blog_router, prefix="/blog", tags=["Blog"])
 api_router.include_router(email_logs_router, prefix="/email-logs", tags=["Email Logs"])
 api_router.include_router(regions_router, prefix="/regions", tags=["Regions"])
 api_router.include_router(audit_logs_router, prefix="/audit-logs", tags=["Audit Logs"])
+
+# ─── POS ──────────────────────────────────────────────────────────────────────
+api_router.include_router(branches_router, prefix="/branches", tags=["Branches"])
+api_router.include_router(taxes_router, prefix="/taxes", tags=["Taxes"])
+api_router.include_router(tax_groups_router, prefix="/tax-groups", tags=["Taxes"])
+api_router.include_router(
+    payment_methods_router, prefix="/payment-methods", tags=["Payment Methods"]
+)
+api_router.include_router(charges_router, prefix="/charges", tags=["Charges"])
+api_router.include_router(reasons_router, prefix="/reasons", tags=["Reasons"])
+api_router.include_router(tags_router, prefix="/tags", tags=["Tags"])
+api_router.include_router(
+    kitchen_flows_router, prefix="/kitchen-flows", tags=["Kitchen Flows"]
+)
+api_router.include_router(devices_router, prefix="/devices", tags=["Devices"])
+api_router.include_router(printers_router, prefix="/printers", tags=["Printers"])
+api_router.include_router(roles_router, prefix="/roles", tags=["Roles"])
+api_router.include_router(staff_router, prefix="/staff", tags=["Staff"])
+api_router.include_router(tills_router, prefix="/tills", tags=["Tills"])
+api_router.include_router(
+    business_settings_router, prefix="/business-settings", tags=["Business Settings"]
+)
+api_router.include_router(pos_orders_router, prefix="/pos/orders", tags=["POS Orders"])
+api_router.include_router(kitchen_router, prefix="/pos/kitchen", tags=["Kitchen"])
+api_router.include_router(
+    pos_reports_router, prefix="/pos/reports", tags=["POS Reports"]
+)
+
+# ─── Inventory ────────────────────────────────────────────────────────────────
+api_router.include_router(
+    inventory_categories_router,
+    prefix="/inventory/categories",
+    tags=["Inventory"],
+)
+api_router.include_router(
+    inventory_items_router, prefix="/inventory/items", tags=["Inventory"]
+)
+api_router.include_router(
+    inventory_levels_router, prefix="/inventory/levels", tags=["Inventory"]
+)
+api_router.include_router(
+    inventory_transactions_router,
+    prefix="/inventory/transactions",
+    tags=["Inventory"],
+)
+api_router.include_router(
+    warehouses_router, prefix="/inventory/warehouses", tags=["Inventory"]
+)
+api_router.include_router(
+    suppliers_router, prefix="/inventory/suppliers", tags=["Inventory"]
+)
+api_router.include_router(
+    purchase_orders_router,
+    prefix="/inventory/purchase-orders",
+    tags=["Inventory"],
+)
+api_router.include_router(
+    recipes_router, prefix="/inventory/recipes", tags=["Inventory"]
+)
+
+# ─── Marketing ────────────────────────────────────────────────────────────────
+api_router.include_router(discounts_router, prefix="/discounts", tags=["Marketing"])
+api_router.include_router(promotions_router, prefix="/promotions", tags=["Marketing"])
+api_router.include_router(
+    timed_events_router, prefix="/timed-events", tags=["Marketing"]
+)
+api_router.include_router(gift_cards_router, prefix="/gift-cards", tags=["Marketing"])
+api_router.include_router(loyalty_router, prefix="/loyalty", tags=["Marketing"])
+api_router.include_router(
+    house_accounts_router, prefix="/house-accounts", tags=["Marketing"]
+)

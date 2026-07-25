@@ -7,21 +7,43 @@ import { useAuth } from '@/lib/auth-context';
 import { loginPathFor } from '@/lib/auth-redirect';
 import { cn } from '@/lib/utils';
 
-const NAV = [
+// Grouped so the POS surface stays distinguishable from the storefront one as
+// the navigation grows.
+const NAV: Array<
+  { href: string; label: string; icon: string } | { section: string }
+> = [
   { href: '/',              label: 'Dashboard',       icon: 'dashboard' },
+
+  { section: 'Catalogue' },
   { href: '/products',      label: 'Products',        icon: 'inventory_2' },
   { href: '/categories',    label: 'Categories',      icon: 'category' },
   { href: '/modifiers',     label: 'Modifiers',       icon: 'tune' },
+
+  { section: 'Point of Sale' },
+  { href: '/pos-orders',    label: 'POS Orders',      icon: 'point_of_sale' },
+  { href: '/branches',      label: 'Branches',        icon: 'storefront' },
+  { href: '/staff',         label: 'Staff & Roles',   icon: 'badge' },
+  { href: '/devices',       label: 'Devices',         icon: 'tablet_mac' },
+  { href: '/pos-config',    label: 'POS Config',      icon: 'settings_applications' },
+  { href: '/pos-reports',   label: 'POS Reports',     icon: 'insights' },
+
+  { section: 'Inventory' },
+  { href: '/inventory',     label: 'Inventory',       icon: 'warehouse' },
+  { href: '/purchase-orders', label: 'Purchase Orders', icon: 'shopping_cart_checkout' },
+
+  { section: 'Online store' },
   { href: '/orders',        label: 'Orders',          icon: 'receipt_long' },
   { href: '/promo-codes',   label: 'Promo Codes',     icon: 'local_offer' },
   { href: '/customers',     label: 'Customers',       icon: 'people' },
-  { href: '/admin-users',   label: 'Admin Users',     icon: 'admin_panel_settings' },
+  { href: '/regions',       label: 'Regions',         icon: 'local_shipping' },
   { href: '/analytics',     label: 'Analytics',       icon: 'bar_chart' },
-  { href: '/import',        label: 'Import / Export', icon: 'sync_alt' },
+  { href: '/content',       label: 'Content',         icon: 'edit_note' },
   { href: '/languages',     label: 'Languages',       icon: 'translate' },
   { href: '/translations',  label: 'Translations',    icon: 'text_fields' },
-  { href: '/content',       label: 'Content',         icon: 'edit_note' },
-  { href: '/regions',       label: 'Regions',         icon: 'local_shipping' },
+
+  { section: 'System' },
+  { href: '/admin-users',   label: 'Admin Users',     icon: 'admin_panel_settings' },
+  { href: '/import',        label: 'Import / Export', icon: 'sync_alt' },
   { href: '/security',      label: 'Security',        icon: 'vpn_key' },
   { href: '/email-logs',    label: 'Email Logs',      icon: 'mail' },
   { href: '/audit-logs',    label: 'Audit Logs',      icon: 'manage_history' },
@@ -51,7 +73,22 @@ function SidebarContent({ collapsed, pathname, user, setMobileOpen, onLogout }: 
 
       {/* Nav */}
       <nav className="flex-1 py-4 overflow-y-auto">
-        {NAV.map(({ href, label, icon }) => {
+        {NAV.map((entry) => {
+          if ('section' in entry) {
+            // Section headings disappear when collapsed — a lone divider reads
+            // better than a truncated word in a 56px rail.
+            return collapsed ? (
+              <div key={entry.section} className="my-2 mx-3 border-t border-gray-100" />
+            ) : (
+              <p
+                key={entry.section}
+                className="px-4 pt-4 pb-1 text-[10px] uppercase tracking-widest text-gray-400 font-body"
+              >
+                {entry.section}
+              </p>
+            );
+          }
+          const { href, label, icon } = entry;
           const active = href === '/' ? pathname === '/' : pathname.startsWith(href);
           return (
             <Link
