@@ -128,6 +128,10 @@ services:
 
   certbot:
     image: certbot/certbot:latest
+    # This was the only service without a restart policy. It exited 255 in
+    # April, nothing brought it back, and the certificate it renews expired on
+    # 12 July — taking the whole HTTPS API down until it was noticed.
+    restart: always
     volumes:
       - ./certbot/www:/var/www/certbot
       - ./certbot/conf:/etc/letsencrypt

@@ -376,6 +376,23 @@ jobs:
           docker compose -f docker-compose.prod.yml up -d --no-deps nginx
           docker compose -f docker-compose.prod.yml exec -T nginx nginx -s reload
 
+          # The deploy only ever started api and nginx, so when the certbot
+          # renewal loop died it stayed dead through every subsequent deploy
+          # and the certificate silently expired. Bring it up here too.
+          echo "Ensuring the certificate renewal loop is up..."
+          docker compose -f docker-compose.prod.yml up -d --no-deps certbot
+
+          echo "Certificate expiry:"
+          docker compose -f docker-compose.prod.yml exec -T nginx sh -c '
+            for c in /etc/letsencrypt/live/*/cert.pem; do
+              [ -e "$c" ] || continue
+              echo "  $c: $(openssl x509 -enddate -noout -in "$c" | cut -d= -f2)"
+              # Fail loudly while there is still time to act, rather than
+              # discovering it from a browser error after it has expired.
+              openssl x509 -checkend 604800 -noout -in "$c" \
+                || echo "  WARNING: expires within 7 days"
+            done' || true
+
           echo "Pruning old images..."
           docker image prune -f
 
