@@ -30,6 +30,7 @@ from app.models import (
     KitchenFlowCategory,
     PaymentMethod,
     Reason,
+    Course,
     Tag,
     TaggedEntity,
     Tax,
@@ -51,6 +52,9 @@ from app.schemas.pos import (
     ReasonCreate,
     ReasonResponse,
     ReasonUpdate,
+    CourseCreate,
+    CourseResponse,
+    CourseUpdate,
     TagAssignment,
     TagCreate,
     TagResponse,
@@ -235,6 +239,14 @@ reasons_router = build_crud_router(
     update_schema=ReasonUpdate,
     response_schema=ReasonResponse,
     entity_type="reason",
+)
+
+courses_router = build_crud_router(
+    model=Course,
+    create_schema=CourseCreate,
+    update_schema=CourseUpdate,
+    response_schema=CourseResponse,
+    entity_type="course",
 )
 
 tags_router = build_crud_router(

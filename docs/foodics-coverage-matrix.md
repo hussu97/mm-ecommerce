@@ -37,7 +37,7 @@ plan.
 | Park / draft a check | ⚠️ | `pos_status="draft"` exists; no terminal UI |
 | Send to kitchen (fire) | ✅ | `/send-to-kitchen`, `KitchenTicket` |
 | Kitchen reprint | ✅ | `/pos/kitchen/tickets/{id}/reprint` |
-| Coursing (staged firing) | ⚠️ | each fire makes its own ticket; no explicit course grouping |
+| Coursing (staged firing) | ✅ | `/courses` CRUD, `course_id` on a line, `send-to-kitchen?course_id=` |
 | Tables + floor plan | ✅ | `Section`, `PosTable`, layout JSON |
 | Change table owner | ✅ | `POST /pos/orders/{id}/table` — claims the new table before freeing the old |
 | Tips | ✅ | `OrderPayment.tips`, `Order.tips_amount` |
@@ -76,7 +76,7 @@ plan.
 | Allergens | ✅ | `Allergen`, `ProductAllergen` |
 | Per-branch price / availability override | ✅ | `BranchProduct` |
 | Mark out of stock from the terminal | ✅ | `PUT /products/{id}/availability` per branch |
-| Product nutrition facts | ⚠️ | calories + walking-minutes only |
+| Product nutrition facts | ✅ | free-form `nutrition` panel: macros, salt, allergens |
 
 ## 4. Inventory
 
@@ -167,7 +167,7 @@ plan.
 | Activity log | ✅ |
 | Inventory levels | ✅ |
 | Inventory control / history | ✅ transactions report |
-| Purchase orders / transfers / purchasing | ⚠️ list endpoints, not formatted reports |
+| Purchase orders / transfers / purchasing | ✅ `GET /pos/reports/purchase-orders` and `/transfers` |
 | Cost adjustment history | ✅ `GET /pos/reports/cost-adjustment-history` |
 | Menu engineering | ✅ |
 | Inventory cost analysis / COGS | ✅ |

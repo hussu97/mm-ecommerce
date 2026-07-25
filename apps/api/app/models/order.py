@@ -274,6 +274,10 @@ class OrderItem(Base, UUIDMixin):
         Boolean, nullable=False, server_default="false"
     )
     kitchen_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Which course this line is fired with; null on an uncoursed check.
+    course_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("courses.id", ondelete="SET NULL"), nullable=True
+    )
     kitchen_flow_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("kitchen_flows.id", ondelete="SET NULL"),

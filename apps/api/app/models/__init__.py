@@ -22,6 +22,7 @@ from .audit_log import AuditLog  # noqa: F401
 from .admin_passkey import AdminPasskey, WebAuthnChallenge  # noqa: F401
 
 # ─── POS domain ───────────────────────────────────────────────────────────────
+from .course import Course  # noqa: F401
 from .tax import Tax, TaxGroup, TaxGroupTax, TaxTypeEnum  # noqa: F401
 from .branch import (  # noqa: F401
     Branch,
@@ -188,6 +189,7 @@ __all__ = [
     "PaymentMethod",
     "PaymentMethodTypeEnum",
     "Charge",
+    "Course",
     "ChargeTypeEnum",
     "Reason",
     "ReasonTypeEnum",

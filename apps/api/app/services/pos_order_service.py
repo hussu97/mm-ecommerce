@@ -257,6 +257,7 @@ async def add_item(
     unit_price_override: Decimal | None = None,
     selected_options: list[dict] | None = None,
     kitchen_notes: str | None = None,
+    course_id: uuid.UUID | None = None,
 ) -> OrderItem:
     _assert_open(order)
     if quantity < 1:
@@ -294,6 +295,7 @@ async def add_item(
         status=OrderItemStatusEnum.ACTIVE.value,
         is_open_price=is_open_price,
         kitchen_notes=kitchen_notes,
+        course_id=course_id,
         kitchen_flow_id=await _route_to_kitchen_flow(db, order, product),
         creator_id=user.id,
         added_at=utcnow(),
@@ -627,7 +629,9 @@ async def recalculate(db: AsyncSession, order: Order) -> Order:
 # ─── Kitchen ──────────────────────────────────────────────────────────────────
 
 
-async def send_to_kitchen(db: AsyncSession, *, order: Order) -> list[KitchenTicket]:
+async def send_to_kitchen(
+    db: AsyncSession, *, order: Order, course_id=None
+) -> list[KitchenTicket]:
     """
     Fire every line not yet sent, grouped into one ticket per kitchen station.
     Re-firing is safe — already-sent lines are skipped.
@@ -638,6 +642,13 @@ async def send_to_kitchen(db: AsyncSession, *, order: Order) -> list[KitchenTick
         for i in order.items
         if i.sent_to_kitchen_at is None and i.status != OrderItemStatusEnum.VOID.value
     ]
+    if course_id is not None:
+        # Firing one course: starters now, mains when the table is ready.
+        # Without this a single send dumps the whole check on the pass and the
+        # mains go cold while the starters are being eaten.
+        pending = [i for i in pending if i.course_id == course_id]
+        if not pending:
+            raise ConflictError("Nothing left to fire in that course")
     if not pending:
         raise ConflictError("Every line has already been sent to the kitchen")
 

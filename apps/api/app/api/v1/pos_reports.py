@@ -220,3 +220,25 @@ async def cost_adjustment_history(
     """Stock write-offs and revaluations, newest first."""
     _require(user, "reports.cost_adjustment_history")
     return await pos_reports_service.cost_adjustment_history(db, **window.kwargs)
+
+
+@router.get("/purchase-orders")
+async def purchase_orders_report(
+    window: _Window = Depends(),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Purchase orders with ordered, received and outstanding value."""
+    _require(user, "reports.cost_analysis")
+    return await pos_reports_service.purchase_orders_report(db, **window.kwargs)
+
+
+@router.get("/transfers")
+async def transfers_report(
+    window: _Window = Depends(),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Stock moved between branches, both legs."""
+    _require(user, "reports.cost_analysis")
+    return await pos_reports_service.transfers_report(db, **window.kwargs)

@@ -87,6 +87,9 @@ class Product(Base, UUIDMixin, TimestampMixin):
     is_non_revenue: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="false"
     )
+    #: Full nutrition panel. Free-form so adding sugar or salt later
+    #: needs no migration — the shape follows the packet, not us.
+    nutrition: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     walking_minutes_to_burn_calories: Mapped[int | None] = mapped_column(
         Integer, nullable=True
     )

@@ -47,6 +47,8 @@ class AddItemRequest(BaseModel):
     unit_price: Decimal | None = Field(None, ge=0)
     selected_options: list[SelectedOption] = Field(default_factory=list)
     kitchen_notes: str | None = None
+    #: Fire this line with a named course rather than immediately.
+    course_id: UUID | None = None
 
 
 class SplitOrderRequest(BaseModel):
@@ -137,6 +139,7 @@ class OrderItemResponse(ORMModel):
     is_open_price: bool
     kitchen_notes: str | None
     kitchen_flow_id: UUID | None
+    course_id: UUID | None = None
     sent_to_kitchen_at: datetime | None
     added_at: datetime | None
 

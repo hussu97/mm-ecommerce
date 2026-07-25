@@ -33,6 +33,7 @@ from .pos_config import (
     kitchen_flows_router,
     payment_methods_router,
     reasons_router,
+    courses_router,
     tags_router,
     tax_groups_router,
     taxes_router,
@@ -106,6 +107,7 @@ api_router.include_router(
 )
 api_router.include_router(charges_router, prefix="/charges", tags=["Charges"])
 api_router.include_router(reasons_router, prefix="/reasons", tags=["Reasons"])
+api_router.include_router(courses_router, prefix="/courses", tags=["Menu"])
 api_router.include_router(tags_router, prefix="/tags", tags=["Tags"])
 api_router.include_router(
     kitchen_flows_router, prefix="/kitchen-flows", tags=["Kitchen Flows"]
