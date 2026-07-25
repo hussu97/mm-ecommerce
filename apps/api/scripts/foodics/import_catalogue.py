@@ -270,17 +270,24 @@ class Importer:
                     "image_urls": [hosted] if hosted else [],
                     "category_id": category.id if category else None,
                     "tax_group_id": tax_group.id if tax_group else None,
-                    "is_active": row.get("is_active", True),
                     "is_stock_product": row.get("is_stock_product", False),
                     "pricing_method": "fixed",
                     "display_order": order,
                 },
             )
-            # Counter items — coffee, juices, bottled water — belong on the
-            # terminal, not the cake website. Only decided on first import: a
-            # product the site already sells keeps whatever it was set to,
-            # and anything genuinely wanted online is opted in from the admin.
+            # Both of these are decided once, on first import, and never
+            # overwritten afterwards.
+            #
+            # is_active, because whether something is currently sold is an
+            # operational decision taken in our system. Production has 90
+            # products deliberately retired that Foodics still lists as
+            # active; carrying the export's value across would put every one
+            # of them back on the live website.
+            #
+            # is_web_visible, because counter items — coffee, juices, bottled
+            # water — belong on the terminal, not the cake website.
             if existing is None:
+                product.is_active = row.get("is_active", True)
                 product.is_web_visible = self.web_visible_on_import
             self.products[row["id"]] = product
             await self.link_modifiers(row, product)
