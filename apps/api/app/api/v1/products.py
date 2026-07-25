@@ -13,7 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Request
 
 from app.core.cache import cache_delete_pattern, cache_get, cache_set
-from app.core.deps import get_admin_user, get_current_active_user, get_db
+from app.core.deps import (
+    get_admin_user,
+    get_current_active_user,
+    get_db,
+    get_optional_user,
+)
 from app.core.exceptions import ForbiddenError
 from app.models.menu import BranchProduct
 from app.models.user import User
@@ -60,8 +65,15 @@ async def list_products(
         ),
     ),
     db: AsyncSession = Depends(get_db),
+    viewer: User | None = Depends(get_optional_user),
 ):
     """List products with filtering, search, and pagination."""
+    # The counter menu is staff-facing. Anyone may browse the website
+    # catalogue, but asking for the POS one requires being signed in, or the
+    # "POS only" flag would be a suggestion rather than a boundary.
+    if channel != "web" and viewer is None:
+        raise ForbiddenError("Sign in to view the POS catalogue")
+
     items, total = await product_service.get_all(
         db,
         category_slugs=category,
