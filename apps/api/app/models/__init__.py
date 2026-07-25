@@ -21,6 +21,48 @@ from .region import Region, DeliverySettings  # noqa: F401
 from .audit_log import AuditLog  # noqa: F401
 from .admin_passkey import AdminPasskey, WebAuthnChallenge  # noqa: F401
 
+# ─── POS domain ───────────────────────────────────────────────────────────────
+from .tax import Tax, TaxGroup, TaxGroupTax, TaxTypeEnum  # noqa: F401
+from .branch import (  # noqa: F401
+    Branch,
+    BranchBusinessDay,
+    BranchTypeEnum,
+)
+from .role import (  # noqa: F401
+    ALL_PERMISSIONS,
+    PERMISSION_DESCRIPTIONS,
+    PERMISSION_GROUPS,
+    Role,
+    UserBranch,
+)
+from .payment_method import PaymentMethod, PaymentMethodTypeEnum  # noqa: F401
+from .charge import Charge, ChargeTypeEnum  # noqa: F401
+from .reason import Reason, ReasonTypeEnum  # noqa: F401
+from .tag import Tag, TaggedEntity, TagTypeEnum  # noqa: F401
+from .kitchen_flow import KitchenFlow, KitchenFlowCategory  # noqa: F401
+from .device import (  # noqa: F401
+    Device,
+    DeviceStatusEnum,
+    DeviceTypeEnum,
+    Printer,
+    PrinterConnectionEnum,
+    PrinterRoleEnum,
+)
+from .pos_table import PosTable, Section, TableStatusEnum  # noqa: F401
+from .till import (  # noqa: F401
+    DRAWER_SIGN,
+    DrawerOperation,
+    DrawerOperationTypeEnum,
+    Shift,
+    Till,
+    TillStatusEnum,
+)
+from .business_settings import (  # noqa: F401
+    BusinessSettings,
+    KitchenSortingEnum,
+    ReceiptLanguageModeEnum,
+)
+
 __all__ = [
     "Base",
     "User",
@@ -51,4 +93,46 @@ __all__ = [
     "AuditLog",
     "AdminPasskey",
     "WebAuthnChallenge",
+    # POS domain
+    "Tax",
+    "TaxGroup",
+    "TaxGroupTax",
+    "TaxTypeEnum",
+    "Branch",
+    "BranchBusinessDay",
+    "BranchTypeEnum",
+    "Role",
+    "UserBranch",
+    "ALL_PERMISSIONS",
+    "PERMISSION_GROUPS",
+    "PERMISSION_DESCRIPTIONS",
+    "PaymentMethod",
+    "PaymentMethodTypeEnum",
+    "Charge",
+    "ChargeTypeEnum",
+    "Reason",
+    "ReasonTypeEnum",
+    "Tag",
+    "TaggedEntity",
+    "TagTypeEnum",
+    "KitchenFlow",
+    "KitchenFlowCategory",
+    "Device",
+    "DeviceTypeEnum",
+    "DeviceStatusEnum",
+    "Printer",
+    "PrinterRoleEnum",
+    "PrinterConnectionEnum",
+    "Section",
+    "PosTable",
+    "TableStatusEnum",
+    "Till",
+    "TillStatusEnum",
+    "Shift",
+    "DrawerOperation",
+    "DrawerOperationTypeEnum",
+    "DRAWER_SIGN",
+    "BusinessSettings",
+    "ReceiptLanguageModeEnum",
+    "KitchenSortingEnum",
 ]
