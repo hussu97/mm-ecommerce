@@ -56,7 +56,11 @@ class User(Base, UUIDMixin, TimestampMixin):
         "Address", back_populates="user", cascade="all, delete-orphan"
     )
     carts: Mapped[list[Cart]] = relationship("Cart", back_populates="user")
-    orders: Mapped[list[Order]] = relationship("Order", back_populates="user")
+    # Orders now reference users four ways (customer, creator, closer, driver),
+    # so the customer relationship has to name its column explicitly.
+    orders: Mapped[list[Order]] = relationship(
+        "Order", back_populates="user", foreign_keys="Order.user_id"
+    )
     admin_passkeys: Mapped[list[AdminPasskey]] = relationship(
         "AdminPasskey", back_populates="user", cascade="all, delete-orphan"
     )
