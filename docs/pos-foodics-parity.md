@@ -234,13 +234,42 @@ Offline‑first with a local queue and sync. Melting Moments visual language
 
 ---
 
-## 6. Build order
+## 6. Build order and progress
 
-1. **Foundation** — branches, taxes, payment methods, charges, reasons, tags, devices, roles/staff, settings
-2. **Menu** — price tags, groups, allergens, combos, branch overrides, product field extensions
-3. **POS ops** — sections/tables, tills, shifts, drawer ops, POS order engine, KDS
-4. **Inventory** — items/levels/transactions/PO/TO/counts/recipes/depletion
-5. **Marketing** — discounts, promotions, timed events, gift cards, loyalty, house accounts
-6. **Reports** — the report suite above
-7. **Admin UI** — pages for all of the above
-8. **iPad POS app**
+| # | Phase | State |
+|---|---|---|
+| 1 | **Foundation** — branches + business days, taxes/tax groups, payment methods, charges, reasons, tags, kitchen flows, devices + printers, sections/tables, roles + staff (PIN), tills/shifts/drawer operations, business settings | ✅ done |
+| 2 | **Menu** — price tags, groups, allergens, combos, branch-level overrides | ⏳ partial — product `tax_group_id`, `pricing_method`, `costing_method`, `is_non_revenue` landed; the rest outstanding |
+| 3 | **POS ops** — POS order engine, pricing/tax, split tender, kitchen tickets + KDS | ✅ done |
+| 4 | **Inventory** | ⬜ not started |
+| 5 | **Marketing** — discounts, promotions, timed events, gift cards, loyalty, house accounts | ⬜ not started |
+| 6 | **Reports** | ⬜ not started (till X/Z report done) |
+| 7 | **Admin UI** | ⬜ not started |
+| 8 | **iPad POS app** (`mm-pos`) | ⏳ in progress — domain, API client, ESC/POS printing, receipt/kitchen/Z renderers, LAN transport, cash drawer done and tested; SwiftUI screens and offline queue outstanding |
+
+### Delivered so far
+
+**Migrations** `034_pos_foundation` (22 tables), `035_pos_orders`
+(6 tables + 28 order columns + 15 order-item columns),
+`036_product_pos_fields` (seeds the UAE VAT group and backfills every product).
+
+**Endpoints** ~120 new, under `/branches`, `/taxes`, `/tax-groups`,
+`/payment-methods`, `/charges`, `/reasons`, `/tags`, `/kitchen-flows`,
+`/devices`, `/printers`, `/roles`, `/staff`, `/tills`, `/business-settings`,
+`/pos/orders`, `/pos/kitchen`.
+
+**Key invariants**
+- `business_date` derives from each branch's cut-off, so post-midnight trading
+  books against the right day.
+- Till cash is recomputed from the drawer ledger, never incremented in place.
+- `recalculate()` is the only writer of money on an order; order-level discounts
+  are apportioned across lines so per-rate VAT stays correct on mixed-rate checks.
+- Every POS endpoint is gated on the role authority matrix in §2.
+
+**Tests** 257 Python (24 covering pricing alone) + 11 Swift, all green.
+
+### Note on repository drift
+
+`033_set_admin_initial_passwords` was applied to production but existed on no
+branch in this repo — it lived only inside the deployed API image. It has been
+restored to version control so a clean checkout reproduces production.
