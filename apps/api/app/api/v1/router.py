@@ -47,6 +47,14 @@ from .inventory import (
     transactions_router as inventory_transactions_router,
     warehouses_router,
 )
+from .marketing import (
+    discounts_router,
+    gift_cards_router,
+    house_accounts_router,
+    loyalty_router,
+    promotions_router,
+    timed_events_router,
+)
 from .pos_orders import kitchen_router, router as pos_orders_router
 from .pos_reports import router as pos_reports_router
 from .staff import roles_router, router as staff_router
@@ -137,4 +145,16 @@ api_router.include_router(
 )
 api_router.include_router(
     recipes_router, prefix="/inventory/recipes", tags=["Inventory"]
+)
+
+# ─── Marketing ────────────────────────────────────────────────────────────────
+api_router.include_router(discounts_router, prefix="/discounts", tags=["Marketing"])
+api_router.include_router(promotions_router, prefix="/promotions", tags=["Marketing"])
+api_router.include_router(
+    timed_events_router, prefix="/timed-events", tags=["Marketing"]
+)
+api_router.include_router(gift_cards_router, prefix="/gift-cards", tags=["Marketing"])
+api_router.include_router(loyalty_router, prefix="/loyalty", tags=["Marketing"])
+api_router.include_router(
+    house_accounts_router, prefix="/house-accounts", tags=["Marketing"]
 )
