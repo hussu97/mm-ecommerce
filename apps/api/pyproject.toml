@@ -32,6 +32,9 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
     "httpx>=0.28.0",
+    # Reads docker-compose.prod.yml, so the tests can check that a setting
+    # which gates behaviour actually reaches the container that enforces it.
+    "pyyaml>=6.0",
     # Pinned to a minor range. Ruff was previously unpinned, so a release that
     # widened the default ruleset turned CI red across the whole package without
     # a single line of source changing. Bump this deliberately, not by accident.

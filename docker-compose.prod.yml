@@ -67,6 +67,10 @@ services:
       CLOUDFLARE_R2_PUBLIC_URL: ${CLOUDFLARE_R2_PUBLIC_URL}
       CORS_ORIGINS: ${CORS_ORIGINS}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-*}
+      # The storefront API is the one that has to *refuse* device tokens,
+      # so it needs this as much as the register does. Setting it only on
+      # pos-api left the flag in .env doing nothing at all.
+      POS_REQUIRE_POS_HOST: ${POS_REQUIRE_POS_HOST:-false}
       WEB_URL: ${WEB_URL}
       ADMIN_URL: ${ADMIN_URL}
       UMAMI_API_KEY: ${UMAMI_API_KEY:-}
@@ -127,6 +131,7 @@ services:
       CLOUDFLARE_R2_PUBLIC_URL: ${CLOUDFLARE_R2_PUBLIC_URL}
       POS_CORS_ORIGINS: ${POS_CORS_ORIGINS:-}
       POS_ALLOWED_HOSTS: ${POS_ALLOWED_HOSTS:-*}
+      POS_REQUIRE_POS_HOST: ${POS_REQUIRE_POS_HOST:-false}
       WEB_URL: ${WEB_URL}
       ADMIN_URL: ${ADMIN_URL}
       UMAMI_API_KEY: ${UMAMI_API_KEY:-}
