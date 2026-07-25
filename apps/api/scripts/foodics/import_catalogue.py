@@ -196,18 +196,29 @@ class Importer:
     async def import_categories(self) -> None:
         for order, row in enumerate(self.export.get("categories", [])):
             reference = row.get("reference") or slugify(row["name"], row["id"][:8])
+            # Keyed on reference, not slug: `reference` is the stable Foodics
+            # identity and is what our schema enforces as unique. Production
+            # derives its slugs from the reference ("cat-brownies") while this
+            # importer derives them from the name ("brownies"), so matching on
+            # slug tried to insert a second row for every existing category.
+            existing = await self.one(Category, reference=reference)
             category = await self.upsert(
                 Category,
-                {"slug": slugify(row["name"], reference)},
+                {"reference": reference},
                 {
                     "name": row["name"],
-                    "reference": reference,
                     "translations": translations(("name", row.get("name_localized"))),
                     "image_url": self.hosted_image(row.get("image")),
                     "display_order": order,
                     "is_active": True,
                 },
             )
+            # A slug is a live URL, not a derived attribute. Set it once and
+            # leave it alone, or renaming a product in Foodics silently breaks
+            # every link to it.
+            if existing is None:
+                category.slug = slugify(row["name"], reference)
+                await self.db.flush()
             self.categories[row["id"]] = category
 
     async def import_modifiers(self) -> None:
@@ -260,7 +271,6 @@ class Importer:
                 {"sku": sku},
                 {
                     "name": row["name"],
-                    "slug": slugify(row["name"], sku.lower()),
                     "description": row.get("description"),
                     "translations": translations(
                         ("name", row.get("name_localized")),
@@ -289,6 +299,8 @@ class Importer:
             if existing is None:
                 product.is_active = row.get("is_active", True)
                 product.is_web_visible = self.web_visible_on_import
+                product.slug = slugify(row["name"], sku.lower())
+                await self.db.flush()
             self.products[row["id"]] = product
             await self.link_modifiers(row, product)
 
