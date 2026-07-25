@@ -401,8 +401,12 @@ jobs:
           # nginx reload below had no guard, so for months every deploy ended
           # silently at this point — "Deployment complete" has never once been
           # printed — while the job still reported success.
-          echo "Ensuring nginx is up..."
-          docker compose -f docker-compose.prod.yml up -d --no-deps nginx < /dev/null
+          # --build, because nginx's config and entrypoint are baked into its
+          # image rather than mounted. Without it compose reuses whatever image
+          # already exists, so every change under nginx/ since the first build
+          # has been pulled onto the VM and then quietly ignored.
+          echo "Rebuilding and starting nginx..."
+          docker compose -f docker-compose.prod.yml up -d --no-deps --build nginx < /dev/null
           docker compose -f docker-compose.prod.yml exec -T nginx nginx -s reload < /dev/null
 
           # The deploy only ever started api and nginx, so when the certbot
