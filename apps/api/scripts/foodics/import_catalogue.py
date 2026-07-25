@@ -142,11 +142,22 @@ class Importer:
             await self.db.execute(select(model).filter_by(**where))
         ).scalar_one_or_none()
 
-    async def upsert(self, model, key: dict, values: dict):
+    async def upsert(
+        self, model, key: dict, values: dict, create_only: dict | None = None
+    ):
+        """
+        Insert or update, matched on `key`.
+
+        `create_only` is applied when the row is first created and never
+        touched again. That is where anything the shop owns rather than
+        Foodics belongs: a slug is a live URL, and whether an item is on sale
+        is an operational decision — neither should be restored from an
+        export.
+        """
         row = await self.one(model, **key)
         created = row is None
         if created:
-            row = model(**key, **values)
+            row = model(**key, **values, **(create_only or {}))
             self.db.add(row)
         else:
             for field, value in values.items():
@@ -201,7 +212,6 @@ class Importer:
             # derives its slugs from the reference ("cat-brownies") while this
             # importer derives them from the name ("brownies"), so matching on
             # slug tried to insert a second row for every existing category.
-            existing = await self.one(Category, reference=reference)
             category = await self.upsert(
                 Category,
                 {"reference": reference},
@@ -212,13 +222,8 @@ class Importer:
                     "display_order": order,
                     "is_active": True,
                 },
+                create_only={"slug": slugify(row["name"], reference)},
             )
-            # A slug is a live URL, not a derived attribute. Set it once and
-            # leave it alone, or renaming a product in Foodics silently breaks
-            # every link to it.
-            if existing is None:
-                category.slug = slugify(row["name"], reference)
-                await self.db.flush()
             self.categories[row["id"]] = category
 
     async def import_modifiers(self) -> None:
@@ -265,7 +270,6 @@ class Importer:
             tax_group = self.tax_groups.get(row.get("tax_group_id"))
             hosted = self.hosted_image(row.get("image"))
 
-            existing = await self.one(Product, sku=sku)
             product = await self.upsert(
                 Product,
                 {"sku": sku},
@@ -284,23 +288,12 @@ class Importer:
                     "pricing_method": "fixed",
                     "display_order": order,
                 },
+                create_only={
+                    "slug": slugify(row["name"], sku.lower()),
+                    "is_active": row.get("is_active", True),
+                    "is_web_visible": self.web_visible_on_import,
+                },
             )
-            # Both of these are decided once, on first import, and never
-            # overwritten afterwards.
-            #
-            # is_active, because whether something is currently sold is an
-            # operational decision taken in our system. Production has 90
-            # products deliberately retired that Foodics still lists as
-            # active; carrying the export's value across would put every one
-            # of them back on the live website.
-            #
-            # is_web_visible, because counter items — coffee, juices, bottled
-            # water — belong on the terminal, not the cake website.
-            if existing is None:
-                product.is_active = row.get("is_active", True)
-                product.is_web_visible = self.web_visible_on_import
-                product.slug = slugify(row["name"], sku.lower())
-                await self.db.flush()
             self.products[row["id"]] = product
             await self.link_modifiers(row, product)
 
