@@ -13,6 +13,7 @@ from __future__ import annotations
 import uuid
 from datetime import timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 
@@ -26,6 +27,27 @@ from app.services import pos_reports_service
 
 def _paths(app) -> set[str]:
     return set(app.openapi()["paths"])
+
+
+class _StubDB:
+    """Just enough session to resolve one device and count commits."""
+
+    def __init__(self, device):
+        self._device = device
+        self.commits = 0
+
+    async def execute(self, _stmt):
+        device = self._device
+
+        class _Result:
+            @staticmethod
+            def scalar_one_or_none():
+                return device
+
+        return _Result()
+
+    async def commit(self):
+        self.commits += 1
 
 
 # ─── The route ────────────────────────────────────────────────────────────────
@@ -140,6 +162,58 @@ def test_the_header_figures_are_the_sum_of_the_rows():
     assert dashboard.open_tills == 1
     assert dashboard.orders_today == 15
     assert dashboard.sales_today == Decimal("1300.00")
+
+
+@pytest.mark.asyncio
+async def test_a_device_that_talks_to_us_is_recorded_as_seen():
+    """
+    `last_seen_at` was written only by pairing and by the launch heartbeat, so
+    five minutes into a shift every dashboard called the till offline — while it
+    was ringing up sales. Any authenticated request now counts as being seen.
+    """
+    from app.api.v1 import devices as devices_api
+
+    device = SimpleNamespace(
+        status="used",
+        last_seen_at=utcnow() - timedelta(hours=3),
+        token_hash="hashed",
+    )
+    db = _StubDB(device)
+
+    resolved = await devices_api.authenticate_device(db, "a-token")
+
+    assert resolved is device
+    assert (utcnow() - resolved.last_seen_at).total_seconds() < 5
+    assert db.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_a_busy_till_does_not_write_a_row_per_request():
+    """
+    Throttled to one write a minute per device — a terminal mid-service issues a
+    request per tap, and stamping every one of them would turn a read path into
+    a write path for no extra accuracy.
+    """
+    from app.api.v1 import devices as devices_api
+
+    seen = utcnow() - timedelta(seconds=5)
+    device = SimpleNamespace(status="used", last_seen_at=seen, token_hash="hashed")
+    db = _StubDB(device)
+
+    await devices_api.authenticate_device(db, "a-token")
+
+    assert device.last_seen_at == seen
+    assert db.commits == 0
+
+
+def test_the_refresh_window_is_inside_the_offline_threshold():
+    """
+    If a device could go longer between stamps than the dashboards allow before
+    calling it offline, a perfectly healthy till would flicker red.
+    """
+    from app.api.v1 import devices as devices_api
+
+    assert devices_api.SEEN_REFRESH_SECONDS < operations.OFFLINE_AFTER_SECONDS
 
 
 def test_offline_is_decided_by_the_same_threshold_as_the_branches_dashboard():

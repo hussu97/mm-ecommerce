@@ -54,8 +54,28 @@ def _generate_pairing_code() -> str:
     return "".join(secrets.choice(PAIRING_CODE_ALPHABET) for _ in range(8))
 
 
+#: How stale `last_seen_at` may get before an authenticated request refreshes it.
+#: Comfortably under the five minutes the dashboards treat as offline, so a
+#: terminal that is talking to us is never reported as down; long enough that a
+#: busy till ringing up a check does not write a row per request.
+SEEN_REFRESH_SECONDS = 60
+
+
 async def authenticate_device(db: AsyncSession, token: str | None) -> Device:
-    """Resolve the `X-Device-Token` header to a paired device."""
+    """
+    Resolve the `X-Device-Token` header to a paired device, and record that we
+    heard from it.
+
+    `last_seen_at` used to be written only by pairing and by the explicit
+    heartbeat, which a terminal sends once at launch. Five minutes later every
+    dashboard reported it offline — including tills that had been ringing up
+    sales all afternoon, which made "offline devices" a number nobody could act
+    on. Seen means last spoke to us, so it is stamped here, at the single choke
+    point every device-authenticated request passes through.
+
+    Throttled to one write a minute per device. Without that a till mid-service
+    would write a row per tap.
+    """
     if not token:
         raise UnauthorizedError("Device token required")
     stmt = select(Device).where(
@@ -67,6 +87,15 @@ async def authenticate_device(db: AsyncSession, token: str | None) -> Device:
         raise UnauthorizedError("Unrecognised device token")
     if device.status == DeviceStatusEnum.DISABLED.value:
         raise UnauthorizedError("This device has been disabled")
+
+    now = utcnow()
+    if (
+        device.last_seen_at is None
+        or (now - device.last_seen_at).total_seconds() >= SEEN_REFRESH_SECONDS
+    ):
+        device.last_seen_at = now
+        await db.commit()
+
     return device
 
 
