@@ -21,6 +21,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.category import Category
+from app.models.device import Device
 from app.models.inventory import (
     InventoryItem,
     InventoryLevel,
@@ -290,6 +291,10 @@ _ORDER_DIMENSIONS = {
     "customer": Order.user_id,
     "branch": Order.branch_id,
     "table": Order.table_id,
+    # Which POS machine rang it up. A branch with three tills reports as one row
+    # under "branch"; a manager comparing counters — or looking for the terminal
+    # that stopped selling at four o'clock — needs them apart.
+    "device": Order.device_id,
     "hour": func.to_char(Order.closed_at, "HH24"),
 }
 
@@ -359,6 +364,12 @@ async def _labels_for(
             .all()
         )
         return {str(t.id): t.name for t in tables}
+
+    if dimension == "device":
+        devices = (
+            (await db.execute(select(Device).where(Device.id.in_(ids)))).scalars().all()
+        )
+        return {str(d.id): d.name for d in devices}
 
     return {}
 
@@ -646,12 +657,30 @@ async def tills_report(
 
     tills = list((await db.execute(stmt)).scalars().all())
     labels = await _staff_labels(db, [(t.user_id,) for t in tills])
+
+    # Which machine each shift ran on. A variance is investigated by going to the
+    # terminal, so a report that names only the cashier sends a manager looking
+    # for a person rather than a drawer.
+    device_ids = {t.device_id for t in tills if t.device_id}
+    device_names: dict[str, str] = {}
+    if device_ids:
+        device_names = {
+            str(d.id): d.name
+            for d in (
+                (await db.execute(select(Device).where(Device.id.in_(device_ids))))
+                .scalars()
+                .all()
+            )
+        }
+
     return [
         {
             "till_id": str(t.id),
             "business_date": t.business_date,
             "status": t.status,
             "user": labels.get(str(t.user_id), "Unknown"),
+            "device_id": str(t.device_id) if t.device_id else None,
+            "device_name": device_names.get(str(t.device_id)) if t.device_id else None,
             "opened_at": t.opened_at,
             "closed_at": t.closed_at,
             "opening_amount": _q(t.opening_amount),

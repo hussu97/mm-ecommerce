@@ -776,6 +776,187 @@ async def branches_dashboard(
     )
 
 
+# ─── Live terminals dashboard ─────────────────────────────────────────────────
+
+
+class TerminalLive(BaseModel):
+    device_id: uuid.UUID
+    name: str
+    reference: str
+    type: str
+    status: str
+    branch_id: uuid.UUID
+    branch_name: str
+    last_seen_at: datetime | None
+    is_online: bool
+    app_version: str | None
+    os_version: str | None
+    model_identifier: str | None
+    open_till_id: uuid.UUID | None
+    open_till_user: str | None
+    open_till_opened_at: datetime | None
+    active_orders: int
+    active_orders_amount: Decimal
+    orders_today: int
+    sales_today: Decimal
+
+
+class TerminalsDashboard(BaseModel):
+    terminals: int
+    online: int
+    offline: int
+    open_tills: int
+    orders_today: int
+    sales_today: Decimal
+    devices: list[TerminalLive]
+
+
+@dashboard_router.get("/devices", response_model=TerminalsDashboard)
+async def terminals_dashboard(
+    branch_id: uuid.UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """
+    Every POS machine, one row each: is it online, whose shift is on it, and what
+    it has taken today.
+
+    The branches dashboard already counts terminals per site, which answers "is
+    anything down" but not "which one". A manager standing in a branch with three
+    tills needs the name of the one that stopped, and the till it stopped
+    mid-shift — so this reports per device rather than per branch.
+
+    Scoped by the branch's own `business_date`, not by `created_at`: a shop that
+    trades past midnight has one trading day, and a wall-clock "today" would
+    report the late half of a Friday night against Saturday and make every
+    terminal look quiet.
+
+    Read behind `dashboard.branches` rather than admin rights. The device list in
+    `/devices` is admin-only because it hands out pairing codes; nothing here
+    does, so a shift manager can see it without being able to pair anything.
+    """
+    _require(user, "dashboard.branches")
+
+    branch_filters = [Branch.is_active.is_(True), Branch.deleted_at.is_(None)]
+    if branch_id:
+        branch_filters.append(Branch.id == branch_id)
+    branches = list(
+        (await db.execute(select(Branch).where(*branch_filters))).scalars().all()
+    )
+    branch_names = {b.id: b.name for b in branches}
+
+    device_filters = [
+        Device.branch_id.in_(list(branch_names) or [uuid.uuid4()]),
+        Device.deleted_at.is_(None),
+        # Kitchen displays and printer bridges are not machines anyone sells on.
+        Device.type.in_(["cashier", "sub_cashier"]),
+    ]
+    devices = list(
+        (
+            await db.execute(
+                select(Device).where(*device_filters).order_by(Device.name.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    # One business date per branch, resolved once: two terminals in the same
+    # branch must be measured against the same day or their totals will not sum
+    # to the branch's.
+    business_dates: dict[uuid.UUID, str] = {}
+    for branch in branches:
+        business_dates[branch.id] = await business_day_service.current_business_date(
+            db, branch
+        )
+
+    now = utcnow()
+    rows: list[TerminalLive] = []
+
+    for device in devices:
+        active = (
+            await db.execute(
+                select(
+                    func.count(Order.id), func.coalesce(func.sum(Order.total), 0)
+                ).where(
+                    Order.is_pos.is_(True),
+                    Order.device_id == device.id,
+                    Order.pos_status == PosOrderStatusEnum.ACTIVE.value,
+                )
+            )
+        ).one()
+
+        today = (
+            await db.execute(
+                select(
+                    func.count(Order.id), func.coalesce(func.sum(Order.total), 0)
+                ).where(
+                    Order.is_pos.is_(True),
+                    Order.device_id == device.id,
+                    Order.business_date == business_dates.get(device.branch_id),
+                    Order.pos_status == PosOrderStatusEnum.CLOSED.value,
+                )
+            )
+        ).one()
+
+        till = (
+            await db.execute(
+                select(Till)
+                .where(
+                    Till.device_id == device.id,
+                    Till.status == TillStatusEnum.OPEN.value,
+                )
+                .order_by(Till.opened_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+        till_user: str | None = None
+        if till is not None:
+            operator = await db.get(User, till.user_id)
+            if operator is not None:
+                till_user = operator.display_name or operator.email
+
+        online = (
+            device.last_seen_at is not None
+            and (now - device.last_seen_at).total_seconds() <= OFFLINE_AFTER_SECONDS
+        )
+
+        rows.append(
+            TerminalLive(
+                device_id=device.id,
+                name=device.name,
+                reference=device.reference,
+                type=device.type,
+                status=device.status,
+                branch_id=device.branch_id,
+                branch_name=branch_names.get(device.branch_id, "Unknown"),
+                last_seen_at=device.last_seen_at,
+                is_online=online,
+                app_version=device.app_version,
+                os_version=device.os_version,
+                model_identifier=device.model_identifier,
+                open_till_id=till.id if till else None,
+                open_till_user=till_user,
+                open_till_opened_at=till.opened_at if till else None,
+                active_orders=int(active[0] or 0),
+                active_orders_amount=Decimal(str(active[1] or 0)),
+                orders_today=int(today[0] or 0),
+                sales_today=Decimal(str(today[1] or 0)),
+            )
+        )
+
+    return TerminalsDashboard(
+        terminals=len(rows),
+        online=sum(1 for r in rows if r.is_online),
+        offline=sum(1 for r in rows if not r.is_online),
+        open_tills=sum(1 for r in rows if r.open_till_id is not None),
+        orders_today=sum(r.orders_today for r in rows),
+        sales_today=sum((r.sales_today for r in rows), start=Decimal("0")),
+        devices=rows,
+    )
+
+
 @dashboard_router.get("/inventory")
 async def inventory_dashboard(
     branch_id: uuid.UUID | None = None,
