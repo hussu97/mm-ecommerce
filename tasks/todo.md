@@ -376,3 +376,27 @@
 - Sentry fix: web/admin browser Sentry now uses `/monitoring` tunnel routes instead of direct `ingest.../envelope` calls.
 - Verified: `pnpm --filter web test -- lib/checkout-auth.test.ts lib/api.test.ts` passed; `pnpm --filter web lint` passed with existing warnings; `pnpm --filter admin build` passed.
 - Residual: `pnpm --filter web build` compiled and typechecked, then failed because unrelated `/ar/signup` and `/track` prerender attempts exceeded 60s.
+
+## Bug: Website Lists Categories With Nothing To Sell (2026-07-27)
+- [x] Trace the categories tab back to `GET /categories` and the storefront product filter
+- [x] Count categories against the storefront catalogue (`is_active` AND `is_web_visible`)
+- [x] Drop categories whose storefront count is zero from the public listing
+- [x] 404 the same categories on `GET /categories/{slug}` so they are not reachable by URL
+- [x] Leave the admin view (`include_inactive=true`) counting the full catalogue
+- [x] Rename the cache key so stale entries under the old meaning are not served
+- [x] Add unit coverage and run ruff + the full API suite
+
+### Review
+- Root cause: `category_service.get_all` counted products on `is_active` alone. The
+  storefront product query also requires `is_web_visible`, so a category of POS-only
+  items (coffee, bottled water imported from Foodics) reported a non-zero count and was
+  rendered as a tab that opened onto an empty page.
+- Fix: `_countable_products(storefront_only)` builds the join condition once. The
+  storefront path adds `is_web_visible` and a `HAVING count(products.id) > 0`; the admin
+  path is byte-for-byte the query it was before.
+- `get_by_slug` applies the same rule, so a hidden category 404s instead of serving an
+  empty page — the argument already made for products in `test_product_channels.py`.
+- Cache key `categories:active` -> `categories:storefront`, so no Redis entry written
+  under the old semantics survives the deploy.
+- Verified: `pytest` 364 passed / 7 skipped; `ruff check` and `ruff format --check` clean;
+  generated SQL inspected for both the storefront and admin paths.

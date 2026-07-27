@@ -30,20 +30,36 @@ async def _with_product_count(db: AsyncSession, cat: Category) -> CategoryRespon
     return response
 
 
+def _countable_products(storefront_only: bool):
+    """
+    The join condition that decides which products a category is counted for.
+
+    The storefront and the POS share one product table but not one catalogue.
+    A category whose every product is POS-only — coffee, bottled water — has
+    nothing to sell on the website, so the website must not count those
+    products and must not list the category. Admin still counts every active
+    product, because that is the catalogue it is there to manage.
+    """
+    clause = (Product.category_id == Category.id) & (Product.is_active == True)  # noqa: E712
+    if storefront_only:
+        clause = clause & (Product.is_web_visible == True)  # noqa: E712
+    return clause
+
+
 async def get_all(
     db: AsyncSession, include_inactive: bool = False
 ) -> list[CategoryResponse]:
+    storefront_only = not include_inactive
     stmt = (
         select(Category, func.count(Product.id).label("product_count"))
-        .outerjoin(
-            Product,
-            (Product.category_id == Category.id) & (Product.is_active == True),  # noqa: E712
-        )
+        .outerjoin(Product, _countable_products(storefront_only))
         .group_by(Category.id)
         .order_by(Category.display_order, Category.name)
     )
-    if not include_inactive:
-        stmt = stmt.where(Category.is_active == True)  # noqa: E712
+    if storefront_only:
+        stmt = stmt.where(Category.is_active == True).having(  # noqa: E712
+            func.count(Product.id) > 0
+        )
 
     result = await db.execute(stmt)
     rows = result.all()
@@ -59,12 +75,10 @@ async def get_all(
 async def get_by_slug(
     db: AsyncSession, slug: str, include_inactive: bool = False
 ) -> CategoryResponse:
+    storefront_only = not include_inactive
     stmt = (
         select(Category, func.count(Product.id).label("product_count"))
-        .outerjoin(
-            Product,
-            (Product.category_id == Category.id) & (Product.is_active == True),  # noqa: E712
-        )
+        .outerjoin(Product, _countable_products(storefront_only))
         .where(Category.slug == slug)
         .group_by(Category.id)
     )
@@ -73,7 +87,10 @@ async def get_by_slug(
     if not row:
         raise NotFoundError(f"Category '{slug}' not found")
     cat, count = row
-    if not include_inactive and not cat.is_active:
+    if storefront_only and not cat.is_active:
+        raise NotFoundError(f"Category '{slug}' not found")
+    # A category the listing hides must not be reachable by guessing its URL.
+    if storefront_only and not count:
         raise NotFoundError(f"Category '{slug}' not found")
     response = CategoryResponse.model_validate(cat)
     response.product_count = count or 0

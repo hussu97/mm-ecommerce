@@ -9,7 +9,10 @@ from app.services import audit_service, category_service
 
 router = APIRouter()
 
-_CACHE_KEY = "categories:active"
+# Keyed by what it holds, not just "active": the storefront list now excludes
+# categories with nothing to sell on the web. Renaming the key retires any
+# entry written under the old meaning instead of serving it for another TTL.
+_CACHE_KEY = "categories:storefront"
 _CACHE_TTL = 300
 
 
@@ -18,7 +21,13 @@ async def list_categories(
     include_inactive: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
-    """List all active categories with product counts."""
+    """
+    List categories with product counts.
+
+    The default is the storefront view: active categories that have at least
+    one product the website actually sells. `include_inactive` is the admin
+    view and returns every category, counted against the full catalogue.
+    """
     if not include_inactive:
         cached = await cache_get(_CACHE_KEY)
         if cached is not None:
