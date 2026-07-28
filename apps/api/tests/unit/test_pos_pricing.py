@@ -178,6 +178,21 @@ def test_percentage_charge_is_taken_on_the_net_sale():
     assert result.total_excl_tax + result.tax_total == result.total
 
 
+def test_percentage_charges_do_not_compound():
+    """Two percentage charges are each taken on the sale, not on each other."""
+    result = calculate_order(
+        [line(1, "105.00")],
+        charges=[
+            ChargeInput("Service", "percentage", D("0.10"), tax_rate=VAT),
+            ChargeInput("Municipality", "percentage", D("0.10"), tax_rate=VAT),
+        ],
+    )
+    # Net sale is 100.00, so each 10% charge is 10.00 — not 10.00 then 10.95.
+    assert result.charge_amounts == [D("10.00"), D("10.00")]
+    assert result.charges == D("20.00")
+    assert result.total_excl_tax + result.tax_total == result.total
+
+
 def test_non_revenue_line_is_untaxed():
     result = calculate_order([line(1, "50.00", is_non_revenue=True)])
     assert result.tax_total == D("0.00")
