@@ -756,7 +756,8 @@ function CheckoutContent() {
       // Zero-total order: backend auto-confirmed it, redirect straight to confirmation.
       if (session.confirmed) {
         analytics.checkoutStepComplete({ step: 3 });
-        window.location.href = `/${locale}/checkout/confirmation?order_number=${orderNumber}`;
+        const orderEmail = createdOrder?.email ?? retryOrder?.email ?? form.email.trim().toLowerCase();
+        window.location.href = `/${locale}/checkout/confirmation?order_number=${orderNumber}&email=${encodeURIComponent(orderEmail)}`;
         return;
       }
 

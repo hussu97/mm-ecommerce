@@ -75,7 +75,7 @@ async def list_all_orders(
     status: OrderStatusEnum | None = Query(None),
     search: str | None = Query(None, description="Filter by order number or email"),
     page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
+    per_page: int = Query(20, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_admin_user),
 ):
@@ -120,14 +120,21 @@ async def track_order(data: TrackOrderRequest, db: AsyncSession = Depends(get_db
 @router.get("/{order_number}", response_model=OrderResponse)
 async def get_order(
     order_number: str,
+    email: str | None = Query(
+        None, description="Order email — proof of ownership for unauthenticated calls"
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_optional_user),
 ):
-    """Get an order by order number. Authenticated users can only view their own orders."""
+    """
+    Get an order by order number. Authenticated users can only view their own
+    orders; unauthenticated callers must supply the order's email as proof
+    (same scheme as /orders/track).
+    """
     user_id = current_user.id if current_user else None
     is_admin = current_user.is_admin if current_user else False
     return await order_service.get_by_order_number(
-        db, order_number, user_id=user_id, admin=is_admin
+        db, order_number, user_id=user_id, admin=is_admin, email=email
     )
 
 

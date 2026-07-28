@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from urllib.parse import quote
 
 import stripe
 from stripe._error import SignatureVerificationError, StripeError
@@ -74,9 +75,12 @@ class StripeProvider(PaymentProvider):
             except StripeError as e:
                 logger.warning("Could not create Stripe coupon: %s", e)
 
+        # The email rides along so the confirmation page can prove ownership to
+        # GET /orders/{order_number} even if the guest session cookie was lost.
         success_url = (
             f"{settings.WEB_URL}/checkout/confirmation"
-            f"?order_number={order.order_number}&session_id={{CHECKOUT_SESSION_ID}}"
+            f"?order_number={order.order_number}&email={quote(order.email)}"
+            f"&session_id={{CHECKOUT_SESSION_ID}}"
         )
         cancel_url = f"{settings.WEB_URL}/checkout?step=payment&order_number={order.order_number}"
 
