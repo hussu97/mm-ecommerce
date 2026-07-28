@@ -4,13 +4,15 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import func, select, update as sql_update
+from sqlalchemy import Integer, cast, func, select, update as sql_update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.models.cart import Cart, CartItem
 from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
+from app.models.product import Product
 from app.models.promo_code import PromoCode
 from app.schemas.order import OrderCreate, OrderListResponse, OrderResponse
 from app.services import delivery_service, promo_code_service
@@ -65,22 +67,17 @@ async def _generate_order_number(db: AsyncSession) -> str:
     today = datetime.now(timezone.utc).strftime("%Y%m%d")
     prefix = f"MM-{today}-"
 
+    # Max of the numeric sequence, not a string sort — once the day passes 999
+    # orders, "MM-...-1000" sorts below "MM-...-999" lexicographically and a
+    # string max would hand out a duplicate number.
     result = await db.execute(
-        select(Order.order_number)
-        .where(Order.order_number.like(f"{prefix}%"))
-        .order_by(Order.order_number.desc())
-        .limit(1)
-        .with_for_update()
+        select(
+            func.max(cast(func.split_part(Order.order_number, "-", 3), Integer))
+        ).where(Order.order_number.like(f"{prefix}%"))
     )
-    last = result.scalar_one_or_none()
+    last_seq = result.scalar_one_or_none()
 
-    if last:
-        last_seq = int(last.split("-")[-1])
-        seq = last_seq + 1
-    else:
-        seq = 1
-
-    return f"{prefix}{seq:03d}"
+    return f"{prefix}{int(last_seq or 0) + 1:03d}"
 
 
 # ── Private helpers for create_order ──────────────────────────────────────────
@@ -173,6 +170,33 @@ def _compute_item_totals(cart: Cart) -> tuple[list[dict], Decimal]:
     return items_data, subtotal
 
 
+async def _decrement_stock(db: AsyncSession, cart: Cart) -> None:
+    """
+    Atomically claim stock for stock-tracked products.
+
+    The guarded UPDATE decrements and enforces availability in one statement,
+    so two concurrent checkouts cannot both take the last item. Runs in the
+    order-creation transaction: if the order fails, the claim rolls back.
+    """
+    quantities: dict[uuid.UUID, tuple[str, int]] = {}
+    for cart_item in cart.items:
+        product = cart_item.product
+        if product and product.is_stock_product:
+            name, qty = quantities.get(product.id, (product.name, 0))
+            quantities[product.id] = (name, qty + cart_item.quantity)
+
+    for product_id, (name, qty) in quantities.items():
+        result = await db.execute(
+            sql_update(Product)
+            .where(Product.id == product_id, Product.stock_quantity >= qty)
+            .values(stock_quantity=Product.stock_quantity - qty)
+            .returning(Product.id)
+            .execution_options(synchronize_session=False)
+        )
+        if not result.scalar_one_or_none():
+            raise BadRequestError(f"Product '{name}' is out of stock")
+
+
 async def _compute_order_totals(
     data: OrderCreate,
     subtotal: Decimal,
@@ -224,10 +248,9 @@ async def _persist_order(
     address_snapshot: dict | None = (
         data.shipping_address.model_dump(mode="json") if data.shipping_address else None
     )
-    order_number = await _generate_order_number(db)
 
     order = Order(
-        order_number=order_number,
+        order_number=await _generate_order_number(db),
         user_id=user_id,
         email=data.email,
         delivery_method=data.delivery_method,
@@ -244,8 +267,19 @@ async def _persist_order(
         payment_method=data.payment_method,
         notes=data.notes,
     )
-    db.add(order)
-    await db.flush()
+    # Two checkouts can read the same max sequence and generate the same
+    # number; the unique constraint catches the loser, who regenerates and
+    # retries inside a savepoint so the rest of the transaction survives.
+    for attempt in range(3):
+        try:
+            async with db.begin_nested():
+                db.add(order)
+                await db.flush()
+            break
+        except IntegrityError:
+            if attempt == 2:
+                raise
+            order.order_number = await _generate_order_number(db)
 
     for item in items_data:
         db.add(OrderItem(order_id=order.id, **item))
@@ -323,7 +357,10 @@ async def create_order(
         data, subtotal, discount_amount, db
     )
 
-    # 5. Persist order rows and clear cart
+    # 5. Claim stock for stock-tracked products (fails if any is out of stock)
+    await _decrement_stock(db, cart)
+
+    # 6. Persist order rows and clear cart
     return await _persist_order(
         db,
         data,
@@ -376,6 +413,7 @@ async def get_by_order_number(
     order_number: str,
     user_id: uuid.UUID | None = None,
     admin: bool = False,
+    email: str | None = None,
 ) -> OrderResponse:
     stmt = (
         select(Order)
@@ -387,8 +425,15 @@ async def get_by_order_number(
     if not order:
         raise NotFoundError(f"Order '{order_number}' not found")
 
-    if not admin and user_id and order.user_id != user_id:
-        raise ForbiddenError("Not your order")
+    if not admin:
+        if user_id:
+            if order.user_id != user_id:
+                raise ForbiddenError("Not your order")
+        elif not email or order.email != email.lower().strip():
+            # An order number alone must never expose the full order — it
+            # carries the customer's email and address. Unauthenticated callers
+            # prove ownership with the order's email, like /orders/track.
+            raise ForbiddenError("Not your order")
 
     return OrderResponse.model_validate(order)
 
@@ -419,6 +464,20 @@ async def update_status(
     order.status = new_status
     if admin_notes is not None:
         order.admin_notes = admin_notes
+
+    # A cancelled order releases the stock it claimed at creation.
+    if new_status == OrderStatusEnum.CANCELLED:
+        for item in order.items:
+            if item.product_id:
+                await db.execute(
+                    sql_update(Product)
+                    .where(
+                        Product.id == item.product_id,
+                        Product.is_stock_product.is_(True),
+                    )
+                    .values(stock_quantity=Product.stock_quantity + item.quantity)
+                    .execution_options(synchronize_session=False)
+                )
 
     await db.flush()
     await db.refresh(order)

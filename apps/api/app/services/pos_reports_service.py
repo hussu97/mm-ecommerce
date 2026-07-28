@@ -50,6 +50,7 @@ from app.models.tag import Tag, TaggedEntity
 from app.models.product import Product
 from app.models.till import DrawerOperation, Till
 from app.models.user import User
+from app.services import business_day_service
 
 ZERO = Decimal("0.00")
 
@@ -243,6 +244,12 @@ async def sales_by_dimension(
             f"Unsupported dimension '{dimension}'. "
             f"Try one of: {', '.join(sorted(SUPPORTED_DIMENSIONS))}"
         )
+
+    if dimension == "hour":
+        # `closed_at` is stored in UTC; the hour has to be read in the business's
+        # local timezone or a 6pm rush reports as 2pm.
+        tz = await business_day_service.resolve_timezone(db)
+        column = func.to_char(func.timezone(tz.key, Order.closed_at), "HH24")
 
     stmt = (
         _scope(

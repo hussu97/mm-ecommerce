@@ -573,6 +573,7 @@ async def recalculate(db: AsyncSession, order: Order) -> Order:
                 tax_id=tax_id,
                 tax_name=tax_name,
                 returned_quantity=item.returned_quantity or 0,
+                is_non_revenue=bool(product and product.is_non_revenue),
                 discounts=[
                     DiscountInput(
                         name=d.name,
@@ -788,7 +789,13 @@ async def record_payment(
         raise BadRequestError("Payment amount must be positive")
 
     outstanding = order.balance_due
-    if not is_refund and amount > outstanding:
+    if is_refund:
+        net_paid = _net_paid(order)
+        if amount > net_paid:
+            raise ConflictError(
+                f"Refund of {amount} exceeds the {net_paid} paid on this order"
+            )
+    elif amount > outstanding:
         raise ConflictError(
             f"Payment of {amount} exceeds the outstanding balance of {outstanding}"
         )

@@ -30,11 +30,18 @@ def mock_calculate_fee():
 # ── Test helpers ─────────────────────────────────────────────────────────────
 
 
-def _product(base_price: str = "100.00", is_active: bool = True) -> MagicMock:
+def _product(
+    base_price: str = "100.00",
+    is_active: bool = True,
+    is_stock_product: bool = False,
+    stock_quantity: int = 0,
+) -> MagicMock:
     p = MagicMock()
     p.id = uuid.uuid4()
     p.base_price = Decimal(base_price)
     p.is_active = is_active
+    p.is_stock_product = is_stock_product
+    p.stock_quantity = stock_quantity
     p.name = "Test Cake"
     p.sku = "CAKE-001"
     p.translations = {}
@@ -115,24 +122,28 @@ def _db_for_create(
     final_order,
     *,
     cart_items: list | None = None,
-    last_order_num: str | None = None,
+    last_order_seq: int | None = None,
+    extra_results: list | None = None,
 ) -> AsyncMock:
     """
     Mock DB wired for create_order (no promo — patch promo service separately).
     Execute call order:
       1. cart lookup
-      2. _generate_order_number
-      3. select CartItems for deletion
-      4. final Order reload
+      2. [extra_results — e.g. one stock decrement per stock-tracked product]
+      3. _generate_order_number (numeric max of today's sequence)
+      4. select CartItems for deletion
+      5. final Order reload
     """
     db = AsyncMock()
     db.add = MagicMock()
     db.delete = AsyncMock()
     db.flush = AsyncMock()
+    db.begin_nested = MagicMock()
     db.execute = AsyncMock(
         side_effect=[
             _result(scalar_one_or_none=cart),
-            _result(scalar_one_or_none=last_order_num),
+            *(extra_results or []),
+            _result(scalar_one_or_none=last_order_seq),
             _result(scalars_all=cart_items or []),
             _result(scalar_one=final_order),
         ]
@@ -499,7 +510,7 @@ class TestCreateOrderCalculations:
 
     async def test_order_number_starts_at_001_for_first_order(self):
         cart = _cart(items=[_cart_item(_product())])
-        db = _db_for_create(cart, _order_mock(), last_order_num=None)
+        db = _db_for_create(cart, _order_mock(), last_order_seq=None)
 
         await create_order(db, _pickup_data(), user_id=None)
 
@@ -508,13 +519,22 @@ class TestCreateOrderCalculations:
 
     async def test_order_number_increments_from_last(self):
         cart = _cart(items=[_cart_item(_product())])
-        today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d")
-        db = _db_for_create(cart, _order_mock(), last_order_num=f"MM-{today}-005")
+        db = _db_for_create(cart, _order_mock(), last_order_seq=5)
 
         await create_order(db, _pickup_data(), user_id=None)
 
         order_arg = db.add.call_args_list[0][0][0]
         assert order_arg.order_number.endswith("-006")
+
+    async def test_order_number_increments_past_four_digits(self):
+        """Regression: a string max would sort '-999' above '-1000'."""
+        cart = _cart(items=[_cart_item(_product())])
+        db = _db_for_create(cart, _order_mock(), last_order_seq=1000)
+
+        await create_order(db, _pickup_data(), user_id=None)
+
+        order_arg = db.add.call_args_list[0][0][0]
+        assert order_arg.order_number.endswith("-1001")
 
     async def test_cart_items_deleted_after_order_created(self):
         ci = _cart_item(_product())
@@ -558,6 +578,49 @@ class TestCreateOrderCalculations:
         assert order_arg.status == OrderStatusEnum.CREATED
 
 
+# ── Stock-tracked products ────────────────────────────────────────────────────
+
+
+class TestCreateOrderStock:
+    async def test_stock_product_is_decremented_at_creation(self):
+        product = _product(is_stock_product=True, stock_quantity=5)
+        cart = _cart(items=[_cart_item(product, quantity=2)])
+        db = _db_for_create(
+            cart,
+            _order_mock(),
+            # Guarded UPDATE affected a row → stock was claimed.
+            extra_results=[_result(scalar_one_or_none=product.id)],
+        )
+
+        await create_order(db, _pickup_data(), user_id=None)
+
+        decrement = db.execute.call_args_list[1][0][0]
+        assert "stock_quantity" in str(decrement)
+
+    async def test_out_of_stock_product_fails_the_order(self):
+        product = _product(is_stock_product=True, stock_quantity=1)
+        cart = _cart(items=[_cart_item(product, quantity=2)])
+        db = _db_for_create(
+            cart,
+            _order_mock(),
+            # Guarded UPDATE affected no rows → not enough stock.
+            extra_results=[_result(scalar_one_or_none=None)],
+        )
+
+        with pytest.raises(BadRequestError, match="[Oo]ut of stock"):
+            await create_order(db, _pickup_data(), user_id=None)
+
+    async def test_non_stock_product_is_not_decremented(self):
+        cart = _cart(items=[_cart_item(_product(), quantity=2)])
+        db = _db_for_create(cart, _order_mock())
+
+        await create_order(db, _pickup_data(), user_id=None)
+
+        # Second execute is the order-number query, not a stock UPDATE.
+        second = db.execute.call_args_list[1][0][0]
+        assert "stock_quantity" not in str(second)
+
+
 # ── Promo code applied to order ───────────────────────────────────────────────
 
 
@@ -581,6 +644,7 @@ class TestCreateOrderWithPromo:
         db.add = MagicMock()
         db.delete = AsyncMock()
         db.flush = AsyncMock()
+        db.begin_nested = MagicMock()
         db.execute = AsyncMock(
             side_effect=[
                 _result(scalar_one_or_none=cart),  # cart lookup

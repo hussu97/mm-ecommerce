@@ -54,7 +54,7 @@ class AdminUserSummary(BaseModel):
 async def list_customers(
     search: str | None = Query(None, description="Search by email or name"),
     page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
+    per_page: int = Query(20, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
     _admin: UserModel = Depends(get_admin_user),
 ):

@@ -127,12 +127,20 @@ async def default_warehouse(db: AsyncSession, branch_id: uuid.UUID) -> Warehouse
 
 
 async def level_for(
-    db: AsyncSession, item_id: uuid.UUID, warehouse_id: uuid.UUID
+    db: AsyncSession,
+    item_id: uuid.UUID,
+    warehouse_id: uuid.UUID,
+    *,
+    for_update: bool = False,
 ) -> InventoryLevel:
     stmt = select(InventoryLevel).where(
         InventoryLevel.item_id == item_id,
         InventoryLevel.warehouse_id == warehouse_id,
     )
+    if for_update:
+        # Mutation path: hold the row so two concurrent postings cannot both
+        # read the same balance and lose one movement.
+        stmt = stmt.with_for_update()
     level = (await db.execute(stmt)).scalar_one_or_none()
     if level is None:
         level = InventoryLevel(
@@ -224,7 +232,7 @@ async def post_transaction(
         ):
             delta = normalised
 
-        level = await level_for(db, line.item_id, warehouse_id)
+        level = await level_for(db, line.item_id, warehouse_id, for_update=True)
 
         if transaction.type == InventoryTransactionTypeEnum.INVENTORY_COUNT.value:
             # A count sets the balance rather than moving it; the variance is

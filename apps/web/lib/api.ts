@@ -157,7 +157,8 @@ export const ordersApi = {
   create: (data: OrderCreate) => api.post<Order>('/orders', data),
   list: (page = 1) =>
     api.get<{ items: Order[]; total: number; page: number; pages: number }>(`/orders?page=${page}`),
-  get: (orderNumber: string) => api.get<Order>(`/orders/${orderNumber}`),
+  get: (orderNumber: string, email?: string) =>
+    api.get<Order>(`/orders/${orderNumber}${email ? `?email=${encodeURIComponent(email)}` : ''}`),
 };
 
 export const paymentsApi = {

@@ -14,6 +14,9 @@ import type { Order } from '@/lib/types';
 function ConfirmationContent() {
   const searchParams = useSearchParams();
   const orderNumber = searchParams.get('order_number');
+  // Proof of ownership for guests without a session cookie — the API refuses
+  // to return a full order to an unauthenticated caller without it.
+  const email = searchParams.get('email');
   const { t, locale } = useTranslation();
 
   const [order, setOrder] = useState<Order | null>(null);
@@ -22,7 +25,7 @@ function ConfirmationContent() {
 
   useEffect(() => {
     if (!orderNumber) { setLoading(false); setError(true); return; }
-    ordersApi.get(orderNumber)
+    ordersApi.get(orderNumber, email ?? undefined)
       .then(order => {
         setOrder(order);
         analytics.orderCompleted({
@@ -35,6 +38,7 @@ function ConfirmationContent() {
       })
       .catch(() => setError(true))
       .finally(() => setLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderNumber]);
 
   if (loading) {

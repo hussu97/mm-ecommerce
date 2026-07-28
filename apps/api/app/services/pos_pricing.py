@@ -285,11 +285,14 @@ def calculate_order(
         )
 
     # Charges are computed on the discounted, tax-exclusive sale value.
+    # The base is snapshotted before the loop so that two percentage charges
+    # are each taken on the sale, not on the sale plus the previous charge.
+    charge_base = total_excl_tax
     charge_amounts: list[Decimal] = []
     charges_total = ZERO
     for charge in charges:
         if charge.type == "percentage":
-            gross_charge = money(total_excl_tax * charge.value)
+            gross_charge = money(charge_base * charge.value)
         else:
             gross_charge = money(charge.value)
         charge_amounts.append(gross_charge)
