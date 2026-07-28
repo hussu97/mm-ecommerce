@@ -53,7 +53,7 @@ async def list_products(
         description="Sort order: newest|oldest|price_asc|price_desc|name|category",
     ),
     page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
+    per_page: int = Query(20, ge=1, le=2000),
     include_inactive: bool = Query(False),
     is_active: bool | None = Query(None),
     channel: Literal["web", "pos", "all"] = Query(
