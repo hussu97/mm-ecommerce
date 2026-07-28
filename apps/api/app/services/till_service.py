@@ -16,7 +16,7 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError
@@ -320,19 +320,26 @@ async def _payment_breakdown(
     )
 
     # Every tender that touched this till, named as the cashier saw it.
+    # Filtered on the payment's own till, not the order's: a check opened on one
+    # till can be settled on another, and the money belongs where it was taken.
+    # Refunds are netted off rather than counted as takings.
     tender_rows = (
         await db.execute(
             select(
                 PaymentMethod.name,
-                func.coalesce(func.sum(OrderPayment.amount), 0),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (OrderPayment.is_refund.is_(True), -OrderPayment.amount),
+                            else_=OrderPayment.amount,
+                        )
+                    ),
+                    0,
+                ),
             )
             .select_from(OrderPayment)
-            .join(Order, Order.id == OrderPayment.order_id)
             .join(PaymentMethod, PaymentMethod.id == OrderPayment.payment_method_id)
-            .where(
-                Order.till_id == till.id,
-                Order.pos_status == PosOrderStatusEnum.CLOSED.value,
-            )
+            .where(OrderPayment.till_id == till.id)
             .group_by(PaymentMethod.name)
         )
     ).all()
