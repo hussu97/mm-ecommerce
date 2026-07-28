@@ -8,7 +8,7 @@ from app.core.exceptions import ConflictError, NotFoundError
 from app.services import menu_group_service
 from app.models.category import Category
 from app.models.modifier import Modifier, ProductModifier
-from app.models.product import Product
+from app.models.product import WEB_CHANNEL, Product, sells_on
 from app.schemas.product import (
     ProductCreate,
     ProductModifierLink,
@@ -89,7 +89,7 @@ async def get_all(
         stmt = stmt.where(Product.is_active == True)  # noqa: E712
 
     if channel == "web":
-        stmt = stmt.where(Product.is_web_visible == True)  # noqa: E712
+        stmt = stmt.where(sells_on(WEB_CHANNEL))
     elif channel == "pos":
         # The per-product flag and the menu tree together — see
         # menu_group_service.pos_visibility_clause for why membership only
@@ -129,7 +129,7 @@ async def get_by_slug(db: AsyncSession, slug: str) -> ProductResponse:
         .where(
             Product.slug == slug,
             Product.is_active == True,  # noqa: E712
-            Product.is_web_visible == True,  # noqa: E712
+            sells_on(WEB_CHANNEL),
         )
     )
     result = await db.execute(stmt)
@@ -156,7 +156,7 @@ async def get_featured(db: AsyncSession, limit: int = 8) -> list[ProductResponse
         .where(
             Product.is_active == True,  # noqa: E712
             Product.is_featured == True,  # noqa: E712
-            Product.is_web_visible == True,  # noqa: E712
+            sells_on(WEB_CHANNEL),
         )
         .order_by(Product.display_order, Product.created_at.desc())
         .limit(limit)

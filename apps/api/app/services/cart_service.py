@@ -5,11 +5,10 @@ from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.cart import Cart, CartItem
-from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.product import Product
 from app.schemas.cart import (
     CartItemCreate,
@@ -18,9 +17,11 @@ from app.schemas.cart import (
     CartResponse,
     SelectedOption,
 )
+from app.services import modifier_rules
 
 __all__ = [
     "add_item",
+    "option_charge",
     "clear",
     "get_or_create",
     "merge",
@@ -31,6 +32,22 @@ __all__ = [
 
 def _cart_load_options():
     return [selectinload(Cart.items).joinedload(CartItem.product)]
+
+
+def option_charge(option: dict) -> Decimal:
+    """
+    What one snapshot row adds to the unit price.
+
+    `charged_total` is authoritative where it exists — it already has the
+    group's free allowance taken off. Rows written before quantities existed
+    carry neither key and repeated the option instead, so falling back to a
+    single unit price prices them exactly as they were priced then.
+    """
+    if option.get("charged_total") is not None:
+        return Decimal(str(option["charged_total"]))
+    return Decimal(str(option.get("option_price", 0))) * int(
+        option.get("quantity") or 1
+    )
 
 
 async def _build_response(cart: Cart) -> CartResponse:
@@ -45,7 +62,7 @@ async def _build_response(cart: Cart) -> CartResponse:
         # Compute unit price from stored JSONB snapshot
         selected_options = cart_item.selected_options or []
         options_total = sum(
-            Decimal(str(opt.get("option_price", 0))) for opt in selected_options
+            (option_charge(opt) for opt in selected_options), Decimal("0")
         )
         base = Decimal(str(product.base_price)) if product else Decimal("0")
         unit_price = base + options_total
@@ -85,79 +102,71 @@ async def _build_options_snapshot(
     product: Product,
     selected_options: list[SelectedOption],
 ) -> list[dict]:
-    """Validate selected options against product modifiers and build JSONB snapshot."""
+    """
+    Validate the shopper's choices and snapshot them onto the cart line.
+
+    The rules themselves live in `modifier_rules`, shared with the register,
+    so a mixed box that a cashier can ring up is one a shopper can order and
+    the price is the same number on both. What stays here is the shape of the
+    snapshot, which the storefront reads and older rows already use.
+    """
     if not selected_options:
-        return []
-
-    # Load product modifiers with options
-    pm_result = await db.execute(
-        select(ProductModifier)
-        .where(ProductModifier.product_id == product.id)
-        .options(joinedload(ProductModifier.modifier).selectinload(Modifier.options))
-    )
-    product_modifiers = pm_result.scalars().unique().all()
-
-    # Group selected options by modifier_id
-    selections_by_modifier: dict[uuid.UUID, list[uuid.UUID]] = {}
-    for sel in selected_options:
-        selections_by_modifier.setdefault(sel.modifier_id, []).append(sel.option_id)
-
-    # Validate constraints for each modifier
-    for pm in product_modifiers:
-        mod_selections = selections_by_modifier.get(pm.modifier_id, [])
-        count = len(mod_selections)
-        if count < pm.minimum_options:
-            raise BadRequestError(
-                f"Modifier '{pm.modifier.name}' requires at least {pm.minimum_options} option(s), got {count}"
-            )
-        if count > pm.maximum_options:
-            raise BadRequestError(
-                f"Modifier '{pm.modifier.name}' allows at most {pm.maximum_options} option(s), got {count}"
-            )
-        # Unique enforcement: stored flag OR single-pick shorthand (min==max==1)
-        effective_unique = pm.unique_options or (
-            pm.minimum_options == 1 and pm.maximum_options == 1
-        )
-        if effective_unique and len(set(mod_selections)) < len(mod_selections):
-            raise BadRequestError(
-                f"Modifier '{pm.modifier.name}' does not allow duplicate options"
-            )
-
-    # Build snapshot
-    snapshot = []
-    option_id_map: dict[uuid.UUID, ModifierOption] = {}
-    modifier_map: dict[uuid.UUID, Modifier] = {}
-    for pm in product_modifiers:
-        modifier_map[pm.modifier_id] = pm.modifier
-        for opt in pm.modifier.options:
-            option_id_map[opt.id] = opt
-
-    for sel in selected_options:
-        opt = option_id_map.get(sel.option_id)
-        if not opt:
-            raise BadRequestError(
-                f"Option '{sel.option_id}' not found for this product"
-            )
-        mod = modifier_map.get(sel.modifier_id)
-        snapshot.append(
-            {
-                "modifier_id": str(sel.modifier_id),
-                "modifier_name": mod.name if mod else "",
-                "modifier_translations": mod.translations if mod else {},
-                "option_id": str(sel.option_id),
-                "option_name": opt.name,
-                "option_translations": opt.translations or {},
-                "option_price": float(opt.price),
-            }
+        # Still worth resolving: a product with a required group must not
+        # reach the basket with nothing chosen.
+        resolved = await modifier_rules.resolve(db, product=product, selections=[])
+    else:
+        resolved = await modifier_rules.resolve(
+            db,
+            product=product,
+            selections=[
+                modifier_rules.Selection(
+                    option_id=sel.option_id,
+                    quantity=sel.quantity,
+                    modifier_id=sel.modifier_id,
+                )
+                for sel in selected_options
+            ],
         )
 
-    return snapshot
+    return [
+        {
+            "modifier_id": str(choice.modifier_id),
+            "modifier_name": choice.modifier_name,
+            "modifier_translations": choice.modifier_translations,
+            "option_id": str(choice.option_id),
+            # The same id under the name the order pipeline and the inventory
+            # depletion look for. Web orders used to carry only `option_id`,
+            # so an option with its own recipe never moved any stock.
+            "modifier_option_id": str(choice.option_id),
+            "option_name": choice.option_name,
+            "option_translations": choice.option_translations,
+            # Per unit. Lines written before quantities existed repeated the
+            # option instead, and have no `quantity` key — reading it as 1
+            # keeps those baskets priced exactly as they were.
+            "option_price": float(choice.unit_price),
+            "quantity": choice.quantity,
+            #: What the line is actually charged for this option, after the
+            #: group's free allowance. Stored rather than recomputed so a
+            #: basket priced under one set of rules keeps its price.
+            "charged_total": float(choice.charged_total),
+        }
+        for choice in resolved
+    ]
 
 
 def _options_key(product_id: uuid.UUID, selected_options: list[dict]) -> tuple:
-    """Dedup key: product_id + sorted option_ids."""
-    option_ids = tuple(sorted(opt["option_id"] for opt in selected_options))
-    return (product_id, option_ids)
+    """
+    Dedup key: the product plus exactly what was chosen, quantities included.
+
+    Two brownie boxes are the same line only if they hold the same brownies in
+    the same numbers. Keying on the option ids alone would merge a box of two
+    Ferrero and one Fudge into a box of one Ferrero and two Fudge.
+    """
+    counted: dict[str, int] = {}
+    for opt in selected_options:
+        key = str(opt["option_id"])
+        counted[key] = counted.get(key, 0) + int(opt.get("quantity") or 1)
+    return (product_id, tuple(sorted(counted.items())))
 
 
 async def get_or_create(

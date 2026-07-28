@@ -4,7 +4,8 @@ import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { productsApi, categoriesApi, bulkApi } from '@/lib/api';
-import type { Category, Product } from '@/lib/types';
+import type { Category, Product, SalesChannel } from '@/lib/types';
+import { ChannelBadges } from '@/components/products/SalesChannels';
 import { Badge, Button, Input, MultiSelect, Pagination, TabBar } from '@/components/ui';
 import { formatCurrency } from '@/lib/utils';
 
@@ -129,13 +130,10 @@ export default function ProductsPage() {
    * Separate from activate/deactivate on purpose: taking lattes off the cake
    * website should not withdraw them from the counter too.
    */
-  async function handleBulkVisibility(channel: 'web' | 'pos', visible: boolean) {
+  async function handleBulkVisibility(channel: SalesChannel, visible: boolean) {
     setBulking(true);
     try {
-      await bulkApi.updateVisibility(
-        Array.from(selectedIds),
-        channel === 'web' ? { is_web_visible: visible } : { is_pos_visible: visible },
-      );
+      await bulkApi.updateVisibility(Array.from(selectedIds), channel, visible);
       await load();
     } catch (err) {
       alert((err as Error).message);
@@ -300,8 +298,7 @@ export default function ProductsPage() {
                   </td>
                   <td className="px-4 py-2.5 text-center hidden lg:table-cell">
                     {product.is_featured && <Badge variant="info">Featured</Badge>}
-                    {!product.is_web_visible && <Badge variant="warning">POS only</Badge>}
-                    {!product.is_pos_visible && <Badge variant="warning">Web only</Badge>}
+                    <ChannelBadges channels={product.sales_channels} />
                   </td>
                   <td className="px-4 py-2.5 text-right">
                     <div className="flex items-center justify-end gap-2">

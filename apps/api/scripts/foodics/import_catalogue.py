@@ -34,6 +34,7 @@ sys.path.insert(
     0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 )
 
+from app.models.product import POS_CHANNEL, WEB_CHANNEL  # noqa: E402
 from app.models import (  # noqa: E402
     Branch,
     Combo,
@@ -406,7 +407,11 @@ class Importer:
                 create_only={
                     "slug": slugify(row["name"], sku.lower()),
                     "is_active": row.get("is_active", True),
-                    "is_web_visible": self.web_visible_on_import,
+                    "sales_channels": (
+                        [POS_CHANNEL, WEB_CHANNEL]
+                        if self.web_visible_on_import
+                        else [POS_CHANNEL]
+                    ),
                 },
             )
             self.products[row["id"]] = product
@@ -414,12 +419,24 @@ class Importer:
 
     async def link_modifiers(self, row: dict, product: Product) -> None:
         """
-        Attach modifier groups, inferring the choice rules Foodics omits.
+        Attach modifier groups, carrying Foodics' own choice rules across.
 
-        Roughly half the drinks carry no price of their own and are priced
-        entirely by a "Size" group. For those the group must be a required
-        single-select, or the cashier could ring up a latte for nothing.
-        Everything else is treated as an optional extra.
+        Foodics keeps `minimum_options`, `maximum_options` and `free_options`
+        on the product↔modifier link, not on the group — the same "Milk" group
+        is optional on a brownie and required on a latte. An export taken with
+        `?include=modifiers` carries them in each modifier's `pivot`.
+
+        This used to guess them instead, and the guess was wrong in a way
+        nobody could see from the console: it set `maximum_options` to *the
+        number of options in the group*. "Mix Brownies Box Of 3" therefore
+        imported as min 0 / max 9 — pick nothing, or pick all nine — when
+        Foodics says 3 and 3. It also forced `unique_options`, which is what
+        stopped a cashier putting two Ferrero and one Fudge in the same box.
+
+        The inference is kept only for an export that predates the pivot, and
+        `unique_options` is now false by default: repeating an option is the
+        norm for a mixed box, and a group that genuinely must not repeat says
+        so with max 1.
         """
         priced_by_modifier = money(row.get("price")) == 0 and bool(row["modifier_ids"])
 
@@ -427,29 +444,64 @@ class Importer:
             modifier = self.modifiers.get(foodics_id)
             if modifier is None:
                 continue
-            option_count = len(
-                (
-                    await self.db.execute(
-                        select(ModifierOption).where(
-                            ModifierOption.modifier_id == modifier.id
+
+            pivot = self.modifier_pivot(row, foodics_id)
+            if pivot is not None:
+                rules = {
+                    "minimum_options": int(pivot.get("minimum_options") or 0),
+                    "maximum_options": int(pivot.get("maximum_options") or 1),
+                    "free_options": int(pivot.get("free_options") or 0),
+                }
+            else:
+                option_count = len(
+                    (
+                        await self.db.execute(
+                            select(ModifierOption).where(
+                                ModifierOption.modifier_id == modifier.id
+                            )
                         )
                     )
+                    .scalars()
+                    .all()
                 )
-                .scalars()
-                .all()
-            )
-            required = priced_by_modifier
+                required = priced_by_modifier
+                rules = {
+                    "minimum_options": 1 if required else 0,
+                    "maximum_options": 1 if required else max(option_count, 1),
+                    "free_options": 0,
+                }
+
             await self.upsert(
                 ProductModifier,
                 {"product_id": product.id, "modifier_id": modifier.id},
                 {
-                    "minimum_options": 1 if required else 0,
-                    "maximum_options": 1 if required else max(option_count, 1),
-                    "free_options": 0,
-                    "unique_options": True,
+                    **rules,
+                    # A single-select group is unique by construction; anything
+                    # wider is a quantity choice until Foodics says otherwise.
+                    "unique_options": rules["maximum_options"] <= 1,
                     "display_order": order,
                 },
             )
+
+    @staticmethod
+    def modifier_pivot(row: dict, foodics_id: str) -> dict | None:
+        """
+        The choice rules Foodics recorded for this product↔modifier pair.
+
+        `None` when the export was taken without `include=modifiers`, which is
+        the only case the inference above is for.
+        """
+        for modifier in row.get("modifiers") or []:
+            if modifier.get("id") != foodics_id:
+                continue
+            pivot = modifier.get("pivot") or {}
+            if "maximum_options" in pivot:
+                return pivot
+            # Some exports flatten the pivot onto the modifier itself.
+            if "maximum_options" in modifier:
+                return modifier
+            return None
+        return None
 
     # ── Operations ───────────────────────────────────────────────────────────
 

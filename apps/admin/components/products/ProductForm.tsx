@@ -4,7 +4,9 @@ import { useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { categoriesApi, productsApi, modifiersApi, uploadsApi, ApiError } from '@/lib/api';
-import type { Category, Modifier, Product } from '@/lib/types';
+import type { Category, Modifier, Product, SalesChannel } from '@/lib/types';
+import { SALES_CHANNELS } from '@/lib/types';
+import { SalesChannelPicker } from '@/components/products/SalesChannels';
 import { Button, Input, Select, Textarea } from '@/components/ui';
 import { TranslationFields } from '@/components/TranslationFields';
 import { useLanguages } from '@/hooks/useLanguages';
@@ -30,13 +32,17 @@ export function ProductForm({ product }: Props) {
     calories: String(product?.calories ?? ''),
     preparation_time: String(product?.preparation_time ?? ''),
     is_featured: product?.is_featured ?? false,
-    is_web_visible: product?.is_web_visible ?? true,
-    is_pos_visible: product?.is_pos_visible ?? true,
     is_active: product?.is_active ?? true,
     is_stock_product: product?.is_stock_product ?? false,
     stock_quantity: String(product?.stock_quantity ?? 0),
     display_order: String(product?.display_order ?? 0),
   });
+  // A new product sells everywhere by default; an existing one keeps what
+  // it has, including an empty list, which is a real answer rather than a
+  // missing one and must not be silently turned back into "both".
+  const [salesChannels, setSalesChannels] = useState<SalesChannel[]>(
+    product ? (product.sales_channels ?? []) : [...SALES_CHANNELS],
+  );
   const [translations, setTranslations] = useState<Record<string, Record<string, string>>>(product?.translations ?? {});
   const [imageUrls, setImageUrls] = useState<string[]>(product?.image_urls ?? []);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -137,8 +143,7 @@ export function ProductForm({ product }: Props) {
       preparation_time: form.preparation_time.trim() ? Number(form.preparation_time) : null,
       image_urls: imageUrls,
       is_featured: form.is_featured,
-      is_web_visible: form.is_web_visible,
-      is_pos_visible: form.is_pos_visible,
+      sales_channels: salesChannels,
       is_active: form.is_active,
       is_stock_product: form.is_stock_product,
       stock_quantity: Number(form.stock_quantity) || 0,
@@ -248,7 +253,10 @@ export function ProductForm({ product }: Props) {
           translations={translations}
           onChange={setTranslations}
         />
-        <div className="flex flex-wrap gap-6 mt-4">
+        <div className="mt-5 pt-5 border-t border-gray-100">
+          <SalesChannelPicker value={salesChannels} onChange={setSalesChannels} />
+        </div>
+        <div className="flex flex-wrap gap-6 mt-5">
           <label className="flex items-center gap-2 cursor-pointer text-xs font-body text-gray-600 uppercase tracking-wider">
             <input
               type="checkbox"
@@ -257,26 +265,6 @@ export function ProductForm({ product }: Props) {
               className="accent-primary"
             />
             Featured
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer text-xs font-body text-gray-600 uppercase tracking-wider">
-            <input
-              type="checkbox"
-              checked={form.is_web_visible}
-              onChange={e => setForm(f => ({ ...f, is_web_visible: e.target.checked }))}
-              className="accent-primary"
-            />
-            {/* Counter-only items (coffee, bottled water) stay off the website. */}
-            Sell on website
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer text-xs font-body text-gray-600 uppercase tracking-wider">
-            <input
-              type="checkbox"
-              checked={form.is_pos_visible}
-              onChange={e => setForm(f => ({ ...f, is_pos_visible: e.target.checked }))}
-              className="accent-primary"
-            />
-            {/* A menu group also has to reach it — see Menu Groups. */}
-            Sell on register
           </label>
           <label className="flex items-center gap-2 cursor-pointer text-xs font-body text-gray-600 uppercase tracking-wider">
             <input

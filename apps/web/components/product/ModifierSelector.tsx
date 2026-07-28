@@ -52,12 +52,22 @@ function ModifierGroup({
   }
 
   const total = selectedForThis.length;
+  const short = pm.minimum_options - total;
 
   return (
     <div className="space-y-2">
       <div className="flex items-baseline justify-between">
         <h4 className="text-xs font-body uppercase tracking-widest text-gray-600">{modifierName}</h4>
-        <span className="text-[11px] text-gray-400 font-body">{pickLabel}</span>
+        <span
+          className={`text-[11px] font-body ${short > 0 ? 'text-primary' : 'text-gray-400'}`}
+        >
+          {/*
+            A box of three is easy to leave at two and hard to notice. The
+            running count sits where the rule is stated rather than only
+            surfacing as a disabled button with no explanation.
+          */}
+          {total > 0 ? `${total} / ${pm.maximum_options} — ${pickLabel}` : pickLabel}
+        </span>
       </div>
       <div className="space-y-1.5">
         {activeOptions.map(opt => {
@@ -140,21 +150,31 @@ export function ModifierSelector({ product, onChange }: Props) {
 
   const productModifiers = product.product_modifiers ?? [];
 
-  // Compute validity and total price
+  // Compute validity and total price.
+  //
+  // This has to agree with `modifier_rules.resolve` on the server, which is
+  // what the basket is actually charged. It previously ignored `free_options`
+  // and quoted a price the cart then contradicted.
   function compute(sel: SelectedOption[]) {
     let valid = true;
     let optionsPrice = 0;
 
     for (const pm of productModifiers) {
-      const count = sel.filter(s => s.modifier_id === pm.modifier_id).length;
-      if (count < pm.minimum_options || count > pm.maximum_options) {
+      const chosen = sel.filter(s => s.modifier_id === pm.modifier_id);
+      if (chosen.length < pm.minimum_options || chosen.length > pm.maximum_options) {
         valid = false;
       }
-      for (const s of sel) {
-        if (s.modifier_id !== pm.modifier_id) continue;
-        const opt = pm.modifier.options.find(o => o.id === s.option_id);
-        if (opt) optionsPrice += Number(opt.price);
-      }
+
+      // The free allowance is spent in the order the options are laid out, so
+      // which picks are free never depends on the order they were tapped in.
+      const priced = chosen
+        .map(s => pm.modifier.options.find(o => o.id === s.option_id))
+        .filter((o): o is NonNullable<typeof o> => Boolean(o))
+        .sort((a, b) => a.display_order - b.display_order);
+      const free = Math.max(pm.free_options ?? 0, 0);
+      priced.forEach((opt, index) => {
+        if (index >= free) optionsPrice += Number(opt.price);
+      });
     }
 
     const totalPrice = Number(product.base_price) + optionsPrice;

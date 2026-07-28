@@ -10,6 +10,11 @@ from pydantic import BaseModel, ConfigDict, Field
 class SelectedOption(BaseModel):
     modifier_id: UUID
     option_id: UUID
+    #: How many of this option. A mixed box is two Ferrero and one Fudge, and
+    #: saying so once is clearer than sending the option twice — but a client
+    #: that still repeats it gets the same basket, because the server sums
+    #: repeats before applying the group's limits.
+    quantity: int = Field(default=1, ge=1, le=99)
 
 
 class CartItemCreate(BaseModel):

@@ -130,15 +130,27 @@ export interface Product {
   image_urls: string[];
   is_active: boolean;
   is_featured: boolean;
-  /** Listed on the public website; POS-only items are false. */
-  is_web_visible: boolean;
-  is_pos_visible: boolean;
+  /**
+   * Which channels sell this product. Empty means it is in the catalogue and
+   * sold nowhere yet — a real state, not a missing value.
+   */
+  sales_channels: SalesChannel[];
   display_order: number;
   created_at: string;
   updated_at: string;
   product_modifiers: ProductModifier[];
   category: Category | null;
 }
+
+/** The order here is the order the console offers them in. */
+export const SALES_CHANNELS = ['pos', 'web'] as const;
+
+export type SalesChannel = (typeof SALES_CHANNELS)[number];
+
+export const SALES_CHANNEL_LABELS: Record<SalesChannel, string> = {
+  pos: 'POS',
+  web: 'Website',
+};
 
 export interface ProductListResponse {
   items: Product[];

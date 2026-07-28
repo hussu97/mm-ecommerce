@@ -67,7 +67,7 @@ async def test_storefront_listing_counts_only_products_the_website_sells():
     await category_service.get_all(db)
 
     sql = _sql(db.captured[0])
-    assert "is_web_visible" in sql
+    assert "sales_channels @>" in sql
     assert "is_active" in sql
 
 
@@ -92,7 +92,7 @@ async def test_admin_still_sees_every_category_and_the_whole_catalogue():
     await category_service.get_all(db, include_inactive=True)
 
     sql = _sql(db.captured[0])
-    assert "is_web_visible" not in sql
+    assert "sales_channels" not in sql
     assert "HAVING" not in sql.upper()
 
 

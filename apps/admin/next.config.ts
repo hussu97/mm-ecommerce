@@ -29,6 +29,12 @@ const nextConfig: NextConfig = {
     deviceSizes: [640, 750, 828, 1080, 1200, 1920],
     imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
     formats: ["image/webp"],
+    // Every host a `products.image_urls` / `categories.image_url` value has ever
+    // pointed at. A host missing here is not a broken image on a page nobody
+    // notices — next/image answers 400 for it, so the admin shows a placeholder
+    // for the whole catalogue while the storefront (which runs `unoptimized`)
+    // looks fine, and it reads as a storage-permission fault rather than a
+    // config one. Add the host here whenever the media origin moves.
     remotePatterns: [
       {
         protocol: "https",
@@ -37,6 +43,17 @@ const nextConfig: NextConfig = {
       {
         protocol: "https",
         hostname: "pub-**.r2.dev",
+      },
+      {
+        // Where the live catalogue's images actually are today: the Foodics
+        // menu import copied them into this bucket.
+        protocol: "https",
+        hostname: "storage.googleapis.com",
+      },
+      {
+        // CLOUDFLARE_R2_PUBLIC_URL in production — what new uploads return.
+        protocol: "https",
+        hostname: "media.meltingmomentscakes.com",
       },
       {
         protocol: "https",

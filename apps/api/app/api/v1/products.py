@@ -35,6 +35,20 @@ router = APIRouter()
 _FEATURED_TTL = 300
 
 
+async def _invalidate_catalogue_caches() -> None:
+    """
+    Retire what a product edit can have changed.
+
+    Not only the featured list: whether a category is listed at all depends on
+    whether it still has something to sell on that channel, so flipping the
+    last item in "Juices" off the register has to retire the register's
+    category list too. Otherwise the chip survives its own contents for the
+    rest of the TTL and the cashier taps into an empty grid.
+    """
+    await cache_delete_pattern("products:featured:*")
+    await cache_delete_pattern("categories:channel:*")
+
+
 class ProductListResponse(BaseModel):
     items: list[ProductResponse]
     total: int
@@ -141,7 +155,7 @@ async def create_product(
 ):
     """Create a new product (admin only)."""
     result = await product_service.create(db, data)
-    await cache_delete_pattern("products:featured:*")
+    await _invalidate_catalogue_caches()
     await audit_service.log_action(
         db,
         action="CREATE",
@@ -165,7 +179,7 @@ async def update_product(
 ):
     """Update a product (admin only)."""
     result = await product_service.update(db, slug, data)
-    await cache_delete_pattern("products:featured:*")
+    await _invalidate_catalogue_caches()
     await audit_service.log_action(
         db,
         action="UPDATE",
@@ -188,7 +202,7 @@ async def delete_product(
 ):
     """Delete a product (admin only)."""
     await product_service.delete(db, slug)
-    await cache_delete_pattern("products:featured:*")
+    await _invalidate_catalogue_caches()
     await audit_service.log_action(
         db,
         action="DELETE",

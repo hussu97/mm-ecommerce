@@ -22,6 +22,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.models import MenuGroup, MenuGroupProduct, Product
+from app.models.product import POS_CHANNEL, sells_on
 
 #: A tree deeper than this is a mistake or a cycle the check constraint cannot
 #: see. The recursive query stops there rather than running away.
@@ -83,7 +84,7 @@ def pos_visibility_clause():
         select(1).select_from(MenuGroup).where(MenuGroup.deleted_at.is_(None)).exists()
     )
     return and_(
-        Product.is_pos_visible == True,  # noqa: E712
+        sells_on(POS_CHANNEL),
         or_(no_tree_yet, Product.id.in_(visible_product_ids_subquery())),
     )
 

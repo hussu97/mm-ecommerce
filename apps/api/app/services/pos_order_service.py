@@ -48,6 +48,7 @@ from app.models.user import User
 from app.services import (
     business_day_service,
     inventory_service,
+    modifier_rules,
     pos_pricing,
     till_service,
 )
@@ -285,9 +286,41 @@ async def add_item(
     if not product.is_active:
         raise ConflictError(f"{product.name} is not available")
 
-    options = selected_options or []
+    # The terminal's choices are re-decided here rather than accepted. It sent
+    # a price per option, and taking that number meant a device on a counter
+    # could ring a paid extra up at zero and nothing in the books would look
+    # wrong; it also never counted the picks against the group's minimum and
+    # maximum, so a "Box of 3" could leave the till holding one brownie or
+    # nine. Prices come from the catalogue and the rules are enforced for
+    # every channel in one place — see `modifier_rules`.
+    resolved = await modifier_rules.resolve(
+        db,
+        product=product,
+        selections=[
+            modifier_rules.Selection(
+                option_id=uuid.UUID(str(o["modifier_option_id"])),
+                quantity=int(o.get("quantity") or 1),
+            )
+            for o in (selected_options or [])
+            if o.get("modifier_option_id")
+        ],
+    )
+    options = [
+        {
+            "modifier_option_id": str(choice.option_id),
+            "modifier_id": str(choice.modifier_id),
+            "modifier_name": choice.modifier_name,
+            "name": choice.option_name,
+            "sku": choice.option_sku,
+            # Per unit, so a receipt can print "2 × Ferrero  +8.00" without
+            # having to divide, and `quantity` is what the kitchen reads.
+            "price": float(money(choice.unit_price)),
+            "quantity": choice.quantity,
+        }
+        for choice in resolved
+    ]
     options_price = money(
-        sum((Decimal(str(o.get("price", 0))) for o in options), Decimal("0"))
+        sum((choice.charged_total for choice in resolved), Decimal("0"))
     )
 
     is_open_price = unit_price_override is not None
@@ -759,9 +792,21 @@ async def send_to_kitchen(
 
 
 def _summarise_options(item: OrderItem) -> str | None:
-    options = item.selected_options_snapshot or []
-    names = [str(o.get("name")) for o in options if o.get("name")]
-    return ", ".join(names) if names else None
+    """
+    The one-line description of a line's choices, for a kitchen ticket.
+
+    Quantities are spelled out. A mixed box reads "2 × Ferrero, Fudge"; naming
+    each option once would have the kitchen pack one of each and be short by
+    one brownie, with nothing on the ticket to show why.
+    """
+    parts: list[str] = []
+    for option in item.selected_options_snapshot or []:
+        name = option.get("name")
+        if not name:
+            continue
+        quantity = int(option.get("quantity") or 1)
+        parts.append(f"{quantity} × {name}" if quantity > 1 else str(name))
+    return ", ".join(parts) if parts else None
 
 
 # ─── Payment and close ────────────────────────────────────────────────────────

@@ -45,7 +45,7 @@ def test_an_empty_tree_does_not_empty_the_till():
     """
     clause = str(menu_group_service.pos_visibility_clause())
     assert "NOT (EXISTS" in clause, "must fall back when no group exists"
-    assert "is_pos_visible" in clause
+    assert "sales_channels @>" in clause
 
 
 def test_membership_is_required_once_a_tree_exists():

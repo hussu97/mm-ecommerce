@@ -5,10 +5,28 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.models.product import SALES_CHANNELS
 
 from .category import CategoryResponse
 from .modifier import ProductModifierResponse
+
+
+SalesChannel = Literal["pos", "web"]
+
+
+def _dedupe_channels(value: list[str] | None) -> list[str] | None:
+    """
+    Canonical order, no repeats.
+
+    A multi-select can post the same channel twice; stored as-is it would make
+    two products that sell in the same places compare unequal, and the console
+    would show a duplicated chip.
+    """
+    if value is None:
+        return None
+    return [c for c in SALES_CHANNELS if c in value]
 
 
 class ProductModifierLink(BaseModel):
@@ -36,14 +54,17 @@ class ProductCreate(BaseModel):
     stock_quantity: int = Field(default=0, ge=0)
     image_urls: list[str] = Field(default_factory=list)
     is_featured: bool = False
-    #: Listed on the public website. POS-only items are false.
-    is_web_visible: bool = True
-    #: Sellable on the register. The menu tree decides layout and can hide a
-    #: whole branch; this is the per-product switch.
-    is_pos_visible: bool = True
+    #: Which channels sell this — any subset of ("pos", "web"). Empty means
+    #: the item is in the catalogue and not yet sold anywhere, which is a
+    #: legitimate draft state rather than an error.
+    sales_channels: list[SalesChannel] = Field(
+        default_factory=lambda: list(SALES_CHANNELS)
+    )
     #: Free-form nutrition panel: protein, carbs, fat, salt, allergens.
     nutrition: dict | None = None
     display_order: int = 0
+
+    _canonical_channels = field_validator("sales_channels")(_dedupe_channels)
 
 
 class ProductUpdate(BaseModel):
@@ -63,11 +84,12 @@ class ProductUpdate(BaseModel):
     image_urls: list[str] | None = None
     is_active: bool | None = None
     is_featured: bool | None = None
-    is_web_visible: bool | None = None
-    is_pos_visible: bool | None = None
+    sales_channels: list[SalesChannel] | None = None
     #: Free-form nutrition panel: protein, carbs, fat, salt, allergens.
     nutrition: dict | None = None
     display_order: int | None = None
+
+    _canonical_channels = field_validator("sales_channels")(_dedupe_channels)
 
 
 class ProductResponse(BaseModel):
@@ -94,8 +116,9 @@ class ProductResponse(BaseModel):
     image_urls: list[str]
     is_active: bool
     is_featured: bool
-    is_web_visible: bool = True
-    is_pos_visible: bool = True
+    sales_channels: list[SalesChannel] = Field(
+        default_factory=lambda: list(SALES_CHANNELS)
+    )
     nutrition: dict | None = None
     display_order: int
     created_at: datetime

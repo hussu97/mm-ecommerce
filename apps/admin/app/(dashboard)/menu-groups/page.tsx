@@ -363,7 +363,7 @@ export default function MenuGroupsPage() {
                       />
                       <span className="font-body text-sm">{p.name}</span>
                       <span className="text-xs text-gray-400 ml-auto">{p.sku}</span>
-                      {!p.is_pos_visible && (
+                      {!p.sales_channels?.includes('pos') && (
                         <span className="text-xs text-amber-700 bg-amber-50 px-1.5 rounded">
                           off register
                         </span>

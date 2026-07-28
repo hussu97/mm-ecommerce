@@ -15,7 +15,7 @@ from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEn
 from app.models.product import Product
 from app.models.promo_code import PromoCode
 from app.schemas.order import OrderCreate, OrderListResponse, OrderResponse
-from app.services import delivery_service, promo_code_service
+from app.services import cart_service, delivery_service, promo_code_service
 
 __all__ = [
     "VALID_TRANSITIONS",
@@ -144,8 +144,11 @@ def _compute_item_totals(cart: Cart) -> tuple[list[dict], Decimal]:
             raise BadRequestError("A product in your cart is no longer available")
 
         selected_options = cart_item.selected_options or []
+        # Shared with the cart's own pricing so a checkout can never total a
+        # basket differently from the basket page the shopper just read.
         options_price = sum(
-            Decimal(str(opt.get("option_price", 0))) for opt in selected_options
+            (cart_service.option_charge(opt) for opt in selected_options),
+            Decimal("0"),
         )
         base_price = Decimal(str(product.base_price))
         unit_price = base_price + options_price

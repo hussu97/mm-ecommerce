@@ -4,9 +4,11 @@ import uuid
 
 from fastapi import APIRouter, Depends, Path
 from pydantic import BaseModel
-from sqlalchemy import update
+from sqlalchemy import String, case, cast, func, update
+from sqlalchemy.dialects.postgresql import ARRAY, array
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.cache import cache_delete_pattern
 from app.core.deps import get_admin_user, get_db
 from app.core.exceptions import BadRequestError
 from app.models.category import Category
@@ -14,6 +16,7 @@ from app.models.modifier import Modifier, ModifierOption
 from app.models.product import Product
 from app.models.promo_code import PromoCode
 from app.models.user import User
+from app.schemas.product import SalesChannel
 
 router = APIRouter()
 
@@ -57,11 +60,14 @@ async def bulk_update_status(
 
 class BulkVisibilityRequest(BaseModel):
     ids: list[uuid.UUID]
-    #: Omit a channel to leave it as it is — the two are set independently, so
-    #: putting the coffee menu on the register must not also decide whether it
-    #: belongs on a cake website.
-    is_web_visible: bool | None = None
-    is_pos_visible: bool | None = None
+    #: The channel being added or removed, and which way. One channel at a
+    #: time on purpose: putting the coffee menu on the register must not also
+    #: decide whether it belongs on a cake website, and a request that sent
+    #: the whole list would silently overwrite the other channel for every
+    #: product in the selection.
+    channel: SalesChannel
+    #: True adds the channel to each product, false takes it away.
+    enabled: bool
 
 
 @router.post("/products/visibility")
@@ -71,28 +77,36 @@ async def bulk_update_visibility(
     _admin: User = Depends(get_admin_user),
 ):
     """
-    Put products on the website, the register, or both.
+    Put products on the website or the register, or take them off.
 
     Separate from the status endpoint because "not sold here" and "not sold at
     all" are different decisions: deactivating a product withdraws it
     everywhere, which is not what someone means when they take lattes off the
     cake site.
     """
-    values = {
-        field: getattr(body, field)
-        for field in ("is_web_visible", "is_pos_visible")
-        if getattr(body, field) is not None
-    }
-    if not values:
-        raise BadRequestError("Choose at least one of the website or the register")
     if not body.ids:
         return {"updated": 0}
+
+    channel = body.channel
+    if body.enabled:
+        # `|| ` would append a second copy on a product that already sells
+        # there; the guard keeps the list a set.
+        new_channels = case(
+            (
+                Product.sales_channels.contains([channel]),
+                Product.sales_channels,
+            ),
+            else_=Product.sales_channels + cast(array([channel]), ARRAY(String)),
+        )
+    else:
+        new_channels = func.array_remove(Product.sales_channels, channel)
 
     stmt = (
         update(Product)
         .where(Product.id.in_(body.ids))
-        .values(**values)
+        .values(sales_channels=new_channels)
         .execution_options(synchronize_session=False)
     )
     result = await db.execute(stmt)
+    await cache_delete_pattern("categories:channel:*")
     return {"updated": result.rowcount}

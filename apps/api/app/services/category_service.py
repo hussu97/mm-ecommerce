@@ -5,8 +5,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError
 from app.models.category import Category
-from app.models.product import Product
+from app.models.product import POS_CHANNEL, WEB_CHANNEL, Product, sells_on
 from app.schemas.category import CategoryCreate, CategoryResponse, CategoryUpdate
+from app.services import menu_group_service
+
+#: Not a selling channel: the console's view of the whole catalogue.
+ALL_CHANNELS = "all"
 
 __all__ = [
     "create",
@@ -30,36 +34,70 @@ async def _with_product_count(db: AsyncSession, cat: Category) -> CategoryRespon
     return response
 
 
-def _countable_products(storefront_only: bool):
+def _countable_products(channel: str):
     """
     The join condition that decides which products a category is counted for.
 
-    The storefront and the POS share one product table but not one catalogue.
-    A category whose every product is POS-only — coffee, bottled water — has
-    nothing to sell on the website, so the website must not count those
-    products and must not list the category. Admin still counts every active
-    product, because that is the catalogue it is there to manage.
+    The storefront and the register share one product table but not one
+    catalogue, so a category has to be counted against the channel doing the
+    asking. A category whose every product is POS-only — coffee, bottled
+    water — has nothing to sell on the website and must not be listed there.
+
+    The mirror of that was a live bug: the terminal read the same unfiltered
+    list, so **Juices** and **Smoothies**, which sell only over the counter,
+    had no chip on the register and a cashier could not find their items at
+    all. `channel="pos"` counts against exactly what the register can sell,
+    menu tree included; `channel="all"` counts every active product, which is
+    the catalogue the console exists to manage.
     """
     clause = (Product.category_id == Category.id) & (Product.is_active == True)  # noqa: E712
-    if storefront_only:
-        clause = clause & (Product.is_web_visible == True)  # noqa: E712
+    if channel == WEB_CHANNEL:
+        clause = clause & sells_on(WEB_CHANNEL)
+    elif channel == POS_CHANNEL:
+        clause = clause & menu_group_service.pos_visibility_clause()
     return clause
 
 
+def resolve_channel(channel: str | None, include_inactive: bool) -> str:
+    """
+    Which catalogue the caller means.
+
+    `include_inactive` was the console's way of saying "show me everything"
+    before channels were explicit, and both old clients and this module's own
+    callers still say only that. It keeps meaning what it meant, so making the
+    channel explicit changes nothing for anybody who has not asked for it.
+    """
+    if channel is not None:
+        return channel
+    return ALL_CHANNELS if include_inactive else WEB_CHANNEL
+
+
+def _hides_empty(channel: str) -> bool:
+    """
+    Whether a category with nothing to sell on this channel is hidden.
+
+    Only for a selling channel. The console lists every category, empty ones
+    included — that is where an operator goes to fill them.
+    """
+    return channel in (WEB_CHANNEL, POS_CHANNEL)
+
+
 async def get_all(
-    db: AsyncSession, include_inactive: bool = False
+    db: AsyncSession,
+    include_inactive: bool = False,
+    channel: str | None = None,
 ) -> list[CategoryResponse]:
-    storefront_only = not include_inactive
+    channel = resolve_channel(channel, include_inactive)
     stmt = (
         select(Category, func.count(Product.id).label("product_count"))
-        .outerjoin(Product, _countable_products(storefront_only))
+        .outerjoin(Product, _countable_products(channel))
         .group_by(Category.id)
         .order_by(Category.display_order, Category.name)
     )
-    if storefront_only:
-        stmt = stmt.where(Category.is_active == True).having(  # noqa: E712
-            func.count(Product.id) > 0
-        )
+    if not include_inactive:
+        stmt = stmt.where(Category.is_active == True)  # noqa: E712
+    if _hides_empty(channel):
+        stmt = stmt.having(func.count(Product.id) > 0)
 
     result = await db.execute(stmt)
     rows = result.all()
@@ -73,12 +111,15 @@ async def get_all(
 
 
 async def get_by_slug(
-    db: AsyncSession, slug: str, include_inactive: bool = False
+    db: AsyncSession,
+    slug: str,
+    include_inactive: bool = False,
+    channel: str | None = None,
 ) -> CategoryResponse:
-    storefront_only = not include_inactive
+    channel = resolve_channel(channel, include_inactive)
     stmt = (
         select(Category, func.count(Product.id).label("product_count"))
-        .outerjoin(Product, _countable_products(storefront_only))
+        .outerjoin(Product, _countable_products(channel))
         .where(Category.slug == slug)
         .group_by(Category.id)
     )
@@ -87,10 +128,10 @@ async def get_by_slug(
     if not row:
         raise NotFoundError(f"Category '{slug}' not found")
     cat, count = row
-    if storefront_only and not cat.is_active:
+    if not include_inactive and not cat.is_active:
         raise NotFoundError(f"Category '{slug}' not found")
     # A category the listing hides must not be reachable by guessing its URL.
-    if storefront_only and not count:
+    if _hides_empty(channel) and not count:
         raise NotFoundError(f"Category '{slug}' not found")
     response = CategoryResponse.model_validate(cat)
     response.product_count = count or 0

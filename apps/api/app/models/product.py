@@ -14,6 +14,15 @@ if TYPE_CHECKING:
     from .modifier import ProductModifier
 
 
+#: Every channel a product can be sold on. The order is the order the console
+#: offers them in. A database check constraint holds the same set, so a typo in
+#: an import is rejected rather than becoming a product that sells nowhere.
+SALES_CHANNELS: tuple[str, ...] = ("pos", "web")
+
+POS_CHANNEL = "pos"
+WEB_CHANNEL = "web"
+
+
 class Product(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "products"
 
@@ -49,21 +58,24 @@ class Product(Base, UUIDMixin, TimestampMixin):
     is_sold_by_weight: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
     )
-    #: Whether this product is sold on the public website.
+    #: Which channels sell this product — any subset of `SALES_CHANNELS`.
     #:
-    #: The POS catalogue and the storefront catalogue are not the same list.
-    #: A coffee shop sells lattes and bottled water over the counter that the
-    #: cake website has no business listing, so imported POS items land with
-    #: this false and are opted in deliberately.
-    is_web_visible: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="true", default=True
-    )
-    #: The counterpart for the register. The menu tree decides how the terminal
-    #: lays a menu out and lets a whole branch be switched off at once; this is
-    #: the per-product override, and answers "why can I not see this item"
-    #: without an operator having to walk the tree to find out.
-    is_pos_visible: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="true", default=True
+    #: The POS catalogue and the storefront catalogue are not the same list. A
+    #: coffee shop sells lattes and bottled water over the counter that the
+    #: cake website has no business listing, and the website sells nine-piece
+    #: boxes the counter does not. One list rather than a flag per channel, so
+    #: "where is this sold" is a single answer an operator can read and set in
+    #: one place — and so adding a channel is data rather than a migration.
+    #:
+    #: An empty list is legitimate: an item in the catalogue, sold nowhere yet.
+    #: On the register this is still only half the answer — the menu tree
+    #: decides layout and can switch a whole branch off; see
+    #: `menu_group_service.pos_visibility_clause`.
+    sales_channels: Mapped[Any] = mapped_column(
+        ARRAY(String),
+        nullable=False,
+        default=lambda: list(SALES_CHANNELS),
+        server_default="{pos,web}",
     )
     is_stock_product: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
@@ -109,3 +121,18 @@ class Product(Base, UUIDMixin, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<Product {self.name}>"
+
+
+def sells_on(channel: str):
+    """
+    SQL for "this product is sold on `channel`".
+
+    Written as `@>` rather than `= ANY(...)` so the GIN index on
+    `sales_channels` is usable — the storefront runs this on every listing.
+
+    It lives here, beside the column, because the product, category and menu
+    tree services all ask the question and importing between them would be a
+    cycle. One definition means the storefront and the register can never
+    disagree about what "sold on the web" means.
+    """
+    return Product.sales_channels.contains([channel])

@@ -4,7 +4,7 @@ import type {
   FunnelData, ImportResult, Language, Modifier, Order, OrdersPoint, PaginatedAuditLogs,
   PaginatedCustomers, PaginatedEmailLogs, PaginatedOrders, Product, ProductListResponse,
   PromoCode, PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
-  TrafficData, UploadResponse, User, Region, DeliverySettings,
+  TrafficData, UploadResponse, User, Region, DeliverySettings, SalesChannel,
 } from './types';
 import type {
   PublicKeyCredentialCreationOptionsJSON,
@@ -279,11 +279,15 @@ export const promoApi = {
 export const bulkApi = {
   updateStatus: (entity: string, ids: string[], is_active: boolean) =>
     api.post<{ updated: number }>(`/bulk/${entity}/status`, { ids, is_active }),
-  /** Put products on the website, the register, or both. Omitted channels are left alone. */
-  updateVisibility: (
-    ids: string[],
-    channels: { is_web_visible?: boolean; is_pos_visible?: boolean },
-  ) => api.post<{ updated: number }>('/bulk/products/visibility', { ids, ...channels }),
+  /**
+   * Add or remove one sales channel across a selection.
+   *
+   * One channel per call: a request carrying the whole list would overwrite
+   * the other channel for every product selected, so putting the coffee menu
+   * on the register would silently decide whether it belongs on the website.
+   */
+  updateVisibility: (ids: string[], channel: SalesChannel, enabled: boolean) =>
+    api.post<{ updated: number }>('/bulk/products/visibility', { ids, channel, enabled }),
 };
 
 // ─── Export ───────────────────────────────────────────────────────────────────
