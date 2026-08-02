@@ -31,10 +31,12 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.models.branch import Branch
 from app.models.cart import Cart
+from app.models.delivery_batch import DeliveryBatch
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import Order, OrderStatusEnum
 from app.models.order_delivery import (
@@ -51,7 +53,10 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "Estimate",
     "PickupPoint",
+    "Drop",
+    "apply_price",
     "apply_webhook",
+    "build_drop",
     "cancel_delivery",
     "clear_caches",
     "courier_order_id_of",
@@ -60,8 +65,11 @@ __all__ = [
     "get_delivery",
     "handle_webhook",
     "is_enabled",
+    "parse_quotation",
+    "parse_time",
     "record_cart_estimate",
     "record_order_delivery",
+    "special_requests",
 ]
 
 
@@ -202,12 +210,12 @@ async def estimate_for_point(
                     "address": address or f"{latitude:.5f}, {longitude:.5f}",
                 },
             ],
-            special_requests=_special_requests(),
+            special_requests=special_requests(),
             # Half the checkout budget: a quote we will not show is not worth
             # making anyone wait for.
             timeout=min(settings.LALAMOVE_TIMEOUT_SECONDS, 4.0),
         )
-        estimate = _parse_quotation(quotation)
+        estimate = parse_quotation(quotation)
         if estimate is None:
             error = "Courier returned no price"
     except LalamoveError as exc:
@@ -273,6 +281,10 @@ async def record_order_delivery(
             else FulfilmentProviderEnum.THIRD_PARTY.value
         ),
         zone_name=zone.name if zone else None,
+        # The row, not just the name: batching needs to reach this zone's
+        # schedule, and matching on a name would break the first time one is
+        # renamed.
+        polygon_id=zone.id if zone else None,
         fee_charged=Decimal(str(order.delivery_fee or 0)),
     )
     # The estimate the shopper's own basket collected a moment ago, carried
@@ -301,15 +313,68 @@ async def get_delivery(db: AsyncSession, order_id: uuid.UUID) -> OrderDelivery |
     return result.scalars().first()
 
 
+@dataclass(frozen=True)
+class Drop:
+    """One customer's stop on a route, in the shape the courier wants it."""
+
+    order_number: str
+    stop: dict[str, Any]
+    name: str
+    phone: str
+    remarks: str
+
+    def recipient(self, stop_id: str | None) -> dict[str, Any]:
+        return {
+            "stopId": stop_id,
+            "name": self.name,
+            "phone": self.phone,
+            "remarks": self.remarks,
+        }
+
+
+def build_drop(order: Order) -> tuple[Drop | None, str | None]:
+    """
+    Turn an order's shipping snapshot into a stop, or say why it cannot be one.
+
+    Returns `(drop, reason)`. The reason is written to the delivery row so an
+    admin sees "no reachable phone number" rather than a courier error about a
+    field they have never heard of.
+    """
+    address = order.shipping_address_snapshot or {}
+    latitude, longitude = _coordinates(address)
+    if latitude is None or longitude is None:
+        return None, "Order has no delivery coordinates"
+
+    phone = _normalise_phone(str(address.get("phone") or ""))
+    if not phone:
+        return None, "Order has no reachable phone number"
+
+    return (
+        Drop(
+            order_number=order.order_number,
+            stop={
+                "coordinates": {"lat": f"{latitude:.7f}", "lng": f"{longitude:.7f}"},
+                "address": _drop_address(address),
+            },
+            name=_recipient_name(address) or order.order_number,
+            phone=phone,
+            remarks=_remarks(order, address),
+        ),
+        None,
+    )
+
+
 async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None:
     """
-    Book the courier for an order that is packed and ready.
+    Book a courier for one order, on its own.
 
-    Quotes afresh rather than reusing the checkout estimate: quotations expire
-    after five minutes and an order placed this morning is not going out on
-    this morning's price. Failures are written to the delivery row and returned
-    quietly — the order is already paid for, so refusing to change its status
-    because a courier is unreachable helps nobody.
+    This is the un-batched path: the zone has no schedule, or nothing in the
+    schedule covered the moment the box was ready. Quotes afresh rather than
+    reusing the checkout estimate — quotations expire after five minutes and an
+    order placed this morning is not going out on this morning's price.
+    Failures are written to the delivery row and returned quietly, because the
+    order is already paid for and refusing to change its status when a courier
+    is unreachable helps nobody.
     """
     delivery = await get_delivery(db, order.id)
     if delivery is None:
@@ -326,10 +391,9 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
         delivery.last_error = "Courier is not configured; dispatch this order by hand"
         return delivery
 
-    address = order.shipping_address_snapshot or {}
-    latitude, longitude = _coordinates(address)
-    if latitude is None or longitude is None:
-        delivery.last_error = "Order has no delivery coordinates"
+    drop, reason = build_drop(order)
+    if drop is None:
+        delivery.last_error = reason
         return delivery
 
     pickup = await resolve_pickup(db)
@@ -337,20 +401,10 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
         delivery.last_error = "No pickup branch is configured"
         return delivery
 
-    recipient_phone = _normalise_phone(str(address.get("phone") or ""))
-    if not recipient_phone:
-        delivery.last_error = "Order has no reachable phone number"
-        return delivery
-
-    drop_stop = {
-        "coordinates": {"lat": f"{latitude:.7f}", "lng": f"{longitude:.7f}"},
-        "address": _drop_address(address),
-    }
-
     try:
         quotation = await provider.create_quotation(
-            [pickup.as_stop(), drop_stop],
-            special_requests=_special_requests(),
+            [pickup.as_stop(), drop.stop],
+            special_requests=special_requests(),
         )
         stops = quotation.get("stops") or []
         if len(stops) < 2:
@@ -363,14 +417,7 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
                 "name": pickup.name,
                 "phone": pickup.phone,
             },
-            recipients=[
-                {
-                    "stopId": stops[1].get("stopId"),
-                    "name": _recipient_name(address) or order.order_number,
-                    "phone": recipient_phone,
-                    "remarks": _remarks(order, address),
-                }
-            ],
+            recipients=[drop.recipient(stops[1].get("stopId"))],
             is_pod_enabled=True,
             # Comes back on every webhook, so a status update can find its way
             # home even if we somehow lost the courier id.
@@ -394,7 +441,7 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
             delivery.courier_order_id,
         ]
 
-    estimate = _parse_quotation(quotation)
+    estimate = parse_quotation(quotation)
     if estimate is not None:
         delivery.quoted_cost = estimate.cost
         delivery.quoted_currency = estimate.currency
@@ -412,7 +459,7 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
     delivery.booked_at = datetime.now(timezone.utc)
     delivery.status_updated_at = delivery.booked_at
     delivery.last_error = None
-    _apply_price(delivery, booking.get("priceBreakdown"))
+    apply_price(delivery, booking.get("priceBreakdown"))
     delivery.last_payload = booking
 
     logger.info(
@@ -503,18 +550,20 @@ async def handle_webhook(db: AsyncSession, raw_body: bytes) -> dict[str, Any]:
         raise LalamoveError("Webhook has no eventId")
 
     courier_order_id = courier_order_id_of(payload)
-    delivery: OrderDelivery | None = None
-    order_number: str | None = None
+    deliveries: list[OrderDelivery] = []
     if courier_order_id:
-        row = (
-            await db.execute(
-                select(OrderDelivery, Order.order_number)
-                .join(Order, Order.id == OrderDelivery.order_id)
-                .where(OrderDelivery.courier_order_id == courier_order_id)
+        deliveries = list(
+            (
+                await db.execute(
+                    select(OrderDelivery)
+                    .where(OrderDelivery.courier_order_id == courier_order_id)
+                    .options(selectinload(OrderDelivery.order))
+                    .order_by(OrderDelivery.stop_sequence)
+                )
             )
-        ).first()
-        if row is not None:
-            delivery, order_number = row
+            .scalars()
+            .all()
+        )
 
     inserted = await db.execute(
         pg_insert(WebhookEvent)
@@ -522,7 +571,14 @@ async def handle_webhook(db: AsyncSession, raw_body: bytes) -> dict[str, Any]:
             provider="lalamove",
             event_id=str(event_id),
             event_type=event_type[:100],
-            order_number=order_number,
+            # A batched run covers several orders, so no single number belongs
+            # in this column. The batch is the thing to look up by then, and it
+            # is findable by the same courier id.
+            order_number=(
+                deliveries[0].order.order_number
+                if len(deliveries) == 1 and deliveries[0].order
+                else None
+            ),
         )
         .on_conflict_do_nothing(index_elements=["event_id"])
     )
@@ -530,14 +586,65 @@ async def handle_webhook(db: AsyncSession, raw_body: bytes) -> dict[str, Any]:
         logger.info("Duplicate Lalamove webhook skipped: %s", event_id)
         return {"received": True, "duplicate": True}
 
-    if delivery is None:
+    if not deliveries:
         # A booking we have no record of — a manual order placed in the partner
         # portal, or a wallet event that names no order. Acknowledged so it is
         # not retried for a day, and left alone.
         return {"received": True, "event_type": event_type, "matched": False}
 
-    await apply_webhook(db, payload, delivery=delivery)
-    return {"received": True, "event_type": event_type, "matched": True}
+    # One courier order can be carrying fifteen of ours. Every one of them gets
+    # the driver and the status; only proof of delivery is per-customer.
+    for delivery in deliveries:
+        await apply_webhook(db, payload, delivery=delivery)
+    if courier_order_id:
+        await _apply_to_batch(db, payload, courier_order_id)
+
+    return {
+        "received": True,
+        "event_type": event_type,
+        "matched": True,
+        "deliveries": len(deliveries),
+    }
+
+
+async def _apply_to_batch(
+    db: AsyncSession, payload: dict[str, Any], courier_order_id: str
+) -> None:
+    """Keep the run's own row in step with the orders riding on it."""
+    batch = (
+        (
+            await db.execute(
+                select(DeliveryBatch).where(
+                    DeliveryBatch.courier_order_id == courier_order_id
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if batch is None:
+        return
+
+    data = payload.get("data") or {}
+    courier_order = data.get("order") or {}
+    driver = data.get("driver") or {}
+
+    if status := courier_order.get("status"):
+        batch.courier_status = status
+    if share_link := courier_order.get("shareLink"):
+        batch.share_link = share_link
+    if driver_id := (driver.get("driverId") or courier_order.get("driverId")):
+        batch.driver_id = str(driver_id)
+    if driver:
+        batch.driver_name = driver.get("name") or batch.driver_name
+        batch.driver_phone = driver.get("phone") or batch.driver_phone
+        batch.driver_plate = driver.get("plateNumber") or batch.driver_plate
+    if breakdown := courier_order.get("priceBreakdown"):
+        total = decimal_or_none(breakdown.get("total"))
+        if total is not None:
+            batch.cost_total = total
+        batch.price_breakdown = breakdown
+    batch.last_payload = payload
 
 
 async def apply_webhook(
@@ -574,7 +681,7 @@ async def apply_webhook(
             logger.info("Lalamove webhook for unknown order %s", courier_order_id)
             return None
 
-    updated_at = _parse_time(data.get("updatedAt"))
+    updated_at = parse_time(data.get("updatedAt"))
     if (
         updated_at is not None
         and delivery.status_updated_at is not None
@@ -598,17 +705,16 @@ async def apply_webhook(
         delivery.driver_phone = driver.get("phone") or delivery.driver_phone
         delivery.driver_plate = driver.get("plateNumber") or delivery.driver_plate
         location = data.get("location") or {}
-        delivery.driver_latitude = _decimal(location.get("lat"))
-        delivery.driver_longitude = _decimal(location.get("lng"))
+        delivery.driver_latitude = decimal_or_none(location.get("lat"))
+        delivery.driver_longitude = decimal_or_none(location.get("lng"))
 
     if event_type == "POD_STATUS_CHANGED":
-        for stop in courier_order.get("stops") or []:
-            pod = stop.get("POD") or {}
-            if pod:
-                delivery.pod_status = pod.get("status") or delivery.pod_status
-                delivery.pod_image_url = pod.get("image") or delivery.pod_image_url
+        pod = _pod_for(delivery, courier_order.get("stops") or [])
+        if pod:
+            delivery.pod_status = pod.get("status") or delivery.pod_status
+            delivery.pod_image_url = pod.get("image") or delivery.pod_image_url
 
-    _apply_price(delivery, courier_order.get("priceBreakdown"))
+    apply_price(delivery, courier_order.get("priceBreakdown"))
     if courier_order.get("shareLink"):
         delivery.share_link = courier_order["shareLink"]
     if courier_order.get("driverId"):
@@ -641,6 +747,50 @@ async def apply_webhook(
 
     await _advance_order(db, delivery)
     return delivery
+
+
+def _pod_for(delivery: OrderDelivery, stops: list[dict[str, Any]]) -> dict | None:
+    """
+    The proof belonging to *this* customer, out of a route with many.
+
+    On a shared run every stop reports its own POD, and attaching the last one
+    to everybody would put a photo of somebody else's doorway on the wrong
+    order. Matched by stop id where Lalamove sends one and by coordinates where
+    it does not; on a solo run, where there is only ever one drop, the first
+    proof on the route is unambiguous.
+    """
+    with_pod = [stop for stop in stops if stop.get("POD")]
+    if not with_pod:
+        return None
+
+    if delivery.stop_id:
+        for stop in with_pod:
+            if stop.get("stopId") == delivery.stop_id:
+                return stop["POD"]
+
+    address = (delivery.order.shipping_address_snapshot or {}) if delivery.order else {}
+    latitude, longitude = _coordinates(address)
+    if latitude is not None and longitude is not None:
+        target = (f"{latitude:.4f}", f"{longitude:.4f}")
+        for stop in with_pod:
+            coords = stop.get("coordinates") or {}
+            try:
+                here = (
+                    f"{float(coords.get('lat')):.4f}",
+                    f"{float(coords.get('lng')):.4f}",
+                )
+            except (TypeError, ValueError):
+                continue
+            if here == target:
+                return stop["POD"]
+
+    # A solo booking has exactly one drop, so there is nothing to confuse it
+    # with. On a shared run, refusing to guess is the right answer.
+    if delivery.batch_id is None:
+        return with_pod[0]["POD"]
+
+    logger.info("POD on a shared run did not match a stop for delivery %s", delivery.id)
+    return None
 
 
 async def _advance_order(db: AsyncSession, delivery: OrderDelivery) -> None:
@@ -676,14 +826,14 @@ async def _advance_order(db: AsyncSession, delivery: OrderDelivery) -> None:
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 
-def _special_requests() -> list[str]:
+def special_requests() -> list[str]:
     raw = settings.LALAMOVE_SPECIAL_REQUESTS or ""
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
-def _parse_quotation(quotation: dict[str, Any]) -> Estimate | None:
+def parse_quotation(quotation: dict[str, Any]) -> Estimate | None:
     breakdown = quotation.get("priceBreakdown") or {}
-    total = _decimal(breakdown.get("total"))
+    total = decimal_or_none(breakdown.get("total"))
     if total is None:
         return None
     distance = quotation.get("distance") or {}
@@ -700,16 +850,16 @@ def _parse_quotation(quotation: dict[str, Any]) -> Estimate | None:
     )
 
 
-def _apply_price(delivery: OrderDelivery, breakdown: Any) -> None:
+def apply_price(delivery: OrderDelivery, breakdown: Any) -> None:
     if not isinstance(breakdown, dict):
         return
-    total = _decimal(breakdown.get("total"))
+    total = decimal_or_none(breakdown.get("total"))
     if total is not None:
         delivery.cost_total = total
     delivery.price_breakdown = breakdown
 
 
-def _decimal(value: Any) -> Decimal | None:
+def decimal_or_none(value: Any) -> Decimal | None:
     if value is None or value == "":
         return None
     try:
@@ -718,7 +868,7 @@ def _decimal(value: Any) -> Decimal | None:
         return None
 
 
-def _parse_time(value: Any) -> datetime | None:
+def parse_time(value: Any) -> datetime | None:
     if not value:
         return None
     text = str(value).replace("Z", "+00:00")

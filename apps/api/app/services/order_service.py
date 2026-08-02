@@ -16,6 +16,7 @@ from app.models.product import Product
 from app.models.promo_code import PromoCode
 from app.schemas.order import OrderCreate, OrderListResponse, OrderResponse
 from app.services import (
+    batching_service,
     cart_service,
     delivery_service,
     delivery_zone_service,
@@ -532,13 +533,19 @@ async def update_status(
     if admin_notes is not None:
         order.admin_notes = admin_notes
 
-    # Packed means the box is ready, which is the moment a courier is worth
-    # booking — earlier and a driver waits at the counter. Nothing happens for
-    # a third-party zone: `dispatch_order` returns the record untouched and the
-    # flow stays the manual one it has always been.
+    # Packed means the box is ready, which is the moment it can travel —
+    # earlier and a driver waits at the counter. Whether it leaves now or waits
+    # for the rest of its batch is the zone's schedule to decide. Nothing
+    # happens for a third-party zone: the call returns the record untouched and
+    # the flow stays the manual one it has always been.
     if new_status == OrderStatusEnum.PACKED:
-        await lalamove_service.dispatch_order(db, order)
+        await batching_service.assign_or_dispatch(db, order)
     elif new_status == OrderStatusEnum.CANCELLED:
+        delivery = await lalamove_service.get_delivery(db, order.id)
+        if delivery is not None:
+            # Off the run first, so a batch that is now empty does not go out
+            # to collect nothing.
+            await batching_service.cancel_assignment(db, delivery)
         await lalamove_service.cancel_delivery(db, order)
 
     # A cancelled order releases the stock it claimed at creation.

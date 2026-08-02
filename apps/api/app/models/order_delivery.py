@@ -21,6 +21,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
+    from .delivery_batch import DeliveryBatch
     from .order import Order
 
 
@@ -95,6 +96,15 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
     #: The polygon that priced this order, by name, at the time it was placed.
     #: A snapshot: the map is versioned and the zone may be redrawn tomorrow.
     zone_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    #: The row behind that name, so batching can find the zone's schedule.
+    #: Nulled rather than cascaded if the map version is deleted — the name
+    #: above is the part that has to survive.
+    polygon_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("delivery_polygons.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     fee_charged: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
 
     #: What the courier said it would cost, taken at checkout and never shown
@@ -107,6 +117,29 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
     quoted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    # ── batching ──────────────────────────────────────────────────────────────
+    #: The run this order is travelling on, if it is sharing one. Null means it
+    #: went alone — either its zone has no schedule, or nothing covered the
+    #: moment it was ready.
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("delivery_batches.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    #: When the box was ready to leave. This is the moment a window is matched
+    #: against — not the moment the order was placed, because a batch can only
+    #: carry what has actually been baked. Kept so that changing the schedule
+    #: can re-derive the answer for everything still waiting.
+    dispatchable_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: Position in the courier's optimised route, 1-based. Which drop is whose.
+    stop_sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Lalamove's id for this order's own stop, so a per-stop POD update can be
+    #: matched to the right customer rather than the whole van.
+    stop_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # ── the booking ───────────────────────────────────────────────────────────
     courier_order_id: Mapped[str | None] = mapped_column(
@@ -177,10 +210,18 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     order: Mapped[Order] = relationship("Order", back_populates="delivery")
+    batch: Mapped[DeliveryBatch | None] = relationship(
+        "DeliveryBatch", back_populates="deliveries"
+    )
 
     @property
     def is_booked(self) -> bool:
         return bool(self.courier_order_id)
+
+    @property
+    def is_waiting_for_a_batch(self) -> bool:
+        """Assigned to a run that has not left yet."""
+        return bool(self.batch_id) and not self.courier_order_id
 
     @property
     def needs_attention(self) -> bool:

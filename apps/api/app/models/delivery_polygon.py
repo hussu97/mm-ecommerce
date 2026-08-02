@@ -4,7 +4,7 @@ import enum
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
     Boolean,
@@ -19,6 +19,9 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, UUIDMixin, utcnow
+
+if TYPE_CHECKING:
+    from .delivery_batch import DeliveryBatchWindow
 
 
 class FulfilmentProviderEnum(str, enum.Enum):
@@ -117,6 +120,14 @@ class DeliveryPolygon(Base, UUIDMixin):
 
     version: Mapped[DeliveryPolygonVersion] = relationship(
         "DeliveryPolygonVersion", back_populates="polygons"
+    )
+    #: When orders in this zone travel together. Only meaningful for a zone we
+    #: dispatch ourselves; a third-party zone has no run to share.
+    batch_windows: Mapped[list[DeliveryBatchWindow]] = relationship(
+        "DeliveryBatchWindow",
+        back_populates="polygon",
+        cascade="all, delete-orphan",
+        order_by="DeliveryBatchWindow.start_hour, DeliveryBatchWindow.start_minute",
     )
 
     def __repr__(self) -> str:

@@ -411,6 +411,68 @@ export interface DeliveryMapVersion {
   polygons: DeliveryZone[];
 }
 
+/** GeoJSON as the API hands it over — [lng, lat], MultiPolygon, holes after the outline. */
+export interface ZoneGeometry {
+  type: 'MultiPolygon';
+  coordinates: number[][][][];
+}
+
+export interface DeliveryZoneShape {
+  id: string;
+  name: string;
+  region_slug: string | null;
+  delivery_fee: number;
+  fulfilment_provider: FulfilmentProvider;
+  display_order: number;
+  geometry: ZoneGeometry;
+}
+
+export interface DeliveryZoneMap {
+  version: { id: string; name: string } | null;
+  zones: DeliveryZoneShape[];
+  bounds: { min_lat: number; max_lat: number; min_lng: number; max_lng: number } | null;
+}
+
+/**
+ * A slot of the day whose orders travel together, in Dubai time.
+ * End hour 24 means midnight closing the day.
+ */
+export interface BatchWindow {
+  id: string;
+  polygon_id: string;
+  label: string;
+  start_hour: number;
+  start_minute: number;
+  end_hour: number;
+  end_minute: number;
+  is_active: boolean;
+  wraps_midnight: boolean;
+}
+
+export type BatchWindowWrite = Omit<BatchWindow, 'id' | 'polygon_id' | 'wraps_midnight'>;
+
+/** One courier order carrying several of ours. */
+export interface DeliveryBatch {
+  id: string;
+  polygon_id: string;
+  zone_name: string | null;
+  window_label: string | null;
+  dispatch_at: string;
+  status: 'pending' | 'dispatching' | 'dispatched' | 'failed' | 'cancelled';
+  stop_count: number;
+  courier_order_id: string | null;
+  courier_status: string | null;
+  share_link: string | null;
+  driver_name: string | null;
+  distance_m: number | null;
+  cost_total: number | null;
+  /** What the run worked out at per order — the number batching exists to move. */
+  cost_per_delivery: number | null;
+  dispatched_at: string | null;
+  last_error: string | null;
+  order_numbers: string[];
+}
+
 /** The live map, flattened, plus the settings that apply to every zone in it. */
 export interface DeliveryZoneSummary {
   version: { id: string; name: string } | null;

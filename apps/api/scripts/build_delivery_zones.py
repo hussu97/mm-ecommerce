@@ -18,9 +18,17 @@ area the rate card was actually measured over:
                        the furthest points the POC quoted (48 road km / AED 51),
                        and stops short of Jebel Ali and Hatta.
 
-The remainder of every emirate keeps the 50 AED third-party price. There is no
-polygon subtraction for it: the full emirate outline is emitted as its own zone
-and ordered *after* the clipped city, and the lookup takes the first match.
+The remainder of every emirate keeps the 50 AED third-party price, and is a
+genuine remainder: the served circle is punched out of it as a hole, so the two
+zones do not overlap. That could have been left to `display_order` — list the
+city first and take the first match — but a shape whose price depends on the
+row above it is a shape you cannot look at and understand. It also draws wrong:
+two translucent fills stacked over Deira, and no way to tell which one an order
+there is actually paying.
+
+The hole is the whole circle, not the circle clipped to the emirate. Anywhere
+the two disagree is already outside the outer ring, and a point outside the
+outline is excluded before holes are ever consulted.
 
 Distances are computed on a local equirectangular approximation, which is
 accurate to well under a percent at these radii, and the clip region is a
@@ -175,6 +183,21 @@ def _flat(geometry: dict) -> dict:
     return {"type": "MultiPolygon", "coordinates": [geometry["coordinates"]]}
 
 
+def punch_out(geometry: dict, radius_km: float) -> dict:
+    """
+    The emirate with its served city removed, as a hole in every part.
+
+    Leaves the two zones disjoint, so which fee applies is a property of where
+    the pin is rather than of which row was checked first.
+    """
+    hole = [list(pt) for pt in _circle(ORIGIN_LAT, ORIGIN_LNG, radius_km)]
+    hole.append(hole[0])
+    return {
+        "type": "MultiPolygon",
+        "coordinates": [[*part, hole] for part in _parts(geometry)],
+    }
+
+
 def _count(geometry: dict) -> tuple[int, int]:
     polys = geometry["coordinates"]
     return len(polys), sum(len(ring) for poly in polys for ring in poly)
@@ -199,7 +222,17 @@ def build() -> list[dict]:
             }
         )
     for emirate, geometry in emirates.items():
-        zones.append({"name": emirate, "geometry": _flat(geometry)})
+        radius = SERVED_RADIUS_KM.get(emirate)
+        zones.append(
+            {
+                "name": emirate,
+                "geometry": (
+                    punch_out(geometry, radius)
+                    if radius is not None
+                    else _flat(geometry)
+                ),
+            }
+        )
     return zones
 
 

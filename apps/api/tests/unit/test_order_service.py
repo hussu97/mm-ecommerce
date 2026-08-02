@@ -49,11 +49,20 @@ def mock_fulfilment():
             new_callable=AsyncMock,
         ),
         patch(
-            "app.services.order_service.lalamove_service.dispatch_order",
+            "app.services.order_service.lalamove_service.get_delivery",
             new_callable=AsyncMock,
+            return_value=None,
         ),
         patch(
             "app.services.order_service.lalamove_service.cancel_delivery",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.services.order_service.batching_service.assign_or_dispatch",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.services.order_service.batching_service.cancel_assignment",
             new_callable=AsyncMock,
         ),
     ):

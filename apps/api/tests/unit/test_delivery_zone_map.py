@@ -137,11 +137,37 @@ def test_real_addresses_get_the_right_zone(
     assert zone["provider"] == provider, label
 
 
-def test_a_city_is_listed_ahead_of_its_own_emirate(zones):
+@pytest.mark.parametrize(
+    "label,lat,lng",
+    [
+        ("the shop itself", 25.3304139, 55.3710382),
+        ("Deira, on the Dubai city edge", 25.2530, 55.3320),
+        ("Al Nahda, on the Dubai–Sharjah line", 25.2980, 55.3760),
+        ("Ajman Corniche", 25.4052, 55.4384),
+        ("Jebel Ali, just outside the served circle", 24.9500, 55.1500),
+        ("Al Dhaid, inland Sharjah", 25.2880, 55.8810),
+    ],
+)
+def test_exactly_one_zone_claims_each_point(zones, label, lat, lng):
     """
-    Sharjah City sits inside Sharjah, so both contain the shop. The fee that
-    applies is whichever is tested first — if that order inverted, every local
-    delivery would silently jump from 15 to 50.
+    A served city is punched out of its emirate rather than laid on top of it,
+    so no address is inside two zones at once.
+
+    The alternative — overlap plus `display_order` — prices correctly only for
+    as long as nobody reorders the rows, and gives a map you cannot read: two
+    translucent fills over Deira with no way to tell which fee applies there.
+    """
+    matches = [z["name"] for z in zones if point_in_geometry(lat, lng, z["geometry"])]
+    assert len(matches) == 1, f"{label} matched {matches}"
+
+
+def test_a_city_is_still_listed_ahead_of_its_own_emirate(zones):
+    """
+    Belt and braces. The shapes no longer overlap, so order does not decide the
+    fee any more — but the smaller, more specific zone being tested first is
+    the cheaper lookup and the convention the map is drawn in, and a redraw
+    that reintroduced an overlap would price correctly rather than jumping
+    every local delivery from 15 to 50.
     """
     order = [z["name"] for z in zones]
     for city, emirate in (

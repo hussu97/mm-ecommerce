@@ -6,6 +6,7 @@ import type {
   PromoCode, PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
   TrafficData, UploadResponse, User, Region, DeliverySettings, SalesChannel,
   DeliveryMapVersion, DeliveryZone, DeliveryZoneSummary, FulfilmentProvider, OrderDelivery,
+  BatchWindow, BatchWindowWrite, DeliveryBatch, DeliveryZoneMap,
 } from './types';
 import type {
   PublicKeyCredentialCreationOptionsJSON,
@@ -248,6 +249,23 @@ export const deliveryZonesApi = {
     api.get<{ name: string; delivery_fee: number; fulfilment_provider: FulfilmentProvider; geometry: unknown }>(
       `/delivery-zones/polygons/${zoneId}/geometry`,
     ),
+  /** Every zone's outline in one call, simplified for drawing. */
+  map: (versionId?: string) =>
+    api.get<DeliveryZoneMap>(`/delivery-zones/map${versionId ? `?version_id=${versionId}` : ''}`),
+
+  // ── Batching ────────────────────────────────────────────────────────────
+  listWindows: (zoneId: string) =>
+    api.get<BatchWindow[]>(`/delivery-zones/polygons/${zoneId}/batch-windows`),
+  createWindow: (zoneId: string, data: BatchWindowWrite) =>
+    api.post<BatchWindow>(`/delivery-zones/polygons/${zoneId}/batch-windows`, data),
+  updateWindow: (windowId: string, data: BatchWindowWrite) =>
+    api.put<BatchWindow>(`/delivery-zones/batch-windows/${windowId}`, data),
+  deleteWindow: (windowId: string) =>
+    api.delete<void>(`/delivery-zones/batch-windows/${windowId}`),
+  listBatches: (params?: { status_filter?: string; limit?: number }) =>
+    api.get<DeliveryBatch[]>(`/delivery-zones/batches${buildQs(params)}`),
+  dispatchBatch: (batchId: string) =>
+    api.post<DeliveryBatch>(`/delivery-zones/batches/${batchId}/dispatch`),
 };
 
 // ─── Analytics ────────────────────────────────────────────────────────────────

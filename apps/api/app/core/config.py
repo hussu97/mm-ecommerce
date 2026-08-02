@@ -145,6 +145,12 @@ class Settings(BaseSettings):
     LALAMOVE_PICKUP_BRANCH_REF: str = ""
     #: Who the driver calls at the shop. Falls back to the branch's own phone.
     LALAMOVE_SENDER_PHONE: str = ""
+    #: The in-process loop that sends a batch when its window closes. There is
+    #: no queue in this stack, so this is the only thing that fires them.
+    #: Turning it off leaves batches sitting until someone dispatches them by
+    #: hand from the admin — useful for a maintenance window, dangerous as a
+    #: default, which is why it is on.
+    BATCH_DISPATCHER_ENABLED: bool = True
 
     # ── Frontend URLs (email templates & CORS) ────────────────────────────────
     WEB_URL: str = "http://localhost:3000"
