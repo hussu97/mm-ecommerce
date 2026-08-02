@@ -19,9 +19,9 @@ Umami records them automatically — no dashboard config needed for events to ap
 | `promo_applied` | code, discount | existing + checkout | cart/page.tsx, PromoCodeStep.tsx |
 | `order_completed` | order_number, total, payment_provider, delivery_method, item_count | existing | checkout/confirmation/page.tsx |
 | `view_product` | product_name, category, price, has_modifiers | phase 1 | ProductDetailATC.tsx (on mount) |
-| `checkout_step_complete` | step (1\|2), delivery_method? | phase 1 | checkout/page.tsx |
+| `checkout_step_complete` | step (always 1), delivery_method | phase 1 | checkout/page.tsx |
 | `payment_failed` | order_number, error_message | phase 1 | checkout/page.tsx (handleSubmit catch) |
-| `checkout_error` | step (1\|2), field | phase 1 | checkout/page.tsx (StepInformation.handleNext) |
+| `checkout_error` | step (always 1), field | phase 1 | checkout/page.tsx (handleSubmit validation) |
 | `search` | query, result_count | phase 2 | SearchTracker.tsx (client wrapper in search/page.tsx) |
 | `user_signup` | method: 'email' | phase 2 | signup/page.tsx |
 | `user_login` | method: 'email' | phase 2 | login/page.tsx |
@@ -92,3 +92,4 @@ Navigate to: **Umami dashboard → [Website] → Funnels → Create funnel**
 | 2026-04-18 | Fix Main Purchase Funnel step 1: `/` → `/*` to match locale-prefixed homepages (`/en`, `/ar`) |
 | 2026-06-05 | Queue custom events briefly when the Umami script has not loaded yet; no event names or payload fields changed |
 | 2026-08-02 | Checkout collapsed from 3 steps to 2 (delivery method moved into step 1). `checkout_step_complete` and `checkout_error` now emit `step` 1\|2 instead of 1\|2\|3; step 1 now also carries `delivery_method`. No events added or removed. |
+| 2026-08-02 | Checkout collapsed again from 2 steps to a single page. `checkout_step_complete` now fires once, on submit, always with `step: 1` and a `delivery_method`; `checkout_error` likewise always reports `step: 1`. No events added or removed — but the Main Purchase Funnel's step 4→5 is now a single page view, so treat any step-2 history before this date as a different shape. |

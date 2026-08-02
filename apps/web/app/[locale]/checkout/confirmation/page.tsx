@@ -77,7 +77,12 @@ function ConfirmationContent() {
           {t('confirmation.title')}
         </h1>
         <p className="font-body text-sm text-gray-500">
-          {t('confirmation.thank_you', { email: order.email })}
+          {/* Guests who declined an email are stored under a generated
+              `…@guest.local`. Promising to write to it — and printing it back
+              at them — would be a confirmation nobody receives. */}
+          {order.email && !/@guest\.local$/i.test(order.email)
+            ? t('confirmation.thank_you', { email: order.email })
+            : t('confirmation.thank_you_no_email')}
         </p>
       </div>
 
