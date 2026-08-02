@@ -39,7 +39,6 @@ class OpenOrderRequest(BaseModel):
     #: Ahead orders — a cake wanted at 4pm tomorrow.
     due_at: datetime | None = None
     #: Which delivery zone the address falls in.
-    region_id: UUID | None = None
 
 
 class AddItemRequest(BaseModel):
@@ -198,7 +197,6 @@ class PosOrderResponse(ORMModel):
     original_order_id: UUID | None = None
     branch_id: UUID | None
     table_id: UUID | None
-    region_id: UUID | None = None
     device_id: UUID | None
     till_id: UUID | None
     order_type: str | None

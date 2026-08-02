@@ -1,5 +1,91 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ✅ 2026-08-02: Delivery Batching, Zone Map, and Retiring Regions — DONE
+- [x] Cut the served cities out of their emirates so no address is in two zones
+- [x] Add per-zone batch windows in Dubai time, seeded 00:00/12:00/18:00/21:00/22:00/23:00
+- [x] Assign an order to a run when it is packed; dispatch alone when no window covers it
+- [x] Book the run route-optimised, split above fifteen drops, match stops back by coordinate
+- [x] Re-derive everything still waiting whenever the schedule changes
+- [x] Fire due runs from an in-process sweeper with a Postgres advisory lock
+- [x] Make webhooks batch-aware, with proof of delivery matched per customer
+- [x] Draw the country in the admin, hover for fee and courier
+- [x] Remove the region concept from BE, FE and the database
+- [x] Move the free-delivery threshold and pickup fee under Delivery Zones
+
+### Findings / Result
+- **Batching is worth more than any pricing decision.** Measured live against production
+  AE: five Sharjah drops on one route cost **AED 62 total, 12.40 each**, against AED 125
+  to send them separately. Route optimisation alone did AED 12 of that — the same five
+  stops quoted 74 unordered and 62 reordered — and it is free.
+- **Lalamove reorders the stops.** The reply comes back in route order, not send order,
+  so each customer is matched to their stop by coordinate. Position-matching would have
+  booked every customer after the first against somebody else's address.
+- **The zones overlapped and nobody could see it.** Sharjah City sat inside Sharjah and
+  priced correctly only because it was listed first. The served circle is now punched out
+  of its emirate as a hole, so the price is a property of where the pin is. A test asserts
+  every landmark matches exactly one zone.
+- **A window is matched at pack time, not order time.** A run can only carry what has been
+  baked; scheduling by placement would build routes around cakes that do not exist yet.
+- **No queue in this stack**, so the API sweeps once a minute inside its own lifespan,
+  guarded by a Postgres advisory lock and `FOR UPDATE SKIP LOCKED`.
+- **Regions were a question with a better answer already on the row.** Dropped `regions`,
+  `addresses.region`, `orders.region_id`, `branch_regions` and `delivery_polygons.region_slug`.
+  Reporting that grouped by emirate now groups by the zone that priced the order.
+- 504 API tests pass. Admin and web typecheck clean with no new lint warnings. Every
+  migration runs and reverses on a fresh database.
+
+### Still to do
+- **Push the branch.** `feat/lalamove-batching` is committed locally only — the active
+  `gh` account is `h-abbasi` and the repo belongs to `hussu97`.
+- **Migration ordering.** This chain hangs off 048 as `050 → 051 → 052 → 053`;
+  `feat/homepage-visual-refresh` has its own `049` off the same parent. Whichever merges
+  second must re-parent, and `alembic upgrade head` refuses to run until one of them does.
+- Register the webhook URL and fund the wallet in the Partner Portal.
+
+## ✅ 2026-08-02: Lalamove Courier Integration — DONE
+- [x] Read the whole Lalamove v3 API surface, including the webhook deck their docs only link to
+- [x] Confirm the UAE really is supported in production, and that sandbox AE is not
+- [x] Cut the emirate outlines into zones the fee strategy can actually price
+- [x] Publish a new polygon version: Sharjah City 15, Ajman City 15, Dubai City 25, everything else 50
+- [x] Add `fulfilment_provider` to `delivery_polygons` so a zone names its own courier
+- [x] Build the signed API client — quotations, orders, drivers, cancel, priority fee, cities, webhook config
+- [x] Quote the courier at checkout, hide it from the customer, record it against the cart
+- [x] Add `order_deliveries`, and `out_for_delivery` / `delivered` to the order lifecycle
+- [x] Book on packed, cancel on cancelled, leave third-party zones exactly as they were
+- [x] Receive and verify webhooks: signature, idempotency, out-of-order handling
+- [x] Admin: a delivery-zone map editor with drafts and rollback, and a fulfilment panel per order
+- [x] Verify against production AE with live quotes, and against a real database with real migrations
+
+### Findings / Result
+- **The docs are wrong about the UAE.** `GET /v3/cities` with `Market: AE` returns `AE AUH`, `AE DXB`,
+  `AE SHJ` on production, and `language` is validated to be exactly `en_AE`. The **sandbox** is the
+  genuinely broken half: its AE pricing engine 500s and its wallet is unfunded, so lifecycle work has
+  to be done against sandbox HK and validated against production AE.
+- **An emirate is not a delivery zone.** Sharjah reaches Khor Fakkan, Dubai reaches Hatta, Ajman owns
+  two inland exclaves. Those cost three to six times a city run, and Hatta is refused outright with
+  `ERR_OUT_OF_SERVICE_AREA`. Each served emirate is now clipped to the radius its rate card was
+  measured over — Sharjah 25 km, Ajman 30 km, Dubai 40 km — and listed ahead of its own outline, so the
+  city wins the lookup and the remainder stays third-party at 50.
+- **The customer is told nothing.** The storefront quote carries no courier field, and a test asserts
+  the response model's exact field set so a future addition fails loudly rather than leaking.
+- **A courier failure is never a customer failure.** With no credentials configured, `lalamove` zones
+  price and sell identically and dispatch by hand. A refused address, an empty wallet or an outage is
+  recorded on the delivery row and surfaced to an admin; the order is never cancelled on the customer's
+  behalf because a driver declined.
+- **Booking commits immediately.** The wallet debit happens outside our transaction and cannot roll
+  back with it, so losing the courier's order id would mean double-booking on the next dispatch.
+- Verified live against production AE: Al Majaz 15 charged / 25 cost, Palm Jumeirah 25 / 56, Yas Island
+  50 / 116 (third-party, estimate still recorded), Hatta refused and the reason stored, and a basket
+  over 200 charged 0 with the 25 cost still captured.
+- Every migration runs and reverses cleanly on a fresh database; the downgrade hands the live map back
+  to the previous version rather than leaving the storefront with none.
+- 468 API tests pass. Admin and web typecheck clean with no new lint warnings.
+
+### Still to do
+- Register the webhook URL and fund the wallet in the Partner Portal — neither can be done from code.
+- Batching is the real lever and is not built: one multi-stop order carrying ten drops costs about a
+  third per delivery of ten separate ones, which is what turns every zone profitable.
+
 ## ✅ 2026-06-06: Admin Credential Bootstrap Correction — DONE
 - [x] Confirm admin reset gap and capture lesson
 - [x] Directly update production DB for immediate admin access

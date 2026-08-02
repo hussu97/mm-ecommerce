@@ -1,10 +1,12 @@
 import type {
   AdminLoginOptions, AdminPasskey, AdminUserSummary,
-  AnalyticsOverview, AuditLog, Category, CmsPage, CustomerBreakdown, RegionData,
+  AnalyticsOverview, AuditLog, Category, CmsPage, CustomerBreakdown, ZoneSalesData,
   FunnelData, ImportResult, Language, Modifier, Order, OrdersPoint, PaginatedAuditLogs,
   PaginatedCustomers, PaginatedEmailLogs, PaginatedOrders, Product, ProductListResponse,
   PromoCode, PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
-  TrafficData, UploadResponse, User, Region, DeliverySettings, SalesChannel,
+  TrafficData, UploadResponse, User, DeliverySettings, SalesChannel,
+  DeliveryMapVersion, DeliveryZone, DeliveryZoneSummary, FulfilmentProvider, OrderDelivery,
+  BatchWindow, BatchWindowWrite, DeliveryBatch, DeliveryZoneMap,
 } from './types';
 import type {
   PublicKeyCredentialCreationOptionsJSON,
@@ -218,6 +220,56 @@ export const ordersApi = {
   get: (orderNumber: string) => api.get<Order>(`/orders/${orderNumber}`),
   updateStatus: (orderNumber: string, status: string, admin_notes?: string) =>
     api.put<Order>(`/orders/${orderNumber}/status`, { status, admin_notes }),
+  /** Fulfilment detail. 404s for pickup orders and anything placed before this existed. */
+  getDelivery: (orderNumber: string) =>
+    api.get<OrderDelivery>(`/orders/${orderNumber}/delivery`),
+  /** Book the courier again after a failed or abandoned dispatch. */
+  dispatchDelivery: (orderNumber: string) =>
+    api.post<OrderDelivery>(`/orders/${orderNumber}/delivery/dispatch`),
+};
+
+// ─── Delivery zones ───────────────────────────────────────────────────────────
+
+export const deliveryZonesApi = {
+  listVersions: () => api.get<DeliveryMapVersion[]>('/delivery-zones/versions'),
+  summary: () => api.get<DeliveryZoneSummary>('/delivery-zones/summary'),
+  /** The three numbers that apply in every zone. */
+  getSettings: () => api.get<DeliverySettings>('/delivery-zones/settings'),
+  updateSettings: (data: Partial<Pick<DeliverySettings, 'free_delivery_threshold' | 'pickup_fee' | 'default_delivery_fee'>>) =>
+    api.put<DeliverySettings>('/delivery-zones/settings', data),
+  /** Copy a map into an editable draft. Defaults to copying the live one. */
+  createVersion: (data: { name: string; notes?: string; source_version_id?: string }) =>
+    api.post<DeliveryMapVersion>('/delivery-zones/versions', data),
+  /** Only works on a draft — the live map is read-only by design. */
+  updateZone: (
+    zoneId: string,
+    data: { delivery_fee?: number; fulfilment_provider?: FulfilmentProvider; display_order?: number },
+  ) => api.put<DeliveryZone>(`/delivery-zones/polygons/${zoneId}`, data),
+  publish: (versionId: string) =>
+    api.post<DeliveryMapVersion>(`/delivery-zones/versions/${versionId}/activate`),
+  deleteVersion: (versionId: string) =>
+    api.delete<void>(`/delivery-zones/versions/${versionId}`),
+  geometry: (zoneId: string) =>
+    api.get<{ name: string; delivery_fee: number; fulfilment_provider: FulfilmentProvider; geometry: unknown }>(
+      `/delivery-zones/polygons/${zoneId}/geometry`,
+    ),
+  /** Every zone's outline in one call, simplified for drawing. */
+  map: (versionId?: string) =>
+    api.get<DeliveryZoneMap>(`/delivery-zones/map${versionId ? `?version_id=${versionId}` : ''}`),
+
+  // ── Batching ────────────────────────────────────────────────────────────
+  listWindows: (zoneId: string) =>
+    api.get<BatchWindow[]>(`/delivery-zones/polygons/${zoneId}/batch-windows`),
+  createWindow: (zoneId: string, data: BatchWindowWrite) =>
+    api.post<BatchWindow>(`/delivery-zones/polygons/${zoneId}/batch-windows`, data),
+  updateWindow: (windowId: string, data: BatchWindowWrite) =>
+    api.put<BatchWindow>(`/delivery-zones/batch-windows/${windowId}`, data),
+  deleteWindow: (windowId: string) =>
+    api.delete<void>(`/delivery-zones/batch-windows/${windowId}`),
+  listBatches: (params?: { status_filter?: string; limit?: number }) =>
+    api.get<DeliveryBatch[]>(`/delivery-zones/batches${buildQs(params)}`),
+  dispatchBatch: (batchId: string) =>
+    api.post<DeliveryBatch>(`/delivery-zones/batches/${batchId}/dispatch`),
 };
 
 // ─── Analytics ────────────────────────────────────────────────────────────────
@@ -248,8 +300,8 @@ export const analyticsApi = {
     api.get<CustomerBreakdown>(`/analytics/customers${buildQs(params)}`),
   revenueBreakdown: (params?: { start_date?: string; end_date?: string }) =>
     api.get<RevenueBreakdown>(`/analytics/revenue-breakdown${buildQs(params)}`),
-  regions: (params?: { start_date?: string; end_date?: string }) =>
-    api.get<RegionData[]>(`/analytics/regions${buildQs(params)}`),
+  zones: (params?: { start_date?: string; end_date?: string }) =>
+    api.get<ZoneSalesData[]>(`/analytics/zones${buildQs(params)}`),
   promos: (params?: { start_date?: string; end_date?: string }) =>
     api.get<PromoPerformance[]>(`/analytics/promos${buildQs(params)}`),
 };
@@ -363,17 +415,6 @@ export const cmsApi = {
 };
 
 // ─── Email Logs ───────────────────────────────────────────────────────────────
-
-// ─── Regions ──────────────────────────────────────────────────────────────────
-
-export const regionsApi = {
-  list: () => api.get<Region[]>('/regions'),
-  update: (slug: string, data: Partial<Pick<Region, 'name_translations' | 'delivery_fee' | 'is_active' | 'sort_order'>>) =>
-    api.put<Region>(`/regions/${slug}`, data),
-  getSettings: () => api.get<DeliverySettings>('/regions/settings'),
-  updateSettings: (data: Partial<Pick<DeliverySettings, 'free_delivery_threshold' | 'pickup_fee'>>) =>
-    api.put<DeliverySettings>('/regions/settings', data),
-};
 
 // ─── Email Logs ───────────────────────────────────────────────────────────────
 

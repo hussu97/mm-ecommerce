@@ -23,6 +23,7 @@ __all__ = [
     "add_item",
     "option_charge",
     "clear",
+    "find_cart",
     "get_or_create",
     "merge",
     "remove_item",
@@ -424,6 +425,29 @@ async def merge(
 
     cart = await _load_cart(db, user_cart.id)
     return await _build_response(cart)
+
+
+async def find_cart(
+    db: AsyncSession, user_id: uuid.UUID | None, session_id: str | None
+) -> Cart | None:
+    """
+    The basket this request belongs to, or nothing.
+
+    Same precedence as checkout — the signed-in cart first, the session cart as
+    a fallback for a guest who has only just been handed a token. Unlike
+    `_get_user_cart` it stays quiet when there is no basket, because pricing a
+    delivery for someone who has not added anything yet is ordinary, not an
+    error.
+    """
+    if user_id:
+        result = await db.execute(select(Cart).where(Cart.user_id == user_id))
+        cart = result.scalar_one_or_none()
+        if cart:
+            return cart
+    if session_id:
+        result = await db.execute(select(Cart).where(Cart.session_id == session_id))
+        return result.scalar_one_or_none()
+    return None
 
 
 async def _get_user_cart(

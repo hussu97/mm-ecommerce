@@ -165,7 +165,9 @@ async def export_orders(
     status: Optional[OrderStatusEnum] = None,
 ) -> str:
     stmt = (
-        select(Order).options(joinedload(Order.items)).order_by(Order.created_at.desc())
+        select(Order)
+        .options(joinedload(Order.items), joinedload(Order.delivery))
+        .order_by(Order.created_at.desc())
     )
     if start_date:
         stmt = stmt.where(Order.created_at >= start_date)
@@ -194,14 +196,14 @@ async def export_orders(
             "Total",
             "Payment Provider",
             "Delivery Method",
-            "Region",
+            "Delivery Zone",
             "Promo Code",
         ]
     )
     for r in rows:
-        region = ""
-        if r.shipping_address_snapshot:
-            region = r.shipping_address_snapshot.get("region", "")
+        # The zone that priced the order, not the emirate the customer picked
+        # from a dropdown that no longer exists.
+        zone = r.delivery.zone_name if r.delivery else ""
         w.writerow(
             [
                 r.order_number,
@@ -215,7 +217,7 @@ async def export_orders(
                 str(r.total),
                 r.payment_provider or "",
                 r.delivery_method.value,
-                region,
+                zone or "",
                 r.promo_code_used or "",
             ]
         )

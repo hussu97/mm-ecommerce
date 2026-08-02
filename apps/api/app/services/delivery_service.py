@@ -5,30 +5,17 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.cart import Cart
+from app.models.delivery_settings import DeliverySettings
 from app.models.order import DeliveryMethodEnum
-from app.models.region import DeliverySettings, Region
-from app.services import delivery_zone_service
+from app.services import delivery_zone_service, lalamove_service
 
 __all__ = [
     "calculate_fee",
     "quote",
-    "get_active_regions",
-    "get_all_regions",
     "get_delivery_rates",
     "get_settings",
 ]
-
-
-async def get_active_regions(db: AsyncSession) -> list[Region]:
-    result = await db.execute(
-        select(Region).where(Region.is_active == True).order_by(Region.sort_order)  # noqa: E712
-    )
-    return list(result.scalars().all())
-
-
-async def get_all_regions(db: AsyncSession) -> list[Region]:
-    result = await db.execute(select(Region).order_by(Region.sort_order))
-    return list(result.scalars().all())
 
 
 async def get_settings(db: AsyncSession) -> DeliverySettings:
@@ -50,7 +37,6 @@ async def get_settings(db: AsyncSession) -> DeliverySettings:
 
 async def calculate_fee(
     delivery_method: DeliveryMethodEnum,
-    region_slug: str | None,
     subtotal: Decimal,
     db: AsyncSession,
     settings: DeliverySettings | None = None,
@@ -60,10 +46,11 @@ async def calculate_fee(
     """
     The delivery fee in AED.
 
-    The pin decides it. `region_slug` is only consulted for orders that predate
-    the polygon map or arrive without coordinates, because a self-declared
-    emirate was always a guess — wrong for an address a few hundred metres over
-    a boundary, and wrong for everyone who left the dropdown on its default.
+    The pin decides it, and only the pin. There used to be a self-declared
+    emirate to fall back on; it was always a guess — wrong for an address a few
+    hundred metres over a boundary, and wrong for everyone who left the
+    dropdown on its default — and an order without coordinates cannot be
+    delivered anyway, so the default fee is the honest answer for one.
     """
     if settings is None:
         settings = await get_settings(db)
@@ -83,14 +70,6 @@ async def calculate_fee(
         # A real address we have simply not drawn a zone around yet.
         return settings.default_delivery_fee
 
-    if region_slug:
-        result = await db.execute(
-            select(Region).where(Region.slug == region_slug, Region.is_active == True)  # noqa: E712
-        )
-        region = result.scalars().first()
-        if region:
-            return region.delivery_fee
-
     return settings.default_delivery_fee
 
 
@@ -99,8 +78,18 @@ async def quote(
     subtotal: Decimal,
     latitude: Decimal | float | None = None,
     longitude: Decimal | float | None = None,
+    cart: Cart | None = None,
+    address: str | None = None,
 ) -> dict:
-    """What delivery would cost to this point, for the checkout to show live."""
+    """
+    What delivery would cost to this point, for the checkout to show live.
+
+    When a basket is supplied this also asks the courier what the same trip
+    would cost *us*, and writes that onto the basket. The customer is never
+    told: the fee they see is the zone's, and the courier's number exists so
+    the zone's number can be argued with later. It is deliberately absent from
+    the response — nothing that reaches a browser should hint at who delivers.
+    """
     settings = await get_settings(db)
     zone = (
         await delivery_zone_service.find_zone(db, float(latitude), float(longitude))
@@ -109,6 +98,25 @@ async def quote(
     )
     base_fee = zone.delivery_fee if zone else settings.default_delivery_fee
     qualifies = subtotal >= settings.free_delivery_threshold
+
+    if cart is not None and latitude is not None and longitude is not None:
+        estimate, error = await lalamove_service.estimate_for_point(
+            db, float(latitude), float(longitude), address
+        )
+        if estimate is not None or error is not None:
+            await lalamove_service.record_cart_estimate(
+                db,
+                cart,
+                zone=zone,
+                # The fee actually charged, free delivery included, because the
+                # comparison that matters is cost against revenue.
+                fee=Decimal("0.00") if qualifies else base_fee,
+                latitude=float(latitude),
+                longitude=float(longitude),
+                estimate=estimate,
+                error=error,
+            )
+
     return {
         "delivery_fee": float(Decimal("0.00") if qualifies else base_fee),
         # What it would have cost, so the summary can strike it through and
@@ -120,24 +128,21 @@ async def quote(
             max(Decimal("0.00"), settings.free_delivery_threshold - subtotal)
         ),
         "zone_name": zone.name if zone else None,
-        "region_slug": zone.region_slug if zone else None,
         "in_known_zone": zone is not None,
     }
 
 
 async def get_delivery_rates(db: AsyncSession) -> dict:
-    """Return a serialisable summary of all active regions and their fees."""
-    regions = await get_active_regions(db)
+    """
+    The delivery numbers a storefront can render before it has a pin.
+
+    Deliberately not a list of areas and prices. The fee comes from where the
+    pin lands, and publishing a price table would invite the storefront to
+    guess from an address string — which is exactly the guess the polygon map
+    replaced.
+    """
     settings = await get_settings(db)
     return {
-        "regions": [
-            {
-                "slug": r.slug,
-                "name_translations": r.name_translations,
-                "delivery_fee": float(r.delivery_fee),
-            }
-            for r in regions
-        ],
         "free_threshold": float(settings.free_delivery_threshold),
         "pickup_fee": float(settings.pickup_fee),
         "default_delivery_fee": float(settings.default_delivery_fee),

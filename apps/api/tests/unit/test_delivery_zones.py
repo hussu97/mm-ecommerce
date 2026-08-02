@@ -91,8 +91,8 @@ def test_bounding_box_rejects_before_walking_the_ring():
     zone = Zone(
         id=None,  # type: ignore[arg-type]
         name="L",
-        region_slug=None,
         delivery_fee=Decimal("35.00"),
+        fulfilment_provider="third_party",
         min_lat=0.0,
         max_lat=2.0,
         min_lng=0.0,

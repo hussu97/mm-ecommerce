@@ -160,7 +160,15 @@ export interface ProductListResponse {
   pages: number;
 }
 
-export type OrderStatus = 'created' | 'confirmed' | 'packed' | 'cancelled';
+export type OrderStatus =
+  | 'created'
+  | 'confirmed'
+  | 'packed'
+  // Set by the courier's own pickup event on an integrated zone, and by hand
+  // everywhere else.
+  | 'out_for_delivery'
+  | 'delivered'
+  | 'cancelled';
 
 export interface SelectedOptionSnapshot {
   modifier_id: string;
@@ -333,7 +341,8 @@ export interface RevenueBreakdown {
   by_payment_provider: BreakdownItem[];
 }
 
-export interface RegionData { region: string; orders: number; revenue: number; }
+/** Sales grouped by the delivery zone that priced each order. */
+export interface ZoneSalesData { zone: string; orders: number; revenue: number; }
 
 export interface PromoPerformance {
   code: string;
@@ -366,19 +375,146 @@ export interface PaginatedEmailLogs {
   pages: number;
 }
 
-export interface Region {
+/** Who carries an order out of the kitchen. */
+export type FulfilmentProvider = 'lalamove' | 'third_party';
+
+/** One zone on a delivery map: a shape, a price, and a courier. */
+export interface DeliveryZone {
   id: string;
-  slug: string;
-  name_translations: Record<string, string>;
+  name: string;
   delivery_fee: number;
+  fulfilment_provider: FulfilmentProvider;
+  display_order: number;
+  point_count: number;
+}
+
+/**
+ * A complete delivery map. Only one is live; the rest are drafts and history,
+ * which is what makes a bad price a one-click rollback.
+ */
+export interface DeliveryMapVersion {
+  id: string;
+  name: string;
+  notes: string | null;
   is_active: boolean;
-  sort_order: number;
+  created_at: string;
+  activated_at: string | null;
+  polygons: DeliveryZone[];
+}
+
+/** GeoJSON as the API hands it over — [lng, lat], MultiPolygon, holes after the outline. */
+export interface ZoneGeometry {
+  type: 'MultiPolygon';
+  coordinates: number[][][][];
+}
+
+export interface DeliveryZoneShape {
+  id: string;
+  name: string;
+  delivery_fee: number;
+  fulfilment_provider: FulfilmentProvider;
+  display_order: number;
+  geometry: ZoneGeometry;
+}
+
+export interface DeliveryZoneMap {
+  version: { id: string; name: string } | null;
+  zones: DeliveryZoneShape[];
+  bounds: { min_lat: number; max_lat: number; min_lng: number; max_lng: number } | null;
+}
+
+/**
+ * A slot of the day whose orders travel together, in Dubai time.
+ * End hour 24 means midnight closing the day.
+ */
+export interface BatchWindow {
+  id: string;
+  polygon_id: string;
+  label: string;
+  start_hour: number;
+  start_minute: number;
+  end_hour: number;
+  end_minute: number;
+  is_active: boolean;
+  wraps_midnight: boolean;
+}
+
+export type BatchWindowWrite = Omit<BatchWindow, 'id' | 'polygon_id' | 'wraps_midnight'>;
+
+/** One courier order carrying several of ours. */
+export interface DeliveryBatch {
+  id: string;
+  polygon_id: string;
+  zone_name: string | null;
+  window_label: string | null;
+  dispatch_at: string;
+  status: 'pending' | 'dispatching' | 'dispatched' | 'failed' | 'cancelled';
+  stop_count: number;
+  courier_order_id: string | null;
+  courier_status: string | null;
+  share_link: string | null;
+  driver_name: string | null;
+  distance_m: number | null;
+  cost_total: number | null;
+  /** What the run worked out at per order — the number batching exists to move. */
+  cost_per_delivery: number | null;
+  dispatched_at: string | null;
+  last_error: string | null;
+  order_numbers: string[];
+}
+
+/** The live map, flattened, plus the settings that apply to every zone in it. */
+export interface DeliveryZoneSummary {
+  version: { id: string; name: string } | null;
+  zones: Array<{
+    name: string;
+      delivery_fee: number;
+    fulfilment_provider: FulfilmentProvider;
+  }>;
+  /** The same everywhere — free delivery does not depend on the zone. */
+  free_threshold: number;
+  default_delivery_fee: number;
+  pickup_fee: number;
+}
+
+/**
+ * The fulfilment side of an order. Admin-only — the storefront is never told
+ * which courier is carrying the box.
+ */
+export interface OrderDelivery {
+  provider: FulfilmentProvider;
+  zone_name: string | null;
+  fee_charged: number | null;
+  quoted_cost: number | null;
+  quoted_currency: string | null;
+  quoted_distance_m: number | null;
+  cost_total: number | null;
+  /** Fee charged minus what the courier cost. Negative loses money. */
+  margin: number | null;
+  courier_order_id: string | null;
+  courier_status: string | null;
+  share_link: string | null;
+  driver_name: string | null;
+  driver_phone: string | null;
+  driver_plate: string | null;
+  pod_status: string | null;
+  pod_image_url: string | null;
+  booked_at: string | null;
+  picked_up_at: string | null;
+  delivered_at: string | null;
+  cancelled_at: string | null;
+  cancel_reason: string | null;
+  last_error: string | null;
+  needs_attention: boolean;
 }
 
 export interface DeliverySettings {
   id: string;
+  /** The same in every zone, on purpose. */
   free_delivery_threshold: number;
   pickup_fee: number;
+  /** Charged when a pin falls outside every zone we have drawn. */
+  default_delivery_fee: number;
 }
 
 // ─── Audit Logs ───────────────────────────────────────────────────────────────

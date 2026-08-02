@@ -8,7 +8,11 @@ from typing import Any, Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.delivery_polygon import DeliveryPolygon, DeliveryPolygonVersion
+from app.models.delivery_polygon import (
+    DeliveryPolygon,
+    DeliveryPolygonVersion,
+    FulfilmentProviderEnum,
+)
 
 __all__ = [
     "Zone",
@@ -26,13 +30,17 @@ class Zone:
 
     id: uuid.UUID
     name: str
-    region_slug: str | None
     delivery_fee: Decimal
+    fulfilment_provider: str
     min_lat: float
     max_lat: float
     min_lng: float
     max_lng: float
     rings: tuple[tuple[tuple[tuple[float, float], ...], ...], ...]
+
+    @property
+    def is_lalamove(self) -> bool:
+        return self.fulfilment_provider == FulfilmentProviderEnum.LALAMOVE.value
 
     def contains(self, lat: float, lng: float) -> bool:
         # Four comparisons reject almost every zone before any real work.
@@ -136,8 +144,10 @@ def _to_zone(p: DeliveryPolygon) -> Zone:
     return Zone(
         id=p.id,
         name=p.name,
-        region_slug=p.region_slug,
         delivery_fee=Decimal(str(p.delivery_fee)),
+        fulfilment_provider=(
+            p.fulfilment_provider or FulfilmentProviderEnum.THIRD_PARTY.value
+        ),
         min_lat=float(p.min_lat),
         max_lat=float(p.max_lat),
         min_lng=float(p.min_lng),

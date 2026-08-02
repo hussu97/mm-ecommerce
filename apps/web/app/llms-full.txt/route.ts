@@ -49,7 +49,7 @@ export async function GET() {
 ### Delivery
 - Delivers to all UAE Emirates: Dubai, Sharjah, Ajman, Abu Dhabi, Fujairah, Ras Al Khaimah, Umm Al Quwain, Al Ain
 - Delivery typically next day (orders placed before cutoff)
-- Delivery fee varies by region
+- Delivery fee depends on the delivery address
 
 ### Payment Methods
 - Cash on delivery

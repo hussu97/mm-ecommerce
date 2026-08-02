@@ -1,4 +1,4 @@
-import { Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, PublicRegion, DeliveryRates, DeliveryQuote } from './types';
+import { Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, DeliveryRates, DeliveryQuote } from './types';
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -194,32 +194,8 @@ export const trackApi = {
   },
 };
 
-// Normalise old format {standard_zones, standard_rate, remote_zones, remote_rate, pickup_rate}
-// into the current DeliveryRates shape {regions, free_threshold, pickup_fee}.
-function normaliseDeliveryRates(data: unknown): DeliveryRates {
-  const d = data as Record<string, unknown>;
-  if ('regions' in d) return d as unknown as DeliveryRates;
-  // Old format
-  const toRegion = (slug: string, fee: number): PublicRegion => ({
-    slug,
-    name_translations: {
-      en: slug.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
-    },
-    delivery_fee: fee,
-  });
-  const regions: PublicRegion[] = [
-    ...((d.standard_zones as string[]) ?? []).map((s) => toRegion(s, (d.standard_rate as number) ?? 35)),
-    ...((d.remote_zones as string[]) ?? []).map((s) => toRegion(s, (d.remote_rate as number) ?? 50)),
-  ];
-  return {
-    regions,
-    free_threshold: (d.free_threshold as number) ?? 200,
-    pickup_fee: (d.pickup_rate as number) ?? 0,
-  };
-}
-
 export const deliveryApi = {
-  getRates: () => api.get<unknown>('/delivery/rates').then(normaliseDeliveryRates),
+  getRates: () => api.get<DeliveryRates>('/delivery/rates'),
   /**
    * What delivery costs to a specific point. Priced against the active zone
    * map, so the figure on screen is the one the order gets written with.
@@ -241,10 +217,6 @@ export const deliveryApi = {
       longitude,
       address: address || null,
     }),
-};
-
-export const regionsApi = {
-  getPublicRegions: () => api.get<PublicRegion[]>('/regions/public'),
 };
 
 export const cmsApi = {

@@ -15,7 +15,15 @@ from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEn
 from app.models.product import Product
 from app.models.promo_code import PromoCode
 from app.schemas.order import OrderCreate, OrderListResponse, OrderResponse
-from app.services import cart_service, delivery_service, promo_code_service
+from app.services import (
+    batching_service,
+    cart_service,
+    delivery_service,
+    delivery_zone_service,
+    lalamove_service,
+    promo_code_service,
+)
+from app.services.delivery_zone_service import Zone
 
 __all__ = [
     "VALID_TRANSITIONS",
@@ -49,6 +57,23 @@ VALID_TRANSITIONS: dict[OrderStatusEnum, set[OrderStatusEnum]] = {
         OrderStatusEnum.DISPUTED,
     },
     OrderStatusEnum.PACKED: {
+        OrderStatusEnum.OUT_FOR_DELIVERY,
+        # A third-party zone has no courier reporting back, so the shop marks
+        # the order delivered itself and never passes through the middle state.
+        OrderStatusEnum.DELIVERED,
+        OrderStatusEnum.REFUNDED,
+        OrderStatusEnum.DISPUTED,
+    },
+    # A courier that rejects, expires or cancels a booking does not cancel the
+    # order — it is paid for and boxed. The delivery row records the failure and
+    # an admin re-dispatches or refunds, which is why cancelling is still not
+    # reachable from here.
+    OrderStatusEnum.OUT_FOR_DELIVERY: {
+        OrderStatusEnum.DELIVERED,
+        OrderStatusEnum.REFUNDED,
+        OrderStatusEnum.DISPUTED,
+    },
+    OrderStatusEnum.DELIVERED: {
         OrderStatusEnum.REFUNDED,
         OrderStatusEnum.DISPUTED,
     },
@@ -205,19 +230,28 @@ async def _compute_order_totals(
     subtotal: Decimal,
     discount_amount: Decimal,
     db: AsyncSession,
-) -> tuple[Decimal, Decimal, Decimal, Decimal]:
+) -> tuple[Decimal, Decimal, Decimal, Decimal, Zone | None]:
     """
     Compute delivery fee, order total, and VAT figures.
 
-    Returns (delivery_fee, total, vat_amount, total_excl_vat).
+    Returns (delivery_fee, total, vat_amount, total_excl_vat, zone). The zone
+    comes back because it also decides who carries the order, and resolving it
+    twice risks the two answers disagreeing if the map is published in between.
     """
     discounted_subtotal = subtotal - discount_amount
     address = data.shipping_address
-    # The fee is priced off the pin. The region rides along only as a fallback
-    # for an address saved before the map existed.
+    zone = (
+        await delivery_zone_service.find_zone(
+            db, float(address.latitude), float(address.longitude)
+        )
+        if address is not None
+        and address.latitude is not None
+        and address.longitude is not None
+        else None
+    )
+    # The fee is priced off the pin, and only the pin.
     delivery_fee = await delivery_service.calculate_fee(
         data.delivery_method,
-        address.region if address else None,
         discounted_subtotal,
         db,
         latitude=address.latitude if address else None,
@@ -231,7 +265,7 @@ async def _compute_order_totals(
     vat_amount = (taxable * VAT_RATE / (1 + VAT_RATE)).quantize(Decimal("0.01"))
     total_excl_vat = (taxable / (1 + VAT_RATE)).quantize(Decimal("0.01"))
 
-    return delivery_fee, total, vat_amount, total_excl_vat
+    return delivery_fee, total, vat_amount, total_excl_vat, zone
 
 
 async def _persist_order(
@@ -249,10 +283,10 @@ async def _persist_order(
     vat_amount: Decimal,
     total_excl_vat: Decimal,
     fallback_email: str | None = None,
-) -> OrderResponse:
+) -> Order:
     """
     Write the order, its items, and update promo usage atomically.
-    Clears the cart on success and returns the full OrderResponse.
+    Clears the cart on success and returns the persisted order.
     """
     VAT_RATE = Decimal("0.05")
 
@@ -332,10 +366,7 @@ async def _persist_order(
         await db.delete(ci)
 
     await db.flush()
-
-    stmt = select(Order).options(*_order_load_options()).where(Order.id == order.id)
-    result = await db.execute(stmt)
-    return OrderResponse.model_validate(result.scalar_one())
+    return order
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -373,15 +404,19 @@ async def create_order(
         promo_obj = await promo_code_service.get_promo(db, data.promo_code)
 
     # 4. Compute delivery fee, total, VAT
-    delivery_fee, total, vat_amount, total_excl_vat = await _compute_order_totals(
-        data, subtotal, discount_amount, db
-    )
+    (
+        delivery_fee,
+        total,
+        vat_amount,
+        total_excl_vat,
+        zone,
+    ) = await _compute_order_totals(data, subtotal, discount_amount, db)
 
     # 5. Claim stock for stock-tracked products (fails if any is out of stock)
     await _decrement_stock(db, cart)
 
     # 6. Persist order rows and clear cart
-    return await _persist_order(
+    order = await _persist_order(
         db,
         data,
         user_id,
@@ -397,6 +432,16 @@ async def create_order(
         total_excl_vat,
         fallback_email,
     )
+
+    # 7. Open the delivery record — including for zones no courier API touches,
+    #    so "what did fulfilment cost" is answerable for the whole country and
+    #    not just the automated part of it.
+    if data.delivery_method == DeliveryMethodEnum.DELIVERY:
+        await lalamove_service.record_order_delivery(db, order, zone=zone, cart=cart)
+
+    stmt = select(Order).options(*_order_load_options()).where(Order.id == order.id)
+    result = await db.execute(stmt)
+    return OrderResponse.model_validate(result.scalar_one())
 
 
 async def get_user_orders(
@@ -485,6 +530,21 @@ async def update_status(
     order.status = new_status
     if admin_notes is not None:
         order.admin_notes = admin_notes
+
+    # Packed means the box is ready, which is the moment it can travel —
+    # earlier and a driver waits at the counter. Whether it leaves now or waits
+    # for the rest of its batch is the zone's schedule to decide. Nothing
+    # happens for a third-party zone: the call returns the record untouched and
+    # the flow stays the manual one it has always been.
+    if new_status == OrderStatusEnum.PACKED:
+        await batching_service.assign_or_dispatch(db, order)
+    elif new_status == OrderStatusEnum.CANCELLED:
+        delivery = await lalamove_service.get_delivery(db, order.id)
+        if delivery is not None:
+            # Off the run first, so a batch that is now empty does not go out
+            # to collect nothing.
+            await batching_service.cancel_assignment(db, delivery)
+        await lalamove_service.cancel_delivery(db, order)
 
     # A cancelled order releases the stock it claimed at creation.
     if new_status == OrderStatusEnum.CANCELLED:

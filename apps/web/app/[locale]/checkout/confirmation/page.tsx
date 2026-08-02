@@ -158,7 +158,6 @@ function ConfirmationContent() {
             ].filter(Boolean).join(', ')}
           </p>
           <p className="font-body text-sm text-gray-600">
-            {order.shipping_address_snapshot.region}
           </p>
         </div>
       )}

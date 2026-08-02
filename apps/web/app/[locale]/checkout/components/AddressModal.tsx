@@ -10,7 +10,7 @@ import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { addressesApi } from '@/lib/api';
 import { guestAddresses } from '@/lib/guest-addresses';
 import { reverseGeocode } from '@/lib/geocode';
-import type { Address, RegionCode } from '@/lib/types';
+import type { Address } from '@/lib/types';
 
 const LocationPicker = dynamic(
   () => import('@/components/ui/LocationPicker').then((m) => ({ default: m.LocationPicker })),
@@ -26,14 +26,13 @@ export interface AddressDraft {
   addressLine1: string;
   addressLine2: string;
   unitNumber: string;
-  region: string;
   latitude: number | null;
   longitude: number | null;
 }
 
 const EMPTY: AddressDraft = {
   id: '', label: 'Home', firstName: '', lastName: '', phone: '',
-  addressLine1: '', addressLine2: '', unitNumber: '', region: 'dubai',
+  addressLine1: '', addressLine2: '', unitNumber: '',
   latitude: null, longitude: null,
 };
 
@@ -47,7 +46,6 @@ export function toDraft(a: Address): AddressDraft {
     addressLine1: a.address_line_1,
     addressLine2: a.address_line_2 ?? '',
     unitNumber: a.unit_number ?? '',
-    region: a.region,
     latitude: a.latitude === null ? null : Number(a.latitude),
     longitude: a.longitude === null ? null : Number(a.longitude),
   };
@@ -127,7 +125,6 @@ export function AddressModal({
     setDraft((prev) => ({
       ...prev,
       addressLine1: found.address,
-      region: found.region || prev.region,
     }));
     setErrors((prev) => {
       const next = { ...prev };
@@ -171,7 +168,6 @@ export function AddressModal({
       address_line_1: draft.addressLine1.trim(),
       address_line_2: draft.addressLine2.trim() || undefined,
       unit_number: draft.unitNumber.trim() || undefined,
-      region: draft.region as RegionCode,
       latitude: draft.latitude,
       longitude: draft.longitude,
     };

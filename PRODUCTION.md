@@ -664,6 +664,59 @@ outright. The steps below are kept for rebuilding the host from scratch.
 | `TAMARA_API_KEY` | API key | Tamara merchant dashboard |
 | `TAMARA_API_URL` | `https://api.tamara.co` | Literal (use `https://api-sandbox.tamara.co` for staging) |
 
+#### Courier — Lalamove
+
+Optional. Leave the key and secret unset and zones marked `lalamove` behave
+exactly like third-party ones — same price, dispatched by hand.
+
+| Secret | Production value | Notes |
+|--------|-----------------|-------|
+| `LALAMOVE_API_KEY` | `pk_prod_...` | Partner Portal → Developers, **Production** tab |
+| `LALAMOVE_API_SECRET` | `sk_prod_...` | Same screen. Also signs inbound webhooks |
+| `LALAMOVE_PICKUP_BRANCH_REF` | branch reference | Optional. Empty = first active branch taking online orders that has coordinates |
+| `LALAMOVE_SENDER_PHONE` | `+9715...` | Optional. Empty = that branch's own phone |
+
+These five are the only ones worth setting by hand. The rest are written to
+`.env` with a literal fallback in the deploy workflow, so leaving them unset
+gives the intended value rather than an empty one:
+
+| Secret | Falls back to | Notes |
+|--------|---------------|-------|
+| `LALAMOVE_ENV` | `production` | Sandbox has no working AE pricing engine and an unfunded wallet |
+| `LALAMOVE_MARKET` | `AE` | |
+| `LALAMOVE_LANGUAGE` | `en_AE` | Lalamove validates this to exactly this string for the UAE |
+| `LALAMOVE_SERVICE_TYPE` | `CAR` | Smallest UAE vehicle |
+| `LALAMOVE_SPECIAL_REQUESTS` | `DOOR_TO_DOOR` | Flat +5 AED per order, not per stop |
+| `LALAMOVE_WEBHOOK_PATH` | `/api/v1/webhooks/lalamove` | Must match the Partner Portal URL byte for byte — it is part of the signature |
+| `LALAMOVE_TIMEOUT_SECONDS` | `8` | |
+| `LALAMOVE_QUOTE_CACHE_SECONDS` | `120` | |
+| `BATCH_DISPATCHER_ENABLED` | `true` | The in-process loop that sends a batch when its window closes |
+
+**The fallbacks are load-bearing, not tidiness.** An unset secret expands to an
+empty string, and an empty value in `.env` overrides the Python default rather
+than deferring to it — an empty `LALAMOVE_TIMEOUT_SECONDS` fails float parsing
+and the API does not boot. The two credentials are deliberately *not*
+defaulted: empty there means "no courier", which the code is built to handle.
+
+Setting the two credentials:
+
+```bash
+gh secret set LALAMOVE_API_KEY --repo hussu97/mm-ecommerce
+gh secret set LALAMOVE_API_SECRET --repo hussu97/mm-ecommerce
+```
+
+Two things have to be done in the Partner Portal, not here:
+
+1. **Webhook URL** → `https://api.meltingmomentscakes.com/api/v1/webhooks/lalamove`,
+   Webhook Version 3. The path is part of what the signature covers, so it must
+   match `LALAMOVE_WEBHOOK_PATH` byte for byte. An endpoint that fails to answer
+   200 ten times in a day is disabled by Lalamove, after which no order gets a
+   status until someone re-enters the URL.
+2. **Fund the wallet.** Orders debit it the moment they are placed; an empty
+   wallet fails dispatch with `ERR_INSUFFICIENT_CREDIT`. The failure is recorded
+   on the order and surfaced in the admin, and the order can be re-dispatched
+   once topped up — but nothing is collected in the meantime.
+
 #### Frontend URLs (used in email templates & CORS)
 
 | Secret | Production value | Notes |

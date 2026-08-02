@@ -6,6 +6,7 @@ from .products import router as products_router
 from .cart import router as cart_router
 from .uploads import router as uploads_router
 from .delivery import router as delivery_router
+from .delivery_zones import router as delivery_zones_router
 from .promo_codes import router as promo_codes_router
 from .orders import router as orders_router
 from .addresses import router as addresses_router
@@ -21,7 +22,6 @@ from .i18n import router as i18n_router
 from .cms import router as cms_router
 from .blog import router as blog_router
 from .email_logs import router as email_logs_router
-from .regions import router as regions_router
 from .audit_logs import router as audit_logs_router
 
 # POS domain
@@ -82,6 +82,9 @@ api_router.include_router(cart_router, prefix="/cart", tags=["Cart"])
 api_router.include_router(uploads_router, prefix="/uploads", tags=["Uploads"])
 api_router.include_router(delivery_router, prefix="/delivery", tags=["Delivery"])
 api_router.include_router(
+    delivery_zones_router, prefix="/delivery-zones", tags=["Delivery Zones"]
+)
+api_router.include_router(
     promo_codes_router, prefix="/promo-codes", tags=["Promo Codes"]
 )
 api_router.include_router(orders_router, prefix="/orders", tags=["Orders"])
@@ -96,7 +99,6 @@ api_router.include_router(i18n_router, prefix="/i18n", tags=["i18n"])
 api_router.include_router(cms_router, prefix="/cms", tags=["CMS"])
 api_router.include_router(blog_router, prefix="/blog", tags=["Blog"])
 api_router.include_router(email_logs_router, prefix="/email-logs", tags=["Email Logs"])
-api_router.include_router(regions_router, prefix="/regions", tags=["Regions"])
 api_router.include_router(audit_logs_router, prefix="/audit-logs", tags=["Audit Logs"])
 
 # ─── POS ──────────────────────────────────────────────────────────────────────

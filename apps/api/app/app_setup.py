@@ -11,8 +11,9 @@ happened to have open.
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import sentry_sdk
 from fastapi import Depends, FastAPI, Request
@@ -126,13 +127,16 @@ def _configure_logging() -> None:
     logging.root.setLevel(logging.INFO)
 
 
-def make_lifespan(service: str, *, seed: bool):
+def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
     """
-    Startup checks, and the i18n seed for whichever app owns it.
+    Startup checks, the i18n seed, and the batch dispatcher — each owned by
+    whichever app is responsible for it.
 
     Only one app seeds. Two processes racing the same upsert on boot is a
     deadlock waiting to happen, and the register has no use for storefront
-    copy anyway.
+    copy anyway. The batch dispatcher belongs to the storefront for the same
+    reason: web orders are the only ones that batch, and it holds a database
+    advisory lock so running it in two places would achieve nothing but noise.
     """
 
     @asynccontextmanager
@@ -152,8 +156,21 @@ def make_lifespan(service: str, *, seed: bool):
                     await seed_i18n(session)
             except Exception as exc:  # noqa: BLE001 — a seed must not block boot
                 logger.warning("i18n seed failed (non-fatal): %s", exc)
+
+        dispatcher: asyncio.Task | None = None
+        if dispatch_batches and settings.BATCH_DISPATCHER_ENABLED:
+            from app.services import batch_scheduler
+
+            dispatcher = asyncio.create_task(batch_scheduler.run_forever())
+
         logger.info("%s starting up [env=%s]", service, settings.APP_ENV)
         yield
+        if dispatcher is not None:
+            dispatcher.cancel()
+            # Awaited so a batch mid-booking finishes rather than being torn
+            # off halfway between a quotation and an order.
+            with suppress(asyncio.CancelledError):
+                await dispatcher
         logger.info("%s shutting down", service)
 
     return lifespan

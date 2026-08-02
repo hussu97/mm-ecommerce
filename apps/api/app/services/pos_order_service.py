@@ -175,7 +175,6 @@ async def open_order(
     notes: str | None = None,
     source: str = OrderSourceEnum.CASHIER.value,
     due_at=None,
-    region_id=None,
 ) -> Order:
     if order_type not in {t.value for t in OrderTypeEnum}:
         raise BadRequestError(f"Unknown order type '{order_type}'")
@@ -207,7 +206,6 @@ async def open_order(
         is_pos=True,
         branch_id=branch.id,
         table_id=table_id,
-        region_id=region_id,
         device_id=device_id,
         till_id=till.id if till else None,
         order_type=order_type,

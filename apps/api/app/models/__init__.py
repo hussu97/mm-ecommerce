@@ -4,7 +4,7 @@ All SQLAlchemy models — imported here so Alembic can autodiscover them.
 
 from .base import Base  # noqa: F401 — must be first
 from .user import User  # noqa: F401
-from .address import Address, RegionEnum  # noqa: F401
+from .address import Address  # noqa: F401
 from .category import Category  # noqa: F401
 from .product import Product  # noqa: F401
 from .modifier import Modifier, ModifierOption, ProductModifier  # noqa: F401
@@ -17,13 +17,29 @@ from .cms import CmsPage  # noqa: F401
 from .blog import BlogPost  # noqa: F401
 from .webhook_event import WebhookEvent  # noqa: F401
 from .email_log import EmailLog  # noqa: F401
-from .region import Region, DeliverySettings  # noqa: F401
-from .delivery_polygon import DeliveryPolygon, DeliveryPolygonVersion  # noqa: F401
+from .delivery_settings import DeliverySettings  # noqa: F401
+from .delivery_polygon import (  # noqa: F401
+    DeliveryPolygon,
+    DeliveryPolygonVersion,
+    FulfilmentProviderEnum,
+)
+from .delivery_batch import (  # noqa: F401
+    DELIVERY_TIMEZONE,
+    MAX_DROPS_PER_ORDER,
+    BatchStatusEnum,
+    DeliveryBatch,
+    DeliveryBatchWindow,
+)
+from .order_delivery import (  # noqa: F401
+    FAILED_COURIER_STATUSES,
+    TERMINAL_COURIER_STATUSES,
+    CourierStatusEnum,
+    OrderDelivery,
+)
 from .audit_log import AuditLog  # noqa: F401
 from .admin_passkey import AdminPasskey, WebAuthnChallenge  # noqa: F401
 
 # ─── POS domain ───────────────────────────────────────────────────────────────
-from .branch_region import BranchRegion  # noqa: F401
 from .course import Course  # noqa: F401
 from .tax import Tax, TaxGroup, TaxGroupTax, TaxTypeEnum  # noqa: F401
 from .branch import (  # noqa: F401
@@ -149,7 +165,6 @@ __all__ = [
     "Base",
     "User",
     "Address",
-    "RegionEnum",
     "Category",
     "Product",
     "Modifier",
@@ -170,10 +185,15 @@ __all__ = [
     "BlogPost",
     "WebhookEvent",
     "EmailLog",
-    "Region",
     "DeliveryPolygon",
     "DeliveryPolygonVersion",
     "DeliverySettings",
+    "FulfilmentProviderEnum",
+    "DeliveryBatch",
+    "DeliveryBatchWindow",
+    "BatchStatusEnum",
+    "OrderDelivery",
+    "CourierStatusEnum",
     "AuditLog",
     "AdminPasskey",
     "WebAuthnChallenge",
@@ -193,7 +213,6 @@ __all__ = [
     "PaymentMethod",
     "PaymentMethodTypeEnum",
     "Charge",
-    "BranchRegion",
     "Course",
     "ChargeTypeEnum",
     "Reason",

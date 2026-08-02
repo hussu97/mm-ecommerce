@@ -6,13 +6,14 @@ from typing import Optional
 import httpx
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select, cast, Text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import cache_get, cache_set, cache_delete_pattern  # noqa: F401
 from app.core.config import settings
 from app.core.deps import get_admin_user, get_db
 from app.models.order import Order, OrderItem, OrderStatusEnum
+from app.models.order_delivery import OrderDelivery
 from app.models.user import User
 
 _ANALYTICS_TTL = 300
@@ -120,8 +121,8 @@ class RevenueBreakdown(BaseModel):
     by_payment_provider: list[BreakdownItem]
 
 
-class RegionData(BaseModel):
-    region: str
+class ZoneData(BaseModel):
+    zone: str
     orders: int
     revenue: float
 
@@ -641,44 +642,50 @@ async def get_revenue_breakdown(
     return result_obj
 
 
-@router.get("/regions", response_model=list[RegionData])
-async def get_regions(
+@router.get("/zones", response_model=list[ZoneData])
+async def get_zones(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_admin_user),
 ):
-    """Sales breakdown by UAE region (from shipping address snapshot)."""
+    """
+    Sales by delivery zone.
+
+    Grouped by the zone that actually priced each order, snapshotted on its
+    delivery record. It used to group by the emirate the customer picked from
+    a dropdown, which made this a report on what people typed rather than on
+    where the cakes went.
+    """
     start, end = _date_range(start_date, end_date)
 
-    cache_key = f"analytics:regions:{start}:{end}"
+    cache_key = f"analytics:zones:{start}:{end}"
     cached = await cache_get(cache_key)
     if cached is not None:
-        return [RegionData(**item) for item in cached]
-
-    region_col = cast(Order.shipping_address_snapshot["region"], Text)
+        return [ZoneData(**item) for item in cached]
 
     stmt = (
         select(
-            region_col.label("region"),
+            OrderDelivery.zone_name.label("zone"),
             func.count(Order.id).label("orders"),
             func.coalesce(func.sum(Order.total), 0).label("revenue"),
         )
+        .join(OrderDelivery, OrderDelivery.order_id == Order.id)
         .where(
             Order.status != OrderStatusEnum.CANCELLED,
-            Order.shipping_address_snapshot != None,  # noqa: E711
+            OrderDelivery.zone_name.isnot(None),
             func.date(Order.created_at) >= start,
             func.date(Order.created_at) <= end,
         )
-        .group_by(region_col)
+        .group_by(OrderDelivery.zone_name)
         .order_by(func.sum(Order.total).desc())
     )
     rows = (await db.execute(stmt)).all()
 
     result_list = [
-        RegionData(region=str(r.region), orders=int(r.orders), revenue=float(r.revenue))
+        ZoneData(zone=str(r.zone), orders=int(r.orders), revenue=float(r.revenue))
         for r in rows
-        if r.region
+        if r.zone
     ]
     await cache_set(
         cache_key,

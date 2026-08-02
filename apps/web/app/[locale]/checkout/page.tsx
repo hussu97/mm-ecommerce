@@ -22,7 +22,7 @@ import { analytics } from '@/lib/analytics';
 import { guestAddresses } from '@/lib/guest-addresses';
 import { AddressModal, formatAddress, toDraft, type AddressDraft } from './components/AddressModal';
 import { PromoCodeStep } from './components/PromoCodeStep';
-import type { Address, Cart, CartItem, RegionCode, DeliveryRates, DeliveryQuote } from '@/lib/types';
+import type { Address, Cart, CartItem, DeliveryRates, DeliveryQuote } from '@/lib/types';
 
 // ─── Session persistence ──────────────────────────────────────────────────────
 
@@ -49,7 +49,6 @@ interface CheckoutForm {
   addressLine2: string;
   unitNumber: string;
   addressLabel: string;
-  region: string;
   locationLat: number | null;
   locationLng: number | null;
   selectedAddressId: string; // '' = new address
@@ -63,7 +62,7 @@ interface CheckoutForm {
 
 const INITIAL_FORM: CheckoutForm = {
   email: '', firstName: '', lastName: '', phone: '',
-  addressLine1: '', addressLine2: '', unitNumber: '', addressLabel: 'Home', region: 'dubai',
+  addressLine1: '', addressLine2: '', unitNumber: '', addressLabel: 'Home',
   locationLat: null, locationLng: null,
   selectedAddressId: '',
   deliveryMethod: 'delivery',
@@ -350,7 +349,6 @@ function CheckoutContent() {
           addressLine1: d.addressLine1,
           addressLine2: d.addressLine2,
           unitNumber: d.unitNumber,
-          region: d.region,
           locationLat: d.latitude,
           locationLng: d.longitude,
         };
@@ -386,8 +384,11 @@ function CheckoutContent() {
   const freeThreshold = quote?.free_threshold ?? deliveryRates?.free_threshold ?? 200;
   const freeApplied = effectiveSubtotal >= freeThreshold;
 
-  // Priced off the pin against the active zone map. Until there is a pin there
-  // is no honest number to show, so the row says so rather than guessing.
+  // Priced off the pin against the active zone map. Before there is a pin the
+  // API answers with the fallback fee, which is the highest we charge — so the
+  // quote can only ever come down once the address is in, never up. A total
+  // that rises after the customer has read it is the worse surprise.
+  const hasPin = form.locationLat !== null && form.locationLng !== null;
   const baseFee = quote?.base_fee ?? null;
   const knowsFee = baseFee !== null;
   const homeDeliveryFee = knowsFee ? (freeApplied ? 0 : baseFee) : null;
@@ -408,11 +409,11 @@ function CheckoutContent() {
     if (retryOrder) return;
     let cancelled = false;
     deliveryApi
-      .quote(effectiveSubtotal, form.locationLat, form.locationLng)
+      .quote(effectiveSubtotal, form.locationLat, form.locationLng, form.addressLine1)
       .then((q) => { if (!cancelled) setQuote(q); })
       .catch(() => { /* leave the previous quote in place */ });
     return () => { cancelled = true; };
-  }, [effectiveSubtotal, form.locationLat, form.locationLng, retryOrder]);
+  }, [effectiveSubtotal, form.locationLat, form.locationLng, form.addressLine1, retryOrder]);
 
 
   const currentDraft: AddressDraft = {
@@ -424,7 +425,6 @@ function CheckoutContent() {
     addressLine1: form.addressLine1,
     addressLine2: form.addressLine2,
     unitNumber: form.unitNumber,
-    region: form.region,
     latitude: form.locationLat,
     longitude: form.locationLng,
   };
@@ -440,7 +440,6 @@ function CheckoutContent() {
       addressLine1: d.addressLine1,
       addressLine2: d.addressLine2,
       unitNumber: d.unitNumber,
-      region: d.region,
       locationLat: d.latitude,
       locationLng: d.longitude,
     });
@@ -502,7 +501,6 @@ function CheckoutContent() {
                 address_line_1: form.addressLine1,
                 address_line_2: form.addressLine2 || undefined,
                 unit_number: form.unitNumber || undefined,
-                region: form.region as RegionCode,
                 latitude: form.locationLat ?? undefined,
                 longitude: form.locationLng ?? undefined,
               }
@@ -610,9 +608,9 @@ function CheckoutContent() {
             title={t('checkout.delivery_option')}
             subtitle={freeApplied
               ? t('checkout.free_delivery_qualified')
-              : knowsFee
-                ? t('checkout.free_delivery_upsell', { amount: remainingForFree.toFixed(2) })
-                : t('checkout.fee_from_address')}
+              : !hasPin
+                ? t('checkout.fee_from_address')
+                : t('checkout.free_delivery_upsell', { amount: remainingForFree.toFixed(2) })}
             trailing={
               !knowsFee ? (
                 <span className="text-gray-400">—</span>

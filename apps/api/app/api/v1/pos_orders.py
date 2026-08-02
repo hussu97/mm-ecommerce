@@ -145,7 +145,6 @@ async def open_order(
         notes=data.notes,
         source=data.source,
         due_at=data.due_at,
-        region_id=data.region_id,
     )
     return _serialise(order)
 

@@ -197,7 +197,6 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
               <p>{addr.first_name} {addr.last_name}</p>
               <p>{addr.address_line_1}</p>
               {addr.address_line_2 && <p>{addr.address_line_2}</p>}
-              <p>{addr.region}</p>
               {addr.phone && <p className="text-gray-400">{addr.phone}</p>}
             </div>
           ) : (

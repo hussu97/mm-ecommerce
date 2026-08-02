@@ -6,8 +6,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.address import RegionEnum
-
 
 class AddressCreate(BaseModel):
     label: str = Field(default="Home", max_length=50)
@@ -17,7 +15,6 @@ class AddressCreate(BaseModel):
     address_line_1: str = Field(min_length=1, max_length=255)
     address_line_2: str | None = Field(None, max_length=255)
     unit_number: str | None = Field(None, max_length=50)
-    region: RegionEnum
     country: str = Field(default="AE", max_length=2)
     is_default: bool = False
     latitude: Decimal
@@ -32,7 +29,6 @@ class AddressUpdate(BaseModel):
     address_line_1: str | None = Field(None, min_length=1, max_length=255)
     address_line_2: str | None = None
     unit_number: str | None = Field(None, max_length=50)
-    region: RegionEnum | None = None
     is_default: bool | None = None
     latitude: Decimal | None = None
     longitude: Decimal | None = None
@@ -50,7 +46,6 @@ class AddressResponse(BaseModel):
     address_line_1: str
     address_line_2: str | None
     unit_number: str | None
-    region: RegionEnum
     country: str
     is_default: bool
     latitude: Decimal

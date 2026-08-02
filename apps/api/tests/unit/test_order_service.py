@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.core.exceptions import BadRequestError, NotFoundError
-from app.models.address import RegionEnum
 from app.models.order import DeliveryMethodEnum, OrderStatusEnum
 from app.schemas.address import AddressCreate
 from app.schemas.order import OrderCreate
@@ -25,6 +24,48 @@ def mock_calculate_fee():
     ) as m:
         m.return_value = Decimal("0.00")
         yield m
+
+
+@pytest.fixture(autouse=True)
+def mock_fulfilment():
+    """
+    Silence everything that talks to the zone map or a courier.
+
+    These tests drive `create_order` and `update_status` against a mock session
+    whose `execute` is a fixed script of results, so any extra query — resolving
+    the zone, opening the delivery row, looking up a booking to cancel — runs
+    the script off its end. What they are checking is arithmetic and status
+    rules; dispatch has its own tests.
+    """
+    with (
+        patch(
+            "app.services.order_service.delivery_zone_service.find_zone",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "app.services.order_service.lalamove_service.record_order_delivery",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.services.order_service.lalamove_service.get_delivery",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "app.services.order_service.lalamove_service.cancel_delivery",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.services.order_service.batching_service.assign_or_dispatch",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.services.order_service.batching_service.cancel_assignment",
+            new_callable=AsyncMock,
+        ),
+    ):
+        yield
 
 
 # ── Test helpers ─────────────────────────────────────────────────────────────
@@ -168,13 +209,12 @@ def _db_for_update(order, updated_order=None) -> AsyncMock:
     return db
 
 
-def _delivery_address(region: RegionEnum = RegionEnum.DUBAI) -> AddressCreate:
+def _delivery_address() -> AddressCreate:
     return AddressCreate(
         first_name="Test",
         last_name="User",
         phone="+971500000000",
         address_line_1="123 Test St",
-        region=region,
         latitude=Decimal("25.2048"),
         longitude=Decimal("55.2708"),
     )
@@ -190,15 +230,13 @@ def _pickup_data(promo_code: str | None = None) -> OrderCreate:
     )
 
 
-def _delivery_data(
-    region: RegionEnum = RegionEnum.DUBAI, promo_code: str | None = None
-) -> OrderCreate:
+def _delivery_data(promo_code: str | None = None) -> OrderCreate:
     return OrderCreate(
         email="test@example.com",
         delivery_method=DeliveryMethodEnum.DELIVERY,
         payment_method="stripe",
         session_id="sess_test",
-        shipping_address=_delivery_address(region),
+        shipping_address=_delivery_address(),
         promo_code=promo_code,
     )
 
@@ -475,7 +513,7 @@ class TestCreateOrderCalculations:
         cart = _cart(items=[_cart_item(_product("100.00"))])
         db = _db_for_create(cart, _order_mock(delivery_fee=Decimal("35.00")))
 
-        await create_order(db, _delivery_data(RegionEnum.DUBAI), user_id=None)
+        await create_order(db, _delivery_data(), user_id=None)
 
         order_arg = db.add.call_args_list[0][0][0]
         assert order_arg.delivery_fee == Decimal("35.00")
@@ -485,7 +523,7 @@ class TestCreateOrderCalculations:
         cart = _cart(items=[_cart_item(_product("100.00"))])
         db = _db_for_create(cart, _order_mock(delivery_fee=Decimal("50.00")))
 
-        await create_order(db, _delivery_data(RegionEnum.ABU_DHABI), user_id=None)
+        await create_order(db, _delivery_data(), user_id=None)
 
         order_arg = db.add.call_args_list[0][0][0]
         assert order_arg.delivery_fee == Decimal("50.00")
@@ -494,7 +532,7 @@ class TestCreateOrderCalculations:
         cart = _cart(items=[_cart_item(_product("200.00"))])
         db = _db_for_create(cart, _order_mock(delivery_fee=Decimal("0.00")))
 
-        await create_order(db, _delivery_data(RegionEnum.DUBAI), user_id=None)
+        await create_order(db, _delivery_data(), user_id=None)
 
         order_arg = db.add.call_args_list[0][0][0]
         assert order_arg.delivery_fee == Decimal("0.00")
@@ -503,7 +541,7 @@ class TestCreateOrderCalculations:
         cart = _cart(items=[_cart_item(_product("250.00"))])
         db = _db_for_create(cart, _order_mock(delivery_fee=Decimal("0.00")))
 
-        await create_order(db, _delivery_data(RegionEnum.ABU_DHABI), user_id=None)
+        await create_order(db, _delivery_data(), user_id=None)
 
         order_arg = db.add.call_args_list[0][0][0]
         assert order_arg.delivery_fee == Decimal("0.00")
@@ -750,9 +788,7 @@ class TestCreateOrderWithPromo:
             ),
         )
 
-        await create_order(
-            db, _delivery_data(RegionEnum.ABU_DHABI, promo_code="DISC50"), user_id=None
-        )
+        await create_order(db, _delivery_data(promo_code="DISC50"), user_id=None)
 
         order_arg = db.add.call_args_list[0][0][0]
         assert order_arg.delivery_fee == Decimal("0.00")

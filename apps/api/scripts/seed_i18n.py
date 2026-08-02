@@ -154,7 +154,7 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "home_delivery", "Home Delivery"),
     ("checkout", "store_pickup", "Store Pickup"),
     ("checkout", "free_delivery_qualified", "Free delivery — your order qualifies!"),
-    ("checkout", "delivery_time", "Delivered to {region} · 2–3 business days"),
+    ("checkout", "delivery_time", "Delivered in 2–3 business days"),
     ("checkout", "free_delivery_upsell", "Add {amount} AED more for free delivery"),
     (
         "checkout",
@@ -201,7 +201,7 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("cart", "remove_item", "Remove from basket"),
     ("checkout", "add_promo_or_note", "Add a promo code or a note"),
     ("checkout", "delivery_option", "Delivery"),
-    ("checkout", "fee_from_address", "Calculated from your address"),
+    ("checkout", "fee_from_address", "Confirmed once you add your address"),
     ("checkout", "view_pickup_location", "See where to collect from"),
     ("common", "address", "Address"),
     ("checkout", "email_optional", "Email (optional)"),
@@ -464,18 +464,7 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("error", "tagline", "Made with 100% Love"),
     # promo_banner
     ("promo_banner", "text", "Free delivery on orders over 200 AED!"),
-    # regions
-    ("regions", "dubai", "Dubai"),
-    ("regions", "sharjah", "Sharjah"),
-    ("regions", "ajman", "Ajman"),
-    ("regions", "abu_dhabi", "Abu Dhabi"),
-    ("regions", "fujairah", "Fujairah"),
-    ("regions", "ras_al_khaimah", "Ras Al Khaimah"),
-    ("regions", "umm_al_quwain", "Umm Al Quwain"),
-    ("regions", "al_ain", "Al Ain"),
-    ("regions", "rest_of_uae", "Rest of UAE"),
     # address labels
-    ("address", "region", "Region"),
     ("address", "pin_location", "Pin Location"),
     ("address", "search_location", "Search for a location…"),
     (
@@ -483,8 +472,6 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
         "pin_location_required",
         "Please drop a pin on the map to confirm your delivery location",
     ),
-    # checkout region validation
-    ("checkout", "region_required", "Region is required"),
 ]
 
 AR_TRANSLATIONS: list[tuple[str, str, str]] = [
@@ -603,7 +590,7 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "home_delivery", "التوصيل المنزلي"),
     ("checkout", "store_pickup", "الاستلام من المتجر"),
     ("checkout", "free_delivery_qualified", "توصيل مجاني — طلبك يستوفي الشرط!"),
-    ("checkout", "delivery_time", "التوصيل إلى {region} · 2–3 أيام عمل"),
+    ("checkout", "delivery_time", "التوصيل خلال 2–3 أيام عمل"),
     ("checkout", "free_delivery_upsell", "أضف {amount} درهم أكثر للتوصيل المجاني"),
     (
         "checkout",
@@ -650,7 +637,7 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("cart", "remove_item", "إزالة من السلة"),
     ("checkout", "add_promo_or_note", "إضافة رمز خصم أو ملاحظة"),
     ("checkout", "delivery_option", "التوصيل"),
-    ("checkout", "fee_from_address", "تُحتسب حسب عنوانك"),
+    ("checkout", "fee_from_address", "يُحتسب بدقة بعد إضافة عنوانك"),
     ("checkout", "view_pickup_location", "شاهد مكان الاستلام"),
     ("common", "address", "العنوان"),
     ("checkout", "email_optional", "البريد الإلكتروني (اختياري)"),
@@ -901,18 +888,7 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("error", "tagline", "مصنوعة بـ 100% حب"),
     # promo_banner
     ("promo_banner", "text", "توصيل مجاني للطلبات التي تتجاوز 200 درهم!"),
-    # regions
-    ("regions", "dubai", "دبي"),
-    ("regions", "sharjah", "الشارقة"),
-    ("regions", "ajman", "عجمان"),
-    ("regions", "abu_dhabi", "أبوظبي"),
-    ("regions", "fujairah", "الفجيرة"),
-    ("regions", "ras_al_khaimah", "رأس الخيمة"),
-    ("regions", "umm_al_quwain", "أم القيوين"),
-    ("regions", "al_ain", "العين"),
-    ("regions", "rest_of_uae", "بقية الإمارات"),
     # address labels
-    ("address", "region", "المنطقة"),
     ("address", "pin_location", "تحديد الموقع على الخريطة"),
     ("address", "search_location", "ابحث عن موقع…"),
     (
@@ -920,8 +896,6 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
         "pin_location_required",
         "يرجى تحديد الموقع على الخريطة لتأكيد عنوان التوصيل",
     ),
-    # checkout region validation
-    ("checkout", "region_required", "المنطقة مطلوبة"),
 ]
 
 ALL_TRANSLATIONS = [("en", *row) for row in EN_TRANSLATIONS] + [

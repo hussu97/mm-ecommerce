@@ -199,17 +199,6 @@ export interface PromoValidateResponse {
 
 // ─── Address ──────────────────────────────────────────────────────────────────
 
-export type RegionCode =
-  | 'dubai'
-  | 'sharjah'
-  | 'ajman'
-  | 'abu_dhabi'
-  | 'fujairah'
-  | 'ras_al_khaimah'
-  | 'umm_al_quwain'
-  | 'al_ain'
-  | 'rest_of_uae';
-
 export interface Address {
   id: string;
   user_id: string;
@@ -220,7 +209,6 @@ export interface Address {
   address_line_1: string;
   address_line_2: string | null;
   unit_number: string | null;
-  region: RegionCode;
   country: string;
   is_default: boolean;
   latitude: number | null;
@@ -236,7 +224,6 @@ export interface AddressCreate {
   address_line_1: string;
   address_line_2?: string;
   unit_number?: string;
-  region: RegionCode;
   country?: string;
   is_default?: boolean;
   latitude?: number | null;
@@ -284,16 +271,18 @@ export interface BlogPostListResponse {
 
 // ─── Delivery ─────────────────────────────────────────────────────────────────
 
-export interface PublicRegion {
-  slug: string;
-  name_translations: Record<string, string>;
-  delivery_fee: number;
-}
-
+/**
+ * The delivery numbers that hold before a pin exists.
+ *
+ * Deliberately not a list of areas and prices: the fee comes from where the
+ * marker lands, and a table here would invite guessing one from the address
+ * text — which is the guess the zone map replaced.
+ */
 export interface DeliveryRates {
-  regions: PublicRegion[];
   free_threshold: number;
   pickup_fee: number;
+  /** Charged when a pin falls outside every zone we have drawn. */
+  default_delivery_fee: number;
 }
 
 // ─── Payment ──────────────────────────────────────────────────────────────────
@@ -315,6 +304,5 @@ export interface DeliveryQuote {
   free_threshold: number;
   remaining_for_free: number;
   zone_name: string | null;
-  region_slug: string | null;
   in_known_zone: boolean;
 }

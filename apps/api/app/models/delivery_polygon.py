@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import enum
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
     Boolean,
@@ -18,6 +19,23 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, UUIDMixin, utcnow
+
+if TYPE_CHECKING:
+    from .delivery_batch import DeliveryBatchWindow
+
+
+class FulfilmentProviderEnum(str, enum.Enum):
+    """Who carries an order out of the kitchen.
+
+    Stored as plain text rather than a PostgreSQL enum: adding a courier should
+    be an insert, not a migration that rewrites a type while the storefront is
+    reading from it.
+    """
+
+    #: Booked over the Lalamove API — quoted, dispatched and tracked in code.
+    LALAMOVE = "lalamove"
+    #: Whoever we already use. No integration: the same manual flow as today.
+    THIRD_PARTY = "third_party"
 
 
 class DeliveryPolygonVersion(Base, UUIDMixin):
@@ -73,10 +91,16 @@ class DeliveryPolygon(Base, UUIDMixin):
         index=True,
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    # Kept so an order can still record which emirate it went to, and so the
-    # admin list reads in familiar terms, but it no longer decides the price.
-    region_slug: Mapped[str | None] = mapped_column(String(30), nullable=True)
     delivery_fee: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    # Which courier serves this zone. Third party is the safe default: it means
+    # "do what we have always done", so a zone added without thinking about
+    # dispatch cannot start booking real couriers by accident.
+    fulfilment_provider: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default=FulfilmentProviderEnum.THIRD_PARTY.value,
+        server_default=FulfilmentProviderEnum.THIRD_PARTY.value,
+    )
     geometry: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
 
     min_lat: Mapped[Decimal] = mapped_column(Numeric(9, 6), nullable=False)
@@ -94,6 +118,17 @@ class DeliveryPolygon(Base, UUIDMixin):
     version: Mapped[DeliveryPolygonVersion] = relationship(
         "DeliveryPolygonVersion", back_populates="polygons"
     )
+    #: When orders in this zone travel together. Only meaningful for a zone we
+    #: dispatch ourselves; a third-party zone has no run to share.
+    batch_windows: Mapped[list[DeliveryBatchWindow]] = relationship(
+        "DeliveryBatchWindow",
+        back_populates="polygon",
+        cascade="all, delete-orphan",
+        order_by="DeliveryBatchWindow.start_hour, DeliveryBatchWindow.start_minute",
+    )
 
     def __repr__(self) -> str:
-        return f"<DeliveryPolygon {self.name} @ {self.delivery_fee}>"
+        return (
+            f"<DeliveryPolygon {self.name} @ {self.delivery_fee} "
+            f"via {self.fulfilment_provider}>"
+        )

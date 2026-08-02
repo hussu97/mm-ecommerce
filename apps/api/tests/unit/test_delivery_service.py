@@ -1,115 +1,166 @@
+"""
+What `calculate_fee` charges, now that only the pin decides.
+
+These used to be region-rate tests: a slug went in, a table lookup came out.
+The slug is gone, and with it the class of bug where a customer in Al Nahda
+picked "Dubai", paid the Dubai fee, and was delivered to Sharjah. What is left
+is the order the three rules apply in — pickup, then free delivery, then the
+zone — because getting that order wrong is how a AED 250 basket ends up being
+charged for delivery.
+"""
+
 from __future__ import annotations
 
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.models.delivery_settings import DeliverySettings
 from app.models.order import DeliveryMethodEnum
-from app.models.region import DeliverySettings, Region
+from app.services import delivery_service
 from app.services.delivery_service import calculate_fee
+from app.services.delivery_zone_service import Zone
+
+SETTINGS = DeliverySettings(
+    free_delivery_threshold=Decimal("200.00"),
+    pickup_fee=Decimal("0.00"),
+    default_delivery_fee=Decimal("50.00"),
+)
+
+SHARJAH_CITY = Zone(
+    id=None,  # type: ignore[arg-type]
+    name="Sharjah City",
+    delivery_fee=Decimal("15.00"),
+    fulfilment_provider="lalamove",
+    min_lat=25.0,
+    max_lat=25.6,
+    min_lng=55.2,
+    max_lng=55.7,
+    rings=(),
+)
+
+#: Somewhere inside Sharjah City. The zone lookup is patched, so the exact
+#: numbers only have to be plausible.
+PIN = {"latitude": 25.3304, "longitude": 55.3710}
 
 
-def _make_db(settings: DeliverySettings, region: Region | None = None):
-    """Return a minimal AsyncMock session that yields the given fixtures."""
+def _db() -> AsyncMock:
     db = AsyncMock()
-
-    def execute_side_effect(stmt):
-        result = MagicMock()
-        # Determine which query is being run by inspecting the bound params
-        sql = str(stmt.compile(compile_kwargs={"literal_binds": True}))
-        if "delivery_settings" in sql.lower():
-            result.scalars.return_value.first.return_value = settings
-        elif "regions" in sql.lower():
-            result.scalars.return_value.first.return_value = region
-            result.scalars.return_value.all.return_value = [region] if region else []
-        return result
-
-    async def async_execute(stmt):
-        return execute_side_effect(stmt)
-
-    db.execute = async_execute
+    db.execute = AsyncMock(return_value=MagicMock())
     return db
 
 
-_DEFAULT_SETTINGS = DeliverySettings(
-    free_delivery_threshold=Decimal("200.00"),
-    pickup_fee=Decimal("0.00"),
-)
+def _with_zone(zone: Zone | None):
+    return (
+        patch.object(
+            delivery_service, "get_settings", new=AsyncMock(return_value=SETTINGS)
+        ),
+        patch.object(
+            delivery_service.delivery_zone_service,
+            "find_zone",
+            new=AsyncMock(return_value=zone),
+        ),
+    )
 
 
-@pytest.mark.asyncio
-class TestPickup:
-    async def test_pickup_is_always_free(self):
-        db = _make_db(_DEFAULT_SETTINGS)
-        fee = await calculate_fee(DeliveryMethodEnum.PICKUP, None, Decimal("10.00"), db)
-        assert fee == Decimal("0.00")
-
-    async def test_pickup_free_even_with_low_subtotal(self):
-        db = _make_db(_DEFAULT_SETTINGS)
-        fee = await calculate_fee(
-            DeliveryMethodEnum.PICKUP, "dubai", Decimal("1.00"), db
+async def fee(subtotal: str, *, zone: Zone | None = SHARJAH_CITY, pin: bool = True):
+    settings_patch, zone_patch = _with_zone(zone)
+    with settings_patch, zone_patch:
+        return await calculate_fee(
+            DeliveryMethodEnum.DELIVERY,
+            Decimal(subtotal),
+            _db(),
+            **(PIN if pin else {}),
         )
-        assert fee == Decimal("0.00")
 
 
-@pytest.mark.asyncio
-class TestFreeThreshold:
-    async def test_free_at_exact_threshold(self):
-        db = _make_db(_DEFAULT_SETTINGS)
-        fee = await calculate_fee(
-            DeliveryMethodEnum.DELIVERY, "dubai", Decimal("200.00"), db
-        )
-        assert fee == Decimal("0.00")
-
-    async def test_free_above_threshold(self):
-        db = _make_db(_DEFAULT_SETTINGS)
-        fee = await calculate_fee(
-            DeliveryMethodEnum.DELIVERY, "abu-dhabi", Decimal("250.00"), db
-        )
-        assert fee == Decimal("0.00")
-
-    async def test_not_free_below_threshold(self):
-        region = Region(
-            slug="dubai",
-            delivery_fee=Decimal("35.00"),
-            is_active=True,
-            sort_order=1,
-            name_translations={"en": "Dubai", "ar": "دبي"},
-        )
-        db = _make_db(_DEFAULT_SETTINGS, region)
-        fee = await calculate_fee(
-            DeliveryMethodEnum.DELIVERY, "dubai", Decimal("199.99"), db
-        )
-        assert fee > Decimal("0.00")
+# ── pickup ────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
-class TestRegionRates:
-    async def test_dubai_rate(self):
-        region = Region(
-            slug="dubai",
-            delivery_fee=Decimal("35.00"),
-            is_active=True,
-            sort_order=1,
-            name_translations={"en": "Dubai", "ar": "دبي"},
-        )
-        db = _make_db(_DEFAULT_SETTINGS, region)
-        fee = await calculate_fee(
-            DeliveryMethodEnum.DELIVERY, "dubai", Decimal("100.00"), db
-        )
-        assert fee == Decimal("35.00")
+async def test_pickup_is_free_whatever_the_basket():
+    settings_patch, zone_patch = _with_zone(SHARJAH_CITY)
+    with settings_patch, zone_patch:
+        for subtotal in ("1.00", "199.99", "1000.00"):
+            assert await calculate_fee(
+                DeliveryMethodEnum.PICKUP, Decimal(subtotal), _db(), **PIN
+            ) == Decimal("0.00")
 
-    async def test_remote_region_rate(self):
-        region = Region(
-            slug="abu-dhabi",
-            delivery_fee=Decimal("50.00"),
-            is_active=True,
-            sort_order=2,
-            name_translations={"en": "Abu Dhabi", "ar": "أبو ظبي"},
-        )
-        db = _make_db(_DEFAULT_SETTINGS, region)
-        fee = await calculate_fee(
-            DeliveryMethodEnum.DELIVERY, "abu-dhabi", Decimal("100.00"), db
-        )
-        assert fee == Decimal("50.00")
+
+# ── free delivery ─────────────────────────────────────────────────────────────
+
+
+async def test_free_at_exactly_the_threshold():
+    """200 is the promise. Charging at exactly 200 would make it a lie."""
+    assert await fee("200.00") == Decimal("0.00")
+
+
+async def test_free_above_the_threshold():
+    assert await fee("250.00") == Decimal("0.00")
+
+
+async def test_a_penny_short_still_pays():
+    assert await fee("199.99") == Decimal("15.00")
+
+
+async def test_the_threshold_beats_the_zone_everywhere():
+    """
+    Free delivery is checked before the zone, so it applies identically in a
+    15 AED zone and a 50 AED one. That is the point: the threshold is the one
+    delivery number a customer can see, and it must not vary by address.
+    """
+    far = Zone(
+        id=None,  # type: ignore[arg-type]
+        name="Fujairah",
+        delivery_fee=Decimal("50.00"),
+        fulfilment_provider="third_party",
+        min_lat=24.8,
+        max_lat=25.7,
+        min_lng=55.9,
+        max_lng=56.4,
+        rings=(),
+    )
+    assert await fee("250.00") == await fee("250.00", zone=far) == Decimal("0.00")
+
+
+# ── the zone ──────────────────────────────────────────────────────────────────
+
+
+async def test_the_zone_under_the_pin_sets_the_fee():
+    assert await fee("100.00") == Decimal("15.00")
+
+
+async def test_a_pin_outside_every_zone_pays_the_default():
+    """A real address we have simply not drawn yet. Quoting nothing is worse."""
+    assert await fee("100.00", zone=None) == Decimal("50.00")
+
+
+async def test_an_order_with_no_coordinates_pays_the_default():
+    """
+    There is no emirate to fall back on any more, and there should not be: an
+    order without a pin cannot be delivered, so the default is the honest
+    answer rather than a guess dressed up as a lookup.
+    """
+    assert await fee("100.00", pin=False) == Decimal("50.00")
+
+
+# ── the shape of the public rates ─────────────────────────────────────────────
+
+
+async def test_the_public_rates_no_longer_publish_a_price_list():
+    """
+    A list of areas and prices would invite the storefront to guess a fee from
+    an address string, which is exactly the guess the polygon map replaced.
+    """
+    with patch.object(
+        delivery_service, "get_settings", new=AsyncMock(return_value=SETTINGS)
+    ):
+        rates = await delivery_service.get_delivery_rates(_db())
+
+    assert set(rates) == {"free_threshold", "pickup_fee", "default_delivery_fee"}
+    assert rates["free_threshold"] == 200.0
+
+
+@pytest.mark.parametrize("gone", ["get_active_regions", "get_all_regions"])
+def test_the_region_helpers_are_gone(gone):
+    assert not hasattr(delivery_service, gone)
