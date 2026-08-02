@@ -68,7 +68,10 @@ const INITIAL_FORM: CheckoutForm = {
   selectedAddressId: '',
   deliveryMethod: 'delivery',
   promoCode: '', promoDiscount: 0, promoMessage: '',
-  paymentMethod: 'stripe',
+  // Cash is both the first option shown and how this market usually pays, so
+  // it is also the one selected on arrival. Switch to 'stripe' here if you
+  // would rather guarantee payment up front than remove the last click.
+  paymentMethod: 'cod',
   notes: '',
 };
 
@@ -292,7 +295,10 @@ function StepInformation({
 
   const isDelivery = form.deliveryMethod === 'delivery';
   const effectiveSubtotal = Math.max(0, subtotal - form.promoDiscount);
-  const deliveryFee = calcFeeFromRates(deliveryRates, form.deliveryMethod, form.region, effectiveSubtotal);
+  // What the *home delivery* option costs, regardless of which option is
+  // currently selected — otherwise picking pickup relabels the delivery card
+  // "0 AED" and quotes a price that does not exist.
+  const homeDeliveryFee = calcFeeFromRates(deliveryRates, 'delivery', form.region, effectiveSubtotal);
   const freeThreshold = deliveryRates?.free_threshold ?? 200;
 
   function validateStep1(f: CheckoutForm): Record<string, string> {
@@ -346,7 +352,7 @@ function StepInformation({
           deliveryMethod={form.deliveryMethod}
           region={form.region}
           effectiveSubtotal={effectiveSubtotal}
-          deliveryFee={deliveryFee}
+          deliveryFee={homeDeliveryFee}
           freeThreshold={freeThreshold}
           onChange={(method) => onChange({ deliveryMethod: method })}
         />

@@ -123,7 +123,13 @@ function ConfirmationContent() {
         </div>
         <div className="h-px bg-gray-200" />
         <div className="flex justify-between font-semibold text-base">
-          <span>{t('confirmation.total_paid')}</span>
+          {/* Nothing has been paid yet on a cash order — the money changes
+              hands at the door or the counter. */}
+          <span>
+            {order.payment_provider === 'cod'
+              ? t('confirmation.total_due')
+              : t('confirmation.total_paid')}
+          </span>
           <span className="text-primary">{Number(order.total).toFixed(2)} AED</span>
         </div>
         <div className="flex justify-between text-xs text-gray-400 pt-1">

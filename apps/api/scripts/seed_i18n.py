@@ -211,6 +211,7 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ),
     ("confirmation", "order_number", "Order Number"),
     ("confirmation", "total_paid", "Total Paid"),
+    ("confirmation", "total_due", "Total Due on Collection / Delivery"),
     ("confirmation", "delivering_to", "Delivering to"),
     (
         "confirmation",
@@ -607,6 +608,7 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("confirmation", "thank_you", "شكراً لطلبك. سنُرسل تأكيداً إلى {email}."),
     ("confirmation", "order_number", "رقم الطلب"),
     ("confirmation", "total_paid", "الإجمالي المدفوع"),
+    ("confirmation", "total_due", "المبلغ المستحق عند الاستلام"),
     ("confirmation", "delivering_to", "التوصيل إلى"),
     (
         "confirmation",
