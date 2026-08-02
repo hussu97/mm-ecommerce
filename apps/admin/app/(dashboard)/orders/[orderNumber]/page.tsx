@@ -50,19 +50,27 @@ export default function OrderDetailPage() {
       .finally(() => setLoading(false));
   }, [orderNumber]);
 
-  // Separate call, and a 404 is normal: pickup orders and anything placed
-  // before fulfilment was tracked simply have no delivery record.
+  // A fulfilment record is only ever opened for delivery orders, so asking for
+  // one on a pickup order — every POS check included — is a guaranteed 404.
+  // Delivery orders placed before fulfilment was tracked still 404, hence the
+  // catch: that one is genuinely expected and not worth logging.
+  const isDeliveryOrder = order?.delivery_method === 'delivery';
+
   const loadDelivery = useCallback(() => {
+    if (!isDeliveryOrder) return;
     ordersApi.getDelivery(orderNumber)
       .then(setDelivery)
       .catch(err => { if (!(err instanceof ApiError && err.status === 404)) console.error(err); });
-  }, [orderNumber]);
+  }, [orderNumber, isDeliveryOrder]);
 
   useEffect(() => { loadDelivery(); }, [loadDelivery]);
 
   async function updateStatus(newStatus: OrderStatus) {
     if (!order) return;
-    if (!confirm(`Set order to "${STATUS_LABEL[newStatus]}"?`)) return;
+    // Cancelling goes through on the first click — it is the one status the
+    // counter changes while the customer is still on the phone. Every other
+    // move still asks.
+    if (newStatus !== 'cancelled' && !confirm(`Set order to "${STATUS_LABEL[newStatus]}"?`)) return;
     setActionLoading(true);
     try {
       const updated = await ordersApi.updateStatus(orderNumber, newStatus, notes || undefined);
