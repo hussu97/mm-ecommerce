@@ -5,7 +5,7 @@ import { ProductGrid } from '@/components/category/ProductGrid';
 import { Breadcrumb } from '@/components/ui';
 import { getTranslations, createT } from '@/lib/i18n/server';
 import { localizedField } from '@/lib/i18n/entity';
-import { API_BASE } from '@/lib/api';
+import { RSC_API_BASE } from '@/lib/api';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 const PER_PAGE = 12;
@@ -146,10 +146,10 @@ export default async function AllProductsPage({
   const { category, page: pageStr } = await searchParams;
   const page = Math.max(1, parseInt(pageStr ?? '1', 10) || 1);
 
-  const productUrl = `${API_BASE}/products?per_page=${PER_PAGE}&page=${page}${category ? `&category=${category}` : ''}`;
+  const productUrl = `${RSC_API_BASE}/products?per_page=${PER_PAGE}&page=${page}${category ? `&category=${category}` : ''}`;
 
   const [categoriesRes, productsRes, translations] = await Promise.all([
-    fetch(`${API_BASE}/categories`, { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) }),
+    fetch(`${RSC_API_BASE}/categories`, { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) }),
     fetch(productUrl, { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) }),
     getTranslations(locale),
   ]);

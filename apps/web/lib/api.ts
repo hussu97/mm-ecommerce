@@ -2,10 +2,19 @@ import { Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateR
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
-// Server Components (RSC) need an absolute URL for fetch — relative paths don't
-// work in Node.js. When API_BASE is a relative proxied path (dev), fall back to
-// the direct backend URL. In production API_BASE is already absolute.
-const RSC_API_BASE = API_BASE.startsWith('http')
+/**
+ * Base URL for fetches that run on the server — Server Components, route
+ * handlers, `sitemap.ts`, `generateMetadata`.
+ *
+ * `API_BASE` is a relative path in dev so the browser goes through the Next
+ * rewrite and cookies stay same-origin, but Node's fetch cannot resolve a
+ * relative URL with no request to resolve it against. Worse than throwing: in
+ * a static prerender it never settles, so a `try`/`catch` fallback around it
+ * never runs and the build worker is killed at its 60s timeout. Production
+ * sets an absolute `NEXT_PUBLIC_API_URL`, which is why this only ever bites
+ * locally. Every server-side fetch must use this, never `API_BASE`.
+ */
+export const RSC_API_BASE = API_BASE.startsWith('http')
   ? API_BASE
   : (process.env.NEXT_PRIVATE_API_HOST ?? 'http://localhost:8000') + '/api/v1';
 
@@ -214,9 +223,24 @@ export const deliveryApi = {
   /**
    * What delivery costs to a specific point. Priced against the active zone
    * map, so the figure on screen is the one the order gets written with.
+   *
+   * `address` is the pin's formatted address. It is not used to price anything
+   * — the pin already did that — it travels so the server can record what the
+   * same trip would cost to fulfil, against the same place a driver would be
+   * sent to.
    */
-  quote: (subtotal: number, latitude: number | null, longitude: number | null) =>
-    api.post<DeliveryQuote>('/delivery/quote', { subtotal, latitude, longitude }),
+  quote: (
+    subtotal: number,
+    latitude: number | null,
+    longitude: number | null,
+    address?: string | null,
+  ) =>
+    api.post<DeliveryQuote>('/delivery/quote', {
+      subtotal,
+      latitude,
+      longitude,
+      address: address || null,
+    }),
 };
 
 export const regionsApi = {

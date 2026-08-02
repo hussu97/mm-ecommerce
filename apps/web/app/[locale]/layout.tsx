@@ -7,7 +7,7 @@ import { Footer } from "@/components/layout/Footer";
 import { PromoBanner } from "@/components/layout/PromoBanner";
 import type { Category, Language } from "@/lib/types";
 
-import { API_BASE } from "@/lib/api";
+import { RSC_API_BASE } from "@/lib/api";
 
 const SUPPORTED_LOCALES = (process.env.NEXT_PUBLIC_SUPPORTED_LOCALES ?? "en,ar").split(",");
 
@@ -17,7 +17,7 @@ export function generateStaticParams() {
 
 async function getActiveCategories(): Promise<Category[]> {
   try {
-    const res = await fetch(`${API_BASE}/categories`, { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) });
+    const res = await fetch(`${RSC_API_BASE}/categories`, { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) });
     if (!res.ok) return [];
     const data: Category[] = await res.json();
     return data.filter((c) => c.is_active).sort((a, b) => a.display_order - b.display_order);

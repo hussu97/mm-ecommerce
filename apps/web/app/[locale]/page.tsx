@@ -1,6 +1,6 @@
 import { Fragment } from 'react';
 import type { Metadata } from 'next';
-import { cmsApi, API_BASE } from '@/lib/api';
+import { cmsApi, RSC_API_BASE } from '@/lib/api';
 import type { Product, Category } from '@/lib/types';
 import { HeroCarousel, type HeroContent } from '@/components/home/HeroCarousel';
 import { UspMarquee, type UspContent } from '@/components/home/UspMarquee';
@@ -27,7 +27,7 @@ interface HomeContent {
 
 async function getCategories(): Promise<Category[]> {
   try {
-    const res = await fetch(`${API_BASE}/categories`, {
+    const res = await fetch(`${RSC_API_BASE}/categories`, {
       next: { revalidate: 300 },
       signal: AbortSignal.timeout(8000),
     });
@@ -141,7 +141,7 @@ async function getHomeContent(locale: string): Promise<HomeContent> {
 
 async function getFeaturedProducts(): Promise<Product[]> {
   try {
-    const res = await fetch(`${API_BASE}/products/featured`, {
+    const res = await fetch(`${RSC_API_BASE}/products/featured`, {
       next: { revalidate: 300 },
       signal: AbortSignal.timeout(8000),
     });

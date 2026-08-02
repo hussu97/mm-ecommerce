@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { ProductListResponse } from '@/lib/types';
-import { API_BASE } from '@/lib/api';
+import { RSC_API_BASE } from '@/lib/api';
 import { ProductGrid } from '@/components/category/ProductGrid';
 import { SearchTracker } from '@/components/analytics/SearchTracker';
 import { getTranslations, createT } from '@/lib/i18n/server';
@@ -25,7 +25,7 @@ async function searchProducts(params: SearchParams): Promise<ProductListResponse
     ...(page && { page }),
   });
 
-  const res = await fetch(`${API_BASE}/products?${qs.toString()}`, { cache: 'no-store' });
+  const res = await fetch(`${RSC_API_BASE}/products?${qs.toString()}`, { cache: 'no-store' });
   if (!res.ok) return null;
   return res.json();
 }

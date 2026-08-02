@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
+import { RSC_API_BASE } from '@/lib/api';
 import type { BlogPost, BlogPostListResponse, Category, Product, ProductListResponse } from '@/lib/types';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 
 export const revalidate = 3600;
@@ -113,7 +113,7 @@ export async function GET() {
 
 async function fetchCategories(): Promise<Category[]> {
   try {
-    const res = await fetch(`${API_BASE}/categories`, {
+    const res = await fetch(`${RSC_API_BASE}/categories`, {
       next: { revalidate: 3600 },
       signal: AbortSignal.timeout(5000),
     });
@@ -131,7 +131,7 @@ async function fetchAllProducts(): Promise<Product[]> {
   try {
     while (hasMore) {
       const res = await fetch(
-        `${API_BASE}/products?per_page=100&page=${page}&is_active=true`,
+        `${RSC_API_BASE}/products?per_page=100&page=${page}&is_active=true`,
         { next: { revalidate: 3600 }, signal: AbortSignal.timeout(5000) },
       );
       if (!res.ok) break;
@@ -148,7 +148,7 @@ async function fetchAllProducts(): Promise<Product[]> {
 
 async function fetchBlogPosts(): Promise<BlogPost[]> {
   try {
-    const res = await fetch(`${API_BASE}/blog/public?locale=en&per_page=50`, {
+    const res = await fetch(`${RSC_API_BASE}/blog/public?locale=en&per_page=50`, {
       next: { revalidate: 3600 },
       signal: AbortSignal.timeout(5000),
     });
@@ -162,7 +162,7 @@ async function fetchBlogPosts(): Promise<BlogPost[]> {
 
 async function fetchFaq(): Promise<FaqItem[]> {
   try {
-    const res = await fetch(`${API_BASE}/cms/public/faq?locale=en`, {
+    const res = await fetch(`${RSC_API_BASE}/cms/public/faq?locale=en`, {
       next: { revalidate: 3600 },
       signal: AbortSignal.timeout(5000),
     });

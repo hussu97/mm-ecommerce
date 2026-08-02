@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
+import { RSC_API_BASE } from '@/lib/api';
 import type { Category } from '@/lib/types';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 
 export const revalidate = 3600;
@@ -9,7 +9,7 @@ export const revalidate = 3600;
 export async function GET() {
   let categories: Category[] = [];
   try {
-    const res = await fetch(`${API_BASE}/categories`, { next: { revalidate: 3600 } });
+    const res = await fetch(`${RSC_API_BASE}/categories`, { next: { revalidate: 3600 } });
     if (res.ok) categories = await res.json();
   } catch {
     // continue with empty categories

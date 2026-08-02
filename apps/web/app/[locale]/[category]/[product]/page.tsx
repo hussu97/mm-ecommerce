@@ -7,12 +7,12 @@ import { RecentlyViewedProducts } from '@/components/product/RecentlyViewedProdu
 import type { Product, ProductModifier } from '@/lib/types';
 import { localizedField } from '@/lib/i18n/entity';
 import { getTranslations, createT } from '@/lib/i18n/server';
-import { API_BASE } from '@/lib/api';
+import { RSC_API_BASE } from '@/lib/api';
 import { BRAND, PRODUCT_BRAND, SHIPPING_DETAILS, RETURN_POLICY } from '@/lib/schema';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 
 async function getProduct(slug: string): Promise<Product | null> {
-  const res = await fetch(`${API_BASE}/products/${slug}`, { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) });
+  const res = await fetch(`${RSC_API_BASE}/products/${slug}`, { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) });
   if (!res.ok) return null;
   return res.json();
 }
