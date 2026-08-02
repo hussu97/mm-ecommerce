@@ -102,16 +102,21 @@ h6,
   to   { opacity: 1; }
 }
 
+/* The track holds MM_MARQUEE_COPIES identical runs of the list and travels by
+   exactly one run — 1/4 of its own width — so the loop restarts on an identical
+   frame. Four runs (rather than the usual two) means three runs' worth of items
+   are always spanning the viewport, which keeps the strip full on wide screens
+   even when the list itself is short. */
 @keyframes mm-marquee {
   from { transform: translate3d(0, 0, 0); }
-  to   { transform: translate3d(-50%, 0, 0); }
+  to   { transform: translate3d(-25%, 0, 0); }
 }
 
 /* Slow push-in on the active hero frame — the photograph keeps breathing while
    the slide is on screen instead of sitting there as a flat plate. */
 @keyframes mm-kenburns {
-  from { transform: scale(1.02); }
-  to   { transform: scale(1.11); }
+  from { transform: scale(1); }
+  to   { transform: scale(1.06); }
 }
 
 @keyframes mm-sheen {
@@ -124,7 +129,6 @@ h6,
    staggers siblings. */
 .mm-reveal {
   opacity: 0;
-  will-change: opacity, transform;
 }
 
 .mm-reveal[data-shown='true'] {
@@ -139,13 +143,28 @@ h6,
   animation: none;
 }
 
+/* Anchored left in both scripts. Under `dir="rtl"` the overflowing track is laid
+   out from the container's *right* edge, so translating it -50% slides it clean
+   out of view and the strip renders empty. Item order inside a decorative loop
+   carries no meaning, so pinning the rail to LTR costs nothing — each label
+   still resolves its own direction via `dir="auto"`. */
+.mm-marquee {
+  direction: ltr;
+}
+
 .mm-marquee-track {
   display: flex;
   width: max-content;
   animation: mm-marquee var(--mm-marquee-duration, 40s) linear infinite;
 }
 
-/* The strip scrolls toward the reading direction's origin in both scripts. */
+.mm-marquee-run {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+/* …and the strip still travels toward the reading direction's origin. */
 [dir='rtl'] .mm-marquee-track {
   animation-direction: reverse;
 }
@@ -218,11 +237,15 @@ h6,
   }
 
   .mm-marquee-track {
-    /* Without the animation the duplicated half is dead weight — hide it so the
-       strip reads as one clean row of USPs. */
+    /* Without the animation the duplicate runs are dead weight — hide them so
+       the strip reads as one clean row of USPs. */
     width: 100%;
     justify-content: center;
+  }
+
+  .mm-marquee-run {
     flex-wrap: wrap;
+    justify-content: center;
   }
 
   .mm-marquee-track > [aria-hidden='true'] {

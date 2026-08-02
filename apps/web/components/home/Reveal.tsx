@@ -1,13 +1,15 @@
 'use client';
 
-import { useEffect, useRef, useState, type CSSProperties, type ElementType, type ReactNode } from 'react';
+import { useEffect, useRef, type CSSProperties, type ElementType, type ReactNode } from 'react';
 
 /**
  * Fades a block up into place the first time it scrolls into view.
  *
- * Deliberately not a library: the homepage is server-rendered and one shared
- * IntersectionObserver per element is cheaper than shipping a motion runtime to
- * every visitor on a 3G connection in Sharjah.
+ * Deliberately not a library: the homepage is server-rendered and one
+ * IntersectionObserver per block is cheaper than shipping a motion runtime to
+ * every visitor on a phone in Sharjah. The observer flips a `data-shown`
+ * attribute directly rather than going through state — nothing about the React
+ * tree changes when a section becomes visible, so there is no re-render.
  *
  * If the browser has no IntersectionObserver the block is shown immediately —
  * content must never be stranded at opacity 0. The JS-disabled case is covered
@@ -28,24 +30,27 @@ export function Reveal({
   once?: boolean;
 }) {
   const ref = useRef<HTMLElement>(null);
-  const [shown, setShown] = useState<'true' | 'false' | 'skip'>('false');
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
 
     if (typeof IntersectionObserver === 'undefined') {
-      setShown('skip');
+      el.dataset.shown = 'skip';
       return;
     }
 
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) {
-          setShown('true');
+        // Already scrolled past — a restored scroll position or a jump to an
+        // anchor must not leave everything above the fold at opacity 0.
+        const scrolledPast = entry.boundingClientRect.bottom < 0;
+
+        if (entry.isIntersecting || scrolledPast) {
+          el.dataset.shown = 'true';
           if (once) observer.disconnect();
         } else if (!once) {
-          setShown('false');
+          el.dataset.shown = 'false';
         }
       },
       { threshold: 0.12, rootMargin: '0px 0px -8% 0px' },
@@ -58,7 +63,7 @@ export function Reveal({
   return (
     <Tag
       ref={ref}
-      data-shown={shown}
+      data-shown="false"
       className={`mm-reveal ${className}`}
       style={{ '--mm-delay': `${delay}ms` } as CSSProperties}
     >

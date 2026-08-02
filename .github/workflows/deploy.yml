@@ -390,6 +390,17 @@ jobs:
           timeout 300 docker compose -f docker-compose.prod.yml run --rm --no-deps -T api alembic upgrade head < /dev/null \
             || { echo "ERROR: Migration failed or timed out after 5 minutes"; exit 1; }
 
+          # A migration that edits cms_pages writes straight to Postgres, so the
+          # cms:<slug>:<locale> keys the API caches for five minutes keep serving
+          # the pre-migration copy. That is invisible on a normal deploy and ugly
+          # on this one: the Vercel build runs in parallel and bakes whatever the
+          # API answers with into the static pages, per locale, so a page can ship
+          # half migrated. Drop the CMS keys and let them refill from the new rows.
+          echo "Invalidating CMS cache..."
+          docker compose -f docker-compose.prod.yml exec -T redis \
+            sh -c 'redis-cli --scan --pattern "cms:*" | xargs -r redis-cli del' < /dev/null \
+            || echo "WARNING: CMS cache flush failed — content may be stale for up to 5 minutes"
+
           echo "Restarting the APIs with the new image..."
           docker compose -f docker-compose.prod.yml up -d --force-recreate --remove-orphans api pos-api
 

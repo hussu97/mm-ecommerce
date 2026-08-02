@@ -1,24 +1,33 @@
+import { Fragment } from 'react';
 import type { Metadata } from 'next';
-import { cmsApi, API_BASE } from '@/lib/api';
+import { cmsApi, RSC_API_BASE } from '@/lib/api';
 import type { Product, Category } from '@/lib/types';
-import { HeroSection, type HeroContent } from '@/components/home/HeroSection';
+import { HeroCarousel, type HeroContent } from '@/components/home/HeroCarousel';
+import { UspMarquee, type UspContent } from '@/components/home/UspMarquee';
 import { FeaturedProducts, type FeaturedContent } from '@/components/home/FeaturedProducts';
+import { CategoryTiles, type CategoriesContent } from '@/components/home/CategoryTiles';
+import { PromoBanners, type PromosContent } from '@/components/home/PromoBanners';
 import { MeetTheBaker, type BakerContent } from '@/components/home/MeetTheBaker';
 import { CaterSection, type CaterContent } from '@/components/home/CaterSection';
+import { orderedSections, type HomeLayout, type SectionKey } from '@/lib/home-sections';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 
 interface HomeContent {
   hero?: HeroContent;
+  usps?: UspContent;
   featured?: FeaturedContent;
+  categories?: CategoriesContent;
+  promos?: PromosContent;
   baker?: BakerContent;
   cater?: CaterContent;
+  layout?: HomeLayout;
   seo?: { title?: string; description?: string };
 }
 
 async function getCategories(): Promise<Category[]> {
   try {
-    const res = await fetch(`${API_BASE}/categories`, {
+    const res = await fetch(`${RSC_API_BASE}/categories`, {
       next: { revalidate: 300 },
       signal: AbortSignal.timeout(8000),
     });
@@ -132,7 +141,7 @@ async function getHomeContent(locale: string): Promise<HomeContent> {
 
 async function getFeaturedProducts(): Promise<Product[]> {
   try {
-    const res = await fetch(`${API_BASE}/products/featured`, {
+    const res = await fetch(`${RSC_API_BASE}/products/featured`, {
       next: { revalidate: 300 },
       signal: AbortSignal.timeout(8000),
     });
@@ -184,6 +193,21 @@ export default async function HomePage({
   ]);
 
   const jsonLd = buildJsonLd(categories, featuredProducts);
+  const activeCategories = categories.filter(cat => cat.is_active);
+
+  const sections: Record<SectionKey, React.ReactNode> = {
+    hero: <HeroCarousel c={c.hero ?? {}} locale={locale} />,
+    usps: <UspMarquee c={c.usps ?? {}} />,
+    featured: (
+      <FeaturedProducts products={featuredProducts} c={c.featured ?? {}} locale={locale} />
+    ),
+    categories: (
+      <CategoryTiles c={c.categories ?? {}} categories={activeCategories} locale={locale} />
+    ),
+    promos: <PromoBanners c={c.promos ?? {}} locale={locale} />,
+    baker: <MeetTheBaker c={c.baker ?? {}} locale={locale} />,
+    cater: <CaterSection c={c.cater ?? {}} locale={locale} />,
+  };
 
   return (
     <>
@@ -191,10 +215,16 @@ export default async function HomePage({
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
-      <HeroSection c={c.hero ?? {}} locale={locale} />
-      <FeaturedProducts products={featuredProducts} c={c.featured ?? {}} locale={locale} />
-      <MeetTheBaker c={c.baker ?? {}} locale={locale} />
-      <CaterSection c={c.cater ?? {}} />
+      {/* Scroll reveals start at opacity 0 and are un-hidden by an observer.
+          With scripting off there is no observer, so opt out of the whole
+          effect rather than serve an invisible page. */}
+      <noscript>
+        <style>{'.mm-reveal{opacity:1!important;animation:none!important}'}</style>
+      </noscript>
+
+      {orderedSections(c.layout).map(key => (
+        <Fragment key={key}>{sections[key]}</Fragment>
+      ))}
     </>
   );
 }

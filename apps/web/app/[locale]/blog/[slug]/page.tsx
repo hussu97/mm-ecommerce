@@ -3,14 +3,14 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import type { BlogPost } from '@/lib/types';
 import { Breadcrumb } from '@/components/ui';
-import { API_BASE } from '@/lib/api';
+import { RSC_API_BASE } from '@/lib/api';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 
 async function fetchPost(slug: string, locale: string): Promise<BlogPost | null> {
   try {
     const res = await fetch(
-      `${API_BASE}/blog/public/${slug}?locale=${locale}`,
+      `${RSC_API_BASE}/blog/public/${slug}?locale=${locale}`,
       { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) },
     );
     if (!res.ok) return null;

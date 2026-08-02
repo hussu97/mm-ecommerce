@@ -33,15 +33,13 @@ Ajman, AED 25 clears it across Dubai, and no fee a customer would pay clears a
 048's map is left in place and merely deactivated, so rolling back is pointing
 `is_active` at it again.
 
-Numbered 050 rather than 049 because `feat/homepage-visual-refresh` took 049
-off the same parent. Both chains hang off 048, which is fine while they are
-separate branches and becomes two Alembic heads the moment they are both
-merged. Whichever lands second should re-parent onto the other — a one-line
-change to `down_revision`, caught immediately because `alembic upgrade head`
-refuses to run with two heads.
+Numbered 050 rather than 049 because the home-page work took 049 off the same
+parent while this was in flight. Both chains hung off 048 until they met; this
+one re-parented onto 049 at the merge, which is why the numbers skip nothing
+but the history has a fork in it.
 
 Revision ID: 050_delivery_zone_fulfilment
-Revises: 048_delivery_polygons
+Revises: 049_home_page_sections
 Create Date: 2026-08-02
 """
 
@@ -56,7 +54,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "050_delivery_zone_fulfilment"
-down_revision: Union[str, None] = "048_delivery_polygons"
+down_revision: Union[str, None] = "049_home_page_sections"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

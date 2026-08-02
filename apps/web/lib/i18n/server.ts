@@ -1,9 +1,9 @@
 import type { Language } from "@/lib/types";
-import { API_BASE } from "@/lib/api";
+import { RSC_API_BASE } from "@/lib/api";
 
 export async function getTranslations(locale: string): Promise<Record<string, string>> {
   try {
-    const res = await fetch(`${API_BASE}/i18n/translations/${locale}`, {
+    const res = await fetch(`${RSC_API_BASE}/i18n/translations/${locale}`, {
       next: { revalidate: 300 },
       signal: AbortSignal.timeout(8000),
     });
@@ -16,7 +16,7 @@ export async function getTranslations(locale: string): Promise<Record<string, st
 
 export async function getLanguages(): Promise<Language[]> {
   try {
-    const res = await fetch(`${API_BASE}/i18n/languages`, {
+    const res = await fetch(`${RSC_API_BASE}/i18n/languages`, {
       next: { revalidate: 300 },
       signal: AbortSignal.timeout(8000),
     });

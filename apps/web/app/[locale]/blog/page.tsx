@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { BlogPost, BlogPostListResponse } from '@/lib/types';
 import { Breadcrumb } from '@/components/ui';
-import { API_BASE } from '@/lib/api';
+import { RSC_API_BASE } from '@/lib/api';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 const PER_PAGE = 10;
@@ -58,7 +58,7 @@ export default async function BlogIndexPage({
 
   try {
     const res = await fetch(
-      `${API_BASE}/blog/public?locale=${locale}&page=${page}&per_page=${PER_PAGE}`,
+      `${RSC_API_BASE}/blog/public?locale=${locale}&page=${page}&per_page=${PER_PAGE}`,
       { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) },
     );
     if (res.ok) {

@@ -7,7 +7,7 @@ import { CategoryTracker } from '@/components/analytics/CategoryTracker';
 import { Breadcrumb } from '@/components/ui';
 import { localizedField } from '@/lib/i18n/entity';
 import { getTranslations, createT } from '@/lib/i18n/server';
-import { API_BASE } from '@/lib/api';
+import { RSC_API_BASE } from '@/lib/api';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 const PER_PAGE = 12;
 
@@ -17,8 +17,8 @@ async function getCategoryData(
 ): Promise<{ category: Category; products: Product[]; total: number; pages: number } | null> {
   try {
     const [catRes, prodRes] = await Promise.all([
-      fetch(`${API_BASE}/categories/${slug}`, { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) }),
-      fetch(`${API_BASE}/products?category=${slug}&per_page=${PER_PAGE}&page=${page}`, {
+      fetch(`${RSC_API_BASE}/categories/${slug}`, { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) }),
+      fetch(`${RSC_API_BASE}/products?category=${slug}&per_page=${PER_PAGE}&page=${page}`, {
         next: { revalidate: 300 },
         signal: AbortSignal.timeout(8000),
       }),
