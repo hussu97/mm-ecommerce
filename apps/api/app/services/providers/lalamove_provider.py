@@ -333,7 +333,17 @@ class LalamoveClient:
             raise LalamoveError("Webhook body is not an object")
 
         if payload.get("apiKey") != config.key:
-            raise LalamoveError("Webhook is for a different API key")
+            # Named, because this rejection is invisible from the other side:
+            # we answer 200 so Lalamove does not retry for a day and disable the
+            # URL, which means a key mismatch loses every status update in
+            # silence. Saying which key arrived turns "the orders never leave
+            # packed" into a one-line diagnosis. Prefixes only — enough to tell
+            # sandbox from production, or a rotated key from a stale one.
+            arrived = str(payload.get("apiKey") or "")
+            raise LalamoveError(
+                "Webhook is for a different API key "
+                f"(got {arrived[:11] or '<none>'}…, expected {config.key[:11]}…)"
+            )
 
         signature = payload.get("signature")
         if not signature:
