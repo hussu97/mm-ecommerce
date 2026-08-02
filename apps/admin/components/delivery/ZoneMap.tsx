@@ -109,9 +109,6 @@ export function ZoneMap({ data, selectedZoneId, onSelect }: Props) {
             {formatCurrency(active.delivery_fee)} ·{' '}
             {(PROVIDER_STYLE[active.fulfilment_provider] ?? PROVIDER_STYLE.third_party).label}
           </p>
-          {active.region_slug && (
-            <p className="text-[10px] font-body text-gray-400 mt-0.5">{active.region_slug}</p>
-          )}
         </div>
       )}
 
@@ -126,7 +123,8 @@ export function ZoneMap({ data, selectedZoneId, onSelect }: Props) {
           </div>
         ))}
         <span className="text-[11px] font-body text-gray-400 ml-auto">
-          Hover a zone for its fee. Smaller zones sit on top, which is the order fees resolve in.
+          Hover a zone for its fee. Zones do not overlap, so every address is in
+          exactly one.
         </span>
       </div>
     </div>

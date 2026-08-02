@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-import enum
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
@@ -15,18 +14,6 @@ from datetime import datetime
 
 if TYPE_CHECKING:
     from .user import User
-
-
-class RegionEnum(str, enum.Enum):
-    DUBAI = "dubai"
-    SHARJAH = "sharjah"
-    AJMAN = "ajman"
-    ABU_DHABI = "abu_dhabi"
-    FUJAIRAH = "fujairah"
-    RAS_AL_KHAIMAH = "ras_al_khaimah"
-    UMM_AL_QUWAIN = "umm_al_quwain"
-    AL_AIN = "al_ain"
-    REST_OF_UAE = "rest_of_uae"
 
 
 class Address(Base, UUIDMixin):
@@ -47,7 +34,6 @@ class Address(Base, UUIDMixin):
     # Flat / office / floor — the one part of an address a map pin can never
     # supply, and the part a rider needs to finish the delivery.
     unit_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    region: Mapped[str] = mapped_column(String(30), nullable=False)
     country: Mapped[str] = mapped_column(String(2), nullable=False, default="AE")
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     latitude: Mapped[Decimal] = mapped_column(Numeric(9, 6), nullable=False)
@@ -60,4 +46,4 @@ class Address(Base, UUIDMixin):
     user: Mapped[User] = relationship("User", back_populates="addresses")
 
     def __repr__(self) -> str:
-        return f"<Address {self.label} - {self.region}>"
+        return f"<Address {self.label} @ {self.latitude},{self.longitude}>"

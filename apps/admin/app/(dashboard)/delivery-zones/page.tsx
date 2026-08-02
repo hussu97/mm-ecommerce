@@ -8,7 +8,7 @@ import type {
   DeliveryZone,
   DeliveryZoneMap,
   DeliveryZoneShape,
-  DeliveryZoneSummary,
+  DeliverySettings,
   FulfilmentProvider,
 } from '@/lib/types';
 import { Badge, Button, Input, Select, Spinner, TabBar } from '@/components/ui';
@@ -28,7 +28,7 @@ const PROVIDER_OPTIONS = [
 
 export default function DeliveryZonesPage() {
   const [versions, setVersions] = useState<DeliveryMapVersion[]>([]);
-  const [summary, setSummary] = useState<DeliveryZoneSummary | null>(null);
+  const [settings, setSettings] = useState<DeliverySettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -48,12 +48,12 @@ export default function DeliveryZonesPage() {
     try {
       const [v, s, m, b] = await Promise.all([
         deliveryZonesApi.listVersions(),
-        deliveryZonesApi.summary(),
+        deliveryZonesApi.getSettings(),
         deliveryZonesApi.map(),
         deliveryZonesApi.listBatches({ limit: 50 }),
       ]);
       setVersions(v);
-      setSummary(s);
+      setSettings(s);
       setZoneMap(m);
       setBatches(b);
       setOpenId(current => current ?? v.find(x => x.is_active)?.id ?? v[0]?.id ?? null);
@@ -152,32 +152,12 @@ export default function DeliveryZonesPage() {
         />
       )}
 
-      {tab === 'maps' && summary && (
-        <div className="bg-white border border-gray-200 p-4 mb-4">
-          <p className="text-[11px] font-body uppercase tracking-widest text-gray-400 mb-3">
-            Applies to every zone
-          </p>
-          <dl className="grid grid-cols-3 gap-4 text-xs font-body">
-            <div>
-              <dt className="text-gray-500">Free delivery above</dt>
-              <dd className="text-gray-800 text-sm">
-                {formatCurrency(summary.free_threshold)}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-gray-500">Outside every zone</dt>
-              <dd className="text-gray-800 text-sm">
-                {formatCurrency(summary.default_delivery_fee)}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-gray-500">Pickup</dt>
-              <dd className="text-gray-800 text-sm">
-                {summary.pickup_fee > 0 ? formatCurrency(summary.pickup_fee) : 'Free'}
-              </dd>
-            </div>
-          </dl>
-        </div>
+      {tab === 'maps' && settings && (
+        <SettingsCard
+          settings={settings}
+          busy={busy}
+          onSave={data => run(() => deliveryZonesApi.updateSettings(data))}
+        />
       )}
 
       <div className={cn('space-y-3', tab !== 'maps' && 'hidden')}>
@@ -373,7 +353,7 @@ function ZoneRow({
       <td className="px-4 py-2.5">
         <div className="text-xs font-body text-gray-800">{zone.name}</div>
         <div className="text-[11px] font-body text-gray-400">
-          {zone.region_slug ?? '—'} · {zone.point_count.toLocaleString()} points
+          {zone.point_count.toLocaleString()} points
         </div>
       </td>
       <td className="px-4 py-2.5 text-right">
@@ -566,6 +546,114 @@ function RunsTab({
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+
+/**
+ * The three delivery numbers that belong to no zone.
+ *
+ * They used to live on a Regions screen alongside a table of emirates and
+ * their fees. The emirates are gone — the pin decides the price — and these
+ * three were the only part of that screen still worth keeping.
+ */
+function SettingsCard({
+  settings,
+  busy,
+  onSave,
+}: {
+  settings: DeliverySettings;
+  busy: boolean;
+  onSave: (data: {
+    free_delivery_threshold?: number;
+    pickup_fee?: number;
+    default_delivery_fee?: number;
+  }) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({
+    free_delivery_threshold: String(settings.free_delivery_threshold),
+    pickup_fee: String(settings.pickup_fee),
+    default_delivery_fee: String(settings.default_delivery_fee),
+  });
+
+  const FIELDS = [
+    {
+      key: 'free_delivery_threshold' as const,
+      label: 'Free delivery above',
+      hint: 'The same in every zone — the one delivery number a customer sees.',
+    },
+    {
+      key: 'default_delivery_fee' as const,
+      label: 'Outside every zone',
+      hint: 'A real address we have not drawn a shape around yet.',
+    },
+    { key: 'pickup_fee' as const, label: 'Pickup', hint: 'Usually nothing.' },
+  ];
+
+  function save() {
+    const parsed = Object.fromEntries(
+      FIELDS.map(f => [f.key, Number(form[f.key])]),
+    ) as Record<(typeof FIELDS)[number]['key'], number>;
+    if (Object.values(parsed).some(v => !Number.isFinite(v) || v < 0)) {
+      alert('Every amount has to be a number, and none of them can be negative.');
+      return;
+    }
+    onSave(parsed);
+    setEditing(false);
+  }
+
+  return (
+    <div className="bg-white border border-gray-200 p-4 mb-4">
+      <div className="flex items-center mb-3">
+        <p className="text-[11px] font-body uppercase tracking-widest text-gray-400 flex-1">
+          Applies to every zone
+        </p>
+        {!editing && (
+          <button
+            onClick={() => setEditing(true)}
+            className="text-[11px] font-body text-primary hover:underline"
+          >
+            Edit
+          </button>
+        )}
+      </div>
+
+      <dl className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs font-body">
+        {FIELDS.map(field => (
+          <div key={field.key}>
+            <dt className="text-gray-500">{field.label}</dt>
+            {editing ? (
+              <input
+                value={form[field.key]}
+                onChange={e => setForm({ ...form, [field.key]: e.target.value })}
+                inputMode="decimal"
+                className="mt-1 w-24 px-2 py-1 text-xs font-body bg-white border border-gray-300 rounded-sm outline-none focus:border-primary"
+              />
+            ) : (
+              <dd className="text-gray-800 text-sm">
+                {Number(settings[field.key]) > 0
+                  ? formatCurrency(Number(settings[field.key]))
+                  : 'Free'}
+              </dd>
+            )}
+            <p className="text-[10px] text-gray-400 mt-1">{field.hint}</p>
+          </div>
+        ))}
+      </dl>
+
+      {editing && (
+        <div className="flex justify-end gap-2 mt-3">
+          <Button size="sm" variant="ghost" onClick={() => setEditing(false)} disabled={busy}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={save} disabled={busy}>
+            Save
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

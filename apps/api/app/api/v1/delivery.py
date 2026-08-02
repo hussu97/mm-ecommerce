@@ -17,7 +17,6 @@ router = APIRouter()
 
 class DeliveryCalculateRequest(BaseModel):
     delivery_method: DeliveryMethodEnum
-    region: str | None = None
     subtotal: Decimal
     latitude: Decimal | None = None
     longitude: Decimal | None = None
@@ -39,7 +38,6 @@ class DeliveryQuoteResponse(BaseModel):
     free_threshold: float
     remaining_for_free: float
     zone_name: str | None = None
-    region_slug: str | None = None
     in_known_zone: bool
 
 
@@ -51,7 +49,7 @@ class DeliveryCalculateResponse(BaseModel):
 
 @router.get("/rates", response_model=dict[str, Any])
 async def get_rates(db: AsyncSession = Depends(get_db)):
-    """Return all active delivery regions and the free-shipping threshold."""
+    """The free-delivery threshold, the pickup fee and the outside-every-zone fee."""
     return await delivery_service.get_delivery_rates(db)
 
 
@@ -60,11 +58,10 @@ async def calculate_delivery(
     data: DeliveryCalculateRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Calculate the delivery fee for a given region and order subtotal."""
+    """The delivery fee for a pin and an order subtotal."""
     settings = await delivery_service.get_settings(db)
     fee = await delivery_service.calculate_fee(
         data.delivery_method,
-        data.region,
         data.subtotal,
         db,
         settings=settings,

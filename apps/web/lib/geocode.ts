@@ -7,45 +7,21 @@
  * street, area and emirate split across three inputs the customer had to
  * reconcile. The only thing left to type is the part no map can know: the flat.
  *
- * The emirate still comes back, but as data rather than a question. It rides
- * along on the order for reporting; the delivery fee is priced off the
- * coordinates against the zone map.
+ * Nothing is derived from the result beyond that line. The emirate used to be
+ * guessed out of Google's components and sent along with the order; the fee is
+ * priced off the coordinates against the zone map, so the guess was a second,
+ * worse answer to a question already answered.
  */
 
 export interface GeocodedAddress {
   /** Google's formatted address, trimmed of the country suffix. */
   address: string;
-  region: string;
 }
 
 type Component = google.maps.GeocoderAddressComponent;
 
 function pick(components: Component[], type: string): string {
   return components.find((c) => c.types.includes(type))?.long_name ?? '';
-}
-
-/**
- * Google names UAE emirates several ways ("Abu Dhabi Emirate", "Emirate of
- * Sharjah", "Ras al Khaimah"), so match loosely on the distinctive words rather
- * than expecting one exact string.
- */
-function toRegionSlug(components: Component[]): string {
-  const admin = pick(components, 'administrative_area_level_1').toLowerCase();
-  const locality = pick(components, 'locality').toLowerCase();
-
-  // Al Ain sits inside the emirate of Abu Dhabi but has always been its own
-  // line in the fee table, so the city wins over the emirate here.
-  if (locality.includes('al ain') || admin.includes('al ain')) return 'al_ain';
-
-  const haystack = `${admin} ${locality}`;
-  if (haystack.includes('dubai')) return 'dubai';
-  if (haystack.includes('sharjah')) return 'sharjah';
-  if (haystack.includes('ajman')) return 'ajman';
-  if (haystack.includes('abu dhabi') || haystack.includes('abudhabi')) return 'abu_dhabi';
-  if (haystack.includes('ras al khaimah') || haystack.includes('ras el khaimah')) return 'ras_al_khaimah';
-  if (haystack.includes('fujairah')) return 'fujairah';
-  if (haystack.includes('umm al quwain') || haystack.includes('umm al qaiwain')) return 'umm_al_quwain';
-  return 'rest_of_uae';
 }
 
 /**
@@ -90,7 +66,7 @@ export async function reverseGeocode(lat: number, lng: number): Promise<Geocoded
     const address = tidy(best.formatted_address, best.address_components);
     if (!address) return null;
 
-    return { address, region: toRegionSlug(best.address_components) };
+    return { address };
   } catch {
     return null;
   }

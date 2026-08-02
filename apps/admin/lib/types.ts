@@ -341,7 +341,8 @@ export interface RevenueBreakdown {
   by_payment_provider: BreakdownItem[];
 }
 
-export interface RegionData { region: string; orders: number; revenue: number; }
+/** Sales grouped by the delivery zone that priced each order. */
+export interface ZoneSalesData { zone: string; orders: number; revenue: number; }
 
 export interface PromoPerformance {
   code: string;
@@ -374,15 +375,6 @@ export interface PaginatedEmailLogs {
   pages: number;
 }
 
-export interface Region {
-  id: string;
-  slug: string;
-  name_translations: Record<string, string>;
-  delivery_fee: number;
-  is_active: boolean;
-  sort_order: number;
-}
-
 /** Who carries an order out of the kitchen. */
 export type FulfilmentProvider = 'lalamove' | 'third_party';
 
@@ -390,7 +382,6 @@ export type FulfilmentProvider = 'lalamove' | 'third_party';
 export interface DeliveryZone {
   id: string;
   name: string;
-  region_slug: string | null;
   delivery_fee: number;
   fulfilment_provider: FulfilmentProvider;
   display_order: number;
@@ -420,7 +411,6 @@ export interface ZoneGeometry {
 export interface DeliveryZoneShape {
   id: string;
   name: string;
-  region_slug: string | null;
   delivery_fee: number;
   fulfilment_provider: FulfilmentProvider;
   display_order: number;
@@ -478,8 +468,7 @@ export interface DeliveryZoneSummary {
   version: { id: string; name: string } | null;
   zones: Array<{
     name: string;
-    region_slug: string | null;
-    delivery_fee: number;
+      delivery_fee: number;
     fulfilment_provider: FulfilmentProvider;
   }>;
   /** The same everywhere — free delivery does not depend on the zone. */
@@ -521,8 +510,11 @@ export interface OrderDelivery {
 
 export interface DeliverySettings {
   id: string;
+  /** The same in every zone, on purpose. */
   free_delivery_threshold: number;
   pickup_fee: number;
+  /** Charged when a pin falls outside every zone we have drawn. */
+  default_delivery_fee: number;
 }
 
 // ─── Audit Logs ───────────────────────────────────────────────────────────────

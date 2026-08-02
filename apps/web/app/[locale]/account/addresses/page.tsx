@@ -2,18 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import { addressesApi, ApiError } from '@/lib/api';
-import { Address, AddressCreate, RegionCode } from '@/lib/types';
+import { Address, AddressCreate } from '@/lib/types';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { LocationPicker } from '@/components/ui/LocationPicker';
-
-const REGION_CODES: RegionCode[] = [
-  'dubai', 'sharjah', 'ajman', 'abu_dhabi',
-  'fujairah', 'ras_al_khaimah', 'umm_al_quwain', 'al_ain', 'rest_of_uae',
-];
 
 const BLANK_FORM: AddressCreate = {
   label: 'Home',
@@ -22,7 +17,6 @@ const BLANK_FORM: AddressCreate = {
   phone: '',
   address_line_1: '',
   address_line_2: '',
-  region: 'dubai',
   country: 'AE',
   is_default: false,
   latitude: null,
@@ -40,11 +34,6 @@ export default function AddressesPage() {
   const [errors, setErrors] = useState<Partial<Record<keyof AddressCreate, string>>>({});
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-
-  const REGION_OPTIONS = REGION_CODES.map((code) => ({
-    value: code,
-    label: t(`regions.${code}`),
-  }));
 
   useEffect(() => {
     addressesApi.list()
@@ -68,7 +57,6 @@ export default function AddressesPage() {
       phone: addr.phone,
       address_line_1: addr.address_line_1,
       address_line_2: addr.address_line_2 || '',
-      region: addr.region,
       country: addr.country,
       is_default: addr.is_default,
       latitude: addr.latitude,
@@ -89,7 +77,6 @@ export default function AddressesPage() {
     if (!form.last_name.trim()) e.last_name = t('common.required');
     if (!form.phone.trim()) e.phone = t('common.required');
     if (!form.address_line_1.trim()) e.address_line_1 = t('common.required');
-    if (!form.region) e.region = t('common.required');
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -205,13 +192,6 @@ export default function AddressesPage() {
               value={form.address_line_2}
               onChange={e => setForm(f => ({ ...f, address_line_2: e.target.value }))}
             />
-            <Select
-              label={t('address.region')}
-              value={form.region}
-              onChange={e => setForm(f => ({ ...f, region: e.target.value as RegionCode }))}
-              options={REGION_OPTIONS}
-              error={errors.region}
-            />
             <div>
               <p className="text-xs font-medium uppercase tracking-wider text-gray-600 mb-2">
                 {t('address.pin_location')}
@@ -275,7 +255,6 @@ export default function AddressesPage() {
                   {addr.address_line_2 && (
                     <p className="text-sm text-gray-600 font-body">{addr.address_line_2}</p>
                   )}
-                  <p className="text-sm text-gray-600 font-body">{t(`regions.${addr.region}`)}</p>
                   <p className="text-xs text-gray-400 font-body mt-1">{addr.phone}</p>
                 </div>
                 <div className="flex flex-col gap-1.5 shrink-0">

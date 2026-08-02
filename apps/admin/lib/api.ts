@@ -1,10 +1,10 @@
 import type {
   AdminLoginOptions, AdminPasskey, AdminUserSummary,
-  AnalyticsOverview, AuditLog, Category, CmsPage, CustomerBreakdown, RegionData,
+  AnalyticsOverview, AuditLog, Category, CmsPage, CustomerBreakdown, ZoneSalesData,
   FunnelData, ImportResult, Language, Modifier, Order, OrdersPoint, PaginatedAuditLogs,
   PaginatedCustomers, PaginatedEmailLogs, PaginatedOrders, Product, ProductListResponse,
   PromoCode, PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
-  TrafficData, UploadResponse, User, Region, DeliverySettings, SalesChannel,
+  TrafficData, UploadResponse, User, DeliverySettings, SalesChannel,
   DeliveryMapVersion, DeliveryZone, DeliveryZoneSummary, FulfilmentProvider, OrderDelivery,
   BatchWindow, BatchWindowWrite, DeliveryBatch, DeliveryZoneMap,
 } from './types';
@@ -233,6 +233,10 @@ export const ordersApi = {
 export const deliveryZonesApi = {
   listVersions: () => api.get<DeliveryMapVersion[]>('/delivery-zones/versions'),
   summary: () => api.get<DeliveryZoneSummary>('/delivery-zones/summary'),
+  /** The three numbers that apply in every zone. */
+  getSettings: () => api.get<DeliverySettings>('/delivery-zones/settings'),
+  updateSettings: (data: Partial<Pick<DeliverySettings, 'free_delivery_threshold' | 'pickup_fee' | 'default_delivery_fee'>>) =>
+    api.put<DeliverySettings>('/delivery-zones/settings', data),
   /** Copy a map into an editable draft. Defaults to copying the live one. */
   createVersion: (data: { name: string; notes?: string; source_version_id?: string }) =>
     api.post<DeliveryMapVersion>('/delivery-zones/versions', data),
@@ -296,8 +300,8 @@ export const analyticsApi = {
     api.get<CustomerBreakdown>(`/analytics/customers${buildQs(params)}`),
   revenueBreakdown: (params?: { start_date?: string; end_date?: string }) =>
     api.get<RevenueBreakdown>(`/analytics/revenue-breakdown${buildQs(params)}`),
-  regions: (params?: { start_date?: string; end_date?: string }) =>
-    api.get<RegionData[]>(`/analytics/regions${buildQs(params)}`),
+  zones: (params?: { start_date?: string; end_date?: string }) =>
+    api.get<ZoneSalesData[]>(`/analytics/zones${buildQs(params)}`),
   promos: (params?: { start_date?: string; end_date?: string }) =>
     api.get<PromoPerformance[]>(`/analytics/promos${buildQs(params)}`),
 };
@@ -411,17 +415,6 @@ export const cmsApi = {
 };
 
 // ─── Email Logs ───────────────────────────────────────────────────────────────
-
-// ─── Regions ──────────────────────────────────────────────────────────────────
-
-export const regionsApi = {
-  list: () => api.get<Region[]>('/regions'),
-  update: (slug: string, data: Partial<Pick<Region, 'name_translations' | 'delivery_fee' | 'is_active' | 'sort_order'>>) =>
-    api.put<Region>(`/regions/${slug}`, data),
-  getSettings: () => api.get<DeliverySettings>('/regions/settings'),
-  updateSettings: (data: Partial<Pick<DeliverySettings, 'free_delivery_threshold' | 'pickup_fee'>>) =>
-    api.put<DeliverySettings>('/regions/settings', data),
-};
 
 // ─── Email Logs ───────────────────────────────────────────────────────────────
 

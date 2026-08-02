@@ -249,11 +249,9 @@ async def _compute_order_totals(
         and address.longitude is not None
         else None
     )
-    # The fee is priced off the pin. The region rides along only as a fallback
-    # for an address saved before the map existed.
+    # The fee is priced off the pin, and only the pin.
     delivery_fee = await delivery_service.calculate_fee(
         data.delivery_method,
-        address.region if address else None,
         discounted_subtotal,
         db,
         latitude=address.latitude if address else None,

@@ -21,7 +21,7 @@ import pytest
 
 from app.api.v1.delivery import DeliveryQuoteResponse
 from app.models.cart import Cart
-from app.models.region import DeliverySettings
+from app.models.delivery_settings import DeliverySettings
 from app.services import delivery_service, lalamove_service
 from app.services.delivery_zone_service import Zone
 
@@ -34,7 +34,6 @@ SETTINGS = DeliverySettings(
 SHARJAH_CITY = Zone(
     id=uuid.uuid4(),
     name="Sharjah City",
-    region_slug="sharjah",
     delivery_fee=Decimal("15.00"),
     fulfilment_provider="lalamove",
     min_lat=25.0,
@@ -110,7 +109,6 @@ def test_the_response_model_has_no_field_that_could_leak_one():
         "free_threshold",
         "remaining_for_free",
         "zone_name",
-        "region_slug",
         "in_known_zone",
     }
 
@@ -151,7 +149,6 @@ async def test_the_threshold_does_not_move_with_the_zone(cart):
     far = Zone(
         id=uuid.uuid4(),
         name="Fujairah",
-        region_slug="fujairah",
         delivery_fee=Decimal("50.00"),
         fulfilment_provider="third_party",
         min_lat=24.8,

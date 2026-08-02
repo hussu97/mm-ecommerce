@@ -30,6 +30,7 @@ from app.models.delivery_batch import (
     DeliveryBatch,
     DeliveryBatchWindow,
 )
+from app.models.delivery_settings import DeliverySettings
 from app.models.delivery_polygon import (
     DeliveryPolygon,
     DeliveryPolygonVersion,
@@ -54,7 +55,6 @@ router = APIRouter()
 class PolygonResponse(BaseModel):
     id: str
     name: str
-    region_slug: str | None
     delivery_fee: float
     fulfilment_provider: str
     display_order: int
@@ -67,7 +67,6 @@ class PolygonResponse(BaseModel):
         return cls(
             id=str(p.id),
             name=p.name,
-            region_slug=p.region_slug,
             delivery_fee=float(p.delivery_fee),
             fulfilment_provider=p.fulfilment_provider,
             display_order=p.display_order,
@@ -325,7 +324,6 @@ async def zone_map(
             {
                 "id": str(polygon.id),
                 "name": polygon.name,
-                "region_slug": polygon.region_slug,
                 "delivery_fee": float(polygon.delivery_fee),
                 "fulfilment_provider": polygon.fulfilment_provider,
                 "display_order": polygon.display_order,
@@ -408,7 +406,6 @@ async def create_version(
         copy = DeliveryPolygon(
             version_id=draft.id,
             name=polygon.name,
-            region_slug=polygon.region_slug,
             delivery_fee=polygon.delivery_fee,
             fulfilment_provider=polygon.fulfilment_provider,
             geometry=polygon.geometry,
@@ -608,7 +605,6 @@ async def zone_summary(
         "zones": [
             {
                 "name": z.name,
-                "region_slug": z.region_slug,
                 "delivery_fee": float(z.delivery_fee),
                 "fulfilment_provider": z.fulfilment_provider,
             }
@@ -871,3 +867,78 @@ async def dispatch_batch_now(
     )
     polygon = await db.get(DeliveryPolygon, batch.polygon_id)
     return BatchResponse.of(batch, polygon.name if polygon else None, [])
+
+
+# ── Settings ──────────────────────────────────────────────────────────────────
+
+
+class DeliverySettingsResponse(BaseModel):
+    id: str
+    free_delivery_threshold: float
+    pickup_fee: float
+    default_delivery_fee: float
+
+    @classmethod
+    def of(cls, s: DeliverySettings) -> "DeliverySettingsResponse":
+        return cls(
+            id=str(s.id),
+            free_delivery_threshold=float(s.free_delivery_threshold),
+            pickup_fee=float(s.pickup_fee),
+            default_delivery_fee=float(s.default_delivery_fee),
+        )
+
+
+class DeliverySettingsUpdate(BaseModel):
+    free_delivery_threshold: Decimal | None = Field(None, ge=0)
+    pickup_fee: Decimal | None = Field(None, ge=0)
+    default_delivery_fee: Decimal | None = Field(None, ge=0)
+
+
+@router.get("/settings", response_model=DeliverySettingsResponse)
+async def get_delivery_settings(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    """
+    The three delivery numbers that are not a property of any zone.
+
+    They live here rather than on their own screen because there is nothing
+    else left to configure about delivery: the free-delivery threshold is
+    deliberately identical everywhere, pickup has no zone, and the default is
+    what a pin outside every shape on the map gets charged.
+    """
+    return DeliverySettingsResponse.of(await delivery_service.get_settings(db))
+
+
+@router.put("/settings", response_model=DeliverySettingsResponse)
+async def update_delivery_settings(
+    data: DeliverySettingsUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+):
+    """Change them. Unlike a zone fee, these take effect immediately."""
+    settings = await delivery_service.get_settings(db)
+    before = DeliverySettingsResponse.of(settings).model_dump()
+
+    for field, value in data.model_dump(exclude_none=True).items():
+        setattr(settings, field, value)
+    # `get_settings` invents a row when the table is empty, so this has to be an
+    # add rather than an assumption that the object is already tracked.
+    db.add(settings)
+    await db.flush()
+
+    await audit_service.log_action(
+        db,
+        action="UPDATE",
+        entity_type="delivery_settings",
+        entity_id=str(settings.id),
+        entity_label="Delivery settings",
+        admin=admin,
+        changes={
+            "from": before,
+            "to": DeliverySettingsResponse.of(settings).model_dump(),
+        },
+        request=request,
+    )
+    return DeliverySettingsResponse.of(settings)

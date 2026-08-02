@@ -30,7 +30,6 @@ class Zone:
 
     id: uuid.UUID
     name: str
-    region_slug: str | None
     delivery_fee: Decimal
     fulfilment_provider: str
     min_lat: float
@@ -145,7 +144,6 @@ def _to_zone(p: DeliveryPolygon) -> Zone:
     return Zone(
         id=p.id,
         name=p.name,
-        region_slug=p.region_slug,
         delivery_fee=Decimal(str(p.delivery_fee)),
         fulfilment_provider=(
             p.fulfilment_provider or FulfilmentProviderEnum.THIRD_PARTY.value

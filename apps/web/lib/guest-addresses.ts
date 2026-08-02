@@ -1,6 +1,6 @@
 'use client';
 
-import type { Address, RegionCode } from './types';
+import type { Address } from './types';
 
 /**
  * Addresses for people who have not made an account.
@@ -48,7 +48,6 @@ export interface GuestAddressInput {
   address_line_1: string;
   address_line_2?: string;
   unit_number?: string;
-  region: RegionCode;
   latitude?: number | null;
   longitude?: number | null;
   is_default?: boolean;
@@ -65,7 +64,6 @@ function toAddress(input: GuestAddressInput, id: string): Address {
     address_line_1: input.address_line_1,
     address_line_2: input.address_line_2 ?? null,
     unit_number: input.unit_number ?? null,
-    region: input.region,
     country: 'AE',
     is_default: input.is_default ?? false,
     latitude: input.latitude ?? null,

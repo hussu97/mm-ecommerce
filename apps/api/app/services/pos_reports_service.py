@@ -45,7 +45,7 @@ from app.models.pos_order import (
     PosOrderStatusEnum,
 )
 from app.models.pos_table import PosTable, Section
-from app.models.region import Region
+from app.models.order_delivery import OrderDelivery
 from app.models.tag import Tag, TaggedEntity
 from app.models.product import Product
 from app.models.till import DrawerOperation, Till
@@ -1547,8 +1547,13 @@ async def _sales_by_delivery_zone(
     Only delivery orders count. A takeaway has no zone, and including it
     would drop every counter sale into an "Unzoned" bucket that swamps the
     real ones.
+
+    Grouped by the zone that actually priced the order, snapshotted on the
+    delivery record. That used to be the customer's self-declared emirate,
+    which made this report a summary of what people typed rather than of where
+    the cakes went.
     """
-    zone = func.coalesce(Region.slug, "unzoned")
+    zone = func.coalesce(OrderDelivery.zone_name, "unzoned")
     stmt = (
         _scope(
             select(
@@ -1562,7 +1567,7 @@ async def _sales_by_delivery_zone(
             date_to=date_to,
         )
         .select_from(Order)
-        .outerjoin(Region, Region.id == Order.region_id)
+        .outerjoin(OrderDelivery, OrderDelivery.order_id == Order.id)
         .where(Order.pos_status == CLOSED, Order.order_type == "delivery")
         .group_by(zone)
         .order_by(func.coalesce(func.sum(Order.total), 0).desc())

@@ -206,7 +206,6 @@ export default function OrderDetailPage() {
               <p>{order.shipping_address_snapshot.phone}</p>
               <p>{order.shipping_address_snapshot.address_line_1}</p>
               {order.shipping_address_snapshot.address_line_2 && <p>{order.shipping_address_snapshot.address_line_2}</p>}
-              <p>{order.shipping_address_snapshot.region}</p>
             </div>
           )}
         </div>

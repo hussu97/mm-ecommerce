@@ -10,9 +10,15 @@ class TestDeliveryRates:
         data = (await client.get("/api/v1/delivery/rates")).json()
         assert "free_threshold" in data
 
-    async def test_get_rates_has_regions(self, client):
+    async def test_get_rates_publishes_no_price_list(self, client):
+        """
+        Areas and prices are not handed to the storefront. The fee comes from
+        where the pin lands, and a table here would invite a guess from the
+        address text instead.
+        """
         data = (await client.get("/api/v1/delivery/rates")).json()
-        assert "regions" in data
+        assert "regions" not in data
+        assert set(data) == {"free_threshold", "pickup_fee", "default_delivery_fee"}
 
 
 class TestDeliveryCalculate:
@@ -30,7 +36,6 @@ class TestDeliveryCalculate:
             "/api/v1/delivery/calculate",
             json={
                 "delivery_method": "delivery",
-                "region": "dubai",
                 "subtotal": "200.00",
             },
         )
@@ -42,7 +47,6 @@ class TestDeliveryCalculate:
             "/api/v1/delivery/calculate",
             json={
                 "delivery_method": "delivery",
-                "region": "dubai",
                 "subtotal": "100.00",
             },
         )

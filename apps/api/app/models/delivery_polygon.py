@@ -91,9 +91,6 @@ class DeliveryPolygon(Base, UUIDMixin):
         index=True,
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    # Kept so an order can still record which emirate it went to, and so the
-    # admin list reads in familiar terms, but it no longer decides the price.
-    region_slug: Mapped[str | None] = mapped_column(String(30), nullable=True)
     delivery_fee: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     # Which courier serves this zone. Third party is the safe default: it means
     # "do what we have always done", so a zone added without thinking about
