@@ -249,6 +249,14 @@ async def assign_or_dispatch(
     now = moment or datetime.now(timezone.utc)
     delivery.dispatchable_at = now
 
+    if not lalamove_service.is_enabled():
+        # No courier configured, so there is no shared run to wait for. Falling
+        # through to the single-order path records "dispatch this by hand" on
+        # the order immediately, where the person packing it will see it —
+        # rather than parking it in a batch that can only fail when its window
+        # closes an hour later.
+        return await lalamove_service.dispatch_order(db, order)
+
     if delivery.polygon_id is None:
         # An order placed before zones carried an id, or against a map that has
         # since been deleted. It still has to go out; it just goes alone.

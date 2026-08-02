@@ -19,7 +19,7 @@ import pytest
 
 from app.models.order import OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
-from app.services import lalamove_service
+from app.services import batching_service, lalamove_service
 
 NOW = datetime(2026, 8, 2, 12, 0, tzinfo=timezone.utc)
 COURIER_ID = "3463513590991397204"
@@ -343,3 +343,44 @@ async def test_an_order_already_out_with_a_driver_is_not_booked_twice():
 )
 def test_phone_numbers_reach_e164_or_nothing(raw, expected):
     assert lalamove_service._normalise_phone(raw) == expected
+
+
+async def test_nothing_is_batched_when_no_courier_is_configured():
+    """
+    Without credentials there is no shared run to wait for, so an order must
+    not be parked in a batch that can only fail when its window closes. It
+    falls through to the single-order path, which records "dispatch this by
+    hand" on the order straight away — where the person packing it will see it.
+    """
+    delivery = _delivery(courier_order_id=None, courier_status=None, batch_id=None)
+    order = _order(OrderStatusEnum.PACKED)
+    delivery.polygon_id = uuid.uuid4()
+
+    async def _get_delivery(_db, _order_id):
+        return delivery
+
+    calls: list[str] = []
+
+    async def _dispatch(_db, o):
+        calls.append(o.order_number)
+        delivery.last_error = "Courier is not configured; dispatch this order by hand"
+        return delivery
+
+    original_get, original_dispatch, original_enabled = (
+        lalamove_service.get_delivery,
+        lalamove_service.dispatch_order,
+        lalamove_service.is_enabled,
+    )
+    lalamove_service.get_delivery = _get_delivery  # type: ignore[assignment]
+    lalamove_service.dispatch_order = _dispatch  # type: ignore[assignment]
+    lalamove_service.is_enabled = lambda: False  # type: ignore[assignment]
+    try:
+        result = await batching_service.assign_or_dispatch(_FakeDb(order), order)
+    finally:
+        lalamove_service.get_delivery = original_get  # type: ignore[assignment]
+        lalamove_service.dispatch_order = original_dispatch  # type: ignore[assignment]
+        lalamove_service.is_enabled = original_enabled  # type: ignore[assignment]
+
+    assert calls == [order.order_number], "the single-order path should have run"
+    assert result.batch_id is None
+    assert "by hand" in (result.last_error or "")
