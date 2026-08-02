@@ -85,6 +85,155 @@ h6,
   font-family: var(--font-display-ar);
 }
 
+/* ─── Homepage motion ─────────────────────────────────────────────────────────
+   Everything here is pure CSS: the homepage is mostly server-rendered and we
+   are not shipping an animation library for it. Each effect degrades to a
+   static layout under `prefers-reduced-motion`, which is enforced once at the
+   bottom of this block rather than per-rule.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+@keyframes mm-rise {
+  from { opacity: 0; transform: translate3d(0, 26px, 0); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes mm-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes mm-marquee {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(-50%, 0, 0); }
+}
+
+/* Slow push-in on the active hero frame — the photograph keeps breathing while
+   the slide is on screen instead of sitting there as a flat plate. */
+@keyframes mm-kenburns {
+  from { transform: scale(1.02); }
+  to   { transform: scale(1.11); }
+}
+
+@keyframes mm-sheen {
+  from { transform: translate3d(-120%, 0, 0); }
+  to   { transform: translate3d(220%, 0, 0); }
+}
+
+/* Reveal on scroll. The element starts hidden and only animates once the
+   observer adds `data-shown` — see components/home/Reveal.tsx. `--mm-delay`
+   staggers siblings. */
+.mm-reveal {
+  opacity: 0;
+  will-change: opacity, transform;
+}
+
+.mm-reveal[data-shown='true'] {
+  animation: mm-rise 0.75s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: var(--mm-delay, 0ms);
+}
+
+/* No JS / no observer support: never leave content invisible. */
+.no-js .mm-reveal,
+.mm-reveal[data-shown='skip'] {
+  opacity: 1;
+  animation: none;
+}
+
+.mm-marquee-track {
+  display: flex;
+  width: max-content;
+  animation: mm-marquee var(--mm-marquee-duration, 40s) linear infinite;
+}
+
+/* The strip scrolls toward the reading direction's origin in both scripts. */
+[dir='rtl'] .mm-marquee-track {
+  animation-direction: reverse;
+}
+
+.mm-marquee:hover .mm-marquee-track,
+.mm-marquee:focus-within .mm-marquee-track {
+  animation-play-state: paused;
+}
+
+.mm-kenburns {
+  animation: mm-kenburns 9s ease-out both;
+}
+
+.mm-slide-in {
+  animation: mm-rise 0.85s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: var(--mm-delay, 0ms);
+}
+
+.mm-fade-in {
+  animation: mm-fade 0.6s ease-out both;
+}
+
+/* Sheen sweep across a filled CTA on hover. */
+.mm-sheen {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.mm-sheen::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 45%;
+  background: linear-gradient(
+    100deg,
+    transparent,
+    rgba(255, 255, 255, 0.42),
+    transparent
+  );
+  transform: translate3d(-120%, 0, 0);
+  pointer-events: none;
+}
+
+.mm-sheen:hover::after,
+.mm-sheen:focus-visible::after {
+  animation: mm-sheen 0.9s ease-out;
+}
+
+/* Horizontal rails: hide the scrollbar but keep the scrolling. */
+.mm-rail {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.mm-rail::-webkit-scrollbar {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mm-reveal,
+  .mm-reveal[data-shown='true'],
+  .mm-slide-in,
+  .mm-fade-in,
+  .mm-kenburns,
+  .mm-marquee-track {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  .mm-marquee-track {
+    /* Without the animation the duplicated half is dead weight — hide it so the
+       strip reads as one clean row of USPs. */
+    width: 100%;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .mm-marquee-track > [aria-hidden='true'] {
+    display: none;
+  }
+
+  .mm-sheen::after {
+    display: none;
+  }
+}
+
 /* ─── Google Maps PlaceAutocompleteElement — force light theme ────────────── */
 gmp-place-autocomplete {
   color-scheme: light;

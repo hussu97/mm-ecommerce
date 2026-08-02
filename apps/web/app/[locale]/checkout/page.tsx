@@ -386,8 +386,11 @@ function CheckoutContent() {
   const freeThreshold = quote?.free_threshold ?? deliveryRates?.free_threshold ?? 200;
   const freeApplied = effectiveSubtotal >= freeThreshold;
 
-  // Priced off the pin against the active zone map. Until there is a pin there
-  // is no honest number to show, so the row says so rather than guessing.
+  // Priced off the pin against the active zone map. Before there is a pin the
+  // API answers with the fallback fee, which is the highest we charge — so the
+  // quote can only ever come down once the address is in, never up. A total
+  // that rises after the customer has read it is the worse surprise.
+  const hasPin = form.locationLat !== null && form.locationLng !== null;
   const baseFee = quote?.base_fee ?? null;
   const knowsFee = baseFee !== null;
   const homeDeliveryFee = knowsFee ? (freeApplied ? 0 : baseFee) : null;
@@ -610,9 +613,9 @@ function CheckoutContent() {
             title={t('checkout.delivery_option')}
             subtitle={freeApplied
               ? t('checkout.free_delivery_qualified')
-              : knowsFee
-                ? t('checkout.free_delivery_upsell', { amount: remainingForFree.toFixed(2) })
-                : t('checkout.fee_from_address')}
+              : !hasPin
+                ? t('checkout.fee_from_address')
+                : t('checkout.free_delivery_upsell', { amount: remainingForFree.toFixed(2) })}
             trailing={
               !knowsFee ? (
                 <span className="text-gray-400">—</span>
