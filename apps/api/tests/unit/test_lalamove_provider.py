@@ -186,8 +186,13 @@ def test_the_default_webhook_path_is_the_one_we_serve():
     """
     Signing covers the path, so this setting and the route have to agree
     exactly. They live in different files; this is what notices when one moves.
+
+    Read from the OpenAPI schema rather than `app.routes`, for the reason
+    `test_pos_subapp` already records: FastAPI 0.140 stopped flattening
+    `include_router` into that attribute, so walking it sees only the handful
+    of endpoints declared directly on the app and reports every mounted router
+    as absent.
     """
     from app.main import app
 
-    routes = {getattr(r, "path", None) for r in app.routes}
-    assert settings.LALAMOVE_WEBHOOK_PATH in routes
+    assert settings.LALAMOVE_WEBHOOK_PATH in set(app.openapi()["paths"])
