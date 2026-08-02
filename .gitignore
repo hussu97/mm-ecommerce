@@ -1,5 +1,5 @@
 # Dependencies
-node_modules/
+node_modules
 .pnpm-store/
 
 # Build outputs
@@ -16,8 +16,8 @@ __pycache__/
 *.egg-info/
 .eggs/
 *.egg
-.venv/
-venv/
+.venv
+venv
 env/
 
 # Environment
