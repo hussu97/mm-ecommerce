@@ -52,13 +52,12 @@ interface CheckoutForm {
   locationLat: number | null;
   locationLng: number | null;
   selectedAddressId: string; // '' = new address
-  // Step 2
   deliveryMethod: 'delivery' | 'pickup';
-  // Step 3
+  // Step 2
   promoCode: string;
   promoDiscount: number;
   promoMessage: string;
-  paymentMethod: 'stripe';
+  paymentMethod: 'stripe' | 'cod';
   notes: string;
 }
 
@@ -93,7 +92,10 @@ function calcFeeFromRates(
 
 function StepIndicator({ step }: { step: number }) {
   const { t } = useTranslation();
-  const STEPS = [t('checkout.step_information'), t('checkout.step_delivery'), t('checkout.step_payment')];
+  // Delivery method moved up into step 1 — choosing "pickup" after already
+  // being made to enter an address was the wrong order, and a third screen
+  // holding one radio pair was a step for its own sake.
+  const STEPS = [t('checkout.step_information'), t('checkout.step_payment')];
   return (
     <nav className="flex items-center gap-2 mb-8 font-body text-xs uppercase tracking-widest">
       {STEPS.map((label, i) => {
@@ -125,11 +127,10 @@ function StepIndicator({ step }: { step: number }) {
 // ─── Order summary sidebar ────────────────────────────────────────────────────
 
 function OrderSummarySidebar({
-  cart, form, step, retryOrder, deliveryRates,
+  cart, form, retryOrder, deliveryRates,
 }: {
   cart: Cart | null;
   form: CheckoutForm;
-  step: number;
   retryOrder: import('@/lib/types').Order | null;
   deliveryRates: DeliveryRates | null;
 }) {
@@ -138,12 +139,12 @@ function OrderSummarySidebar({
   const subtotal = retryOrder ? Number(retryOrder.subtotal) : (cart?.subtotal ?? 0);
   const discount = retryOrder ? Number(retryOrder.discount_amount) : form.promoDiscount;
   const effectiveSubtotal = Math.max(0, subtotal - discount);
+  // The delivery method is picked on the first screen now, so the shopper sees
+  // a real total straight away instead of "Delivery — next step".
   const deliveryFee = retryOrder
     ? Number(retryOrder.delivery_fee)
-    : step >= 2
-      ? calcFeeFromRates(deliveryRates, form.deliveryMethod, form.region, effectiveSubtotal)
-      : null;
-  const total = retryOrder ? Number(retryOrder.total) : subtotal + (deliveryFee ?? 0) - discount;
+    : calcFeeFromRates(deliveryRates, form.deliveryMethod, form.region, effectiveSubtotal);
+  const total = retryOrder ? Number(retryOrder.total) : subtotal + deliveryFee - discount;
 
   return (
     <div className="bg-gray-50 border border-gray-100 rounded-sm p-5 space-y-4 sticky top-24">
@@ -218,10 +219,10 @@ function OrderSummarySidebar({
           </div>
         )}
         <div className="flex justify-between">
-          <span className="text-gray-500">{t('common.delivery')}</span>
-          {deliveryFee === null ? (
-            <span className="text-gray-400 italic">{t('checkout.next_step')}</span>
-          ) : deliveryFee === 0 ? (
+          <span className="text-gray-500">
+            {form.deliveryMethod === 'pickup' ? t('checkout.store_pickup') : t('common.delivery')}
+          </span>
+          {deliveryFee === 0 ? (
             <span className="text-green-600">{t('common.free')}</span>
           ) : (
             <span>{deliveryFee.toFixed(2)} AED</span>
@@ -254,10 +255,28 @@ function isValidEmail(email: string): boolean {
   return true;
 }
 
+/**
+ * Bring the first invalid field into view.
+ *
+ * The Continue button sits at the bottom of a long form, so an error on the
+ * email field renders a full screen above the tap that triggered it. Without
+ * this the button reads as simply broken.
+ */
+function focusFirstError(field: string) {
+  requestAnimationFrame(() => {
+    const el =
+      document.querySelector<HTMLElement>(`[data-field="${field}"]`) ??
+      document.querySelector<HTMLElement>('[data-field-error="true"]');
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.querySelector<HTMLElement>('input, select, textarea')?.focus({ preventScroll: true });
+  });
+}
+
 // ─── Step 1: Information ──────────────────────────────────────────────────────
 
 function StepInformation({
-  form, onChange, onNext, savedAddresses, loadingAddresses, regions,
+  form, onChange, onNext, savedAddresses, loadingAddresses, regions, subtotal, deliveryRates,
 }: {
   form: CheckoutForm;
   onChange: (patch: Partial<CheckoutForm>) => void;
@@ -265,9 +284,16 @@ function StepInformation({
   savedAddresses: Address[];
   loadingAddresses: boolean;
   regions: PublicRegion[];
+  subtotal: number;
+  deliveryRates: DeliveryRates | null;
 }) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { t } = useTranslation();
+
+  const isDelivery = form.deliveryMethod === 'delivery';
+  const effectiveSubtotal = Math.max(0, subtotal - form.promoDiscount);
+  const deliveryFee = calcFeeFromRates(deliveryRates, form.deliveryMethod, form.region, effectiveSubtotal);
+  const freeThreshold = deliveryRates?.free_threshold ?? 200;
 
   function validateStep1(f: CheckoutForm): Record<string, string> {
     const errs: Record<string, string> = {};
@@ -287,19 +313,20 @@ function StepInformation({
 
   const handleNext = () => {
     const contactErrors = validateStep1(form);
-    const needsAddress = !form.selectedAddressId;
+    // Pickup orders have no address to give. Asking for one — and blocking on
+    // it — is what the old flow did, and it is why `checkout_error` fired more
+    // often than `begin_checkout`.
+    const needsAddress = isDelivery && !form.selectedAddressId;
     const addressFieldErrors = needsAddress ? validateStep1Address(form) : {};
-    const locationError: Record<string, string> = (form.locationLat === null || form.locationLng === null)
-      ? { locationLat: t('checkout.pin_location_required') }
-      : {};
-    const all = { ...contactErrors, ...addressFieldErrors, ...locationError };
+    const all = { ...contactErrors, ...addressFieldErrors };
     if (Object.keys(all).length > 0) {
       setErrors(all);
       analytics.checkoutError({ step: 1, field: Object.keys(all)[0] });
+      focusFirstError(Object.keys(all)[0]);
       return;
     }
     setErrors({});
-    analytics.checkoutStepComplete({ step: 1 });
+    analytics.checkoutStepComplete({ step: 1, delivery_method: form.deliveryMethod });
     onNext();
   };
 
@@ -310,12 +337,31 @@ function StepInformation({
 
   return (
     <div className="space-y-6">
+      {/* How they want it — asked first, because it decides whether the rest of
+          this form even applies to them. */}
+      <div>
+        <h2 className="font-display text-xl text-primary uppercase tracking-widest mb-1">{t('checkout.delivery_method')}</h2>
+        <div className="h-px bg-secondary/30 mb-5" />
+        <DeliveryCalculator
+          deliveryMethod={form.deliveryMethod}
+          region={form.region}
+          effectiveSubtotal={effectiveSubtotal}
+          deliveryFee={deliveryFee}
+          freeThreshold={freeThreshold}
+          onChange={(method) => onChange({ deliveryMethod: method })}
+        />
+        <div className="mt-4 p-3 bg-secondary/10 rounded-sm flex gap-2">
+          <span className="material-icons text-base text-secondary mt-0.5">info</span>
+          <p className="font-body text-xs text-gray-600">{t('checkout.delivery_time_note')}</p>
+        </div>
+      </div>
+
       {/* Contact information */}
       <div>
         <h2 className="font-display text-xl text-primary uppercase tracking-widest mb-1">{t('checkout.contact_information')}</h2>
         <div className="h-px bg-secondary/30 mb-5" />
         <div className="space-y-4">
-          <div>
+          <div data-field="email" data-field-error={errors.email ? 'true' : undefined}>
             <Input
               label={t('common.email')}
               type="email"
@@ -327,114 +373,69 @@ function StepInformation({
             <p className="mt-1.5 text-xs text-foreground/50">{t('checkout.email_hint')}</p>
           </div>
           <div className="grid grid-cols-2 gap-4">
+            <div data-field="firstName" data-field-error={errors.firstName ? 'true' : undefined}>
+              <Input
+                label={t('common.first_name')}
+                placeholder={t('checkout.first_name_placeholder')}
+                value={form.firstName}
+                onChange={field('firstName')}
+                error={errors.firstName}
+              />
+            </div>
+            <div data-field="lastName" data-field-error={errors.lastName ? 'true' : undefined}>
+              <Input
+                label={t('common.last_name')}
+                placeholder={t('checkout.last_name_placeholder')}
+                value={form.lastName}
+                onChange={field('lastName')}
+                error={errors.lastName}
+              />
+            </div>
+          </div>
+          <div data-field="phone" data-field-error={errors.phone ? 'true' : undefined}>
             <Input
-              label={t('common.first_name')}
-              placeholder={t('checkout.first_name_placeholder')}
-              value={form.firstName}
-              onChange={field('firstName')}
-              error={errors.firstName}
-            />
-            <Input
-              label={t('common.last_name')}
-              placeholder={t('checkout.last_name_placeholder')}
-              value={form.lastName}
-              onChange={field('lastName')}
-              error={errors.lastName}
+              label={t('common.phone')}
+              type="tel"
+              placeholder={t('common.phone_placeholder')}
+              value={form.phone}
+              onChange={field('phone')}
+              error={errors.phone}
             />
           </div>
-          <Input
-            label={t('common.phone')}
-            type="tel"
-            placeholder={t('common.phone_placeholder')}
-            value={form.phone}
-            onChange={field('phone')}
-            error={errors.phone}
-          />
         </div>
       </div>
 
-      {/* Delivery address — extracted component */}
-      <AddressForm
-        values={{
-          selectedAddressId: form.selectedAddressId,
-          firstName: form.firstName,
-          lastName: form.lastName,
-          phone: form.phone,
-          addressLine1: form.addressLine1,
-          addressLine2: form.addressLine2,
-          region: form.region,
-          locationLat: form.locationLat,
-          locationLng: form.locationLng,
-        }}
-        onChange={onChange}
-        errors={errors}
-        onClearError={(key) => setErrors((prev) => { const next = { ...prev }; delete next[key]; return next; })}
-        savedAddresses={savedAddresses}
-        loadingAddresses={loadingAddresses}
-        regions={regions}
-      />
+      {/* Delivery address — only when there is something to deliver to. */}
+      {isDelivery && (
+        <AddressForm
+          values={{
+            selectedAddressId: form.selectedAddressId,
+            firstName: form.firstName,
+            lastName: form.lastName,
+            phone: form.phone,
+            addressLine1: form.addressLine1,
+            addressLine2: form.addressLine2,
+            region: form.region,
+            locationLat: form.locationLat,
+            locationLng: form.locationLng,
+          }}
+          onChange={onChange}
+          errors={errors}
+          onClearError={(key) => setErrors((prev) => { const next = { ...prev }; delete next[key]; return next; })}
+          savedAddresses={savedAddresses}
+          loadingAddresses={loadingAddresses}
+          regions={regions}
+        />
+      )}
 
       <Button variant="primary" size="lg" fullWidth onClick={handleNext}>
-        {t('checkout.continue_to_delivery')} →
+        {t('checkout.continue_to_payment')} →
       </Button>
     </div>
   );
 }
 
-// ─── Step 2: Delivery ─────────────────────────────────────────────────────────
-
-function StepDelivery({
-  form, onChange, onBack, onNext, subtotal, deliveryRates,
-}: {
-  form: CheckoutForm;
-  onChange: (patch: Partial<CheckoutForm>) => void;
-  onBack: () => void;
-  onNext: () => void;
-  subtotal: number;
-  deliveryRates: DeliveryRates | null;
-}) {
-  const { t } = useTranslation();
-  const effectiveSubtotal = Math.max(0, subtotal - form.promoDiscount);
-  const deliveryFee = calcFeeFromRates(deliveryRates, form.deliveryMethod, form.region, effectiveSubtotal);
-  const freeThreshold = deliveryRates?.free_threshold ?? 200;
-
-  return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="font-display text-xl text-primary uppercase tracking-widest mb-1">{t('checkout.delivery_method')}</h2>
-        <div className="h-px bg-secondary/30 mb-5" />
-
-        {/* Delivery method selector — extracted component */}
-        <DeliveryCalculator
-          deliveryMethod={form.deliveryMethod}
-          region={form.region}
-          effectiveSubtotal={effectiveSubtotal}
-          deliveryFee={deliveryFee}
-          freeThreshold={freeThreshold}
-          onChange={(method) => onChange({ deliveryMethod: method })}
-        />
-
-        <div className="mt-4 p-3 bg-secondary/10 rounded-sm flex gap-2">
-          <span className="material-icons text-base text-secondary mt-0.5">info</span>
-          <p className="font-body text-xs text-gray-600">
-            {t('checkout.delivery_time_note')}
-          </p>
-        </div>
-      </div>
-
-      <div className="flex gap-3">
-        <Button variant="ghost" size="lg" onClick={onBack} className="flex-1">
-          ← {t('common.back')}
-        </Button>
-        <Button variant="primary" size="lg" onClick={onNext} className="flex-1">
-          {t('checkout.continue_to_payment')} →
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-// ─── Step 3: Payment ──────────────────────────────────────────────────────────
+// ─── Step 2: Payment ──────────────────────────────────────────────────────────
 
 function StepPayment({
   form, onChange, onBack, cart, retryOrder, onSubmit, isSubmitting, deliveryRates,
@@ -461,7 +462,19 @@ function StepPayment({
     ? Number(retryOrder.total)
     : Math.max(0, subtotal + deliveryFee - form.promoDiscount);
 
+  // Cash is the default way this market pays for food. Card-only was the last
+  // wall in the funnel: a shopper who got all the way here and does not want to
+  // hand over card details had nothing to click.
   const PAYMENT_METHODS = [
+    {
+      id: 'cod' as const,
+      label: t('checkout.cash_on_delivery'),
+      sublabel: form.deliveryMethod === 'pickup'
+        ? t('checkout.cod_pickup_sublabel')
+        : t('checkout.cod_sublabel'),
+      icon: 'payments',
+      enabled: true,
+    },
     {
       id: 'stripe' as const,
       label: t('checkout.credit_debit_card'),
@@ -584,7 +597,9 @@ function StepPayment({
           ← {t('common.back')}
         </Button>
         <Button variant="primary" size="lg" onClick={onSubmit} loading={isSubmitting} className="flex-1">
-          {t('checkout.pay_now', { total: total.toFixed(2) })}
+          {form.paymentMethod === 'cod'
+            ? t('checkout.place_order', { total: total.toFixed(2) })
+            : t('checkout.pay_now', { total: total.toFixed(2) })}
         </Button>
       </div>
     </div>
@@ -595,7 +610,7 @@ function StepPayment({
 
 function CheckoutContent() {
   const searchParams = useSearchParams();
-  const { cart, refreshCart } = useCart();
+  const { cart, refreshCart, cartLoaded, cartError } = useCart();
   const { addToast } = useToast();
   const { t, locale } = useTranslation();
   const { user } = useAuth();
@@ -755,13 +770,13 @@ function CheckoutContent() {
 
       // Zero-total order: backend auto-confirmed it, redirect straight to confirmation.
       if (session.confirmed) {
-        analytics.checkoutStepComplete({ step: 3 });
+        analytics.checkoutStepComplete({ step: 2 });
         const orderEmail = createdOrder?.email ?? retryOrder?.email ?? form.email.trim().toLowerCase();
         window.location.href = `/${locale}/checkout/confirmation?order_number=${orderNumber}&email=${encodeURIComponent(orderEmail)}`;
         return;
       }
 
-      analytics.checkoutStepComplete({ step: 3 });
+      analytics.checkoutStepComplete({ step: 2 });
       window.location.href = session.checkout_url!;
     } catch (err) {
       // If the order was created but payment session setup failed, preserve it so the
@@ -779,7 +794,25 @@ function CheckoutContent() {
     }
   }, [form, cart, retryOrder, user, locale, addToast, refreshCart, t]);
 
-  if (!cart && !submitting) {
+  // A dropped request used to leave this screen spinning forever, because a
+  // failed fetch and an unfetched cart both looked like `cart === null`. On a
+  // flaky mobile connection that was a dead end with no way back.
+  if (cartError && !submitting && !retryOrder) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 py-16 flex flex-col items-center text-center gap-4">
+        <span className="material-icons text-5xl text-secondary">wifi_off</span>
+        <h1 className="font-display text-2xl text-primary uppercase tracking-widest">
+          {t('checkout.cart_load_failed')}
+        </h1>
+        <Button variant="primary" onClick={() => refreshCart()}>{t('common.try_again')}</Button>
+        <Link href={`/${locale}/cart`} className="font-body text-sm text-gray-500 underline">
+          {t('breadcrumb.cart')}
+        </Link>
+      </div>
+    );
+  }
+
+  if (!cart && !cartLoaded && !submitting) {
     return (
       <div className="max-w-7xl mx-auto px-4 py-20 flex flex-col items-center gap-4">
         <Spinner size="lg" />
@@ -818,23 +851,15 @@ function CheckoutContent() {
               savedAddresses={savedAddresses}
               loadingAddresses={loadingAddresses}
               regions={deliveryRates?.regions ?? []}
-            />
-          )}
-          {step === 2 && (
-            <StepDelivery
-              form={form}
-              onChange={onChange}
-              onBack={() => goToStep(1)}
-              onNext={() => { analytics.checkoutStepComplete({ step: 2, delivery_method: form.deliveryMethod }); goToStep(3); }}
               subtotal={cart?.subtotal ?? 0}
               deliveryRates={deliveryRates}
             />
           )}
-          {step === 3 && (
+          {step === 2 && (
             <StepPayment
               form={form}
               onChange={onChange}
-              onBack={() => goToStep(2)}
+              onBack={() => goToStep(1)}
               cart={cart}
               retryOrder={retryOrder}
               onSubmit={handleSubmit}
@@ -845,7 +870,7 @@ function CheckoutContent() {
         </section>
 
         <aside className="lg:col-span-1 order-first lg:order-last">
-          <OrderSummarySidebar cart={cart} form={form} step={step} retryOrder={retryOrder} deliveryRates={deliveryRates} />
+          <OrderSummarySidebar cart={cart} form={form} retryOrder={retryOrder} deliveryRates={deliveryRates} />
         </aside>
       </div>
     </div>

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
+import { isModifierPriced } from '@/lib/pricing';
 import type { Product, ProductModifier } from '@/lib/types';
 
 export interface SelectedOption {
@@ -15,12 +16,22 @@ interface Props {
   onChange: (options: SelectedOption[], totalPrice: number, isValid: boolean) => void;
 }
 
+/**
+ * A group the customer has no real decision to make in: exactly one pick from a
+ * required list. Preselecting it means the page opens with a live price and an
+ * enabled Add to Cart instead of a greyed-out "Select required options".
+ */
+function isForcedSingleChoice(pm: ProductModifier): boolean {
+  return pm.minimum_options === 1 && pm.maximum_options === 1;
+}
+
 function ModifierGroup({
   pm,
   selected,
   onSelect,
   onIncrement,
   onDecrement,
+  absolutePrices,
   t,
   locale,
 }: {
@@ -29,6 +40,7 @@ function ModifierGroup({
   onSelect: (modifierId: string, optionId: string, checked: boolean) => void;
   onIncrement: (modifierId: string, optionId: string) => void;
   onDecrement: (modifierId: string, optionId: string) => void;
+  absolutePrices: boolean;
   t: (key: string, params?: Record<string, string | number>) => string;
   locale: string;
 }) {
@@ -53,6 +65,11 @@ function ModifierGroup({
 
   const total = selectedForThis.length;
   const short = pm.minimum_options - total;
+
+  // When the product has no base price the option price IS the price, so a
+  // "+" turns "From 40.00 AED" into something that reads like 80.
+  const priceLabel = (price: number) =>
+    `${absolutePrices ? '' : '+'}${Number(price).toFixed(2)} AED`;
 
   return (
     <div className="space-y-2">
@@ -86,7 +103,7 @@ function ModifierGroup({
                 <span className="text-sm font-body text-gray-700">{optionName}</span>
                 <div className="flex items-center gap-3">
                   {opt.price > 0 && (
-                    <span className="text-xs font-body text-primary">+{Number(opt.price).toFixed(2)} AED</span>
+                    <span className="text-xs font-body text-primary">{priceLabel(opt.price)}</span>
                   )}
                   <div className="flex items-center gap-2">
                     <button
@@ -129,12 +146,13 @@ function ModifierGroup({
                   name={isSingle ? `mod-${pm.modifier_id}` : undefined}
                   checked={isSelected}
                   onChange={e => onSelect(pm.modifier_id, opt.id, e.target.checked)}
+                  aria-label={`${optionName}${opt.price > 0 ? ` — ${priceLabel(opt.price)}` : ''}`}
                   className="accent-primary"
                 />
                 <span className="text-sm font-body text-gray-700">{optionName}</span>
               </div>
               {opt.price > 0 && (
-                <span className="text-xs font-body text-primary">+{Number(opt.price).toFixed(2)} AED</span>
+                <span className="text-xs font-body text-primary">{priceLabel(opt.price)}</span>
               )}
             </label>
           );
@@ -146,9 +164,23 @@ function ModifierGroup({
 
 export function ModifierSelector({ product, onChange }: Props) {
   const { t, locale } = useTranslation();
-  const [selected, setSelected] = useState<SelectedOption[]>([]);
 
   const productModifiers = product.product_modifiers ?? [];
+  const absolutePrices = isModifierPriced(product);
+
+  // Open with the cheapest option already chosen for any group that only ever
+  // allows one answer. The customer can still change it, but they are no longer
+  // made to click twice — and never meets a disabled Add to Cart button.
+  const [selected, setSelected] = useState<SelectedOption[]>(() =>
+    productModifiers.flatMap((pm) => {
+      if (!isForcedSingleChoice(pm)) return [];
+      const active = pm.modifier.options
+        .filter((o) => o.is_active)
+        .sort((a, b) => Number(a.price) - Number(b.price) || a.display_order - b.display_order);
+      const cheapest = active[0];
+      return cheapest ? [{ modifier_id: pm.modifier_id, option_id: cheapest.id }] : [];
+    }),
+  );
 
   // Compute validity and total price.
   //
@@ -239,6 +271,7 @@ export function ModifierSelector({ product, onChange }: Props) {
           onSelect={handleSelect}
           onIncrement={handleIncrement}
           onDecrement={handleDecrement}
+          absolutePrices={absolutePrices}
           t={t}
           locale={locale}
         />

@@ -8,33 +8,14 @@ import { analytics } from '@/lib/analytics';
 import { ModifierSelector, SelectedOption } from '@/components/product/ModifierSelector';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
+import { computeFromPrice, isModifierPriced } from '@/lib/pricing';
 import type { Product } from '@/lib/types';
-
-/** Minimum displayable price: base_price + cheapest required option, or cheapest any option if still 0 */
-function computeMinPrice(product: Product): number {
-  let price = Number(product.base_price);
-  for (const pm of product.product_modifiers ?? []) {
-    if (pm.minimum_options <= 0) continue;
-    const active = pm.modifier.options.filter(o => o.is_active);
-    if (active.length === 0) continue;
-    price += Math.min(...active.map(o => Number(o.price))) * Math.min(pm.minimum_options, 1);
-  }
-  if (price === 0 && (product.product_modifiers?.length ?? 0) > 0) {
-    for (const pm of product.product_modifiers ?? []) {
-      const active = pm.modifier.options.filter(o => o.is_active);
-      if (active.length === 0) continue;
-      const cheapest = Math.min(...active.map(o => Number(o.price)));
-      if (cheapest > 0) { price = cheapest; break; }
-    }
-  }
-  return price;
-}
 
 export function ProductDetailATC({ product }: { product: Product }) {
   const { t, locale } = useTranslation();
   const hasModifiers = product.product_modifiers && product.product_modifiers.length > 0;
   const isOutOfStock = product.is_stock_product && product.stock_quantity <= 0;
-  const minPrice = hasModifiers ? computeMinPrice(product) : Number(product.base_price);
+  const minPrice = hasModifiers ? computeFromPrice(product) : Number(product.base_price);
   const [qty, setQty] = useState(1);
   const [adding, setAdding] = useState(false);
   const [selectedOptions, setSelectedOptions] = useState<SelectedOption[]>([]);

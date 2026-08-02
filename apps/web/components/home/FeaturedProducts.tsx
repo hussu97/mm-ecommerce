@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useCart } from '@/lib/cart-context';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
+import { computeFromPrice } from '@/lib/pricing';
 import type { Product } from '@/lib/types';
 
 export interface FeaturedContent {
@@ -20,7 +21,7 @@ function ProductCard({ product }: { product: Product }) {
   const [adding, setAdding] = useState(false);
 
   const hasModifiers = product.product_modifiers && product.product_modifiers.length > 0;
-  const price = Number(product.base_price);
+  const price = computeFromPrice(product);
   const image = product.image_urls?.[0];
   const categorySlug = product.category?.slug ?? 'products';
   const productName = localizedField(product, 'name', product.name, locale);

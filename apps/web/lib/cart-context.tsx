@@ -13,6 +13,12 @@ interface CartContextType {
   cart: Cart | null;
   itemCount: number;
   isLoading: boolean;
+  /** False until the first cart fetch settles, so callers can tell "still
+   *  loading" apart from "loaded and there is nothing here". */
+  cartLoaded: boolean;
+  /** True when the last cart fetch failed. Checkout shows a retry instead of
+   *  spinning forever on a dropped mobile connection. */
+  cartError: boolean;
   addItem: (productId: string, quantity?: number, selectedOptions?: SelectedOption[]) => Promise<void>;
   updateItem: (itemId: string, quantity: number) => Promise<void>;
   removeItem: (itemId: string) => Promise<void>;
@@ -26,14 +32,20 @@ const CartContext = createContext<CartContextType | null>(null);
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [cart, setCart] = useState<Cart | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [cartLoaded, setCartLoaded] = useState(false);
+  const [cartError, setCartError] = useState(false);
 
   const refreshCart = useCallback(async () => {
     ensureSessionId();
     try {
       const data = await cartApi.get();
       setCart(data);
+      setCartError(false);
     } catch {
       setCart(null);
+      setCartError(true);
+    } finally {
+      setCartLoaded(true);
     }
   }, []);
 
@@ -106,7 +118,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const itemCount = cart?.item_count ?? 0;
 
   return (
-    <CartContext.Provider value={{ cart, itemCount, isLoading, addItem, updateItem, removeItem, clearCart, mergeCart, refreshCart }}>
+    <CartContext.Provider value={{ cart, itemCount, isLoading, cartLoaded, cartError, addItem, updateItem, removeItem, clearCart, mergeCart, refreshCart }}>
       {children}
     </CartContext.Provider>
   );

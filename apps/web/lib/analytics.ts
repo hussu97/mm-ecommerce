@@ -89,13 +89,13 @@ export const analytics = {
     has_modifiers: boolean;
   }) => track('view_product', data),
 
-  checkoutStepComplete: (data: { step: 1 | 2 | 3; delivery_method?: string }) =>
+  checkoutStepComplete: (data: { step: 1 | 2; delivery_method?: string }) =>
     track('checkout_step_complete', data),
 
   paymentFailed: (data: { order_number: string; error_message: string }) =>
     track('payment_failed', data),
 
-  checkoutError: (data: { step: 1 | 2 | 3; field: string }) =>
+  checkoutError: (data: { step: 1 | 2; field: string }) =>
     track('checkout_error', data),
 
   // ─── Phase 2: Acquisition & auth ─────────────────────────────────────────

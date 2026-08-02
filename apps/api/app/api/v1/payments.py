@@ -17,7 +17,7 @@ router = APIRouter()
 
 class CreateSessionRequest(BaseModel):
     order_number: str
-    provider: str  # currently: stripe
+    provider: str  # currently: stripe | cod
 
 
 class CreateSessionResponse(BaseModel):

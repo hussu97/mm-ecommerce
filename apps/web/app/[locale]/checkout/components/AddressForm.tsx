@@ -123,7 +123,10 @@ export function AddressForm({
         <div className="space-y-4">
           <div>
             <p className="text-xs font-medium uppercase tracking-wider text-gray-600 mb-2">
-              {t('address.pin_location')}
+              {t('address.pin_location')}{' '}
+              <span className="normal-case tracking-normal text-gray-400 font-normal">
+                — optional, helps our driver find you
+              </span>
             </p>
             <LocationPicker
               lat={values.locationLat}
@@ -135,26 +138,30 @@ export function AddressForm({
               <p className="mt-1 text-xs text-red-500 font-body">{errors.locationLat}</p>
             )}
           </div>
-          <Input
-            label={t('common.address_line_1')}
-            placeholder={t('checkout.address_placeholder')}
-            value={values.addressLine1}
-            onChange={field('addressLine1')}
-            error={errors.addressLine1}
-          />
+          <div data-field="addressLine1" data-field-error={errors.addressLine1 ? 'true' : undefined}>
+            <Input
+              label={t('common.address_line_1')}
+              placeholder={t('checkout.address_placeholder')}
+              value={values.addressLine1}
+              onChange={field('addressLine1')}
+              error={errors.addressLine1}
+            />
+          </div>
           <Input
             label={t('common.address_line_2_optional')}
             placeholder={t('checkout.address2_placeholder')}
             value={values.addressLine2}
             onChange={field('addressLine2')}
           />
-          <Select
-            label={t('address.region')}
-            options={REGION_OPTIONS}
-            value={values.region}
-            onChange={field('region')}
-            error={errors.region}
-          />
+          <div data-field="region" data-field-error={errors.region ? 'true' : undefined}>
+            <Select
+              label={t('address.region')}
+              options={REGION_OPTIONS}
+              value={values.region}
+              onChange={field('region')}
+              error={errors.region}
+            />
+          </div>
         </div>
       )}
     </div>

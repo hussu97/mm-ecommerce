@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { notFound } from 'next/navigation';
+import { notFound, permanentRedirect } from 'next/navigation';
 import { Breadcrumb } from '@/components/ui';
 import { ProductDetailATC } from './ProductDetailATC';
 import { ProductImageGallery } from './ProductImageGallery';
@@ -34,7 +34,10 @@ export async function generateMetadata({
   const ogImages = product.image_urls?.length
     ? product.image_urls.slice(0, 1).map(url => ({ url, alt: localizedName }))
     : [{ url: '/images/logos/color_logo.jpeg', alt: 'Melting Moments Cakes' }];
-  const path = `/${categorySlug}/${slug}`;
+  // Canonicalise on the product's real category, never on whatever slug the
+  // request happened to use — otherwise /en/product-page/x and /en/cat-cookiemelt/x
+  // each declare themselves canonical and split the ranking signal.
+  const path = `/${product.category?.slug ?? categorySlug}/${slug}`;
 
   return {
     title: localizedName,
@@ -66,6 +69,13 @@ export default async function ProductDetailPage({
 
   if (!product) notFound();
   if (product.category && !product.category.is_active) notFound();
+
+  // The route matches any [category] segment, so the same product was reachable
+  // — and indexable — under an unlimited number of URLs. Send every variant to
+  // the one real address instead of serving duplicates.
+  if (product.category?.slug && product.category.slug !== categorySlug) {
+    permanentRedirect(`/${locale}/${product.category.slug}/${productSlug}`);
+  }
 
   const t = createT(translations);
 

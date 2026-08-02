@@ -16,10 +16,16 @@ export function HeroSection({ c, locale }: { c: HeroContent; locale: string }) {
     <section aria-label="Hero" className="bg-[#f9f5f0]">
 
       {/* 2-col: text + baker photo */}
-      <div className="max-w-7xl mx-auto px-4 py-16 lg:py-24 grid lg:grid-cols-2 gap-12 items-center">
+      {/*
+        On phones the headline and the Shop button come first. They used to sit
+        below a full-bleed 4:5 portrait, which pushed the only call to action
+        ~950px down — past the fold on every phone — on the 80% of sessions that
+        are mobile.
+      */}
+      <div className="max-w-7xl mx-auto px-4 py-8 lg:py-24 grid lg:grid-cols-2 gap-8 lg:gap-12 items-center">
 
         {/* Left: Text */}
-        <div className="flex flex-col gap-6 order-2 lg:order-1">
+        <div className="flex flex-col gap-5 lg:gap-6 order-1">
           <p className="text-xs font-body uppercase tracking-[0.3em] text-primary/70">
             {c.tagline}
           </p>
@@ -46,8 +52,8 @@ export function HeroSection({ c, locale }: { c: HeroContent; locale: string }) {
         </div>
 
         {/* Right: Baker photo with decorative offset border */}
-        <div className="relative order-1 lg:order-2">
-          <div className="relative aspect-[4/5] w-full max-w-md mx-auto lg:max-w-none">
+        <div className="relative order-2">
+          <div className="relative aspect-[4/3] lg:aspect-[4/5] w-full max-w-md mx-auto lg:max-w-none">
             <Image
               src="/images/photos/person_shot_1.jpg"
               alt="Fatema Abbasi — founder of Melting Moments Cakes"
@@ -59,7 +65,7 @@ export function HeroSection({ c, locale }: { c: HeroContent; locale: string }) {
               blurDataURL="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxIDEiPjxyZWN0IHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiM4YTVhNjQiLz48L3N2Zz4="
             />
           </div>
-          <div className="absolute -bottom-3 -right-3 w-full max-w-md mx-auto lg:max-w-none aspect-[4/5] border-2 border-secondary pointer-events-none" />
+          <div className="absolute -bottom-3 -right-3 w-full max-w-md mx-auto lg:max-w-none aspect-[4/3] lg:aspect-[4/5] border-2 border-secondary pointer-events-none" />
         </div>
 
       </div>

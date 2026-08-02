@@ -112,6 +112,26 @@ async def create_session(db: AsyncSession, order_number: str, provider: str) -> 
             "confirmed": True,
         }
 
+    # Cash on delivery: nothing to charge now, so the order is accepted on the
+    # spot and the money is collected at the door. Cash is how most of this
+    # market pays for food, and requiring a card up front turns those
+    # customers away at the last screen.
+    if provider == "cod":
+        order.status = OrderStatusEnum.CONFIRMED
+        order.payment_provider = "cod"
+        order.payment_id = None
+        await db.flush()
+        order_response = OrderResponse.model_validate(order)
+        await email_service.send_order_confirmation(order_response)
+        await email_service.send_owner_order_notification(order_response)
+        logger.info("Cash-on-delivery order confirmed: order=%s", order_number)
+        return {
+            "provider": "cod",
+            "session_id": None,
+            "checkout_url": None,
+            "confirmed": True,
+        }
+
     # Stripe AED minimum is 2.00 AED. Orders below this threshold cannot be charged.
     _STRIPE_AED_MINIMUM = Decimal("2.00")
     if provider == "stripe" and order_total < _STRIPE_AED_MINIMUM:

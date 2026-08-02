@@ -49,9 +49,13 @@ const nextConfig: NextConfig = {
     ];
   },
   images: {
-    // Product/category images are already CDN-hosted; avoid burning Vercel's
-    // limited Image Optimization transformations on every storefront variant.
-    unoptimized: true,
+    // The source images in GCS are ~350KB 2048px JPEGs, and a category grid
+    // renders seven of them into ~300px slots — ~2.4MB to draw one page, on
+    // traffic that is 80% mobile. Optimization is billed per unique
+    // (image, width, quality) and the result is cached, not per request, so a
+    // 39-product catalogue costs a bounded one-off rather than scaling with
+    // visits. Serving AVIF/WebP at the right width is worth far more than the
+    // transformations it uses.
     deviceSizes: [640, 750, 828, 1080, 1200, 1920],
     imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
     formats: ["image/avif", "image/webp"],

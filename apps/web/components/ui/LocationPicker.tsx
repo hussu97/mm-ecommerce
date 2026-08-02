@@ -79,9 +79,40 @@ function MapContent({ lat, lng, onChange, placeholder }: LocationPickerProps) {
     [onChange]
   );
 
+  // One tap beats pinching a 200px map on a phone, which is how most of this
+  // traffic arrives. Silently ignored if the browser denies permission — the
+  // pin is a convenience for the driver, never a gate on the order.
+  const useCurrentLocation = useCallback(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        onChangeRef.current(latitude, longitude);
+        mapRef.current?.panTo({ lat: latitude, lng: longitude });
+        mapRef.current?.setZoom(16);
+      },
+      () => { /* denied or unavailable — the map is still there to tap */ },
+      { enableHighAccuracy: true, timeout: 10_000 },
+    );
+  }, []);
+
   return (
     <>
       <div ref={containerRef} className="w-full" />
+
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <p className="font-body text-xs text-gray-400">
+          {position ? 'Pin set — drag it to adjust.' : 'Search above, or tap the map to drop a pin.'}
+        </p>
+        <button
+          type="button"
+          onClick={useCurrentLocation}
+          className="inline-flex items-center gap-1.5 text-xs font-body text-primary hover:underline"
+        >
+          <span className="material-icons text-sm">my_location</span>
+          Use my current location
+        </button>
+      </div>
 
       <Map
         style={{ width: '100%', height: '200px', borderRadius: '2px' }}
