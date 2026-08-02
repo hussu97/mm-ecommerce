@@ -115,6 +115,37 @@ class Settings(BaseSettings):
     TAMARA_API_KEY: str = ""
     TAMARA_API_URL: str = "https://api.tamara.co"
 
+    # ── Lalamove (courier) ───────────────────────────────────────────────────
+    #: Leave the key and secret empty to run without a courier: zones marked
+    #: `lalamove` then behave exactly like third-party ones — priced the same,
+    #: dispatched by hand — so a missing credential degrades to today's flow
+    #: instead of stalling orders.
+    LALAMOVE_API_KEY: str = ""
+    LALAMOVE_API_SECRET: str = ""
+    #: "production" or "sandbox". Sandbox has no working AE pricing engine and
+    #: an unfunded wallet, so it is only useful against another market.
+    LALAMOVE_ENV: str = "production"
+    LALAMOVE_MARKET: str = "AE"
+    #: Validated by Lalamove to be exactly this for the UAE.
+    LALAMOVE_LANGUAGE: str = "en_AE"
+    #: CAR is the smallest vehicle offered in the UAE (0.5 m³, 80 kg).
+    LALAMOVE_SERVICE_TYPE: str = "CAR"
+    #: Curb-to-curb is the default fare; a cake needs carrying to the door.
+    #: Flat +5 AED per order, not per stop.
+    LALAMOVE_SPECIAL_REQUESTS: str = "DOOR_TO_DOOR"
+    #: Signing covers the path only, and it must match the path Lalamove is
+    #: configured to POST to, byte for byte, or every webhook fails validation.
+    LALAMOVE_WEBHOOK_PATH: str = "/api/v1/webhooks/lalamove"
+    LALAMOVE_TIMEOUT_SECONDS: float = 8.0
+    #: Checkout re-quotes on every pin move, so identical points inside this
+    #: window reuse the last answer rather than spending the 100/min budget.
+    LALAMOVE_QUOTE_CACHE_SECONDS: int = 120
+    #: Which branch the courier collects from. Falls back to the first active
+    #: branch that takes online orders and has coordinates.
+    LALAMOVE_PICKUP_BRANCH_REF: str = ""
+    #: Who the driver calls at the shop. Falls back to the branch's own phone.
+    LALAMOVE_SENDER_PHONE: str = ""
+
     # ── Frontend URLs (email templates & CORS) ────────────────────────────────
     WEB_URL: str = "http://localhost:3000"
     ADMIN_URL: str = "http://localhost:3001"

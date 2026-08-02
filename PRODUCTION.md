@@ -664,6 +664,31 @@ outright. The steps below are kept for rebuilding the host from scratch.
 | `TAMARA_API_KEY` | API key | Tamara merchant dashboard |
 | `TAMARA_API_URL` | `https://api.tamara.co` | Literal (use `https://api-sandbox.tamara.co` for staging) |
 
+#### Courier — Lalamove
+
+Optional. Leave the key and secret unset and zones marked `lalamove` behave
+exactly like third-party ones — same price, dispatched by hand.
+
+| Secret | Production value | Notes |
+|--------|-----------------|-------|
+| `LALAMOVE_API_KEY` | `pk_prod_...` | Partner Portal → Developers, **Production** tab |
+| `LALAMOVE_API_SECRET` | `sk_prod_...` | Same screen. Also signs inbound webhooks |
+| `LALAMOVE_ENV` | `production` | Sandbox has no working AE pricing engine and an unfunded wallet |
+| `LALAMOVE_PICKUP_BRANCH_REF` | branch reference | Optional. Empty = first active branch taking online orders that has coordinates |
+| `LALAMOVE_SENDER_PHONE` | `+9715...` | Optional. Empty = that branch's own phone |
+
+Two things have to be done in the Partner Portal, not here:
+
+1. **Webhook URL** → `https://api.meltingmomentscakes.com/api/v1/webhooks/lalamove`,
+   Webhook Version 3. The path is part of what the signature covers, so it must
+   match `LALAMOVE_WEBHOOK_PATH` byte for byte. An endpoint that fails to answer
+   200 ten times in a day is disabled by Lalamove, after which no order gets a
+   status until someone re-enters the URL.
+2. **Fund the wallet.** Orders debit it the moment they are placed; an empty
+   wallet fails dispatch with `ERR_INSUFFICIENT_CREDIT`. The failure is recorded
+   on the order and surfaced in the admin, and the order can be re-dispatched
+   once topped up — but nothing is collected in the meantime.
+
 #### Frontend URLs (used in email templates & CORS)
 
 | Secret | Production value | Notes |

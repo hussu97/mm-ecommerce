@@ -12,13 +12,19 @@ const STATUS_OPTIONS = [
   { value: 'created', label: 'Created' },
   { value: 'confirmed', label: 'Confirmed' },
   { value: 'packed', label: 'Packed' },
+  { value: 'out_for_delivery', label: 'On The Way' },
+  { value: 'delivered', label: 'Delivered' },
   { value: 'cancelled', label: 'Cancelled' },
 ];
 
+// Packed is no longer the end of the line, so it reads as in-progress and only
+// a delivered order gets the green.
 const STATUS_VARIANT: Record<OrderStatus, 'warning' | 'info' | 'success' | 'danger'> = {
   created: 'warning',
   confirmed: 'info',
-  packed: 'success',
+  packed: 'info',
+  out_for_delivery: 'info',
+  delivered: 'success',
   cancelled: 'danger',
 };
 

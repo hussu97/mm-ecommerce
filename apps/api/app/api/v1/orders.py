@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -13,6 +15,7 @@ from app.core.deps import (
     get_optional_user,
 )
 from app.models.order import Order, OrderStatusEnum
+from app.models.order_delivery import OrderDelivery
 from app.models.user import User
 from app.schemas.order import (
     OrderCreate,
@@ -23,7 +26,12 @@ from app.schemas.order import (
 from fastapi import Request
 
 from app.core.cache import cache_delete_pattern
-from app.services import audit_service, email_service, order_service
+from app.services import (
+    audit_service,
+    email_service,
+    lalamove_service,
+    order_service,
+)
 
 router = APIRouter()
 
@@ -34,6 +42,76 @@ class PaginatedOrders(BaseModel):
     page: int
     per_page: int
     pages: int
+
+
+class OrderDeliveryResponse(BaseModel):
+    """
+    The fulfilment side of an order. **Admin only.**
+
+    Deliberately not folded into `OrderResponse`: that model is served to the
+    customer, and we have decided they are not told which courier carries their
+    cake. Keeping the two apart makes that a structural guarantee rather than a
+    field somebody has to remember not to add.
+    """
+
+    provider: str
+    zone_name: str | None
+    fee_charged: float | None
+    quoted_cost: float | None
+    quoted_currency: str | None
+    quoted_distance_m: int | None
+    cost_total: float | None
+    #: Fee minus cost. Negative means this delivery lost money.
+    margin: float | None
+    courier_order_id: str | None
+    courier_status: str | None
+    share_link: str | None
+    driver_name: str | None
+    driver_phone: str | None
+    driver_plate: str | None
+    pod_status: str | None
+    pod_image_url: str | None
+    booked_at: datetime | None
+    picked_up_at: datetime | None
+    delivered_at: datetime | None
+    cancelled_at: datetime | None
+    cancel_reason: str | None
+    last_error: str | None
+    needs_attention: bool
+
+    @classmethod
+    def of(cls, d: OrderDelivery) -> "OrderDeliveryResponse":
+        cost = d.cost_total if d.cost_total is not None else d.quoted_cost
+        margin = (
+            float(d.fee_charged) - float(cost)
+            if d.fee_charged is not None and cost is not None
+            else None
+        )
+        return cls(
+            provider=d.provider,
+            zone_name=d.zone_name,
+            fee_charged=float(d.fee_charged) if d.fee_charged is not None else None,
+            quoted_cost=float(d.quoted_cost) if d.quoted_cost is not None else None,
+            quoted_currency=d.quoted_currency,
+            quoted_distance_m=d.quoted_distance_m,
+            cost_total=float(d.cost_total) if d.cost_total is not None else None,
+            margin=margin,
+            courier_order_id=d.courier_order_id,
+            courier_status=d.courier_status,
+            share_link=d.share_link,
+            driver_name=d.driver_name,
+            driver_phone=d.driver_phone,
+            driver_plate=d.driver_plate,
+            pod_status=d.pod_status,
+            pod_image_url=d.pod_image_url,
+            booked_at=d.booked_at,
+            picked_up_at=d.picked_up_at,
+            delivered_at=d.delivered_at,
+            cancelled_at=d.cancelled_at,
+            cancel_reason=d.cancel_reason,
+            last_error=d.last_error,
+            needs_attention=d.needs_attention,
+        )
 
 
 @router.post("", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
@@ -186,3 +264,67 @@ async def update_order_status(
     )
 
     return order
+
+
+# ── Fulfilment (admin only) ───────────────────────────────────────────────────
+
+
+async def _load_delivery(db: AsyncSession, order_number: str) -> OrderDelivery:
+    result = await db.execute(
+        select(OrderDelivery)
+        .join(Order, Order.id == OrderDelivery.order_id)
+        .where(Order.order_number == order_number)
+    )
+    delivery = result.scalars().first()
+    if delivery is None:
+        raise HTTPException(404, f"No delivery recorded for order '{order_number}'")
+    return delivery
+
+
+@router.get("/{order_number}/delivery", response_model=OrderDeliveryResponse)
+async def get_order_delivery(
+    order_number: str,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    """Who is carrying this order, where it is, and what it cost us."""
+    return OrderDeliveryResponse.of(await _load_delivery(db, order_number))
+
+
+@router.post("/{order_number}/delivery/dispatch", response_model=OrderDeliveryResponse)
+async def dispatch_order_delivery(
+    order_number: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+):
+    """
+    Book the courier again after a failed or abandoned dispatch.
+
+    The normal path books automatically when the order is packed. This exists
+    for the cases that path cannot handle on its own: the wallet was empty, the
+    courier was unreachable, or every driver rejected the job.
+    """
+    result = await db.execute(select(Order).where(Order.order_number == order_number))
+    order = result.scalars().first()
+    if order is None:
+        raise HTTPException(404, f"Order '{order_number}' not found")
+
+    delivery = await lalamove_service.dispatch_order(db, order)
+    if delivery is None:
+        raise HTTPException(404, f"No delivery recorded for order '{order_number}'")
+
+    await audit_service.log_action(
+        db,
+        action="UPDATE",
+        entity_type="order_delivery",
+        entity_id=order_number,
+        entity_label=order_number,
+        admin=admin,
+        changes={
+            "courier_order_id": delivery.courier_order_id,
+            "error": delivery.last_error,
+        },
+        request=request,
+    )
+    return OrderDeliveryResponse.of(delivery)

@@ -23,6 +23,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
+    from .order_delivery import OrderDelivery
     from .pos_order import (
         OrderCharge,
         OrderDiscount,
@@ -36,6 +37,11 @@ class OrderStatusEnum(str, enum.Enum):
     CREATED = "created"
     CONFIRMED = "confirmed"
     PACKED = "packed"
+    #: The parcel has left the kitchen. On an integrated zone this is set by the
+    #: courier's own PICKED_UP webhook rather than by hand, so it means the
+    #: driver is holding the box, not that someone remembered to click.
+    OUT_FOR_DELIVERY = "out_for_delivery"
+    DELIVERED = "delivered"
     CANCELLED = "cancelled"
     PAYMENT_FAILED = "payment_failed"
     REFUNDED = "refunded"
@@ -211,6 +217,14 @@ class Order(Base, UUIDMixin, TimestampMixin):
     )
     order_taxes: Mapped[list[OrderTax]] = relationship(
         "OrderTax", cascade="all, delete-orphan", lazy="selectin"
+    )
+    #: How this order reaches the customer, and what the courier charged us.
+    #: Admin-facing only — never serialised into a storefront response.
+    delivery: Mapped[OrderDelivery | None] = relationship(
+        "OrderDelivery",
+        back_populates="order",
+        cascade="all, delete-orphan",
+        uselist=False,
     )
 
     @property

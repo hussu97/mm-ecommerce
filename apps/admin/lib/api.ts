@@ -5,6 +5,7 @@ import type {
   PaginatedCustomers, PaginatedEmailLogs, PaginatedOrders, Product, ProductListResponse,
   PromoCode, PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
   TrafficData, UploadResponse, User, Region, DeliverySettings, SalesChannel,
+  DeliveryMapVersion, DeliveryZone, DeliveryZoneSummary, FulfilmentProvider, OrderDelivery,
 } from './types';
 import type {
   PublicKeyCredentialCreationOptionsJSON,
@@ -218,6 +219,35 @@ export const ordersApi = {
   get: (orderNumber: string) => api.get<Order>(`/orders/${orderNumber}`),
   updateStatus: (orderNumber: string, status: string, admin_notes?: string) =>
     api.put<Order>(`/orders/${orderNumber}/status`, { status, admin_notes }),
+  /** Fulfilment detail. 404s for pickup orders and anything placed before this existed. */
+  getDelivery: (orderNumber: string) =>
+    api.get<OrderDelivery>(`/orders/${orderNumber}/delivery`),
+  /** Book the courier again after a failed or abandoned dispatch. */
+  dispatchDelivery: (orderNumber: string) =>
+    api.post<OrderDelivery>(`/orders/${orderNumber}/delivery/dispatch`),
+};
+
+// ─── Delivery zones ───────────────────────────────────────────────────────────
+
+export const deliveryZonesApi = {
+  listVersions: () => api.get<DeliveryMapVersion[]>('/delivery-zones/versions'),
+  summary: () => api.get<DeliveryZoneSummary>('/delivery-zones/summary'),
+  /** Copy a map into an editable draft. Defaults to copying the live one. */
+  createVersion: (data: { name: string; notes?: string; source_version_id?: string }) =>
+    api.post<DeliveryMapVersion>('/delivery-zones/versions', data),
+  /** Only works on a draft — the live map is read-only by design. */
+  updateZone: (
+    zoneId: string,
+    data: { delivery_fee?: number; fulfilment_provider?: FulfilmentProvider; display_order?: number },
+  ) => api.put<DeliveryZone>(`/delivery-zones/polygons/${zoneId}`, data),
+  publish: (versionId: string) =>
+    api.post<DeliveryMapVersion>(`/delivery-zones/versions/${versionId}/activate`),
+  deleteVersion: (versionId: string) =>
+    api.delete<void>(`/delivery-zones/versions/${versionId}`),
+  geometry: (zoneId: string) =>
+    api.get<{ name: string; delivery_fee: number; fulfilment_provider: FulfilmentProvider; geometry: unknown }>(
+      `/delivery-zones/polygons/${zoneId}/geometry`,
+    ),
 };
 
 // ─── Analytics ────────────────────────────────────────────────────────────────

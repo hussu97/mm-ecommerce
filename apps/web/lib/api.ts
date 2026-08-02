@@ -214,9 +214,24 @@ export const deliveryApi = {
   /**
    * What delivery costs to a specific point. Priced against the active zone
    * map, so the figure on screen is the one the order gets written with.
+   *
+   * `address` is the pin's formatted address. It is not used to price anything
+   * — the pin already did that — it travels so the server can record what the
+   * same trip would cost to fulfil, against the same place a driver would be
+   * sent to.
    */
-  quote: (subtotal: number, latitude: number | null, longitude: number | null) =>
-    api.post<DeliveryQuote>('/delivery/quote', { subtotal, latitude, longitude }),
+  quote: (
+    subtotal: number,
+    latitude: number | null,
+    longitude: number | null,
+    address?: string | null,
+  ) =>
+    api.post<DeliveryQuote>('/delivery/quote', {
+      subtotal,
+      latitude,
+      longitude,
+      address: address || null,
+    }),
 };
 
 export const regionsApi = {

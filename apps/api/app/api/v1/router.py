@@ -6,6 +6,7 @@ from .products import router as products_router
 from .cart import router as cart_router
 from .uploads import router as uploads_router
 from .delivery import router as delivery_router
+from .delivery_zones import router as delivery_zones_router
 from .promo_codes import router as promo_codes_router
 from .orders import router as orders_router
 from .addresses import router as addresses_router
@@ -81,6 +82,9 @@ api_router.include_router(import_router, prefix="/import", tags=["Import"])
 api_router.include_router(cart_router, prefix="/cart", tags=["Cart"])
 api_router.include_router(uploads_router, prefix="/uploads", tags=["Uploads"])
 api_router.include_router(delivery_router, prefix="/delivery", tags=["Delivery"])
+api_router.include_router(
+    delivery_zones_router, prefix="/delivery-zones", tags=["Delivery Zones"]
+)
 api_router.include_router(
     promo_codes_router, prefix="/promo-codes", tags=["Promo Codes"]
 )

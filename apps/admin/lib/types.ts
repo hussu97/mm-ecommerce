@@ -160,7 +160,15 @@ export interface ProductListResponse {
   pages: number;
 }
 
-export type OrderStatus = 'created' | 'confirmed' | 'packed' | 'cancelled';
+export type OrderStatus =
+  | 'created'
+  | 'confirmed'
+  | 'packed'
+  // Set by the courier's own pickup event on an integrated zone, and by hand
+  // everywhere else.
+  | 'out_for_delivery'
+  | 'delivered'
+  | 'cancelled';
 
 export interface SelectedOptionSnapshot {
   modifier_id: string;
@@ -373,6 +381,80 @@ export interface Region {
   delivery_fee: number;
   is_active: boolean;
   sort_order: number;
+}
+
+/** Who carries an order out of the kitchen. */
+export type FulfilmentProvider = 'lalamove' | 'third_party';
+
+/** One zone on a delivery map: a shape, a price, and a courier. */
+export interface DeliveryZone {
+  id: string;
+  name: string;
+  region_slug: string | null;
+  delivery_fee: number;
+  fulfilment_provider: FulfilmentProvider;
+  display_order: number;
+  point_count: number;
+}
+
+/**
+ * A complete delivery map. Only one is live; the rest are drafts and history,
+ * which is what makes a bad price a one-click rollback.
+ */
+export interface DeliveryMapVersion {
+  id: string;
+  name: string;
+  notes: string | null;
+  is_active: boolean;
+  created_at: string;
+  activated_at: string | null;
+  polygons: DeliveryZone[];
+}
+
+/** The live map, flattened, plus the settings that apply to every zone in it. */
+export interface DeliveryZoneSummary {
+  version: { id: string; name: string } | null;
+  zones: Array<{
+    name: string;
+    region_slug: string | null;
+    delivery_fee: number;
+    fulfilment_provider: FulfilmentProvider;
+  }>;
+  /** The same everywhere — free delivery does not depend on the zone. */
+  free_threshold: number;
+  default_delivery_fee: number;
+  pickup_fee: number;
+}
+
+/**
+ * The fulfilment side of an order. Admin-only — the storefront is never told
+ * which courier is carrying the box.
+ */
+export interface OrderDelivery {
+  provider: FulfilmentProvider;
+  zone_name: string | null;
+  fee_charged: number | null;
+  quoted_cost: number | null;
+  quoted_currency: string | null;
+  quoted_distance_m: number | null;
+  cost_total: number | null;
+  /** Fee charged minus what the courier cost. Negative loses money. */
+  margin: number | null;
+  courier_order_id: string | null;
+  courier_status: string | null;
+  share_link: string | null;
+  driver_name: string | null;
+  driver_phone: string | null;
+  driver_plate: string | null;
+  pod_status: string | null;
+  pod_image_url: string | null;
+  booked_at: string | null;
+  picked_up_at: string | null;
+  delivered_at: string | null;
+  cancelled_at: string | null;
+  cancel_reason: string | null;
+  last_error: string | null;
+  needs_attention: boolean;
 }
 
 export interface DeliverySettings {

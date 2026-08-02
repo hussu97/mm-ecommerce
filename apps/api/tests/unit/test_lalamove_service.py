@@ -1,0 +1,345 @@
+"""
+What a courier update is allowed to do to an order.
+
+The webhook receiver is effectively a second writer on the orders table, and
+Lalamove is explicit that its pushes can arrive out of order and more than
+once. These tests cover the consequences of that: a late update must not rewind
+a delivered order, a failed booking must not cancel a paid one, and a settled
+order must not be reopened by something arriving hours after the fact.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from types import SimpleNamespace
+
+import pytest
+
+from app.models.order import OrderStatusEnum
+from app.models.order_delivery import OrderDelivery
+from app.services import lalamove_service
+
+NOW = datetime(2026, 8, 2, 12, 0, tzinfo=timezone.utc)
+COURIER_ID = "3463513590991397204"
+
+
+class _FakeResult:
+    def __init__(self, value):
+        self._value = value
+
+    def scalars(self):
+        return SimpleNamespace(first=lambda: self._value)
+
+
+class _FakeDb:
+    """Answers exactly one kind of query: give me the order behind this id."""
+
+    def __init__(self, order):
+        self.order = order
+
+    async def execute(self, _stmt):
+        return _FakeResult(self.order)
+
+
+def _delivery(**overrides) -> OrderDelivery:
+    delivery = OrderDelivery(
+        order_id=uuid.uuid4(),
+        provider="lalamove",
+        zone_name="Sharjah City",
+        fee_charged=Decimal("15.00"),
+        courier_order_id=COURIER_ID,
+        courier_status="ON_GOING",
+        status_updated_at=NOW,
+    )
+    for key, value in overrides.items():
+        setattr(delivery, key, value)
+    return delivery
+
+
+def _order(status=OrderStatusEnum.PACKED):
+    return SimpleNamespace(id=uuid.uuid4(), status=status, order_number="MM-1")
+
+
+def _event(status: str, *, at: datetime = NOW, previous: str = "ON_GOING") -> dict:
+    return {
+        "eventType": "ORDER_STATUS_CHANGED",
+        "data": {
+            "order": {
+                "orderId": COURIER_ID,
+                "status": status,
+                "previousStatus": previous,
+                "shareLink": "https://share.lalamove.com/abc",
+            },
+            "updatedAt": at.isoformat().replace("+00:00", "Z"),
+        },
+    }
+
+
+# ── status mapping ────────────────────────────────────────────────────────────
+
+
+async def test_pickup_puts_the_order_on_the_way():
+    delivery, order = _delivery(), _order(OrderStatusEnum.PACKED)
+    await lalamove_service.apply_webhook(
+        _FakeDb(order), _event("PICKED_UP", at=NOW + timedelta(minutes=5)), delivery
+    )
+    assert delivery.courier_status == "PICKED_UP"
+    assert delivery.picked_up_at is not None
+    assert order.status == OrderStatusEnum.OUT_FOR_DELIVERY
+
+
+async def test_completion_marks_the_order_delivered():
+    delivery = _delivery(courier_status="PICKED_UP")
+    order = _order(OrderStatusEnum.OUT_FOR_DELIVERY)
+    await lalamove_service.apply_webhook(
+        _FakeDb(order),
+        _event("COMPLETED", at=NOW + timedelta(minutes=30), previous="PICKED_UP"),
+        delivery,
+    )
+    assert delivery.delivered_at is not None
+    assert order.status == OrderStatusEnum.DELIVERED
+
+
+@pytest.mark.parametrize("status", ["CANCELED", "REJECTED", "EXPIRED"])
+async def test_a_failed_booking_flags_the_delivery_but_leaves_the_order(status):
+    """
+    Nobody is coming for the box, but the customer has paid and it is packed.
+    Cancelling their order because a driver declined would be the wrong end of
+    the problem — this needs a human, so it surfaces as one.
+    """
+    delivery, order = _delivery(), _order(OrderStatusEnum.PACKED)
+    await lalamove_service.apply_webhook(
+        _FakeDb(order), _event(status, at=NOW + timedelta(minutes=2)), delivery
+    )
+    assert delivery.courier_status == status
+    assert delivery.needs_attention is True
+    assert order.status == OrderStatusEnum.PACKED
+
+
+async def test_assigning_and_ongoing_do_not_move_the_order():
+    """Both mean "packed and waiting". Neither is worth telling anyone about."""
+    delivery = _delivery(courier_status="ASSIGNING_DRIVER")
+    order = _order(OrderStatusEnum.PACKED)
+    await lalamove_service.apply_webhook(
+        _FakeDb(order), _event("ON_GOING", at=NOW + timedelta(minutes=1)), delivery
+    )
+    assert order.status == OrderStatusEnum.PACKED
+
+
+# ── out-of-order and duplicate delivery ───────────────────────────────────────
+
+
+async def test_a_late_update_cannot_rewind_a_delivered_order():
+    """
+    Lalamove: "our webhooks may not be sent in the right chronological order".
+    An ON_GOING stamped before the COMPLETED we already applied is stale.
+    """
+    delivered_at = NOW + timedelta(minutes=30)
+    delivery = _delivery(
+        courier_status="COMPLETED",
+        status_updated_at=delivered_at,
+        delivered_at=delivered_at,
+    )
+    order = _order(OrderStatusEnum.DELIVERED)
+
+    await lalamove_service.apply_webhook(
+        _FakeDb(order), _event("ON_GOING", at=NOW + timedelta(minutes=5)), delivery
+    )
+
+    assert delivery.courier_status == "COMPLETED"
+    assert order.status == OrderStatusEnum.DELIVERED
+
+
+async def test_replaying_the_same_event_changes_nothing():
+    delivery, order = _delivery(), _order(OrderStatusEnum.PACKED)
+    event = _event("PICKED_UP", at=NOW + timedelta(minutes=5))
+
+    await lalamove_service.apply_webhook(_FakeDb(order), event, delivery)
+    first_pickup = delivery.picked_up_at
+    await lalamove_service.apply_webhook(_FakeDb(order), event, delivery)
+
+    assert delivery.picked_up_at == first_pickup
+    assert order.status == OrderStatusEnum.OUT_FOR_DELIVERY
+
+
+async def test_a_refunded_order_is_not_reopened_by_a_late_delivery():
+    """Money has already moved. A courier event does not get to undo that."""
+    delivery = _delivery(courier_status="PICKED_UP")
+    order = _order(OrderStatusEnum.REFUNDED)
+    await lalamove_service.apply_webhook(
+        _FakeDb(order),
+        _event("COMPLETED", at=NOW + timedelta(hours=2), previous="PICKED_UP"),
+        delivery,
+    )
+    assert order.status == OrderStatusEnum.REFUNDED
+
+
+async def test_a_created_order_does_not_jump_to_out_for_delivery():
+    """
+    A pickup event for an order still sitting at "created" means our state and
+    theirs have diverged. Trusting it would skip confirmation and packing.
+    """
+    delivery, order = _delivery(), _order(OrderStatusEnum.CREATED)
+    await lalamove_service.apply_webhook(
+        _FakeDb(order), _event("PICKED_UP", at=NOW + timedelta(minutes=5)), delivery
+    )
+    assert order.status == OrderStatusEnum.CREATED
+
+
+# ── other event types ─────────────────────────────────────────────────────────
+
+
+async def test_driver_details_are_recorded():
+    delivery, order = _delivery(), _order()
+    await lalamove_service.apply_webhook(
+        _FakeDb(order),
+        {
+            "eventType": "DRIVER_ASSIGNED",
+            "data": {
+                "driver": {
+                    "driverId": "79973",
+                    "name": "Test Driver",
+                    "phone": "+971500000000",
+                    "plateNumber": "VP7815702",
+                },
+                "location": {"lat": 25.3304, "lng": 55.3710},
+                "order": {"orderId": COURIER_ID},
+                "updatedAt": (NOW + timedelta(minutes=1))
+                .isoformat()
+                .replace("+00:00", "Z"),
+            },
+        },
+        delivery,
+    )
+    assert delivery.driver_name == "Test Driver"
+    assert delivery.driver_plate == "VP7815702"
+    assert delivery.driver_latitude == Decimal("25.3304")
+
+
+async def test_proof_of_delivery_is_recorded():
+    delivery, order = _delivery(), _order()
+    await lalamove_service.apply_webhook(
+        _FakeDb(order),
+        {
+            "eventType": "POD_STATUS_CHANGED",
+            "data": {
+                "order": {
+                    "orderId": COURIER_ID,
+                    "status": "PICKED_UP",
+                    "stops": [
+                        {"deliveryCode": {"status": "Not Applicable"}},
+                        {
+                            "POD": {
+                                "status": "DELIVERED",
+                                "image": "https://example.test/pod.png",
+                            }
+                        },
+                    ],
+                },
+                "updatedAt": (NOW + timedelta(minutes=20))
+                .isoformat()
+                .replace("+00:00", "Z"),
+            },
+        },
+        delivery,
+    )
+    assert delivery.pod_status == "DELIVERED"
+    assert delivery.pod_image_url == "https://example.test/pod.png"
+
+
+async def test_the_real_cost_is_captured_from_the_price_breakdown():
+    """
+    The number the whole exercise turns on: what the courier actually charged,
+    against the fee we took.
+    """
+    delivery, order = _delivery(), _order()
+    event = _event("COMPLETED", at=NOW + timedelta(minutes=40), previous="PICKED_UP")
+    event["data"]["order"]["priceBreakdown"] = {
+        "base": "20",
+        "specialRequests": "5",
+        "total": "25",
+        "currency": "AED",
+    }
+    await lalamove_service.apply_webhook(_FakeDb(order), event, delivery)
+    assert delivery.cost_total == Decimal("25")
+    # 15 charged against 25 spent. Loss-making on its own, and visible as such.
+    assert delivery.fee_charged - delivery.cost_total == Decimal("-10")
+
+
+async def test_an_event_for_an_order_we_never_booked_is_ignored():
+    assert (
+        await lalamove_service.apply_webhook(_FakeDb(None), _event("COMPLETED")) is None
+    )
+
+
+async def test_an_event_with_no_order_id_is_ignored():
+    payload = {"eventType": "WALLET_BALANCE_CHANGED", "data": {"amount": "100"}}
+    assert await lalamove_service.apply_webhook(_FakeDb(None), payload) is None
+
+
+# ── dispatch ──────────────────────────────────────────────────────────────────
+
+
+async def test_a_third_party_zone_is_never_dispatched():
+    """
+    The point of the provider column: these zones work exactly as they did
+    before, with nothing called and nobody booked.
+    """
+    delivery = _delivery(provider="third_party", courier_order_id=None)
+    order = _order(OrderStatusEnum.PACKED)
+
+    async def _get_delivery(_db, _order_id):
+        return delivery
+
+    original = lalamove_service.get_delivery
+    lalamove_service.get_delivery = _get_delivery  # type: ignore[assignment]
+    try:
+        result = await lalamove_service.dispatch_order(_FakeDb(order), order)
+    finally:
+        lalamove_service.get_delivery = original  # type: ignore[assignment]
+
+    assert result is delivery
+    assert result.courier_order_id is None
+    assert result.last_error is None
+
+
+async def test_an_order_already_out_with_a_driver_is_not_booked_twice():
+    delivery = _delivery(courier_status="ON_GOING")
+    order = _order(OrderStatusEnum.PACKED)
+
+    async def _get_delivery(_db, _order_id):
+        return delivery
+
+    original = lalamove_service.get_delivery
+    lalamove_service.get_delivery = _get_delivery  # type: ignore[assignment]
+    try:
+        result = await lalamove_service.dispatch_order(_FakeDb(order), order)
+    finally:
+        lalamove_service.get_delivery = original  # type: ignore[assignment]
+
+    assert result.courier_order_id == COURIER_ID
+    assert result.previous_courier_order_ids in (None, [])
+
+
+# ── phone numbers ─────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("+971501234567", "+971501234567"),
+        ("00971501234567", "+971501234567"),
+        ("971501234567", "+971501234567"),
+        ("0501234567", "+971501234567"),
+        ("050 123 4567", "+971501234567"),
+        ("050-123-4567", "+971501234567"),
+        # Nonsense is dropped rather than guessed at — a wrong number on a
+        # booking strands a driver outside a building.
+        ("12345", ""),
+        ("", ""),
+    ],
+)
+def test_phone_numbers_reach_e164_or_nothing(raw, expected):
+    assert lalamove_service._normalise_phone(raw) == expected

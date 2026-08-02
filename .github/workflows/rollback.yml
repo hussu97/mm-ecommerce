@@ -89,6 +89,11 @@ jobs:
           TABBY_MERCHANT_CODE=${{ secrets.TABBY_MERCHANT_CODE }}
           TAMARA_API_KEY=${{ secrets.TAMARA_API_KEY }}
           TAMARA_API_URL=${{ secrets.TAMARA_API_URL }}
+          LALAMOVE_API_KEY=${{ secrets.LALAMOVE_API_KEY }}
+          LALAMOVE_API_SECRET=${{ secrets.LALAMOVE_API_SECRET }}
+          LALAMOVE_ENV=${{ secrets.LALAMOVE_ENV }}
+          LALAMOVE_PICKUP_BRANCH_REF=${{ secrets.LALAMOVE_PICKUP_BRANCH_REF }}
+          LALAMOVE_SENDER_PHONE=${{ secrets.LALAMOVE_SENDER_PHONE }}
           WEB_URL=${{ secrets.WEB_URL }}
           ADMIN_URL=${{ secrets.ADMIN_URL }}
           # Not secrets — the register's hostname is public. Kept apart from

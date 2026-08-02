@@ -411,11 +411,11 @@ function CheckoutContent() {
     if (retryOrder) return;
     let cancelled = false;
     deliveryApi
-      .quote(effectiveSubtotal, form.locationLat, form.locationLng)
+      .quote(effectiveSubtotal, form.locationLat, form.locationLng, form.addressLine1)
       .then((q) => { if (!cancelled) setQuote(q); })
       .catch(() => { /* leave the previous quote in place */ });
     return () => { cancelled = true; };
-  }, [effectiveSubtotal, form.locationLat, form.locationLng, retryOrder]);
+  }, [effectiveSubtotal, form.locationLat, form.locationLng, form.addressLine1, retryOrder]);
 
 
   const currentDraft: AddressDraft = {

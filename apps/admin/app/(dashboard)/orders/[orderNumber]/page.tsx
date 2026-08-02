@@ -1,25 +1,43 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { ordersApi } from '@/lib/api';
-import type { Order, OrderStatus } from '@/lib/types';
+import { ordersApi, ApiError } from '@/lib/api';
+import type { Order, OrderDelivery, OrderStatus } from '@/lib/types';
 import { Badge, Button } from '@/components/ui';
 import { cn, formatCurrency, formatDate } from '@/lib/utils';
 
-const STATUS_STEPS: OrderStatus[] = ['created', 'confirmed', 'packed'];
+const STATUS_STEPS: OrderStatus[] = [
+  'created',
+  'confirmed',
+  'packed',
+  'out_for_delivery',
+  'delivered',
+];
+
+const STATUS_LABEL: Record<OrderStatus, string> = {
+  created: 'created',
+  confirmed: 'confirmed',
+  packed: 'packed',
+  out_for_delivery: 'on the way',
+  delivered: 'delivered',
+  cancelled: 'cancelled',
+};
 
 const STATUS_VARIANT: Record<OrderStatus, 'warning' | 'info' | 'success' | 'danger'> = {
   created: 'warning',
   confirmed: 'info',
-  packed: 'success',
+  packed: 'info',
+  out_for_delivery: 'info',
+  delivered: 'success',
   cancelled: 'danger',
 };
 
 export default function OrderDetailPage() {
   const { orderNumber } = useParams<{ orderNumber: string }>();
   const [order, setOrder] = useState<Order | null>(null);
+  const [delivery, setDelivery] = useState<OrderDelivery | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [notes, setNotes] = useState('');
@@ -32,13 +50,36 @@ export default function OrderDetailPage() {
       .finally(() => setLoading(false));
   }, [orderNumber]);
 
+  // Separate call, and a 404 is normal: pickup orders and anything placed
+  // before fulfilment was tracked simply have no delivery record.
+  const loadDelivery = useCallback(() => {
+    ordersApi.getDelivery(orderNumber)
+      .then(setDelivery)
+      .catch(err => { if (!(err instanceof ApiError && err.status === 404)) console.error(err); });
+  }, [orderNumber]);
+
+  useEffect(() => { loadDelivery(); }, [loadDelivery]);
+
   async function updateStatus(newStatus: OrderStatus) {
     if (!order) return;
-    if (!confirm(`Set order to "${newStatus}"?`)) return;
+    if (!confirm(`Set order to "${STATUS_LABEL[newStatus]}"?`)) return;
     setActionLoading(true);
     try {
       const updated = await ordersApi.updateStatus(orderNumber, newStatus, notes || undefined);
       setOrder(updated);
+      loadDelivery();
+    } catch (err) {
+      alert((err as Error).message);
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function redispatch() {
+    if (!confirm('Book the courier again for this order?')) return;
+    setActionLoading(true);
+    try {
+      setDelivery(await ordersApi.dispatchDelivery(orderNumber));
     } catch (err) {
       alert((err as Error).message);
     } finally {
@@ -107,7 +148,7 @@ export default function OrderDetailPage() {
                       {done ? <span className="material-icons text-[14px]">check</span> : idx + 1}
                     </div>
                     <span className={cn('text-[10px] mt-1 font-body capitalize', done ? 'text-primary' : 'text-gray-400')}>
-                      {step}
+                      {STATUS_LABEL[step]}
                     </span>
                   </div>
                   {idx < STATUS_STEPS.length - 1 && (
@@ -132,6 +173,18 @@ export default function OrderDetailPage() {
           <Button size="sm" onClick={() => updateStatus('packed')} loading={actionLoading}>
             <span className="material-icons text-[14px]">inventory</span>
             Mark Packed
+          </Button>
+        )}
+        {order.status === 'packed' && (
+          <Button size="sm" onClick={() => updateStatus('out_for_delivery')} loading={actionLoading}>
+            <span className="material-icons text-[14px]">local_shipping</span>
+            Mark On The Way
+          </Button>
+        )}
+        {(order.status === 'packed' || order.status === 'out_for_delivery') && (
+          <Button size="sm" onClick={() => updateStatus('delivered')} loading={actionLoading}>
+            <span className="material-icons text-[14px]">done_all</span>
+            Mark Delivered
           </Button>
         )}
         {(order.status === 'created' || order.status === 'confirmed') && (
@@ -179,6 +232,14 @@ export default function OrderDetailPage() {
           </dl>
         </div>
       </div>
+
+      {delivery && (
+        <DeliveryPanel
+          delivery={delivery}
+          busy={actionLoading}
+          onRedispatch={redispatch}
+        />
+      )}
 
       {/* Items */}
       <div className="bg-white border border-gray-200 mb-4">
@@ -252,6 +313,165 @@ export default function OrderDetailPage() {
           </Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Fulfilment ────────────────────────────────────────────────────────────────
+
+const COURIER_STATUS_LABEL: Record<string, string> = {
+  ASSIGNING_DRIVER: 'Finding a driver',
+  ON_GOING: 'Driver on the way to us',
+  PICKED_UP: 'Collected',
+  COMPLETED: 'Delivered',
+  CANCELED: 'Cancelled',
+  REJECTED: 'Rejected by drivers',
+  EXPIRED: 'Expired — nobody accepted',
+};
+
+/**
+ * What it cost to get this order out of the door.
+ *
+ * The customer is never shown any of this. It is here for the two questions
+ * the shop actually has: is somebody coming for this box, and did we make
+ * money on the delivery.
+ */
+function DeliveryPanel({
+  delivery,
+  busy,
+  onRedispatch,
+}: {
+  delivery: OrderDelivery;
+  busy: boolean;
+  onRedispatch: () => void;
+}) {
+  const cost = delivery.cost_total ?? delivery.quoted_cost;
+  const isCourier = delivery.provider === 'lalamove';
+
+  return (
+    <div
+      className={cn(
+        'bg-white border mb-4',
+        delivery.needs_attention ? 'border-red-300' : 'border-gray-200',
+      )}
+    >
+      <div className="flex items-center gap-2 px-4 pt-4 pb-2">
+        <p className="text-[11px] font-body uppercase tracking-widest text-gray-400 flex-1">
+          Fulfilment
+        </p>
+        <Badge variant={isCourier ? 'info' : 'neutral'}>
+          {isCourier ? 'Courier API' : 'Third party'}
+        </Badge>
+        {delivery.courier_status && (
+          <Badge
+            variant={
+              delivery.courier_status === 'COMPLETED'
+                ? 'success'
+                : delivery.needs_attention
+                  ? 'danger'
+                  : 'info'
+            }
+          >
+            {COURIER_STATUS_LABEL[delivery.courier_status] ?? delivery.courier_status}
+          </Badge>
+        )}
+      </div>
+
+      {delivery.last_error && (
+        <p className="mx-4 mb-3 px-3 py-2 text-xs font-body text-red-700 bg-red-50 border border-red-200">
+          {delivery.last_error}
+        </p>
+      )}
+
+      <dl className="grid grid-cols-2 sm:grid-cols-4 gap-4 px-4 pb-4 text-xs font-body">
+        <div>
+          <dt className="text-gray-500">Zone</dt>
+          <dd className="text-gray-800">{delivery.zone_name ?? '—'}</dd>
+        </div>
+        <div>
+          <dt className="text-gray-500">Charged</dt>
+          <dd className="text-gray-800">
+            {delivery.fee_charged !== null
+              ? delivery.fee_charged > 0
+                ? formatCurrency(delivery.fee_charged)
+                : 'Free'
+              : '—'}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-gray-500">Courier cost</dt>
+          <dd className="text-gray-800">
+            {cost !== null ? formatCurrency(cost) : '—'}
+            {delivery.quoted_distance_m !== null && (
+              <span className="text-gray-400">
+                {' '}
+                · {(delivery.quoted_distance_m / 1000).toFixed(1)} km
+              </span>
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-gray-500">Margin</dt>
+          <dd className={cn(delivery.margin !== null && delivery.margin < 0 ? 'text-red-600' : 'text-gray-800')}>
+            {delivery.margin !== null ? formatCurrency(delivery.margin) : '—'}
+          </dd>
+        </div>
+
+        {delivery.driver_name && (
+          <div className="col-span-2">
+            <dt className="text-gray-500">Driver</dt>
+            <dd className="text-gray-800">
+              {delivery.driver_name}
+              {delivery.driver_phone && ` · ${delivery.driver_phone}`}
+              {delivery.driver_plate && ` · ${delivery.driver_plate}`}
+            </dd>
+          </div>
+        )}
+        {delivery.booked_at && (
+          <div>
+            <dt className="text-gray-500">Booked</dt>
+            <dd className="text-gray-800">{formatDate(delivery.booked_at)}</dd>
+          </div>
+        )}
+        {delivery.delivered_at && (
+          <div>
+            <dt className="text-gray-500">Delivered</dt>
+            <dd className="text-gray-800">{formatDate(delivery.delivered_at)}</dd>
+          </div>
+        )}
+      </dl>
+
+      {(isCourier || delivery.pod_image_url) && (
+        <div className="flex flex-wrap items-center gap-2 px-4 pb-4">
+          {delivery.share_link && (
+            <a
+              href={delivery.share_link}
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs font-body text-primary hover:underline"
+            >
+              Live tracking (internal)
+            </a>
+          )}
+          {delivery.pod_image_url && (
+            <a
+              href={delivery.pod_image_url}
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs font-body text-primary hover:underline"
+            >
+              Proof of delivery
+            </a>
+          )}
+          <div className="flex-1" />
+          {isCourier && (
+            <Button size="sm" variant="ghost" onClick={onRedispatch} disabled={busy}>
+              <span className="material-icons text-[14px]">refresh</span>
+              {delivery.courier_order_id ? 'Re-dispatch' : 'Dispatch now'}
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -1,5 +1,49 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ✅ 2026-08-02: Lalamove Courier Integration — DONE
+- [x] Read the whole Lalamove v3 API surface, including the webhook deck their docs only link to
+- [x] Confirm the UAE really is supported in production, and that sandbox AE is not
+- [x] Cut the emirate outlines into zones the fee strategy can actually price
+- [x] Publish a new polygon version: Sharjah City 15, Ajman City 15, Dubai City 25, everything else 50
+- [x] Add `fulfilment_provider` to `delivery_polygons` so a zone names its own courier
+- [x] Build the signed API client — quotations, orders, drivers, cancel, priority fee, cities, webhook config
+- [x] Quote the courier at checkout, hide it from the customer, record it against the cart
+- [x] Add `order_deliveries`, and `out_for_delivery` / `delivered` to the order lifecycle
+- [x] Book on packed, cancel on cancelled, leave third-party zones exactly as they were
+- [x] Receive and verify webhooks: signature, idempotency, out-of-order handling
+- [x] Admin: a delivery-zone map editor with drafts and rollback, and a fulfilment panel per order
+- [x] Verify against production AE with live quotes, and against a real database with real migrations
+
+### Findings / Result
+- **The docs are wrong about the UAE.** `GET /v3/cities` with `Market: AE` returns `AE AUH`, `AE DXB`,
+  `AE SHJ` on production, and `language` is validated to be exactly `en_AE`. The **sandbox** is the
+  genuinely broken half: its AE pricing engine 500s and its wallet is unfunded, so lifecycle work has
+  to be done against sandbox HK and validated against production AE.
+- **An emirate is not a delivery zone.** Sharjah reaches Khor Fakkan, Dubai reaches Hatta, Ajman owns
+  two inland exclaves. Those cost three to six times a city run, and Hatta is refused outright with
+  `ERR_OUT_OF_SERVICE_AREA`. Each served emirate is now clipped to the radius its rate card was
+  measured over — Sharjah 25 km, Ajman 30 km, Dubai 40 km — and listed ahead of its own outline, so the
+  city wins the lookup and the remainder stays third-party at 50.
+- **The customer is told nothing.** The storefront quote carries no courier field, and a test asserts
+  the response model's exact field set so a future addition fails loudly rather than leaking.
+- **A courier failure is never a customer failure.** With no credentials configured, `lalamove` zones
+  price and sell identically and dispatch by hand. A refused address, an empty wallet or an outage is
+  recorded on the delivery row and surfaced to an admin; the order is never cancelled on the customer's
+  behalf because a driver declined.
+- **Booking commits immediately.** The wallet debit happens outside our transaction and cannot roll
+  back with it, so losing the courier's order id would mean double-booking on the next dispatch.
+- Verified live against production AE: Al Majaz 15 charged / 25 cost, Palm Jumeirah 25 / 56, Yas Island
+  50 / 116 (third-party, estimate still recorded), Hatta refused and the reason stored, and a basket
+  over 200 charged 0 with the 25 cost still captured.
+- Every migration runs and reverses cleanly on a fresh database; the downgrade hands the live map back
+  to the previous version rather than leaving the storefront with none.
+- 468 API tests pass. Admin and web typecheck clean with no new lint warnings.
+
+### Still to do
+- Register the webhook URL and fund the wallet in the Partner Portal — neither can be done from code.
+- Batching is the real lever and is not built: one multi-stop order carrying ten drops costs about a
+  third per delivery of ten separate ones, which is what turns every zone profitable.
+
 ## ✅ 2026-06-06: Admin Credential Bootstrap Correction — DONE
 - [x] Confirm admin reset gap and capture lesson
 - [x] Directly update production DB for immediate admin access

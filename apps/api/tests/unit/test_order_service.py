@@ -27,6 +27,39 @@ def mock_calculate_fee():
         yield m
 
 
+@pytest.fixture(autouse=True)
+def mock_fulfilment():
+    """
+    Silence everything that talks to the zone map or a courier.
+
+    These tests drive `create_order` and `update_status` against a mock session
+    whose `execute` is a fixed script of results, so any extra query — resolving
+    the zone, opening the delivery row, looking up a booking to cancel — runs
+    the script off its end. What they are checking is arithmetic and status
+    rules; dispatch has its own tests.
+    """
+    with (
+        patch(
+            "app.services.order_service.delivery_zone_service.find_zone",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "app.services.order_service.lalamove_service.record_order_delivery",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.services.order_service.lalamove_service.dispatch_order",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.services.order_service.lalamove_service.cancel_delivery",
+            new_callable=AsyncMock,
+        ),
+    ):
+        yield
+
+
 # ── Test helpers ─────────────────────────────────────────────────────────────
 
 
