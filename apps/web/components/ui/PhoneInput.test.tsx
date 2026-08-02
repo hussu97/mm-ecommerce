@@ -50,8 +50,10 @@ describe('PhoneInput', () => {
     const { container } = render(<Harness />);
     const input = container.querySelector('input[type="tel"]')!;
     fireEvent.change(input, { target: { value: '+447911123456' } });
-    // The picker follows the pasted number to the UK...
+    // The picker follows the pasted number to the UK — not to Guernsey, which
+    // shares +44 and is what libphonenumber resolves this range to.
     expect(screen.getByText('+44')).toBeInTheDocument();
+    expect(screen.getByLabelText('Country calling code')).toHaveValue('GB');
     // ...and the field keeps only the national part, not a doubled dial code.
     expect((input as HTMLInputElement).value).not.toContain('+44');
   });

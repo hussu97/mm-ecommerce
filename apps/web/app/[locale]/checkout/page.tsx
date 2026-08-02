@@ -717,7 +717,14 @@ function CheckoutContent() {
   useEffect(() => {
     const stored = loadFromSession();
     if (stored) {
-      setForm((prev) => ({ ...prev, ...(stored as Partial<CheckoutForm>) }));
+      const restored = { ...INITIAL_FORM, ...(stored as Partial<CheckoutForm>) };
+      // A payment method that is no longer offered must not survive in a stale
+      // session. Without this, anyone who loaded checkout while cash was on
+      // would keep submitting cash orders after it was switched off.
+      if (!COD_ENABLED && restored.paymentMethod === 'cod') {
+        restored.paymentMethod = 'stripe';
+      }
+      setForm((prev) => ({ ...prev, ...restored }));
     }
 
     const returnStep = searchParams.get('step');

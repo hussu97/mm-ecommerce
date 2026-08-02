@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.config import settings
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.order import Order, OrderStatusEnum
 from app.models.webhook_event import WebhookEvent
@@ -117,6 +118,8 @@ async def create_session(db: AsyncSession, order_number: str, provider: str) -> 
     # market pays for food, and requiring a card up front turns those
     # customers away at the last screen.
     if provider == "cod":
+        if not settings.COD_ENABLED:
+            raise BadRequestError("Cash on delivery is not available right now")
         order.status = OrderStatusEnum.CONFIRMED
         order.payment_provider = "cod"
         order.payment_id = None

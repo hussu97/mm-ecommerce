@@ -23,6 +23,31 @@ import { cn } from '@/lib/utils';
 // most often carry a number from. Everything else follows alphabetically.
 const PRIORITY: CountryCode[] = ['AE', 'SA', 'OM', 'BH', 'KW', 'QA', 'IN', 'PK', 'GB', 'US'];
 
+/**
+ * Several territories share a calling code, and libphonenumber resolves a
+ * number to whichever of them the range belongs to — so a perfectly ordinary
+ * UK mobile can come back as Guernsey. The dial code and the stored E.164 are
+ * right either way, but the flag looks broken, so pick the country a caller
+ * would expect for the shared codes people actually paste.
+ */
+const PRIMARY_FOR_CALLING_CODE: Record<string, CountryCode> = {
+  '1': 'US',
+  '7': 'RU',
+  '44': 'GB',
+  '39': 'IT',
+  '61': 'AU',
+  '47': 'NO',
+  '212': 'MA',
+  '262': 'RE',
+  '590': 'GP',
+  '599': 'CW',
+};
+
+function preferredCountry(parsedCountry: CountryCode, callingCode: string): CountryCode {
+  const primary = PRIMARY_FOR_CALLING_CODE[callingCode];
+  return primary ?? parsedCountry;
+}
+
 const REGION_NAMES =
   typeof Intl !== 'undefined' && 'DisplayNames' in Intl
     ? new Intl.DisplayNames(['en'], { type: 'region' })
@@ -66,7 +91,9 @@ export function PhoneInput({
   // The selected country is derived from the value when the value knows it,
   // and only falls back to local state before anything has been typed.
   const [fallbackCountry, setFallbackCountry] = useState<CountryCode>(defaultCountry);
-  const country = parsed?.country ?? fallbackCountry;
+  const country = parsed?.country
+    ? preferredCountry(parsed.country, parsed.countryCallingCode)
+    : fallbackCountry;
   const inputRef = useRef<HTMLInputElement>(null);
 
   const countries = useMemo(() => {
@@ -99,7 +126,7 @@ export function PhoneInput({
       const normalised = raw.trim().replace(/^00/, '+');
       const full = parsePhoneNumberFromString(normalised);
       if (full?.country) {
-        setFallbackCountry(full.country);
+        setFallbackCountry(preferredCountry(full.country, full.countryCallingCode));
         onChange(full.number);
         return;
       }

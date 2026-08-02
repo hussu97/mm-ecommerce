@@ -115,6 +115,11 @@ class Settings(BaseSettings):
     TAMARA_API_KEY: str = ""
     TAMARA_API_URL: str = "https://api.tamara.co"
 
+    # ── Payments ──────────────────────────────────────────────────────────────
+    # Cash on delivery is implemented end to end but not offered to customers.
+    # The storefront hides it; this stops a crafted request creating one anyway.
+    COD_ENABLED: bool = False
+
     # ── Frontend URLs (email templates & CORS) ────────────────────────────────
     WEB_URL: str = "http://localhost:3000"
     ADMIN_URL: str = "http://localhost:3001"
