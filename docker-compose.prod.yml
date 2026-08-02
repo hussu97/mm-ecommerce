@@ -78,6 +78,31 @@ services:
       SENTRY_DSN: ${SENTRY_DSN:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.02}
+      # ── Courier ─────────────────────────────────────────────────────────
+      # This block is an allow-list, not an env_file: a variable written to
+      # .env and not named here never reaches the container. Leaving these
+      # out would have shipped the whole integration inert, priced correctly
+      # and dispatching nothing, with no error anywhere to say why.
+      #
+      # Empty key and secret mean "no courier", which the app handles: zones
+      # still price from the map and dispatch by hand. The rest carry their
+      # real defaults so an unset value cannot write an empty string over one.
+      LALAMOVE_API_KEY: ${LALAMOVE_API_KEY:-}
+      LALAMOVE_API_SECRET: ${LALAMOVE_API_SECRET:-}
+      LALAMOVE_ENV: ${LALAMOVE_ENV:-production}
+      LALAMOVE_MARKET: ${LALAMOVE_MARKET:-AE}
+      LALAMOVE_LANGUAGE: ${LALAMOVE_LANGUAGE:-en_AE}
+      LALAMOVE_SERVICE_TYPE: ${LALAMOVE_SERVICE_TYPE:-CAR}
+      LALAMOVE_SPECIAL_REQUESTS: ${LALAMOVE_SPECIAL_REQUESTS:-DOOR_TO_DOOR}
+      LALAMOVE_WEBHOOK_PATH: ${LALAMOVE_WEBHOOK_PATH:-/api/v1/webhooks/lalamove}
+      LALAMOVE_TIMEOUT_SECONDS: ${LALAMOVE_TIMEOUT_SECONDS:-8}
+      LALAMOVE_QUOTE_CACHE_SECONDS: ${LALAMOVE_QUOTE_CACHE_SECONDS:-120}
+      LALAMOVE_PICKUP_BRANCH_REF: ${LALAMOVE_PICKUP_BRANCH_REF:-}
+      LALAMOVE_SENDER_PHONE: ${LALAMOVE_SENDER_PHONE:-}
+      # Only the storefront API runs the batch sweeper; the register has no
+      # web orders to batch and the advisory lock would make a second one
+      # pointless anyway.
+      BATCH_DISPATCHER_ENABLED: ${BATCH_DISPATCHER_ENABLED:-true}
       UVICORN_WORKERS: "1"
     # Ship stdout/stderr directly to GCP Cloud Logging.
     # The app emits structured JSON (severity/message/time/stack_trace) in
