@@ -91,9 +91,17 @@ jobs:
           TAMARA_API_URL=${{ secrets.TAMARA_API_URL }}
           LALAMOVE_API_KEY=${{ secrets.LALAMOVE_API_KEY }}
           LALAMOVE_API_SECRET=${{ secrets.LALAMOVE_API_SECRET }}
-          LALAMOVE_ENV=${{ secrets.LALAMOVE_ENV }}
+          LALAMOVE_ENV=${{ secrets.LALAMOVE_ENV || 'production' }}
+          LALAMOVE_MARKET=${{ secrets.LALAMOVE_MARKET || 'AE' }}
+          LALAMOVE_LANGUAGE=${{ secrets.LALAMOVE_LANGUAGE || 'en_AE' }}
+          LALAMOVE_SERVICE_TYPE=${{ secrets.LALAMOVE_SERVICE_TYPE || 'CAR' }}
+          LALAMOVE_SPECIAL_REQUESTS=${{ secrets.LALAMOVE_SPECIAL_REQUESTS || 'DOOR_TO_DOOR' }}
+          LALAMOVE_WEBHOOK_PATH=${{ secrets.LALAMOVE_WEBHOOK_PATH || '/api/v1/webhooks/lalamove' }}
+          LALAMOVE_TIMEOUT_SECONDS=${{ secrets.LALAMOVE_TIMEOUT_SECONDS || '8' }}
+          LALAMOVE_QUOTE_CACHE_SECONDS=${{ secrets.LALAMOVE_QUOTE_CACHE_SECONDS || '120' }}
           LALAMOVE_PICKUP_BRANCH_REF=${{ secrets.LALAMOVE_PICKUP_BRANCH_REF }}
           LALAMOVE_SENDER_PHONE=${{ secrets.LALAMOVE_SENDER_PHONE }}
+          BATCH_DISPATCHER_ENABLED=${{ secrets.BATCH_DISPATCHER_ENABLED || 'true' }}
           WEB_URL=${{ secrets.WEB_URL }}
           ADMIN_URL=${{ secrets.ADMIN_URL }}
           # Not secrets — the register's hostname is public. Kept apart from
