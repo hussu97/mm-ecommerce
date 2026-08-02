@@ -1,5 +1,47 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ✅ 2026-08-02: Delivery Batching, Zone Map, and Retiring Regions — DONE
+- [x] Cut the served cities out of their emirates so no address is in two zones
+- [x] Add per-zone batch windows in Dubai time, seeded 00:00/12:00/18:00/21:00/22:00/23:00
+- [x] Assign an order to a run when it is packed; dispatch alone when no window covers it
+- [x] Book the run route-optimised, split above fifteen drops, match stops back by coordinate
+- [x] Re-derive everything still waiting whenever the schedule changes
+- [x] Fire due runs from an in-process sweeper with a Postgres advisory lock
+- [x] Make webhooks batch-aware, with proof of delivery matched per customer
+- [x] Draw the country in the admin, hover for fee and courier
+- [x] Remove the region concept from BE, FE and the database
+- [x] Move the free-delivery threshold and pickup fee under Delivery Zones
+
+### Findings / Result
+- **Batching is worth more than any pricing decision.** Measured live against production
+  AE: five Sharjah drops on one route cost **AED 62 total, 12.40 each**, against AED 125
+  to send them separately. Route optimisation alone did AED 12 of that — the same five
+  stops quoted 74 unordered and 62 reordered — and it is free.
+- **Lalamove reorders the stops.** The reply comes back in route order, not send order,
+  so each customer is matched to their stop by coordinate. Position-matching would have
+  booked every customer after the first against somebody else's address.
+- **The zones overlapped and nobody could see it.** Sharjah City sat inside Sharjah and
+  priced correctly only because it was listed first. The served circle is now punched out
+  of its emirate as a hole, so the price is a property of where the pin is. A test asserts
+  every landmark matches exactly one zone.
+- **A window is matched at pack time, not order time.** A run can only carry what has been
+  baked; scheduling by placement would build routes around cakes that do not exist yet.
+- **No queue in this stack**, so the API sweeps once a minute inside its own lifespan,
+  guarded by a Postgres advisory lock and `FOR UPDATE SKIP LOCKED`.
+- **Regions were a question with a better answer already on the row.** Dropped `regions`,
+  `addresses.region`, `orders.region_id`, `branch_regions` and `delivery_polygons.region_slug`.
+  Reporting that grouped by emirate now groups by the zone that priced the order.
+- 504 API tests pass. Admin and web typecheck clean with no new lint warnings. Every
+  migration runs and reverses on a fresh database.
+
+### Still to do
+- **Push the branch.** `feat/lalamove-batching` is committed locally only — the active
+  `gh` account is `h-abbasi` and the repo belongs to `hussu97`.
+- **Migration ordering.** This chain hangs off 048 as `050 → 051 → 052 → 053`;
+  `feat/homepage-visual-refresh` has its own `049` off the same parent. Whichever merges
+  second must re-parent, and `alembic upgrade head` refuses to run until one of them does.
+- Register the webhook URL and fund the wallet in the Partner Portal.
+
 ## ✅ 2026-08-02: Lalamove Courier Integration — DONE
 - [x] Read the whole Lalamove v3 API surface, including the webhook deck their docs only link to
 - [x] Confirm the UAE really is supported in production, and that sandbox AE is not
