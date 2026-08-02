@@ -199,6 +199,7 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("product", "increase", "Increase quantity"),
     ("product", "decrease", "Decrease quantity"),
     ("cart", "remove_item", "Remove from basket"),
+    ("checkout", "add_promo_or_note", "Add a promo code or a note"),
     ("checkout", "email_optional", "Email (optional)"),
     (
         "checkout",
@@ -638,6 +639,7 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("product", "increase", "زيادة الكمية"),
     ("product", "decrease", "تقليل الكمية"),
     ("cart", "remove_item", "إزالة من السلة"),
+    ("checkout", "add_promo_or_note", "إضافة رمز خصم أو ملاحظة"),
     ("checkout", "email_optional", "البريد الإلكتروني (اختياري)"),
     ("checkout", "email_optional_hint", "أضفه إن رغبت بتأكيد مكتوب لطلبك."),
     ("checkout", "add_delivery_address", "أضف عنوان التوصيل"),
