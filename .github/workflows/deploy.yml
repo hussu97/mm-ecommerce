@@ -459,8 +459,34 @@ jobs:
                 || echo "    WARNING: expires within 7 days"
             done' < /dev/null || true
 
+          # -f alone only removes *dangling* images, so every tagged image the
+          # VM has ever pulled stayed on the 20GB disk: it reached 71% full
+          # with 4.6GB of superseded tags. -a removes tagged images no running
+          # container uses; until=168h keeps a 7-day rollback window.
           echo "Pruning old images..."
-          docker image prune -f < /dev/null
+          docker image prune -af --filter "until=168h" < /dev/null
+
+          # nginx is built on the VM (--build above), and that cache is never
+          # reclaimed either — it had grown to 3.2GB. Same 7-day window.
+          echo "Pruning stale build cache..."
+          docker builder prune -f --filter "until=168h" < /dev/null
+
+          # journald shipped uncapped (default: 10% of the disk = 2GB here) and
+          # had reached 810MB. Cap it so logs cannot crowd out the DB. Guarded
+          # and non-fatal: a logging tweak must never fail a deploy.
+          echo "Capping systemd journal size..."
+          if sudo -n true < /dev/null 2>/dev/null; then
+            sudo -n mkdir -p /etc/systemd/journald.conf.d < /dev/null
+            printf '[Journal]\nSystemMaxUse=200M\nSystemMaxFileSize=50M\n' \
+              | sudo -n tee /etc/systemd/journald.conf.d/99-size-cap.conf > /dev/null
+            sudo -n systemctl restart systemd-journald < /dev/null
+            sudo -n journalctl --vacuum-size=200M < /dev/null 2>&1 | tail -1
+          else
+            echo "  skipped: no passwordless sudo for $(whoami)"
+          fi
+
+          echo "Disk after cleanup:"
+          df -h / < /dev/null | tail -1
 
           echo "Deployment complete."
           docker compose -f docker-compose.prod.yml ps < /dev/null
