@@ -1,16 +1,20 @@
 /**
- * Turn a dropped pin into the address fields a rider can read.
+ * Turn a dropped pin into an address.
  *
- * The customer has already told us where they are by putting a marker on the
- * map; making them then type the street name back to us is asking for
- * information we hold. Everything here is a starting point — every field it
- * fills stays editable, because geocoders are confidently wrong often enough
- * that an uneditable result would be worse than an empty one.
+ * The customer has already said where they are by putting a marker on the map;
+ * making them then type the street name back to us is asking for something we
+ * hold. One line comes back — Google's own formatted address — rather than the
+ * street, area and emirate split across three inputs the customer had to
+ * reconcile. The only thing left to type is the part no map can know: the flat.
+ *
+ * The emirate still comes back, but as data rather than a question. It rides
+ * along on the order for reporting; the delivery fee is priced off the
+ * coordinates against the zone map.
  */
 
 export interface GeocodedAddress {
-  addressLine1: string;
-  addressLine2: string;
+  /** Google's formatted address, trimmed of the country suffix. */
+  address: string;
   region: string;
 }
 
@@ -21,16 +25,16 @@ function pick(components: Component[], type: string): string {
 }
 
 /**
- * Google names UAE emirates in several ways ("Abu Dhabi Emirate", "Emirate of
- * Sharjah", "Ras al Khaimah"), so match loosely on the distinctive words
- * rather than expecting one exact string.
+ * Google names UAE emirates several ways ("Abu Dhabi Emirate", "Emirate of
+ * Sharjah", "Ras al Khaimah"), so match loosely on the distinctive words rather
+ * than expecting one exact string.
  */
 function toRegionSlug(components: Component[]): string {
   const admin = pick(components, 'administrative_area_level_1').toLowerCase();
   const locality = pick(components, 'locality').toLowerCase();
 
-  // Al Ain sits inside the emirate of Abu Dhabi but is its own delivery zone,
-  // so the city has to win over the emirate here.
+  // Al Ain sits inside the emirate of Abu Dhabi but has always been its own
+  // line in the fee table, so the city wins over the emirate here.
   if (locality.includes('al ain') || admin.includes('al ain')) return 'al_ain';
 
   const haystack = `${admin} ${locality}`;
@@ -44,32 +48,28 @@ function toRegionSlug(components: Component[]): string {
   return 'rest_of_uae';
 }
 
-function buildLine1(result: google.maps.GeocoderResult): string {
-  const c = result.address_components;
-  const street = [pick(c, 'street_number'), pick(c, 'route')].filter(Boolean).join(' ');
-  if (street) return street;
+/**
+ * Google appends the country and often a plus-code prefix. Neither helps a
+ * rider who is already in the UAE, and both make the line too long to read in
+ * a single row on a phone.
+ */
+function tidy(formatted: string, components: Component[]): string {
+  const country = pick(components, 'country');
+  let out = formatted;
 
-  const named = pick(c, 'premise') || pick(c, 'establishment') || pick(c, 'point_of_interest');
-  if (named) return named;
+  if (country) {
+    out = out.replace(new RegExp(`,?\\s*${country}\\s*$`, 'i'), '');
+  }
+  // A plus code ("7CQ2+3M Dubai") is a fallback Google emits when it has no
+  // street. It is machine-readable, not human-readable.
+  out = out.replace(/^[A-Z0-9]{4}\+[A-Z0-9]{2,3}\s*,?\s*/i, '');
 
-  // Last resort: the head of the formatted address, minus the emirate/country
-  // tail the other fields already capture.
-  return result.formatted_address.split(',')[0]?.trim() ?? '';
-}
-
-function buildLine2(result: google.maps.GeocoderResult): string {
-  const c = result.address_components;
-  return (
-    pick(c, 'neighborhood') ||
-    pick(c, 'sublocality_level_1') ||
-    pick(c, 'sublocality') ||
-    ''
-  );
+  return out.trim().replace(/^,\s*/, '').replace(/,\s*$/, '');
 }
 
 /**
- * Reverse-geocode a pin. Resolves to null when Google has nothing useful —
- * callers keep whatever the customer already typed rather than blanking it.
+ * Reverse-geocode a pin. Resolves to null when Google has nothing useful, so
+ * callers can leave whatever the customer already typed rather than blanking it.
  */
 export async function reverseGeocode(lat: number, lng: number): Promise<GeocodedAddress | null> {
   if (typeof google === 'undefined' || !google.maps?.Geocoder) return null;
@@ -79,19 +79,18 @@ export async function reverseGeocode(lat: number, lng: number): Promise<Geocoded
     const { results } = await geocoder.geocode({ location: { lat, lng } });
     if (!results?.length) return null;
 
-    // Prefer a street address; a plaza or emirate centroid tells the rider
+    // Prefer a street address; a plaza or an emirate centroid tells the rider
     // nothing they cannot already see from the pin.
     const best =
       results.find((r) => r.types.includes('street_address')) ??
       results.find((r) => r.types.includes('premise')) ??
+      results.find((r) => r.types.includes('route')) ??
       results[0];
 
-    const line1 = buildLine1(best);
-    const line2 = buildLine2(best);
-    const region = toRegionSlug(best.address_components);
+    const address = tidy(best.formatted_address, best.address_components);
+    if (!address) return null;
 
-    if (!line1 && !line2 && region === 'rest_of_uae') return null;
-    return { addressLine1: line1, addressLine2: line2, region };
+    return { address, region: toRegionSlug(best.address_components) };
   } catch {
     return null;
   }

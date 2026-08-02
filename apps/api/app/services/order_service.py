@@ -212,9 +212,16 @@ async def _compute_order_totals(
     Returns (delivery_fee, total, vat_amount, total_excl_vat).
     """
     discounted_subtotal = subtotal - discount_amount
-    region = data.shipping_address.region if data.shipping_address else None
+    address = data.shipping_address
+    # The fee is priced off the pin. The region rides along only as a fallback
+    # for an address saved before the map existed.
     delivery_fee = await delivery_service.calculate_fee(
-        data.delivery_method, region, discounted_subtotal, db
+        data.delivery_method,
+        address.region if address else None,
+        discounted_subtotal,
+        db,
+        latitude=address.latitude if address else None,
+        longitude=address.longitude if address else None,
     )
     total = discounted_subtotal + delivery_fee
 

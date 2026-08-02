@@ -2,7 +2,7 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { Suspense, useState, useEffect, useCallback, useMemo } from 'react';
+import { Suspense, useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useCart } from '@/lib/cart-context';
 import {
@@ -22,7 +22,7 @@ import { analytics } from '@/lib/analytics';
 import { guestAddresses } from '@/lib/guest-addresses';
 import { AddressModal, formatAddress, toDraft, type AddressDraft } from './components/AddressModal';
 import { PromoCodeStep } from './components/PromoCodeStep';
-import type { Address, Cart, CartItem, RegionCode, DeliveryRates, PublicRegion } from '@/lib/types';
+import type { Address, Cart, CartItem, RegionCode, DeliveryRates, DeliveryQuote } from '@/lib/types';
 
 // ─── Session persistence ──────────────────────────────────────────────────────
 
@@ -54,6 +54,7 @@ interface CheckoutForm {
   locationLng: number | null;
   selectedAddressId: string; // '' = new address
   deliveryMethod: 'delivery' | 'pickup';
+  paymentMethod: 'stripe' | 'cod';
   promoCode: string;
   promoDiscount: number;
   promoMessage: string;
@@ -66,34 +67,23 @@ const INITIAL_FORM: CheckoutForm = {
   locationLat: null, locationLng: null,
   selectedAddressId: '',
   deliveryMethod: 'delivery',
+  paymentMethod: 'stripe',
   promoCode: '', promoDiscount: 0, promoMessage: '',
   notes: '',
 };
 
 /**
- * How the order is paid follows from how it is collected: delivery is paid by
- * card up front, collection is paid in cash at the counter. There is no
- * decision left to present, so the page states it rather than asking.
+ * Cash only works when the customer comes to the counter, so it is offered for
+ * collection and not for delivery. Card works for both.
  */
-function paymentFor(method: 'delivery' | 'pickup'): 'stripe' | 'cod' {
-  return method === 'pickup' ? 'cod' : 'stripe';
+function paymentOptionsFor(method: 'delivery' | 'pickup'): ('stripe' | 'cod')[] {
+  return method === 'pickup' ? ['cod', 'stripe'] : ['stripe'];
 }
 
-// ─── Delivery fee helper ──────────────────────────────────────────────────────
-
-function calcFeeFromRates(
-  rates: DeliveryRates | null,
-  method: 'delivery' | 'pickup',
-  region: string,
-  subtotal: number,
-): number {
-  if (method === 'pickup') return rates?.pickup_fee ?? 0;
-  if (!rates) return 0;
-  if (subtotal >= rates.free_threshold) return 0;
-  const r = rates.regions.find((reg) => reg.slug === region);
-  if (r) return r.delivery_fee;
-  return rates.regions.reduce((max, reg) => Math.max(max, reg.delivery_fee), 50);
-}
+/** Where to send someone who wants to see the counter before choosing pickup. */
+const STORE_LOCATION = { lat: 25.3304139, lng: 55.3710382 };
+const STORE_MAPS_URL =
+  `https://www.google.com/maps/search/?api=1&query=${STORE_LOCATION.lat},${STORE_LOCATION.lng}`;
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 
@@ -169,13 +159,18 @@ function ChoiceRow({
 // ─── Order summary ────────────────────────────────────────────────────────────
 
 function OrderSummary({
-  cart, retryOrder, discount, promoCode, deliveryFee, deliveryMethod, locale, t,
+  cart, retryOrder, discount, promoCode, deliveryFee, baseFee, freeApplied,
+  remainingForFree, deliveryMethod, locale, t,
 }: {
   cart: Cart | null;
   retryOrder: import('@/lib/types').Order | null;
   discount: number;
   promoCode: string;
   deliveryFee: number;
+  /** What delivery would have cost — struck through once it is waived. */
+  baseFee: number;
+  freeApplied: boolean;
+  remainingForFree: number;
   deliveryMethod: 'delivery' | 'pickup';
   locale: string;
   t: (k: string, p?: Record<string, string | number>) => string;
@@ -238,11 +233,32 @@ function OrderSummary({
             <span>-{discount.toFixed(2)} AED</span>
           </div>
         )}
-        <div className="flex justify-between text-gray-500">
-          <span>{deliveryMethod === 'pickup' ? t('checkout.store_pickup') : t('common.delivery')}</span>
-          <span className={deliveryFee === 0 ? 'text-green-600' : 'text-gray-700'}>
-            {deliveryFee === 0 ? t('common.free') : `${deliveryFee.toFixed(2)} AED`}
-          </span>
+        <div>
+          <div className="flex justify-between text-gray-500">
+            <span>{deliveryMethod === 'pickup' ? t('checkout.store_pickup') : t('common.delivery')}</span>
+            {/* Striking the real fee through, rather than just printing "Free",
+                shows the customer the number they no longer owe. */}
+            {deliveryMethod === 'delivery' && freeApplied && baseFee > 0 ? (
+              <span className="flex items-center gap-2">
+                <span className="text-gray-400 line-through">{baseFee.toFixed(2)} AED</span>
+                <span className="text-green-600 font-medium">{t('common.free')}</span>
+              </span>
+            ) : (
+              <span className={deliveryFee === 0 ? 'text-green-600' : 'text-gray-700'}>
+                {deliveryFee === 0 ? t('common.free') : `${deliveryFee.toFixed(2)} AED`}
+              </span>
+            )}
+          </div>
+          {deliveryMethod === 'delivery' && !freeApplied && remainingForFree > 0 && (
+            <p className="mt-1 font-body text-xs text-secondary">
+              {t('checkout.free_delivery_upsell', { amount: remainingForFree.toFixed(2) })}
+            </p>
+          )}
+          {deliveryMethod === 'delivery' && freeApplied && (
+            <p className="mt-1 font-body text-xs text-green-600">
+              {t('checkout.free_delivery_qualified')}
+            </p>
+          )}
         </div>
         <div className="flex justify-between pt-2 mt-1 border-t border-gray-100 font-medium text-base">
           <span className="text-gray-800">{t('common.total')}</span>
@@ -274,9 +290,14 @@ function CheckoutContent() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [addressOpen, setAddressOpen] = useState(false);
   const [showExtras, setShowExtras] = useState(false);
+  const [quote, setQuote] = useState<DeliveryQuote | null>(null);
 
   const isDelivery = form.deliveryMethod === 'delivery';
-  const paymentMethod = paymentFor(form.deliveryMethod);
+  const paymentOptions = paymentOptionsFor(form.deliveryMethod);
+  // Keep the selection legal: switching to delivery must not leave cash chosen.
+  const paymentMethod = paymentOptions.includes(form.paymentMethod)
+    ? form.paymentMethod
+    : paymentOptions[0];
 
   // Restore from sessionStorage + handle a cancelled payment coming back.
   useEffect(() => {
@@ -303,7 +324,7 @@ function CheckoutContent() {
   }, []);
 
   useEffect(() => {
-    deliveryApi.getRates().then(setDeliveryRates).catch(() => { /* fall back to calcFeeFromRates(null) */ });
+    deliveryApi.getRates().then(setDeliveryRates).catch(() => { /* the quote carries the numbers */ });
   }, []);
 
   // The address book: the API when signed in, localStorage when not. Either way
@@ -362,21 +383,37 @@ function CheckoutContent() {
 
   const subtotal = cart?.subtotal ?? 0;
   const effectiveSubtotal = Math.max(0, subtotal - form.promoDiscount);
+  const freeThreshold = quote?.free_threshold ?? deliveryRates?.free_threshold ?? 200;
+  const freeApplied = effectiveSubtotal >= freeThreshold;
+
+  // Priced off the pin against the active zone map. Until there is a pin there
+  // is no honest number to show, so the row says so rather than guessing.
+  const baseFee = quote?.base_fee ?? null;
+  const knowsFee = baseFee !== null;
+  const homeDeliveryFee = knowsFee ? (freeApplied ? 0 : baseFee) : null;
+  const remainingForFree = Math.max(0, freeThreshold - effectiveSubtotal);
+
   const deliveryFee = retryOrder
     ? Number(retryOrder.delivery_fee)
-    : calcFeeFromRates(deliveryRates, form.deliveryMethod, form.region, effectiveSubtotal);
-  // What home delivery costs regardless of what is selected — otherwise picking
-  // pickup relabels the delivery row with a price that does not exist.
-  const homeDeliveryFee = calcFeeFromRates(deliveryRates, 'delivery', form.region, effectiveSubtotal);
-  const freeThreshold = deliveryRates?.free_threshold ?? 200;
+    : form.deliveryMethod === 'pickup'
+      ? (deliveryRates?.pickup_fee ?? 0)
+      : (homeDeliveryFee ?? 0);
   const total = retryOrder
     ? Number(retryOrder.total)
     : Math.max(0, subtotal + deliveryFee - form.promoDiscount);
 
-  const regionLabel = useMemo(() => {
-    const r = (deliveryRates?.regions ?? []).find((x: PublicRegion) => x.slug === form.region);
-    return r ? (r.name_translations[locale] ?? r.name_translations['en'] ?? form.region) : form.region;
-  }, [deliveryRates, form.region, locale]);
+  // Re-price whenever the pin or the basket changes, so what is on screen is
+  // what the order will be written with.
+  useEffect(() => {
+    if (retryOrder) return;
+    let cancelled = false;
+    deliveryApi
+      .quote(effectiveSubtotal, form.locationLat, form.locationLng)
+      .then((q) => { if (!cancelled) setQuote(q); })
+      .catch(() => { /* leave the previous quote in place */ });
+    return () => { cancelled = true; };
+  }, [effectiveSubtotal, form.locationLat, form.locationLng, retryOrder]);
+
 
   const currentDraft: AddressDraft = {
     id: form.selectedAddressId,
@@ -566,29 +603,57 @@ function CheckoutContent() {
           <ChoiceRow
             selected={isDelivery}
             onSelect={() => {
-              analytics.selectDeliveryMethod({ method: 'delivery', fee: homeDeliveryFee });
+              analytics.selectDeliveryMethod({ method: 'delivery', fee: homeDeliveryFee ?? 0 });
               onChange({ deliveryMethod: 'delivery' });
             }}
             icon="local_shipping"
-            title={t('checkout.home_delivery')}
-            subtitle={effectiveSubtotal >= freeThreshold
+            title={t('checkout.delivery_option')}
+            subtitle={freeApplied
               ? t('checkout.free_delivery_qualified')
-              : t('checkout.free_delivery_upsell', { amount: (freeThreshold - effectiveSubtotal).toFixed(2) })}
-            trailing={homeDeliveryFee === 0
-              ? <span className="text-green-600">{t('common.free')}</span>
-              : <span className="text-gray-700">{homeDeliveryFee.toFixed(2)} AED</span>}
+              : knowsFee
+                ? t('checkout.free_delivery_upsell', { amount: remainingForFree.toFixed(2) })
+                : t('checkout.fee_from_address')}
+            trailing={
+              !knowsFee ? (
+                <span className="text-gray-400">—</span>
+              ) : freeApplied && (baseFee ?? 0) > 0 ? (
+                // The saving is the point, so show what was avoided.
+                <span className="flex items-center gap-2">
+                  <span className="text-gray-400 line-through">{(baseFee ?? 0).toFixed(2)} AED</span>
+                  <span className="text-green-600 font-medium">{t('common.free')}</span>
+                </span>
+              ) : (homeDeliveryFee ?? 0) === 0 ? (
+                <span className="text-green-600">{t('common.free')}</span>
+              ) : (
+                <span className="text-gray-700">{(homeDeliveryFee ?? 0).toFixed(2)} AED</span>
+              )
+            }
           />
-          <ChoiceRow
-            selected={!isDelivery}
-            onSelect={() => {
-              analytics.selectDeliveryMethod({ method: 'pickup', fee: 0 });
-              onChange({ deliveryMethod: 'pickup' });
-            }}
-            icon="storefront"
-            title={t('checkout.store_pickup')}
-            subtitle={t('checkout.pickup_description')}
-            trailing={<span className="text-green-600">{t('common.free')}</span>}
-          />
+          <div>
+            <ChoiceRow
+              selected={!isDelivery}
+              onSelect={() => {
+                analytics.selectDeliveryMethod({ method: 'pickup', fee: 0 });
+                onChange({ deliveryMethod: 'pickup' });
+              }}
+              icon="storefront"
+              title={t('checkout.store_pickup')}
+              subtitle={t('checkout.pickup_description')}
+              trailing={<span className="text-green-600">{t('common.free')}</span>}
+            />
+            {/* Nobody agrees to collect from somewhere they cannot picture. */}
+            {!isDelivery && (
+              <a
+                href={STORE_MAPS_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 inline-flex items-center gap-1.5 font-body text-xs text-primary hover:underline"
+              >
+                <span className="material-icons text-sm">place</span>
+                {t('checkout.view_pickup_location')}
+              </a>
+            )}
+          </div>
         </div>
       </Section>
 
@@ -610,7 +675,7 @@ function CheckoutContent() {
                 {hasAddress ? (
                   <>
                     <span className="block font-body text-sm text-gray-800 truncate">
-                      {formatAddress(currentDraft, regionLabel)}
+                      {formatAddress(currentDraft)}
                     </span>
                     <span className="block font-body text-xs text-gray-400 truncate mt-0.5">
                       {form.firstName} {form.lastName} · {form.phone}
@@ -674,20 +739,46 @@ function CheckoutContent() {
         </div>
       </Section>
 
-      {/* 4 — Stated, not asked: it follows from the choice at the top. */}
+      {/* 4 — A choice when collecting, a statement when delivering: there is no
+             cash handling on the delivery side. */}
       <Section label={t('checkout.payment_method')}>
-        <div className="flex items-center gap-3 px-3.5 py-3 border border-gray-200 rounded-sm bg-gray-50/60">
-          <span className="material-icons text-xl text-primary">
-            {paymentMethod === 'cod' ? 'payments' : 'credit_card'}
-          </span>
-          <div className="flex-1 min-w-0">
-            <p className="font-body text-sm text-gray-800">
-              {paymentMethod === 'cod' ? t('checkout.cash_on_delivery') : t('checkout.credit_debit_card')}
-            </p>
-            <p className="font-body text-xs text-gray-400 mt-0.5">
-              {paymentMethod === 'cod' ? t('checkout.cod_pickup_sublabel') : t('checkout.payment_sublabel')}
-            </p>
-          </div>
+        <div className="space-y-2">
+          {paymentOptions.map((id) => {
+            const isCod = id === 'cod';
+            const only = paymentOptions.length === 1;
+            const row = (
+              <>
+                <span className={`material-icons text-xl ${paymentMethod === id || only ? 'text-primary' : 'text-gray-400'}`}>
+                  {isCod ? 'payments' : 'credit_card'}
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="block font-body text-sm text-gray-800">
+                    {isCod ? t('checkout.cash_on_delivery') : t('checkout.credit_debit_card')}
+                  </span>
+                  <span className="block font-body text-xs text-gray-400 mt-0.5">
+                    {isCod ? t('checkout.cod_pickup_sublabel') : t('checkout.payment_sublabel')}
+                  </span>
+                </span>
+              </>
+            );
+            return only ? (
+              <div key={id} className="flex items-center gap-3 px-3.5 py-3 border border-gray-200 rounded-sm bg-gray-50/60">
+                {row}
+              </div>
+            ) : (
+              <button
+                key={id}
+                type="button"
+                aria-pressed={paymentMethod === id}
+                onClick={() => onChange({ paymentMethod: id })}
+                className={`w-full flex items-center gap-3 px-3.5 py-3 border rounded-sm text-start transition-colors ${
+                  paymentMethod === id ? 'border-primary bg-primary/5' : 'border-gray-200 hover:border-primary/40'
+                }`}
+              >
+                {row}
+              </button>
+            );
+          })}
         </div>
       </Section>
 
@@ -699,6 +790,9 @@ function CheckoutContent() {
           discount={retryOrder ? Number(retryOrder.discount_amount) : form.promoDiscount}
           promoCode={retryOrder?.promo_code_used ?? form.promoCode}
           deliveryFee={deliveryFee}
+          baseFee={baseFee ?? 0}
+          freeApplied={freeApplied}
+          remainingForFree={remainingForFree}
           deliveryMethod={form.deliveryMethod}
           locale={locale}
           t={t}
@@ -761,7 +855,6 @@ function CheckoutContent() {
         isOpen={addressOpen}
         onClose={() => setAddressOpen(false)}
         onSave={applyDraft}
-        regions={deliveryRates?.regions ?? []}
         isAuthenticated={Boolean(user)}
         savedAddresses={savedAddresses}
         onSavedAddressesChange={setSavedAddresses}

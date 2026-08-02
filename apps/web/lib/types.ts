@@ -304,3 +304,17 @@ export interface PaymentSessionResponse {
   checkout_url: string | null;
   confirmed?: boolean;
 }
+
+/** Result of pricing delivery against the active zone map. */
+export interface DeliveryQuote {
+  /** What the customer pays — already zero when free delivery applies. */
+  delivery_fee: number;
+  /** What it would have cost, so the total can be struck through. */
+  base_fee: number;
+  free_delivery_applied: boolean;
+  free_threshold: number;
+  remaining_for_free: number;
+  zone_name: string | null;
+  region_slug: string | null;
+  in_known_zone: boolean;
+}

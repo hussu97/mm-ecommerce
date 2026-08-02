@@ -1,0 +1,159 @@
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass
+from decimal import Decimal
+from typing import Any, Sequence
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.delivery_polygon import DeliveryPolygon, DeliveryPolygonVersion
+
+__all__ = [
+    "Zone",
+    "find_zone",
+    "get_active_version",
+    "get_active_zones",
+    "invalidate_cache",
+    "point_in_geometry",
+]
+
+
+@dataclass(frozen=True)
+class Zone:
+    """A delivery polygon flattened into the shape the lookup actually needs."""
+
+    id: uuid.UUID
+    name: str
+    region_slug: str | None
+    delivery_fee: Decimal
+    min_lat: float
+    max_lat: float
+    min_lng: float
+    max_lng: float
+    rings: tuple[tuple[tuple[tuple[float, float], ...], ...], ...]
+
+    def contains(self, lat: float, lng: float) -> bool:
+        # Four comparisons reject almost every zone before any real work.
+        if not (
+            self.min_lat <= lat <= self.max_lat and self.min_lng <= lng <= self.max_lng
+        ):
+            return False
+        return any(_point_in_polygon(lat, lng, polygon) for polygon in self.rings)
+
+
+def _ray_crosses(lat: float, lng: float, ring: Sequence[tuple[float, float]]) -> bool:
+    """
+    Even-odd ray casting. Ring coordinates are GeoJSON order — (lng, lat).
+
+    Counts how many times a ray cast east from the point crosses the ring. Odd
+    means inside. Points exactly on an edge are not worth special-casing: a
+    delivery boundary is not accurate to the millimetre anyway.
+    """
+    inside = False
+    n = len(ring)
+    j = n - 1
+    for i in range(n):
+        lng_i, lat_i = ring[i]
+        lng_j, lat_j = ring[j]
+        if (lat_i > lat) != (lat_j > lat):
+            x = (lng_j - lng_i) * (lat - lat_i) / (lat_j - lat_i) + lng_i
+            if lng < x:
+                inside = not inside
+        j = i
+    return inside
+
+
+def _point_in_polygon(
+    lat: float, lng: float, polygon: Sequence[Sequence[tuple[float, float]]]
+) -> bool:
+    """First ring is the outline; any that follow are holes cut out of it."""
+    if not polygon:
+        return False
+    if not _ray_crosses(lat, lng, polygon[0]):
+        return False
+    return not any(_ray_crosses(lat, lng, hole) for hole in polygon[1:])
+
+
+def point_in_geometry(lat: float, lng: float, geometry: dict[str, Any]) -> bool:
+    """Public helper for a raw GeoJSON Polygon / MultiPolygon."""
+    polys = (
+        geometry["coordinates"]
+        if geometry.get("type") == "MultiPolygon"
+        else [geometry.get("coordinates", [])]
+    )
+    return any(_point_in_polygon(lat, lng, poly) for poly in polys)
+
+
+# The active map changes only when someone publishes one, so it is held in
+# process rather than re-read and re-parsed on every quote. Keyed by version id
+# so a rollback swaps the entry instead of serving a stale map.
+_cache: dict[uuid.UUID, tuple[Zone, ...]] = {}
+
+
+def invalidate_cache() -> None:
+    _cache.clear()
+
+
+async def get_active_version(db: AsyncSession) -> DeliveryPolygonVersion | None:
+    result = await db.execute(
+        select(DeliveryPolygonVersion).where(DeliveryPolygonVersion.is_active.is_(True))
+    )
+    return result.scalars().first()
+
+
+async def get_active_zones(db: AsyncSession) -> tuple[Zone, ...]:
+    version = await get_active_version(db)
+    if version is None:
+        return ()
+
+    cached = _cache.get(version.id)
+    if cached is not None:
+        return cached
+
+    result = await db.execute(
+        select(DeliveryPolygon)
+        .where(DeliveryPolygon.version_id == version.id)
+        .order_by(DeliveryPolygon.display_order)
+    )
+    zones = tuple(_to_zone(p) for p in result.scalars().all())
+    _cache[version.id] = zones
+    return zones
+
+
+def _to_zone(p: DeliveryPolygon) -> Zone:
+    geometry = p.geometry or {}
+    polys = (
+        geometry.get("coordinates", [])
+        if geometry.get("type") == "MultiPolygon"
+        else [geometry.get("coordinates", [])]
+    )
+    rings = tuple(
+        tuple(tuple((float(c[0]), float(c[1])) for c in ring) for ring in poly)
+        for poly in polys
+    )
+    return Zone(
+        id=p.id,
+        name=p.name,
+        region_slug=p.region_slug,
+        delivery_fee=Decimal(str(p.delivery_fee)),
+        min_lat=float(p.min_lat),
+        max_lat=float(p.max_lat),
+        min_lng=float(p.min_lng),
+        max_lng=float(p.max_lng),
+        rings=rings,
+    )
+
+
+async def find_zone(db: AsyncSession, lat: float, lng: float) -> Zone | None:
+    """
+    The first zone on the active map containing the point.
+
+    Order matters: zones are tested by `display_order`, so a small zone listed
+    ahead of the large one it sits inside wins.
+    """
+    for zone in await get_active_zones(db):
+        if zone.contains(lat, lng):
+            return zone
+    return None

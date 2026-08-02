@@ -1,4 +1,4 @@
-import { Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, PublicRegion, DeliveryRates } from './types';
+import { Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, PublicRegion, DeliveryRates, DeliveryQuote } from './types';
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -211,6 +211,12 @@ function normaliseDeliveryRates(data: unknown): DeliveryRates {
 
 export const deliveryApi = {
   getRates: () => api.get<unknown>('/delivery/rates').then(normaliseDeliveryRates),
+  /**
+   * What delivery costs to a specific point. Priced against the active zone
+   * map, so the figure on screen is the one the order gets written with.
+   */
+  quote: (subtotal: number, latitude: number | null, longitude: number | null) =>
+    api.post<DeliveryQuote>('/delivery/quote', { subtotal, latitude, longitude }),
 };
 
 export const regionsApi = {

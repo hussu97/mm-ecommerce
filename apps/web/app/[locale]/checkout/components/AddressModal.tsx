@@ -1,17 +1,16 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Select } from '@/components/ui/Select';
 import { Spinner } from '@/components/ui/Spinner';
 import { PhoneInput, isValidPhone } from '@/components/ui/PhoneInput';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { addressesApi } from '@/lib/api';
 import { guestAddresses } from '@/lib/guest-addresses';
 import { reverseGeocode } from '@/lib/geocode';
-import type { Address, PublicRegion, RegionCode } from '@/lib/types';
+import type { Address, RegionCode } from '@/lib/types';
 
 const LocationPicker = dynamic(
   () => import('@/components/ui/LocationPicker').then((m) => ({ default: m.LocationPicker })),
@@ -55,8 +54,8 @@ export function toDraft(a: Address): AddressDraft {
 }
 
 /** One line a courier can read, used on the collapsed card and the list rows. */
-export function formatAddress(a: AddressDraft, regionLabel: string): string {
-  return [a.unitNumber, a.addressLine1, a.addressLine2, regionLabel]
+export function formatAddress(a: AddressDraft): string {
+  return [a.unitNumber, a.addressLine1]
     .map((p) => p?.trim())
     .filter(Boolean)
     .join(', ');
@@ -66,7 +65,6 @@ interface AddressModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (draft: AddressDraft) => void;
-  regions: PublicRegion[];
   isAuthenticated: boolean;
   /** Addresses already on file, so the modal can offer them before asking again. */
   savedAddresses: Address[];
@@ -77,26 +75,16 @@ interface AddressModalProps {
 }
 
 export function AddressModal({
-  isOpen, onClose, onSave, regions, isAuthenticated,
+  isOpen, onClose, onSave, isAuthenticated,
   savedAddresses, onSavedAddressesChange, selectedAddressId, initialDraft,
 }: AddressModalProps) {
-  const { t, locale } = useTranslation();
+  const { t } = useTranslation();
   const [mode, setMode] = useState<'list' | 'form'>('list');
   const [draft, setDraft] = useState<AddressDraft>(EMPTY);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [geocoding, setGeocoding] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
-
-  const regionOptions = useMemo(
-    () => regions.map((r) => ({
-      value: r.slug,
-      label: r.name_translations[locale] ?? r.name_translations['en'] ?? r.slug,
-    })),
-    [regions, locale],
-  );
-  const regionLabel = (slug: string) =>
-    regionOptions.find((o) => o.value === slug)?.label ?? slug;
 
   // Reopening should not resume a half-finished edit from last time.
   useEffect(() => {
@@ -123,9 +111,12 @@ export function AddressModal({
   }, [isOpen, onClose]);
 
   /**
-   * The pin is the fastest way to fill this form, so moving it fills the
-   * street fields. Anything the customer has already typed is left alone —
-   * their correction outranks the geocoder's guess.
+   * Moving the pin rewrites the address, every time.
+   *
+   * It used to fill the field only when it was empty, so the second pin drop
+   * did nothing visible: the customer corrected their location and the address
+   * underneath still described the first guess. The pin is the statement of
+   * where they are, so it wins — and the field stays editable underneath.
    */
   const handlePin = useCallback(async (lat: number, lng: number) => {
     setDraft((prev) => ({ ...prev, latitude: lat, longitude: lng }));
@@ -135,8 +126,7 @@ export function AddressModal({
     if (!found) return;
     setDraft((prev) => ({
       ...prev,
-      addressLine1: prev.addressLine1.trim() || found.addressLine1,
-      addressLine2: prev.addressLine2.trim() || found.addressLine2,
+      addressLine1: found.address,
       region: found.region || prev.region,
     }));
     setErrors((prev) => {
@@ -157,7 +147,6 @@ export function AddressModal({
     if (!d.lastName.trim()) e.lastName = t('checkout.last_name_required');
     if (!d.phone.trim() || !isValidPhone(d.phone)) e.phone = t('checkout.valid_phone_required');
     if (!d.addressLine1.trim()) e.addressLine1 = t('checkout.address_required');
-    if (!d.region) e.region = t('checkout.region_required');
     return e;
   }
 
@@ -289,7 +278,7 @@ export function AddressModal({
                         )}
                       </p>
                       <p className="font-body text-xs text-gray-500 mt-0.5">
-                        {formatAddress(d, regionLabel(a.region))}
+                        {formatAddress(d)}
                       </p>
                       <p className="font-body text-xs text-gray-400 mt-0.5">
                         {d.firstName} {d.lastName} · {d.phone}
@@ -348,7 +337,7 @@ export function AddressModal({
               <div className="space-y-4">
                 <div data-field-error={errors.addressLine1 ? 'true' : undefined}>
                   <Input
-                    label={t('common.address_line_1')}
+                    label={t('common.address')}
                     placeholder={t('checkout.address_placeholder')}
                     value={draft.addressLine1}
                     onChange={(e) => field('addressLine1')(e.target.value)}
@@ -371,22 +360,6 @@ export function AddressModal({
                   />
                 </div>
 
-                <Input
-                  label={t('common.address_line_2_optional')}
-                  placeholder={t('checkout.address2_placeholder')}
-                  value={draft.addressLine2}
-                  onChange={(e) => field('addressLine2')(e.target.value)}
-                />
-
-                <div data-field-error={errors.region ? 'true' : undefined}>
-                  <Select
-                    label={t('address.region')}
-                    options={regionOptions}
-                    value={draft.region}
-                    onChange={(e) => field('region')(e.target.value)}
-                    error={errors.region}
-                  />
-                </div>
               </div>
 
               <div className="h-px bg-secondary/30" />

@@ -18,6 +18,25 @@ class DeliveryCalculateRequest(BaseModel):
     delivery_method: DeliveryMethodEnum
     region: str | None = None
     subtotal: Decimal
+    latitude: Decimal | None = None
+    longitude: Decimal | None = None
+
+
+class DeliveryQuoteRequest(BaseModel):
+    subtotal: Decimal
+    latitude: Decimal | None = None
+    longitude: Decimal | None = None
+
+
+class DeliveryQuoteResponse(BaseModel):
+    delivery_fee: float
+    base_fee: float
+    free_delivery_applied: bool
+    free_threshold: float
+    remaining_for_free: float
+    zone_name: str | None = None
+    region_slug: str | None = None
+    in_known_zone: bool
 
 
 class DeliveryCalculateResponse(BaseModel):
@@ -40,7 +59,13 @@ async def calculate_delivery(
     """Calculate the delivery fee for a given region and order subtotal."""
     settings = await delivery_service.get_settings(db)
     fee = await delivery_service.calculate_fee(
-        data.delivery_method, data.region, data.subtotal, db, settings=settings
+        data.delivery_method,
+        data.region,
+        data.subtotal,
+        db,
+        settings=settings,
+        latitude=data.latitude,
+        longitude=data.longitude,
     )
 
     if data.delivery_method == DeliveryMethodEnum.PICKUP:
@@ -52,4 +77,19 @@ async def calculate_delivery(
 
     return DeliveryCalculateResponse(
         delivery_fee=fee, is_free=(fee == Decimal("0.00")), reason=reason
+    )
+
+
+@router.post("/quote", response_model=DeliveryQuoteResponse)
+async def quote_delivery(
+    data: DeliveryQuoteRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    What delivery costs to a specific point, and how far the basket is from
+    free. The checkout calls this whenever the pin or the basket changes, so the
+    figure on screen is the one the order will be written with.
+    """
+    return await delivery_service.quote(
+        db, data.subtotal, latitude=data.latitude, longitude=data.longitude
     )

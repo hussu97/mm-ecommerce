@@ -53,6 +53,11 @@ class DeliverySettings(Base, UUIDMixin, TimestampMixin):
     pickup_fee: Mapped[Decimal] = mapped_column(
         Numeric(10, 2), nullable=False, default=Decimal("0.00")
     )
+    # Charged when a pin falls outside every zone on the active map — a real
+    # address we have simply not drawn yet. Quoting nothing would be worse.
+    default_delivery_fee: Mapped[Decimal] = mapped_column(
+        Numeric(10, 2), nullable=False, default=Decimal("50.00"), server_default="50.00"
+    )
 
     def __repr__(self) -> str:
         return f"<DeliverySettings threshold={self.free_delivery_threshold}>"
