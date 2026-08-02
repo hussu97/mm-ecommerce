@@ -16,6 +16,7 @@ class AddressCreate(BaseModel):
     phone: str = Field(min_length=7, max_length=20)
     address_line_1: str = Field(min_length=1, max_length=255)
     address_line_2: str | None = Field(None, max_length=255)
+    unit_number: str | None = Field(None, max_length=50)
     region: RegionEnum
     country: str = Field(default="AE", max_length=2)
     is_default: bool = False
@@ -30,6 +31,7 @@ class AddressUpdate(BaseModel):
     phone: str | None = Field(None, min_length=7, max_length=20)
     address_line_1: str | None = Field(None, min_length=1, max_length=255)
     address_line_2: str | None = None
+    unit_number: str | None = Field(None, max_length=50)
     region: RegionEnum | None = None
     is_default: bool | None = None
     latitude: Decimal | None = None
@@ -47,6 +49,7 @@ class AddressResponse(BaseModel):
     phone: str
     address_line_1: str
     address_line_2: str | None
+    unit_number: str | None
     region: RegionEnum
     country: str
     is_default: bool

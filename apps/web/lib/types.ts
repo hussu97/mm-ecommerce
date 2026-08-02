@@ -219,6 +219,7 @@ export interface Address {
   phone: string;
   address_line_1: string;
   address_line_2: string | null;
+  unit_number: string | null;
   region: RegionCode;
   country: string;
   is_default: boolean;
@@ -234,6 +235,7 @@ export interface AddressCreate {
   phone: string;
   address_line_1: string;
   address_line_2?: string;
+  unit_number?: string;
   region: RegionCode;
   country?: string;
   is_default?: boolean;
@@ -244,7 +246,8 @@ export interface AddressCreate {
 // ─── Order (create) ───────────────────────────────────────────────────────────
 
 export interface OrderCreate {
-  email: string;
+  /** Optional — a phone number is enough to run a delivery. */
+  email?: string;
   delivery_method: DeliveryMethod;
   shipping_address?: AddressCreate;
   promo_code?: string;

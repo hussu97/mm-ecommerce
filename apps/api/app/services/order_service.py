@@ -241,12 +241,21 @@ async def _persist_order(
     total: Decimal,
     vat_amount: Decimal,
     total_excl_vat: Decimal,
+    fallback_email: str | None = None,
 ) -> OrderResponse:
     """
     Write the order, its items, and update promo usage atomically.
     Clears the cart on success and returns the full OrderResponse.
     """
     VAT_RATE = Decimal("0.05")
+
+    # `orders.email` is not nullable and is what every downstream lookup keys
+    # on. When the customer declines to give one we fall back to the session's
+    # own address, which for a guest is the generated `…@guest.local` the auth
+    # layer already mints — a value the mailer knows not to write to.
+    order_email = data.email or fallback_email
+    if not order_email:
+        raise BadRequestError("An email address or an active session is required")
 
     address_snapshot: dict | None = (
         data.shipping_address.model_dump(mode="json") if data.shipping_address else None
@@ -255,7 +264,7 @@ async def _persist_order(
     order = Order(
         order_number=await _generate_order_number(db),
         user_id=user_id,
-        email=data.email,
+        email=order_email,
         delivery_method=data.delivery_method,
         delivery_fee=delivery_fee,
         subtotal=subtotal,
@@ -329,6 +338,7 @@ async def create_order(
     db: AsyncSession,
     data: OrderCreate,
     user_id: uuid.UUID | None,
+    fallback_email: str | None = None,
 ) -> OrderResponse:
     # 1. Locate and validate cart (with session_id fallback for guest checkout)
     cart = await _locate_cart(db, user_id, data.session_id)
@@ -378,6 +388,7 @@ async def create_order(
         total,
         vat_amount,
         total_excl_vat,
+        fallback_email,
     )
 
 

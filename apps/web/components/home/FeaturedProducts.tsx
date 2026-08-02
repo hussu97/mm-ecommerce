@@ -3,10 +3,10 @@
 import { useState, useRef, useEffect } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { useCart } from '@/lib/cart-context';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
 import { computeFromPrice } from '@/lib/pricing';
+import { AddToCartControl } from '@/components/product/AddToCartControl';
 import type { Product } from '@/lib/types';
 
 export interface FeaturedContent {
@@ -17,8 +17,6 @@ export interface FeaturedContent {
 
 function ProductCard({ product }: { product: Product }) {
   const { t, locale } = useTranslation();
-  const { addItem } = useCart();
-  const [adding, setAdding] = useState(false);
 
   const hasModifiers = product.product_modifiers && product.product_modifiers.length > 0;
   const price = computeFromPrice(product);
@@ -26,19 +24,6 @@ function ProductCard({ product }: { product: Product }) {
   const categorySlug = product.category?.slug ?? 'products';
   const productName = localizedField(product, 'name', product.name, locale);
   const pdpHref = `/${locale}/${categorySlug}/${product.slug}`;
-
-  const handleAdd = async () => {
-    if (hasModifiers) {
-      window.location.href = pdpHref;
-      return;
-    }
-    setAdding(true);
-    try {
-      await addItem(product.id, 1, []);
-    } finally {
-      setAdding(false);
-    }
-  };
 
   return (
     <article className="group flex flex-col flex-shrink-0 w-64 sm:w-auto">
@@ -69,18 +54,10 @@ function ProductCard({ product }: { product: Product }) {
           {productName}
         </Link>
         <div className="h-px bg-secondary/40" />
-        <div className="flex items-center justify-between gap-2">
-          <span className="font-body text-sm font-medium text-primary">
-            {hasModifiers ? `${t('product.from')} ` : ''}{price.toFixed(2)} AED
-          </span>
-          <button
-            onClick={handleAdd}
-            disabled={adding}
-            className="text-[10px] font-body uppercase tracking-widest px-3 py-1.5 border border-primary text-primary hover:bg-primary hover:text-white transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {adding ? '...' : hasModifiers ? t('product.select_short') : t('product.add_short')}
-          </button>
-        </div>
+        <span className="font-body text-sm font-medium text-primary">
+          {hasModifiers ? `${t('product.from')} ` : ''}{price.toFixed(2)} AED
+        </span>
+        <AddToCartControl product={product} size="compact" />
       </div>
     </article>
   );

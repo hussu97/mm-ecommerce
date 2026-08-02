@@ -40,11 +40,17 @@ class TestOrderCreate:
                 payment_method="stripe",
             )
 
-    def test_email_required(self):
-        with pytest.raises(ValidationError):
-            OrderCreate(
-                delivery_method=DeliveryMethodEnum.PICKUP, payment_method="stripe"
-            )
+    def test_email_optional(self):
+        """
+        A phone number is enough to run a delivery, so the schema accepts an
+        order without an email. The service still refuses to write one with no
+        address at all — it falls back to the session's own (guest) email, and
+        raises when there is not even that.
+        """
+        order = OrderCreate(
+            delivery_method=DeliveryMethodEnum.PICKUP, payment_method="stripe"
+        )
+        assert order.email is None
 
 
 class TestOrderStatusUpdate:

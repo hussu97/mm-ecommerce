@@ -63,6 +63,17 @@ def _send(to: str, subject: str, html: str) -> dict:
     Send an email via Resend. Never raises — always returns a result dict:
       {"status": "sent"|"failed"|"skipped", "resend_id": str|None, "error": str|None}
     """
+    # Guests who decline to give an email are stored under the generated
+    # `…@guest.local` address the auth layer mints. It is a placeholder, not a
+    # mailbox — writing to it would only earn us bounces.
+    if to.lower().endswith("@guest.local"):
+        logger.info("Placeholder guest address — skipping email: %s", subject)
+        return {
+            "status": "skipped",
+            "resend_id": None,
+            "error": "placeholder guest address",
+        }
+
     if not settings.RESEND_API_KEY:
         logger.warning("RESEND_API_KEY not set — skipping email to %s: %s", to, subject)
         return {

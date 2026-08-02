@@ -35,7 +35,10 @@ class OrderItemResponse(BaseModel):
 
 
 class OrderCreate(BaseModel):
-    email: EmailStr
+    # Optional: a phone number is enough to run a delivery. Email is only
+    # needed if the customer wants the confirmation in writing, so asking for
+    # it as a hard requirement cost more orders than it saved.
+    email: EmailStr | None = None
     delivery_method: DeliveryMethodEnum
     shipping_address: AddressCreate | None = (
         None  # required if delivery_method == delivery

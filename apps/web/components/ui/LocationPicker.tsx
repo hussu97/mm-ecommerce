@@ -10,11 +10,14 @@ interface LocationPickerProps {
   lng: number | null;
   onChange: (lat: number, lng: number) => void;
   placeholder?: string;
+  /** Map height. The checkout modal gives the map real estate to be usable
+   *  with a thumb; inline uses stay compact. */
+  height?: string;
 }
 
 // ─── Inner component (must live inside APIProvider) ───────────────────────────
 
-function MapContent({ lat, lng, onChange, placeholder }: LocationPickerProps) {
+function MapContent({ lat, lng, onChange, placeholder, height = '200px' }: LocationPickerProps) {
   const map = useMap();
   const placesLib = useMapsLibrary('places');
   const containerRef = useRef<HTMLDivElement>(null);
@@ -115,7 +118,7 @@ function MapContent({ lat, lng, onChange, placeholder }: LocationPickerProps) {
       </div>
 
       <Map
-        style={{ width: '100%', height: '200px', borderRadius: '2px' }}
+        style={{ width: '100%', height, borderRadius: '2px' }}
         defaultCenter={position ?? DUBAI_CENTER}
         defaultZoom={13}
         mapId={process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID}
@@ -141,7 +144,7 @@ function MapContent({ lat, lng, onChange, placeholder }: LocationPickerProps) {
 // ─── Public component ─────────────────────────────────────────────────────────
 
 export function LocationPicker({
-  lat, lng, onChange, placeholder = 'Search for a location…',
+  lat, lng, onChange, placeholder = 'Search for a location…', height,
 }: LocationPickerProps) {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? '';
 
@@ -156,7 +159,7 @@ export function LocationPicker({
   return (
     <div className="space-y-2">
       <APIProvider apiKey={apiKey} libraries={['places']}>
-        <MapContent lat={lat} lng={lng} onChange={onChange} placeholder={placeholder} />
+        <MapContent lat={lat} lng={lng} onChange={onChange} placeholder={placeholder} height={height} />
       </APIProvider>
     </div>
   );

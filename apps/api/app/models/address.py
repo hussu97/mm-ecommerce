@@ -44,6 +44,9 @@ class Address(Base, UUIDMixin):
     phone: Mapped[str] = mapped_column(String(20), nullable=False)
     address_line_1: Mapped[str] = mapped_column(String(255), nullable=False)
     address_line_2: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Flat / office / floor — the one part of an address a map pin can never
+    # supply, and the part a rider needs to finish the delivery.
+    unit_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
     region: Mapped[str] = mapped_column(String(30), nullable=False)
     country: Mapped[str] = mapped_column(String(2), nullable=False, default="AE")
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

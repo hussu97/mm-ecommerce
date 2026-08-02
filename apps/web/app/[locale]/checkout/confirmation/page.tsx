@@ -8,6 +8,8 @@ import { analytics } from '@/lib/analytics';
 import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { useAuth } from '@/lib/auth-context';
+import { CreateAccountNudge } from './CreateAccountNudge';
 import { localizedField } from '@/lib/i18n/entity';
 import type { Order } from '@/lib/types';
 
@@ -18,6 +20,7 @@ function ConfirmationContent() {
   // to return a full order to an unauthenticated caller without it.
   const email = searchParams.get('email');
   const { t, locale } = useTranslation();
+  const { user } = useAuth();
 
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
@@ -143,10 +146,11 @@ function ConfirmationContent() {
         <div className="bg-gray-50 rounded-sm p-4 mb-6">
           <p className="font-body text-xs uppercase tracking-widest text-gray-500 mb-2">{t('confirmation.delivering_to')}</p>
           <p className="font-body text-sm text-gray-800">
-            {order.shipping_address_snapshot.address_line_1}
-            {order.shipping_address_snapshot.address_line_2
-              ? `, ${order.shipping_address_snapshot.address_line_2}`
-              : ''}
+            {[
+              order.shipping_address_snapshot.unit_number,
+              order.shipping_address_snapshot.address_line_1,
+              order.shipping_address_snapshot.address_line_2,
+            ].filter(Boolean).join(', ')}
           </p>
           <p className="font-body text-sm text-gray-600">
             {order.shipping_address_snapshot.region}
@@ -161,6 +165,22 @@ function ConfirmationContent() {
           </p>
         </div>
       )}
+
+      {/*
+        Only worth showing when there is an account to make: a real email on
+        the order, and nobody signed in already. Guests who declined to give an
+        email are stored under a generated `…@guest.local`, which is not
+        something to invite anyone to register with.
+      */}
+      {!user
+        && order.email
+        && !/@guest\.local$/i.test(order.email)
+        && (
+          <CreateAccountNudge
+            email={order.email}
+            phone={order.shipping_address_snapshot?.phone as string | undefined}
+          />
+        )}
 
       {/* CTAs */}
       <div className="flex flex-col sm:flex-row gap-3">

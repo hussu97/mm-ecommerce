@@ -48,7 +48,9 @@ async def create_order(
     For guests, provide session_id in the request body.
     """
     user_id = current_user.id if current_user else None
-    order = await order_service.create_order(db, data, user_id)
+    order = await order_service.create_order(
+        db, data, user_id, fallback_email=current_user.email if current_user else None
+    )
     await cache_delete_pattern("analytics:*")
     return order
 
