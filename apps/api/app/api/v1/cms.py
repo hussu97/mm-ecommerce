@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_admin_user, get_db
@@ -9,7 +9,7 @@ from app.schemas.cms import (
     CmsPageResponse,
     CmsPageUpdate,
 )
-from app.services import cms_service
+from app.services import cms_service, image_warm_service
 
 router = APIRouter()
 
@@ -35,10 +35,19 @@ async def get_page(
 async def update_page(
     slug: str,
     data: CmsPageUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_admin_user),
 ):
-    return await cms_service.update_page(db, slug, data.content)
+    page = await cms_service.update_page(db, slug, data.content)
+    # A swapped hero or promo photograph is a brand-new image URL that no page
+    # view has ever asked the optimiser for. Warm it here rather than leaving the
+    # first customer after the change to sit through the encode.
+    background_tasks.add_task(
+        image_warm_service.warm_quietly,
+        image_warm_service.collect_image_urls(data.content),
+    )
+    return page
 
 
 @router.put("/pages/{slug}/{locale}", response_model=CmsPageResponse)
@@ -46,10 +55,16 @@ async def update_page_locale(
     slug: str,
     locale: str,
     data: CmsPageLocaleUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_admin_user),
 ):
-    return await cms_service.update_page_locale(db, slug, locale, data.content)
+    page = await cms_service.update_page_locale(db, slug, locale, data.content)
+    background_tasks.add_task(
+        image_warm_service.warm_quietly,
+        image_warm_service.collect_image_urls(data.content),
+    )
+    return page
 
 
 @router.get("/public/{slug}", response_model=CmsPagePublicResponse)

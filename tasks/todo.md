@@ -45,8 +45,11 @@
       redundant.
 - [x] 6. `app/core/images.py` re-encodes admin uploads before they reach R2.
 - [x] 7. Verified: builds, 153 web tests, 400 API tests, ruff, live re-measurement.
-- [x] 8. Added `scripts/warm-image-cache.mjs` and ran it — this turned out to be the
-      change that actually fixed the reported slowness.
+- [x] 8. Warming turned out to be the change that actually fixed the reported
+      slowness. It started as a script and is now `image_warm_service`, fired as a
+      background task from the three places an image URL enters the catalogue:
+      admin upload, Foodics bulk import, and a CMS content change. Artwork
+      generation runs from the `web` build rather than by hand.
 
 ### Findings / Result
 
@@ -62,7 +65,14 @@
   how much source it has to read. Worth doing for the bytes, not for the wait.
 - **Warming the cache is what fixed it.** 273 requests, 141 s, one-off: every product
   image at every width the layouts can resolve to. Re-measured after —
-  **0.13–0.22 s, `x-vercel-cache: HIT`, every one.** Re-run after adding products.
+  **0.13–0.22 s, `x-vercel-cache: HIT`, every one.**
+- **A warm you have to remember is a warm that does not happen.** Nothing surfaces
+  the cold-transform cost in the console — whoever uploads an image warms it by
+  looking at it, so the wait always lands on the next customer instead. It now fires
+  from upload, bulk import and CMS save as a fire-and-forget background task, and
+  skips `/images/banners/*` because those are served as static AVIF/WebP siblings
+  and never touch the optimiser. Capped at 200 images per run so a re-uploaded CSV
+  cannot stack full catalogue warms; the truncation is logged, not swallowed.
 - **The banners were the real byte problem, and they were invisible.** `HeroCarousel`
   and `PromoBanners` render raw `<picture>` on purpose — the mobile frame is a
   different crop, which is art direction `next/image` cannot express — so nothing

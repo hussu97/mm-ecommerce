@@ -128,6 +128,7 @@ async def import_categories(db: AsyncSession, rows: list[dict]) -> ImportResult:
                 existing.reference = reference or existing.reference
                 if image_url:
                     existing.image_url = image_url
+                    result.image_urls.append(image_url)
                 result.updated += 1
             else:
                 # Ensure slug is unique
@@ -158,6 +159,8 @@ async def import_categories(db: AsyncSession, rows: list[dict]) -> ImportResult:
                     image_url=image_url,
                 )
                 db.add(cat)
+                if image_url:
+                    result.image_urls.append(image_url)
                 result.created += 1
 
         except Exception as e:
@@ -250,6 +253,7 @@ async def import_products(db: AsyncSession, rows: list[dict]) -> ImportResult:
                     existing.preparation_time = prep_time
                 if image_url:
                     existing.image_urls = [image_url]
+                    result.image_urls.append(image_url)
                 result.updated += 1
             else:
                 slug = _slugify(name)
@@ -288,6 +292,8 @@ async def import_products(db: AsyncSession, rows: list[dict]) -> ImportResult:
                     image_urls=[image_url] if image_url else [],
                 )
                 db.add(product)
+                if image_url:
+                    result.image_urls.append(image_url)
                 result.created += 1
 
         except Exception as e:

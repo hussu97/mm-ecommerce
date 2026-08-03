@@ -7,7 +7,8 @@
       "outputs": [
         ".next/**",
         "!.next/cache/fetch-cache/**",
-        "dist/**"
+        "dist/**",
+        "public/images/**"
       ]
     },
     "dev": {

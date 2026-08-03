@@ -5,13 +5,23 @@ from urllib.parse import urlparse
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel
 
 from app.core.config import settings
-from app.core.images import extension_for, optimize_image
 from app.core.deps import get_admin_user
+from app.core.images import extension_for, optimize_image
 from app.models.user import User
+from app.services import image_warm_service
 
 router = APIRouter()
 
@@ -38,6 +48,7 @@ def _get_r2_client():
     "/image", response_model=UploadResponse, status_code=status.HTTP_201_CREATED
 )
 async def upload_image(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     folder: str = Query(
         "products", description="R2 folder prefix (e.g. products, categories)"
@@ -89,6 +100,13 @@ async def upload_image(
         )
 
     public_url = f"{settings.CLOUDFLARE_R2_PUBLIC_URL.rstrip('/')}/{key}"
+
+    # Build the storefront's derivatives now, while nobody is waiting on them.
+    # Whoever uploaded this will see it immediately because their own page view
+    # warms it; the customer who lands on it tomorrow is the one who would
+    # otherwise pay for the encode.
+    background_tasks.add_task(image_warm_service.warm_quietly, [public_url])
+
     return UploadResponse(url=public_url, key=key)
 
 
