@@ -10,6 +10,10 @@
 
 ## Lessons
 
+### [2026-08-03] Maps JS key checks must preserve the browser referrer error
+- **What went wrong**: A command-line bootstrap probe was summarized as a generic Maps authentication failure, although the browser supplied the actionable `RefererNotAllowedMapError` for the checkout URL.
+- **Rule**: When diagnosing a browser-restricted Google Maps key, inspect the browser console error first and validate the exact production origin/path restriction. Do not collapse it into a generic key-invalid conclusion.
+
 ### [2026-04-13] New env vars must be added to all 4 places
 - **What went wrong**: Added `GCP_PROJECT_ID` to `docker-compose.prod.yml` and `.env.example` but missed the GitHub Actions `deploy.yml` and `rollback.yml` — the secret would never reach the VM's `.env` file
 - **Why**: The `.env` on the VM is written entirely by the CI `printf` block; any secret not listed there is silently absent at runtime

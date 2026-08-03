@@ -112,6 +112,16 @@ copy is what was being replaced.
 
 ---
 
+## ⏳ 2026-08-03: SEO merge, production deploy, and checkout Maps authentication
+
+### Plan
+- [x] 1. Fetch and compare `seo/google-surfaces-audit-fixes` with `origin/main`; identify merge/deploy risks. Clean three-commit merge; a push to `main` triggers Vercel production deployment.
+- [x] 2. Verify Google Cloud project access, Maps API enablement, and API-key restrictions without exposing a key. Correct project: `melting-moments-cakes`; required APIs are enabled.
+- [x] 3. Trace the checkout pin-location map configuration and apply the smallest production-safe fix. `RefererNotAllowedMapError` was caused by rules that omitted the apex domain and path wildcard; repaired the Google Cloud browser-key allowlist while retaining API target restrictions.
+- [x] 4. Run relevant checks and review the production diff/impact. 153 web tests pass, lint has only 13 existing warnings, menu CLI help passes; graph review risk 0.30 with pre-existing coverage gaps.
+- [ ] 5. Merge the SEO branch into `main`, commit the checkout fix if applicable, push `origin/main`, and confirm the production deployment trigger. SEO merge commit created; push and deployment verification pending.
+- [x] 6. Switch this workspace to `main` and document verification/results here.
+
 ## ✅ 2026-08-03: Image Delivery — measured audit + optimisation — DONE
 
 ### What was measured (live, not guessed)
