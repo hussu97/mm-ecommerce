@@ -110,6 +110,8 @@ def test_the_response_model_has_no_field_that_could_leak_one():
         "remaining_for_free",
         "zone_name",
         "in_known_zone",
+        # "we cannot deliver here", with no hint as to who would have.
+        "serviceable",
     }
 
 

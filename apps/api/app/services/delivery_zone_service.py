@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.delivery_polygon import (
     DeliveryPolygon,
     DeliveryPolygonVersion,
+    DeliveryPricingEnum,
     FulfilmentProviderEnum,
 )
 
@@ -37,10 +38,19 @@ class Zone:
     min_lng: float
     max_lng: float
     rings: tuple[tuple[tuple[tuple[float, float], ...], ...], ...]
+    #: Defaulted so a zone built by hand — in a test, or from a row written
+    #: before the column existed — charges its own fee rather than reaching for
+    #: a courier that may not answer.
+    pricing_mode: str = DeliveryPricingEnum.STATIC.value
 
     @property
     def is_lalamove(self) -> bool:
         return self.fulfilment_provider == FulfilmentProviderEnum.LALAMOVE.value
+
+    @property
+    def is_dynamic(self) -> bool:
+        """Priced from the courier's own quote rather than from `delivery_fee`."""
+        return self.pricing_mode == DeliveryPricingEnum.DYNAMIC.value
 
     def contains(self, lat: float, lng: float) -> bool:
         # Four comparisons reject almost every zone before any real work.
@@ -148,6 +158,7 @@ def _to_zone(p: DeliveryPolygon) -> Zone:
         fulfilment_provider=(
             p.fulfilment_provider or FulfilmentProviderEnum.THIRD_PARTY.value
         ),
+        pricing_mode=(p.pricing_mode or DeliveryPricingEnum.STATIC.value),
         min_lat=float(p.min_lat),
         max_lat=float(p.max_lat),
         min_lng=float(p.min_lng),

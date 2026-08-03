@@ -209,6 +209,20 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "add_promo_or_note", "Add a promo code or a note"),
     ("checkout", "delivery_option", "Delivery"),
     ("checkout", "fee_from_address", "Confirmed once you add your address"),
+    # Shown when the pin has no price at all — nothing can be delivered there.
+    # Deliberately says nothing about couriers: who carries an order is not the
+    # shopper's business, and naming one here would be the first place the
+    # fulfilment map leaked onto the storefront.
+    ("checkout", "unserviceable_title", "We can't deliver to this address"),
+    (
+        "checkout",
+        "unserviceable_body",
+        "This location is outside our delivery range at the moment. Try a nearby "
+        "address, or collect your order from the store instead.",
+    ),
+    ("checkout", "unserviceable_change", "Change address"),
+    ("checkout", "unserviceable_pickup", "Collect from store instead"),
+    ("checkout", "unserviceable_short", "Delivery unavailable here"),
     ("checkout", "view_pickup_location", "See where to collect from"),
     ("common", "address", "Address"),
     ("checkout", "email_optional", "Email (optional)"),
@@ -651,6 +665,16 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "add_promo_or_note", "إضافة رمز خصم أو ملاحظة"),
     ("checkout", "delivery_option", "التوصيل"),
     ("checkout", "fee_from_address", "يُحتسب بدقة بعد إضافة عنوانك"),
+    ("checkout", "unserviceable_title", "لا يمكننا التوصيل إلى هذا العنوان"),
+    (
+        "checkout",
+        "unserviceable_body",
+        "هذا الموقع خارج نطاق التوصيل لدينا حالياً. جرّب عنواناً قريباً، أو استلم "
+        "طلبك من المتجر.",
+    ),
+    ("checkout", "unserviceable_change", "تغيير العنوان"),
+    ("checkout", "unserviceable_pickup", "الاستلام من المتجر بدلاً من ذلك"),
+    ("checkout", "unserviceable_short", "التوصيل غير متاح هنا"),
     ("checkout", "view_pickup_location", "شاهد مكان الاستلام"),
     ("common", "address", "العنوان"),
     ("checkout", "email_optional", "البريد الإلكتروني (اختياري)"),

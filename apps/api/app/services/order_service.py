@@ -19,7 +19,6 @@ from app.services import (
     batching_service,
     cart_service,
     delivery_service,
-    delivery_zone_service,
     lalamove_service,
     promo_code_service,
 )
@@ -246,35 +245,51 @@ async def _compute_order_totals(
     Returns (delivery_fee, total, vat_amount, total_excl_vat, zone). The zone
     comes back because it also decides who carries the order, and resolving it
     twice risks the two answers disagreeing if the map is published in between.
+
+    Raises `UnserviceableAreaError` when the pin lands somewhere nothing can be
+    priced to. That is a refusal to take the money, deliberately, at the last
+    moment it can still be refused cleanly.
     """
     discounted_subtotal = subtotal - discount_amount
     address = data.shipping_address
-    zone = (
-        await delivery_zone_service.find_zone(
-            db, float(address.latitude), float(address.longitude)
+    settings = await delivery_service.get_settings(db)
+
+    if data.delivery_method == DeliveryMethodEnum.PICKUP:
+        return (
+            settings.pickup_fee,
+            discounted_subtotal + settings.pickup_fee,
+            *_vat_of(subtotal - discount_amount),
+            None,
         )
-        if address is not None
-        and address.latitude is not None
-        and address.longitude is not None
-        else None
-    )
-    # The fee is priced off the pin, and only the pin.
-    delivery_fee = await delivery_service.calculate_fee(
-        data.delivery_method,
-        discounted_subtotal,
+
+    # The fee is priced off the pin, and only the pin. One call, so the zone the
+    # order is filed against is the same zone its price came from.
+    priced = await delivery_service.price(
         db,
+        discounted_subtotal,
         latitude=address.latitude if address else None,
         longitude=address.longitude if address else None,
+        address=address.address_line_1 if address else None,
+        settings=settings,
     )
+    if not priced.serviceable:
+        raise delivery_service.UnserviceableAreaError()
+
+    zone = priced.zone
+    delivery_fee = settings.default_delivery_fee if priced.fee is None else priced.fee
     total = discounted_subtotal + delivery_fee
 
-    # VAT back-calculation (goods only; delivery excluded per UAE VAT rules)
-    VAT_RATE = Decimal("0.05")
-    taxable = subtotal - discount_amount
-    vat_amount = (taxable * VAT_RATE / (1 + VAT_RATE)).quantize(Decimal("0.01"))
-    total_excl_vat = (taxable / (1 + VAT_RATE)).quantize(Decimal("0.01"))
-
+    vat_amount, total_excl_vat = _vat_of(subtotal - discount_amount)
     return delivery_fee, total, vat_amount, total_excl_vat, zone
+
+
+def _vat_of(taxable: Decimal) -> tuple[Decimal, Decimal]:
+    """VAT back-calculation (goods only; delivery excluded per UAE VAT rules)."""
+    VAT_RATE = Decimal("0.05")
+    return (
+        (taxable * VAT_RATE / (1 + VAT_RATE)).quantize(Decimal("0.01")),
+        (taxable / (1 + VAT_RATE)).quantize(Decimal("0.01")),
+    )
 
 
 async def _persist_order(

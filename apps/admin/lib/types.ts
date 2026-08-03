@@ -378,11 +378,20 @@ export interface PaginatedEmailLogs {
 /** Who carries an order out of the kitchen. */
 export type FulfilmentProvider = 'lalamove' | 'third_party';
 
+/**
+ * Where a zone's fee comes from. `static` charges the zone's own published
+ * price; `dynamic` charges the courier's quote for the customer's exact pin,
+ * rounded up — and refuses the order outright when there is no quote.
+ */
+export type DeliveryPricingMode = 'static' | 'dynamic';
+
 /** One zone on a delivery map: a shape, a price, and a courier. */
 export interface DeliveryZone {
   id: string;
   name: string;
+  /** Only charged when `pricing_mode` is `static`. */
   delivery_fee: number;
+  pricing_mode: DeliveryPricingMode;
   fulfilment_provider: FulfilmentProvider;
   display_order: number;
   point_count: number;
@@ -412,6 +421,7 @@ export interface DeliveryZoneShape {
   id: string;
   name: string;
   delivery_fee: number;
+  pricing_mode: DeliveryPricingMode;
   fulfilment_provider: FulfilmentProvider;
   display_order: number;
   geometry: ZoneGeometry;
@@ -468,7 +478,7 @@ export interface DeliveryZoneSummary {
   version: { id: string; name: string } | null;
   zones: Array<{
     name: string;
-      delivery_fee: number;
+    delivery_fee: number;
     fulfilment_provider: FulfilmentProvider;
   }>;
   /** The same everywhere — free delivery does not depend on the zone. */

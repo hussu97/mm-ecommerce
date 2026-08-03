@@ -26,6 +26,12 @@ stuck one.
 **When the schedule changes.** Everything still waiting is re-derived against
 the new windows from the moment it became dispatchable. An order whose new
 window has already passed goes out on its own rather than waiting for tomorrow.
+
+**A run is a departure time, not a zone.** Windows are per zone because density
+is local, but a van is not. Two zones whose slots close on the same minute share
+one run: the orders waiting in both go out on a single courier order, route-
+optimised across all of them. Sending two vans from the same kitchen at the same
+moment pays the base fare twice for one journey's worth of work.
 """
 
 from __future__ import annotations
@@ -197,14 +203,29 @@ async def _open_batch(
     polygon_id: uuid.UUID,
     match: WindowMatch,
 ) -> DeliveryBatch:
-    """The run this order joins, created if it is the first one in the slot."""
+    """
+    The run this order joins, created if it is the first one leaving then.
+
+    Matched on the departure time alone, not on the zone. Zones have their own
+    schedules — the city slots close at 12:00, 18:00, 21:00, 22:30 and midnight,
+    the outer ones at 17:00 and midnight — and wherever two of them close on the
+    same minute, the orders waiting in both leave together on one courier order.
+    Two vans setting off from the same kitchen at the same moment is two lots of
+    the base fare for one journey's worth of work; the courier optimises the
+    combined route and everything on it gets cheaper.
+
+    `polygon_id` and `window_id` record which zone's slot opened the run. They
+    describe where it came from, not what is on it.
+    """
     result = await db.execute(
-        select(DeliveryBatch).where(
-            DeliveryBatch.polygon_id == polygon_id,
-            DeliveryBatch.window_id == match.window.id,
+        select(DeliveryBatch)
+        .where(
             DeliveryBatch.dispatch_at == match.dispatch_at,
             DeliveryBatch.status == BatchStatusEnum.PENDING.value,
         )
+        # Oldest first, so every zone closing on this minute converges on the
+        # same run instead of two of them each creating one.
+        .order_by(DeliveryBatch.created_at)
     )
     batch = result.scalars().first()
     if batch is not None:
@@ -323,13 +344,17 @@ async def reschedule_polygon(db: AsyncSession, polygon_id: uuid.UUID) -> int:
     windows = await _active_windows(db, polygon_id)
     now = datetime.now(timezone.utc)
 
+    # Selected by the *order's* zone rather than the batch's. A run is shared
+    # across every zone closing on the same minute, so the batch it sits in may
+    # well have been opened by a different zone's schedule — and editing this
+    # zone's windows must not drag those other orders around with it.
     waiting = (
         (
             await db.execute(
                 select(OrderDelivery)
                 .join(DeliveryBatch, DeliveryBatch.id == OrderDelivery.batch_id)
                 .where(
-                    DeliveryBatch.polygon_id == polygon_id,
+                    OrderDelivery.polygon_id == polygon_id,
                     DeliveryBatch.status == BatchStatusEnum.PENDING.value,
                     OrderDelivery.courier_order_id.is_(None),
                 )

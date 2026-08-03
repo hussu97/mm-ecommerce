@@ -27,18 +27,24 @@ class DeliveryQuoteRequest(BaseModel):
     latitude: Decimal | None = None
     longitude: Decimal | None = None
     #: The pin's formatted address. Passed to the courier so its own estimate
-    #: is taken against the same place the driver would be sent to.
+    #: is taken against the same place the driver would be sent to — and, where
+    #: the fee is that estimate, against the place it is charged for.
     address: str | None = None
 
 
 class DeliveryQuoteResponse(BaseModel):
-    delivery_fee: float
-    base_fee: float
+    #: Null until there is something to price — no pin yet, or a pin nothing can
+    #: be delivered to. `serviceable` is what tells the two apart.
+    delivery_fee: float | None = None
+    base_fee: float | None = None
     free_delivery_applied: bool
     free_threshold: float
     remaining_for_free: float
     zone_name: str | None = None
     in_known_zone: bool
+    #: False when we cannot deliver to this pin at all. The checkout says so and
+    #: refuses to submit; the API refuses the order too, so the two agree.
+    serviceable: bool = True
 
 
 class DeliveryCalculateResponse(BaseModel):

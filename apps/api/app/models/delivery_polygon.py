@@ -38,6 +38,24 @@ class FulfilmentProviderEnum(str, enum.Enum):
     THIRD_PARTY = "third_party"
 
 
+class DeliveryPricingEnum(str, enum.Enum):
+    """Where a zone's delivery fee comes from.
+
+    Two zones can be served by the same courier and still be priced completely
+    differently. Around the kitchen the cost of a run is known well enough to
+    publish a flat number and absorb the variance; an hour's drive away it is
+    not, and quoting a flat fee there means either overcharging the near half of
+    the zone or losing money on the far half.
+    """
+
+    #: The zone's own `delivery_fee`. Fixed, published, and independent of what
+    #: any individual run turns out to cost.
+    STATIC = "static"
+    #: Whatever the courier quotes for this exact pin, rounded up to the whole
+    #: dirham. A pin the courier will not quote cannot be delivered to at all.
+    DYNAMIC = "dynamic"
+
+
 class DeliveryPolygonVersion(Base, UUIDMixin):
     """
     One complete map of the delivery zones.
@@ -91,7 +109,19 @@ class DeliveryPolygon(Base, UUIDMixin):
         index=True,
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    #: Only read when `pricing_mode` is static. A dynamic zone keeps the column
+    #: at zero rather than a plausible-looking number nothing charges, so a row
+    #: cannot be misread as "we charge 50 here" by anyone glancing at the table.
     delivery_fee: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    #: Static is the safe default: a zone added without thinking about pricing
+    #: charges its own published fee rather than silently handing the price over
+    #: to a courier API.
+    pricing_mode: Mapped[str] = mapped_column(
+        String(10),
+        nullable=False,
+        default=DeliveryPricingEnum.STATIC.value,
+        server_default=DeliveryPricingEnum.STATIC.value,
+    )
     # Which courier serves this zone. Third party is the safe default: it means
     # "do what we have always done", so a zone added without thinking about
     # dispatch cannot start booking real couriers by accident.
@@ -128,7 +158,9 @@ class DeliveryPolygon(Base, UUIDMixin):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<DeliveryPolygon {self.name} @ {self.delivery_fee} "
-            f"via {self.fulfilment_provider}>"
+        price = (
+            f"{self.delivery_fee}"
+            if self.pricing_mode == DeliveryPricingEnum.STATIC.value
+            else "dynamic"
         )
+        return f"<DeliveryPolygon {self.name} @ {price} via {self.fulfilment_provider}>"
