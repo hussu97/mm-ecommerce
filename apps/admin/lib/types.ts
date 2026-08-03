@@ -478,7 +478,9 @@ export interface DeliveryZoneSummary {
   version: { id: string; name: string } | null;
   zones: Array<{
     name: string;
+    /** Zero, and meaningless, when `pricing_mode` is `dynamic`. */
     delivery_fee: number;
+    pricing_mode: DeliveryPricingMode;
     fulfilment_provider: FulfilmentProvider;
   }>;
   /** The same everywhere — free delivery does not depend on the zone. */

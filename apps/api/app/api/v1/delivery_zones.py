@@ -634,7 +634,10 @@ async def zone_summary(
         "zones": [
             {
                 "name": z.name,
+                # Zero on a courier-priced zone, and meaningless there — the fee
+                # comes from the pin. `pricing_mode` is what says which it is.
                 "delivery_fee": float(z.delivery_fee),
+                "pricing_mode": z.pricing_mode,
                 "fulfilment_provider": z.fulfilment_provider,
             }
             for z in zones
