@@ -7,7 +7,13 @@
 - [x] 2. Confirm the current Google Maps autocomplete event contract, implement the smallest compatible fix, and add focused coverage. Convert `event.placePrediction.toPlace()`, then fetch location; tests assert the event name, conversion, map pan, pin callback, and cleanup.
 - [x] 3. Audit the remaining Google Maps integration, especially address quality from a selected place versus reverse geocoding; apply any necessary update with coverage. Current Google migration, APIs and browser-key restrictions verified; autocomplete is UAE-restricted and passes a clean selected-place name, street, locality, and country directly to checkout and saved-address forms. Reverse geocoding remains the fallback for a map tap/current location.
 - [x] 4. Trace the Lalamove booking payload through checkout and order dispatch; verify coordinates, address lines, recipient name, and phone mapping. Drop stop has formatted lat/lng plus unit number and Address Line 1; recipient has first/last name and E.164 phone.
-- [ ] 5. Run focused and relevant regression checks, review the impact, commit, and deploy the web fix. 153 web tests, focused picker tests, and type-check pass; lint has 11 existing warnings and none in changed code. Commit/deployment pending.
+- [x] 5. Run focused and relevant regression checks, review the impact, commit, and deploy the web fix. Focused picker coverage, 153 web tests, 24 admin tests, 532 API tests, and type-check pass; lint has 11 existing warnings and none in changed code. Production run 30834203611 passed, and the live checkout confirmed autocomplete pans and pins the map while filling `Melting Moments Cakes, 21 Arab Club Street, Al Majaz 3, United Arab Emirates` without Maps console errors.
+
+### Result
+
+- The picker uses the current Google Places `gmp-select` event and converts the event prediction to a Place before fetching its location. A selected result now always pans and sets the marker, then supplies the address directly to checkout and saved-address forms.
+- Google Maps JavaScript, Places, and Geocoding APIs are enabled in `melting-moments-cakes`; the browser key is referrer-restricted to the production apex, subdomains, and Vercel hostname, while retaining those API restrictions.
+- English checkout addresses retain the useful Google street and locality details while removing repeated mixed Arabic/English fragments. Map taps and current-location use reverse geocoding as their fallback.
 
 
 ## ✅ 2026-08-03: SEO / GEO audit + content rewrite — DONE
