@@ -6,13 +6,17 @@
 - [x] 1. Resolve the owner-provided Google Maps place URL and record its canonical coordinates. Google resolves it to `25.3304139, 55.3736131`.
 - [x] 2. Trace the checkout address/location state and Lalamove booking payload to identify whether either uses a different coordinate. Checkout, contact embed, delivery-zone source, and production branch `K001` used the stale viewport longitude; Lalamove reads its pickup stop from `K001`.
 - [x] 3. Set the approved delivery address text to `Melting Moments Cakes, Garden Tower 1 Shop no 1, Al Majaz 3, Sharjah`, add regression coverage, and verify the resulting payload. The live `K001` pickup record now returns the approved address and `25.3304139, 55.3736131`; the migration protects the same values for future deployments.
-- [ ] 4. Review, test, commit, push, and confirm production deployment. The first hosted migration check caught an obsolete `region_slug` insert after migration 053 removed that column; the corrected migration now passes a fresh PostgreSQL upgrade → downgrade → upgrade check. Awaiting its replacement deployment.
+- [x] 4. Review, test, commit, push, and confirm production deployment. The first hosted migration check caught an obsolete `region_slug` insert after migration 053 removed that column; the corrected migration passed a fresh PostgreSQL upgrade → downgrade → upgrade check, GitHub’s PostgreSQL CI, and production run `30836646686`. The VM reports migration `055_correct_sharjah_kitchen_pin` and a healthy API.
 
 ### Result
 
 - The business-place URL’s canonical pin is `25.3304139, 55.3736131`; `55.3710382` was the Google Maps viewport center, approximately 260 metres west of the pin.
 - Google Places selection now preserves the owner-approved storefront address for that verified place, while all other places retain their clean Google-formatted address.
 - A new immutable delivery-zone version is calculated from the corrected pin, so delivery pricing and the Lalamove pickup record share one source of truth.
+
+### Review
+
+- Production `K001` now returns `Melting Moments Cakes, Garden Tower 1 Shop no 1, Al Majaz 3, Sharjah` with `25.3304139, 55.3736131`; this is the record Lalamove resolves as its pickup stop.
 
 ## ⏳ 2026-08-03: Checkout location selection and Lalamove payload audit
 
