@@ -7,7 +7,28 @@ const DUBAI_CENTER = { lat: 25.2048, lng: 55.2708 };
 
 function formatSelectedAddress(place: google.maps.places.Place): string | undefined {
   const name = place.displayName?.trim();
-  const address = place.formattedAddress?.trim();
+  const component = (type: string) => place.addressComponents
+    ?.find(({ types }) => types.includes(type))
+    ?.longText
+    ?.trim();
+  const streetAddress = [component('street_number'), component('route')]
+    .filter(Boolean)
+    .join(' ');
+  const locality = component('sublocality_level_1')
+    ?? component('neighborhood')
+    ?? component('sublocality')
+    ?? component('locality');
+  const address = [
+    streetAddress,
+    locality,
+    component('administrative_area_level_1'),
+    component('country'),
+  ]
+    .filter((part): part is string => Boolean(part))
+    .filter((part, index, parts) => parts.findIndex(
+      (candidate) => candidate.localeCompare(part, undefined, { sensitivity: 'accent' }) === 0,
+    ) === index)
+    .join(', ') || place.formattedAddress?.trim();
   if (!address) return name || undefined;
   if (!name || address.toLocaleLowerCase().includes(name.toLocaleLowerCase())) return address;
   return `${name}, ${address}`;
@@ -74,7 +95,7 @@ function MapContent({ lat, lng, onChange, placeholder, height = '200px' }: Locat
         placePrediction?: { toPlace: () => google.maps.places.Place };
       }).placePrediction?.toPlace();
       if (!place) return;
-      await place.fetchFields({ fields: ['displayName', 'formattedAddress', 'location'] });
+      await place.fetchFields({ fields: ['addressComponents', 'displayName', 'formattedAddress', 'location'] });
       const loc = place.location;
       if (!loc) return;
       const newLat = loc.lat();
