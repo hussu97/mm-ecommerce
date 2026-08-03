@@ -5,10 +5,19 @@ import { APIProvider, Map, AdvancedMarker, useMapsLibrary, useMap, type MapMouse
 
 const DUBAI_CENTER = { lat: 25.2048, lng: 55.2708 };
 
+function formatSelectedAddress(place: google.maps.places.Place): string | undefined {
+  const name = place.displayName?.trim();
+  const address = place.formattedAddress?.trim();
+  if (!address) return name || undefined;
+  if (!name || address.toLocaleLowerCase().includes(name.toLocaleLowerCase())) return address;
+  return `${name}, ${address}`;
+}
+
 interface LocationPickerProps {
   lat: number | null;
   lng: number | null;
-  onChange: (lat: number, lng: number) => void;
+  /** Present only when the customer selects an autocomplete result. */
+  onChange: (lat: number, lng: number, selectedAddress?: string) => void;
   placeholder?: string;
   /** Map height. The checkout modal gives the map real estate to be usable
    *  with a thumb; inline uses stay compact. */
@@ -41,17 +50,20 @@ function MapContent({ lat, lng, onChange, placeholder, height = '200px' }: Locat
   // Wire up PlaceAutocompleteElement once the library is ready.
   // Deps exclude onChange/map so the element isn't torn down on every render.
   useEffect(() => {
-    if (!placesLib || !containerRef.current) return;
+    const container = containerRef.current;
+    if (!placesLib || !container) return;
 
-    containerRef.current.innerHTML = '';
+    container.innerHTML = '';
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const PlaceAutocompleteElement = (placesLib as any).PlaceAutocompleteElement;
     if (!PlaceAutocompleteElement) return;
 
-    const placeAc = new PlaceAutocompleteElement({});
+    // We deliver only within the UAE, so international predictions are not
+    // actionable and make the address picker slower to use.
+    const placeAc = new PlaceAutocompleteElement({ includedRegionCodes: ['AE'] });
     placeAc.setAttribute('placeholder', placeholder ?? '');
-    containerRef.current.appendChild(placeAc);
+    container.appendChild(placeAc);
 
     const handler = async (event: Event) => {
       // Maps v3.59.8 renamed `gmp-placeselect` to `gmp-select`. The new
@@ -62,12 +74,12 @@ function MapContent({ lat, lng, onChange, placeholder, height = '200px' }: Locat
         placePrediction?: { toPlace: () => google.maps.places.Place };
       }).placePrediction?.toPlace();
       if (!place) return;
-      await place.fetchFields({ fields: ['location'] });
+      await place.fetchFields({ fields: ['displayName', 'formattedAddress', 'location'] });
       const loc = place.location;
       if (!loc) return;
       const newLat = loc.lat();
       const newLng = loc.lng();
-      onChangeRef.current(newLat, newLng);
+      onChangeRef.current(newLat, newLng, formatSelectedAddress(place));
       mapRef.current?.panTo({ lat: newLat, lng: newLng });
       mapRef.current?.setZoom(15);
     };
@@ -76,9 +88,8 @@ function MapContent({ lat, lng, onChange, placeholder, height = '200px' }: Locat
 
     return () => {
       placeAc.removeEventListener('gmp-select', handler);
-      if (containerRef.current) containerRef.current.innerHTML = '';
+      container.innerHTML = '';
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [placesLib, placeholder]);
 
   const handleMapClick = useCallback(

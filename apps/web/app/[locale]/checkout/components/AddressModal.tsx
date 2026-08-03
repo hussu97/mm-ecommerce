@@ -116,8 +116,17 @@ export function AddressModal({
    * underneath still described the first guess. The pin is the statement of
    * where they are, so it wins — and the field stays editable underneath.
    */
-  const handlePin = useCallback(async (lat: number, lng: number) => {
+  const handlePin = useCallback(async (lat: number, lng: number, selectedAddress?: string) => {
     setDraft((prev) => ({ ...prev, latitude: lat, longitude: lng }));
+    if (selectedAddress) {
+      setDraft((prev) => ({ ...prev, addressLine1: selectedAddress }));
+      setErrors((prev) => {
+        const next = { ...prev };
+        delete next.addressLine1;
+        return next;
+      });
+      return;
+    }
     setGeocoding(true);
     const found = await reverseGeocode(lat, lng);
     setGeocoding(false);

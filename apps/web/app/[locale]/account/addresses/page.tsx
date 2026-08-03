@@ -199,7 +199,12 @@ export default function AddressesPage() {
               <LocationPicker
                 lat={form.latitude ?? null}
                 lng={form.longitude ?? null}
-                onChange={(lat, lng) => setForm(f => ({ ...f, latitude: lat, longitude: lng }))}
+                onChange={(lat, lng, selectedAddress) => setForm(f => ({
+                  ...f,
+                  latitude: lat,
+                  longitude: lng,
+                  address_line_1: selectedAddress ?? f.address_line_1,
+                }))}
               />
             </div>
             <label className="flex items-center gap-2 cursor-pointer">

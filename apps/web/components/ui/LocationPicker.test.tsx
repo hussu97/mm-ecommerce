@@ -151,6 +151,7 @@ describe('LocationPicker', () => {
 
       const calls = PlaceAutocompleteElementSpy.mock.calls as unknown[][];
       const constructorArg = (calls[0]?.[0] ?? {}) as Record<string, unknown>;
+      expect(constructorArg).toMatchObject({ includedRegionCodes: ['AE'] });
       expect(constructorArg.inputPlaceholder).toBeUndefined();
     });
 
@@ -163,7 +164,7 @@ describe('LocationPicker', () => {
         },
       );
 
-      renderLocationPicker();
+      const { onChange } = renderLocationPicker();
 
       expect(mockPlaceAutocompleteElement.addEventListener).toHaveBeenCalledWith(
         'gmp-select',
@@ -172,6 +173,8 @@ describe('LocationPicker', () => {
 
       const mockPlace = {
         fetchFields: vi.fn().mockResolvedValue(undefined),
+        displayName: 'Melting Moments Cakes',
+        formattedAddress: 'Al Khan, Sharjah, United Arab Emirates',
         location: { lat: () => 25.2, lng: () => 55.27 },
       };
       const mockPlacePrediction = { toPlace: vi.fn(() => mockPlace) };
@@ -185,7 +188,14 @@ describe('LocationPicker', () => {
       });
 
       expect(mockPlacePrediction.toPlace).toHaveBeenCalledOnce();
-      expect(mockPlace.fetchFields).toHaveBeenCalledWith({ fields: ['location'] });
+      expect(mockPlace.fetchFields).toHaveBeenCalledWith({
+        fields: ['displayName', 'formattedAddress', 'location'],
+      });
+      expect(onChange).toHaveBeenCalledWith(
+        25.2,
+        55.27,
+        'Melting Moments Cakes, Al Khan, Sharjah, United Arab Emirates',
+      );
       expect(mockPanTo).toHaveBeenCalledWith({ lat: 25.2, lng: 55.27 });
       expect(mockSetZoom).toHaveBeenCalledWith(15);
     });
