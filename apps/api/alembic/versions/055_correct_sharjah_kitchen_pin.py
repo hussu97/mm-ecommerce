@@ -29,17 +29,17 @@ depends_on: Union[str, Sequence[str], None] = None
 
 VERSION_NAME = "Lalamove strategy v1.1 — corrected Sharjah kitchen pin"
 
-ZONES: dict[str, tuple[str, str, str]] = {
-    "Sharjah City": ("15.00", "sharjah", "lalamove"),
-    "Ajman City": ("15.00", "ajman", "lalamove"),
-    "Dubai City": ("25.00", "dubai", "lalamove"),
-    "Sharjah": ("50.00", "sharjah", "third_party"),
-    "Ajman": ("50.00", "ajman", "third_party"),
-    "Dubai": ("50.00", "dubai", "third_party"),
-    "Abu Dhabi": ("50.00", "abu_dhabi", "third_party"),
-    "Ras al-Khaimah": ("50.00", "ras_al_khaimah", "third_party"),
-    "Fujairah": ("50.00", "fujairah", "third_party"),
-    "Umm al-Quwain": ("50.00", "umm_al_quwain", "third_party"),
+ZONES: dict[str, tuple[str, str]] = {
+    "Sharjah City": ("15.00", "lalamove"),
+    "Ajman City": ("15.00", "lalamove"),
+    "Dubai City": ("25.00", "lalamove"),
+    "Sharjah": ("50.00", "third_party"),
+    "Ajman": ("50.00", "third_party"),
+    "Dubai": ("50.00", "third_party"),
+    "Abu Dhabi": ("50.00", "third_party"),
+    "Ras al-Khaimah": ("50.00", "third_party"),
+    "Fujairah": ("50.00", "third_party"),
+    "Umm al-Quwain": ("50.00", "third_party"),
 }
 
 GEOJSON_PATH = (
@@ -106,22 +106,21 @@ def upgrade() -> None:
             ),
         },
     )
-    for order, (name, (fee, slug, provider)) in enumerate(ZONES.items()):
+    for order, (name, (fee, provider)) in enumerate(ZONES.items()):
         geometry = shapes[name]
         min_lat, max_lat, min_lng, max_lng = _bbox(geometry)
         conn.execute(
             sa.text(
                 "INSERT INTO delivery_polygons "
-                "(id, version_id, name, region_slug, delivery_fee, fulfilment_provider, "
+                "(id, version_id, name, delivery_fee, fulfilment_provider, "
                 "geometry, min_lat, max_lat, min_lng, max_lng, display_order) "
-                "VALUES (:id, :version_id, :name, :slug, :fee, :provider, "
+                "VALUES (:id, :version_id, :name, :fee, :provider, "
                 "CAST(:geometry AS jsonb), :min_lat, :max_lat, :min_lng, :max_lng, :display_order)"
             ),
             {
                 "id": str(uuid.uuid4()),
                 "version_id": version_id,
                 "name": name,
-                "slug": slug,
                 "fee": fee,
                 "provider": provider,
                 "geometry": json.dumps(geometry),
