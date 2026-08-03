@@ -1,5 +1,90 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ✅ 2026-08-03: Image Delivery — measured audit + optimisation — DONE
+
+### What was measured (live, not guessed)
+
+**Product images — 39 SKUs, one image each, all on `storage.googleapis.com/mm-product-images/menu/`**
+- Every one is a **2048×1365 JPEG**, avg **362 KB**, **13.79 MB** for the catalogue.
+- They *are* going through `next/image` with a correct `sizes`, and a warm Vercel edge
+  returns **18 KB AVIF at w=640 in 0.41 s** — that path is healthy.
+- The cost is the **cold transform**: a variant nobody has requested yet took
+  **3.09 s TTFB** (measured, WebP w=640). Vercel must pull the 362 KB original from GCS
+  and encode it before the first byte reaches the browser. 8 srcset widths × 2 formats
+  × 39 images = 624 variants, so cold misses are routine on this traffic volume.
+- The assumption going in was that shrinking the source would kill that latency. It
+  did not — see Findings. It shrinks the bytes, and the fallback if optimisation is
+  ever bypassed, but the wait is the optimiser's encode, not its read.
+
+**Local banner artwork in `apps/web/public` — 4.3 MB, and mostly bypassing the optimiser**
+- `HeroCarousel` and `PromoBanners` deliberately use raw `<picture>`/`<img>` (art-directed
+  mobile crops that `next/image` cannot express). Correct call — but that also means
+  **zero compression, zero format negotiation**: plain JPEG at full weight.
+- Three hero slides load `eager` above the fold: **648 KB desktop / 560 KB mobile**.
+- `person_shot_3.png` is **361 KB for a 514×434 image**. `person_shot_2.png` is 310 KB.
+  These are PNGs holding photographs.
+
+**Re-encode benchmark (sharp 0.35.3 / libvips 8.18.3, run on the real files)**
+
+| Asset | Now | After |
+|---|---|---|
+| Product source 2048px | 460 KB | **92 KB** AVIF @1400px (−80%) |
+| Hero banner | 232 KB | **52 KB** AVIF @1920px (−78%) |
+| `person_shot_3.png` | 361 KB | **10 KB** AVIF (−97%) |
+
+### Plan
+- [x] 1. Re-encode the GCS product sources to 1400px max, mozjpeg q78 progressive.
+      Originals copied to `gs://mm-product-images/_originals-2026-08-02/` first.
+- [x] 2. `apps/web/scripts/optimize-images.mjs` generates `public/images` from the
+      pristine artwork now kept in `apps/web/image-src`.
+- [x] 3. `BannerPicture` gives the hero and promo bands AVIF → WebP → JPEG per
+      breakpoint, keeping the art-directed mobile crop.
+- [x] 4. `next.config.ts`: declare `qualities: [75]`.
+- [x] ~~5. Preload the LCP hero.~~ Dropped — the hero `<img>` is already in the
+      server-rendered HTML with `fetchPriority="high"`, so a preload link is
+      redundant.
+- [x] 6. `app/core/images.py` re-encodes admin uploads before they reach R2.
+- [x] 7. Verified: builds, 153 web tests, 400 API tests, ruff, live re-measurement.
+- [x] 8. Added `scripts/warm-image-cache.mjs` and ran it — this turned out to be the
+      change that actually fixed the reported slowness.
+
+### Findings / Result
+
+- **The slow thing was never the byte size — it was the cold transform.** Product
+  images were already going through `next/image` with a correct `sizes`, and a warm
+  edge served 18 KB of AVIF in 0.41 s. But `/_next/image` produces a derivative on
+  the *first* request for each (url, width, quality, format), and that first request
+  measured **0.5 s – 9.8 s to first byte**. On ~430 visitors/month spread over 39
+  products × 7 widths, a large share of real page views were paying that.
+- **Shrinking the sources did not fix the latency.** 2048px/460 KB → 1400px/157 KB
+  across the bucket (32.11 MB → 11.94 MB, −63%), and cold transforms still ranged
+  0.5–5.7 s afterwards. The encode cost is dominated by Vercel's optimiser, not by
+  how much source it has to read. Worth doing for the bytes, not for the wait.
+- **Warming the cache is what fixed it.** 273 requests, 141 s, one-off: every product
+  image at every width the layouts can resolve to. Re-measured after —
+  **0.13–0.22 s, `x-vercel-cache: HIT`, every one.** Re-run after adding products.
+- **The banners were the real byte problem, and they were invisible.** `HeroCarousel`
+  and `PromoBanners` render raw `<picture>` on purpose — the mobile frame is a
+  different crop, which is art direction `next/image` cannot express — so nothing
+  ever compressed or format-negotiated them. Three hero slides loaded `eager` at
+  full JPEG weight above the fold.
+
+  | Homepage banners | Before | After (AVIF) |
+  |---|---|---|
+  | Mobile | 856 KB | **286 KB** (−67%) |
+  | Desktop | 991 KB | **225 KB** (−77%) |
+
+- **Renaming files to save bytes nobody downloads is a trap.** Both `person_shot`
+  PNGs are opaque photographs — ~350 KB for a 514px image — and converting them to
+  JPEG cut them to 20 KB. But they are `next/image` sources, so a visitor gets AVIF
+  either way and the source format only affects what the optimiser decodes. The live
+  CMS rows point at those exact `.png` paths, so the rename would have 404'd the
+  about page in production to save nothing. Reverted; the generator now guarantees
+  the output filename set matches `image-src` exactly.
+- **`optimize_image` has to check whether alpha is *used*, not whether it exists.**
+  A mode check alone keeps opaque RGBA uploads as PNG and gives up most of the
+  saving. Caught by a test, not by reading the code.
+
 ## ✅ 2026-08-02: Delivery Batching, Zone Map, and Retiring Regions — DONE
 - [x] Cut the served cities out of their emirates so no address is in two zones
 - [x] Add per-zone batch windows in Dubai time, seeded 00:00/12:00/18:00/21:00/22:00/23:00

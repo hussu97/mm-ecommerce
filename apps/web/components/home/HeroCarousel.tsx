@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { BannerPicture } from './BannerPicture';
 
 export interface HeroSlide {
   /** Wide banner, ~12:5. Falls back to `image_mobile` if omitted. */
@@ -142,25 +143,23 @@ export function HeroCarousel({ c, locale }: { c: HeroContent; locale: string }) 
             >
               {/* <picture> rather than next/image: these are pre-graded, correctly
                   sized JPEGs and the mobile frame is a different crop, which is
-                  art direction the image component cannot express. */}
-              <picture>
-                <source media="(max-width: 639px)" srcSet={tall} />
-                <img
-                  src={wide}
-                  alt=""
-                  aria-hidden="true"
-                  decoding={i === 0 ? 'sync' : 'async'}
-                  // Every slide is inside the viewport, so `lazy` buys nothing
-                  // but a blank frame the first time the carousel advances past
-                  // an image that has not arrived yet. Fetch them all, and let
-                  // priority keep the later ones behind the LCP frame.
-                  loading="eager"
-                  fetchPriority={i === 0 ? 'high' : 'low'}
-                  className={`absolute inset-0 h-full w-full object-cover ${
-                    isActive ? 'mm-kenburns' : ''
-                  }`}
-                />
-              </picture>
+                  art direction the image component cannot express. Nothing
+                  re-encodes them for us either, so BannerPicture offers the AVIF
+                  and WebP built next to them. */}
+              <BannerPicture
+                wide={wide}
+                tall={tall}
+                decoding={i === 0 ? 'sync' : 'async'}
+                // Every slide is inside the viewport, so `lazy` buys nothing
+                // but a blank frame the first time the carousel advances past
+                // an image that has not arrived yet. Fetch them all, and let
+                // priority keep the later ones behind the LCP frame.
+                loading="eager"
+                fetchPriority={i === 0 ? 'high' : 'low'}
+                className={`absolute inset-0 h-full w-full object-cover ${
+                  isActive ? 'mm-kenburns' : ''
+                }`}
+              />
             </div>
           );
         })}

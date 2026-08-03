@@ -24,6 +24,8 @@ dependencies = [
     "python-json-logger>=3.0.0",
     "sentry-sdk[fastapi]>=2.0.0",
     "webauthn>=2.5.0",
+    # Re-encodes admin image uploads before they reach R2 (app/core/images.py).
+    "pillow>=11.0.0",
 ]
 
 [project.optional-dependencies]

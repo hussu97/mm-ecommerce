@@ -49,16 +49,22 @@ const nextConfig: NextConfig = {
     ];
   },
   images: {
-    // The source images in GCS are ~350KB 2048px JPEGs, and a category grid
-    // renders seven of them into ~300px slots — ~2.4MB to draw one page, on
-    // traffic that is 80% mobile. Optimization is billed per unique
-    // (image, width, quality) and the result is cached, not per request, so a
-    // 39-product catalogue costs a bounded one-off rather than scaling with
-    // visits. Serving AVIF/WebP at the right width is worth far more than the
-    // transformations it uses.
+    // Optimization is billed and cached per unique (image, width, quality), and
+    // the first request for a combination nobody has asked for yet pays for the
+    // encode — a cold transform measured 3.1s TTFB when the sources were 2048px
+    // /350KB JPEGs. Those sources are now capped at 1400px, which is the lever
+    // that actually moves this: less to fetch from GCS and less to decode.
+    //
+    // These two lists are already trimmed against Next's defaults (no 2048/3840)
+    // and stay as they are — `sizes` on the product grids resolves to ~960 CSS px
+    // at 2x, and the full-bleed about-page shots are what keeps 1920 in.
     deviceSizes: [640, 750, 828, 1080, 1200, 1920],
     imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
     formats: ["image/avif", "image/webp"],
+    // Every `next/image` on the site renders at the default quality. Declaring
+    // the allowed set means a hand-edited or crawled `?q=` cannot mint a second
+    // full set of transforms for the whole catalogue.
+    qualities: [75],
     remotePatterns: [
       {
         protocol: "https",

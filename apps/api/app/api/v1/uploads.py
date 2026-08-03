@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import mimetypes
 import uuid
 from urllib.parse import urlparse
 
@@ -10,6 +9,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from pydantic import BaseModel
 
 from app.core.config import settings
+from app.core.images import extension_for, optimize_image
 from app.core.deps import get_admin_user
 from app.models.user import User
 
@@ -61,10 +61,16 @@ async def upload_image(
             detail=f"File too large. Maximum size is {MAX_FILE_SIZE // (1024 * 1024)} MB",
         )
 
-    # Generate unique key
-    ext = mimetypes.guess_extension(content_type) or ".jpg"
-    if ext == ".jpe":
-        ext = ".jpg"
+    # Downscale and re-encode before it ever reaches the bucket. A camera-roll
+    # photo is several thousand pixels wide and the storefront never renders one
+    # above ~960; storing the original just makes every cold image transform
+    # slower for the first visitor who lands on that product.
+    contents, content_type = optimize_image(contents, content_type)
+
+    # Generate unique key. The extension has to follow the *re-encoded* type —
+    # a PNG that came back out as JPEG must not be stored under `.png`, or R2
+    # serves JPEG bytes as `image/png`.
+    ext = extension_for(content_type)
     key = f"{folder}/{uuid.uuid4()}{ext}"
 
     try:

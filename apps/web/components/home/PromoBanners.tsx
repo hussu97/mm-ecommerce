@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Reveal } from './Reveal';
+import { BannerPicture } from './BannerPicture';
 
 export interface PromoItem {
   image?: string;
@@ -36,17 +37,13 @@ export function PromoBanners({ c, locale }: { c: PromosContent; locale: string }
             className="bg-[#f4ece4]"
           >
             <Reveal className="relative w-full overflow-hidden aspect-[4/3] sm:aspect-[21/8] lg:aspect-[12/5] max-h-[70vh]">
-              <picture>
-                <source media="(max-width: 639px)" srcSet={tall} />
-                <img
-                  src={wide}
-                  alt=""
-                  aria-hidden="true"
-                  loading="lazy"
-                  decoding="async"
-                  className="absolute inset-0 h-full w-full object-cover transition-transform duration-[1200ms] ease-out hover:scale-[1.04]"
-                />
-              </picture>
+              <BannerPicture
+                wide={wide}
+                tall={tall}
+                loading="lazy"
+                decoding="async"
+                className="absolute inset-0 h-full w-full object-cover transition-transform duration-[1200ms] ease-out hover:scale-[1.04]"
+              />
 
               <div className="absolute inset-0 bg-gradient-to-b from-[#f6efe7]/90 via-[#f6efe7]/20 to-transparent sm:bg-gradient-to-r sm:from-[#f6efe7]/90 sm:via-[#f6efe7]/40 sm:to-transparent" />
 
