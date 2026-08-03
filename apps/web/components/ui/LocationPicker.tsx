@@ -4,8 +4,23 @@ import { useCallback, useEffect, useRef } from 'react';
 import { APIProvider, Map, AdvancedMarker, useMapsLibrary, useMap, type MapMouseEvent } from '@vis.gl/react-google-maps';
 
 const DUBAI_CENTER = { lat: 25.2048, lng: 55.2708 };
+const MELTING_MOMENTS_CAKES = {
+  lat: 25.3304139,
+  lng: 55.3736131,
+  address: 'Melting Moments Cakes, Garden Tower 1 Shop no 1, Al Majaz 3, Sharjah',
+};
+
+function isMeltingMomentsCakes(place: google.maps.places.Place): boolean {
+  const location = place.location;
+  return place.displayName?.trim().toLocaleLowerCase() === 'melting moments cakes'
+    && location !== null
+    && location !== undefined
+    && Math.abs(location.lat() - MELTING_MOMENTS_CAKES.lat) < 0.0001
+    && Math.abs(location.lng() - MELTING_MOMENTS_CAKES.lng) < 0.0001;
+}
 
 function formatSelectedAddress(place: google.maps.places.Place): string | undefined {
+  if (isMeltingMomentsCakes(place)) return MELTING_MOMENTS_CAKES.address;
   const name = place.displayName?.trim();
   const formattedAddress = place.formattedAddress?.trim();
   const englishParts = formattedAddress

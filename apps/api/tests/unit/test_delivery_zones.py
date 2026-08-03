@@ -65,7 +65,7 @@ def test_landmarks_land_in_the_right_emirate(emirates, label, lat, lng, expected
 
 def test_the_shop_itself_is_in_a_35_aed_zone(emirates):
     """Melting Moments is in Sharjah; a neighbour must not be quoted 50."""
-    zone = resolve(emirates, 25.3304139, 55.3710382)
+    zone = resolve(emirates, 25.3304139, 55.3736131)
     assert zone == "Sharjah"
     assert FEES[zone] == Decimal("35.00")
 

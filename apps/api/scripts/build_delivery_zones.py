@@ -58,7 +58,7 @@ TARGET = DATA / "uae_delivery_zones.geojson.json"
 
 # Melting Moments Cakes, Al Qasimia, Sharjah — every run starts here.
 ORIGIN_LAT = 25.3304139
-ORIGIN_LNG = 55.3710382
+ORIGIN_LNG = 55.3736131
 
 KM_PER_DEG_LAT = 111.32
 CIRCLE_POINTS = 96

@@ -69,7 +69,7 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
         (
             "Melting Moments itself",
             25.3304139,
-            55.3710382,
+            55.3736131,
             "Sharjah City",
             "15.00",
             LALAMOVE,
@@ -140,7 +140,7 @@ def test_real_addresses_get_the_right_zone(
 @pytest.mark.parametrize(
     "label,lat,lng",
     [
-        ("the shop itself", 25.3304139, 55.3710382),
+        ("the shop itself", 25.3304139, 55.3736131),
         ("Deira, on the Dubai city edge", 25.2530, 55.3320),
         ("Al Nahda, on the Dubai–Sharjah line", 25.2980, 55.3760),
         ("Ajman Corniche", 25.4052, 55.4384),

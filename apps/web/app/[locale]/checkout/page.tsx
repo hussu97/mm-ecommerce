@@ -80,7 +80,7 @@ function paymentOptionsFor(method: 'delivery' | 'pickup'): ('stripe' | 'cod')[] 
 }
 
 /** Where to send someone who wants to see the counter before choosing pickup. */
-const STORE_LOCATION = { lat: 25.3304139, lng: 55.3710382 };
+const STORE_LOCATION = { lat: 25.3304139, lng: 55.3736131 };
 const STORE_MAPS_URL =
   `https://www.google.com/maps/search/?api=1&query=${STORE_LOCATION.lat},${STORE_LOCATION.lng}`;
 

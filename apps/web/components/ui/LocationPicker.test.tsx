@@ -200,6 +200,37 @@ describe('LocationPicker', () => {
       expect(mockSetZoom).toHaveBeenCalledWith(15);
     });
 
+    it('uses the approved shop address when Melting Moments Cakes is selected', async () => {
+      let capturedHandler: ((e: Event) => void) | null = null;
+      mockPlaceAutocompleteElement.addEventListener.mockImplementation(
+        (_: string, handler: EventListenerOrEventListenerObject) => {
+          capturedHandler = handler as (e: Event) => void;
+        },
+      );
+      const { onChange } = renderLocationPicker();
+      const mockPlace = {
+        fetchFields: vi.fn().mockResolvedValue(undefined),
+        displayName: 'Melting Moments Cakes',
+        formattedAddress: '21 Arab Club Street - Al Majaz 3 - Sharjah - United Arab Emirates',
+        location: { lat: () => 25.3304139, lng: () => 55.3736131 },
+      };
+      const event = new Event('gmp-select') as Event & {
+        placePrediction: { toPlace: () => typeof mockPlace };
+      };
+      event.placePrediction = { toPlace: () => mockPlace };
+
+      await act(async () => {
+        capturedHandler?.(event);
+      });
+
+      expect(onChange).toHaveBeenCalledWith(
+        25.3304139,
+        55.3736131,
+        'Melting Moments Cakes, Garden Tower 1 Shop no 1, Al Majaz 3, Sharjah',
+      );
+      expect(mockPanTo).toHaveBeenCalledWith({ lat: 25.3304139, lng: 55.3736131 });
+    });
+
     it('does not call onChange when place has no location', async () => {
       let capturedHandler: ((e: Event) => void) | null = null;
       mockPlaceAutocompleteElement.addEventListener.mockImplementation(
