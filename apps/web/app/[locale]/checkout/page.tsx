@@ -212,7 +212,7 @@ function ChoiceRow({
 
 function OrderSummary({
   cart, retryOrder, discount, promoCode, deliveryFee, baseFee, freeApplied,
-  remainingForFree, deliveryMethod, unserviceable, locale, t,
+  freeAvailable, hasPin, remainingForFree, deliveryMethod, unserviceable, locale, t,
 }: {
   cart: Cart | null;
   retryOrder: import('@/lib/types').Order | null;
@@ -223,6 +223,10 @@ function OrderSummary({
   /** What delivery would have cost — struck through once it is waived. */
   baseFee: number;
   freeApplied: boolean;
+  /** Whether free delivery can reach this address at all. */
+  freeAvailable: boolean;
+  /** True once a pin exists, so "not in this area" is a fact and not a guess. */
+  hasPin: boolean;
   remainingForFree: number;
   deliveryMethod: 'delivery' | 'pickup';
   /** Nothing can be delivered to this pin, so there is no total to commit to. */
@@ -310,9 +314,19 @@ function OrderSummary({
               </span>
             )}
           </div>
-          {deliveryMethod === 'delivery' && !unserviceable && !freeApplied && remainingForFree > 0 && (
+          {/* Three different things to say about one offer: it is not coming
+              here, you are this far from it, or you have it. Saying the second
+              to someone in the first case is the failure worth avoiding. */}
+          {deliveryMethod === 'delivery' && !unserviceable && !freeAvailable && hasPin && (
+            <p className="mt-1 font-body text-xs text-gray-400">
+              {t('checkout.free_delivery_not_in_area')}
+            </p>
+          )}
+          {deliveryMethod === 'delivery' && !unserviceable && freeAvailable && !freeApplied && remainingForFree > 0 && (
             <p className="mt-1 font-body text-xs text-secondary">
-              {t('checkout.free_delivery_upsell', { amount: remainingForFree.toFixed(2) })}
+              {t(hasPin ? 'checkout.free_delivery_upsell' : 'checkout.free_delivery_upsell_areas', {
+                amount: remainingForFree.toFixed(2),
+              })}
             </p>
           )}
           {deliveryMethod === 'delivery' && !unserviceable && freeApplied && (
@@ -450,8 +464,16 @@ function CheckoutContent() {
 
   const subtotal = cart?.subtotal ?? 0;
   const effectiveSubtotal = Math.max(0, subtotal - form.promoDiscount);
-  const freeThreshold = quote?.free_threshold ?? deliveryRates?.free_threshold ?? 200;
-  const freeApplied = effectiveSubtotal >= freeThreshold;
+  const freeThreshold = quote?.free_threshold ?? deliveryRates?.free_threshold ?? 150;
+  // The server decides this, not the basket. Free delivery only reaches the
+  // zones we price ourselves, so "big enough order" is a necessary condition
+  // and not a sufficient one — working it out here from the subtotal alone
+  // would promise it to every address in the country.
+  const freeApplied = quote?.free_delivery_applied ?? false;
+  // Undefined until the first quote lands. Assumed available so the upsell is
+  // not suppressed on a cold page; the copy for that state says "in selected
+  // areas", which is exactly what we know at that point.
+  const freeAvailable = quote?.free_delivery_available ?? true;
 
   // Priced off the pin against the active zone map. Close to the kitchen that is
   // a published flat fee; beyond it, the courier's own price for this exact
@@ -692,7 +714,11 @@ function CheckoutContent() {
                 ? t('checkout.free_delivery_qualified')
                 : !hasPin
                   ? t('checkout.fee_from_address')
-                  : t('checkout.free_delivery_upsell', { amount: remainingForFree.toFixed(2) })}
+                  : !freeAvailable
+                    // The fee here is a courier bill, not a number we set, so
+                    // there is nothing to earn by spending more.
+                    ? t('checkout.free_delivery_not_in_area')
+                    : t('checkout.free_delivery_upsell', { amount: remainingForFree.toFixed(2) })}
             trailing={
               unserviceable ? (
                 <span className="material-icons text-lg text-amber-600">wrong_location</span>
@@ -887,6 +913,8 @@ function CheckoutContent() {
           deliveryFee={deliveryFee}
           baseFee={baseFee ?? 0}
           freeApplied={freeApplied}
+          freeAvailable={freeAvailable}
+          hasPin={hasPin}
           remainingForFree={remainingForFree}
           deliveryMethod={form.deliveryMethod}
           unserviceable={Boolean(unserviceable)}

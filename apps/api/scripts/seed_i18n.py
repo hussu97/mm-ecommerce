@@ -161,6 +161,22 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "home_delivery", "Home Delivery"),
     ("checkout", "store_pickup", "Store Pickup"),
     ("checkout", "free_delivery_qualified", "Free delivery — your order qualifies!"),
+    # Shown before there is a pin, when whether the offer reaches this customer
+    # is still unknown. The qualifier is the whole point of the separate key:
+    # promising free delivery flatly and then charging 137 to Abu Dhabi is a
+    # broken promise however correct the arithmetic was.
+    (
+        "checkout",
+        "free_delivery_upsell_areas",
+        "Add {amount} AED more for free delivery in selected areas",
+    ),
+    # Shown once the pin lands somewhere the offer cannot reach, so a full
+    # basket is not left waiting for a discount that is never coming.
+    (
+        "checkout",
+        "free_delivery_not_in_area",
+        "Free delivery isn't available for this address",
+    ),
     ("checkout", "delivery_time", "Delivered in 2–3 business days"),
     ("checkout", "free_delivery_upsell", "Add {amount} AED more for free delivery"),
     (
@@ -484,7 +500,7 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("error", "contact_us", "Contact Us"),
     ("error", "tagline", "Made with 100% Love"),
     # promo_banner
-    ("promo_banner", "text", "Free delivery on orders over 200 AED!"),
+    ("promo_banner", "text", "Free delivery over 150 AED in selected areas"),
     # address labels
     ("address", "pin_location", "Pin Location"),
     ("address", "search_location", "Search for a location…"),
@@ -617,6 +633,16 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "home_delivery", "التوصيل المنزلي"),
     ("checkout", "store_pickup", "الاستلام من المتجر"),
     ("checkout", "free_delivery_qualified", "توصيل مجاني — طلبك يستوفي الشرط!"),
+    (
+        "checkout",
+        "free_delivery_upsell_areas",
+        "أضف {amount} درهم أكثر للتوصيل المجاني في مناطق مختارة",
+    ),
+    (
+        "checkout",
+        "free_delivery_not_in_area",
+        "التوصيل المجاني غير متاح لهذا العنوان",
+    ),
     ("checkout", "delivery_time", "التوصيل خلال 2–3 أيام عمل"),
     ("checkout", "free_delivery_upsell", "أضف {amount} درهم أكثر للتوصيل المجاني"),
     (
@@ -924,7 +950,7 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("error", "contact_us", "تواصل معنا"),
     ("error", "tagline", "مصنوعة بـ 100% حب"),
     # promo_banner
-    ("promo_banner", "text", "توصيل مجاني للطلبات التي تتجاوز 200 درهم!"),
+    ("promo_banner", "text", "توصيل مجاني للطلبات فوق 150 درهم في مناطق مختارة"),
     # address labels
     ("address", "pin_location", "تحديد الموقع على الخريطة"),
     ("address", "search_location", "ابحث عن موقع…"),

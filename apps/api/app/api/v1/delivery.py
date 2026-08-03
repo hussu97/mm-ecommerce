@@ -38,6 +38,10 @@ class DeliveryQuoteResponse(BaseModel):
     delivery_fee: float | None = None
     base_fee: float | None = None
     free_delivery_applied: bool
+    #: Whether free delivery reaches this pin at all. False in the areas priced
+    #: from a live courier quote — there is no fee of ours to waive there, only
+    #: a bill that arrives whatever the basket is worth.
+    free_delivery_available: bool = True
     free_threshold: float
     remaining_for_free: float
     zone_name: str | None = None

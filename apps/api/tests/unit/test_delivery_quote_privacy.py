@@ -26,7 +26,7 @@ from app.services import delivery_service, lalamove_service
 from app.services.delivery_zone_service import Zone
 
 SETTINGS = DeliverySettings(
-    free_delivery_threshold=Decimal("200.00"),
+    free_delivery_threshold=Decimal("150.00"),
     pickup_fee=Decimal("0.00"),
     default_delivery_fee=Decimal("50.00"),
 )
@@ -106,6 +106,9 @@ def test_the_response_model_has_no_field_that_could_leak_one():
         "delivery_fee",
         "base_fee",
         "free_delivery_applied",
+        # "free delivery does not reach here" — a fact about the offer, with no
+        # hint as to why, and in particular none about who would have carried it.
+        "free_delivery_available",
         "free_threshold",
         "remaining_for_free",
         "zone_name",
@@ -144,25 +147,26 @@ async def test_free_delivery_records_the_revenue_as_zero(cart):
 
 async def test_the_threshold_does_not_move_with_the_zone(cart):
     """
-    Free delivery is the same promise everywhere, including the zones no
-    courier API touches. A threshold that varied by address would be the one
-    place the map became visible to the customer.
+    One threshold for the whole country. Whether free delivery *applies* does
+    depend on the zone — it reaches the fixed-fee ones and no further — but the
+    number itself never moves, because a threshold that varied by address would
+    be the one place the map became visible to the customer.
     """
     far = Zone(
         id=uuid.uuid4(),
         name="Fujairah",
         delivery_fee=Decimal("50.00"),
-        fulfilment_provider="third_party",
+        fulfilment_provider="lalamove",
         min_lat=24.8,
         max_lat=25.7,
         min_lng=55.9,
         max_lng=56.4,
         rings=(),
     )
-    near = await _quote(cart, subtotal="199.00")
-    far_quote = await _quote(cart, subtotal="199.00", zone=far)
+    near = await _quote(cart, subtotal="149.00")
+    far_quote = await _quote(cart, subtotal="149.00", zone=far)
 
-    assert near["free_threshold"] == far_quote["free_threshold"] == 200.0
+    assert near["free_threshold"] == far_quote["free_threshold"] == 150.0
     assert near["remaining_for_free"] == far_quote["remaining_for_free"] == 1.0
 
 

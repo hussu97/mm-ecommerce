@@ -14,16 +14,20 @@
 /**
  * The basket value that earns free delivery, in AED.
  *
- * Deliberately the same in every zone. It costs several times more to reach
- * Fujairah than Sharjah, but a threshold that moved with the address would be
- * the one place the delivery map became visible to the customer, and "free
- * over 200" has to read the same everywhere.
+ * One number for the whole country: a threshold that moved with the address
+ * would be the one place the delivery map became visible to the customer.
+ *
+ * *Whether* it applies is a separate question, and one only the API can answer
+ * — free delivery reaches the zones we price ourselves and no further, because
+ * everywhere else the fee is a live courier quote and there is nothing of ours
+ * to waive against it. Any copy rendered from this constant alone must say "in
+ * selected areas"; `free_delivery_available` on a quote is the real answer.
  *
  * The authority is `delivery_settings.free_delivery_threshold`, returned on
  * every quote as `free_threshold`. This is the fallback for rendering a
  * marketing line before any quote has been taken — never for pricing.
  */
-export const FREE_DELIVERY_THRESHOLD = 200;
+export const FREE_DELIVERY_THRESHOLD = 150;
 
 /**
  * Charged when no polygon matches the pin. The API returns the live value as

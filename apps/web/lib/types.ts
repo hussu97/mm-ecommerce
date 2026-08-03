@@ -306,6 +306,13 @@ export interface DeliveryQuote {
   /** What it would have cost, so the total can be struck through. */
   base_fee: number | null;
   free_delivery_applied: boolean;
+  /**
+   * Whether free delivery reaches this pin at all. False in the areas priced
+   * from a live courier quote — there is no fee of ours to waive there, so an
+   * upsell towards the threshold would be advertising something that will not
+   * happen.
+   */
+  free_delivery_available: boolean;
   free_threshold: number;
   remaining_for_free: number;
   zone_name: string | null;
