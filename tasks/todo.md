@@ -5,7 +5,12 @@
 ### Plan
 - [x] 1. Audit public product, category, and CMS-asset queries to identify every path that can expose hidden website content. Product listing, details, featured cards, carts, checkout, headers, category pages, all-products, search, and Home CMS tiles were reviewed. The only CMS asset with a category relationship is the Home category-tile block; banners and promos use standalone URLs.
 - [x] 2. Apply one consistent public-visibility rule so hidden products and assets in hidden categories never reach storefront responses. Public API requests now enforce active website products and active categories; direct cart additions and checkout use the same rule; previously-added hidden cart lines are removed; CMS category tiles cannot fall back to a raw href; and server-rendered catalogue fetches are uncached so a hide is immediate.
-- [ ] 3. Add regression coverage for all-products and CMS assets, review the impact, then test, commit, deploy, and verify production.
+- [x] 3. Add regression coverage for all-products and CMS assets, review the impact, then test, commit, deploy, and verify production. API lint and 537 tests pass (7 skipped); web lint has only 11 pre-existing warnings, 156 tests and TypeScript checks pass. Commit `74b34a4` deployed successfully in production run `30840645137`; production health and `/en/all-products` return 200, and the public catalogue returns 35 active, web-enabled products in active categories even when inactive query parameters are supplied.
+
+### Review
+
+- The public catalogue is now fail-closed: a product must be active, assigned to the Website channel, and either uncategorised or in an active category. Hiding a category immediately clears its category and featured-product API caches, and storefront renders do not retain a five-minute Next.js response cache.
+- Existing cart items that no longer meet that rule are removed on the next cart read; checkout independently rejects them. Category-linked Home CMS tiles are suppressed with their hidden category, while standalone promotional links are preserved.
 
 ## ⏳ 2026-08-03: Verify Attibassi Coffee Barsha Heights branch pin
 
