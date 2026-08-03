@@ -7,7 +7,16 @@
 - [x] 2. Apply free delivery only where the fee is ours to set. `price()` sets `free_available` for a `static` zone and never for a dynamic one, so a 500 AED order to Abu Dhabi pays the courier's 137 like any other.
 - [x] 3. Carry the answer to the storefront. The quote gained `free_delivery_available`; the checkout no longer derives "free" from the subtotal, so it cannot promise what the address will not honour.
 - [x] 4. Qualify every customer-facing claim. Banner, checkout upsell, home/about/FAQ copy in both locales, `llms.txt`, `llms-full.txt` and the AI plugin manifest all now say "in selected areas" or name the three city areas outright.
-- [ ] 5. Deploy, verify green, re-test the checkout against static, dynamic and unserviceable pins.
+- [x] 5. Deploy, verify green, re-test the checkout against static, dynamic and unserviceable pins. PR #6 merged; production run `30846916357` green. Verified live below.
+
+### Result
+
+- `/delivery/rates` reports `free_threshold: 150`, and it is the only threshold in the system — there is no figure above which delivery is free outside the fixed-fee zones.
+- Static zones: 149 AED pays 15, 150 AED pays 0 (`applied: true`), Dubai City at 300 pays 0 against a struck-through 25.
+- Dynamic zones: Abu Dhabi at 500 pays 137 and Fujairah at 1000 pays 100, both `free_delivery_available: false`.
+- With no pin, a 500 AED basket is `applied: false, available: true` — nothing promised until the address is known.
+- Live checkout on a 160 AED basket: Dubai City shows "Free delivery — your order qualifies!" with 25.00 struck through; Abu Dhabi shows "Free delivery isn't available for this address" and charges 137.
+- The banner reads "FREE DELIVERY OVER 150 AED IN SELECTED AREAS" in English and the equivalent in Arabic; home, about and both FAQ answers carry the scope in both locales.
 
 ## ⏳ 2026-08-03: Lalamove everywhere — static city fees, dynamic fee elsewhere
 
