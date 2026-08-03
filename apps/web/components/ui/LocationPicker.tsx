@@ -54,7 +54,14 @@ function MapContent({ lat, lng, onChange, placeholder, height = '200px' }: Locat
     containerRef.current.appendChild(placeAc);
 
     const handler = async (event: Event) => {
-      const { place } = (event as CustomEvent<{ place: google.maps.places.Place }>).detail;
+      // Maps v3.59.8 renamed `gmp-placeselect` to `gmp-select`. The new
+      // event carries a PlacePrediction, which must become a Place before its
+      // location can be fetched. Listening to the retired event left the pin
+      // and Address Line 1 unchanged after a customer chose a result.
+      const place = (event as Event & {
+        placePrediction?: { toPlace: () => google.maps.places.Place };
+      }).placePrediction?.toPlace();
+      if (!place) return;
       await place.fetchFields({ fields: ['location'] });
       const loc = place.location;
       if (!loc) return;
@@ -65,10 +72,10 @@ function MapContent({ lat, lng, onChange, placeholder, height = '200px' }: Locat
       mapRef.current?.setZoom(15);
     };
 
-    placeAc.addEventListener('gmp-placeselect', handler);
+    placeAc.addEventListener('gmp-select', handler);
 
     return () => {
-      placeAc.removeEventListener('gmp-placeselect', handler);
+      placeAc.removeEventListener('gmp-select', handler);
       if (containerRef.current) containerRef.current.innerHTML = '';
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -165,15 +165,26 @@ describe('LocationPicker', () => {
 
       renderLocationPicker();
 
+      expect(mockPlaceAutocompleteElement.addEventListener).toHaveBeenCalledWith(
+        'gmp-select',
+        expect.any(Function),
+      );
+
       const mockPlace = {
         fetchFields: vi.fn().mockResolvedValue(undefined),
         location: { lat: () => 25.2, lng: () => 55.27 },
       };
+      const mockPlacePrediction = { toPlace: vi.fn(() => mockPlace) };
+      const event = new Event('gmp-select') as Event & {
+        placePrediction: typeof mockPlacePrediction;
+      };
+      event.placePrediction = mockPlacePrediction;
 
       await act(async () => {
-        capturedHandler?.(new CustomEvent('gmp-placeselect', { detail: { place: mockPlace } }));
+        capturedHandler?.(event);
       });
 
+      expect(mockPlacePrediction.toPlace).toHaveBeenCalledOnce();
       expect(mockPlace.fetchFields).toHaveBeenCalledWith({ fields: ['location'] });
       expect(mockPanTo).toHaveBeenCalledWith({ lat: 25.2, lng: 55.27 });
       expect(mockSetZoom).toHaveBeenCalledWith(15);
@@ -193,9 +204,13 @@ describe('LocationPicker', () => {
         fetchFields: vi.fn().mockResolvedValue(undefined),
         location: null,
       };
+      const event = new Event('gmp-select') as Event & {
+        placePrediction: { toPlace: () => typeof mockPlace };
+      };
+      event.placePrediction = { toPlace: () => mockPlace };
 
       await act(async () => {
-        capturedHandler?.(new CustomEvent('gmp-placeselect', { detail: { place: mockPlace } }));
+        capturedHandler?.(event);
       });
 
       expect(onChange).not.toHaveBeenCalled();
@@ -211,7 +226,7 @@ describe('LocationPicker', () => {
       unmount();
 
       expect(mockPlaceAutocompleteElement.removeEventListener).toHaveBeenCalledWith(
-        'gmp-placeselect',
+        'gmp-select',
         expect.any(Function),
       );
     });

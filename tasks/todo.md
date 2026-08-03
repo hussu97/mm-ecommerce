@@ -1,5 +1,14 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ⏳ 2026-08-03: Checkout location selection and Lalamove payload audit
+
+### Plan
+- [x] 1. Trace the Google Places selection event through the location picker and address form; reproduce the missing map/address update. The map library now emits `gmp-select`, while the app subscribed only to retired `gmp-placeselect`.
+- [x] 2. Confirm the current Google Maps autocomplete event contract, implement the smallest compatible fix, and add focused coverage. Convert `event.placePrediction.toPlace()`, then fetch location; tests assert the event name, conversion, map pan, pin callback, and cleanup.
+- [x] 3. Trace the Lalamove booking payload through checkout and order dispatch; verify coordinates, address lines, recipient name, and phone mapping. Drop stop has formatted lat/lng plus unit number and Address Line 1; recipient has first/last name and E.164 phone.
+- [ ] 4. Run focused and relevant regression checks, review the impact, commit, and deploy the web fix. Focused test and type-check pass; commit/deployment pending.
+
+
 ## ✅ 2026-08-03: SEO / GEO audit + content rewrite — DONE
 
 ### What the audit found
