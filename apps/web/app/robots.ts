@@ -5,7 +5,21 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscake
 export default function robots(): MetadataRoute.Robots {
   return {
     rules: [
-      { userAgent: '*', allow: '/', disallow: ['/account/', '/checkout/', '/cart/'] },
+      // Every route lives under a locale segment (/en/cart, /ar/cart), so the
+      // bare prefixes matched nothing. Keep both shapes: the unprefixed ones
+      // still cover any legacy link, the wildcard ones cover what we serve.
+      {
+        userAgent: '*',
+        allow: '/',
+        disallow: [
+          '/account',
+          '/checkout',
+          '/cart',
+          '/*/account',
+          '/*/checkout',
+          '/*/cart',
+        ],
+      },
       // AI / LLM crawlers
       { userAgent: 'GPTBot', allow: '/' },
       { userAgent: 'ChatGPT-User', allow: '/' },
