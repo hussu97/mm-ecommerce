@@ -54,7 +54,7 @@ export async function generateMetadata({
   const localizedDesc = localizedField(category, 'description', category.description ?? '', locale);
   const description =
     localizedDesc ||
-    `Shop our range of handcrafted ${localizedName.toLowerCase()} — made with love in the UAE.`;
+    `Order ${localizedName.toLowerCase()} from Melting Moments Cakes. Baked to order in Sharjah and delivered across Dubai, Sharjah, Ajman and the rest of the UAE.`;
   const ogImage = category.image_url
     ? [{ url: category.image_url, alt: localizedName }]
     : [{ url: '/images/logos/color_logo.jpeg', alt: 'Melting Moments Cakes' }];
@@ -64,7 +64,11 @@ export async function generateMetadata({
     description,
     alternates: {
       canonical: `${SITE_URL}/${locale}/${slug}`,
-      languages: { en: `${SITE_URL}/en/${slug}`, ar: `${SITE_URL}/ar/${slug}` },
+      languages: {
+        en: `${SITE_URL}/en/${slug}`,
+        ar: `${SITE_URL}/ar/${slug}`,
+        'x-default': `${SITE_URL}/en/${slug}`,
+      },
     },
     openGraph: {
       title: `${localizedName} | Melting Moments Cakes`,

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { cmsApi } from '@/lib/api';
 import { Breadcrumb } from '@/components/ui';
 import { ContactLink } from '@/components/analytics/ContactLink';
+import { BAKERY_BASE, BUSINESS_ID, OG_IMAGE } from '@/lib/schema';
 
 interface ContactContent {
   header?: { label?: string; title?: string; subtitle?: string };
@@ -47,11 +48,16 @@ export async function generateMetadata({
       description: c.seo?.description ?? '',
       alternates: {
         canonical: `${SITE_URL}/${locale}/contact`,
-        languages: { en: `${SITE_URL}/en/contact`, ar: `${SITE_URL}/ar/contact` },
+        languages: {
+          en: `${SITE_URL}/en/contact`,
+          ar: `${SITE_URL}/ar/contact`,
+          'x-default': `${SITE_URL}/en/contact`,
+        },
       },
       openGraph: {
         title: `${c.seo?.title ?? 'Contact Us'} | Melting Moments Cakes`,
         description: c.seo?.description ?? '',
+        images: [OG_IMAGE],
       },
     };
   } catch {
@@ -121,42 +127,31 @@ export default async function ContactPage({
 
   const jsonLd = {
     '@context': 'https://schema.org',
-    '@type': 'Bakery',
-    name: 'Melting Moments Cakes',
-    url: SITE_URL,
-    telephone: info.phone,
-    email: info.email,
-    address: {
-      '@type': 'PostalAddress',
-      addressCountry: 'AE',
-      addressRegion: 'Sharjah',
-    },
-    geo: {
-      '@type': 'GeoCoordinates',
-      latitude: 25.3304,
-      longitude: 55.3710,
-    },
-    priceRange: 'AED 15–200',
-    servesCuisine: ['Brownies', 'Cookies', 'Desserts', 'Artisanal Baked Goods'],
-    paymentAccepted: 'Cash, Credit Card',
-    openingHoursSpecification: [
-      { '@type': 'OpeningHoursSpecification', dayOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'], opens: '08:00', closes: '23:30' },
-      { '@type': 'OpeningHoursSpecification', dayOfWeek: 'Sunday', opens: '15:00', closes: '23:30' },
-    ],
-    sameAs: [
-      'https://www.instagram.com/meltingmomentscakes',
-      info.whatsapp,
-    ].filter(Boolean),
-    areaServed: 'AE',
-    currenciesAccepted: 'AED',
+    // The same node the home page declares — the phone number and the opening
+    // hours belong to one bakery, not to whichever page you happened to land on.
+    ...BAKERY_BASE,
+    email: info.email ?? undefined,
+    sameAs: [...BAKERY_BASE.sameAs, info.whatsapp].filter(Boolean),
   };
 
   const breadcrumbLd = {
     '@context': 'https://schema.org',
-    '@type': 'BreadcrumbList',
-    itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'Home', item: `${SITE_URL}/${locale}` },
-      { '@type': 'ListItem', position: 2, name: 'Contact', item: `${SITE_URL}/${locale}/contact` },
+    '@graph': [
+      {
+        '@type': 'ContactPage',
+        '@id': `${SITE_URL}/${locale}/contact`,
+        name: 'Contact Melting Moments Cakes',
+        description:
+          'Phone, WhatsApp, email and opening hours for Melting Moments Cakes, and how to arrange a custom or bulk order.',
+        about: { '@id': BUSINESS_ID },
+      },
+      {
+        '@type': 'BreadcrumbList',
+        itemListElement: [
+          { '@type': 'ListItem', position: 1, name: 'Home', item: `${SITE_URL}/${locale}` },
+          { '@type': 'ListItem', position: 2, name: 'Contact', item: `${SITE_URL}/${locale}/contact` },
+        ],
+      },
     ],
   };
 

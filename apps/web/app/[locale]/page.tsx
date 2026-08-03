@@ -10,6 +10,7 @@ import { PromoBanners, type PromosContent } from '@/components/home/PromoBanners
 import { MeetTheBaker, type BakerContent } from '@/components/home/MeetTheBaker';
 import { CaterSection, type CaterContent } from '@/components/home/CaterSection';
 import { orderedSections, type HomeLayout, type SectionKey } from '@/lib/home-sections';
+import { BAKERY_BASE, BUSINESS_ID, OG_IMAGE } from '@/lib/schema';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 
@@ -54,16 +55,12 @@ function buildJsonLd(categories: Category[], featuredProducts: Product[]) {
     '@context': 'https://schema.org',
     '@graph': [
       {
-        '@type': 'Organization',
-        name: 'Melting Moments Cakes',
-        url: SITE_URL,
-        logo: `${SITE_URL}/images/logos/color_logo.jpeg`,
-        sameAs: ['https://www.instagram.com/meltingmomentscakes'],
-      },
-      {
         '@type': 'WebSite',
+        '@id': `${SITE_URL}/#website`,
         name: 'Melting Moments Cakes',
         url: SITE_URL,
+        publisher: { '@id': BUSINESS_ID },
+        inLanguage: ['en-AE', 'ar-AE'],
         potentialAction: {
           '@type': 'SearchAction',
           target: {
@@ -74,36 +71,22 @@ function buildJsonLd(categories: Category[], featuredProducts: Product[]) {
         },
       },
       {
-        '@type': 'Bakery',
-        '@id': SITE_URL,
-        name: 'Melting Moments Cakes',
+        ...BAKERY_BASE,
         description:
-          'Artisanal bakery delivering handcrafted brownies, cookies and desserts across the UAE',
-        url: SITE_URL,
-        logo: `${SITE_URL}/images/logos/color_logo.jpeg`,
-        image: `${SITE_URL}/images/logos/color_logo.jpeg`,
-        telephone: '+971503687757',
-        address: {
-          '@type': 'PostalAddress',
-          addressCountry: 'AE',
-          addressRegion: 'Sharjah',
-        },
-        geo: {
-          '@type': 'GeoCoordinates',
-          latitude: 25.3304,
-          longitude: 55.3710,
-        },
-        currenciesAccepted: 'AED',
-        priceRange: 'AED 15–200',
-        servesCuisine: ['Brownies', 'Cookies', 'Desserts', 'Artisanal Baked Goods'],
-        paymentAccepted: 'Cash, Credit Card',
-        areaServed: 'AE',
+          'Home bakery in Sharjah delivering brownies, cookies, cookie melts, cakes and desserts across all seven emirates. Everything is baked to order.',
         hasMenu: `${SITE_URL}/en/all-products`,
-        sameAs: ['https://www.instagram.com/meltingmomentscakes'],
-        openingHoursSpecification: [
-          { '@type': 'OpeningHoursSpecification', dayOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'], opens: '08:00', closes: '23:30' },
-          { '@type': 'OpeningHoursSpecification', dayOfWeek: 'Sunday', opens: '15:00', closes: '23:30' },
-        ],
+        potentialAction: {
+          '@type': 'OrderAction',
+          target: {
+            '@type': 'EntryPoint',
+            urlTemplate: `${SITE_URL}/en/all-products`,
+            actionPlatform: [
+              'https://schema.org/DesktopWebPlatform',
+              'https://schema.org/MobileWebPlatform',
+            ],
+          },
+          deliveryMethod: ['https://schema.org/OnSitePickup', 'https://schema.org/ParcelService'],
+        },
       },
       {
         '@type': 'Menu',
@@ -159,22 +142,27 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { locale } = await params;
   const c = await getHomeContent(locale);
-  const title = c.seo?.title ?? 'Melting Moments Cakes — Artisanal Bakery in UAE';
+  const title =
+    c.seo?.title ?? 'Melting Moments Cakes — Brownie & Dessert Delivery Across the UAE';
   const description =
     c.seo?.description ??
-    'Handcrafted brownies, cookies, cookie melts, and desserts delivered across the UAE. Made with 100% love by Fatema Abbasi.';
+    'Home bakery in Sharjah delivering fudgy brownies, gooey cookies, cookie melts, cakes and desserts to Dubai, Sharjah, Ajman and the rest of the UAE. Baked to order.';
 
   return {
     title,
     description,
     alternates: {
       canonical: `${SITE_URL}/${locale}`,
-      languages: { en: `${SITE_URL}/en`, ar: `${SITE_URL}/ar` },
+      languages: {
+        en: `${SITE_URL}/en`,
+        ar: `${SITE_URL}/ar`,
+        'x-default': `${SITE_URL}/en`,
+      },
     },
     openGraph: {
       title: c.seo?.title ?? 'Melting Moments Cakes',
       description,
-      images: [{ url: '/images/logos/color_logo.jpeg' }],
+      images: [OG_IMAGE],
     },
   };
 }

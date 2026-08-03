@@ -31,7 +31,11 @@ export async function generateMetadata({
       description: c.seo?.description ?? '',
       alternates: {
         canonical: `${SITE_URL}/${locale}/privacy`,
-        languages: { en: `${SITE_URL}/en/privacy`, ar: `${SITE_URL}/ar/privacy` },
+        languages: {
+          en: `${SITE_URL}/en/privacy`,
+          ar: `${SITE_URL}/ar/privacy`,
+          'x-default': `${SITE_URL}/en/privacy`,
+        },
       },
     };
   } catch {

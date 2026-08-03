@@ -40,7 +40,7 @@ export async function generateMetadata({
   const t = createT(translations);
   return {
     title: t('search.title'),
-    description: 'Search our handcrafted brownies, cookies and desserts.',
+    description: 'Search brownies, cookies, cookie melts, cakes and desserts at Melting Moments.',
     robots: { index: false, follow: true },
   };
 }

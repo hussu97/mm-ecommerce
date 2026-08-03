@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { cmsApi } from '@/lib/api';
 import { FaqAccordion } from './FaqAccordion';
 import { Breadcrumb } from '@/components/ui';
+import { OG_IMAGE } from '@/lib/schema';
 
 interface FaqItem {
   question: string;
@@ -32,11 +33,16 @@ export async function generateMetadata({
       description: c.seo?.description ?? '',
       alternates: {
         canonical: `${SITE_URL}/${locale}/faq`,
-        languages: { en: `${SITE_URL}/en/faq`, ar: `${SITE_URL}/ar/faq` },
+        languages: {
+          en: `${SITE_URL}/en/faq`,
+          ar: `${SITE_URL}/ar/faq`,
+          'x-default': `${SITE_URL}/en/faq`,
+        },
       },
       openGraph: {
         title: `${c.seo?.title ?? 'FAQ'} | Melting Moments Cakes`,
         description: c.seo?.description ?? '',
+        images: [OG_IMAGE],
       },
     };
   } catch {

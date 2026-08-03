@@ -3,6 +3,7 @@ import Link from 'next/link';
 import type { BlogPost, BlogPostListResponse } from '@/lib/types';
 import { Breadcrumb } from '@/components/ui';
 import { RSC_API_BASE } from '@/lib/api';
+import { OG_IMAGE } from '@/lib/schema';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 const PER_PAGE = 10;
@@ -18,12 +19,17 @@ export async function generateMetadata({
     description: 'Stories, recipes, and inspiration from the Melting Moments kitchen.',
     alternates: {
       canonical: `${SITE_URL}/${locale}/blog`,
-      languages: { en: `${SITE_URL}/en/blog`, ar: `${SITE_URL}/ar/blog` },
+      languages: {
+        en: `${SITE_URL}/en/blog`,
+        ar: `${SITE_URL}/ar/blog`,
+        'x-default': `${SITE_URL}/en/blog`,
+      },
     },
     openGraph: {
       title: 'Blog | Melting Moments Cakes',
-      description: 'Stories, recipes, and inspiration from the Melting Moments kitchen.',
-      images: [{ url: '/images/logos/color_logo.jpeg', alt: 'Melting Moments Cakes' }],
+      description:
+        'Notes from the kitchen — how things are baked, how delivery works across the UAE, and what to order for an occasion.',
+      images: [OG_IMAGE],
       locale: locale === 'ar' ? 'ar_AE' : 'en_AE',
     },
   };

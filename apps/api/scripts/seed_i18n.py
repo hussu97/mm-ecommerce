@@ -54,6 +54,13 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("nav", "mix_boxes", "Mix Boxes"),
     ("nav", "desserts", "Desserts"),
     ("footer", "tagline", "Made with 100% Love"),
+    (
+        "footer",
+        "service_area",
+        "Baked to order in Sharjah. Brownies, cookies, cookie melts, cakes and "
+        "desserts delivered to Dubai, Sharjah, Ajman, Abu Dhabi, Al Ain, Ras Al "
+        "Khaimah, Fujairah and Umm Al Quwain.",
+    ),
     ("footer", "copyright", "All rights reserved"),
     # common
     ("common", "qty", "Qty"),
@@ -87,7 +94,7 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     (
         "cart",
         "empty_body",
-        "Looks like you haven't added anything yet. Explore our handcrafted treats and find something you'll love.",
+        "Nothing in here yet. Have a look at the menu and find something you'll like.",
     ),
     ("cart", "continue_shopping", "Continue Shopping"),
     ("cart", "order_summary", "Order Summary"),
@@ -494,6 +501,12 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("nav", "mix_boxes", "صناديق مشكلة"),
     ("nav", "desserts", "حلويات"),
     ("footer", "tagline", "مصنوعة بـ 100% حب"),
+    (
+        "footer",
+        "service_area",
+        "تُخبز عند الطلب في الشارقة. براوني وكوكيز وكوكي ملت وكيك وحلويات تُوصَّل "
+        "إلى دبي والشارقة وعجمان وأبوظبي والعين ورأس الخيمة والفجيرة وأم القيوين.",
+    ),
     ("footer", "copyright", "جميع الحقوق محفوظة"),
     # common
     ("common", "qty", "الكمية"),
@@ -524,7 +537,7 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("cart", "item", "منتج"),
     ("cart", "items", "منتجات"),
     ("cart", "empty_title", "سلتك فارغة"),
-    ("cart", "empty_body", "لم تضف أي شيء بعد. تصفح منتجاتنا الحرفية وجد شيئاً ستحبه."),
+    ("cart", "empty_body", "لم تضف شيئاً بعد. تصفّح القائمة وستجد ما يعجبك."),
     ("cart", "continue_shopping", "متابعة التسوق"),
     ("cart", "order_summary", "ملخص الطلب"),
     ("cart", "subtotal", "المجموع الفرعي"),
