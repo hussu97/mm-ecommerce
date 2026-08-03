@@ -9,7 +9,13 @@
 - [x] 4. Seed batch windows on the new map: five slots for the static city zones (00:00–12:00, 12:00–18:00, 18:00–21:00, 21:00–22:30, 22:30–24:00) and two for every dynamic zone (00:00–17:00, 17:00–24:00). This also fixes a live bug — 055 republished the whole map as new rows without seeding schedules, so nothing has been batched since.
 - [x] 5. Make batching cross-polygon: runs closing at the same instant merge into one courier order. `_open_batch` now matches on departure time alone.
 - [x] 6. Expose pricing mode in the admin zone editor.
-- [ ] 7. Tests, deploy, verify green, then exercise checkout against real pins.
+- [x] 7. Tests, deploy, verify green, then exercise checkout against real pins. PR #4 merged; production run `30843656403` green across web, admin and API. Live `/delivery/quote` returns 15/15/25 in the city zones and whole-dirham courier prices beyond them (Al Dhaid 62, RAK 85, Fujairah 100, Khor Fakkan 103, Abu Dhabi 137); Hatta and Liwa Oasis come back `serviceable: false`. The live checkout was driven against all eleven pins in a browser: every fee on screen matched the server's to the dirham, and the two unquotable pins showed the unserviceable panel with the place-order button blocked.
+
+### Result
+
+- Fees beyond the three city zones are now the courier's own price for the pin, rounded up: the flat 50 was under-charging a Khor Fakkan or Abu Dhabi run by 50–90 AED and over-charging a short hop just outside Dubai City.
+- Hatta and Liwa Oasis are genuinely unquotable and are now refused at checkout rather than sold at 50 AED and discovered at dispatch.
+- Free delivery over 200 AED still applies in the dynamic zones, so a qualifying order to Abu Dhabi now waives a fee that is measured at ~137 AED rather than the assumed 50. Flagged rather than changed — the threshold is deliberately identical everywhere.
 
 ## ⏳ 2026-08-03: Enforce hidden website content across catalogue and CMS
 
