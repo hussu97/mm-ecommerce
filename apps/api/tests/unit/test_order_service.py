@@ -19,7 +19,7 @@ from app.services.order_service import VALID_TRANSITIONS, create_order, update_s
 
 
 DELIVERY_SETTINGS = DeliverySettings(
-    free_delivery_threshold=Decimal("200.00"),
+    free_delivery_threshold=Decimal("150.00"),
     pickup_fee=Decimal("0.00"),
     default_delivery_fee=Decimal("50.00"),
 )
@@ -648,8 +648,10 @@ class TestCreateOrderCalculations:
         order_arg = db.add.call_args_list[0][0][0]
         assert order_arg.delivery_fee == Decimal("15.00")
 
-    async def test_free_delivery_at_200_threshold(self):
-        cart = _cart(items=[_cart_item(_product("200.00"))])
+    async def test_free_delivery_at_the_threshold(self, delivery_pricing):
+        find_zone, _ = delivery_pricing
+        find_zone.return_value = _zone("25.00")
+        cart = _cart(items=[_cart_item(_product("150.00"))])
         db = _db_for_create(cart, _order_mock(delivery_fee=Decimal("0.00")))
 
         await create_order(db, _delivery_data(), user_id=None)
@@ -657,7 +659,9 @@ class TestCreateOrderCalculations:
         order_arg = db.add.call_args_list[0][0][0]
         assert order_arg.delivery_fee == Decimal("0.00")
 
-    async def test_free_delivery_above_threshold(self):
+    async def test_free_delivery_above_threshold(self, delivery_pricing):
+        find_zone, _ = delivery_pricing
+        find_zone.return_value = _zone("25.00")
         cart = _cart(items=[_cart_item(_product("250.00"))])
         db = _db_for_create(cart, _order_mock(delivery_fee=Decimal("0.00")))
 
@@ -665,6 +669,24 @@ class TestCreateOrderCalculations:
 
         order_arg = db.add.call_args_list[0][0][0]
         assert order_arg.delivery_fee == Decimal("0.00")
+
+    async def test_a_courier_priced_zone_charges_however_big_the_basket(
+        self, delivery_pricing
+    ):
+        """
+        The fee out there is a bill someone sends us, not a margin we chose, and
+        it is the same 40 dirhams whether the order is 50 or 500.
+        """
+        find_zone, estimate_for_point = delivery_pricing
+        find_zone.return_value = _zone("0.00", pricing_mode="dynamic")
+        cart = _cart(items=[_cart_item(_product("500.00"))])
+        db = _db_for_create(cart, _order_mock(delivery_fee=Decimal("40.00")))
+
+        await create_order(db, _delivery_data(), user_id=None)
+
+        order_arg = db.add.call_args_list[0][0][0]
+        assert order_arg.delivery_fee == Decimal("40.00")
+        assert order_arg.total == Decimal("540.00")
 
     async def test_order_number_starts_at_001_for_first_order(self):
         cart = _cart(items=[_cart_item(_product())])
@@ -887,15 +909,20 @@ class TestCreateOrderWithPromo:
     @patch("app.services.order_service.promo_code_service.validate")
     @patch("app.services.order_service.promo_code_service.get_promo")
     async def test_discount_brings_delivery_to_free_at_threshold(
-        self, mock_get_promo, mock_validate
+        self, mock_get_promo, mock_validate, delivery_pricing
     ):
         """
-        Discount reduces the subtotal to exactly FREE_THRESHOLD (200 AED),
-        so delivery fee should become zero even for a remote zone.
-        subtotal=250, discount=50 → discounted_subtotal=200 → free delivery.
+        Discount reduces the subtotal to exactly the threshold (150 AED), so a
+        fixed-fee zone delivers free: subtotal=250, discount=100 → 150.
+
+        It is the discounted figure that is compared, not the basket — a
+        customer who has paid 150 has bought a 150 dirham order whatever the
+        sticker said.
         """
+        find_zone, _ = delivery_pricing
+        find_zone.return_value = _zone("15.00")
         mock_validate.return_value = PromoCodeValidateResponse(
-            valid=True, discount_amount=Decimal("50.00")
+            valid=True, discount_amount=Decimal("100.00")
         )
         mock_get_promo.return_value = MagicMock(max_uses=None, id=uuid.uuid4())
 

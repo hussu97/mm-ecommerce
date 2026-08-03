@@ -82,6 +82,12 @@ class DeliveryPrice:
     #: dynamic area, which `serviceable` distinguishes.
     base_fee: Decimal | None
     free_applied: bool
+    #: Whether free delivery can apply to this pin at all, regardless of what is
+    #: in the basket. False in the zones we do not price ourselves — there is no
+    #: fixed fee there to waive, only a courier bill that arrives whatever the
+    #: order is worth. Kept separate from `free_applied` so the storefront can
+    #: stop dangling an offer that will never land here.
+    free_available: bool
     #: False only when a dynamic area could not be quoted. Everything else,
     #: including "no pin yet", is serviceable until proven otherwise.
     serviceable: bool
@@ -94,9 +100,8 @@ class DeliveryPrice:
         """
         What the customer actually pays, free delivery included.
 
-        `None` only when the amount is genuinely unknown. A basket over the
-        threshold is zero even before there is a pin — what delivery *would*
-        have cost is still unknown, but what it costs is not.
+        `None` only when the amount is genuinely unknown — no pin, or nowhere we
+        can deliver to.
         """
         if not self.serviceable:
             return None
@@ -111,7 +116,7 @@ async def get_settings(db: AsyncSession) -> DeliverySettings:
     if settings is None:
         # Fallback if table is empty (should not happen after migration)
         settings = DeliverySettings(
-            free_delivery_threshold=Decimal("200.00"),
+            free_delivery_threshold=Decimal("150.00"),
             pickup_fee=Decimal("0.00"),
             default_delivery_fee=Decimal("50.00"),
         )
@@ -145,19 +150,27 @@ async def price(
     stays honest across an emirate we cannot draw a flat price around. A pin
     nobody will quote is not a cheap delivery — it is one we cannot make, and
     saying so is better than taking the money and finding out later.
+
+    Free delivery follows the same split. Waiving a published 15 or 25 is a
+    margin we chose and can afford at a basket that size; waiving a courier bill
+    of 137 to Abu Dhabi is not, and it does not shrink because the order is
+    large. So the offer lives where the fee is ours to set, and nowhere else.
     """
     if settings is None:
         settings = await get_settings(db)
-    free_applied = subtotal >= settings.free_delivery_threshold
+    qualifies = subtotal >= settings.free_delivery_threshold
 
     if latitude is None or longitude is None:
-        # Nothing to price yet. Not an error and not a fee — the checkout says
-        # "once you add your address" rather than showing a number it will have
-        # to take back.
+        # Nothing to price yet, and nothing to promise: whether free delivery
+        # reaches this order is a property of an address we have not been given.
+        # `free_available` stays true so the basket can still be encouraged
+        # towards the threshold — the copy that does it says "in selected
+        # areas", which is exactly the uncertainty this state is in.
         return DeliveryPrice(
             zone=None,
             base_fee=None,
-            free_applied=free_applied,
+            free_applied=False,
+            free_available=True,
             serviceable=True,
             is_dynamic=False,
         )
@@ -179,7 +192,8 @@ async def price(
         return DeliveryPrice(
             zone=zone,
             base_fee=zone.delivery_fee,
-            free_applied=free_applied,
+            free_applied=qualifies,
+            free_available=True,
             serviceable=True,
             is_dynamic=False,
             estimate=estimate,
@@ -190,7 +204,8 @@ async def price(
         return DeliveryPrice(
             zone=zone,
             base_fee=round_up_aed(estimate.cost),
-            free_applied=free_applied,
+            free_applied=False,
+            free_available=False,
             serviceable=True,
             is_dynamic=True,
             estimate=estimate,
@@ -205,7 +220,8 @@ async def price(
         return DeliveryPrice(
             zone=zone,
             base_fee=settings.default_delivery_fee,
-            free_applied=free_applied,
+            free_applied=False,
+            free_available=False,
             serviceable=True,
             is_dynamic=True,
             estimate=None,
@@ -215,7 +231,8 @@ async def price(
     return DeliveryPrice(
         zone=zone,
         base_fee=None,
-        free_applied=free_applied,
+        free_applied=False,
+        free_available=False,
         serviceable=False,
         is_dynamic=True,
         estimate=None,
@@ -274,6 +291,10 @@ async def quote(
     can be argued with later. In a dynamic zone it *is* the price, rounded up.
     Either way the response is deliberately silent about where it came from:
     nothing that reaches a browser should hint at who delivers.
+
+    `free_delivery_available` is the one thing here that is about the offer
+    rather than the price. It says whether free delivery can reach this pin at
+    all, so the storefront can stop advertising it where it cannot.
     """
     settings = await get_settings(db)
     priced = await price(
@@ -311,6 +332,10 @@ async def quote(
         # show the customer the saving they just earned.
         "base_fee": float(priced.base_fee) if priced.base_fee is not None else None,
         "free_delivery_applied": priced.free_applied,
+        # Whether the offer reaches this address at all. Without it the checkout
+        # would keep telling someone in Abu Dhabi they are 40 dirhams from free
+        # delivery, which is an offer that does not exist there.
+        "free_delivery_available": priced.free_available,
         "free_threshold": float(settings.free_delivery_threshold),
         "remaining_for_free": float(
             max(Decimal("0.00"), settings.free_delivery_threshold - subtotal)

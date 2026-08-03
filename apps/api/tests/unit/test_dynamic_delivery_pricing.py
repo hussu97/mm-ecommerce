@@ -24,7 +24,7 @@ from app.services.delivery_zone_service import Zone
 from app.services.providers.lalamove_provider import LalamoveError
 
 SETTINGS = DeliverySettings(
-    free_delivery_threshold=Decimal("200.00"),
+    free_delivery_threshold=Decimal("150.00"),
     pickup_fee=Decimal("0.00"),
     default_delivery_fee=Decimal("50.00"),
 )
@@ -225,11 +225,11 @@ async def test_without_a_pin_there_is_no_fee_and_no_refusal():
     assert priced.fee is None
 
 
-async def test_without_a_pin_a_qualifying_basket_is_still_free():
+async def test_without_a_pin_a_qualifying_basket_is_promised_nothing():
     """
-    What delivery *would* have cost is unknown; what it costs is not. Showing
-    "—" to someone who has already earned free delivery reads as a fee we have
-    not told them yet.
+    Free delivery is a property of the address as much as of the basket, so a
+    250 dirham order is not free until we know where it is going. Saying it is
+    and then charging a courier price would be the worse order of events.
     """
     priced = await _price(
         zone=None,
@@ -239,8 +239,11 @@ async def test_without_a_pin_a_qualifying_basket_is_still_free():
         subtotal="250.00",
     )
 
-    assert priced.fee == Decimal("0.00")
-    assert priced.base_fee is None
+    assert priced.free_applied is False
+    assert priced.fee is None
+    # Still worth encouraging the basket — the copy for this state says
+    # "in selected areas", which is exactly what is known here.
+    assert priced.free_available is True
 
 
 # ── the callers ───────────────────────────────────────────────────────────────
@@ -259,6 +262,7 @@ async def test_calculate_fee_refuses_an_unserviceable_pin():
                     zone=None,
                     base_fee=None,
                     free_applied=False,
+                    free_available=False,
                     serviceable=False,
                     is_dynamic=True,
                 )
@@ -391,3 +395,92 @@ async def test_a_price_is_still_cached_across_re_quotes():
 
     assert quotation.await_count == 1
     lalamove_service.clear_caches()
+
+
+# ── where the offer reaches ───────────────────────────────────────────────────
+
+
+async def test_free_delivery_applies_in_a_fixed_fee_zone():
+    priced = await _price(
+        zone=_zone("25.00", "static"), estimate=_estimate("47.10"), subtotal="250.00"
+    )
+
+    assert priced.free_available is True
+    assert priced.free_applied is True
+    assert priced.fee == Decimal("0.00")
+    # The 25 is still reported, so the summary can strike it through and show
+    # the customer what they no longer owe.
+    assert priced.base_fee == Decimal("25.00")
+
+
+async def test_free_delivery_never_applies_in_a_courier_priced_zone():
+    """
+    Waiving a published 25 is a margin we chose. Waiving a 137 dirham courier
+    bill is us paying most of the order to deliver it, and that number does not
+    shrink because the basket grew.
+    """
+    priced = await _price(
+        zone=_zone("0.00", "dynamic"),
+        estimate=_estimate("137.00"),
+        subtotal="500.00",
+    )
+
+    assert priced.free_available is False
+    assert priced.free_applied is False
+    assert priced.fee == Decimal("137.00")
+
+
+async def test_a_zone_outside_the_map_gets_no_free_delivery_either():
+    priced = await _price(zone=None, estimate=_estimate("88.30"), subtotal="500.00")
+
+    assert priced.free_available is False
+    assert priced.fee == Decimal("89.00")
+
+
+async def test_an_unpriceable_courier_falls_back_without_promising_free():
+    """
+    With no courier configured the fallback fee is charged — but the zone is
+    still one we do not price, so the offer does not appear there.
+    """
+    priced = await _price(
+        zone=_zone("0.00", "dynamic"),
+        estimate=None,
+        enabled=False,
+        subtotal="500.00",
+    )
+
+    assert priced.free_available is False
+    assert priced.fee == SETTINGS.default_delivery_fee
+
+
+async def test_the_quote_tells_the_storefront_where_the_offer_reaches():
+    """
+    The checkout cannot work this out from the subtotal, so the answer travels
+    on the quote. Without it the page would keep telling someone in Abu Dhabi
+    they are forty dirhams from a discount that is not coming.
+    """
+    with (
+        patch.object(
+            delivery_service, "get_settings", new=AsyncMock(return_value=SETTINGS)
+        ),
+        patch.object(
+            delivery_service.delivery_zone_service,
+            "find_zone",
+            new=AsyncMock(return_value=_zone("0.00", "dynamic")),
+        ),
+        patch.object(
+            delivery_service.lalamove_service,
+            "estimate_for_point",
+            new=AsyncMock(return_value=(_estimate("137.00"), None)),
+        ),
+        patch.object(
+            delivery_service.lalamove_service, "is_enabled", return_value=True
+        ),
+    ):
+        result = await delivery_service.quote(
+            AsyncMock(), Decimal("500.00"), latitude=24.47, longitude=54.35
+        )
+
+    assert result["free_delivery_available"] is False
+    assert result["free_delivery_applied"] is False
+    assert result["delivery_fee"] == 137.0

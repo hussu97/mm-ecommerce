@@ -1,5 +1,14 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ⏳ 2026-08-03: Free delivery at 150 AED, in the fixed-fee zones only
+
+### Plan
+- [x] 1. Drop the threshold to 150 and make it the only one — no second tier at any figure. `058_free_delivery_scope` sets it and `alter_column`s the server default; the model, the service fallback, `@mm/config` and every test fixture now say 150.
+- [x] 2. Apply free delivery only where the fee is ours to set. `price()` sets `free_available` for a `static` zone and never for a dynamic one, so a 500 AED order to Abu Dhabi pays the courier's 137 like any other.
+- [x] 3. Carry the answer to the storefront. The quote gained `free_delivery_available`; the checkout no longer derives "free" from the subtotal, so it cannot promise what the address will not honour.
+- [x] 4. Qualify every customer-facing claim. Banner, checkout upsell, home/about/FAQ copy in both locales, `llms.txt`, `llms-full.txt` and the AI plugin manifest all now say "in selected areas" or name the three city areas outright.
+- [ ] 5. Deploy, verify green, re-test the checkout against static, dynamic and unserviceable pins.
+
 ## ⏳ 2026-08-03: Lalamove everywhere — static city fees, dynamic fee elsewhere
 
 ### Plan

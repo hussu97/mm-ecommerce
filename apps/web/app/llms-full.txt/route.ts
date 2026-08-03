@@ -51,7 +51,7 @@ export async function GET() {
 - Delivers to all seven emirates: Dubai, Sharjah, Ajman, Abu Dhabi, Al Ain, Fujairah, Ras Al Khaimah, Umm Al Quwain
 - Usually next day; same-day slots open up for orders placed early
 - The delivery fee is quoted at checkout from the delivery address
-- Free delivery on orders over AED 200
+- Free delivery on orders over AED 150, in the Dubai, Sharjah and Ajman city areas only
 - Store pickup from Sharjah is free
 
 ### Payment Methods
