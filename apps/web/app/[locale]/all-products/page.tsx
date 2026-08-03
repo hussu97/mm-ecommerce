@@ -156,8 +156,8 @@ export default async function AllProductsPage({
   const productUrl = `${RSC_API_BASE}/products?per_page=${PER_PAGE}&page=${page}${category ? `&category=${category}` : ''}`;
 
   const [categoriesRes, productsRes, translations] = await Promise.all([
-    fetch(`${RSC_API_BASE}/categories`, { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) }),
-    fetch(productUrl, { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) }),
+    fetch(`${RSC_API_BASE}/categories`, { cache: 'no-store', signal: AbortSignal.timeout(8000) }),
+    fetch(productUrl, { cache: 'no-store', signal: AbortSignal.timeout(8000) }),
     getTranslations(locale),
   ]);
 

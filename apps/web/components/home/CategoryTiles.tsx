@@ -38,7 +38,7 @@ interface ResolvedTile {
   meta: string;
 }
 
-function resolve(
+export function resolveCategoryTiles(
   c: CategoriesContent,
   categories: Category[],
   locale: string,
@@ -53,8 +53,12 @@ function resolve(
   return source
     .map(tile => {
       const cat = tile.slug ? bySlug.get(tile.slug) : undefined;
-      // A configured tile with neither a known category nor an explicit link
-      // has nowhere to go — drop it rather than render a dead card.
+      // A tile tied to a category is storefront content for that category.
+      // Never use a CMS fallback link to revive it after the category has
+      // been hidden; only truly standalone tiles may rely on an explicit URL.
+      if (tile.slug && !cat) return null;
+      // A configured standalone tile without an explicit link has nowhere to
+      // go — drop it rather than render a dead card.
       if (!cat && !tile.href) return null;
 
       const label =
@@ -91,7 +95,7 @@ export function CategoryTiles({
   categories: Category[];
   locale: string;
 }) {
-  const tiles = resolve(c, categories, locale);
+  const tiles = resolveCategoryTiles(c, categories, locale);
   if (tiles.length === 0) return null;
 
   return (

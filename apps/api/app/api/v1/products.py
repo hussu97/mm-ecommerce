@@ -82,11 +82,15 @@ async def list_products(
     viewer: User | None = Depends(get_optional_user),
 ):
     """List products with filtering, search, and pagination."""
-    # The counter menu is staff-facing. Anyone may browse the website
-    # catalogue, but asking for the POS one requires being signed in, or the
-    # "POS only" flag would be a suggestion rather than a boundary.
-    if channel != "web" and viewer is None:
-        raise ForbiddenError("Sign in to view the POS catalogue")
+    # The counter and inactive catalogue are staff-facing. A customer must not
+    # be able to turn a UI filter into a visibility bypass by changing query
+    # parameters in their browser.
+    is_catalogue_staff = bool(viewer and (viewer.is_staff or viewer.is_admin))
+    if channel != "web" and not is_catalogue_staff:
+        raise ForbiddenError("Staff access is required for the POS catalogue")
+    if not is_catalogue_staff:
+        include_inactive = False
+        is_active = True
 
     items, total = await product_service.get_all(
         db,

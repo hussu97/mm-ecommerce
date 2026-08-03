@@ -23,6 +23,7 @@ from app.services import (
     lalamove_service,
     promo_code_service,
 )
+from app.services.storefront_visibility import is_website_product_visible
 from app.services.delivery_zone_service import Zone
 
 __all__ = [
@@ -131,7 +132,11 @@ async def _locate_cart(
     if user_id:
         result = await db.execute(
             select(Cart)
-            .options(selectinload(Cart.items).joinedload(CartItem.product))
+            .options(
+                selectinload(Cart.items)
+                .joinedload(CartItem.product)
+                .joinedload(Product.category)
+            )
             .where(Cart.user_id == user_id)
         )
         cart = result.scalar_one_or_none()
@@ -140,7 +145,11 @@ async def _locate_cart(
     if (not cart or not cart.items) and session_id:
         result = await db.execute(
             select(Cart)
-            .options(selectinload(Cart.items).joinedload(CartItem.product))
+            .options(
+                selectinload(Cart.items)
+                .joinedload(CartItem.product)
+                .joinedload(Product.category)
+            )
             .where(Cart.session_id == session_id)
         )
         session_cart = result.scalar_one_or_none()
@@ -165,7 +174,7 @@ def _compute_item_totals(cart: Cart) -> tuple[list[dict], Decimal]:
 
     for cart_item in cart.items:
         product = cart_item.product
-        if not product or not product.is_active:
+        if not is_website_product_visible(product):
             raise BadRequestError("A product in your cart is no longer available")
 
         selected_options = cart_item.selected_options or []

@@ -29,7 +29,7 @@ interface HomeContent {
 async function getCategories(): Promise<Category[]> {
   try {
     const res = await fetch(`${RSC_API_BASE}/categories`, {
-      next: { revalidate: 300 },
+      cache: 'no-store',
       signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return [];
@@ -125,7 +125,7 @@ async function getHomeContent(locale: string): Promise<HomeContent> {
 async function getFeaturedProducts(): Promise<Product[]> {
   try {
     const res = await fetch(`${RSC_API_BASE}/products/featured`, {
-      next: { revalidate: 300 },
+      cache: 'no-store',
       signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return [];

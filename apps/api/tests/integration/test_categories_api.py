@@ -53,6 +53,21 @@ class TestCategoriesEndpoints:
         assert data[0]["name"] == "Cakes"
         assert data[0]["product_count"] == 3
 
+    async def test_public_listing_cannot_request_hidden_categories(self, client):
+        get_all = AsyncMock(return_value=[])
+        with (
+            patch("app.api.v1.categories.cache_get", new=AsyncMock(return_value=None)),
+            patch("app.api.v1.categories.cache_set", new=AsyncMock()),
+            patch("app.api.v1.categories.category_service.get_all", new=get_all),
+        ):
+            response = await client.get("/api/v1/categories?include_inactive=true")
+
+        assert response.status_code == 200
+        assert get_all.await_args.kwargs == {
+            "include_inactive": False,
+            "channel": "web",
+        }
+
     async def test_get_category_by_slug_not_found_returns_404(self, client):
         from fastapi import HTTPException
 

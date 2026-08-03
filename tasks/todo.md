@@ -1,5 +1,12 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ⏳ 2026-08-03: Enforce hidden website content across catalogue and CMS
+
+### Plan
+- [x] 1. Audit public product, category, and CMS-asset queries to identify every path that can expose hidden website content. Product listing, details, featured cards, carts, checkout, headers, category pages, all-products, search, and Home CMS tiles were reviewed. The only CMS asset with a category relationship is the Home category-tile block; banners and promos use standalone URLs.
+- [x] 2. Apply one consistent public-visibility rule so hidden products and assets in hidden categories never reach storefront responses. Public API requests now enforce active website products and active categories; direct cart additions and checkout use the same rule; previously-added hidden cart lines are removed; CMS category tiles cannot fall back to a raw href; and server-rendered catalogue fetches are uncached so a hide is immediate.
+- [ ] 3. Add regression coverage for all-products and CMS assets, review the impact, then test, commit, deploy, and verify production.
+
 ## ⏳ 2026-08-03: Verify Attibassi Coffee Barsha Heights branch pin
 
 ### Plan

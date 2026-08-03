@@ -30,6 +30,7 @@ def test_the_storefront_query_filters_on_web_visibility():
     source = inspect.getsource(product_service.get_all)
     assert 'channel == "web"' in source
     assert "sells_on(WEB_CHANNEL)" in source
+    assert "active_website_category_clause" in source
 
 
 def test_single_product_and_featured_lookups_are_storefront_only():
@@ -40,4 +41,4 @@ def test_single_product_and_featured_lookups_are_storefront_only():
     /products/spanish-latte serving a product the website does not sell.
     """
     for fn in (product_service.get_by_slug, product_service.get_featured):
-        assert "sells_on(WEB_CHANNEL)" in inspect.getsource(fn), fn.__name__
+        assert "website_product_visibility_clause" in inspect.getsource(fn), fn.__name__

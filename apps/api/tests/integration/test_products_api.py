@@ -34,6 +34,17 @@ class TestProductsEndpoints:
         assert data["per_page"] == 20
         assert data["pages"] == 1
 
+    async def test_public_listing_cannot_request_inactive_products(self, client):
+        get_all = AsyncMock(return_value=([], 0))
+        with patch("app.api.v1.products.product_service.get_all", new=get_all):
+            response = await client.get(
+                "/api/v1/products?include_inactive=true&is_active=false"
+            )
+
+        assert response.status_code == 200
+        assert get_all.await_args.kwargs["include_inactive"] is False
+        assert get_all.await_args.kwargs["is_active"] is True
+
     async def test_featured_products_returns_list(self, client):
         with (
             patch(

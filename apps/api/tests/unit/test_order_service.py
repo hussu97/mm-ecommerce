@@ -86,6 +86,9 @@ def _product(
     p.name = "Test Cake"
     p.sku = "CAKE-001"
     p.translations = {}
+    p.sales_channels = ["web"]
+    p.category_id = None
+    p.category = None
     return p
 
 
@@ -434,6 +437,17 @@ class TestCreateOrderErrors:
 
     async def test_inactive_product_in_cart_raises(self):
         cart = _cart(items=[_cart_item(_product(is_active=False))])
+        db = AsyncMock()
+        db.execute = AsyncMock(return_value=_result(scalar_one_or_none=cart))
+
+        with pytest.raises(BadRequestError, match="[Nn]o longer available"):
+            await create_order(db, _pickup_data(), user_id=None)
+
+    async def test_product_in_hidden_category_in_cart_raises(self):
+        product = _product()
+        product.category_id = uuid.uuid4()
+        product.category = MagicMock(is_active=False)
+        cart = _cart(items=[_cart_item(product)])
         db = AsyncMock()
         db.execute = AsyncMock(return_value=_result(scalar_one_or_none=cart))
 

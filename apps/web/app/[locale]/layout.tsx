@@ -17,7 +17,7 @@ export function generateStaticParams() {
 
 async function getActiveCategories(): Promise<Category[]> {
   try {
-    const res = await fetch(`${RSC_API_BASE}/categories`, { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) });
+    const res = await fetch(`${RSC_API_BASE}/categories`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
     if (!res.ok) return [];
     const data: Category[] = await res.json();
     return data.filter((c) => c.is_active).sort((a, b) => a.display_order - b.display_order);

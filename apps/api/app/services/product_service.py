@@ -15,6 +15,10 @@ from app.schemas.product import (
     ProductResponse,
     ProductUpdate,
 )
+from app.services.storefront_visibility import (
+    active_website_category_clause,
+    website_product_visibility_clause,
+)
 
 __all__ = [
     "create",
@@ -89,7 +93,7 @@ async def get_all(
         stmt = stmt.where(Product.is_active == True)  # noqa: E712
 
     if channel == "web":
-        stmt = stmt.where(sells_on(WEB_CHANNEL))
+        stmt = stmt.where(sells_on(WEB_CHANNEL), active_website_category_clause())
     elif channel == "pos":
         # The per-product flag and the menu tree together — see
         # menu_group_service.pos_visibility_clause for why membership only
@@ -128,8 +132,7 @@ async def get_by_slug(db: AsyncSession, slug: str) -> ProductResponse:
         .options(*_product_load_options())
         .where(
             Product.slug == slug,
-            Product.is_active == True,  # noqa: E712
-            sells_on(WEB_CHANNEL),
+            *website_product_visibility_clause(),
         )
     )
     result = await db.execute(stmt)
@@ -154,9 +157,8 @@ async def get_featured(db: AsyncSession, limit: int = 8) -> list[ProductResponse
         select(Product)
         .options(*_product_load_options())
         .where(
-            Product.is_active == True,  # noqa: E712
             Product.is_featured == True,  # noqa: E712
-            sells_on(WEB_CHANNEL),
+            *website_product_visibility_clause(),
         )
         .order_by(Product.display_order, Product.created_at.desc())
         .limit(limit)

@@ -46,8 +46,7 @@ def test_a_staff_viewer_can_open_any_product():
 
 def test_a_shopper_still_only_sees_the_live_website():
     source = inspect.getsource(product_service.get_by_slug)
-    assert "sells_on(WEB_CHANNEL)" in source
-    assert "is_active" in source
+    assert "website_product_visibility_clause" in source
 
 
 def test_the_admin_variant_does_not_filter_by_channel():

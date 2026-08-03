@@ -18,6 +18,10 @@ from app.schemas.cart import (
     SelectedOption,
 )
 from app.services import modifier_rules
+from app.services.storefront_visibility import (
+    is_website_product_visible,
+    website_product_visibility_clause,
+)
 
 __all__ = [
     "add_item",
@@ -32,7 +36,25 @@ __all__ = [
 
 
 def _cart_load_options():
-    return [selectinload(Cart.items).joinedload(CartItem.product)]
+    return [
+        selectinload(Cart.items)
+        .joinedload(CartItem.product)
+        .joinedload(Product.category)
+    ]
+
+
+async def _discard_hidden_items(db: AsyncSession, cart: Cart) -> Cart:
+    """Remove items that were hidden after a shopper had added them."""
+    hidden_items = [
+        item for item in cart.items if not is_website_product_visible(item.product)
+    ]
+    if not hidden_items:
+        return cart
+
+    for item in hidden_items:
+        await db.delete(item)
+    await db.flush()
+    return await _load_cart(db, cart.id)
 
 
 def option_charge(option: dict) -> Decimal:
@@ -200,6 +222,7 @@ async def get_or_create(
         # Reload with options
         cart = await _load_cart(db, cart.id)
 
+    cart = await _discard_hidden_items(db, cart)
     return await _build_response(cart)
 
 
@@ -222,16 +245,19 @@ async def add_item(
         db.add(cart)
         await db.flush()
 
-    # Validate product exists and is active
+    # Shoppers can buy only live website products in live categories. This is
+    # intentionally enforced here too, rather than trusting the product grid.
     product_result = await db.execute(
         select(Product).where(
             Product.id == data.product_id,
-            Product.is_active == True,  # noqa: E712
+            *website_product_visibility_clause(),
         )
     )
     product = product_result.scalar_one_or_none()
     if not product:
-        raise NotFoundError(f"Product '{data.product_id}' not found or inactive")
+        raise NotFoundError(
+            f"Product '{data.product_id}' is not available on the website"
+        )
 
     # Block out-of-stock items
     if product.is_stock_product and product.stock_quantity <= 0:
@@ -274,7 +300,7 @@ async def add_item(
         db.add(item)
 
     await db.flush()
-    cart = await _load_cart(db, cart.id)
+    cart = await _discard_hidden_items(db, await _load_cart(db, cart.id))
     return await _build_response(cart)
 
 
@@ -375,7 +401,9 @@ async def merge(
 
     guest_product_ids = list({item.product_id for item in guest_items})
     products_result = await db.execute(
-        select(Product).where(Product.id.in_(guest_product_ids))
+        select(Product).where(
+            Product.id.in_(guest_product_ids), *website_product_visibility_clause()
+        )
     )
     products_by_id = {p.id: p for p in products_result.scalars().all()}
 
@@ -401,6 +429,8 @@ async def merge(
 
         # Cap at available stock for stock-tracked products — no DB hit
         product = products_by_id.get(guest_item.product_id)
+        if not product:
+            continue
         if product and product.is_stock_product and merged_qty > product.stock_quantity:
             merged_qty = product.stock_quantity
 
@@ -423,7 +453,7 @@ async def merge(
     await db.delete(guest_cart)
     await db.flush()
 
-    cart = await _load_cart(db, user_cart.id)
+    cart = await _discard_hidden_items(db, await _load_cart(db, user_cart.id))
     return await _build_response(cart)
 
 

@@ -17,9 +17,9 @@ async function getCategoryData(
 ): Promise<{ category: Category; products: Product[]; total: number; pages: number } | null> {
   try {
     const [catRes, prodRes] = await Promise.all([
-      fetch(`${RSC_API_BASE}/categories/${slug}`, { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) }),
+      fetch(`${RSC_API_BASE}/categories/${slug}`, { cache: 'no-store', signal: AbortSignal.timeout(8000) }),
       fetch(`${RSC_API_BASE}/products?category=${slug}&per_page=${PER_PAGE}&page=${page}`, {
-        next: { revalidate: 300 },
+        cache: 'no-store',
         signal: AbortSignal.timeout(8000),
       }),
     ]);
