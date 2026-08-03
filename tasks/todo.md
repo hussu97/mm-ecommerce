@@ -1,5 +1,117 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ✅ 2026-08-03: SEO / GEO audit + content rewrite — DONE
+
+### What the audit found
+
+**Already good, left alone.** `robots.ts` allows every AI crawler (GPTBot, PerplexityBot,
+ClaudeBot, CCBot…) and points at both sitemaps. `sitemap.ts` covers static routes, categories,
+products and blog posts per locale with language alternates. `image-sitemap.xml` exists.
+`llms.txt` / `llms-full.txt` routes exist — rare, and a real GEO advantage. Structured data
+coverage was already broad: `Bakery`, `Organization`, `WebSite`+`SearchAction`, `Menu`,
+`Product`+`Offer`+`shippingDetails`+`hasMerchantReturnPolicy`, `CollectionPage`+`ItemList`,
+`FAQPage`, `Article`, `BreadcrumbList` everywhere. Product canonicals already resolve to the
+real category slug.
+
+**The problems.**
+
+1. **The copy read as machine-written.** "Artisanal" was in the page title, the manifest,
+   `llms.txt`, the OpenSearch description and the image alt text. Alongside it: "handcrafted",
+   "bespoke", "indulge", "the finest ingredients", "a genuine obsession with quality", and
+   "Every bite tells a story of passion, craft, and a deep love for bringing joy through food".
+   Two of the three blog posts were titled around the same vocabulary.
+2. **The facts contradicted each other.** `llms.txt`, `llms-full.txt`, `ai-plugin.json` and the
+   home-page `Bakery` schema all advertised cash on delivery. The FAQ said cash on delivery was
+   unavailable. The checkout only offers cash on *pickup* (`paymentOptionsFor` in
+   `checkout/page.tsx`). An answer engine reading this site would state the wrong thing
+   confidently — worse than saying nothing.
+3. **Almost no commercial keywords.** The copy never used the words people type: *brownie
+   delivery Dubai*, *dessert delivery Sharjah*, *birthday cake*, *eggless*, *home bakery*,
+   *corporate gifting*, *Eid / Ramadan boxes*, *same-day*, *halal*.
+4. **`areaServed: 'AE'`** — one country string. No emirate or city appeared as structured data
+   anywhere, for a business whose entire proposition is UAE-wide delivery.
+5. **The entity was split three ways.** Home, contact and about each declared their own business
+   node with no shared `@id`, so the phone number on one page and the opening hours on another
+   never joined up.
+6. **No `x-default` hreflang** on any page.
+7. **The Open Graph image was an 800×800 logo.** `summary_large_image` and Facebook both want
+   1200×630, so shared links were cropped or dropped.
+8. **Alt text was generic** — "Artisanal desserts", "Handcrafted cookies", "Melting Moments
+   treats". No product, no place.
+9. **The FAQ had 8 entries**, none of them the high-intent questions that feed People-Also-Ask
+   and answer engines.
+10. **Delivery pricing in the FAQ was stale** — a hardcoded AED 35 / AED 50 table, while pricing
+    has since moved to versioned polygons quoted at checkout.
+
+### What changed
+
+**Content — migration `054_seo_content_refresh.py`.** Reversible: the previous content of every
+row it touches is copied into `seo_content_backup_054` on upgrade, and the downgrade restores it
+verbatim and drops the table. It overwrites rather than merges, which is the point — the stored
+copy is what was being replaced.
+
+- **About** rewritten end to end, both locales. Was three paragraphs of "passion, craft, and a
+  deep love for bringing joy through food". Now says what happened: baking for family, about
+  forty trays to get the brownie right, a home kitchen in Sharjah, delivery to all seven
+  emirates. First person, contractions, specifics.
+- **FAQ** grown 8 → 16. The eight new ones are the queries that actually get typed: same-day
+  delivery, how much delivery costs, birthday cakes, corporate/bulk, eggless, "what is a cookie
+  melt", where the bakery is, and Dubai specifically. Delivery pricing now points at the live
+  checkout quote instead of the stale fee table.
+- **Payment facts corrected everywhere** — card online, cash on pickup only.
+- **Home** `seo.title`/`description`, the category and cater subtitles, and the USP strip now
+  carry the delivery and city terms without reading like a keyword list. The hero slides and
+  promo bands from 049 were already good and were left alone.
+- **Blog**: the three existing posts keep their slugs (the only URLs here with any age) and get
+  new words. Four new posts target real queries — dessert delivery in Dubai, Eid and Ramadan
+  boxes, eggless baking, and birthday/corporate ordering. Full Arabic bodies for all seven,
+  where the Arabic used to be a three-line stub. Every post now has a cover image.
+
+**Code**
+
+- `lib/schema.ts` grew from 4 constants to the shared entity: one `BUSINESS_ID` every page points
+  at, `areaServed` as nine named areas instead of `'AE'`, `founder`, `contactPoint`, `knowsAbout`,
+  `OG_IMAGE`.
+- Home, contact and about JSON-LD now resolve to that one entity. About gained `AboutPage`,
+  contact gained `ContactPage`, home gained `OrderAction` and a `WebSite`→`publisher` link.
+- `x-default` hreflang on all eight page types that set language alternates.
+- `llms.txt` / `llms-full.txt` rewritten: correct payment facts, service-area list, lead times,
+  and a "Quick answers" block written for extraction.
+- New `app/opengraph-image.tsx` — 1200×630, generated at build time by `next/og`. Verified: real
+  PNG, correct dimensions, renders as designed. Because a page that returns its own `openGraph`
+  object replaces the inherited one, images included, the pages that do that now pass `OG_IMAGE`
+  explicitly; product, category and blog-post pages keep their real photographs.
+- Footer gained a service-area line on every page, behind a new `footer.service_area` i18n key,
+  hidden until the seed has run so it never prints the raw key.
+- Alt text pass on the about page and the home kitchen gallery.
+
+### Verification
+
+- `pnpm --filter web test` — 17 files, 153 tests, all passing
+- `pnpm --filter web lint` — 0 errors (13 pre-existing warnings, none in touched files)
+- `pnpm --filter web exec tsc --noEmit` — clean
+- `next build` — compiles, 51 static pages generated, `/opengraph-image` emitted
+- OG PNG inspected on disk: 1200×630, valid signature, renders correctly
+- Rendered HTML checked against a running production server: `og:image`, `og:image:width/height`,
+  `twitter:image` and `hreflang="x-default"` all present; home JSON-LD carries the nine
+  `areaServed` entries, `knowsAbout`, `founder` and the shared `@id`
+- `ruff check` on the migration and `seed_i18n.py` — clean; migration data round-tripped through
+  a stub-import harness (`_apply` semantics, blog shape, JSON-serialisability, zero banned words)
+
+### Not done — needs the owner
+
+- **Real photographs.** The OG card is typographic because inventing bakery photos is not
+  something I can do honestly. The three biggest remaining image wins need a camera: a second
+  photo of Fatema so the About hero and the home baker block are not the same shot; per-category
+  tile photos showing one hero product; and product shots for the SKUs whose `image_urls` are
+  empty — those are exactly the ones missing from `image-sitemap.xml`.
+- **Google Business Profile.** The highest-value local-SEO action for this business is outside
+  the codebase: claim the profile, set the service area to the emirates, collect the first
+  reviews. `aggregateRating` is deliberately absent from the schema — inventing one is a manual
+  action risk, and it can be added for real once reviews exist.
+
+---
+
 ## ✅ 2026-08-03: Image Delivery — measured audit + optimisation — DONE
 
 ### What was measured (live, not guessed)

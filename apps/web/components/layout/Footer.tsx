@@ -4,9 +4,12 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 
+const SERVICE_AREA_KEY = 'footer.service_area';
+
 export function Footer() {
   const { locale, t } = useTranslation();
   const currentYear = new Date().getFullYear();
+  const serviceArea = t(SERVICE_AREA_KEY);
 
   return (
     <footer className="bg-[#f9f5f0] border-t-2 border-secondary">
@@ -24,6 +27,17 @@ export function Footer() {
           <p className="text-sm text-gray-500 font-body italic text-center max-w-xs">
             {t('footer.tagline')}
           </p>
+          {/* Where the business is and where it reaches. On every page because
+              that is what a local search has to be able to find.
+
+              `t` falls back to the key itself when a translation is missing, so
+              this stays hidden until the i18n seed has run rather than printing
+              "footer.service_area" across the bottom of the site. */}
+          {serviceArea !== SERVICE_AREA_KEY && (
+            <p className="text-xs text-gray-400 font-body text-center max-w-sm leading-relaxed">
+              {serviceArea}
+            </p>
+          )}
 
           {/* Social */}
           <div className="flex items-center gap-4">

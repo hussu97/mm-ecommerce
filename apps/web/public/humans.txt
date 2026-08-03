@@ -1,6 +1,6 @@
 /* TEAM */
 Baker & Founder: Fatema Abbasi
-Location: UAE
+Location: Sharjah, UAE — delivering to every emirate
 Contact: hello [at] meltingmomentscakes.com
 
 /* TECH */
@@ -12,6 +12,6 @@ Monorepo: Turborepo + pnpm
 Hosting: Vercel
 
 /* SITE */
-Last updated: 2026-03-09
+Last updated: 2026-08-03
 Language: English, Arabic
 Standards: HTML5, CSS3, ES2022

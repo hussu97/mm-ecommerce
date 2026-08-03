@@ -33,31 +33,40 @@ export async function GET() {
   // Header
   sections.push(`# Melting Moments Cakes — Full Product Catalogue
 
-> Artisanal bakery in the UAE delivering handcrafted brownies, cookies, cookie melts, and desserts across Dubai, Sharjah, and all Emirates. Founded by Fatema Abbasi.
+> A home bakery in Sharjah, UAE. Brownies, cookies, cookie melts, cakes and desserts, baked to order and delivered to all seven emirates. Run by Fatema Abbasi.
 > Website: ${SITE_URL}
 > WhatsApp: +971 50 368 7757
 > Instagram: @meltingmomentscakes
-> Location: Sharjah, UAE — delivers to all Emirates
+> Location: Sharjah, UAE — delivers to every emirate
 
 ## Business Information
 
 ### Ordering
 - Order online at ${SITE_URL}/en
-- Order via WhatsApp: +971 50 368 7757 (message us with your order)
+- Order via WhatsApp: +971 50 368 7757
 - No minimum order value
+- 24–48 hours' notice is best. Large, custom or event orders need 5–7 days.
 
 ### Delivery
-- Delivers to all UAE Emirates: Dubai, Sharjah, Ajman, Abu Dhabi, Fujairah, Ras Al Khaimah, Umm Al Quwain, Al Ain
-- Delivery typically next day (orders placed before cutoff)
-- Delivery fee depends on the delivery address
+- Delivers to all seven emirates: Dubai, Sharjah, Ajman, Abu Dhabi, Al Ain, Fujairah, Ras Al Khaimah, Umm Al Quwain
+- Usually next day; same-day slots open up for orders placed early
+- The delivery fee is quoted at checkout from the delivery address
+- Free delivery on orders over AED 200
+- Store pickup from Sharjah is free
 
 ### Payment Methods
-- Cash on delivery
-- Credit/debit card (online checkout)
+- Card online: Visa, Mastercard, Apple Pay (via Stripe)
+- Cash is accepted on pickup orders only. There is no cash on delivery.
+- Tabby and Tamara (buy now, pay later) are not live yet
 
 ### Business Hours
 - Monday to Saturday: 8:00 AM – 11:30 PM
 - Sunday: 3:00 PM – 11:30 PM
+
+### Dietary
+- Everything is halal. No alcohol-based flavourings.
+- There is an eggless range.
+- Baked in a home kitchen that also handles nuts, dairy, eggs and gluten — an allergen-free environment cannot be guaranteed.
 
 ### Returns & Refunds
 - All sales are final — no returns or refunds on perishable baked goods

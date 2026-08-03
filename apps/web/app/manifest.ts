@@ -5,7 +5,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: 'Melting Moments Cakes',
     short_name: 'Melting Moments',
     description:
-      'Handcrafted brownies, cookies, cookie melts, and desserts delivered across the UAE.',
+      'Brownies, cookies, cookie melts, cakes and desserts, baked to order in Sharjah and delivered across the UAE.',
     start_url: '/en',
     display: 'standalone',
     theme_color: '#8a5a64',

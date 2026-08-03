@@ -6,6 +6,7 @@ import { Breadcrumb } from '@/components/ui';
 import { getTranslations, createT } from '@/lib/i18n/server';
 import { localizedField } from '@/lib/i18n/entity';
 import { RSC_API_BASE } from '@/lib/api';
+import { OG_IMAGE } from '@/lib/schema';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 const PER_PAGE = 12;
@@ -20,15 +21,21 @@ export async function generateMetadata({
   const t = createT(translations);
   return {
     title: t('nav.all'),
-    description: 'Browse our full range of handcrafted treats — made with love in the UAE.',
+    description:
+      'The full menu — brownies, cookies, cookie melts, cakes and desserts, baked to order in Sharjah and delivered across the UAE.',
     alternates: {
       canonical: `${SITE_URL}/${locale}/all-products`,
-      languages: { en: `${SITE_URL}/en/all-products`, ar: `${SITE_URL}/ar/all-products` },
+      languages: {
+        en: `${SITE_URL}/en/all-products`,
+        ar: `${SITE_URL}/ar/all-products`,
+        'x-default': `${SITE_URL}/en/all-products`,
+      },
     },
     openGraph: {
       title: `${locale === 'ar' ? 'جميع المنتجات' : 'All Products'} | Melting Moments Cakes`,
-      description: 'Browse our full range of handcrafted treats — made with love in the UAE.',
-      images: [{ url: '/images/logos/color_logo.jpeg', alt: 'Melting Moments Cakes' }],
+      description:
+        'The full menu — brownies, cookies, cookie melts, cakes and desserts, baked to order and delivered across the UAE.',
+      images: [OG_IMAGE],
       locale: locale === 'ar' ? 'ar_AE' : 'en_AE',
     },
   };

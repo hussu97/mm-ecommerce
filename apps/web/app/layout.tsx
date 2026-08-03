@@ -36,27 +36,28 @@ const cairo = Cairo({
 
 export const metadata: Metadata = {
   title: {
-    default: "Melting Moments Cakes - Artisanal Bakery in UAE",
+    default: "Melting Moments Cakes — Brownie & Dessert Delivery Across the UAE",
     template: "%s | Melting Moments Cakes",
   },
   description:
-    "Handcrafted brownies, cookies, cookie melts, and desserts delivered across the UAE. Made with 100% love by Fatema Abbasi.",
+    "Home bakery in Sharjah delivering fudgy brownies, gooey cookies, cookie melts, cakes and desserts to Dubai, Sharjah, Ajman and the rest of the UAE. Baked to order by Fatema Abbasi.",
   keywords: [
-    "brownies", "cookies", "bakery", "UAE", "Dubai", "Sharjah", "artisanal",
-    "brownies Dubai", "brownies Sharjah", "bakery delivery UAE", "custom cakes UAE",
-    "dessert delivery Dubai", "best brownies Dubai", "homemade cookies UAE",
-    "Melting Moments Cakes", "Fatema Abbasi baker", "cookie melts UAE",
+    "brownie delivery Dubai", "dessert delivery Dubai", "dessert delivery Sharjah",
+    "cookie delivery UAE", "cookie melts Dubai", "brownies Sharjah",
+    "home bakery Sharjah", "home bakery Dubai", "birthday cake delivery Dubai",
+    "cake delivery Sharjah", "eggless brownies UAE", "eggless cake Dubai",
+    "dessert boxes Dubai", "corporate gifting Dubai", "Eid sweets UAE",
+    "Ramadan dessert boxes", "halal bakery UAE", "same day dessert delivery Dubai",
+    "Melting Moments Cakes", "Fatema Abbasi baker",
   ],
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://meltingmomentscakes.com"),
   openGraph: {
     siteName: "Melting Moments Cakes",
     locale: "en_AE",
     type: "website",
-    images: [{ url: "/images/logos/color_logo.jpeg", width: 800, height: 800, alt: "Melting Moments Cakes" }],
   },
   twitter: {
     card: "summary_large_image",
-    images: ["/images/logos/color_logo.jpeg"],
   },
 };
 
