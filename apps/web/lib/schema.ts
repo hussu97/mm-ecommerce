@@ -182,6 +182,25 @@ export const SHIPPING_DETAILS = {
   },
 };
 
+/**
+ * Search Console flags `shippingRate` as a missing recommended field on every
+ * merchant listing, so the fee has to be in the markup. It is zone-based at
+ * checkout, so the honest single number to publish is the default fee — what
+ * an address we have not drawn a zone around actually pays. Callers read it
+ * from /delivery/rates rather than repeating the figure here, so the markup
+ * cannot drift from what the API charges.
+ */
+export function buildShippingDetails(deliveryFee: number) {
+  return {
+    ...SHIPPING_DETAILS,
+    shippingRate: {
+      '@type': 'MonetaryAmount' as const,
+      value: deliveryFee.toFixed(2),
+      currency: 'AED',
+    },
+  };
+}
+
 export const RETURN_POLICY = {
   '@type': 'MerchantReturnPolicy' as const,
   applicableCountry: 'AE',
