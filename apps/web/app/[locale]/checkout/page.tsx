@@ -323,7 +323,14 @@ function OrderSummary({
         </div>
         <div className="flex justify-between pt-2 mt-1 border-t border-gray-100 font-medium text-base">
           <span className="text-gray-800">{t('common.total')}</span>
-          <span className="text-primary">{total.toFixed(2)} AED</span>
+          {/* No deliverable address means no total. Printing the basket on its
+              own here reads as the price of the order, and it is the one line
+              on the page a customer takes at face value. */}
+          {deliveryMethod === 'delivery' && unserviceable ? (
+            <span className="text-gray-400">&mdash;</span>
+          ) : (
+            <span className="text-primary">{total.toFixed(2)} AED</span>
+          )}
         </div>
         <p className="text-[11px] text-gray-400 text-end">
           VAT included (5%) · {((subtotal - discount) * 5 / 105).toFixed(2)} AED
