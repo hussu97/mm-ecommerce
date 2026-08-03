@@ -65,3 +65,6 @@ cloudflared.deb
 # code-review-graph
 .code-review-graph/
 .claude/launch.json
+
+# Generated menus — rebuild with scripts/menu/generate_menu.py
+scripts/menu/*.html
