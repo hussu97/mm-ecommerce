@@ -1,5 +1,12 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ⏳ 2026-08-03: Verify Attibassi Coffee Barsha Heights branch pin
+
+### Plan
+- [x] 1. Resolve the owner-provided Maps place link and compare it with live branch `B001`. The canonical pin is `25.0984482, 55.1741736`; the live longitude is incorrectly `55.0807900`.
+- [x] 2. Update only `B001` with the approved address and verified coordinates in production. Live `B001` now returns `Attibassi Coffee, Al Shafar Tower 1, Barsha Heights, Dubai` at `25.0984482, 55.1741736`.
+- [ ] 3. Add a forward-only database migration, test it against a clean PostgreSQL migration chain, commit, push, and confirm production deployment. `056_correct_barsha_heights_pin` and the demo seed are updated; the full API suite and migration upgrade → downgrade → upgrade check pass. Awaiting deployment confirmation.
+
 ## ⏳ 2026-08-03: Verify Melting Moments Cakes delivery pin
 
 ### Plan

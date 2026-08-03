@@ -10,6 +10,10 @@
 
 ## Lessons
 
+### [2026-08-03] Treat each operational branch pin as an independently verified record
+- **What happened**: Correcting the Sharjah kitchen exposed a separate, substantially incorrect Barsha Heights branch longitude.
+- **Rule**: Resolve every owner-provided Google Maps place link and update the matching branch record independently; never infer one branch's coordinates or address from another branch or from a map viewport.
+
 ### [2026-08-03] Confirm a customer-provided Maps place before changing delivery coordinates
 - **What happened**: The user questioned the Melting Moments Cakes delivery pin after seeing checkout behaviour, despite the selected Google place containing a specific Maps short link.
 - **Rule**: Resolve the exact Google Maps place URL, compare its canonical latitude/longitude with the saved checkout and Lalamove payload values, and use the owner-provided address text verbatim when it is more operationally precise than Google's formatted address.
