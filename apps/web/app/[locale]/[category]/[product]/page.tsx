@@ -8,13 +8,34 @@ import type { Product, ProductModifier } from '@/lib/types';
 import { localizedField } from '@/lib/i18n/entity';
 import { getTranslations, createT } from '@/lib/i18n/server';
 import { RSC_API_BASE } from '@/lib/api';
-import { BRAND, PRODUCT_BRAND, SHIPPING_DETAILS, RETURN_POLICY } from '@/lib/schema';
+import { BRAND, PRODUCT_BRAND, buildShippingDetails, RETURN_POLICY } from '@/lib/schema';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 
 async function getProduct(slug: string): Promise<Product | null> {
   const res = await fetch(`${RSC_API_BASE}/products/${slug}`, { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) });
   if (!res.ok) return null;
   return res.json();
+}
+
+const FALLBACK_DELIVERY_FEE = 50;
+
+/**
+ * Only feeds the shipping markup, so a slow or down rates endpoint must never
+ * cost us the page: fall back to the same default the API itself falls back to.
+ */
+async function getDefaultDeliveryFee(): Promise<number> {
+  try {
+    const res = await fetch(`${RSC_API_BASE}/delivery/rates`, {
+      next: { revalidate: 3600 },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return FALLBACK_DELIVERY_FEE;
+    const rates = await res.json();
+    const fee = Number(rates?.default_delivery_fee);
+    return Number.isFinite(fee) ? fee : FALLBACK_DELIVERY_FEE;
+  } catch {
+    return FALLBACK_DELIVERY_FEE;
+  }
 }
 
 export async function generateMetadata({
@@ -62,9 +83,10 @@ export default async function ProductDetailPage({
 }) {
   const { locale, category: categorySlug, product: productSlug } = await params;
 
-  const [product, translations] = await Promise.all([
+  const [product, translations, defaultDeliveryFee] = await Promise.all([
     getProduct(productSlug),
     getTranslations(locale),
+    getDefaultDeliveryFee(),
   ]);
 
   if (!product) notFound();
@@ -93,50 +115,38 @@ export default async function ProductDetailPage({
     (pm: ProductModifier) => pm.modifier.options.some(o => o.price > 0),
   );
 
-  let offers: Record<string, unknown>;
   const offerUrl = `${SITE_URL}/${locale}/${categorySlug}/${productSlug}`;
   const availability = product.is_active
     ? 'https://schema.org/InStock'
     : 'https://schema.org/OutOfStock';
 
-  if (hasModifierPrices) {
-    // Sum the min option price from required groups (minimum_options > 0) for the lowest possible price
-    const minExtra = product.product_modifiers.reduce(
-      (sum: number, pm: ProductModifier) => {
+  // Google Merchant Center requires `price` on Offer — AggregateOffer has no
+  // `price` attribute — so a modifier-priced item publishes the lowest price
+  // actually reachable: base plus the cheapest option of every required group.
+  const minExtra = hasModifierPrices
+    ? product.product_modifiers.reduce((sum: number, pm: ProductModifier) => {
         if (pm.minimum_options === 0) return sum;
         const minOptionPrice = Math.min(...pm.modifier.options.map(o => o.price));
         return sum + Math.max(0, minOptionPrice);
-      },
-      0,
-    );
-    // Google Merchant Center requires `price` on Offer — AggregateOffer has no `price` attribute
-    // so we use Offer with the minimum reachable price (base + cheapest required modifiers)
-    offers = {
-      '@type': 'Offer',
-      price: (basePrice + minExtra).toFixed(2),
-      priceCurrency: 'AED',
-      availability,
-      url: offerUrl,
-      seller: BRAND,
-      itemCondition: 'https://schema.org/NewCondition',
-      priceValidUntil: '2100-01-01',
-      shippingDetails: SHIPPING_DETAILS,
-      hasMerchantReturnPolicy: RETURN_POLICY,
-    };
-  } else {
-    offers = {
-      '@type': 'Offer',
-      price: basePrice.toFixed(2),
-      priceCurrency: 'AED',
-      availability,
-      seller: BRAND,
-      url: offerUrl,
-      itemCondition: 'https://schema.org/NewCondition',
-      priceValidUntil: '2100-01-01',
-      shippingDetails: SHIPPING_DETAILS,
-      hasMerchantReturnPolicy: RETURN_POLICY,
-    };
-  }
+      }, 0)
+    : 0;
+
+  const offers: Record<string, unknown> = {
+    '@type': 'Offer',
+    price: (basePrice + minExtra).toFixed(2),
+    priceCurrency: 'AED',
+    availability,
+    url: offerUrl,
+    seller: BRAND,
+    itemCondition: 'https://schema.org/NewCondition',
+    // Search Console asks for `validFrom`; the offer has stood since the
+    // product was created, and that date does not churn on every edit the way
+    // updated_at would — which would re-date the markup for a typo fix.
+    validFrom: product.created_at.slice(0, 10),
+    priceValidUntil: '2100-01-01',
+    shippingDetails: buildShippingDetails(defaultDeliveryFee),
+    hasMerchantReturnPolicy: RETURN_POLICY,
+  };
 
   const productSchema: Record<string, unknown> = {
     '@type': 'Product',
