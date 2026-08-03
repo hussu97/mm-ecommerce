@@ -174,14 +174,7 @@ describe('LocationPicker', () => {
       const mockPlace = {
         fetchFields: vi.fn().mockResolvedValue(undefined),
         displayName: 'Melting Moments Cakes',
-        formattedAddress: 'Al Khan, Sharjah, United Arab Emirates',
-        addressComponents: [
-          { types: ['street_number'], longText: '21' },
-          { types: ['route'], longText: 'Arab Club Street' },
-          { types: ['sublocality_level_1'], longText: 'Al Majaz 3' },
-          { types: ['administrative_area_level_1'], longText: 'Sharjah' },
-          { types: ['country'], longText: 'United Arab Emirates' },
-        ],
+        formattedAddress: '21 Arab Club Street - Al MajazAl Majaz 3 - ضاحيةالمجاز - المجازAl Majaz 3 - الشارقة - United Arab Emirates',
         location: { lat: () => 25.2, lng: () => 55.27 },
       };
       const mockPlacePrediction = { toPlace: vi.fn(() => mockPlace) };
@@ -196,12 +189,12 @@ describe('LocationPicker', () => {
 
       expect(mockPlacePrediction.toPlace).toHaveBeenCalledOnce();
       expect(mockPlace.fetchFields).toHaveBeenCalledWith({
-        fields: ['addressComponents', 'displayName', 'formattedAddress', 'location'],
+        fields: ['displayName', 'formattedAddress', 'location'],
       });
       expect(onChange).toHaveBeenCalledWith(
         25.2,
         55.27,
-        'Melting Moments Cakes, 21 Arab Club Street, Al Majaz 3, Sharjah, United Arab Emirates',
+        'Melting Moments Cakes, 21 Arab Club Street, Al Majaz 3, United Arab Emirates',
       );
       expect(mockPanTo).toHaveBeenCalledWith({ lat: 25.2, lng: 55.27 });
       expect(mockSetZoom).toHaveBeenCalledWith(15);

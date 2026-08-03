@@ -7,28 +7,16 @@ const DUBAI_CENTER = { lat: 25.2048, lng: 55.2708 };
 
 function formatSelectedAddress(place: google.maps.places.Place): string | undefined {
   const name = place.displayName?.trim();
-  const component = (type: string) => place.addressComponents
-    ?.find(({ types }) => types.includes(type))
-    ?.longText
-    ?.trim();
-  const streetAddress = [component('street_number'), component('route')]
-    .filter(Boolean)
-    .join(' ');
-  const locality = component('sublocality_level_1')
-    ?? component('neighborhood')
-    ?? component('sublocality')
-    ?? component('locality');
-  const address = [
-    streetAddress,
-    locality,
-    component('administrative_area_level_1'),
-    component('country'),
-  ]
-    .filter((part): part is string => Boolean(part))
+  const formattedAddress = place.formattedAddress?.trim();
+  const englishParts = formattedAddress
+    ?.split(/\s+-\s+/)
+    .map((part) => part.replace(/[\u0600-\u06FF]/g, '').trim())
+    .map((part) => part.replace(/^(.+?)(\1)\s*(\d+)?$/, '$1 $3').trim())
+    .filter((part) => /[A-Za-z0-9]/.test(part))
     .filter((part, index, parts) => parts.findIndex(
       (candidate) => candidate.localeCompare(part, undefined, { sensitivity: 'accent' }) === 0,
-    ) === index)
-    .join(', ') || place.formattedAddress?.trim();
+    ) === index);
+  const address = englishParts?.join(', ') || formattedAddress;
   if (!address) return name || undefined;
   if (!name || address.toLocaleLowerCase().includes(name.toLocaleLowerCase())) return address;
   return `${name}, ${address}`;
@@ -95,7 +83,7 @@ function MapContent({ lat, lng, onChange, placeholder, height = '200px' }: Locat
         placePrediction?: { toPlace: () => google.maps.places.Place };
       }).placePrediction?.toPlace();
       if (!place) return;
-      await place.fetchFields({ fields: ['addressComponents', 'displayName', 'formattedAddress', 'location'] });
+      await place.fetchFields({ fields: ['displayName', 'formattedAddress', 'location'] });
       const loc = place.location;
       if (!loc) return;
       const newLat = loc.lat();
