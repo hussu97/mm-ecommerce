@@ -1,5 +1,16 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ⏳ 2026-08-03: Lalamove everywhere — static city fees, dynamic fee elsewhere
+
+### Plan
+- [x] 1. Add a `pricing_mode` (static | dynamic) to delivery polygons and publish a new map version where every zone is fulfilled by Lalamove: the three city zones keep their static 15/15/25 fees, every other zone prices dynamically from the courier quote. Migration `057_dynamic_delivery_pricing` publishes "Lalamove everywhere v1"; verified on a clean PostgreSQL chain with an upgrade → downgrade → upgrade round trip.
+- [x] 2. Price a dynamic area from the live courier quote, rounded up to the nearest whole AED, and treat "no quote" as unserviceable rather than silently falling back to a fee. `delivery_service.price()` is now the single place the decision is made, and both the checkout quote and order creation read it.
+- [x] 3. Block order creation for an unserviceable pin and surface it on the checkout page as a clear, actionable section (no courier named). `UnserviceableAreaError` is a 400 carrying its own message; the checkout shows an amber panel under the address with "Change address" and "Collect from store instead".
+- [x] 4. Seed batch windows on the new map: five slots for the static city zones (00:00–12:00, 12:00–18:00, 18:00–21:00, 21:00–22:30, 22:30–24:00) and two for every dynamic zone (00:00–17:00, 17:00–24:00). This also fixes a live bug — 055 republished the whole map as new rows without seeding schedules, so nothing has been batched since.
+- [x] 5. Make batching cross-polygon: runs closing at the same instant merge into one courier order. `_open_batch` now matches on departure time alone.
+- [x] 6. Expose pricing mode in the admin zone editor.
+- [ ] 7. Tests, deploy, verify green, then exercise checkout against real pins.
+
 ## ⏳ 2026-08-03: Enforce hidden website content across catalogue and CMS
 
 ### Plan

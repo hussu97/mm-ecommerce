@@ -34,6 +34,7 @@ from app.models.delivery_settings import DeliverySettings
 from app.models.delivery_polygon import (
     DeliveryPolygon,
     DeliveryPolygonVersion,
+    DeliveryPricingEnum,
     FulfilmentProviderEnum,
 )
 from app.models.order import Order
@@ -55,7 +56,10 @@ router = APIRouter()
 class PolygonResponse(BaseModel):
     id: str
     name: str
+    #: Only meaningful when `pricing_mode` is static. A dynamic zone charges the
+    #: courier's own quote for the customer's pin and never reads this.
     delivery_fee: float
+    pricing_mode: str
     fulfilment_provider: str
     display_order: int
     #: How many coordinates the outline has, so the admin can tell a hand-drawn
@@ -68,6 +72,7 @@ class PolygonResponse(BaseModel):
             id=str(p.id),
             name=p.name,
             delivery_fee=float(p.delivery_fee),
+            pricing_mode=p.pricing_mode,
             fulfilment_provider=p.fulfilment_provider,
             display_order=p.display_order,
             point_count=_point_count(p.geometry),
@@ -109,6 +114,7 @@ class VersionCreate(BaseModel):
 
 class PolygonUpdate(BaseModel):
     delivery_fee: Decimal | None = Field(None, ge=0)
+    pricing_mode: str | None = None
     fulfilment_provider: str | None = None
     display_order: int | None = None
 
@@ -154,7 +160,11 @@ class BatchWindowWrite(BaseModel):
 
 class BatchResponse(BaseModel):
     id: str
+    #: The zone whose slot opened this run. A run is shared by every zone
+    #: closing on the same minute, so it says where the run came from rather
+    #: than what is on it — `zone_name` is the honest answer to that.
     polygon_id: str
+    #: Every zone with an order on this run, comma-separated.
     zone_name: str | None
     window_label: str | None
     dispatch_at: datetime
@@ -325,6 +335,7 @@ async def zone_map(
                 "id": str(polygon.id),
                 "name": polygon.name,
                 "delivery_fee": float(polygon.delivery_fee),
+                "pricing_mode": polygon.pricing_mode,
                 "fulfilment_provider": polygon.fulfilment_provider,
                 "display_order": polygon.display_order,
                 "geometry": _simplify(polygon.geometry, tolerance),
@@ -365,6 +376,7 @@ async def get_polygon_geometry(
     return {
         "name": polygon.name,
         "delivery_fee": float(polygon.delivery_fee),
+        "pricing_mode": polygon.pricing_mode,
         "fulfilment_provider": polygon.fulfilment_provider,
         "geometry": polygon.geometry,
     }
@@ -407,6 +419,7 @@ async def create_version(
             version_id=draft.id,
             name=polygon.name,
             delivery_fee=polygon.delivery_fee,
+            pricing_mode=polygon.pricing_mode,
             fulfilment_provider=polygon.fulfilment_provider,
             geometry=polygon.geometry,
             min_lat=polygon.min_lat,
@@ -479,12 +492,27 @@ async def update_polygon(
 
     before = {
         "delivery_fee": float(polygon.delivery_fee),
+        "pricing_mode": polygon.pricing_mode,
         "fulfilment_provider": polygon.fulfilment_provider,
         "display_order": polygon.display_order,
     }
 
     if data.delivery_fee is not None:
         polygon.delivery_fee = data.delivery_fee
+    if data.pricing_mode is not None:
+        modes = {m.value for m in DeliveryPricingEnum}
+        if data.pricing_mode not in modes:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Unknown pricing mode '{data.pricing_mode}'. "
+                f"Choose one of: {', '.join(sorted(modes))}",
+            )
+        polygon.pricing_mode = data.pricing_mode
+        if polygon.pricing_mode == DeliveryPricingEnum.DYNAMIC.value:
+            # Nothing reads the fee once the courier sets it, and a stale number
+            # left in the column is how someone later reads the table as "we
+            # charge 50 here".
+            polygon.delivery_fee = Decimal("0.00")
     if data.fulfilment_provider is not None:
         allowed = {p.value for p in FulfilmentProviderEnum}
         if data.fulfilment_provider not in allowed:
@@ -509,6 +537,7 @@ async def update_polygon(
             "from": before,
             "to": {
                 "delivery_fee": float(polygon.delivery_fee),
+                "pricing_mode": polygon.pricing_mode,
                 "fulfilment_provider": polygon.fulfilment_provider,
                 "display_order": polygon.display_order,
             },
@@ -605,7 +634,10 @@ async def zone_summary(
         "zones": [
             {
                 "name": z.name,
+                # Zero on a courier-priced zone, and meaningless there — the fee
+                # comes from the pin. `pricing_mode` is what says which it is.
                 "delivery_fee": float(z.delivery_fee),
+                "pricing_mode": z.pricing_mode,
                 "fulfilment_provider": z.fulfilment_provider,
             }
             for z in zones
@@ -813,18 +845,28 @@ async def list_batches(
     )
     rows = (
         await db.execute(
-            select(OrderDelivery.batch_id, Order.order_number)
+            select(OrderDelivery.batch_id, OrderDelivery.zone_name, Order.order_number)
             .join(Order, Order.id == OrderDelivery.order_id)
             .where(OrderDelivery.batch_id.in_({b.id for b in batches}))
             .order_by(OrderDelivery.stop_sequence, Order.order_number)
         )
     ).all()
     numbers: dict[uuid.UUID, list[str]] = {}
-    for batch_id, order_number in rows:
+    on_run: dict[uuid.UUID, list[str]] = {}
+    for batch_id, zone_name, order_number in rows:
         numbers.setdefault(batch_id, []).append(order_number)
+        zones_here = on_run.setdefault(batch_id, [])
+        if zone_name and zone_name not in zones_here:
+            zones_here.append(zone_name)
 
     return [
-        BatchResponse.of(b, zone_names.get(b.polygon_id), numbers.get(b.id, []))
+        BatchResponse.of(
+            b,
+            # What is actually on the run. Falls back to the zone that opened it
+            # for a batch that has not collected anything yet.
+            ", ".join(on_run.get(b.id) or []) or zone_names.get(b.polygon_id),
+            numbers.get(b.id, []),
+        )
         for b in batches
     ]
 

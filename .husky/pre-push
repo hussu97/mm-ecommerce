@@ -11,7 +11,10 @@ echo "▶ pre-push: running backend tests..."
 
 VENV="$(pwd)/apps/api/.venv/bin"
 if [ -d "$VENV" ]; then
-  export PATH="$PATH:$VENV"
+  # Prepended, not appended: appending leaves the system python first on the
+  # PATH, and the hook then fails on a machine that has one without pytest —
+  # which reads as "the tests broke" rather than "the wrong python ran".
+  export PATH="$VENV:$PATH"
   cd apps/api && python -m pytest tests/ --tb=short -q
   cd - > /dev/null
 else

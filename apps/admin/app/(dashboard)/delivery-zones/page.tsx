@@ -5,6 +5,7 @@ import { deliveryZonesApi, ApiError } from '@/lib/api';
 import type {
   DeliveryBatch,
   DeliveryMapVersion,
+  DeliveryPricingMode,
   DeliveryZone,
   DeliveryZoneMap,
   DeliveryZoneShape,
@@ -24,6 +25,16 @@ const PROVIDER_LABEL: Record<FulfilmentProvider, string> = {
 const PROVIDER_OPTIONS = [
   { value: 'lalamove', label: PROVIDER_LABEL.lalamove },
   { value: 'third_party', label: PROVIDER_LABEL.third_party },
+];
+
+const PRICING_LABEL: Record<DeliveryPricingMode, string> = {
+  static: 'Fixed fee',
+  dynamic: 'Courier price',
+};
+
+const PRICING_OPTIONS = [
+  { value: 'static', label: PRICING_LABEL.static },
+  { value: 'dynamic', label: PRICING_LABEL.dynamic },
 ];
 
 export default function DeliveryZonesPage() {
@@ -202,7 +213,11 @@ interface VersionCardProps {
   onDelete: () => void;
   onZoneChange: (
     zoneId: string,
-    data: { delivery_fee?: number; fulfilment_provider?: FulfilmentProvider },
+    data: {
+      delivery_fee?: number;
+      pricing_mode?: DeliveryPricingMode;
+      fulfilment_provider?: FulfilmentProvider;
+    },
   ) => void;
 }
 
@@ -262,6 +277,9 @@ function VersionCard({
                 <th className="px-4 py-2 text-left text-[11px] font-body uppercase tracking-widest text-gray-400">
                   Zone
                 </th>
+                <th className="px-4 py-2 text-left text-[11px] font-body uppercase tracking-widest text-gray-400">
+                  Priced by
+                </th>
                 <th className="px-4 py-2 text-right text-[11px] font-body uppercase tracking-widest text-gray-400">
                   Fee
                 </th>
@@ -279,7 +297,7 @@ function VersionCard({
                   // The saved values are part of the key so a reload after a
                   // save remounts the row with them, rather than leaving the
                   // input showing what was typed before the server answered.
-                  key={`${zone.id}:${zone.delivery_fee}:${zone.fulfilment_provider}`}
+                  key={`${zone.id}:${zone.delivery_fee}:${zone.pricing_mode}:${zone.fulfilment_provider}`}
                   zone={zone}
                   readOnly={version.is_active || busy}
                   onChange={data => onZoneChange(zone.id, data)}
@@ -290,7 +308,9 @@ function VersionCard({
 
           <p className="px-4 pt-3 text-[11px] font-body text-gray-400">
             Zones are matched top to bottom, so a smaller area listed above the one it
-            sits inside wins.
+            sits inside wins. A courier-priced zone charges whatever the courier quotes
+            for the customer&rsquo;s pin, rounded up to the dirham — and refuses the order
+            when there is no quote.
           </p>
 
           <div className="flex flex-wrap items-end gap-2 px-4 py-3">
@@ -334,10 +354,12 @@ function ZoneRow({
   readOnly: boolean;
   onChange: (data: {
     delivery_fee?: number;
+    pricing_mode?: DeliveryPricingMode;
     fulfilment_provider?: FulfilmentProvider;
   }) => void;
 }) {
   const [fee, setFee] = useState(String(zone.delivery_fee));
+  const dynamic = zone.pricing_mode === 'dynamic';
 
   function commitFee() {
     const parsed = Number(fee);
@@ -356,8 +378,29 @@ function ZoneRow({
           {zone.point_count.toLocaleString()} points
         </div>
       </td>
-      <td className="px-4 py-2.5 text-right">
+      <td className="px-4 py-2.5">
         {readOnly ? (
+          <Badge variant={dynamic ? 'warning' : 'neutral'}>
+            {PRICING_LABEL[zone.pricing_mode]}
+          </Badge>
+        ) : (
+          <Select
+            value={zone.pricing_mode}
+            options={PRICING_OPTIONS}
+            onChange={e =>
+              onChange({ pricing_mode: e.target.value as DeliveryPricingMode })
+            }
+            className="w-36"
+          />
+        )}
+      </td>
+      <td className="px-4 py-2.5 text-right">
+        {/* A courier-priced zone has no fee of its own. Showing an editable
+            number here would invite someone to set one and then wonder why no
+            order ever charged it. */}
+        {dynamic ? (
+          <span className="text-xs font-body text-gray-400">Per pin</span>
+        ) : readOnly ? (
           <span className="text-xs font-body text-gray-700">
             {formatCurrency(zone.delivery_fee)}
           </span>
@@ -430,7 +473,9 @@ function BatchingTab({ zones }: { zones: DeliveryZoneShape[] }) {
             </span>
             <span className="text-sm font-body text-gray-800 flex-1">{zone.name}</span>
             <span className="text-xs font-body text-gray-400">
-              {formatCurrency(zone.delivery_fee)}
+              {zone.pricing_mode === 'dynamic'
+                ? PRICING_LABEL.dynamic
+                : formatCurrency(zone.delivery_fee)}
             </span>
           </button>
           {openZone === zone.id && (

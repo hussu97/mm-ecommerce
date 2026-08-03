@@ -296,13 +296,23 @@ export interface PaymentSessionResponse {
 
 /** Result of pricing delivery against the active zone map. */
 export interface DeliveryQuote {
-  /** What the customer pays — already zero when free delivery applies. */
-  delivery_fee: number;
+  /**
+   * What the customer pays — already zero when free delivery applies.
+   *
+   * Null when there is nothing to price: no pin yet, or a pin nothing can be
+   * delivered to. `serviceable` is what tells those two apart.
+   */
+  delivery_fee: number | null;
   /** What it would have cost, so the total can be struck through. */
-  base_fee: number;
+  base_fee: number | null;
   free_delivery_applied: boolean;
   free_threshold: number;
   remaining_for_free: number;
   zone_name: string | null;
   in_known_zone: boolean;
+  /**
+   * False when we cannot deliver to this pin at all. The order endpoint refuses
+   * it too, so blocking the button here is a courtesy rather than the guard.
+   */
+  serviceable: boolean;
 }
