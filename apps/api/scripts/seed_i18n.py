@@ -1016,6 +1016,12 @@ async def seed(session: AsyncSession) -> None:
             print(f"  🔄 {locale}:{namespace}.{key} updated")
 
     await session.commit()
+    # Redis outlives the restart this seed runs inside. Without this, a deploy
+    # that adds a key writes it to Postgres and then serves the pre-deploy copy
+    # until the TTL lapses — which the storefront renders as raw key names.
+    from app.services import i18n_service
+
+    await i18n_service.invalidate_translations()
     print("\n✨ i18n seed complete!")
 
 
