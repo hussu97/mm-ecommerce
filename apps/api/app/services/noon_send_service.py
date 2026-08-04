@@ -654,6 +654,8 @@ async def apply_webhook(
         delivery.courier_previous_status = delivery.courier_status
         delivery.courier_status = status
         moment = updated_at or datetime.now(timezone.utc)
+        if status == NoonSendStatusEnum.ASSIGNED.value:
+            await _announce_rider(db, delivery)
         if status == NoonSendStatusEnum.PICKED_UP.value:
             delivery.picked_up_at = moment
         elif status == NoonSendStatusEnum.DELIVERED.value:
@@ -674,6 +676,25 @@ async def apply_webhook(
 
     await _advance_order(db, delivery)
     return delivery
+
+
+async def _announce_rider(db: AsyncSession, delivery: OrderDelivery) -> None:
+    """Same as the Lalamove side: best-effort, never fails the webhook."""
+    from app.services import push_service
+
+    order = (
+        (await db.execute(select(Order).where(Order.id == delivery.order_id)))
+        .scalars()
+        .first()
+    )
+    if order is None or not getattr(order, "branch_id", None):
+        return
+    try:
+        await push_service.notify_rider_assigned(
+            db, order, rider_name=delivery.driver_name
+        )
+    except Exception:  # pragma: no cover — defensive
+        logger.exception("Could not announce the rider for %s", order.order_number)
 
 
 async def handle_tracking_webhook(

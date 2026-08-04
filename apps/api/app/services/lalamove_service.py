@@ -754,6 +754,7 @@ async def apply_webhook(
         location = data.get("location") or {}
         delivery.driver_latitude = decimal_or_none(location.get("lat"))
         delivery.driver_longitude = decimal_or_none(location.get("lng"))
+        await _announce_driver(db, delivery)
 
     if event_type == "POD_STATUS_CHANGED":
         pod = _pod_for(delivery, courier_order.get("stops") or [])
@@ -794,6 +795,31 @@ async def apply_webhook(
 
     await _advance_order(db, delivery)
     return delivery
+
+
+async def _announce_driver(db: AsyncSession, delivery: OrderDelivery) -> None:
+    """
+    Tell the counter somebody is coming for it.
+
+    Best-effort, and deliberately swallowed: this runs inside a webhook that
+    must answer 200, and a notification that fails is a quieter shop rather
+    than a lost status update.
+    """
+    from app.services import push_service
+
+    order = delivery.order or (
+        (await db.execute(select(Order).where(Order.id == delivery.order_id)))
+        .scalars()
+        .first()
+    )
+    if order is None or not getattr(order, "branch_id", None):
+        return
+    try:
+        await push_service.notify_rider_assigned(
+            db, order, rider_name=delivery.driver_name
+        )
+    except Exception:  # pragma: no cover — defensive
+        logger.exception("Could not announce the driver for %s", order.order_number)
 
 
 def _pod_for(delivery: OrderDelivery, stops: list[dict[str, Any]]) -> dict | None:

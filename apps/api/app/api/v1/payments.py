@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import BadRequestError
 from app.core.deps import get_db, get_optional_user
 from app.models.user import User
 from app.services import payment_service
@@ -61,8 +62,22 @@ async def stripe_webhook(
     stripe_signature: str | None = Header(None, alias="stripe-signature"),
 ):
     """
-    Stripe webhook endpoint. Verifies signature and processes payment events.
-    Must return 200 quickly — Stripe retries on any non-2xx response.
+    Stripe webhook endpoint. Verifies the signature and applies payment events.
+
+    **A failure here must not answer 200.** It used to: every exception was
+    logged and swallowed into a success, on the reasoning that Stripe retries
+    anything else. What that actually bought was three days of
+    `payment_intent.succeeded` events failing on an SDK change while Stripe's
+    dashboard showed an unbroken wall of green and paid orders sat in `created`.
+
+    So the two kinds of failure are now told apart:
+
+    * A **bad signature or unparseable body** is a 400. Retrying will never fix
+      it, and Stripe surfaces it as a failed delivery instead of hiding it.
+    * **Anything else** is ours — a bug, a database blip — and it propagates as
+      a 500 so Stripe retries for up to three days. The dedup row is written in
+      the same transaction as the work, so a rolled-back attempt leaves nothing
+      behind and the retry is free to try again.
     """
     if not stripe_signature:
         raise HTTPException(status_code=400, detail="Missing Stripe-Signature header")
@@ -70,15 +85,17 @@ async def stripe_webhook(
     payload = await request.body()
 
     try:
-        result = await payment_service.handle_stripe_webhook(
+        return await payment_service.handle_stripe_webhook(
             db, payload, stripe_signature
         )
-    except Exception as e:
-        # Log but still return 200 so Stripe doesn't keep retrying malformed events
-        logger.error("Stripe webhook error: %s", e)
-        return {"received": True, "error": str(e)}
-
-    return result
+    except BadRequestError as e:
+        logger.warning("Rejected Stripe webhook: %s", e)
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception:
+        # CRITICAL, not ERROR: a payment event we failed to apply is money that
+        # moved without the order knowing.
+        logger.critical("Stripe webhook processing failed", exc_info=True)
+        raise
 
 
 @router.post("/webhooks/tabby", status_code=status.HTTP_200_OK)

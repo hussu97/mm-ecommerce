@@ -9,11 +9,12 @@ import uuid
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, Header, Request, status
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import get_admin_user, get_db
+from app.core.deps import get_admin_user, get_current_active_user, get_db
 from app.core.exceptions import ConflictError, UnauthorizedError
 from app.models import (
     Branch,
@@ -22,6 +23,7 @@ from app.models import (
     Printer,
 )
 from app.models.base import utcnow
+from app.models.device_push_token import DevicePushToken
 from app.models.user import User
 from app.schemas.pos import (
     BranchResponse,
@@ -35,7 +37,7 @@ from app.schemas.pos import (
     PrinterResponse,
     PrinterUpdate,
 )
-from app.services import audit_service, crud_service
+from app.services import audit_service, crud_service, push_service
 
 logger = logging.getLogger("mm.pos.devices")
 
@@ -465,3 +467,88 @@ async def _clear_other_defaults(db: AsyncSession, printer: Printer) -> None:
     for other in (await db.execute(stmt)).scalars().all():
         other.is_default = False
     await db.flush()
+
+
+# ─── Push registration ────────────────────────────────────────────────────────
+
+
+class PushTokenRegisterRequest(BaseModel):
+    """What a register tells us so it can be woken."""
+
+    #: Apple's device token, hex.
+    token: str = Field(min_length=32, max_length=200)
+    #: The app that owns it — `com.meltingmoments.pos` for the iPad register,
+    #: `com.meltingmoments.posmanager` for the phone. It is the APNs topic, and
+    #: a push to the wrong one is silently dropped by Apple.
+    bundle_id: str = Field(min_length=1, max_length=100)
+    #: The counter this device stands on. Until it is set the device receives
+    #: nothing — a push is addressed to a kitchen, not to a business.
+    branch_id: uuid.UUID | None = None
+    device_id: uuid.UUID | None = None
+    #: True for a TestFlight or debug build. Sandbox tokens are not valid on the
+    #: production APNs host and vice versa, and the failure names nothing useful,
+    #: so the app has to tell us which it is.
+    is_sandbox: bool = False
+
+
+class PushTokenResponse(BaseModel):
+    id: str
+    branch_id: str | None
+    bundle_id: str
+    is_sandbox: bool
+    push_enabled: bool
+
+
+@router.post("/push-token", response_model=PushTokenResponse)
+async def register_push_token(
+    data: PushTokenRegisterRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """
+    Register this device for order notifications, or update its registration.
+
+    Called on every launch, so it upserts on the token: a row per launch would
+    mean the same iPad buzzing five times for one order.
+
+    `push_enabled` in the response says whether the server can actually send —
+    false means no APNs key is configured, and the app should keep polling
+    rather than assume silence means no orders.
+    """
+    row = await push_service.register_token(
+        db,
+        token=data.token.strip(),
+        bundle_id=data.bundle_id.strip(),
+        branch_id=data.branch_id,
+        device_id=data.device_id,
+        user_id=user.id,
+        is_sandbox=data.is_sandbox,
+    )
+    return PushTokenResponse(
+        id=str(row.id),
+        branch_id=str(row.branch_id) if row.branch_id else None,
+        bundle_id=row.bundle_id,
+        is_sandbox=row.is_sandbox,
+        push_enabled=push_service.is_enabled(),
+    )
+
+
+@router.delete("/push-token/{token}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_push_token(
+    token: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Stop sending to this device — a sign-out, or notifications turned off."""
+    row = (
+        (
+            await db.execute(
+                select(DevicePushToken).where(DevicePushToken.token == token)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if row is not None and row.revoked_at is None:
+        row.revoked_at = utcnow()
+        row.revoked_reason = "revoked by device"

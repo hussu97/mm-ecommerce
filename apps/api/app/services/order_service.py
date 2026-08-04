@@ -26,6 +26,7 @@ from app.services import (
     lalamove_service,
     pos_order_service,
     promo_code_service,
+    push_service,
 )
 from app.services.storefront_visibility import is_website_product_visible
 from app.services.delivery_zone_service import Zone
@@ -507,7 +508,18 @@ async def create_order(
     #    the counter is told anything.
     await _attach_to_branch(db, order, zone)
 
-    # 9. Cash orders confirm themselves. A card order is confirmed by Stripe's
+    # 9. Tell the kitchen. Best-effort and last, because a push that fails must
+    #    not fail an order that is already written and already visible to
+    #    anyone who pulls the pending list.
+    if order.branch_id is not None:
+        try:
+            await push_service.notify_order_placed(db, order)
+        except Exception:  # pragma: no cover — defensive
+            logger.exception(
+                "Could not notify %s about %s", order.branch_id, order.order_number
+            )
+
+    # 10. Cash orders confirm themselves. A card order is confirmed by Stripe's
     #    `payment_intent.succeeded` and a failure lands it in `payment_failed`,
     #    but cash has no such event — so without this it would sit in `created`
     #    until an admin noticed, which for an order already printing in a

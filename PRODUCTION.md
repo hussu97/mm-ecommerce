@@ -813,6 +813,45 @@ tied to `APP_ENV` or `NOON_SEND_ENV` — production points `NOON_SEND_ENV` at
 noon's staging fleet, so an environment-shaped gate would have opened the trial
 to every customer the moment that was configured.
 
+#### Apple Push — waking the POS registers
+
+The APNs auth key is **team-scoped and account-wide**: one key serves every app
+in the Apple team and both the sandbox and production hosts, and Apple caps an
+account at two. So this is the *same* key the other apps already use — Key ID
+`CWXGV3TWNY`, Team `2F94NY8R3T`, local copy at `~/.apns/AuthKey_CWXGV3TWNY.p8`.
+Apple serves the `.p8` exactly once, at creation; if that file is lost the key
+has to be reissued.
+
+Empty means no push. Orders still arrive and the register still shows them when
+it polls, so a missing key is a quieter shop rather than a broken one.
+
+| Secret | Value | Notes |
+|--------|-------|-------|
+| `APNS_KEY_P8` | the `.p8`, **one line** | See the conversion below. A multi-line secret does not survive the `printf` into `.env` |
+| `APNS_KEY_ID` | `CWXGV3TWNY` | The ten characters shown beside the key in the Apple portal |
+| `APNS_TEAM_ID` | `2F94NY8R3T` | The `OU` of a signing certificate — *not* the ten characters in its common name |
+| `APNS_ORDER_SOUND` | falls back to `new-order.caf` | Bundled in the app |
+| `APNS_TIMEOUT_SECONDS` | falls back to `10` | |
+
+```bash
+# Flatten the PEM to one line with literal \n, then set it.
+awk 'BEGIN{ORS="\\n"} {print}' ~/.apns/AuthKey_CWXGV3TWNY.p8 \
+  | gh secret set APNS_KEY_P8 --repo hussu97/mm-ecommerce
+gh secret set APNS_KEY_ID  --repo hussu97/mm-ecommerce   # CWXGV3TWNY
+gh secret set APNS_TEAM_ID --repo hussu97/mm-ecommerce   # 2F94NY8R3T
+```
+
+One thing that must be done in the Apple portal, not here: **the Push
+Notifications capability has to be enabled on both App IDs** —
+`com.meltingmoments.pos` (the iPad register) and `com.meltingmoments.posmanager`
+(the phone companion). Without it every send fails with `DeviceTokenNotForTopic`,
+which does not mention the capability.
+
+A 403 from APNs is almost always one of three things and never the device: the
+wrong Key ID, the wrong Team ID, or the App Store Connect `.p8` instead of the
+push one. Both download as `AuthKey_<ID>.p8` and nothing inside the file
+distinguishes them.
+
 #### Frontend URLs (used in email templates & CORS)
 
 | Secret | Production value | Notes |

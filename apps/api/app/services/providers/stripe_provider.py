@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from urllib.parse import quote
 
@@ -124,7 +125,7 @@ class StripeProvider(PaymentProvider):
             raise BadRequestError("Stripe webhook secret not configured")
 
         try:
-            event = stripe.Webhook.construct_event(
+            stripe.Webhook.construct_event(
                 payload, signature, settings.STRIPE_WEBHOOK_SECRET
             )
         except SignatureVerificationError as e:
@@ -134,20 +135,37 @@ class StripeProvider(PaymentProvider):
             logger.error("Stripe webhook parsing error: %s", e)
             raise BadRequestError("Could not parse webhook payload")
 
-        event_type: str = event["type"]
-        obj = event["data"]["object"]
+        # Verified above; read below. The fields are taken out of the raw JSON
+        # rather than off the SDK's object model, deliberately.
+        #
+        # `construct_event` returns typed resources — `event["data"]["object"]`
+        # is a `PaymentIntent`, not a dict — and since stripe-python 8 those no
+        # longer subclass dict, so `.get()` raises `AttributeError: get`. That is
+        # exactly what happened: every `payment_intent.succeeded` since the SDK
+        # was upgraded threw there, and orders that were genuinely paid sat in
+        # `created`. The SDK's job is to prove the payload is authentic; JSON we
+        # already trust is a shape that cannot be changed out from under us by a
+        # minor version bump.
+        try:
+            body = json.loads(payload)
+        except ValueError:
+            raise BadRequestError("Could not parse webhook payload")
+
+        event_type: str = body.get("type", "")
+        obj: dict = (body.get("data") or {}).get("object") or {}
+        metadata: dict = obj.get("metadata") or {}
 
         order_number: str | None = None
         payment_intent_id: str | None = None
 
         if event_type.startswith("payment_intent."):
             payment_intent_id = obj.get("id")
-            order_number = obj.get("metadata", {}).get("order_number")
+            order_number = metadata.get("order_number")
         elif event_type == "charge.dispute.created":
             payment_intent_id = obj.get("payment_intent")
         elif event_type.startswith("charge."):
             payment_intent_id = obj.get("payment_intent")
-            order_number = obj.get("metadata", {}).get("order_number")
+            order_number = metadata.get("order_number")
 
         logger.info(
             "Stripe webhook: type=%s order=%s payment_intent=%s",
@@ -157,7 +175,7 @@ class StripeProvider(PaymentProvider):
         )
 
         return {
-            "event_id": event["id"],
+            "event_id": body.get("id"),
             "event_type": event_type,
             "order_number": order_number,
             "payment_intent_id": payment_intent_id,

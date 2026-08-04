@@ -109,6 +109,11 @@ jobs:
           NOON_SEND_MAX_DISTANCE_M=${{ secrets.NOON_SEND_MAX_DISTANCE_M || '15000' }}
           NOON_SEND_DETOUR_FACTOR=${{ secrets.NOON_SEND_DETOUR_FACTOR || '1.49' }}
           TRIAL_CUSTOMER_EMAILS=${{ secrets.TRIAL_CUSTOMER_EMAILS || 'h_abbasi97@hotmail.com' }}
+          APNS_KEY_P8=${{ secrets.APNS_KEY_P8 }}
+          APNS_KEY_ID=${{ secrets.APNS_KEY_ID }}
+          APNS_TEAM_ID=${{ secrets.APNS_TEAM_ID }}
+          APNS_ORDER_SOUND=${{ secrets.APNS_ORDER_SOUND || 'new-order.caf' }}
+          APNS_TIMEOUT_SECONDS=${{ secrets.APNS_TIMEOUT_SECONDS || '10' }}
           NOON_SEND_WEBHOOK_API_KEY=${{ secrets.NOON_SEND_WEBHOOK_API_KEY }}
           NOON_SEND_TIMEOUT_SECONDS=${{ secrets.NOON_SEND_TIMEOUT_SECONDS || '8' }}
           BATCH_DISPATCHER_ENABLED=${{ secrets.BATCH_DISPATCHER_ENABLED || 'true' }}

@@ -41,6 +41,10 @@ from .order_delivery import (  # noqa: F401
     is_failed,
     is_terminal,
 )
+from .device_push_token import (  # noqa: F401
+    DevicePushToken,
+    PushPlatformEnum,
+)
 from .audit_log import AuditLog  # noqa: F401
 from .admin_passkey import AdminPasskey, WebAuthnChallenge  # noqa: F401
 
@@ -199,6 +203,8 @@ __all__ = [
     "BatchStatusEnum",
     "OrderDelivery",
     "CourierStatusEnum",
+    "DevicePushToken",
+    "PushPlatformEnum",
     "NoonSendStatusEnum",
     "is_failed",
     "is_terminal",

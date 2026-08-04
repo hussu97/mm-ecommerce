@@ -1,5 +1,22 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ⏳ 2026-08-04: Stripe webhooks were failing silently, and the APNs groundwork
+
+### Plan
+- [x] 1. Find out whether Stripe was calling the webhook at all. It was — Cloud Logging shows `POST /api/v1/webhooks/stripe 200` with a `Stripe/1.0` user agent, and an `ERROR` on the same request: **`Stripe webhook error: get`**.
+- [x] 2. Root-cause and fix it. Reproduced locally against stripe-python 15.4.
+- [x] 3. Fix the second bug — the one that hid the first for three days.
+- [x] 4. APNs groundwork: token table, registration endpoints, provider, push service, GitHub secrets.
+
+### Review
+
+- **Root cause.** `stripe.Webhook.construct_event` returns typed resources, and since stripe-python 8 those no longer subclass `dict` — so `event["data"]["object"].get("id")` raises `AttributeError: get`. The SDK is on 15.4. Every `payment_intent.succeeded` threw there. The parse now reads the **verified JSON payload** instead of the SDK object model: `construct_event` still proves the body is authentic, but the fields come out of a shape a minor version bump cannot change.
+- **Why nobody noticed.** The route caught every exception and returned 200. Stripe saw an unbroken wall of successful deliveries, never retried, and paid orders sat in `created`. A bad signature is now a 400 and anything else propagates as a 500 so Stripe retries — and because the dedup row is written in the same transaction as the work, a rolled-back attempt leaves nothing behind for the retry to trip over. That second part was a latent bug of its own: with the old code the dedup row committed, so even a retry would have been skipped as a duplicate.
+- **Two orders are affected** — `MM-20260803-001` and `MM-20260804-001`, both paid in Stripe, both still `created`. The two 2 Aug sessions never produced a webhook at all, so those customers appear to have abandoned checkout. Once this deploys, resending those two events from the Stripe dashboard replays them properly; no script needed.
+- **APNs.** The key is team-scoped and account-wide, so the existing `CWXGV3TWNY` / team `2F94NY8R3T` covers the POS apps too — no new Apple key. JWT signing verified against the real `.p8`. `device_push_tokens` (migration `060`) keys on the token rather than the device, because the token is what Apple addresses and what iOS reissues; dead ones are revoked on `BadDeviceToken`/410 rather than retried forever.
+- **The sound cannot come from the push.** iOS will not loop a notification sound, so the push carries `requires_acknowledgement` and the app plays and repeats the tone itself. A push can only ever be the doorbell.
+
+
 ## ⏳ 2026-08-04: Polygons name a branch, and website orders reach its register
 
 ### Plan

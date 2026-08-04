@@ -211,6 +211,30 @@ class Settings(BaseSettings):
     NOON_SEND_WEBHOOK_API_KEY: str = ""
     NOON_SEND_TIMEOUT_SECONDS: float = 8.0
 
+    # ── Apple Push (the POS registers) ────────────────────────────────────────
+    #: The APNs auth key, as `.p8` PEM. Team-scoped and account-wide: one key
+    #: serves every app in the Apple team and both the sandbox and production
+    #: hosts, and Apple caps an account at two — so this is the same key the
+    #: other apps use, not a new one.
+    #:
+    #: Written by the deploy workflow as a single line with literal `\n`,
+    #: because a multi-line GitHub secret does not survive a `printf` into
+    #: `.env`. The provider puts the newlines back.
+    #:
+    #: Empty means no push at all: orders still arrive and the register still
+    #: shows them when it polls, so a missing key is a quieter shop, not a
+    #: broken one.
+    APNS_KEY_P8: str = ""
+    #: The ten-character Key ID shown next to the key in the Apple portal.
+    APNS_KEY_ID: str = ""
+    #: The Apple Team ID. This is the `OU` of a signing certificate, not the
+    #: ten characters in a certificate's common name.
+    APNS_TEAM_ID: str = ""
+    #: Sound file bundled in the app, played for a new order. The repeating
+    #: alarm is the app's own doing — iOS will not loop a notification sound.
+    APNS_ORDER_SOUND: str = "new-order.caf"
+    APNS_TIMEOUT_SECONDS: float = 10.0
+
     # ── Trial customers ───────────────────────────────────────────────────────
     #: The accounts running live tests against production. Comma-separated, and
     #: matched against a **signed-in** customer's own address — a guest checkout
