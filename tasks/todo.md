@@ -1,5 +1,43 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ⏳ 2026-08-04: Counter sales send no customer email
+
+Follow-up to the email revamp (PR #18, merged). Website and counter orders share
+one table, and the mailer could not tell them apart — so an admin moving a till
+sale through the unified orders screen emailed a customer who had been handed
+the box across the counter, and put a "New order" in both owners' inboxes.
+
+### Plan
+- [x] 1. `email_service.is_counter_sale` — keyed on `source == "cashier"`, the
+      column that exists for this distinction and the one the admin's channel
+      tab already filters on. Explicitly **not** `is_pos`, which is true for
+      website orders too; gating on that would have silenced every customer
+      email the shop sends.
+- [x] 2. Enforced at the funnel — `_send_order_email` and
+      `send_owner_order_notification` — rather than at each caller, because
+      `payment_service` calls the senders directly and `notify_status_change`
+      is only one of the ways in.
+- [x] 3. `OrderResponse.source`, so the mailer can see the channel. Nothing
+      customer-facing renders it.
+- [x] 4. Tests: every status silent for a counter sale, the senders silent when
+      called directly, the owner notification silent, and a regression test
+      pinning the gate to `source` rather than `is_pos`.
+
+### Review
+
+- **The `is_pos` trap is the whole story here.** Both an online order and a till
+  sale carry `is_pos = True`; only `source` separates them. A test asserts that
+  directly, because switching the predicate would break nothing else.
+- **Fails open.** A response with no `source` is not treated as a counter sale.
+  A stray email to a counter customer is a small cost; silencing the storefront
+  is not.
+- **Verified on real rows**, not just hand-built models: two orders in a
+  migrated database, both `is_pos = True`, one `cashier` and one `online`. The
+  counter sale produced nothing; the website order produced the customer
+  confirmation and both owner notifications, exactly as before.
+- 851 API tests pass, ruff clean.
+
+
 ## ⏳ 2026-08-04: Rebuild the order emails, and give a pickup order a branch
 
 The transactional emails were a serif-on-mauve template from before the

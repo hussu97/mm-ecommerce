@@ -10,6 +10,12 @@
 
 ## Lessons
 
+### [2026-08-04] `is_pos` is not the channel — a website order is a POS order too
+- **What went wrong**: nearly gated "don't email counter sales" on `orders.is_pos`. It reads like the flag for a till sale and it is not: `attach_online_order` sets `is_pos = True` on every storefront order, because an order a kitchen has to bake is a POS order in every operational sense and that is what `/pos/orders`, the dispatch board and the operations screens filter on. Gating on it would have silenced **every** customer email the shop sends, and no test in the suite would have failed — the fixtures build `OrderResponse` by hand and none of them carried the flag.
+- **Why it was tempting**: the request was "POS orders should not send customer emails", and there is a column called `is_pos`. The column that actually means "rung up at a till" is `source`, which is what the admin orders screen already filters its channel tab on.
+- **Rule**: before gating behaviour on a boolean, find every place that *writes* it, not just the places that read it. And when a distinction already exists somewhere in the product (here, the admin's Website/Counter tab), reuse its predicate rather than inventing a second one — two definitions of the same thing will disagree eventually, and the one in the mailer is the one nobody watches.
+
+
 ### [2026-08-04] Pydantic coerces a MagicMock to `True`, so a bool default in a test fixture asserts nothing
 - **What went wrong**: `_order()` in `test_order_service.py` builds a `MagicMock` and sets every column by hand, but never set `email_has_account`. `OrderResponse` has `from_attributes=True`, so validation read the attribute off the mock, got a `MagicMock`, and coerced it to `True` — the opposite of the field's default. Every test in that file had been quietly asserting a value nobody chose.
 - **Why it hid**: it only breaks on a *typed* field. Adding `fulfilment: FulfilmentResponse | None` raised immediately and 31 tests went red at once; the bool had been wrong in silence for as long as the field had existed.

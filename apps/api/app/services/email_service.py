@@ -16,9 +16,11 @@ from app.core.config import settings
 from app.core.database import AsyncSessionFactory
 from app.models.delivery_batch import DELIVERY_TIMEZONE
 from app.models.email_log import EmailLog
+from app.models.pos_order import OrderSourceEnum
 from app.schemas.order import OrderResponse
 
 __all__ = [
+    "is_counter_sale",
     "notify_status_change",
     "send_order_cancelled",
     "send_order_confirmation",
@@ -76,6 +78,25 @@ def _admin_order_url(order_number: str) -> str:
 
 
 # ─── Building the picture an order email paints ───────────────────────────────
+
+
+def is_counter_sale(order: OrderResponse) -> bool:
+    """
+    Whether this order was rung up at a till rather than placed on the website.
+
+    A counter sale gets none of these emails. The customer is standing at the
+    counter holding the box and a printed receipt: "your order is confirmed"
+    tells them something they watched happen, and "ready to collect" is a
+    notification about a cake already in their hands. The shop does not want the
+    owner notification for every till transaction either.
+
+    Keyed on `source`, which is the column that exists for exactly this
+    distinction and the one `/orders/admin/all` already filters its channel tab
+    on. **Not** on `is_pos`: that is true for website orders too — a storefront
+    order lands on a branch's register and is a POS order in every operational
+    sense — so gating on it would silence every customer email the shop sends.
+    """
+    return order.source == OrderSourceEnum.CASHIER.value
 
 
 def _money(value: Any) -> str:
@@ -398,7 +419,16 @@ async def _send_order_email(
     the order rather than becoming an exception in whatever was updating the
     order's status. A cake that is baked and boxed must not be blocked by a
     typo in a Jinja file.
+
+    It is also the one place a counter sale is turned away, for the same reason:
+    the rule belongs where every caller passes rather than at each of them.
     """
+    if is_counter_sale(order):
+        logger.info(
+            "Counter sale %s — no customer email (%s)", order.order_number, template
+        )
+        return
+
     try:
         html = _render(
             template,
@@ -437,6 +467,12 @@ async def send_order_confirmation(order: OrderResponse) -> None:
 
 
 async def send_owner_order_notification(order: OrderResponse) -> None:
+    # The counter does not need telling about the counter. Whoever rang it up is
+    # standing at the register that printed it.
+    if is_counter_sale(order):
+        logger.info("Counter sale %s — no owner notification", order.order_number)
+        return
+
     subject = _subject("New order", order)
     context = _order_context(order)
     snapshot = order.shipping_address_snapshot or {}
@@ -591,6 +627,13 @@ async def notify_status_change(order: OrderResponse) -> str | None:
     failures, so a caller can await this inside the transaction that moved the
     order.
     """
+    # A counter sale earns nothing, whatever its status. Checked here as well as
+    # in `_send_order_email` so the return value is the truth: reporting
+    # "confirmed" for an email nobody sent would make this function's answer
+    # useless to a caller trying to log what happened.
+    if is_counter_sale(order):
+        return None
+
     # A failed handover is not a status — the order stays exactly where it was,
     # because it is still paid for and still ours to deliver. It is only visible
     # on the courier record, which is why it is checked before the status map

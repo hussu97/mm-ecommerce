@@ -54,6 +54,7 @@ def _order(
     branch: PickupBranchResponse | None = None,
     payment_id: str | None = "pi_test",
     payment_method: str | None = "stripe",
+    source: str | None = "online",
     **stamps,
 ) -> OrderResponse:
     return OrderResponse(
@@ -85,6 +86,7 @@ def _order(
         admin_notes=None,
         created_at=NOW - timedelta(hours=1),
         updated_at=NOW,
+        source=source,
         items=[
             OrderItemResponse(
                 id=uuid.uuid4(),
@@ -443,3 +445,75 @@ async def test_every_template_renders_for_the_status_that_uses_it(sent):
         assert "<!DOCTYPE html>" in message["html"]
         assert "MELTING MOMENTS" in message["html"].upper()
         assert message["subject"].endswith("Melting Moments")
+
+
+# ── counter sales ─────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status",
+    [
+        OrderStatusEnum.CONFIRMED,
+        OrderStatusEnum.PACKED,
+        OrderStatusEnum.OUT_FOR_DELIVERY,
+        OrderStatusEnum.DELIVERED,
+        OrderStatusEnum.CANCELLED,
+        OrderStatusEnum.PAYMENT_FAILED,
+        OrderStatusEnum.REFUNDED,
+    ],
+)
+async def test_a_counter_sale_sends_nothing_whatever_its_status(status, sent):
+    """
+    The customer is at the counter holding the box and a printed receipt.
+    "Your order is confirmed" tells them something they watched happen.
+    """
+    order = _order(status=status, source="cashier")
+    assert await email_service.notify_status_change(order) is None
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_a_counter_sale_is_turned_away_at_the_mailer_not_at_its_callers(sent):
+    """
+    Called directly, past `notify_status_change`, because `payment_service` does
+    exactly that. The rule has to live where every caller passes.
+    """
+    counter = _order(source="cashier")
+    await email_service.send_order_confirmation(counter)
+    await email_service.send_order_packed(counter)
+    await email_service.send_order_delivered(counter)
+    await email_service.send_order_cancelled(counter)
+    await email_service.send_payment_failed(counter)
+    await email_service.send_refund_notification(counter)
+    await email_service.send_owner_order_notification(counter)
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_the_counter_does_not_need_telling_about_the_counter(sent):
+    """The owner notification is for website orders, not for every till sale."""
+    await email_service.send_owner_order_notification(_order(source="cashier"))
+    assert sent == []
+
+    await email_service.send_owner_order_notification(_order(source="online"))
+    # One per owner.
+    assert len(sent) == len(email_service.OWNER_ORDER_RECIPIENTS)
+
+
+def test_the_gate_reads_the_channel_and_not_whether_it_reached_a_register():
+    """
+    The regression this whole rule is one edit away from.
+
+    `is_pos` is **true for a website order** — a storefront order is attached to
+    a branch's register and is a POS order in every operational sense. Gating on
+    it instead of on `source` would silence every customer email the shop sends,
+    and nothing else in the suite would fail. `source` is the column that exists
+    for this distinction, and the one the admin's channel tab already filters on.
+    """
+    assert email_service.is_counter_sale(_order(source="cashier")) is True
+    assert email_service.is_counter_sale(_order(source="online")) is False
+    # A response built by hand carries no channel. It fails open on purpose: a
+    # stray email to a counter customer is a small cost, and silencing the
+    # storefront is not.
+    assert email_service.is_counter_sale(_order(source=None)) is False

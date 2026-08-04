@@ -254,6 +254,7 @@ def _order_mock(
     # version of the same problem.
     o.email_has_account = False
     o.fulfilment = None
+    o.source = "online"
     return o
 
 
