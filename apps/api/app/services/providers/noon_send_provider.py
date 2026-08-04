@@ -106,7 +106,6 @@ class NoonSendConfig:
     api_key: str
     env: str
     locale: str
-    outlet_code: str
     client_code: str
     timeout: float
 
@@ -120,9 +119,14 @@ class NoonSendConfig:
 
     @property
     def is_configured(self) -> bool:
-        """Credentials *and* a pickup point. A key with nowhere to collect from
-        cannot create a task, so it is not configured in any useful sense."""
-        return bool(self.api_key and self.outlet_code)
+        """Whether we can talk to noon Send at all.
+
+        The key only. Which outlet we collect from is a property of the branch,
+        not of the account, so "can we reach them" and "does this branch have
+        somewhere to collect from" are two separate questions with two separate
+        answers — and the second one is asked per dispatch.
+        """
+        return bool(self.api_key)
 
 
 def _config() -> NoonSendConfig:
@@ -130,7 +134,6 @@ def _config() -> NoonSendConfig:
         api_key=settings.NOON_SEND_API_KEY,
         env=settings.NOON_SEND_ENV,
         locale=settings.NOON_SEND_LOCALE,
-        outlet_code=settings.NOON_SEND_OUTLET_CODE,
         client_code=settings.NOON_SEND_CLIENT_CODE,
         timeout=settings.NOON_SEND_TIMEOUT_SECONDS,
     )
@@ -163,13 +166,10 @@ class NoonSendClient:
         idempotency_key: str | None = None,
         timeout: float | None = None,
         attempts: int = 2,
-        require_outlet: bool = True,
     ) -> Any:
         config = self.config
         if not config.api_key:
             raise NoonSendError("noon Send is not configured")
-        if require_outlet and not config.outlet_code:
-            raise NoonSendError("noon Send has no pickup point configured")
 
         headers = {
             "X-API-Key": config.api_key,
@@ -214,6 +214,7 @@ class NoonSendClient:
         self,
         *,
         order_reference: str,
+        outlet_code: str,
         drop_off_address: dict[str, Any],
         prepaid_value: int = 0,
         cod_value: int = 0,
@@ -226,14 +227,22 @@ class NoonSendClient:
         """
         POST /public/v1/create-task — a rider is dispatched to the kitchen.
 
+        `outlet_code` is which branch the rider collects from — required, and
+        deliberately not defaulted from configuration. A task sent to the wrong
+        kitchen is a rider standing outside a closed door, and the caller always
+        knows which branch it resolved.
+
         The idempotency key is what stops a retried request from putting two
         riders on one cake, so it defaults to the order reference rather than
         being left to the caller to remember.
         """
+        if not outlet_code:
+            raise NoonSendError("This branch is not registered with noon Send")
+
         config = self.config
         body: dict[str, Any] = {
             "order_reference": order_reference,
-            "outlet_code": config.outlet_code,
+            "outlet_code": outlet_code,
             "client_code": config.client_code,
             "drop_off_address": drop_off_address,
             "package_count": package_count,
@@ -285,14 +294,11 @@ class NoonSendClient:
 
     async def get_configurations(self) -> dict[str, Any]:
         """GET /public/v1/configurations — our real distance and payment caps."""
-        return (
-            await self._call("GET", "/public/v1/configurations", require_outlet=False)
-            or {}
-        )
+        return await self._call("GET", "/public/v1/configurations") or {}
 
     async def get_outlets(self) -> list[dict[str, Any]]:
         """GET /public/v1/outlets — noon-side outlets we may collect from."""
-        result = await self._call("GET", "/public/v1/outlets", require_outlet=False)
+        result = await self._call("GET", "/public/v1/outlets")
         return result if isinstance(result, list) else []
 
     # ── pickup points ─────────────────────────────────────────────────────────
@@ -306,7 +312,6 @@ class NoonSendClient:
                 "latitude": coordinate(latitude),
                 "longitude": coordinate(longitude),
             },
-            require_outlet=False,
         )
         return bool((result or {}).get("is_serviceable"))
 
@@ -346,16 +351,13 @@ class NoonSendClient:
                 "POST",
                 "/public/v1/pickup-points/create",
                 json_body=body,
-                require_outlet=False,
             )
             or {}
         )
 
     async def list_pickup_points(self) -> list[dict[str, Any]]:
         """GET /public/v1/pickup-points/list."""
-        result = await self._call(
-            "GET", "/public/v1/pickup-points/list", require_outlet=False
-        )
+        result = await self._call("GET", "/public/v1/pickup-points/list")
         return (result or {}).get("pickup_points") or []
 
 

@@ -35,6 +35,15 @@ export default function BranchesPage() {
         { header: 'Hours', render: (b) => `${b.opening_from} – ${b.opening_to}` },
         { header: 'Day starts', render: (b) => b.business_day_start },
         { header: 'Online', render: (b) => (b.receives_online_orders ? 'Yes' : 'No') },
+        {
+          header: 'noon Send',
+          render: (b) =>
+            b.noon_send_outlet_code ? (
+              <code className="text-xs text-gray-500">{b.noon_send_outlet_code}</code>
+            ) : (
+              <span className="text-xs text-gray-400">—</span>
+            ),
+        },
         { header: 'Status', render: (b) => <StatusBadge active={b.is_active && !b.deleted_at} /> },
       ]}
       fields={[
@@ -70,6 +79,13 @@ export default function BranchesPage() {
         { name: 'tax_registration_name', label: 'Tax registration name' },
         { name: 'receipt_header', label: 'Receipt header', type: 'textarea' },
         { name: 'receipt_footer', label: 'Receipt footer', type: 'textarea' },
+        {
+          name: 'noon_send_outlet_code',
+          label: 'noon Send outlet code',
+          placeholder: 'PCKP_...',
+          helper:
+            'From registering this branch with noon Send. Leave empty and its orders go by Lalamove instead.',
+        },
         { name: 'receives_online_orders', label: 'Accepts online orders', type: 'checkbox' },
         { name: 'accepts_reservations', label: 'Accepts reservations', type: 'checkbox' },
         { name: 'display_order', label: 'Display order', type: 'number' },

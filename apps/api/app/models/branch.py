@@ -95,6 +95,18 @@ class Branch(Base, UUIDMixin, TimestampMixin):
         nullable=True,
     )
 
+    # Courier identity. A branch is a pickup location as far as a courier is
+    # concerned, so which outlet a courier collects from belongs here rather
+    # than in the environment — the same place its coordinates and phone number
+    # already live. Lalamove needs nothing but those two; noon Send additionally
+    # requires the branch to be registered with them, and calls the result an
+    # outlet code.
+    #
+    # Null means this branch cannot dispatch through noon Send. Register it with
+    # `python -m scripts.register_noon_send_pickup --create --branch <ref>`,
+    # which writes the code it gets back into this column.
+    noon_send_outlet_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
     # Capabilities
     receives_online_orders: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"

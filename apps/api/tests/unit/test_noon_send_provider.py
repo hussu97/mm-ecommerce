@@ -36,7 +36,6 @@ def _config(**overrides) -> NoonSendConfig:
         "api_key": "test-key",
         "env": "staging",
         "locale": "en-ae",
-        "outlet_code": "PCKP_TEST123",
         "client_code": "noon_food",
         "timeout": 5.0,
     }
@@ -115,6 +114,7 @@ async def test_create_task_sends_the_headers_and_shape_they_require(monkeypatch)
     client = NoonSendClient(_config())
     result = await client.create_task(
         order_reference="MM-1001",
+        outlet_code="PCKP_TEST123",
         drop_off_address={
             "lat": coordinate(KITCHEN[0]),
             "lng": coordinate(KITCHEN[1]),
@@ -147,6 +147,7 @@ async def test_a_cash_order_sends_cod_and_never_both(monkeypatch):
 
     await NoonSendClient(_config()).create_task(
         order_reference="MM-1002",
+        outlet_code="PCKP_TEST123",
         drop_off_address={},
         cod_value=fils("185.00"),
         prepaid_value=fils("185.00"),
@@ -159,14 +160,18 @@ async def test_a_cash_order_sends_cod_and_never_both(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_nothing_is_sent_without_a_pickup_point(monkeypatch):
-    """A key with nowhere to collect from cannot create a task."""
+async def test_nothing_is_sent_for_an_unregistered_branch(monkeypatch):
+    """
+    A branch with no outlet code has nowhere for a rider to collect from, and
+    the request is refused here rather than sent and rejected. The message names
+    the branch rather than the account, because the fix is a field in the admin.
+    """
     recorder = _Recorder([])
     monkeypatch.setattr(ns.httpx, "AsyncClient", recorder)
 
-    with pytest.raises(NoonSendError, match="pickup point"):
-        await NoonSendClient(_config(outlet_code="")).create_task(
-            order_reference="MM-1003", drop_off_address={}
+    with pytest.raises(NoonSendError, match="not registered with noon Send"):
+        await NoonSendClient(_config()).create_task(
+            order_reference="MM-1003", outlet_code="", drop_off_address={}
         )
     assert recorder.requests == []
 
@@ -185,7 +190,7 @@ async def test_a_server_error_is_retried_once(monkeypatch):
     monkeypatch.setattr(ns.httpx, "AsyncClient", recorder)
 
     result = await NoonSendClient(_config()).create_task(
-        order_reference="MM-1004", drop_off_address={}
+        order_reference="MM-1004", outlet_code="PCKP_TEST123", drop_off_address={}
     )
     assert result["mp_task_nr"] == "ABC"
     assert len(recorder.requests) == 2
@@ -216,7 +221,7 @@ async def test_a_validation_error_is_flattened_into_one_sentence(monkeypatch):
 
     with pytest.raises(NoonSendError) as caught:
         await NoonSendClient(_config()).create_task(
-            order_reference="MM-1005", drop_off_address={}
+            order_reference="MM-1005", outlet_code="PCKP_TEST123", drop_off_address={}
         )
     assert "drop_off_address.lat: value is not a valid integer" in str(caught.value)
 

@@ -176,8 +176,14 @@ class Settings(BaseSettings):
     NOON_SEND_ENV: str = "staging"
     #: Sent on every call. `en-ae` or `en-sa`; only the UAE fleet concerns us.
     NOON_SEND_LOCALE: str = "en-ae"
-    #: The pickup point the rider collects from, as returned by
-    #: `scripts/register_noon_send_pickup.py`. Without it nothing dispatches.
+    #: Fallback pickup point, for a branch with no code of its own.
+    #:
+    #: The real home for this is `branches.noon_send_outlet_code`, set in the
+    #: admin — a courier collects from a *place*, and one environment variable
+    #: cannot hold two answers once a second kitchen starts delivering. This
+    #: remains so the current single-kitchen deployment keeps working without
+    #: anyone touching the admin, and so a fresh environment has something to
+    #: point at before any branch is registered.
     NOON_SEND_OUTLET_CODE: str = ""
     #: `noon_food` or `nownow` — which side of noon owns the pickup point.
     NOON_SEND_CLIENT_CODE: str = "noon_food"

@@ -744,7 +744,6 @@ however the map is redrawn.
 | Secret | Production value | Notes |
 |--------|-----------------|-------|
 | `NOON_SEND_API_KEY` | staging key for now | The staging key is in the ROD integration doc. Request a production key from the noon RoD integrations team (`kasinghal@noon.com`) |
-| `NOON_SEND_OUTLET_CODE` | `PCKP_MLTNGM3W62` | The kitchen's staging pickup point, already created and serviceable. Re-run `python -m scripts.register_noon_send_pickup --create` against production when the production key arrives |
 | `NOON_SEND_WEBHOOK_API_KEY` | a secret you generate | Hand the same value to the integrations team with the webhook URLs |
 
 The rest fall back in the deploy workflow:
@@ -752,6 +751,7 @@ The rest fall back in the deploy workflow:
 | Secret | Falls back to | Notes |
 |--------|---------------|-------|
 | `NOON_SEND_ENV` | `staging` | Deliberate while the trial runs — see the note above. `production` once the live key exists |
+| `NOON_SEND_OUTLET_CODE` | *(empty)* | **Not the place to set this.** It is a fallback for a branch with no code of its own; the real value lives on the branch (below). Leave it unset |
 | `NOON_SEND_LOCALE` | `en-ae` | |
 | `NOON_SEND_CLIENT_CODE` | `noon_food` | `noon_food` or `nownow` |
 | `NOON_SEND_MAX_DISTANCE_M` | `15000` | Their documented cap. `GET /public/v1/configurations` reports the real per-partner limit |
@@ -760,9 +760,28 @@ The rest fall back in the deploy workflow:
 
 ```bash
 gh secret set NOON_SEND_API_KEY --repo hussu97/mm-ecommerce
-gh secret set NOON_SEND_OUTLET_CODE --repo hussu97/mm-ecommerce   # PCKP_MLTNGM3W62
 gh secret set NOON_SEND_WEBHOOK_API_KEY --repo hussu97/mm-ecommerce
 ```
+
+**Registering a branch.** Which outlet a rider collects from is a property of the
+branch, not of the deployment — Lalamove already reads the pickup coordinates and
+phone from the same row. Each kitchen is registered with noon Send separately and
+keeps its own code:
+
+```bash
+python -m scripts.register_noon_send_pickup                          # report all
+python -m scripts.register_noon_send_pickup --branch K001 --create   # register one
+```
+
+The script reads the branch's pin, address and phone, refuses a location noon Send
+says it cannot reach, and writes the returned code into
+`branches.noon_send_outlet_code`. It is also visible and editable at
+**Admin → Branches → noon Send outlet code**, which is where you would paste a code
+issued out of band.
+
+A branch with no code simply does not dispatch through noon Send — its orders fall
+back to Lalamove, and the delivery row says which branch is missing a code. So when
+Barsha Heights starts delivering, it is one script run and no deploy.
 
 Two things have to be done by the noon RoD integrations team, not here:
 

@@ -1,5 +1,20 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ⏳ 2026-08-04: Move the noon Send outlet code onto the branch
+
+### Plan
+- [x] 1. Add `branches.noon_send_outlet_code` (migration `058`), exposed in the branch schemas and editable at Admin → Branches. A courier collects from a *place*, and every other fact about that place — pin, phone, address, whether it takes online orders — already lives on the branch row; Lalamove reads its pickup from there too.
+- [x] 2. Make the branch the source of truth. `resolve_pickup` now returns the branch's `reference` and `noon_send_outlet_code` on the shared `PickupPoint`, so both couriers resolve one place once and cannot disagree about it. `NOON_SEND_OUTLET_CODE` survives only as a fallback for a branch with none, which is what keeps the current deployment working with nothing filled in.
+- [x] 3. Make `create_task` require `outlet_code` per call rather than reading configuration. A task sent to the wrong kitchen is a rider outside a closed door, and the caller always knows which branch resolved. `is_configured` is now the API key alone — "can we reach noon Send" and "does this branch have somewhere to collect from" are two questions with two answers, and the second is asked per dispatch.
+- [x] 4. Rewrite the registration script to work per branch, reading the pin/address/phone off the row and writing the returned code back onto it.
+
+### Review
+
+- **Verified against the real staging API with `NOON_SEND_OUTLET_CODE` deliberately empty**, so only the branch column could supply it. Registered two branches separately — K001 → `PCKP_MLTNGMYRIN`, B001 (Barsha Heights) → `PCKP_TTBSSC1TQX` — dispatched an order, and read the task back from noon Send: `collected from: PCKP_MLTNGMYRIN — Melting Moments Cakes`. That is the multi-outlet case working today, not just designed for.
+- A branch with no code refuses with `Branch B001 has no noon Send outlet code — register it and set it on the branch`, named because the fix is a field in the admin and "noon Send is not configured" would send someone to the deploy secrets, which are fine.
+- Re-running `--create` on an already-registered branch is refused rather than silently creating a second pickup point — the API has no delete, so duplicates are permanent.
+- **What is still single-kitchen:** `resolve_pickup` picks one branch for the whole country. Making it a function of the destination — the zone that priced the order naming the branch that serves it — is the remaining piece, and everything downstream already takes the pickup point as an argument rather than reaching for a global, so it is the only change needed.
+
 ## ⏳ 2026-08-04: Route the trial account to noon Send staging, and run it end to end
 
 ### Plan

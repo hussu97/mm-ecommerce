@@ -189,6 +189,14 @@ async def may_serve(db: AsyncSession, order: Order) -> tuple[bool, str | None]:
     pickup = await resolve_pickup(db)
     if pickup is None:
         return False, "No pickup branch is configured"
+    if not pickup.noon_send_outlet_code:
+        # Named, because the fix is a field in the admin rather than anything in
+        # code, and "noon Send is not configured" would send someone looking in
+        # the wrong place entirely.
+        return False, (
+            f"Branch {pickup.reference or pickup.name} has no noon Send outlet "
+            "code — register it and set it on the branch"
+        )
 
     distance = road_distance_km(pickup.latitude, pickup.longitude, latitude, longitude)
     limit_km = settings.NOON_SEND_MAX_DISTANCE_M / 1000
@@ -327,6 +335,17 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
     if delivery is None:
         return None
 
+    pickup = await resolve_pickup(db)
+    if pickup is None:
+        delivery.last_error = "No pickup branch is configured"
+        return delivery
+    if not pickup.noon_send_outlet_code:
+        delivery.last_error = (
+            f"Branch {pickup.reference or pickup.name} has no noon Send outlet "
+            "code — register it and set it on the branch"
+        )
+        return delivery
+
     task, reason = build_task(order, await outstanding_balance(db, order))
     if task is None:
         delivery.last_error = reason
@@ -335,6 +354,9 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
     try:
         created = await provider.create_task(
             order_reference=task.order_reference,
+            # The branch that actually resolved, not a global. When a second
+            # kitchen starts delivering this is already the right value.
+            outlet_code=pickup.noon_send_outlet_code,
             drop_off_address=task.drop_off_address,
             prepaid_value=task.prepaid_value,
             cod_value=task.cod_value,
@@ -399,9 +421,10 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
     delivery.last_payload = created
 
     logger.info(
-        "noon Send task %s created for %s (est. AED %s)",
+        "noon Send task %s created for %s from %s (est. AED %s)",
         task_nr,
         order.order_number,
+        pickup.reference or pickup.name,
         delivery.cost_total if delivery.cost_total is not None else "-",
     )
 

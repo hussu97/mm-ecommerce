@@ -23,6 +23,7 @@ import pytest
 from app.models.order import OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
 from app.services import noon_send_service
+from app.services.lalamove_service import PickupPoint
 
 NOW = datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc)
 TASK_NR = "EHG84NNJMVG35BTDE"
@@ -249,16 +250,31 @@ async def test_the_ack_from_create_task_is_not_stored_as_a_status(monkeypatch):
         async def commit(self):
             pass
 
+    sent: dict = {}
+
     async def get_delivery(*_args):
         return delivery
 
-    async def create_task(**_kwargs):
+    async def resolve_pickup(*_args):
+        return PickupPoint(
+            name="Melting Moments Cakes",
+            phone="+971501234567",
+            address="Al Majaz 3, Sharjah",
+            latitude=25.3304139,
+            longitude=55.3736131,
+            reference="K001",
+            noon_send_outlet_code="PCKP_MLTNGM3W62",
+        )
+
+    async def create_task(**kwargs):
+        sent.update(kwargs)
         return {"mp_task_nr": TASK_NR, "status": "successful"}
 
     async def estimate(*_args, **_kwargs):
         return None, "not under test"
 
     monkeypatch.setattr(noon_send_service, "get_delivery", get_delivery)
+    monkeypatch.setattr(noon_send_service, "resolve_pickup", resolve_pickup)
     monkeypatch.setattr(noon_send_service.provider, "create_task", create_task)
     monkeypatch.setattr(noon_send_service, "estimate_for_point", estimate)
 
@@ -268,6 +284,85 @@ async def test_the_ack_from_create_task_is_not_stored_as_a_status(monkeypatch):
     assert result.courier_status in {
         s.value for s in noon_send_service.NoonSendStatusEnum
     }
+    # The branch that resolved, not a global — this is what makes a second
+    # kitchen a row in the admin rather than a deploy.
+    assert sent["outlet_code"] == "PCKP_MLTNGM3W62"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "branch_code,setting,expected",
+    [
+        # The branch is the source of truth.
+        ("PCKP_BRANCH01", "PCKP_GLOBAL01", "PCKP_BRANCH01"),
+        # The setting is the fallback that keeps the single-kitchen deployment
+        # working with nothing filled in.
+        (None, "PCKP_GLOBAL01", "PCKP_GLOBAL01"),
+        (None, "", ""),
+    ],
+)
+async def test_the_outlet_code_comes_from_the_branch_first(
+    monkeypatch, branch_code, setting, expected
+):
+    """
+    Which outlet a rider collects from is a property of the place, not of the
+    account. One environment variable cannot hold two answers, and the second
+    kitchen is the whole reason this moved onto the branch.
+    """
+    from app.core.config import settings as app_settings
+    from app.services import lalamove_service
+
+    monkeypatch.setattr(app_settings, "NOON_SEND_OUTLET_CODE", setting)
+    monkeypatch.setattr(app_settings, "LALAMOVE_PICKUP_BRANCH_REF", "")
+    monkeypatch.setattr(app_settings, "LALAMOVE_SENDER_PHONE", "")
+
+    branch = SimpleNamespace(
+        name="Melting Moments Cakes",
+        reference="K001",
+        address="Al Majaz 3, Sharjah",
+        latitude=Decimal("25.3304139"),
+        longitude=Decimal("55.3736131"),
+        phone="+971501234567",
+        noon_send_outlet_code=branch_code,
+    )
+
+    class _Db:
+        async def execute(self, _stmt):
+            return _FakeResult(branch)
+
+    pickup = await lalamove_service.resolve_pickup(_Db())
+    assert pickup.noon_send_outlet_code == expected
+    assert pickup.reference == "K001"
+
+
+@pytest.mark.asyncio
+async def test_an_unregistered_branch_is_named_in_the_refusal(monkeypatch):
+    """
+    The fix for this is a field in the admin, so the message has to say which
+    branch — "noon Send is not configured" would send someone to the deploy
+    secrets, which are fine.
+    """
+
+    async def resolve_pickup(*_args):
+        return PickupPoint(
+            name="Barsha Heights",
+            phone="+971501234567",
+            address="Barsha Heights, Dubai",
+            latitude=25.0984482,
+            longitude=55.1741736,
+            reference="B001",
+            noon_send_outlet_code="",
+        )
+
+    monkeypatch.setattr(noon_send_service, "resolve_pickup", resolve_pickup)
+    order = SimpleNamespace(
+        shipping_address_snapshot={"latitude": 25.0985, "longitude": 55.1742}
+    )
+
+    allowed, reason = await noon_send_service.may_serve(_FakeDb(order), order)
+    assert not allowed
+    assert "B001" in reason
+    assert "outlet code" in reason
 
 
 def test_building_a_task_touches_only_plain_columns():

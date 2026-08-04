@@ -90,11 +90,25 @@ def is_enabled() -> bool:
 
 @dataclass(frozen=True)
 class PickupPoint:
+    """
+    A branch, in the shape a courier needs it.
+
+    Shared by both couriers rather than one each, because "which place does this
+    order leave from" has a single answer and duplicating the resolution is how
+    the two would come to disagree about it.
+    """
+
     name: str
     phone: str
     address: str
     latitude: float
     longitude: float
+    #: Which branch this is, for logging and for a courier that needs to name it.
+    reference: str = ""
+    #: What noon Send calls this branch. Empty means it is not registered with
+    #: them, so it can be a Lalamove pickup but not a noon Send one. Lalamove
+    #: needs no equivalent — it takes coordinates and an address.
+    noon_send_outlet_code: str = ""
 
     def as_stop(self) -> dict[str, Any]:
         return {
@@ -114,6 +128,12 @@ async def resolve_pickup(db: AsyncSession) -> PickupPoint | None:
     the first active branch that takes online orders and has a pin, because a
     branch without coordinates cannot be a pickup stop no matter how it is
     flagged.
+
+    Still one branch for the whole country. When a second one starts delivering,
+    this becomes a function of the destination — the zone that priced the order
+    naming the branch that serves it — and that is the only change needed:
+    everything downstream already takes the pickup point as an argument rather
+    than reaching for a global.
     """
     stmt = select(Branch).where(
         Branch.is_active.is_(True),
@@ -148,6 +168,13 @@ async def resolve_pickup(db: AsyncSession) -> PickupPoint | None:
         address=branch.address or branch.name,
         latitude=float(branch.latitude),
         longitude=float(branch.longitude),
+        reference=branch.reference,
+        # The setting is the fallback, not the source: a branch that names its
+        # own outlet wins, so a second kitchen is a row in the admin rather than
+        # a deploy.
+        noon_send_outlet_code=(
+            branch.noon_send_outlet_code or settings.NOON_SEND_OUTLET_CODE or ""
+        ),
     )
 
 
