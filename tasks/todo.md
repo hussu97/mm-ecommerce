@@ -6,7 +6,17 @@
 - [x] 1. Start the address map on the pin of the address being edited. The pan effect only ever ran when the map instance appeared, so the viewport was whatever `defaultCenter` was at mount and never moved; it now follows the pin, but only when the pin has left the view, so tapping the map does not drag it out from under the finger that tapped.
 - [x] 2. Replace the "Fatema"/"Abbasi" name placeholders with generic ones in both locales. The owner's own name read as a pre-filled value rather than a hint.
 - [x] 3. Stop a promo band advertising a category the storefront no longer serves. Yesterday's fix taught category *tiles* to disappear with their category; hero slides and promo bands carry a hand-typed `cta_href` with no link to the catalogue, so hiding every dessert left "Straight from the fridge — Shop desserts" filling the home page and pointing at an empty listing.
-- [ ] 4. Deploy, verify green, confirm on the live site.
+- [x] 4. Deploy, verify green, confirm on the live site. PR #10 merged; production run `30881396167` green.
+
+### Result
+
+- The address map now opens centred on the address being edited. Verified in a browser against a Ras al-Khaimah pin: the map frames RAK with the marker in view, where before it showed the Dubai default with the marker off the edge.
+- Name placeholders read "First name" / "Last name" (`الاسم الأول` / `اسم العائلة`), replacing the owner's own name.
+- The desserts promo band is gone from the live home page in both locales — 0 `cat-desserts` links, 0 occurrences of "Straight from the fridge" — while the cookies band is untouched.
+
+### Review
+
+- Yesterday's visibility fix was working: the API had already dropped `cat-desserts` from `/categories` and returned 0 products for it. What survived was a *promo band*, a block type with no category relationship at all — the CTA URL was the only link back to the catalogue, so that is where the rule now lives. Hero slides were given the same guard so the next hidden category cannot reproduce this in the carousel.
 
 ## ⏳ 2026-08-03: City courier zones, third-party beyond, and a delivery estimate
 
