@@ -22,7 +22,7 @@ import { ordersApi, exportApi } from '@/lib/api';
 import { branchesApi } from '@/lib/pos-api';
 import type { Branch } from '@/lib/pos-types';
 import type { Order, OrderStatus } from '@/lib/types';
-import { Badge, Button, Input, Pagination, Select, TabBar } from '@/components/ui';
+import { Badge, Button, Input, Pagination, Select, TabBar, LoadError} from '@/components/ui';
 import { formatCurrency, formatDate } from '@/lib/utils';
 
 const STATUS_OPTIONS = [
@@ -72,6 +72,7 @@ export default function OrdersPage() {
   const [pages, setPages] = useState(1);
   const [perPage, setPerPage] = useState(50);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [branchId, setBranchId] = useState('');
@@ -103,6 +104,7 @@ export default function OrdersPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const res = await ordersApi.listAll({
         search: debouncedSearch || undefined,
@@ -115,8 +117,8 @@ export default function OrdersPage() {
       setOrders(res.items);
       setTotal(res.total);
       setPages(res.pages);
-    } catch {
-      // silent
+    } catch (err) {
+      setLoadError((err as Error).message);
     } finally {
       setLoading(false);
     }
@@ -129,8 +131,8 @@ export default function OrdersPage() {
   async function exportCsv() {
     try {
       await exportApi.exportOrders({ status: statusFilter || undefined });
-    } catch {
-      // silent
+    } catch (err) {
+      setLoadError((err as Error).message);
     }
   }
 
@@ -141,6 +143,7 @@ export default function OrdersPage() {
 
   return (
     <div>
+      <LoadError message={loadError} onRetry={load} />
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="font-display text-2xl text-gray-800">Orders</h1>

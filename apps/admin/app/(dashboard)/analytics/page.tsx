@@ -87,6 +87,7 @@ function Empty({ message = 'No data for this period.' }: { message?: string }) {
 }
 
 // ─── Page ────────────────────────────────────────────────────────────────────
+import { LoadError } from '@/components/ui';
 
 export default function AnalyticsPage() {
   const [preset, setPreset] = useState('30d');
@@ -104,10 +105,12 @@ export default function AnalyticsPage() {
   const [zones, setZones] = useState<ZoneSalesData[]>([]);
   const [promos, setPromos] = useState<PromoPerformance[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [exporting, setExporting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const params = { start_date: startDate, end_date: endDate };
       const [ov, rev, oc, tp, fn, tr, cu, bd, em, pr] = await Promise.all([
@@ -132,8 +135,8 @@ export default function AnalyticsPage() {
       setBreakdown(bd);
       setZones(em);
       setPromos(pr);
-    } catch {
-      // silent — API may not be running
+    } catch (err) {
+      setLoadError((err as Error).message);
     } finally {
       setLoading(false);
     }
@@ -145,8 +148,8 @@ export default function AnalyticsPage() {
     setExporting(true);
     try {
       await exportApi.exportOrders({ start_date: startDate, end_date: endDate });
-    } catch {
-      // silent
+    } catch (err) {
+      setLoadError((err as Error).message);
     } finally {
       setExporting(false);
     }
@@ -181,6 +184,7 @@ export default function AnalyticsPage() {
 
   return (
     <div>
+      <LoadError message={loadError} onRetry={load} />
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <div>

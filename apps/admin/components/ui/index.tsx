@@ -321,3 +321,39 @@ export function TabBar({ tabs, active, onChange }: TabBarProps) {
     </div>
   );
 }
+
+
+/**
+ * Says a screen could not load, instead of the screen quietly showing nothing.
+ *
+ * Every list page used to swallow a failed fetch with `// silent`, which turned
+ * a 500 into an empty table. The audit and email log screens sat empty for
+ * months that way while both tables filled up behind them — the endpoints were
+ * returning errors on every single request and nothing on any screen said so.
+ *
+ * An empty table is a legitimate answer to "no results". It must never also be
+ * the answer to "the server refused".
+ */
+export function LoadError({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  if (!message) return null;
+  return (
+    <div
+      role="alert"
+      className="mb-4 border border-red-200 bg-red-50 px-4 py-3 flex flex-wrap items-center gap-x-3 gap-y-1"
+    >
+      <span className="material-icons text-[18px] text-red-500">error_outline</span>
+      <span className="text-sm text-red-800 font-body">
+        Couldn&rsquo;t load this list. {message}
+      </span>
+      {onRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="text-sm font-body text-red-800 underline underline-offset-2 hover:no-underline"
+        >
+          Try again
+        </button>
+      )}
+    </div>
+  );
+}

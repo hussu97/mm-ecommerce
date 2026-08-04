@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { productsApi, categoriesApi, bulkApi } from '@/lib/api';
 import type { Category, Product, SalesChannel } from '@/lib/types';
 import { ChannelBadges } from '@/components/products/SalesChannels';
-import { Badge, Button, Input, MultiSelect, Pagination, TabBar } from '@/components/ui';
+import { Badge, Button, Input, MultiSelect, Pagination, TabBar, LoadError} from '@/components/ui';
 import { formatCurrency } from '@/lib/utils';
 
 export default function ProductsPage() {
@@ -16,6 +16,7 @@ export default function ProductsPage() {
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<'active' | 'inactive'>('active');
@@ -27,6 +28,7 @@ export default function ProductsPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const base = {
         search: search || undefined,
@@ -43,8 +45,8 @@ export default function ProductsPage() {
       setTotal(res.total);
       setPages(res.pages);
       setTabCounts(prev => ({ ...prev, [activeTab]: res.total }));
-    } catch {
-      // silent
+    } catch (err) {
+      setLoadError((err as Error).message);
     } finally {
       setLoading(false);
     }
@@ -146,6 +148,7 @@ export default function ProductsPage() {
 
   return (
     <div>
+      <LoadError message={loadError} onRetry={load} />
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>

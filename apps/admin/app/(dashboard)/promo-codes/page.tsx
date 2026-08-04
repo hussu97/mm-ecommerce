@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { promoApi, bulkApi, ApiError } from '@/lib/api';
 import type { PromoCode } from '@/lib/types';
-import { Button, Input, Pagination, Select, TabBar } from '@/components/ui';
+import { Button, Input, Pagination, Select, TabBar, LoadError} from '@/components/ui';
 import { formatCurrency, formatDate } from '@/lib/utils';
 
 const DISCOUNT_TYPE_OPTIONS = [
@@ -34,6 +34,7 @@ const EMPTY_FORM: FormState = {
 export default function PromoCodesPage() {
   const [codes, setCodes] = useState<PromoCode[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [activeTab, setActiveTab] = useState<'active' | 'inactive'>('active');
   const [showForm, setShowForm] = useState(false);
   const [editingCode, setEditingCode] = useState<PromoCode | null>(null);
@@ -52,11 +53,12 @@ export default function PromoCodesPage() {
 
   async function load() {
     setLoading(true);
+    setLoadError('');
     try {
       const res = await promoApi.list(true);
       setCodes(res);
-    } catch {
-      // silent
+    } catch (err) {
+      setLoadError((err as Error).message);
     } finally {
       setLoading(false);
     }
@@ -195,6 +197,7 @@ export default function PromoCodesPage() {
 
   return (
     <div>
+      <LoadError message={loadError} onRetry={load} />
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>

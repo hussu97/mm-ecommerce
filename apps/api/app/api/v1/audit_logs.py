@@ -16,15 +16,28 @@ router = APIRouter()
 
 
 class AuditLogItem(BaseModel):
-    id: str
+    """
+    One row, as the admin reads it.
+
+    The id columns are typed `UUID` rather than `str` because that is what they
+    are. Pydantic v2 does not coerce a `UUID` into a `str` field — it raises —
+    and since these are read straight off the ORM row, every single response
+    from this endpoint was a 500 and the audit screen was permanently empty
+    while the table filled up behind it. They still serialise to strings in the
+    JSON, so nothing downstream changes.
+    """
+
+    id: uuid.UUID
     action: str
     entity_type: str
-    entity_id: str
-    entity_label: str
-    admin_id: str
-    admin_email: str
-    changes: dict | None
-    ip_address: str | None
+    entity_id: uuid.UUID
+    #: Nullable in the table. Typed as such, or a row logged without a label
+    #: takes the whole page down with it rather than showing a blank cell.
+    entity_label: str | None = None
+    admin_id: uuid.UUID | None = None
+    admin_email: str | None = None
+    changes: dict | None = None
+    ip_address: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

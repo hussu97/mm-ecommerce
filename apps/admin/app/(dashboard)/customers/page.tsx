@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { customersApi } from '@/lib/api';
 import type { CustomerSummary } from '@/lib/types';
-import { Button, Input, Pagination } from '@/components/ui';
+import { Button, Input, Pagination, LoadError} from '@/components/ui';
 import { formatCurrency, formatDate } from '@/lib/utils';
 
 export default function CustomersPage() {
@@ -15,6 +15,7 @@ export default function CustomersPage() {
   const [pages, setPages] = useState(1);
   const [perPage, setPerPage] = useState(50);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -29,6 +30,7 @@ export default function CustomersPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const res = await customersApi.list({
         search: debouncedSearch || undefined,
@@ -38,8 +40,8 @@ export default function CustomersPage() {
       setCustomers(res.items);
       setTotal(res.total);
       setPages(res.pages);
-    } catch {
-      // silent
+    } catch (err) {
+      setLoadError((err as Error).message);
     } finally {
       setLoading(false);
     }
@@ -49,6 +51,7 @@ export default function CustomersPage() {
 
   return (
     <div>
+      <LoadError message={loadError} onRetry={load} />
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>

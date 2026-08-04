@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { modifiersApi, bulkApi, ApiError } from '@/lib/api';
 import type { Modifier, ModifierOption } from '@/lib/types';
-import { Badge, Button, Input, Pagination, TabBar } from '@/components/ui';
+import { Badge, Button, Input, Pagination, TabBar, LoadError} from '@/components/ui';
 import { TranslationFields } from '@/components/TranslationFields';
 import { useLanguages } from '@/hooks/useLanguages';
 
@@ -14,6 +14,7 @@ export default function ModifiersPage() {
   const { languages } = useLanguages();
   const [modifiers, setModifiers] = useState<Modifier[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [activeTab, setActiveTab] = useState<'active' | 'inactive'>('active');
 
   // Modifier form
@@ -63,10 +64,11 @@ export default function ModifiersPage() {
 
   async function load() {
     setLoading(true);
+    setLoadError('');
     try {
       setModifiers(await modifiersApi.list(true));
-    } catch {
-      // silent
+    } catch (err) {
+      setLoadError((err as Error).message);
     } finally {
       setLoading(false);
     }
@@ -277,6 +279,7 @@ export default function ModifiersPage() {
 
   return (
     <div>
+      <LoadError message={loadError} onRetry={load} />
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="font-display text-2xl text-gray-800">Modifiers</h1>

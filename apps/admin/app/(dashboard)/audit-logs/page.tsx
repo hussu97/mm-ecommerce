@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { auditLogsApi } from '@/lib/api';
 import type { AuditAction, AuditLog } from '@/lib/types';
-import { Badge, Input, Pagination, Select } from '@/components/ui';
+import { Badge, Input, Pagination, Select, LoadError} from '@/components/ui';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -60,6 +60,7 @@ export default function AuditLogsPage() {
   const [pages, setPages] = useState(1);
   const [perPage, setPerPage] = useState(50);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
 
   // Filters
   const [actionFilter, setActionFilter] = useState('');
@@ -85,6 +86,7 @@ export default function AuditLogsPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const res = await auditLogsApi.list({
         action: actionFilter || undefined,
@@ -98,8 +100,8 @@ export default function AuditLogsPage() {
       setLogs(res.items);
       setTotal(res.total);
       setPages(res.pages);
-    } catch {
-      // silent
+    } catch (err) {
+      setLoadError((err as Error).message);
     } finally {
       setLoading(false);
     }
@@ -109,6 +111,7 @@ export default function AuditLogsPage() {
 
   return (
     <div>
+      <LoadError message={loadError} onRetry={load} />
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>

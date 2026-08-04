@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
@@ -15,14 +16,23 @@ router = APIRouter()
 
 
 class EmailLogItem(BaseModel):
-    id: str
+    """
+    One send, as the admin reads it.
+
+    `id` is a `UUID` because the column is. Pydantic v2 refuses to coerce one
+    into a `str` field, and these come straight off the ORM row — so every
+    response from this endpoint was a 500 and the screen stayed empty while the
+    table filled up. It still serialises to a string in the JSON.
+    """
+
+    id: uuid.UUID
     template: str
     recipient: str
     subject: str
-    order_number: str | None
+    order_number: str | None = None
     status: str
-    resend_id: str | None
-    error: str | None
+    resend_id: str | None = None
+    error: str | None = None
     sent_at: datetime
 
     model_config = {"from_attributes": True}
