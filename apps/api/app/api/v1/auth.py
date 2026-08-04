@@ -46,6 +46,7 @@ from app.core.config import settings
 from app.models import AdminPasskey, User, WebAuthnChallenge
 from app.models.refresh_token import RefreshToken
 from app.services import email_service
+from app.services.order_service import normalise_locale
 from app.schemas.user import (
     GuestSessionRequest,
     LoginRequest,
@@ -296,7 +297,9 @@ async def register(
     await db.flush()
     await db.refresh(user)
 
-    background_tasks.add_task(email_service.send_welcome, user.email)
+    background_tasks.add_task(
+        email_service.send_welcome, user.email, normalise_locale(body.locale)
+    )
     token_resp = await _make_token_response(user, db)
     _set_auth_cookies(response, token_resp.access_token, token_resp.refresh_token)
     return token_resp
@@ -726,7 +729,10 @@ async def forgot_password(
     if user and not user.is_guest:
         reset_token = create_password_reset_token(str(user.id), user.email)
         background_tasks.add_task(
-            email_service.send_password_reset, user.email, reset_token
+            email_service.send_password_reset,
+            user.email,
+            reset_token,
+            normalise_locale(body.locale),
         )
 
     return {"message": "If this email exists, a password reset link has been sent"}

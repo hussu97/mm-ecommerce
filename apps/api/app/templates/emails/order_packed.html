@@ -13,16 +13,16 @@
   is the next one, when somebody is actually carrying it.
 #}
 {% extends "base.html" %}
-{% import "_parts.html" as parts %}
+{% import "_parts.html" as parts with context %}
 
-{% block title %}{% if is_pickup %}Ready to collect{% else %}On its way{% endif %} — {{ order.order_number }}{% endblock %}
-{% block preheader %}{% if is_pickup %}{{ order.order_number }} is boxed and waiting at the counter.{% else %}{{ order.order_number }} has left the kitchen.{% endif %}{% endblock %}
+{% block title %}{{ t('packed.subject_pickup') if is_pickup else t('packed.subject_delivery') }} — {{ order.order_number }}{% endblock %}
+{% block preheader %}{{ t('packed.preheader_pickup', order_number=order.order_number) if is_pickup else t('packed.preheader_delivery', order_number=order.order_number) }}{% endblock %}
 
 {% block content %}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="hero" align="center">
-    <p class="hero-eyebrow">{% if is_pickup %}Ready for collection{% else %}Out of the kitchen{% endif %}</p>
-    <h2 class="hero-title">{% if is_pickup %}It's ready, {{ name }}.{% else %}It's on its way, {{ name }}.{% endif %}</h2>
+    <p class="hero-eyebrow">{{ t('packed.eyebrow_pickup') if is_pickup else t('packed.eyebrow_delivery') }}</p>
+    <h2 class="hero-title">{{ t('packed.heading_pickup', name=name) if is_pickup else t('packed.heading_delivery', name=name) }}</h2>
   </td></tr>
 </table>
 
@@ -31,13 +31,7 @@
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="body-copy" align="center" style="padding-top: 18px;">
     <p class="lead" style="text-align:center;">
-      {% if is_pickup %}
-        Freshly boxed and waiting for you at the counter. Bring your order number —
-        that's all we need.
-      {% else %}
-        Your order is packed and has been handed over for delivery. Keep your phone
-        nearby so the driver can reach you.
-      {% endif %}
+      {{ t('packed.lead_pickup') if is_pickup else t('packed.lead_delivery') }}
     </p>
   </td></tr>
 </table>
@@ -47,5 +41,5 @@
 {{ parts.address_card(address) }}
 {{ parts.timeline(steps) }}
 {{ parts.order_summary(items, totals) }}
-{{ parts.button(tracking_url, 'View order details') }}
+{{ parts.button(tracking_url, t('packed.cta')) }}
 {% endblock %}

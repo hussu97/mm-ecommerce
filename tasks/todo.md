@@ -1,5 +1,52 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ⏳ 2026-08-04: Emails in the language the order was placed in
+
+Every email was English, including to a customer who browsed, read the checkout
+and paid entirely in Arabic. Nothing on an order recorded a language, so the
+mailer had nothing to switch on — the branch card hedged by stacking both.
+
+### Plan
+- [x] 1. `071_order_locale` — `orders.locale`, NOT NULL, default `en`. A property
+      of the order rather than of the customer: a guest has no account to hang a
+      preference on, and the useful question is "what were they reading when they
+      placed this", which is known exactly once.
+- [x] 2. `normalise_locale` — takes `ar-AE`, `AR`, `fr`, `None` and answers with
+      one of the two the shop has copy for. Never raises: an unrecognised locale
+      is a reason to write in English, not to refuse a paid order.
+- [x] 3. `email_copy.py` — 135 keys × 2 languages, shipped with the templates
+      rather than seeded into `ui_translations`. Email copy is welded to the
+      template beside it and a missing key lands in an inbox, not on a page
+      somebody can refresh.
+- [x] 4. One set of templates, `dir`/`lang` off the order, Tajawal/Cairo for
+      Arabic, `letter-spacing` and `text-transform` stripped from Arabic labels
+      (the script is joined — spacing it pulls the joins apart).
+- [x] 5. Bidi: every always-Latin run is an explicit `ltr` island and everything
+      that could be either is `auto`.
+- [x] 6. Account emails take the locale of the request; the storefront derives it
+      from the URL so no caller can forget.
+
+### Review
+
+- **The owner notification stays English.** It is internal, goes to the two
+  people who run the shop, and links into an English-only admin. The branch card
+  inside it is still the customer's language, because that is the address they
+  were shown.
+- **Digits stay Western in both.** That is how the storefront writes prices, and
+  an order number a customer reads back over the phone has to be the same string
+  either way.
+- **Two bugs the Arabic render caught that no test would have.** The branch card
+  rendered empty — the macro grew arguments its callers never passed — and bidi
+  reordered every Latin run inside the RTL text: a phone number showed as
+  `1234 552 06`, a quantity line as `AED 95.00 × 2`.
+- **One bug the end-to-end run caught that a test was actively hiding**: see
+  today's entry in `lessons.md`. `'lang="ar"' in html` matched the stylesheet.
+- 886 API tests, 184 web tests, ruff and tsc clean. Migration round-trips on
+  PostgreSQL 16, and two real orders — one `ar`, one `en` — were driven through
+  `to_response` into the mailer: correct `lang`/`dir`, subject, branch card and
+  link language on each.
+
+
 ## ⏳ 2026-08-04: Counter sales send no customer email
 
 Follow-up to the email revamp (PR #18, merged). Website and counter orders share

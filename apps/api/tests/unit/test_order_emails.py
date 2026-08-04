@@ -250,9 +250,11 @@ async def test_the_collection_email_carries_the_branch_and_its_map_link(sent):
     assert "Sharjah" in html
     assert BRANCH.maps_url in html
     assert "09:00" in html and "23:00" in html
-    # The Arabic is shown alongside rather than instead: an order records no
-    # locale, so the email offers both and lets the reader use one.
-    assert "ملتينج مومنتس كيكس" in html
+    # One language, not both. This email is English because the order was placed
+    # in English; the Arabic card is asserted in `test_email_locales`. It used to
+    # stack the two, because an order recorded no locale and the email had to
+    # hedge — `orders.locale` is what removed the need to.
+    assert "ملتينج مومنتس كيكس" not in html
 
 
 @pytest.mark.asyncio

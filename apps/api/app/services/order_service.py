@@ -38,7 +38,9 @@ from app.services.delivery_zone_service import Zone
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "SUPPORTED_LOCALES",
     "VALID_TRANSITIONS",
+    "normalise_locale",
     "create_order",
     "to_response",
     "get_all_admin",
@@ -346,6 +348,26 @@ _OPEN_ON_THE_REGISTER = frozenset(
 )
 
 
+#: The languages the shop writes in. Anything else becomes English.
+SUPPORTED_LOCALES = frozenset({"en", "ar"})
+DEFAULT_LOCALE = "en"
+
+
+def normalise_locale(value: str | None) -> str:
+    """
+    The language to write to this customer in.
+
+    Takes whatever the browser sent — a bare code, a regional tag like `ar-AE`,
+    a stray capital, or nothing at all — and answers with one of the two the
+    shop actually has copy for. Never raises: a locale we do not recognise is a
+    reason to write in English, not a reason to refuse a paid order.
+    """
+    if not value:
+        return DEFAULT_LOCALE
+    code = str(value).strip().lower().replace("_", "-").split("-")[0]
+    return code if code in SUPPORTED_LOCALES else DEFAULT_LOCALE
+
+
 def _is_cash_on_delivery(data: OrderCreate) -> bool:
     return str(getattr(data.payment_method, "value", data.payment_method)) == "cod"
 
@@ -495,6 +517,7 @@ async def _persist_order(
         order_number=await _generate_order_number(db),
         user_id=user_id,
         email=order_email,
+        locale=normalise_locale(data.locale),
         delivery_method=data.delivery_method,
         delivery_fee=delivery_fee,
         subtotal=subtotal,

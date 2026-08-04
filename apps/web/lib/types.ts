@@ -244,6 +244,8 @@ export interface Order {
   email_has_account?: boolean;
   /** When it arrives, where to collect it, and whether there is a rider to watch. */
   fulfilment?: Fulfilment | null;
+  /** The language it was placed in. */
+  locale?: string;
 }
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
@@ -315,6 +317,8 @@ export interface OrderCreate {
   shipping_address?: AddressCreate;
   /** Which branch the customer is coming to. Pickup orders only. */
   pickup_branch_id?: string;
+  /** The checkout's language. Every email about this order is written in it. */
+  locale?: string;
   promo_code?: string;
   payment_method: string;
   notes?: string;

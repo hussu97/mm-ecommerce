@@ -17,10 +17,12 @@ from app.core.database import AsyncSessionFactory
 from app.models.delivery_batch import DELIVERY_TIMEZONE
 from app.models.email_log import EmailLog
 from app.models.pos_order import OrderSourceEnum
+from app.services.email_copy import DIRECTION, translator
 from app.schemas.order import OrderResponse
 
 __all__ = [
     "is_counter_sale",
+    "locale_of",
     "notify_status_change",
     "send_order_cancelled",
     "send_order_confirmation",
@@ -54,23 +56,41 @@ _jinja_env = Environment(
 )
 
 
-def _render(template_name: str, recipient_email: str, **context) -> str:
+def _render(
+    template_name: str, recipient_email: str, *, locale: str = "en", **context
+) -> str:
+    """
+    Render one template in one language.
+
+    `t`, `locale` and `direction` are injected here rather than passed by each
+    caller, because every template and every macro needs all three and a
+    template that renders without them renders in the wrong language silently.
+    """
     template = _jinja_env.get_template(template_name)
     return template.render(
         web_url=settings.WEB_URL,
+        shop_url=f"{settings.WEB_URL.rstrip('/')}/{locale}",
         now=datetime.now(timezone.utc),
         recipient_email=recipient_email,
+        locale=locale,
+        direction=DIRECTION.get(locale, "ltr"),
+        t=translator(locale),
         **context,
     )
 
 
-def _order_tracking_url(order_number: str, email: str) -> str:
+def _order_tracking_url(order_number: str, email: str, locale: str = "en") -> str:
+    """The tracking page, in the language the order was placed in.
+
+    An Arabic email whose one button opens an English page has only moved the
+    problem down a click.
+    """
     query = urlencode({"order_number": order_number, "email": email})
-    return f"{settings.WEB_URL.rstrip('/')}/en/track?{query}"
+    return f"{settings.WEB_URL.rstrip('/')}/{locale}/track?{query}"
 
 
-def _account_order_url(order_number: str) -> str:
-    return f"{settings.WEB_URL.rstrip('/')}/en/account/orders/{order_number}"
+def _account_order_url(order_number: str, locale: str = "en") -> str:
+    return f"{settings.WEB_URL.rstrip('/')}/{locale}/account/orders/{order_number}"
 
 
 def _admin_order_url(order_number: str) -> str:
@@ -136,50 +156,92 @@ def _item_rows(order: OrderResponse) -> list[dict[str, Any]]:
     return rows
 
 
-def _totals(order: OrderResponse, *, is_pickup: bool) -> dict[str, Any]:
+def _totals(order: OrderResponse, *, is_pickup: bool, t) -> dict[str, Any]:
     fee = Decimal(str(order.delivery_fee or 0))
     return {
         "subtotal": _money(order.subtotal),
         "discount": _money(order.discount_amount) if order.discount_amount else None,
         "promo_code": order.promo_code_used,
-        "fee_label": "Collection" if is_pickup else "Delivery",
+        "fee_label": t("totals.collection") if is_pickup else t("totals.delivery"),
         # Zero reads better as the word than as 0.00 — it is the difference
         # between "we charged you nothing" and "there is a line here".
-        "delivery_fee": "Free" if fee == 0 else f"AED {_money(fee)}",
+        "delivery_fee": t("totals.free") if fee == 0 else f"AED {_money(fee)}",
         "total": _money(order.total),
         "vat": _money(order.vat_amount),
     }
 
 
-def _when(moment: datetime, *, precision: str, now: datetime) -> str:
+#: Arabic weekday and month names, indexed the way `datetime` counts them —
+#: `weekday()` is Monday-first, `month` is 1-based. Written out rather than
+#: taken from `locale`/`babel`: the C library's Arabic locale is not installed
+#: in the container, and adding a dependency to print twelve words would be a
+#: poor trade.
+_AR_WEEKDAYS = ("الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت", "الأحد")
+_AR_MONTHS = (
+    "يناير",
+    "فبراير",
+    "مارس",
+    "أبريل",
+    "مايو",
+    "يونيو",
+    "يوليو",
+    "أغسطس",
+    "سبتمبر",
+    "أكتوبر",
+    "نوفمبر",
+    "ديسمبر",
+)
+#: Arabic marks the halves of the day with single letters — صباحاً / مساءً,
+#: abbreviated. "AM" in an Arabic sentence reads as a foreign object.
+_AR_MERIDIEM = {"AM": "ص", "PM": "م"}
+
+
+def _when(
+    moment: datetime, *, precision: str, now: datetime, t, locale: str = "en"
+) -> str:
     """
-    A stamp as a person would say it.
+    A stamp as a person would say it, in their language.
 
     "Today" and "tomorrow" rather than a date whenever they apply, because those
     are the two answers a customer is actually looking for and a date makes them
     do the arithmetic. Beyond that it is a weekday and a date, which is
     unambiguous without being a timestamp.
+
+    Digits stay Western in both languages. That is how prices and dates are
+    written on the storefront, and Eastern Arabic numerals in a time somebody
+    has to match against their phone's clock help nobody.
     """
     local = moment.astimezone(TZ)
     today = now.astimezone(TZ).date()
     delta = (local.date() - today).days
 
     if delta == 0:
-        day = "Today"
+        day = t("date.today")
     elif delta == 1:
-        day = "Tomorrow"
+        day = t("date.tomorrow")
     elif delta == -1:
-        day = "Yesterday"
+        day = t("date.yesterday")
+    elif locale == "ar":
+        day = (
+            f"{_AR_WEEKDAYS[local.weekday()]} {local.day} {_AR_MONTHS[local.month - 1]}"
+        )
     else:
         day = local.strftime("%a %-d %b")
 
     if precision == "day":
         return day
-    return f"{day}, {local.strftime('%-I:%M %p')}"
+
+    clock = local.strftime("%-I:%M")
+    meridiem = local.strftime("%p")
+    if locale == "ar":
+        meridiem = _AR_MERIDIEM.get(meridiem, meridiem)
+    return (
+        f"{day}، {clock} {meridiem}" if locale == "ar" else f"{day}, {clock} {meridiem}"
+    )
 
 
 def _estimate_block(
-    order: OrderResponse, *, is_pickup: bool, now: datetime
+    order: OrderResponse, *, is_pickup: bool, now: datetime, t, locale: str
 ) -> dict[str, str] | None:
     """
     The "when" panel, or nothing.
@@ -195,39 +257,45 @@ def _estimate_block(
 
     stage = fulfilment.stage
     value = _when(
-        fulfilment.estimated_at, precision=fulfilment.precision or "day", now=now
+        fulfilment.estimated_at,
+        precision=fulfilment.precision or "day",
+        now=now,
+        t=t,
+        locale=locale,
     )
 
     if stage == "collected":
-        return {"label": "Collected", "value": value, "note": ""}
+        return {"label": t("estimate.collected"), "value": value, "note": ""}
     if stage == "delivered":
-        return {"label": "Delivered", "value": value, "note": ""}
+        return {"label": t("estimate.delivered"), "value": value, "note": ""}
     if stage == "ready" and is_pickup:
         return {
-            "label": "Ready since",
+            "label": t("estimate.ready_since"),
             "value": value,
-            "note": "Waiting for you at the counter.",
+            "note": t("estimate.note_counter"),
         }
     if stage == "on_the_way":
         return {
-            "label": "Arriving",
+            "label": t("estimate.arriving"),
             "value": value,
-            "note": "Now that a driver is carrying it, this is our best estimate.",
+            "note": t("estimate.note_rider"),
         }
 
     note = ""
     if fulfilment.precision == "day":
         # An area a third party covers. Their van, their schedule; naming an
         # hour would be borrowing a precision that is not ours.
-        note = "We'll confirm a time once it's collected."
+        note = t("estimate.note_day")
     return {
-        "label": "Ready to collect" if is_pickup else "Estimated delivery",
+        "label": t("estimate.ready") if is_pickup else t("estimate.delivery"),
         "value": value,
         "note": note,
     }
 
 
-def _timeline(order: OrderResponse, *, is_pickup: bool, now: datetime) -> list[dict]:
+def _timeline(
+    order: OrderResponse, *, is_pickup: bool, now: datetime, t, locale: str
+) -> list[dict]:
     """
     The journey this order is actually on.
 
@@ -245,18 +313,18 @@ def _timeline(order: OrderResponse, *, is_pickup: bool, now: datetime) -> list[d
     if is_pickup:
         order_of = ["preparing", "ready", "collected"]
         labels = {
-            "preparing": "Baking your order",
-            "ready": "Ready to collect",
-            "collected": "Collected",
+            "preparing": t("step.preparing"),
+            "ready": t("step.pickup_ready"),
+            "collected": t("step.pickup_collected"),
         }
         stamps = {"collected": fulfilment.delivered_at}
     elif fulfilment.courier_managed:
         order_of = ["preparing", "ready", "on_the_way", "delivered"]
         labels = {
-            "preparing": "Baking your order",
-            "ready": "Packed",
-            "on_the_way": "Out for delivery",
-            "delivered": "Delivered",
+            "preparing": t("step.preparing"),
+            "ready": t("step.ready"),
+            "on_the_way": t("step.on_the_way"),
+            "delivered": t("step.delivered"),
         }
         stamps = {
             "ready": fulfilment.packed_at,
@@ -268,9 +336,9 @@ def _timeline(order: OrderResponse, *, is_pickup: bool, now: datetime) -> list[d
         # is packed, and the next thing anybody knows is that it arrived.
         order_of = ["preparing", "ready", "delivered"]
         labels = {
-            "preparing": "Baking your order",
-            "ready": "Packed and handed over",
-            "delivered": "Delivered",
+            "preparing": t("step.preparing"),
+            "ready": t("step.ready_handover"),
+            "delivered": t("step.delivered"),
         }
         stamps = {"ready": fulfilment.packed_at, "delivered": fulfilment.delivered_at}
 
@@ -280,7 +348,7 @@ def _timeline(order: OrderResponse, *, is_pickup: bool, now: datetime) -> list[d
             "label": labels[key],
             "done": index <= reached,
             "when": (
-                _when(stamps[key], precision="time", now=now)
+                _when(stamps[key], precision="time", now=now, t=t, locale=locale)
                 if index <= reached and stamps.get(key) is not None
                 else ""
             ),
@@ -289,25 +357,61 @@ def _timeline(order: OrderResponse, *, is_pickup: bool, now: datetime) -> list[d
     ]
 
 
-def _order_context(order: OrderResponse) -> dict[str, Any]:
-    """Everything every order template reads, built once."""
+def locale_of(order: OrderResponse) -> str:
+    """
+    The language to write this order's emails in.
+
+    The order's own, captured at checkout. Falls back to English for a response
+    built before the column existed, or by hand in a test.
+    """
+    return order.locale if order.locale in DIRECTION else "en"
+
+
+def _order_context(
+    order: OrderResponse, *, locale: str | None = None
+) -> dict[str, Any]:
+    """Everything every order template reads, built once, in one language."""
     now = datetime.now(timezone.utc)
+    locale = locale or locale_of(order)
+    t = translator(locale)
     is_pickup = order.delivery_method.value == "pickup"
     fulfilment = order.fulfilment
+    branch = fulfilment.branch if fulfilment else None
+    ar = locale == "ar"
 
     return {
         "order": order,
         "name": _customer_name(order),
         "is_pickup": is_pickup,
         "items": _item_rows(order),
-        "totals": _totals(order, is_pickup=is_pickup),
-        "estimate": _estimate_block(order, is_pickup=is_pickup, now=now),
-        "steps": _timeline(order, is_pickup=is_pickup, now=now),
-        "branch": fulfilment.branch if fulfilment else None,
+        "totals": _totals(order, is_pickup=is_pickup, t=t),
+        "estimate": _estimate_block(
+            order, is_pickup=is_pickup, now=now, t=t, locale=locale
+        ),
+        "steps": _timeline(order, is_pickup=is_pickup, now=now, t=t, locale=locale),
+        "branch": branch,
+        # Resolved here rather than in the template, so the branch card renders
+        # one language instead of stacking both. The `*_ar` fields are null when
+        # they would only repeat the English, which is why each one falls back.
+        "branch_name": (
+            (branch.name_ar or branch.name)
+            if ar and branch
+            else (branch.name if branch else None)
+        ),
+        "branch_address": (
+            (branch.address_ar or branch.address)
+            if ar and branch
+            else (branch.address if branch else None)
+        ),
+        "branch_city": (
+            (branch.city_ar or branch.city)
+            if ar and branch
+            else (branch.city if branch else None)
+        ),
         "address": None if is_pickup else (order.shipping_address_snapshot or None),
-        "tracking_url": _order_tracking_url(order.order_number, order.email),
+        "tracking_url": _order_tracking_url(order.order_number, order.email, locale),
         "live_tracking_url": fulfilment.tracking_url if fulfilment else None,
-        "retry_url": _account_order_url(order.order_number),
+        "retry_url": _account_order_url(order.order_number, locale),
     }
 
 
@@ -429,11 +533,13 @@ async def _send_order_email(
         )
         return
 
+    locale = locale_of(order)
     try:
         html = _render(
             template,
             recipient_email=order.email,
-            **_order_context(order),
+            locale=locale,
+            **_order_context(order, locale=locale),
             **extra,
         )
         result = await asyncio.to_thread(_send, order.email, subject, html)
@@ -454,26 +560,40 @@ async def _send_order_email(
 # ─── Order emails ─────────────────────────────────────────────────────────────
 
 
-def _subject(headline: str, order: OrderResponse) -> str:
-    return f"{headline} — {order.order_number} | Melting Moments"
+def _subject(key: str, order: OrderResponse) -> str:
+    """
+    The line the inbox shows, in the order's own language.
+
+    The order number and the shop name stay Latin in both: the number is what a
+    customer reads back over the phone and searches their inbox for, and it has
+    to be the same string either way.
+    """
+    return (
+        f"{translator(locale_of(order))(key)} — {order.order_number} | Melting Moments"
+    )
 
 
 async def send_order_confirmation(order: OrderResponse) -> None:
     await _send_order_email(
         order,
         template="order_confirmation.html",
-        subject=_subject("Order confirmed", order),
+        subject=_subject("confirmation.subject", order),
     )
 
 
 async def send_owner_order_notification(order: OrderResponse) -> None:
+    # Always English: the two people who receive it run the shop and the admin
+    # it links to is English-only, so translating it would make the operational
+    # email harder to read for the only people who read it. The branch card
+    # inside is still the customer's language — that is the address they saw.
+    #
     # The counter does not need telling about the counter. Whoever rang it up is
     # standing at the register that printed it.
     if is_counter_sale(order):
         logger.info("Counter sale %s — no owner notification", order.order_number)
         return
 
-    subject = _subject("New order", order)
+    subject = f"New order — {order.order_number} | Melting Moments"
     context = _order_context(order)
     snapshot = order.shipping_address_snapshot or {}
     for recipient in OWNER_ORDER_RECIPIENTS:
@@ -481,6 +601,7 @@ async def send_owner_order_notification(order: OrderResponse) -> None:
             html = _render(
                 "owner_order_notification.html",
                 recipient_email=recipient,
+                locale="en",
                 admin_order_url=_admin_order_url(order.order_number),
                 customer_name=(
                     " ".join(
@@ -534,7 +655,10 @@ async def send_order_packed(order: OrderResponse) -> None:
     await _send_order_email(
         order,
         template="order_packed.html",
-        subject=_subject("Ready to collect" if is_pickup else "On its way", order),
+        subject=_subject(
+            "packed.subject_pickup" if is_pickup else "packed.subject_delivery",
+            order,
+        ),
     )
 
 
@@ -549,7 +673,7 @@ async def send_order_out_for_delivery(order: OrderResponse) -> None:
     await _send_order_email(
         order,
         template="order_out_for_delivery.html",
-        subject=_subject("Out for delivery", order),
+        subject=_subject("otw.subject", order),
     )
 
 
@@ -558,7 +682,10 @@ async def send_order_delivered(order: OrderResponse) -> None:
     await _send_order_email(
         order,
         template="order_delivered.html",
-        subject=_subject("Collected" if is_pickup else "Delivered", order),
+        subject=_subject(
+            "delivered.subject_pickup" if is_pickup else "delivered.subject_delivery",
+            order,
+        ),
     )
 
 
@@ -566,7 +693,7 @@ async def send_order_undelivered(order: OrderResponse) -> None:
     await _send_order_email(
         order,
         template="order_undelivered.html",
-        subject=_subject("We couldn't deliver", order),
+        subject=_subject("undelivered.subject", order),
     )
 
 
@@ -574,7 +701,7 @@ async def send_payment_failed(order: OrderResponse) -> None:
     await _send_order_email(
         order,
         template="payment_failed.html",
-        subject=_subject("Payment didn't go through", order),
+        subject=_subject("failed.subject", order),
     )
 
 
@@ -582,7 +709,7 @@ async def send_refund_notification(order: OrderResponse) -> None:
     await _send_order_email(
         order,
         template="order_refunded.html",
-        subject=_subject("Refund processed", order),
+        subject=_subject("refunded.subject", order),
     )
 
 
@@ -590,7 +717,7 @@ async def send_order_cancelled(order: OrderResponse) -> None:
     await _send_order_email(
         order,
         template="order_cancelled.html",
-        subject=_subject("Order cancelled", order),
+        subject=_subject("cancelled.subject", order),
         # A card order that reached `confirmed` was paid for; one cancelled out
         # of `created` or `payment_failed` never was. Telling somebody a refund
         # is coming when no money was taken is the kind of thing that generates
@@ -686,19 +813,31 @@ async def notify_order(db, order) -> str | None:
 # ─── User emails ──────────────────────────────────────────────────────────────
 
 
-async def send_welcome(email: str) -> None:
-    subject = "Welcome to Melting Moments"
-    html = _render("welcome.html", recipient_email=email)
+async def send_welcome(email: str, locale: str = "en") -> None:
+    """
+    Welcome. In the language they signed up in.
+
+    There is no order to read a locale off, so the caller passes the one the
+    request arrived on. It defaults rather than being required, because a signup
+    must not fail over a missing parameter.
+    """
+    t = translator(locale)
+    subject = t("welcome.subject")
+    html = _render("welcome.html", recipient_email=email, locale=locale)
     result = await asyncio.to_thread(_send, email, subject, html)
     await _log("welcome", email, subject, result)
 
 
-async def send_password_reset(email: str, reset_token: str) -> None:
-    reset_link = f"{settings.WEB_URL}/reset-password?token={reset_token}"
-    subject = "Reset your password — Melting Moments"
+async def send_password_reset(email: str, reset_token: str, locale: str = "en") -> None:
+    t = translator(locale)
+    reset_link = (
+        f"{settings.WEB_URL.rstrip('/')}/{locale}/reset-password?token={reset_token}"
+    )
+    subject = f"{t('reset.subject')} — Melting Moments"
     html = _render(
         "password_reset.html",
         recipient_email=email,
+        locale=locale,
         reset_link=reset_link,
     )
     result = await asyncio.to_thread(_send, email, subject, html)

@@ -6,16 +6,16 @@
   email, and neither carries an estimate — there is nothing left to promise.
 #}
 {% extends "base.html" %}
-{% import "_parts.html" as parts %}
+{% import "_parts.html" as parts with context %}
 
-{% block title %}{% if is_pickup %}Collected{% else %}Delivered{% endif %} — {{ order.order_number }}{% endblock %}
-{% block preheader %}{{ order.order_number }} is with you. We hope it's good.{% endblock %}
+{% block title %}{{ t('delivered.subject_pickup') if is_pickup else t('delivered.subject_delivery') }} — {{ order.order_number }}{% endblock %}
+{% block preheader %}{{ t('delivered.preheader', order_number=order.order_number) }}{% endblock %}
 
 {% block content %}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="hero" align="center">
-    <p class="hero-eyebrow">{% if is_pickup %}Collected{% else %}Delivered{% endif %}</p>
-    <h2 class="hero-title">Enjoy it, {{ name }}.</h2>
+    <p class="hero-eyebrow">{{ t('delivered.eyebrow_pickup') if is_pickup else t('delivered.eyebrow_delivery') }}</p>
+    <h2 class="hero-title">{{ t('delivered.heading', name=name) }}</h2>
   </td></tr>
 </table>
 
@@ -24,12 +24,7 @@
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="body-copy" align="center" style="padding-top: 18px;">
     <p class="lead" style="text-align:center;">
-      {% if is_pickup %}
-        Thanks for coming by — your order is with you.
-      {% else %}
-        Your order has been delivered.
-      {% endif %}
-      Everything is best fresh, so don't leave it too long.
+      {{ t('delivered.lead_pickup') if is_pickup else t('delivered.lead_delivery') }}
     </p>
   </td></tr>
 </table>
@@ -37,13 +32,12 @@
 {{ parts.estimate_card(estimate) }}
 {{ parts.timeline(steps) }}
 {{ parts.order_summary(items, totals) }}
-{{ parts.button(web_url, 'Order again') }}
+{{ parts.button(shop_url, t('delivered.cta')) }}
 
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="body-copy" style="padding-top: 24px;">
     <p class="muted">
-      If anything wasn't right, reply to this email and tell us. We read every one,
-      and we would much rather hear it from you than not at all.
+      {{ t('delivered.footnote') }}
     </p>
   </td></tr>
 </table>

@@ -8,16 +8,16 @@
   reliably true.
 #}
 {% extends "base.html" %}
-{% import "_parts.html" as parts %}
+{% import "_parts.html" as parts with context %}
 
-{% block title %}Payment didn't go through — {{ order.order_number }}{% endblock %}
-{% block preheader %}Your order is held. Try the payment again and we'll start baking.{% endblock %}
+{% block title %}{{ t('failed.subject') }} — {{ order.order_number }}{% endblock %}
+{% block preheader %}{{ t('failed.preheader') }}{% endblock %}
 
 {% block content %}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="hero" align="center">
-    <p class="hero-eyebrow">Payment unsuccessful</p>
-    <h2 class="hero-title is-warning">We couldn't take the payment.</h2>
+    <p class="hero-eyebrow">{{ t('failed.eyebrow') }}</p>
+    <h2 class="hero-title is-warning">{{ t('failed.heading') }}</h2>
   </td></tr>
 </table>
 
@@ -26,23 +26,21 @@
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="body-copy" align="center" style="padding-top: 18px;">
     <p class="lead" style="text-align:center;">
-      {{ name }}, your payment for order {{ order.order_number }} didn't go through,
-      so we haven't started baking yet. Nothing has been charged.
+      {{ t('failed.lead', name=name, order_number=order.order_number) }}
     </p>
   </td></tr>
 </table>
 
-{{ parts.alert('Your order is held', 'We are keeping it for you. Try the payment again below — most declines are a bank check that clears on a second attempt or with a different card.') }}
+{{ parts.alert(t('failed.held_label'), t('failed.held_body')) }}
 
-{{ parts.button(retry_url, 'Try payment again') }}
+{{ parts.button(retry_url, t('failed.cta')) }}
 
 {{ parts.order_summary(items, totals) }}
 
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="body-copy" style="padding-top: 24px;">
     <p class="muted">
-      Still not working? Reply to this email and we'll take it from there — we can
-      arrange payment another way.
+      {{ t('failed.footnote') }}
     </p>
   </td></tr>
 </table>

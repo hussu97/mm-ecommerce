@@ -255,6 +255,7 @@ def _order_mock(
     o.email_has_account = False
     o.fulfilment = None
     o.source = "online"
+    o.locale = "en"
     return o
 
 

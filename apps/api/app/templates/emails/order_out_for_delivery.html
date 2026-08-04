@@ -11,16 +11,16 @@
   booking" — so the storefront still never says who carries the cake.
 #}
 {% extends "base.html" %}
-{% import "_parts.html" as parts %}
+{% import "_parts.html" as parts with context %}
 
-{% block title %}Out for delivery — {{ order.order_number }}{% endblock %}
-{% block preheader %}{% if estimate %}{{ estimate.label }}: {{ estimate.value }}. {% endif %}Your order is with the driver.{% endblock %}
+{% block title %}{{ t('otw.subject') }} — {{ order.order_number }}{% endblock %}
+{% block preheader %}{% if estimate %}{{ estimate.label }}: {{ estimate.value }}. {% endif %}{{ t('otw.preheader') }}{% endblock %}
 
 {% block content %}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="hero" align="center">
-    <p class="hero-eyebrow">Out for delivery</p>
-    <h2 class="hero-title">On the road to you, {{ name }}.</h2>
+    <p class="hero-eyebrow">{{ t('otw.eyebrow') }}</p>
+    <h2 class="hero-title">{{ t('otw.heading', name=name) }}</h2>
   </td></tr>
 </table>
 
@@ -29,8 +29,7 @@
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="body-copy" align="center" style="padding-top: 18px;">
     <p class="lead" style="text-align:center;">
-      Your order has been collected and is on its way. Please keep your phone
-      nearby — the driver may call when they arrive.
+      {{ t('otw.lead') }}
     </p>
   </td></tr>
 </table>
@@ -38,10 +37,10 @@
 {{ parts.estimate_card(estimate) }}
 
 {% if live_tracking_url %}
-{{ parts.button(live_tracking_url, 'Track live') }}
-{{ parts.button_ghost(tracking_url, 'Order details') }}
+{{ parts.button(live_tracking_url, t('otw.cta_live')) }}
+{{ parts.button_ghost(tracking_url, t('otw.cta_details')) }}
 {% else %}
-{{ parts.button(tracking_url, 'View order details') }}
+{{ parts.button(tracking_url, t('packed.cta')) }}
 {% endif %}
 
 {{ parts.address_card(address) }}

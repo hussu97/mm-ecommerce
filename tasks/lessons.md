@@ -10,6 +10,12 @@
 
 ## Lessons
 
+### [2026-08-04] A substring search over a whole HTML document is not a test of an attribute
+- **What went wrong**: to assert an email rendered in Arabic I checked `'lang="ar"' in html`. It passed — and it passed for the English email too, because the stylesheet in every email contains the Arabic rules `[lang="ar"] .tagline { … }`. The document always contains that string. The test asserted nothing and would have gone on asserting nothing after the feature broke.
+- **How it surfaced**: only by running two real orders end to end and printing what came out. The English one reported `lang="ar" dir=rtl` while its subject, its branch card and its links were all correctly English — which is what made it obvious the *check* was wrong rather than the code.
+- **Rule**: when asserting on an attribute of a specific element, extract that element first (`re.search(r"<html[^>]*>", …)`) and assert on it. A document-wide `in` check is only safe for a string that can appear in exactly one place, and in an HTML document with an inline stylesheet almost nothing qualifies. And when a test and an end-to-end run disagree, believe the end-to-end run until you know which one is lying.
+
+
 ### [2026-08-04] `is_pos` is not the channel — a website order is a POS order too
 - **What went wrong**: nearly gated "don't email counter sales" on `orders.is_pos`. It reads like the flag for a till sale and it is not: `attach_online_order` sets `is_pos = True` on every storefront order, because an order a kitchen has to bake is a POS order in every operational sense and that is what `/pos/orders`, the dispatch board and the operations screens filter on. Gating on it would have silenced **every** customer email the shop sends, and no test in the suite would have failed — the fixtures build `OrderResponse` by hand and none of them carried the flag.
 - **Why it was tempting**: the request was "POS orders should not send customer emails", and there is a column called `is_pos`. The column that actually means "rung up at a till" is `source`, which is what the admin orders screen already filters its channel tab on.

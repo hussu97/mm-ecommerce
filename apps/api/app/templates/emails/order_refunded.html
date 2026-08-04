@@ -1,14 +1,14 @@
 {% extends "base.html" %}
-{% import "_parts.html" as parts %}
+{% import "_parts.html" as parts with context %}
 
-{% block title %}Refund processed — {{ order.order_number }}{% endblock %}
-{% block preheader %}AED {{ totals.total }} is on its way back to your card.{% endblock %}
+{% block title %}{{ t('refunded.subject') }} — {{ order.order_number }}{% endblock %}
+{% block preheader %}{{ t('refunded.preheader', total=totals.total) }}{% endblock %}
 
 {% block content %}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="hero" align="center">
-    <p class="hero-eyebrow">Refund processed</p>
-    <h2 class="hero-title">Your money is on its way back.</h2>
+    <p class="hero-eyebrow">{{ t('refunded.eyebrow') }}</p>
+    <h2 class="hero-title">{{ t('refunded.heading') }}</h2>
   </td></tr>
 </table>
 
@@ -17,22 +17,20 @@
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="body-copy" align="center" style="padding-top: 18px;">
     <p class="lead" style="text-align:center;">
-      {{ name }}, we've refunded <strong>AED {{ totals.total }}</strong> for order
-      {{ order.order_number }} to the card you paid with.
+      {{ t('refunded.lead', name=name, total=totals.total, order_number=order.order_number) }}
     </p>
   </td></tr>
 </table>
 
-{{ parts.alert('When you will see it', 'Banks typically take five to ten working days to post a refund. It will appear on the same card and statement as the original payment.') }}
+{{ parts.alert(t('refunded.when_label'), t('refunded.when_body')) }}
 
 {{ parts.order_summary(items, totals) }}
-{{ parts.button(web_url, 'Back to the shop') }}
+{{ parts.button(shop_url, t('refunded.cta')) }}
 
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="body-copy" style="padding-top: 24px;">
     <p class="muted">
-      If it hasn't landed after ten working days, reply to this email with your
-      order number and we'll chase it with the bank.
+      {{ t('refunded.footnote') }}
     </p>
   </td></tr>
 </table>

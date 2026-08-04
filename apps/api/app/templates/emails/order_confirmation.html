@@ -1,14 +1,14 @@
 {% extends "base.html" %}
-{% import "_parts.html" as parts %}
+{% import "_parts.html" as parts with context %}
 
-{% block title %}Order confirmed — {{ order.order_number }}{% endblock %}
-{% block preheader %}{% if estimate %}{{ estimate.label }}: {{ estimate.value }}. {% endif %}We're baking {{ order.order_number }} now.{% endblock %}
+{% block title %}{{ t('confirmation.title') }} — {{ order.order_number }}{% endblock %}
+{% block preheader %}{% if estimate %}{{ estimate.label }}: {{ estimate.value }}. {% endif %}{{ t('confirmation.preheader', order_number=order.order_number) }}{% endblock %}
 
 {% block content %}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="hero" align="center">
-    <p class="hero-eyebrow">Order confirmed</p>
-    <h2 class="hero-title">Thank you, {{ name }}.</h2>
+    <p class="hero-eyebrow">{{ t('confirmation.eyebrow') }}</p>
+    <h2 class="hero-title">{{ t('confirmation.heading', name=name) }}</h2>
   </td></tr>
 </table>
 
@@ -17,8 +17,7 @@
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="body-copy" align="center" style="padding-top: 18px;">
     <p class="lead" style="text-align:center;">
-      We've got your order and the kitchen is on it. Everything is baked to order,
-      so it's made fresh rather than pulled off a shelf.
+      {{ t('confirmation.lead') }}
     </p>
   </td></tr>
 </table>
@@ -28,13 +27,12 @@
 {{ parts.address_card(address) }}
 {{ parts.order_summary(items, totals) }}
 {{ parts.notes_card(order.notes) }}
-{{ parts.button(tracking_url, 'Track your order') }}
+{{ parts.button(tracking_url, t('confirmation.cta')) }}
 
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="body-copy" style="padding-top: 24px;">
     <p class="muted">
-      We'll write again the moment it's {% if is_pickup %}ready to collect{% else %}on its way{% endif %}.
-      If anything here looks wrong, reply to this email and we'll sort it out.
+      {{ t('confirmation.footnote_pickup') if is_pickup else t('confirmation.footnote_delivery') }}
     </p>
   </td></tr>
 </table>
