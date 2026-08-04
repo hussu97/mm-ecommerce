@@ -1,19 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const SUPPORTED_LOCALES = (process.env.NEXT_PUBLIC_SUPPORTED_LOCALES ?? "en,ar").split(",");
-const DEFAULT_LOCALE = "en";
+
+/**
+ * Where someone lands when their device tells us nothing we can use.
+ *
+ * Arabic, because the shop is in Sharjah and serves the UAE: a visitor whose
+ * browser asks for French is far likelier to read Arabic here than to have
+ * chosen English deliberately. A device that *does* ask for English still gets
+ * English — this is the fallback, not the preference.
+ */
+const FALLBACK_LOCALE = "ar";
 const COOKIE_NAME = "mm_locale";
 
+/**
+ * The device's own language, honoured in the order the device ranked it.
+ *
+ * `accept-language` arrives pre-sorted by quality, so the first entry we
+ * actually serve is the closest thing to what the person asked for. Region is
+ * dropped — `ar-AE`, `ar-EG` and `ar` are all Arabic to us.
+ */
 function getLocaleFromHeaders(request: NextRequest): string {
   const acceptLang = request.headers.get("accept-language");
-  if (!acceptLang) return DEFAULT_LOCALE;
+  if (!acceptLang) return FALLBACK_LOCALE;
 
   const preferred = acceptLang
     .split(",")
     .map((lang) => lang.split(";")[0].trim().split("-")[0])
     .find((code) => SUPPORTED_LOCALES.includes(code));
 
-  return preferred ?? DEFAULT_LOCALE;
+  return preferred ?? FALLBACK_LOCALE;
 }
 
 export function proxy(request: NextRequest) {

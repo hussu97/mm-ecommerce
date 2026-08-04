@@ -17,17 +17,18 @@ from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEn
 from app.models.product import Product
 from app.models.pos_order import OrderSourceEnum
 from app.models.promo_code import PromoCode
+from app.models.user import User
 from app.schemas.order import OrderCreate, OrderListResponse, OrderResponse
 from app.services import (
     batching_service,
     cart_service,
     courier_service,
     delivery_service,
-    delivery_zone_service,
     lalamove_service,
     pos_order_service,
     promo_code_service,
     push_service,
+    trial_customer,
 )
 from app.services.storefront_visibility import is_website_product_visible
 from app.services.delivery_zone_service import Zone
@@ -256,40 +257,60 @@ async def _compute_order_totals(
     Returns (delivery_fee, total, vat_amount, total_excl_vat, zone). The zone
     comes back because it also decides who carries the order, and resolving it
     twice risks the two answers disagreeing if the map is published in between.
+
+    Raises `UnserviceableAreaError` when the pin lands somewhere nothing can be
+    priced to. That is a refusal to take the money, deliberately, at the last
+    moment it can still be refused cleanly.
     """
     discounted_subtotal = subtotal - discount_amount
     address = data.shipping_address
-    zone = (
-        await delivery_zone_service.find_zone(
-            db, float(address.latitude), float(address.longitude)
+    settings = await delivery_service.get_settings(db)
+
+    if data.delivery_method == DeliveryMethodEnum.PICKUP:
+        return (
+            settings.pickup_fee,
+            discounted_subtotal + settings.pickup_fee,
+            *_vat_of(subtotal - discount_amount),
+            None,
         )
-        if address is not None
-        and address.latitude is not None
-        and address.longitude is not None
-        else None
-    )
-    # The fee is priced off the pin, and only the pin — with one exception, the
-    # trial accounts, who pay nothing. Their identity has to reach this call or
-    # the checkout would show them free delivery and the order would charge for
-    # it anyway.
-    delivery_fee = await delivery_service.calculate_fee(
-        data.delivery_method,
-        discounted_subtotal,
+
+    # The fee is priced off the pin, and only the pin. One call, so the zone the
+    # order is filed against is the same zone its price came from.
+    priced = await delivery_service.price(
         db,
+        discounted_subtotal,
         latitude=address.latitude if address else None,
         longitude=address.longitude if address else None,
-        user_id=user_id,
-        email=email,
+        address=address.address_line_1 if address else None,
+        settings=settings,
     )
+    if not priced.serviceable:
+        raise delivery_service.UnserviceableAreaError()
+
+    zone = priced.zone
+    # The one exception to "the pin, and only the pin": a trial account pays no
+    # delivery fee anywhere. Applied here as well as in the quote because these
+    # are the two places the number is produced, and a waiver in one of them is
+    # a checkout that shows free delivery and an order that charges for it.
+    if trial_customer.is_trial_customer(user_id, email):
+        delivery_fee = Decimal("0.00")
+    else:
+        delivery_fee = (
+            settings.default_delivery_fee if priced.fee is None else priced.fee
+        )
     total = discounted_subtotal + delivery_fee
 
-    # VAT back-calculation (goods only; delivery excluded per UAE VAT rules)
-    VAT_RATE = Decimal("0.05")
-    taxable = subtotal - discount_amount
-    vat_amount = (taxable * VAT_RATE / (1 + VAT_RATE)).quantize(Decimal("0.01"))
-    total_excl_vat = (taxable / (1 + VAT_RATE)).quantize(Decimal("0.01"))
-
+    vat_amount, total_excl_vat = _vat_of(subtotal - discount_amount)
     return delivery_fee, total, vat_amount, total_excl_vat, zone
+
+
+def _vat_of(taxable: Decimal) -> tuple[Decimal, Decimal]:
+    """VAT back-calculation (goods only; delivery excluded per UAE VAT rules)."""
+    VAT_RATE = Decimal("0.05")
+    return (
+        (taxable * VAT_RATE / (1 + VAT_RATE)).quantize(Decimal("0.01")),
+        (taxable / (1 + VAT_RATE)).quantize(Decimal("0.01")),
+    )
 
 
 def _is_cash_on_delivery(data: OrderCreate) -> bool:
@@ -627,7 +648,29 @@ async def get_by_order_number(
             # prove ownership with the order's email, like /orders/track.
             raise ForbiddenError("Not your order")
 
-    return OrderResponse.model_validate(order)
+    response = OrderResponse.model_validate(order)
+    response.email_has_account = await _email_has_account(db, order.email)
+    return response
+
+
+async def _email_has_account(db: AsyncSession, email: str | None) -> bool:
+    """
+    Whether this address can already be signed in to.
+
+    Guests are excluded deliberately. Checkout mints a `…@guest.local` user for
+    every anonymous order, so "a user row exists" is true for practically every
+    order ever placed and would tell the confirmation page to ask people to sign
+    in to an account that has no password.
+    """
+    if not email:
+        return False
+    result = await db.execute(
+        select(User.id).where(
+            func.lower(User.email) == email.lower().strip(),
+            User.is_guest.is_(False),
+        )
+    )
+    return result.first() is not None
 
 
 async def update_status(

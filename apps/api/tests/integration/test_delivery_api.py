@@ -31,16 +31,21 @@ class TestDeliveryCalculate:
         data = response.json()
         assert data["is_free"] is True
 
-    async def test_free_above_threshold(self, client):
+    async def test_a_big_basket_alone_does_not_buy_free_delivery(self, client):
+        """
+        Free delivery is a property of the address as much as of the basket: it
+        reaches the zones we price ourselves and no further. Without a pin there
+        is no address, so there is nothing to promise yet.
+        """
         response = await client.post(
             "/api/v1/delivery/calculate",
             json={
                 "delivery_method": "delivery",
-                "subtotal": "200.00",
+                "subtotal": "500.00",
             },
         )
         assert response.status_code == 200
-        assert response.json()["is_free"] is True
+        assert response.json()["is_free"] is False
 
     async def test_below_threshold_has_fee(self, client):
         response = await client.post(

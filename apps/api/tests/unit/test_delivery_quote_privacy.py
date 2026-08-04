@@ -26,7 +26,7 @@ from app.services import delivery_service, lalamove_service
 from app.services.delivery_zone_service import Zone
 
 SETTINGS = DeliverySettings(
-    free_delivery_threshold=Decimal("200.00"),
+    free_delivery_threshold=Decimal("150.00"),
     pickup_fee=Decimal("0.00"),
     default_delivery_fee=Decimal("50.00"),
 )
@@ -41,6 +41,7 @@ SHARJAH_CITY = Zone(
     min_lng=55.2,
     max_lng=55.7,
     rings=(),
+    free_delivery_eligible=True,
 )
 
 SHARJAH_CENTRAL = Zone(
@@ -75,10 +76,20 @@ def _patches(estimate, error, zone=SHARJAH_CITY):
             "find_zone",
             new=AsyncMock(return_value=zone),
         ),
+        # Patched on Lalamove rather than on the router above it, so a test that
+        # wants a noon Send zone costed on noon Send's own card can say so by
+        # patching that one instead — which is the whole point of the router.
         patch.object(
             delivery_service.lalamove_service,
             "estimate_for_point",
             new=AsyncMock(return_value=(estimate, error)),
+        ),
+        # The arrival estimate walks the zone's schedule. Nothing here is about
+        # the clock, and an empty schedule is a legal state anyway.
+        patch.object(
+            delivery_service.batching_service,
+            "active_windows",
+            new=AsyncMock(return_value=[]),
         ),
     )
 
@@ -86,8 +97,8 @@ def _patches(estimate, error, zone=SHARJAH_CITY):
 async def _quote(
     cart, estimate=ESTIMATE, error=None, subtotal="100.00", zone=SHARJAH_CITY
 ):
-    settings_p, zone_p, est_p = _patches(estimate, error, zone)
-    with settings_p, zone_p, est_p:
+    settings_p, zone_p, est_p, windows_p = _patches(estimate, error, zone)
+    with settings_p, zone_p, est_p, windows_p:
         return await delivery_service.quote(
             AsyncMock(),
             Decimal(subtotal),
@@ -139,28 +150,62 @@ def test_the_response_model_has_no_field_that_could_leak_one():
         "delivery_fee",
         "base_fee",
         "free_delivery_applied",
+        # "free delivery does not reach here" — a fact about the offer, with no
+        # hint as to why, and in particular none about who would have carried it.
+        "free_delivery_available",
         "free_threshold",
         "remaining_for_free",
         "zone_name",
         "in_known_zone",
-        # A duration, which says nothing about who carries the order. Present
-        # only where an honest number exists.
-        "estimated_delivery_minutes",
+        # "we cannot deliver here", with no hint as to who would have.
+        "serviceable",
+        # When it arrives. A date and an hour — never a driver, a run, or a
+        # courier's name.
+        "delivery_estimate",
     }
 
 
-async def test_only_a_zone_that_dispatches_directly_promises_a_time(cart):
+async def test_a_noon_send_zone_promises_an_hour_without_reading_a_schedule(cart):
     """
-    A noon Send zone goes out the moment the box is packed, so an hour is a
-    promise that can be kept. Everything else either waits for a batch window or
-    is driven by hand — no honest number exists, so none is given rather than
-    one being guessed and missed.
+    A noon Send order is handed to a rider the moment it is packed, so an hour
+    is a promise that can be kept — and nothing about it depends on the batch
+    schedule, which is why the schedule is made to explode if it is consulted.
+
+    Asserted because the code path is one `if` on `is_batched` sitting between
+    two branches that would both look plausible if it went missing.
     """
-    assert (await _quote(cart, zone=SHARJAH_CENTRAL))[
-        "estimated_delivery_minutes"
-    ] == 60
-    assert (await _quote(cart, zone=SHARJAH_CITY))["estimated_delivery_minutes"] is None
-    assert (await _quote(cart, zone=None))["estimated_delivery_minutes"] is None
+    settings_p, zone_p, est_p, _ = _patches(ESTIMATE, None, SHARJAH_CENTRAL)
+
+    async def never(*_args, **_kwargs):
+        raise AssertionError("a noon Send zone must not wait for a batch window")
+
+    with (
+        settings_p,
+        zone_p,
+        est_p,
+        patch.object(delivery_service.batching_service, "active_windows", new=never),
+    ):
+        result = await delivery_service.quote(
+            AsyncMock(),
+            Decimal("100.00"),
+            latitude=25.3304,
+            longitude=55.3710,
+            cart=cart,
+            address="Al Qasimia, Sharjah",
+        )
+
+    assert result["delivery_estimate"]["precision"] == "time"
+
+
+async def test_an_area_we_do_not_dispatch_promises_only_a_day(cart):
+    """
+    Outside every drawn zone the order is collected on somebody else's
+    schedule. Naming an hour there would be inventing a precision that belongs
+    to a third party.
+    """
+    result = await _quote(cart, zone=None)
+
+    assert result["delivery_estimate"]["precision"] == "day"
 
 
 async def test_the_promised_time_still_names_nobody(cart):
@@ -199,14 +244,15 @@ async def test_free_delivery_records_the_revenue_as_zero(cart):
 
 async def test_the_threshold_does_not_move_with_the_zone(cart):
     """
-    Free delivery is the same promise everywhere, including the zones no
-    courier API touches. A threshold that varied by address would be the one
-    place the map became visible to the customer.
+    One threshold for the whole country. Whether free delivery *applies* does
+    depend on the zone — it reaches the fixed-fee ones and no further — but the
+    number itself never moves, because a threshold that varied by address would
+    be the one place the map became visible to the customer.
     """
     far = Zone(
         id=uuid.uuid4(),
         name="Fujairah",
-        delivery_fee=Decimal("50.00"),
+        delivery_fee=Decimal("80.00"),
         fulfilment_provider="third_party",
         min_lat=24.8,
         max_lat=25.7,
@@ -214,10 +260,10 @@ async def test_the_threshold_does_not_move_with_the_zone(cart):
         max_lng=56.4,
         rings=(),
     )
-    near = await _quote(cart, subtotal="199.00")
-    far_quote = await _quote(cart, subtotal="199.00", zone=far)
+    near = await _quote(cart, subtotal="149.00")
+    far_quote = await _quote(cart, subtotal="149.00", zone=far)
 
-    assert near["free_threshold"] == far_quote["free_threshold"] == 200.0
+    assert near["free_threshold"] == far_quote["free_threshold"] == 150.0
     assert near["remaining_for_free"] == far_quote["remaining_for_free"] == 1.0
 
 

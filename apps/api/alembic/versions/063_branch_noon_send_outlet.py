@@ -18,8 +18,8 @@ without anyone touching the admin.
 This is additive and nullable: a branch without a code simply does not dispatch
 through noon Send, which is the behaviour every branch has today.
 
-Revision ID: 058_branch_noon_send_outlet
-Revises: 057_noon_send_zone
+Revision ID: 063_branch_noon_send_outlet
+Revises: 062_retire_cocoa_butter_phrase
 Create Date: 2026-08-04
 """
 
@@ -30,8 +30,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "058_branch_noon_send_outlet"
-down_revision: Union[str, None] = "057_noon_send_zone"
+revision: str = "063_branch_noon_send_outlet"
+down_revision: Union[str, None] = "062_retire_cocoa_butter_phrase"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

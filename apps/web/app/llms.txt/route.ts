@@ -38,7 +38,7 @@ export async function GET() {
 - Order online at ${SITE_URL}/en, or by WhatsApp on +971 50 368 7757
 - 24–48 hours' notice is best; 5–7 days for large, custom or event orders
 - Same-day slots are sometimes available for orders placed early — the checkout shows what is open
-- Delivery fee is quoted at checkout from the delivery address; free over AED 200
+- Delivery fee is quoted at checkout from the delivery address; free over AED 150 in the Dubai, Sharjah and Ajman city areas
 - Store pickup from Sharjah is free
 - Price range: AED 15 – AED 200
 

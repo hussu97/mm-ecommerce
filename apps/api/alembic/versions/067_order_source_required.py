@@ -18,8 +18,8 @@ Paired with the fix that makes the storefront stamp `source` at creation rather
 than when the order reaches a register — without it, an order in a zone with no
 branch would be written with no channel and violate this constraint.
 
-Revision ID: 061_order_source_required
-Revises: 060_device_push_tokens
+Revision ID: 067_order_source_required
+Revises: 066_device_push_tokens
 Create Date: 2026-08-04
 """
 
@@ -30,8 +30,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "061_order_source_required"
-down_revision: Union[str, None] = "060_device_push_tokens"
+revision: str = "067_order_source_required"
+down_revision: Union[str, None] = "066_device_push_tokens"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

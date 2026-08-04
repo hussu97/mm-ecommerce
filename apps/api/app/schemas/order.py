@@ -83,6 +83,15 @@ class OrderResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     items: list[OrderItemResponse] = []
+    #: Whether this order's email already belongs to a real account.
+    #:
+    #: Only ever true for a signed-up user — a guest's generated `@guest.local`
+    #: identity is not an account anyone can sign in to. It rides on the order
+    #: rather than living behind an "is this email registered?" endpoint,
+    #: because such an endpoint answers that question for *any* address; this
+    #: one only answers it for someone who already holds the order number and
+    #: the email that placed it.
+    email_has_account: bool = False
 
 
 class OrderListResponse(BaseModel):

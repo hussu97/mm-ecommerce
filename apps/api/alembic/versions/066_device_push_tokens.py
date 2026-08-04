@@ -10,8 +10,8 @@ restore, and sometimes for its own reasons. A dead token is revoked rather than
 deleted, so a device that has gone quiet stays distinguishable from one that
 never registered.
 
-Revision ID: 060_device_push_tokens
-Revises: 059_polygon_branch
+Revision ID: 066_device_push_tokens
+Revises: 065_sharjah_central_noon_send
 Create Date: 2026-08-04
 """
 
@@ -23,8 +23,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "060_device_push_tokens"
-down_revision: Union[str, None] = "059_polygon_branch"
+revision: str = "066_device_push_tokens"
+down_revision: Union[str, None] = "065_sharjah_central_noon_send"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

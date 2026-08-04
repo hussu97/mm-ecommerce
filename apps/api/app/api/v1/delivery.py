@@ -27,22 +27,38 @@ class DeliveryQuoteRequest(BaseModel):
     latitude: Decimal | None = None
     longitude: Decimal | None = None
     #: The pin's formatted address. Passed to the courier so its own estimate
-    #: is taken against the same place the driver would be sent to.
+    #: is taken against the same place the driver would be sent to — and, where
+    #: the fee is that estimate, against the place it is charged for.
     address: str | None = None
 
 
+class DeliveryEstimateResponse(BaseModel):
+    #: ISO 8601, on the shop's clock.
+    at: str
+    precision: str
+
+
 class DeliveryQuoteResponse(BaseModel):
-    delivery_fee: float
-    base_fee: float
+    #: Null until there is something to price — no pin yet, or a pin nothing can
+    #: be delivered to. `serviceable` is what tells the two apart.
+    delivery_fee: float | None = None
+    base_fee: float | None = None
     free_delivery_applied: bool
+    #: Whether free delivery reaches this pin at all. False in the areas priced
+    #: from a live courier quote — there is no fee of ours to waive there, only
+    #: a bill that arrives whatever the basket is worth.
+    free_delivery_available: bool = True
     free_threshold: float
     remaining_for_free: float
     zone_name: str | None = None
     in_known_zone: bool
-    #: Minutes, or absent where no honest number exists. A duration says nothing
-    #: about who carries the order, so it is safe to show; naming the courier
-    #: would not be.
-    estimated_delivery_minutes: int | None = None
+    #: When the order should arrive, and how precisely. `precision` is "time"
+    #: where the schedule is ours to read and "day" where it is not. Null until
+    #: there is a pin to read it from.
+    delivery_estimate: DeliveryEstimateResponse | None = None
+    #: False when we cannot deliver to this pin at all. The checkout says so and
+    #: refuses to submit; the API refuses the order too, so the two agree.
+    serviceable: bool = True
 
 
 class DeliveryCalculateResponse(BaseModel):

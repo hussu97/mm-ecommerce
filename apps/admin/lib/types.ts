@@ -389,13 +389,28 @@ export interface PaginatedEmailLogs {
 /** Who carries an order out of the kitchen. */
 export type FulfilmentProvider = 'lalamove' | 'noon_send' | 'third_party';
 
+/**
+ * Where a zone's fee comes from. `static` charges the zone's own published
+ * price; `dynamic` charges the courier's quote for the customer's exact pin,
+ * rounded up — and refuses the order outright when there is no quote.
+ */
+export type DeliveryPricingMode = 'static' | 'dynamic';
+
 /** One zone on a delivery map: a shape, a price, and a courier. */
 export interface DeliveryZone {
   id: string;
   name: string;
+  /** Only charged when `pricing_mode` is `static`. */
   delivery_fee: number;
   /** The kitchen that bakes this zone's orders. Null = the default pickup branch. */
   branch_id: string | null;
+  pricing_mode: DeliveryPricingMode;
+  /**
+   * Whether a qualifying basket delivers free here. Independent of the fee and
+   * of the courier — a fixed-fee third-party zone is not automatically an
+   * offer, and inferring it from either of those is how it last went wrong.
+   */
+  free_delivery_eligible: boolean;
   fulfilment_provider: FulfilmentProvider;
   display_order: number;
   point_count: number;
@@ -425,6 +440,8 @@ export interface DeliveryZoneShape {
   id: string;
   name: string;
   delivery_fee: number;
+  pricing_mode: DeliveryPricingMode;
+  free_delivery_eligible: boolean;
   fulfilment_provider: FulfilmentProvider;
   display_order: number;
   geometry: ZoneGeometry;
@@ -473,6 +490,14 @@ export interface DeliveryBatch {
   cost_per_delivery: number | null;
   dispatched_at: string | null;
   last_error: string | null;
+  /** How many times this run has been offered to the courier. */
+  attempt_count: number;
+  /**
+   * When it will be offered again on its own. Null means nothing more happens
+   * without somebody pressing the button — it went out, or another attempt
+   * cannot change the answer.
+   */
+  next_attempt_at: string | null;
   order_numbers: string[];
 }
 
@@ -481,7 +506,9 @@ export interface DeliveryZoneSummary {
   version: { id: string; name: string } | null;
   zones: Array<{
     name: string;
-      delivery_fee: number;
+    /** Zero, and meaningless, when `pricing_mode` is `dynamic`. */
+    delivery_fee: number;
+    pricing_mode: DeliveryPricingMode;
     fulfilment_provider: FulfilmentProvider;
   }>;
   /** The same everywhere — free delivery does not depend on the zone. */

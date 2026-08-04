@@ -15,6 +15,11 @@
 - **Why it hid**: everything built, every test passed, and the local history looked linear. `git log origin/main..HEAD` reads "6 ahead" whether or not you are also behind; only the `[behind N]` in `git status -sb` says the other half.
 - **Rule**: `git fetch && git status -sb` before starting any change that adds a migration or touches a shared model, and again before writing the plan. A plan written against a stale base is wrong in ways no test can catch.
 
+### [2026-08-04] Copying a row means copying every column, not the ones you were thinking about
+- **What went wrong**: the admin's copy-map-to-draft flow copied name, fee, pricing mode, free-delivery flag, geometry, bbox, display order and the batch windows — and silently dropped `branch_id`, a column added in the same session. Publishing such a draft would have pointed every zone at no kitchen, so every website order would have been written correctly and reached no register at all.
+- **Why it hid**: the copy is a constructor call with eleven keyword arguments. A twelfth being absent looks exactly like the eleven being present, and no test asserted on a column that had been nullable-with-a-fallback for its whole life.
+- **Rule**: when adding a column to a model that is copied anywhere — drafts, clones, duplicates, imports — grep for the model's constructor and fix every call site in the same commit. Then assert the copy round-trips the new column, because "it falls back" is exactly what stops the omission from being visible.
+
 ### [2026-08-04] Read the lessons file before repeating what is in it
 - **What went wrong**: `057_noon_send_zone` published a fresh map version and seeded no `delivery_batch_windows` — the exact failure already written down two days earlier, in this file, as its own lesson. Every Lalamove order on the new map would have dispatched alone at roughly three times the per-delivery cost, silently.
 - **Also**: those three lessons had been deleted from this file somewhere in the same run of commits, which is presumably why they were not read. The deletion went unnoticed until a line count in `git diff --stat` looked wrong.

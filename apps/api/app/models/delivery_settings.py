@@ -20,11 +20,14 @@ class DeliverySettings(Base, UUIDMixin, TimestampMixin):
 
     __tablename__ = "delivery_settings"
 
-    #: The same in every zone, on purpose. It costs several times more to reach
-    #: Fujairah than Sharjah, but a threshold that moved with the address would
-    #: be the one place the delivery map became visible to the customer.
+    #: One number for the whole country — a threshold that moved with the
+    #: address would be the one place the delivery map became visible to the
+    #: customer. *Whether* it applies is a different question, and one the zone
+    #: answers: free delivery only reaches the zones we price ourselves, because
+    #: outside them there is no fee of ours to waive, only a courier bill that
+    #: does not shrink when the basket grows.
     free_delivery_threshold: Mapped[Decimal] = mapped_column(
-        Numeric(10, 2), nullable=False, default=Decimal("200.00")
+        Numeric(10, 2), nullable=False, default=Decimal("150.00")
     )
     pickup_fee: Mapped[Decimal] = mapped_column(
         Numeric(10, 2), nullable=False, default=Decimal("0.00")

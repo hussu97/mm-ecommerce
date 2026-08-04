@@ -8,22 +8,86 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.core.exceptions import BadRequestError, NotFoundError
+from app.models.delivery_settings import DeliverySettings
 from app.models.order import DeliveryMethodEnum, OrderStatusEnum
 from app.schemas.address import AddressCreate
 from app.schemas.order import OrderCreate
 from app.schemas.promo_code import PromoCodeValidateResponse
+from app.services import lalamove_service
+from app.services.delivery_zone_service import Zone
 from app.services.order_service import VALID_TRANSITIONS, create_order, update_status
 
 
+DELIVERY_SETTINGS = DeliverySettings(
+    free_delivery_threshold=Decimal("150.00"),
+    pickup_fee=Decimal("0.00"),
+    default_delivery_fee=Decimal("50.00"),
+)
+
+
+def _zone(fee: str, pricing_mode: str = "static", *, free: bool = True) -> Zone:
+    return Zone(
+        id=uuid.uuid4(),
+        name="Test Zone",
+        delivery_fee=Decimal(fee),
+        fulfilment_provider="lalamove",
+        min_lat=24.0,
+        max_lat=26.0,
+        min_lng=54.0,
+        max_lng=57.0,
+        rings=(),
+        pricing_mode=pricing_mode,
+        free_delivery_eligible=free,
+    )
+
+
 @pytest.fixture(autouse=True)
-def mock_calculate_fee():
-    """Patch delivery_service.calculate_fee to avoid DB calls in order_service tests."""
-    with patch(
-        "app.services.order_service.delivery_service.calculate_fee",
-        new_callable=AsyncMock,
-    ) as m:
-        m.return_value = Decimal("0.00")
-        yield m
+def delivery_pricing():
+    """
+    Price delivery without a database or a courier.
+
+    The settings row, the zone lookup and the courier are patched — the pricing
+    itself is not. Free delivery, the rounding and the refusal to price an
+    unquotable pin all still run for real, which is the half of `create_order`
+    these tests are actually about.
+
+    Yields `(find_zone, estimate_for_point)` so a test can put a zone under the
+    pin, or take the courier's answer away.
+    """
+    find_zone = AsyncMock(return_value=None)
+    # A quotable pin by default: outside every drawn zone the fee *is* the
+    # courier's number, so a courier that answers nothing is an unserviceable
+    # address rather than a neutral starting point.
+    estimate_for_point = AsyncMock(
+        return_value=(
+            lalamove_service.Estimate(
+                cost=Decimal("40.00"),
+                currency="AED",
+                distance_m=18000,
+                quotation_id="q_default",
+            ),
+            None,
+        )
+    )
+    with (
+        patch(
+            "app.services.delivery_service.get_settings",
+            new=AsyncMock(return_value=DELIVERY_SETTINGS),
+        ),
+        patch(
+            "app.services.delivery_service.delivery_zone_service.find_zone",
+            new=find_zone,
+        ),
+        patch(
+            "app.services.delivery_service.lalamove_service.estimate_for_point",
+            new=estimate_for_point,
+        ),
+        patch(
+            "app.services.delivery_service.lalamove_service.is_enabled",
+            return_value=True,
+        ),
+    ):
+        yield find_zone, estimate_for_point
 
 
 @pytest.fixture(autouse=True)
@@ -38,11 +102,6 @@ def mock_fulfilment():
     rules; dispatch has its own tests.
     """
     with (
-        patch(
-            "app.services.order_service.delivery_zone_service.find_zone",
-            new_callable=AsyncMock,
-            return_value=None,
-        ),
         patch(
             "app.services.order_service.lalamove_service.record_order_delivery",
             new_callable=AsyncMock,
@@ -547,8 +606,9 @@ class TestCreateOrderCalculations:
         # 100 / 1.05 = 95.238... → 95.24
         assert order_arg.total_excl_vat == Decimal("95.24")
 
-    async def test_standard_zone_delivery_fee_is_35(self, mock_calculate_fee):
-        mock_calculate_fee.return_value = Decimal("35.00")
+    async def test_fixed_fee_zone_charges_its_own_fee(self, delivery_pricing):
+        find_zone, _ = delivery_pricing
+        find_zone.return_value = _zone("35.00")
         cart = _cart(items=[_cart_item(_product("100.00"))])
         db = _db_for_create(cart, _order_mock(delivery_fee=Decimal("35.00")))
 
@@ -557,18 +617,67 @@ class TestCreateOrderCalculations:
         order_arg = db.add.call_args_list[0][0][0]
         assert order_arg.delivery_fee == Decimal("35.00")
 
-    async def test_remote_zone_delivery_fee_is_50(self, mock_calculate_fee):
-        mock_calculate_fee.return_value = Decimal("50.00")
+    async def test_dynamic_zone_charges_the_courier_price_rounded_up(
+        self, delivery_pricing
+    ):
+        """The order is written with the same rounded number the checkout showed."""
+        find_zone, estimate_for_point = delivery_pricing
+        find_zone.return_value = _zone("0.00", pricing_mode="dynamic")
+        estimate_for_point.return_value = (
+            lalamove_service.Estimate(
+                cost=Decimal("31.05"),
+                currency="AED",
+                distance_m=22000,
+                quotation_id="q_1",
+            ),
+            None,
+        )
         cart = _cart(items=[_cart_item(_product("100.00"))])
-        db = _db_for_create(cart, _order_mock(delivery_fee=Decimal("50.00")))
+        db = _db_for_create(cart, _order_mock(delivery_fee=Decimal("32.00")))
 
         await create_order(db, _delivery_data(), user_id=None)
 
         order_arg = db.add.call_args_list[0][0][0]
-        assert order_arg.delivery_fee == Decimal("50.00")
+        assert order_arg.delivery_fee == Decimal("32.00")
+        assert order_arg.total == Decimal("132.00")
 
-    async def test_free_delivery_at_200_threshold(self):
-        cart = _cart(items=[_cart_item(_product("200.00"))])
+    async def test_an_unquotable_dynamic_pin_refuses_the_order(self, delivery_pricing):
+        """
+        The point of the whole refusal: no price, no order. Taking the money and
+        discovering at dispatch that nobody will carry it is the outcome this
+        exists to prevent.
+        """
+        find_zone, estimate_for_point = delivery_pricing
+        find_zone.return_value = _zone("0.00", pricing_mode="dynamic")
+        estimate_for_point.return_value = (None, "Outside the service area")
+        cart = _cart(items=[_cart_item(_product("100.00"))])
+        db = _db_for_create(cart, _order_mock())
+
+        with pytest.raises(BadRequestError):
+            await create_order(db, _delivery_data(), user_id=None)
+
+        assert db.add.call_args_list == [], "nothing was written"
+
+    async def test_a_fixed_fee_zone_survives_a_courier_outage(self, delivery_pricing):
+        """
+        Its price never came from the courier, so a courier that will not answer
+        changes nothing the customer can see.
+        """
+        find_zone, estimate_for_point = delivery_pricing
+        find_zone.return_value = _zone("15.00")
+        estimate_for_point.return_value = (None, "Courier quote failed")
+        cart = _cart(items=[_cart_item(_product("100.00"))])
+        db = _db_for_create(cart, _order_mock(delivery_fee=Decimal("15.00")))
+
+        await create_order(db, _delivery_data(), user_id=None)
+
+        order_arg = db.add.call_args_list[0][0][0]
+        assert order_arg.delivery_fee == Decimal("15.00")
+
+    async def test_free_delivery_at_the_threshold(self, delivery_pricing):
+        find_zone, _ = delivery_pricing
+        find_zone.return_value = _zone("25.00")
+        cart = _cart(items=[_cart_item(_product("150.00"))])
         db = _db_for_create(cart, _order_mock(delivery_fee=Decimal("0.00")))
 
         await create_order(db, _delivery_data(), user_id=None)
@@ -576,7 +685,9 @@ class TestCreateOrderCalculations:
         order_arg = db.add.call_args_list[0][0][0]
         assert order_arg.delivery_fee == Decimal("0.00")
 
-    async def test_free_delivery_above_threshold(self):
+    async def test_free_delivery_above_threshold(self, delivery_pricing):
+        find_zone, _ = delivery_pricing
+        find_zone.return_value = _zone("25.00")
         cart = _cart(items=[_cart_item(_product("250.00"))])
         db = _db_for_create(cart, _order_mock(delivery_fee=Decimal("0.00")))
 
@@ -584,6 +695,24 @@ class TestCreateOrderCalculations:
 
         order_arg = db.add.call_args_list[0][0][0]
         assert order_arg.delivery_fee == Decimal("0.00")
+
+    async def test_a_courier_priced_zone_charges_however_big_the_basket(
+        self, delivery_pricing
+    ):
+        """
+        The fee out there is a bill someone sends us, not a margin we chose, and
+        it is the same 40 dirhams whether the order is 50 or 500.
+        """
+        find_zone, estimate_for_point = delivery_pricing
+        find_zone.return_value = _zone("0.00", pricing_mode="dynamic", free=False)
+        cart = _cart(items=[_cart_item(_product("500.00"))])
+        db = _db_for_create(cart, _order_mock(delivery_fee=Decimal("40.00")))
+
+        await create_order(db, _delivery_data(), user_id=None)
+
+        order_arg = db.add.call_args_list[0][0][0]
+        assert order_arg.delivery_fee == Decimal("40.00")
+        assert order_arg.total == Decimal("540.00")
 
     async def test_order_number_starts_at_001_for_first_order(self):
         cart = _cart(items=[_cart_item(_product())])
@@ -808,15 +937,20 @@ class TestCreateOrderWithPromo:
     @patch("app.services.order_service.promo_code_service.validate")
     @patch("app.services.order_service.promo_code_service.get_promo")
     async def test_discount_brings_delivery_to_free_at_threshold(
-        self, mock_get_promo, mock_validate
+        self, mock_get_promo, mock_validate, delivery_pricing
     ):
         """
-        Discount reduces the subtotal to exactly FREE_THRESHOLD (200 AED),
-        so delivery fee should become zero even for a remote zone.
-        subtotal=250, discount=50 → discounted_subtotal=200 → free delivery.
+        Discount reduces the subtotal to exactly the threshold (150 AED), so a
+        fixed-fee zone delivers free: subtotal=250, discount=100 → 150.
+
+        It is the discounted figure that is compared, not the basket — a
+        customer who has paid 150 has bought a 150 dirham order whatever the
+        sticker said.
         """
+        find_zone, _ = delivery_pricing
+        find_zone.return_value = _zone("15.00")
         mock_validate.return_value = PromoCodeValidateResponse(
-            valid=True, discount_amount=Decimal("50.00")
+            valid=True, discount_amount=Decimal("100.00")
         )
         mock_get_promo.return_value = MagicMock(max_uses=None, id=uuid.uuid4())
 

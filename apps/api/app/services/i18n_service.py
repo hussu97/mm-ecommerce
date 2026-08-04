@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.cache import cache_delete, cache_get, cache_set
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.language import Language, UiTranslation
 from app.schemas.i18n import (
@@ -19,8 +20,30 @@ __all__ = [
     "get_active_languages",
     "get_all_languages",
     "get_translations",
+    "invalidate_translations",
     "update_language",
 ]
+
+_TRANSLATIONS_TTL = 300  # 5 minutes
+
+
+def _translations_key(locale: str) -> str:
+    return f"i18n:translations:{locale}"
+
+
+async def invalidate_translations(locale: str | None = None) -> None:
+    """
+    Forget the cached copy, for one locale or for every one.
+
+    Called by anything that writes a translation — the admin editor and, just as
+    importantly, the startup seed. The seed is the one that used to be missed:
+    Redis outlives a restart, so a deploy that adds a key would seed it into
+    Postgres and then keep serving the pre-deploy copy for the rest of the TTL,
+    and the storefront would render raw `checkout.some_key` strings at people
+    until it expired.
+    """
+    for code in (locale,) if locale else ("en", "ar"):
+        await cache_delete(_translations_key(code))
 
 
 async def get_active_languages(db: AsyncSession) -> list[LanguageResponse]:
@@ -38,12 +61,26 @@ async def get_all_languages(db: AsyncSession) -> list[LanguageResponse]:
 
 
 async def get_translations(db: AsyncSession, locale: str) -> dict[str, str]:
+    """
+    Every UI string for one language.
+
+    Cached in Redis rather than in the process: it is read on every server
+    render of every page, it changes only when someone edits it, and a
+    per-worker cache would leave half the workers serving yesterday's copy after
+    an edit. Shared storage means one invalidation reaches all of them.
+    """
+    key = _translations_key(locale)
+    cached = await cache_get(key)
+    if cached is not None:
+        return cached
+
     result = await db.execute(
         select(UiTranslation).where(UiTranslation.locale == locale)
     )
     translations: dict[str, str] = {}
     for t in result.scalars().all():
         translations[f"{t.namespace}.{t.key}"] = t.value
+    await cache_set(key, translations, ttl=_TRANSLATIONS_TTL)
     return translations
 
 
@@ -116,4 +153,5 @@ async def bulk_upsert_translations(
         count += 1
 
     await db.flush()
+    await invalidate_translations(locale)
     return count

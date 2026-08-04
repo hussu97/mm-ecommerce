@@ -168,6 +168,11 @@ export interface Order {
   created_at: string;
   updated_at: string;
   items: OrderItem[];
+  /**
+   * Whether this order's email already belongs to a real (non-guest) account.
+   * Decides whether the confirmation page offers to create one or to sign in.
+   */
+  email_has_account?: boolean;
 }
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
@@ -296,13 +301,37 @@ export interface PaymentSessionResponse {
 
 /** Result of pricing delivery against the active zone map. */
 export interface DeliveryQuote {
-  /** What the customer pays — already zero when free delivery applies. */
-  delivery_fee: number;
+  /**
+   * What the customer pays — already zero when free delivery applies.
+   *
+   * Null when there is nothing to price: no pin yet, or a pin nothing can be
+   * delivered to. `serviceable` is what tells those two apart.
+   */
+  delivery_fee: number | null;
   /** What it would have cost, so the total can be struck through. */
-  base_fee: number;
+  base_fee: number | null;
   free_delivery_applied: boolean;
+  /**
+   * Whether free delivery reaches this pin at all. False in the areas priced
+   * from a live courier quote — there is no fee of ours to waive there, so an
+   * upsell towards the threshold would be advertising something that will not
+   * happen.
+   */
+  free_delivery_available: boolean;
   free_threshold: number;
   remaining_for_free: number;
   zone_name: string | null;
   in_known_zone: boolean;
+  /**
+   * When the order should arrive. Null until there is a pin to read a schedule
+   * off. `precision` is `"time"` where the schedule is ours — the order joins a
+   * run whose departure we set — and `"day"` where the van belongs to a partner
+   * and an hour would be a promise we cannot keep.
+   */
+  delivery_estimate: { at: string; precision: 'time' | 'day' } | null;
+  /**
+   * False when we cannot deliver to this pin at all. The order endpoint refuses
+   * it too, so blocking the button here is a courtesy rather than the guard.
+   */
+  serviceable: boolean;
 }

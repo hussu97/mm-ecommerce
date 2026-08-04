@@ -4,19 +4,29 @@ import { useEffect, useState } from 'react';
 import { addressesApi, ApiError } from '@/lib/api';
 import { Address, AddressCreate } from '@/lib/types';
 import { Input } from '@/components/ui/Input';
-import { Select } from '@/components/ui/Select';
+import { PhoneInput, isValidPhone } from '@/components/ui/PhoneInput';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { LocationPicker } from '@/components/ui/LocationPicker';
 
+/**
+ * The same address, asked for the same way as at checkout.
+ *
+ * This form had drifted: it offered an Address Line 2 the checkout does not
+ * have, omitted the flat/office/floor the driver actually needs, took the phone
+ * as free text so a pasted `+971 50 …` had nowhere to go, and left every field
+ * unlabelled by example. Two forms for one record is two chances to teach a
+ * customer a different shape of the same thing, so this one now mirrors the
+ * checkout: the map leads, then the address, then who receives it.
+ */
 const BLANK_FORM: AddressCreate = {
   label: 'Home',
   first_name: '',
   last_name: '',
   phone: '',
   address_line_1: '',
-  address_line_2: '',
+  unit_number: '',
   country: 'AE',
   is_default: false,
   latitude: null,
@@ -56,7 +66,7 @@ export default function AddressesPage() {
       last_name: addr.last_name,
       phone: addr.phone,
       address_line_1: addr.address_line_1,
-      address_line_2: addr.address_line_2 || '',
+      unit_number: addr.unit_number || '',
       country: addr.country,
       is_default: addr.is_default,
       latitude: addr.latitude,
@@ -73,10 +83,14 @@ export default function AddressesPage() {
 
   function validate() {
     const e: Partial<Record<keyof AddressCreate, string>> = {};
-    if (!form.first_name.trim()) e.first_name = t('common.required');
-    if (!form.last_name.trim()) e.last_name = t('common.required');
-    if (!form.phone.trim()) e.phone = t('common.required');
-    if (!form.address_line_1.trim()) e.address_line_1 = t('common.required');
+    if (!form.first_name.trim()) e.first_name = t('checkout.first_name_required');
+    if (!form.last_name.trim()) e.last_name = t('checkout.last_name_required');
+    // Same bar as checkout: a number that is merely non-empty still strands a
+    // driver outside a building.
+    if (!form.phone.trim() || !isValidPhone(form.phone)) {
+      e.phone = t('checkout.valid_phone_required');
+    }
+    if (!form.address_line_1.trim()) e.address_line_1 = t('checkout.address_required');
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -85,7 +99,7 @@ export default function AddressesPage() {
     if (!validate()) return;
     setSaving(true);
     try {
-      const data = { ...form, address_line_2: form.address_line_2 || undefined };
+      const data = { ...form, unit_number: form.unit_number || undefined };
       if (editId) {
         const updated = await addressesApi.update(editId, data);
         setAddresses(prev => prev.map(a => a.id === editId ? updated : a));
@@ -153,45 +167,9 @@ export default function AddressesPage() {
           <h2 className="text-xs font-body uppercase tracking-widest text-primary mb-4">
             {editId ? t('address.edit_address') : t('address.new_address')}
           </h2>
-          <div className="space-y-3">
-            <Input
-              label={t('address.label_hint')}
-              value={form.label}
-              onChange={e => setForm(f => ({ ...f, label: e.target.value }))}
-            />
-            <div className="grid grid-cols-2 gap-3">
-              <Input
-                label={t('common.first_name')}
-                value={form.first_name}
-                onChange={e => setForm(f => ({ ...f, first_name: e.target.value }))}
-                error={errors.first_name}
-              />
-              <Input
-                label={t('common.last_name')}
-                value={form.last_name}
-                onChange={e => setForm(f => ({ ...f, last_name: e.target.value }))}
-                error={errors.last_name}
-              />
-            </div>
-            <Input
-              label={t('common.phone')}
-              type="tel"
-              value={form.phone}
-              onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
-              error={errors.phone}
-              placeholder={t('common.phone_placeholder')}
-            />
-            <Input
-              label={t('common.address_line_1')}
-              value={form.address_line_1}
-              onChange={e => setForm(f => ({ ...f, address_line_1: e.target.value }))}
-              error={errors.address_line_1}
-            />
-            <Input
-              label={t('common.address_line_2_optional')}
-              value={form.address_line_2}
-              onChange={e => setForm(f => ({ ...f, address_line_2: e.target.value }))}
-            />
+          <div className="space-y-5">
+            {/* The map leads, exactly as it does at checkout: it is the fastest
+                way to answer most of what follows. */}
             <div>
               <p className="text-xs font-medium uppercase tracking-wider text-gray-600 mb-2">
                 {t('address.pin_location')}
@@ -205,8 +183,67 @@ export default function AddressesPage() {
                   longitude: lng,
                   address_line_1: selectedAddress ?? f.address_line_1,
                 }))}
+                placeholder={t('address.search_location')}
               />
             </div>
+
+            <div className="h-px bg-secondary/30" />
+
+            <div className="space-y-4">
+              <Input
+                label={t('common.address')}
+                placeholder={t('checkout.address_placeholder')}
+                value={form.address_line_1}
+                onChange={e => setForm(f => ({ ...f, address_line_1: e.target.value }))}
+                error={errors.address_line_1}
+              />
+              <div className="grid grid-cols-2 gap-4">
+                {/* The unit number is the part that finishes the job — a
+                    formatted address gets a driver to the building. */}
+                <Input
+                  label={t('address.unit_number')}
+                  placeholder={t('address.unit_placeholder')}
+                  value={form.unit_number ?? ''}
+                  onChange={e => setForm(f => ({ ...f, unit_number: e.target.value }))}
+                />
+                <Input
+                  label={t('address.label')}
+                  placeholder={t('address.label_placeholder')}
+                  value={form.label ?? ''}
+                  onChange={e => setForm(f => ({ ...f, label: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            <div className="h-px bg-secondary/30" />
+
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <Input
+                  label={t('common.first_name')}
+                  placeholder={t('checkout.first_name_placeholder')}
+                  value={form.first_name}
+                  onChange={e => setForm(f => ({ ...f, first_name: e.target.value }))}
+                  error={errors.first_name}
+                />
+                <Input
+                  label={t('common.last_name')}
+                  placeholder={t('checkout.last_name_placeholder')}
+                  value={form.last_name}
+                  onChange={e => setForm(f => ({ ...f, last_name: e.target.value }))}
+                  error={errors.last_name}
+                />
+              </div>
+              {/* The same control as checkout, so a number pasted out of a
+                  contact card with its own country code still lands. */}
+              <PhoneInput
+                label={t('common.phone')}
+                value={form.phone}
+                onChange={v => setForm(f => ({ ...f, phone: v }))}
+                error={errors.phone}
+              />
+            </div>
+
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -256,7 +293,15 @@ export default function AddressesPage() {
                   <p className="text-sm text-gray-700 font-body">
                     {addr.first_name} {addr.last_name}
                   </p>
-                  <p className="text-sm text-gray-600 font-body">{addr.address_line_1}</p>
+                  {/* Unit first, then the street — the same one line the
+                      checkout shows, because a formatted address gets a driver
+                      to the building and the flat number finishes the job. */}
+                  <p className="text-sm text-gray-600 font-body">
+                    {[addr.unit_number, addr.address_line_1].filter(Boolean).join(', ')}
+                  </p>
+                  {/* Only ever present on addresses saved before this form
+                      stopped asking for it. Shown rather than silently dropped:
+                      somebody typed it because it mattered. */}
                   {addr.address_line_2 && (
                     <p className="text-sm text-gray-600 font-body">{addr.address_line_2}</p>
                   )}

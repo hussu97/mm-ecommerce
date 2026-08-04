@@ -13,6 +13,32 @@ import { CreateAccountNudge } from './CreateAccountNudge';
 import { localizedField } from '@/lib/i18n/entity';
 import type { Order } from '@/lib/types';
 
+/**
+ * The address this order went to, in the shape the address book stores.
+ *
+ * Read off the order's own snapshot rather than the checkout form: by the time
+ * anyone sees this page the form is gone, and the snapshot is what the driver
+ * is being sent to. Returns null without a pin, because an address the map
+ * cannot place is not one worth saving for next time.
+ */
+function addressFromOrder(order: Order): import('@/lib/types').AddressCreate | null {
+  const a = order.shipping_address_snapshot;
+  if (!a || !a.address_line_1) return null;
+  const num = (v: unknown) => (v === null || v === undefined || v === '' ? null : Number(v));
+  return {
+    label: (a.label as string) || 'Home',
+    first_name: (a.first_name as string) || '',
+    last_name: (a.last_name as string) || '',
+    phone: (a.phone as string) || '',
+    address_line_1: a.address_line_1 as string,
+    address_line_2: (a.address_line_2 as string) || undefined,
+    unit_number: (a.unit_number as string) || undefined,
+    latitude: num(a.latitude),
+    longitude: num(a.longitude),
+    is_default: true,
+  };
+}
+
 function ConfirmationContent() {
   const searchParams = useSearchParams();
   const orderNumber = searchParams.get('order_number');
@@ -183,6 +209,8 @@ function ConfirmationContent() {
           <CreateAccountNudge
             email={order.email}
             phone={order.shipping_address_snapshot?.phone as string | undefined}
+            hasAccount={order.email_has_account}
+            address={addressFromOrder(order)}
           />
         )}
 

@@ -7,6 +7,7 @@ import type { Branch } from '@/lib/pos-types';
 import type {
   DeliveryBatch,
   DeliveryMapVersion,
+  DeliveryPricingMode,
   DeliveryZone,
   DeliveryZoneMap,
   DeliveryZoneShape,
@@ -37,6 +38,16 @@ const PROVIDER_BADGE: Record<FulfilmentProvider, 'info' | 'success' | 'neutral'>
   noon_send: 'success',
   third_party: 'neutral',
 };
+
+const PRICING_LABEL: Record<DeliveryPricingMode, string> = {
+  static: 'Fixed fee',
+  dynamic: 'Courier price',
+};
+
+const PRICING_OPTIONS = [
+  { value: 'static', label: PRICING_LABEL.static },
+  { value: 'dynamic', label: PRICING_LABEL.dynamic },
+];
 
 export default function DeliveryZonesPage() {
   const [versions, setVersions] = useState<DeliveryMapVersion[]>([]);
@@ -223,6 +234,8 @@ interface VersionCardProps {
     zoneId: string,
     data: {
       delivery_fee?: number;
+      pricing_mode?: DeliveryPricingMode;
+      free_delivery_eligible?: boolean;
       fulfilment_provider?: FulfilmentProvider;
       branch_id?: string;
     },
@@ -286,6 +299,9 @@ function VersionCard({
                 <th className="px-4 py-2 text-left text-[11px] font-body uppercase tracking-widest text-gray-400">
                   Zone
                 </th>
+                <th className="px-4 py-2 text-left text-[11px] font-body uppercase tracking-widest text-gray-400">
+                  Priced by
+                </th>
                 <th className="px-4 py-2 text-right text-[11px] font-body uppercase tracking-widest text-gray-400">
                   Fee
                 </th>
@@ -294,6 +310,9 @@ function VersionCard({
                 </th>
                 <th className="px-4 py-2 text-left text-[11px] font-body uppercase tracking-widest text-gray-400">
                   Baked at
+                </th>
+                <th className="px-4 py-2 text-center text-[11px] font-body uppercase tracking-widest text-gray-400">
+                  Free over threshold
                 </th>
                 <th className="px-4 py-2 text-right text-[11px] font-body uppercase tracking-widest text-gray-400">
                   Order
@@ -306,7 +325,7 @@ function VersionCard({
                   // The saved values are part of the key so a reload after a
                   // save remounts the row with them, rather than leaving the
                   // input showing what was typed before the server answered.
-                  key={`${zone.id}:${zone.delivery_fee}:${zone.fulfilment_provider}:${zone.branch_id}`}
+                  key={`${zone.id}:${zone.delivery_fee}:${zone.pricing_mode}:${zone.fulfilment_provider}:${zone.free_delivery_eligible}:${zone.branch_id}`}
                   zone={zone}
                   branches={branches}
                   readOnly={version.is_active || busy}
@@ -318,7 +337,9 @@ function VersionCard({
 
           <p className="px-4 pt-3 text-[11px] font-body text-gray-400">
             Zones are matched top to bottom, so a smaller area listed above the one it
-            sits inside wins.
+            sits inside wins. A courier-priced zone charges whatever the courier quotes
+            for the customer&rsquo;s pin, rounded up to the dirham — and refuses the order
+            when there is no quote.
           </p>
 
           <div className="flex flex-wrap items-end gap-2 px-4 py-3">
@@ -364,11 +385,14 @@ function ZoneRow({
   readOnly: boolean;
   onChange: (data: {
     delivery_fee?: number;
+    pricing_mode?: DeliveryPricingMode;
+    free_delivery_eligible?: boolean;
     fulfilment_provider?: FulfilmentProvider;
     branch_id?: string;
   }) => void;
 }) {
   const [fee, setFee] = useState(String(zone.delivery_fee));
+  const dynamic = zone.pricing_mode === 'dynamic';
 
   function commitFee() {
     const parsed = Number(fee);
@@ -387,8 +411,29 @@ function ZoneRow({
           {zone.point_count.toLocaleString()} points
         </div>
       </td>
-      <td className="px-4 py-2.5 text-right">
+      <td className="px-4 py-2.5">
         {readOnly ? (
+          <Badge variant={dynamic ? 'warning' : 'neutral'}>
+            {PRICING_LABEL[zone.pricing_mode]}
+          </Badge>
+        ) : (
+          <Select
+            value={zone.pricing_mode}
+            options={PRICING_OPTIONS}
+            onChange={e =>
+              onChange({ pricing_mode: e.target.value as DeliveryPricingMode })
+            }
+            className="w-36"
+          />
+        )}
+      </td>
+      <td className="px-4 py-2.5 text-right">
+        {/* A courier-priced zone has no fee of its own. Showing an editable
+            number here would invite someone to set one and then wonder why no
+            order ever charged it. */}
+        {dynamic ? (
+          <span className="text-xs font-body text-gray-400">Per pin</span>
+        ) : readOnly ? (
           <span className="text-xs font-body text-gray-700">
             {formatCurrency(zone.delivery_fee)}
           </span>
@@ -432,6 +477,21 @@ function ZoneRow({
             }))}
             onChange={e => onChange({ branch_id: e.target.value })}
             className="w-44"
+          />
+        )}
+      </td>
+      <td className="px-4 py-2.5 text-center">
+        {readOnly ? (
+          <Badge variant={zone.free_delivery_eligible ? 'success' : 'neutral'}>
+            {zone.free_delivery_eligible ? 'Free' : 'Always charged'}
+          </Badge>
+        ) : (
+          <input
+            type="checkbox"
+            aria-label={`Free delivery over the threshold in ${zone.name}`}
+            checked={zone.free_delivery_eligible}
+            onChange={e => onChange({ free_delivery_eligible: e.target.checked })}
+            className="w-4 h-4 accent-primary cursor-pointer"
           />
         )}
       </td>
@@ -480,7 +540,9 @@ function BatchingTab({ zones }: { zones: DeliveryZoneShape[] }) {
             </span>
             <span className="text-sm font-body text-gray-800 flex-1">{zone.name}</span>
             <span className="text-xs font-body text-gray-400">
-              {formatCurrency(zone.delivery_fee)}
+              {zone.pricing_mode === 'dynamic'
+                ? PRICING_LABEL.dynamic
+                : formatCurrency(zone.delivery_fee)}
             </span>
           </button>
           {openZone === zone.id && (
@@ -556,6 +618,18 @@ function RunsTab({
                     {batch.last_error}
                   </div>
                 )}
+                {/* Whether this is being handled or is waiting on a person is
+                    the only thing worth knowing about a failed run, and it is
+                    not something a status badge can say on its own. */}
+                {batch.next_attempt_at ? (
+                  <div className="text-[11px] font-body text-gray-400 mt-0.5">
+                    Attempt {batch.attempt_count} · trying again {formatDate(batch.next_attempt_at)}
+                  </div>
+                ) : batch.status === 'failed' && batch.attempt_count > 1 ? (
+                  <div className="text-[11px] font-body text-gray-400 mt-0.5">
+                    Gave up after {batch.attempt_count} attempts
+                  </div>
+                ) : null}
               </td>
               <td className="px-4 py-2.5 text-xs font-body text-gray-600">
                 {formatDate(batch.dispatch_at)}
@@ -582,15 +656,19 @@ function RunsTab({
                     Track
                   </a>
                 )}
-                {batch.status !== 'dispatched' && batch.status !== 'cancelled' && (
-                  <button
-                    onClick={() => onDispatch(batch.id)}
-                    disabled={busy}
-                    className="text-[11px] font-body text-primary hover:underline"
-                  >
-                    {batch.status === 'failed' ? 'Retry' : 'Send now'}
-                  </button>
-                )}
+                {/* A dispatched run with a retry pending is one whose second
+                    courier order failed — part of it is on the road and part of
+                    it is still in the kitchen, so the button has to stay. */}
+                {batch.status !== 'cancelled' &&
+                  (batch.status !== 'dispatched' || batch.next_attempt_at) && (
+                    <button
+                      onClick={() => onDispatch(batch.id)}
+                      disabled={busy}
+                      className="text-[11px] font-body text-primary hover:underline"
+                    >
+                      {batch.status === 'pending' ? 'Send now' : 'Retry'}
+                    </button>
+                  )}
               </td>
             </tr>
           ))}

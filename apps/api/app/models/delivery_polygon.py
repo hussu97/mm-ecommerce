@@ -34,14 +34,33 @@ class FulfilmentProviderEnum(str, enum.Enum):
 
     #: Booked over the Lalamove API — quoted, dispatched and tracked in code.
     LALAMOVE = "lalamove"
-    #: Booked over noon's Rider-on-Demand API, sold as "noon Send". Cheaper than
-    #: Lalamove on anything under 31 road km, but it cannot cross an emirate
-    #: boundary and caps a run at 15 km, so from the Sharjah kitchen it only
-    #: ever serves the inner part of Sharjah. Falls back to Lalamove whenever it
-    #: will not take a job.
+    #: Booked over noon's Rider-on-Demand API, sold as "noon Send". On a bike it
+    #: is cheaper than Lalamove at every distance in range, but it cannot cross
+    #: an emirate boundary and will not carry a run past 20 km, so from the
+    #: Sharjah kitchen it only ever serves the inner part of Sharjah. Falls back
+    #: to Lalamove whenever it will not take a job — including, deliberately, for
+    #: every customer outside the trial while it runs against noon's staging.
     NOON_SEND = "noon_send"
     #: Whoever we already use. No integration: the same manual flow as today.
     THIRD_PARTY = "third_party"
+
+
+class DeliveryPricingEnum(str, enum.Enum):
+    """Where a zone's delivery fee comes from.
+
+    Two zones can be served by the same courier and still be priced completely
+    differently. Around the kitchen the cost of a run is known well enough to
+    publish a flat number and absorb the variance; an hour's drive away it is
+    not, and quoting a flat fee there means either overcharging the near half of
+    the zone or losing money on the far half.
+    """
+
+    #: The zone's own `delivery_fee`. Fixed, published, and independent of what
+    #: any individual run turns out to cost.
+    STATIC = "static"
+    #: Whatever the courier quotes for this exact pin, rounded up to the whole
+    #: dirham. A pin the courier will not quote cannot be delivered to at all.
+    DYNAMIC = "dynamic"
 
 
 class DeliveryPolygonVersion(Base, UUIDMixin):
@@ -97,7 +116,31 @@ class DeliveryPolygon(Base, UUIDMixin):
         index=True,
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    #: Only read when `pricing_mode` is static. A dynamic zone keeps the column
+    #: at zero rather than a plausible-looking number nothing charges, so a row
+    #: cannot be misread as "we charge 50 here" by anyone glancing at the table.
     delivery_fee: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    #: Static is the safe default: a zone added without thinking about pricing
+    #: charges its own published fee rather than silently handing the price over
+    #: to a courier API.
+    pricing_mode: Mapped[str] = mapped_column(
+        String(10),
+        nullable=False,
+        default=DeliveryPricingEnum.STATIC.value,
+        server_default=DeliveryPricingEnum.STATIC.value,
+    )
+    #: Whether a basket over the threshold delivers free here.
+    #:
+    #: A flag of its own rather than something inferred from the fee or the
+    #: courier. It used to be read off `pricing_mode`, which worked only while
+    #: the fixed-fee zones and the ones we deliver ourselves were the same set;
+    #: the moment a third-party zone got a fixed fee too, that proxy started
+    #: giving delivery away in the places it costs the most to reach. False by
+    #: default, because a zone drawn without anyone thinking about the offer
+    #: should not be making it.
+    free_delivery_eligible: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     #: The branch that serves this zone — bakes the order, hands it to the
     #: courier, and sees it on its register. Exactly one per zone: the shapes are
     #: disjoint, so a pin resolves to one zone and therefore one kitchen, with
@@ -151,7 +194,9 @@ class DeliveryPolygon(Base, UUIDMixin):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<DeliveryPolygon {self.name} @ {self.delivery_fee} "
-            f"via {self.fulfilment_provider}>"
+        price = (
+            f"{self.delivery_fee}"
+            if self.pricing_mode == DeliveryPricingEnum.STATIC.value
+            else "dynamic"
         )
+        return f"<DeliveryPolygon {self.name} @ {price} via {self.fulfilment_provider}>"

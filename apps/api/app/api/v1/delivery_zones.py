@@ -35,6 +35,7 @@ from app.models.delivery_settings import DeliverySettings
 from app.models.delivery_polygon import (
     DeliveryPolygon,
     DeliveryPolygonVersion,
+    DeliveryPricingEnum,
     FulfilmentProviderEnum,
 )
 from app.models.order import Order
@@ -56,7 +57,14 @@ router = APIRouter()
 class PolygonResponse(BaseModel):
     id: str
     name: str
+    #: Only meaningful when `pricing_mode` is static. A dynamic zone charges the
+    #: courier's own quote for the customer's pin and never reads this.
     delivery_fee: float
+    pricing_mode: str
+    #: Whether a qualifying basket delivers free here. Independent of the fee
+    #: and of the courier: a fixed-fee third-party zone is not automatically an
+    #: offer, and reading it off either of those was how it last went wrong.
+    free_delivery_eligible: bool
     fulfilment_provider: str
     #: The kitchen that bakes this zone's orders and hands them to the courier.
     #: Null falls back to the single configured pickup branch.
@@ -72,6 +80,8 @@ class PolygonResponse(BaseModel):
             id=str(p.id),
             name=p.name,
             delivery_fee=float(p.delivery_fee),
+            pricing_mode=p.pricing_mode,
+            free_delivery_eligible=p.free_delivery_eligible,
             fulfilment_provider=p.fulfilment_provider,
             branch_id=str(p.branch_id) if p.branch_id else None,
             display_order=p.display_order,
@@ -114,6 +124,8 @@ class VersionCreate(BaseModel):
 
 class PolygonUpdate(BaseModel):
     delivery_fee: Decimal | None = Field(None, ge=0)
+    pricing_mode: str | None = None
+    free_delivery_eligible: bool | None = None
     fulfilment_provider: str | None = None
     branch_id: uuid.UUID | None = None
     display_order: int | None = None
@@ -160,7 +172,11 @@ class BatchWindowWrite(BaseModel):
 
 class BatchResponse(BaseModel):
     id: str
+    #: The zone whose slot opened this run. A run is shared by every zone
+    #: closing on the same minute, so it says where the run came from rather
+    #: than what is on it — `zone_name` is the honest answer to that.
     polygon_id: str
+    #: Every zone with an order on this run, comma-separated.
     zone_name: str | None
     window_label: str | None
     dispatch_at: datetime
@@ -177,6 +193,12 @@ class BatchResponse(BaseModel):
     cost_per_delivery: float | None
     dispatched_at: datetime | None
     last_error: str | None
+    #: How many times this run has been offered to the courier.
+    attempt_count: int
+    #: When it will be offered again on its own. Null means nothing more will
+    #: happen without somebody pressing the button — either it went out, or
+    #: another attempt cannot change the answer.
+    next_attempt_at: datetime | None
     order_numbers: list[str]
 
     @classmethod
@@ -201,6 +223,8 @@ class BatchResponse(BaseModel):
             cost_per_delivery=float(per) if per is not None else None,
             dispatched_at=b.dispatched_at,
             last_error=b.last_error,
+            attempt_count=b.attempt_count,
+            next_attempt_at=b.next_attempt_at,
             order_numbers=order_numbers,
         )
 
@@ -331,6 +355,8 @@ async def zone_map(
                 "id": str(polygon.id),
                 "name": polygon.name,
                 "delivery_fee": float(polygon.delivery_fee),
+                "pricing_mode": polygon.pricing_mode,
+                "free_delivery_eligible": polygon.free_delivery_eligible,
                 "fulfilment_provider": polygon.fulfilment_provider,
                 "display_order": polygon.display_order,
                 "geometry": _simplify(polygon.geometry, tolerance),
@@ -371,6 +397,8 @@ async def get_polygon_geometry(
     return {
         "name": polygon.name,
         "delivery_fee": float(polygon.delivery_fee),
+        "pricing_mode": polygon.pricing_mode,
+        "free_delivery_eligible": polygon.free_delivery_eligible,
         "fulfilment_provider": polygon.fulfilment_provider,
         "geometry": polygon.geometry,
     }
@@ -413,7 +441,14 @@ async def create_version(
             version_id=draft.id,
             name=polygon.name,
             delivery_fee=polygon.delivery_fee,
+            pricing_mode=polygon.pricing_mode,
+            free_delivery_eligible=polygon.free_delivery_eligible,
             fulfilment_provider=polygon.fulfilment_provider,
+            # The kitchen travels with the zone for the same reason the schedule
+            # does: a draft published without it points every zone at nothing,
+            # and every website order lands on no register at all — silently,
+            # because the order itself is perfectly fine.
+            branch_id=polygon.branch_id,
             geometry=polygon.geometry,
             min_lat=polygon.min_lat,
             max_lat=polygon.max_lat,
@@ -485,6 +520,8 @@ async def update_polygon(
 
     before = {
         "delivery_fee": float(polygon.delivery_fee),
+        "pricing_mode": polygon.pricing_mode,
+        "free_delivery_eligible": polygon.free_delivery_eligible,
         "fulfilment_provider": polygon.fulfilment_provider,
         "branch_id": str(polygon.branch_id) if polygon.branch_id else None,
         "display_order": polygon.display_order,
@@ -492,6 +529,22 @@ async def update_polygon(
 
     if data.delivery_fee is not None:
         polygon.delivery_fee = data.delivery_fee
+    if data.pricing_mode is not None:
+        modes = {m.value for m in DeliveryPricingEnum}
+        if data.pricing_mode not in modes:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Unknown pricing mode '{data.pricing_mode}'. "
+                f"Choose one of: {', '.join(sorted(modes))}",
+            )
+        polygon.pricing_mode = data.pricing_mode
+        if polygon.pricing_mode == DeliveryPricingEnum.DYNAMIC.value:
+            # Nothing reads the fee once the courier sets it, and a stale number
+            # left in the column is how someone later reads the table as "we
+            # charge 50 here".
+            polygon.delivery_fee = Decimal("0.00")
+    if data.free_delivery_eligible is not None:
+        polygon.free_delivery_eligible = data.free_delivery_eligible
     if data.fulfilment_provider is not None:
         allowed = {p.value for p in FulfilmentProviderEnum}
         if data.fulfilment_provider not in allowed:
@@ -524,6 +577,8 @@ async def update_polygon(
             "from": before,
             "to": {
                 "delivery_fee": float(polygon.delivery_fee),
+                "pricing_mode": polygon.pricing_mode,
+                "free_delivery_eligible": polygon.free_delivery_eligible,
                 "fulfilment_provider": polygon.fulfilment_provider,
                 "branch_id": str(polygon.branch_id) if polygon.branch_id else None,
                 "display_order": polygon.display_order,
@@ -621,7 +676,11 @@ async def zone_summary(
         "zones": [
             {
                 "name": z.name,
+                # Zero on a courier-priced zone, and meaningless there — the fee
+                # comes from the pin. `pricing_mode` is what says which it is.
                 "delivery_fee": float(z.delivery_fee),
+                "pricing_mode": z.pricing_mode,
+                "free_delivery_eligible": z.free_delivery_eligible,
                 "fulfilment_provider": z.fulfilment_provider,
             }
             for z in zones
@@ -836,18 +895,28 @@ async def list_batches(
     )
     rows = (
         await db.execute(
-            select(OrderDelivery.batch_id, Order.order_number)
+            select(OrderDelivery.batch_id, OrderDelivery.zone_name, Order.order_number)
             .join(Order, Order.id == OrderDelivery.order_id)
             .where(OrderDelivery.batch_id.in_({b.id for b in batches}))
             .order_by(OrderDelivery.stop_sequence, Order.order_number)
         )
     ).all()
     numbers: dict[uuid.UUID, list[str]] = {}
-    for batch_id, order_number in rows:
+    on_run: dict[uuid.UUID, list[str]] = {}
+    for batch_id, zone_name, order_number in rows:
         numbers.setdefault(batch_id, []).append(order_number)
+        zones_here = on_run.setdefault(batch_id, [])
+        if zone_name and zone_name not in zones_here:
+            zones_here.append(zone_name)
 
     return [
-        BatchResponse.of(b, zone_names.get(b.polygon_id), numbers.get(b.id, []))
+        BatchResponse.of(
+            b,
+            # What is actually on the run. Falls back to the zone that opened it
+            # for a batch that has not collected anything yet.
+            ", ".join(on_run.get(b.id) or []) or zone_names.get(b.polygon_id),
+            numbers.get(b.id, []),
+        )
         for b in batches
     ]
 
@@ -862,16 +931,22 @@ async def dispatch_batch_now(
     """
     Send a run early, or retry one the courier refused.
 
-    The sweeper fires these on schedule; this is for the shop deciding it is
-    not worth waiting, and for the wallet-was-empty case where the run failed
-    and needs another go once it is topped up.
+    The sweeper fires these on schedule and retries a refusal a few times on its
+    own; this is for the shop deciding it is not worth waiting, and for the run
+    that has already exhausted those attempts.
+
+    Pressing it resets the ladder. Somebody doing this by hand has almost always
+    just changed something the automatic attempts could not — topped up the
+    wallet, fixed an address — so the run deserves the full set of tries again
+    rather than the one that was left.
     """
     batch = await db.get(DeliveryBatch, batch_id)
     if batch is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Batch not found")
-    if batch.status == BatchStatusEnum.DISPATCHED.value:
+    if batch.status == BatchStatusEnum.DISPATCHED.value and not batch.next_attempt_at:
         raise HTTPException(status.HTTP_409_CONFLICT, "This run has already gone out.")
 
+    batch.attempt_count = 0
     await batching_service.dispatch_batch(db, batch)
     await db.flush()
     await audit_service.log_action(

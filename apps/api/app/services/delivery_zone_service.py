@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.delivery_polygon import (
     DeliveryPolygon,
     DeliveryPolygonVersion,
+    DeliveryPricingEnum,
     FulfilmentProviderEnum,
 )
 
@@ -37,6 +38,13 @@ class Zone:
     min_lng: float
     max_lng: float
     rings: tuple[tuple[tuple[tuple[float, float], ...], ...], ...]
+    #: Defaulted so a zone built by hand — in a test, or from a row written
+    #: before the column existed — charges its own fee rather than reaching for
+    #: a courier that may not answer.
+    pricing_mode: str = DeliveryPricingEnum.STATIC.value
+    #: Whether a qualifying basket delivers free here. Defaulted off so a zone
+    #: built by hand cannot give delivery away by omission.
+    free_delivery_eligible: bool = False
     #: The kitchen that serves this zone. None falls back to the single
     #: configured pickup branch, which is what every zone did before zones knew
     #: about branches at all — so it defaults, and a map drawn before the column
@@ -53,8 +61,31 @@ class Zone:
 
     @property
     def books_itself(self) -> bool:
-        """A zone we dispatch over an API rather than by hand."""
+        """A zone we dispatch over an API rather than by hand.
+
+        Wider than `is_batched`: noon Send is ours to dispatch but never shares a
+        run, so the two questions stopped having the same answer the moment a
+        second courier arrived. "When will it arrive" turns on this one — we know
+        the schedule for anything we dispatch — while "does it wait for a van"
+        turns on the other.
+        """
         return self.fulfilment_provider != FulfilmentProviderEnum.THIRD_PARTY.value
+
+    @property
+    def is_batched(self) -> bool:
+        """Whether orders here wait for a shared run rather than going alone.
+
+        Only Lalamove. A third-party zone is collected on somebody else's
+        schedule, which we cannot see; noon Send's shared run is a different
+        product with a cap of three that we do not use, so its orders always go
+        out on their own — which is exactly why it can promise an hour.
+        """
+        return self.is_lalamove
+
+    @property
+    def is_dynamic(self) -> bool:
+        """Priced from the courier's own quote rather than from `delivery_fee`."""
+        return self.pricing_mode == DeliveryPricingEnum.DYNAMIC.value
 
     def contains(self, lat: float, lng: float) -> bool:
         # Four comparisons reject almost every zone before any real work.
@@ -162,6 +193,8 @@ def _to_zone(p: DeliveryPolygon) -> Zone:
         fulfilment_provider=(
             p.fulfilment_provider or FulfilmentProviderEnum.THIRD_PARTY.value
         ),
+        pricing_mode=(p.pricing_mode or DeliveryPricingEnum.STATIC.value),
+        free_delivery_eligible=bool(p.free_delivery_eligible),
         branch_id=p.branch_id,
         min_lat=float(p.min_lat),
         max_lat=float(p.max_lat),

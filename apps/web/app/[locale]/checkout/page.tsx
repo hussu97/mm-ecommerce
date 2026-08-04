@@ -10,7 +10,7 @@ import {
   getSessionId,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { ensureCheckoutAuth } from '@/lib/checkout-auth';
+import { accountEmailOf, ensureCheckoutAuth } from '@/lib/checkout-auth';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { PhoneInput, isValidPhone } from '@/components/ui/PhoneInput';
@@ -125,6 +125,106 @@ function Section({ label, children }: { label: string; children: React.ReactNode
   );
 }
 
+/**
+ * The one thing on this page that stops an order.
+ *
+ * A pin the courier will not quote has no price, and a checkout that quietly
+ * shows a fee anyway sells a delivery nobody is going to make. So it says so —
+ * and, because "we cannot deliver here" is useless on its own, it says it next
+ * to the two things that actually resolve it: move the pin, or collect.
+ *
+ * Amber rather than red. Nothing has gone wrong and nothing was lost; this
+ * address simply is not one of the ones that works.
+ */
+function UnserviceableNotice({
+  onChangeAddress, onSwitchToPickup, t,
+}: {
+  onChangeAddress: () => void;
+  onSwitchToPickup: () => void;
+  t: (k: string, p?: Record<string, string | number>) => string;
+}) {
+  return (
+    <div
+      role="alert"
+      data-field="unserviceable"
+      className="mt-3 border border-amber-300 bg-amber-50/70 rounded-sm px-3.5 py-3"
+    >
+      <div className="flex gap-2.5">
+        <span className="material-icons text-xl text-amber-600 shrink-0">wrong_location</span>
+        <div className="min-w-0">
+          <p className="font-body text-sm text-amber-900">{t('checkout.unserviceable_title')}</p>
+          <p className="font-body text-xs text-amber-800/80 mt-1 leading-relaxed">
+            {t('checkout.unserviceable_body')}
+          </p>
+          <div className="flex flex-wrap gap-2 mt-3">
+            <button
+              type="button"
+              onClick={onChangeAddress}
+              className="font-body text-xs px-3 py-1.5 border border-amber-400 text-amber-900 rounded-sm hover:bg-amber-100 transition-colors"
+            >
+              {t('checkout.unserviceable_change')}
+            </button>
+            <button
+              type="button"
+              onClick={onSwitchToPickup}
+              className="font-body text-xs px-3 py-1.5 text-amber-800 underline underline-offset-2 hover:text-amber-900 transition-colors"
+            >
+              {t('checkout.unserviceable_pickup')}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "Tomorrow, 13:00" — or just "Tomorrow" where an hour would be a lie.
+ *
+ * The words are translated; the date and the hour are formatted by the browser,
+ * which knows the customer's locale and calendar far better than a translation
+ * table ever will. Everything is read on the shop's clock rather than the
+ * device's: a customer checking out from London is still being delivered to in
+ * the UAE, and "tomorrow" has to mean the shop's tomorrow.
+ */
+const SHOP_TZ = 'Asia/Dubai';
+
+function formatEstimate(
+  estimate: { at: string; precision: 'time' | 'day' },
+  locale: string,
+  t: (k: string, p?: Record<string, string | number>) => string,
+): string {
+  const at = new Date(estimate.at);
+  if (Number.isNaN(at.getTime())) return '';
+
+  const dayKey = (d: Date) =>
+    new Intl.DateTimeFormat('en-CA', { timeZone: SHOP_TZ }).format(d);
+  const today = dayKey(new Date());
+  const tomorrow = dayKey(new Date(Date.now() + 86_400_000));
+  const target = dayKey(at);
+
+  const day =
+    target === today
+      ? t('checkout.delivery_today')
+      : target === tomorrow
+        ? t('checkout.delivery_tomorrow')
+        : new Intl.DateTimeFormat(locale, {
+            weekday: 'short',
+            day: 'numeric',
+            month: 'short',
+            timeZone: SHOP_TZ,
+          }).format(at);
+
+  if (estimate.precision === 'day') return t('checkout.delivery_by_day', { day });
+
+  const time = new Intl.DateTimeFormat(locale, {
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: SHOP_TZ,
+  }).format(at);
+  return t('checkout.delivery_by_time', { day, time });
+}
+
 /** One tappable choice: icon, label, and what it costs. */
 function ChoiceRow({
   selected, onSelect, icon, title, subtitle, trailing,
@@ -159,23 +259,31 @@ function ChoiceRow({
 
 function OrderSummary({
   cart, retryOrder, discount, promoCode, deliveryFee, baseFee, freeApplied,
-  remainingForFree, deliveryMethod, locale, t,
+  freeAvailable, hasPin, remainingForFree, deliveryMethod, unserviceable, locale, t,
 }: {
   cart: Cart | null;
   retryOrder: import('@/lib/types').Order | null;
   discount: number;
   promoCode: string;
-  deliveryFee: number;
+  /** Null while the fee is unknown — no pin yet, or nowhere we can deliver. */
+  deliveryFee: number | null;
   /** What delivery would have cost — struck through once it is waived. */
   baseFee: number;
   freeApplied: boolean;
+  /** Whether free delivery can reach this address at all. */
+  freeAvailable: boolean;
+  /** True once a pin exists, so "not in this area" is a fact and not a guess. */
+  hasPin: boolean;
   remainingForFree: number;
   deliveryMethod: 'delivery' | 'pickup';
+  /** Nothing can be delivered to this pin, so there is no total to commit to. */
+  unserviceable: boolean;
   locale: string;
   t: (k: string, p?: Record<string, string | number>) => string;
 }) {
   const subtotal = retryOrder ? Number(retryOrder.subtotal) : (cart?.subtotal ?? 0);
-  const total = retryOrder ? Number(retryOrder.total) : Math.max(0, subtotal + deliveryFee - discount);
+  const knownFee = deliveryFee ?? 0;
+  const total = retryOrder ? Number(retryOrder.total) : Math.max(0, subtotal + knownFee - discount);
 
   const rows = retryOrder
     ? retryOrder.items.map((i) => ({
@@ -237,23 +345,38 @@ function OrderSummary({
             <span>{deliveryMethod === 'pickup' ? t('checkout.store_pickup') : t('common.delivery')}</span>
             {/* Striking the real fee through, rather than just printing "Free",
                 shows the customer the number they no longer owe. */}
-            {deliveryMethod === 'delivery' && freeApplied && baseFee > 0 ? (
+            {deliveryMethod === 'delivery' && unserviceable ? (
+              <span className="text-amber-700">{t('checkout.unserviceable_short')}</span>
+            ) : deliveryMethod === 'delivery' && deliveryFee === null ? (
+              // Not free, and not a number we are willing to guess at yet.
+              <span className="text-gray-400">{t('checkout.fee_from_address')}</span>
+            ) : deliveryMethod === 'delivery' && freeApplied && baseFee > 0 ? (
               <span className="flex items-center gap-2">
                 <span className="text-gray-400 line-through">{baseFee.toFixed(2)} AED</span>
                 <span className="text-green-600 font-medium">{t('common.free')}</span>
               </span>
             ) : (
-              <span className={deliveryFee === 0 ? 'text-green-600' : 'text-gray-700'}>
-                {deliveryFee === 0 ? t('common.free') : `${deliveryFee.toFixed(2)} AED`}
+              <span className={knownFee === 0 ? 'text-green-600' : 'text-gray-700'}>
+                {knownFee === 0 ? t('common.free') : `${knownFee.toFixed(2)} AED`}
               </span>
             )}
           </div>
-          {deliveryMethod === 'delivery' && !freeApplied && remainingForFree > 0 && (
-            <p className="mt-1 font-body text-xs text-secondary">
-              {t('checkout.free_delivery_upsell', { amount: remainingForFree.toFixed(2) })}
+          {/* Three different things to say about one offer: it is not coming
+              here, you are this far from it, or you have it. Saying the second
+              to someone in the first case is the failure worth avoiding. */}
+          {deliveryMethod === 'delivery' && !unserviceable && !freeAvailable && hasPin && (
+            <p className="mt-1 font-body text-xs text-gray-400">
+              {t('checkout.free_delivery_not_in_area')}
             </p>
           )}
-          {deliveryMethod === 'delivery' && freeApplied && (
+          {deliveryMethod === 'delivery' && !unserviceable && freeAvailable && !freeApplied && remainingForFree > 0 && (
+            <p className="mt-1 font-body text-xs text-secondary">
+              {t(hasPin ? 'checkout.free_delivery_upsell' : 'checkout.free_delivery_upsell_areas', {
+                amount: remainingForFree.toFixed(2),
+              })}
+            </p>
+          )}
+          {deliveryMethod === 'delivery' && !unserviceable && freeApplied && (
             <p className="mt-1 font-body text-xs text-green-600">
               {t('checkout.free_delivery_qualified')}
             </p>
@@ -261,7 +384,14 @@ function OrderSummary({
         </div>
         <div className="flex justify-between pt-2 mt-1 border-t border-gray-100 font-medium text-base">
           <span className="text-gray-800">{t('common.total')}</span>
-          <span className="text-primary">{total.toFixed(2)} AED</span>
+          {/* No deliverable address means no total. Printing the basket on its
+              own here reads as the price of the order, and it is the one line
+              on the page a customer takes at face value. */}
+          {deliveryMethod === 'delivery' && unserviceable ? (
+            <span className="text-gray-400">&mdash;</span>
+          ) : (
+            <span className="text-primary">{total.toFixed(2)} AED</span>
+          )}
         </div>
         <p className="text-[11px] text-gray-400 text-end">
           VAT included (5%) · {((subtotal - discount) * 5 / 105).toFixed(2)} AED
@@ -292,6 +422,9 @@ function CheckoutContent() {
   const [quote, setQuote] = useState<DeliveryQuote | null>(null);
 
   const isDelivery = form.deliveryMethod === 'delivery';
+  // Where the receipt is already going, when there is an account to read it
+  // off. Null for guests — see accountEmailOf.
+  const accountEmail = accountEmailOf(user);
   const paymentOptions = paymentOptionsFor(form.deliveryMethod);
   // Keep the selection legal: switching to delivery must not leave cash chosen.
   const paymentMethod = paymentOptions.includes(form.paymentMethod)
@@ -381,27 +514,46 @@ function CheckoutContent() {
 
   const subtotal = cart?.subtotal ?? 0;
   const effectiveSubtotal = Math.max(0, subtotal - form.promoDiscount);
-  const freeThreshold = quote?.free_threshold ?? deliveryRates?.free_threshold ?? 200;
-  const freeApplied = effectiveSubtotal >= freeThreshold;
+  const freeThreshold = quote?.free_threshold ?? deliveryRates?.free_threshold ?? 150;
+  // The server decides this, not the basket. Free delivery only reaches the
+  // zones we price ourselves, so "big enough order" is a necessary condition
+  // and not a sufficient one — working it out here from the subtotal alone
+  // would promise it to every address in the country.
+  const freeApplied = quote?.free_delivery_applied ?? false;
+  // Undefined until the first quote lands. Assumed available so the upsell is
+  // not suppressed on a cold page; the copy for that state says "in selected
+  // areas", which is exactly what we know at that point.
+  const freeAvailable = quote?.free_delivery_available ?? true;
+  // The question every shopper actually has. Only ever rendered from what the
+  // server sent — the schedule that produces it is not something the browser
+  // can or should reconstruct.
+  const arrival =
+    isDelivery && !retryOrder && quote?.delivery_estimate
+      ? formatEstimate(quote.delivery_estimate, locale, t)
+      : '';
 
-  // Priced off the pin against the active zone map. Before there is a pin the
-  // API answers with the fallback fee, which is the highest we charge — so the
-  // quote can only ever come down once the address is in, never up. A total
-  // that rises after the customer has read it is the worse surprise.
+  // Priced off the pin against the active zone map. Close to the kitchen that is
+  // a published flat fee; beyond it, the courier's own price for this exact
+  // trip. Which means the number is not knowable before the pin is, so until
+  // then there is no fee on screen rather than a placeholder we would have to
+  // take back — a total that rises after the customer has read it is the worse
+  // surprise. It also means the pin can have no price at all, which is not a
+  // free delivery and not a zero: it is an address we cannot serve.
   const hasPin = form.locationLat !== null && form.locationLng !== null;
+  const unserviceable = isDelivery && !retryOrder && quote?.serviceable === false;
   const baseFee = quote?.base_fee ?? null;
-  const knowsFee = baseFee !== null;
-  const homeDeliveryFee = knowsFee ? (freeApplied ? 0 : baseFee) : null;
+  const homeDeliveryFee = unserviceable ? null : (quote?.delivery_fee ?? null);
+  const knowsFee = homeDeliveryFee !== null;
   const remainingForFree = Math.max(0, freeThreshold - effectiveSubtotal);
 
   const deliveryFee = retryOrder
     ? Number(retryOrder.delivery_fee)
     : form.deliveryMethod === 'pickup'
       ? (deliveryRates?.pickup_fee ?? 0)
-      : (homeDeliveryFee ?? 0);
+      : homeDeliveryFee;
   const total = retryOrder
     ? Number(retryOrder.total)
-    : Math.max(0, subtotal + deliveryFee - form.promoDiscount);
+    : Math.max(0, subtotal + (deliveryFee ?? 0) - form.promoDiscount);
 
   // Re-price whenever the pin or the basket changes, so what is on screen is
   // what the order will be written with.
@@ -450,13 +602,20 @@ function CheckoutContent() {
     if (!retryOrder) {
       const found: Record<string, string> = {};
       // Email is only checked when something was typed: a typo is caught, a
-      // blank never blocks.
-      if (form.email.trim() && !isValidEmail(form.email)) found.email = t('checkout.valid_email_required');
+      // blank never blocks. Nothing to check at all when it came from the
+      // account rather than the keyboard.
+      if (!accountEmail && form.email.trim() && !isValidEmail(form.email)) {
+        found.email = t('checkout.valid_email_required');
+      }
 
       if (isDelivery) {
         if (!form.addressLine1.trim()) found.address = t('checkout.address_required');
         else if (!form.firstName.trim() || !form.phone.trim() || !isValidPhone(form.phone)) {
           found.address = t('checkout.address_contact_incomplete');
+        } else if (unserviceable) {
+          // The API refuses this too. Stopping here saves the customer a round
+          // trip and a payment page they were never going to get through.
+          found.unserviceable = t('checkout.unserviceable_title');
         }
       } else {
         if (!form.firstName.trim()) found.firstName = t('checkout.first_name_required');
@@ -490,7 +649,7 @@ function CheckoutContent() {
         const order = await ordersApi.create({
           // Blank means "no email" — the API falls back to the session's own
           // address rather than refusing the order.
-          email: form.email.trim() ? form.email.trim().toLowerCase() : undefined,
+          email: accountEmail ?? (form.email.trim() ? form.email.trim().toLowerCase() : undefined),
           delivery_method: form.deliveryMethod,
           shipping_address: isDelivery
             ? {
@@ -525,7 +684,8 @@ function CheckoutContent() {
       // Cash and zero-total orders are confirmed server-side — there is no
       // gateway to visit, so go straight to the confirmation.
       if (session.confirmed) {
-        const orderEmail = createdOrder?.email ?? retryOrder?.email ?? form.email.trim().toLowerCase();
+        const orderEmail =
+          createdOrder?.email ?? retryOrder?.email ?? accountEmail ?? form.email.trim().toLowerCase();
         window.location.href =
           `/${locale}/checkout/confirmation?order_number=${orderNumber}&email=${encodeURIComponent(orderEmail)}`;
         return;
@@ -542,7 +702,7 @@ function CheckoutContent() {
       addToast(message, 'error');
       setSubmitting(false);
     }
-  }, [form, cart, retryOrder, user, locale, addToast, refreshCart, t, paymentMethod, isDelivery]);
+  }, [form, cart, retryOrder, user, accountEmail, locale, addToast, refreshCart, t, paymentMethod, isDelivery, unserviceable]);
 
   // ── Non-form states ────────────────────────────────────────────────────────
 
@@ -583,9 +743,12 @@ function CheckoutContent() {
   // ── The page ───────────────────────────────────────────────────────────────
 
   const placeOrderLabel = t('checkout.place_order', { total: total.toFixed(2) });
+  // Left clickable rather than disabled: a dead button explains nothing, and
+  // pressing it scrolls the explanation into view.
+  const blocked = Boolean(unserviceable);
 
   return (
-    <div className="max-w-xl mx-auto px-4 py-8 sm:py-10 pb-28 sm:pb-10">
+    <div className="max-w-xl mx-auto px-4 py-8 sm:py-10">
       <header className="flex items-baseline justify-between mb-6">
         <h1 className="font-display text-2xl sm:text-3xl text-primary uppercase tracking-[0.15em]">
           {t('breadcrumb.checkout')}
@@ -606,13 +769,21 @@ function CheckoutContent() {
             }}
             icon="local_shipping"
             title={t('checkout.delivery_option')}
-            subtitle={freeApplied
-              ? t('checkout.free_delivery_qualified')
-              : !hasPin
-                ? t('checkout.fee_from_address')
-                : t('checkout.free_delivery_upsell', { amount: remainingForFree.toFixed(2) })}
+            subtitle={unserviceable
+              ? t('checkout.unserviceable_short')
+              : freeApplied
+                ? t('checkout.free_delivery_qualified')
+                : !hasPin
+                  ? t('checkout.fee_from_address')
+                  : !freeAvailable
+                    // The fee here is a courier bill, not a number we set, so
+                    // there is nothing to earn by spending more.
+                    ? t('checkout.free_delivery_not_in_area')
+                    : t('checkout.free_delivery_upsell', { amount: remainingForFree.toFixed(2) })}
             trailing={
-              !knowsFee ? (
+              unserviceable ? (
+                <span className="material-icons text-lg text-amber-600">wrong_location</span>
+              ) : !knowsFee ? (
                 <span className="text-gray-400">—</span>
               ) : freeApplied && (baseFee ?? 0) > 0 ? (
                 // The saving is the point, so show what was avoided.
@@ -620,10 +791,10 @@ function CheckoutContent() {
                   <span className="text-gray-400 line-through">{(baseFee ?? 0).toFixed(2)} AED</span>
                   <span className="text-green-600 font-medium">{t('common.free')}</span>
                 </span>
-              ) : (homeDeliveryFee ?? 0) === 0 ? (
+              ) : homeDeliveryFee === 0 ? (
                 <span className="text-green-600">{t('common.free')}</span>
               ) : (
-                <span className="text-gray-700">{(homeDeliveryFee ?? 0).toFixed(2)} AED</span>
+                <span className="text-gray-700">{homeDeliveryFee.toFixed(2)} AED</span>
               )
             }
           />
@@ -689,6 +860,30 @@ function CheckoutContent() {
               <span className="material-icons text-lg text-gray-300">chevron_right</span>
             </button>
             {errors.address && <p className="mt-1.5 text-xs text-red-500 font-body">{errors.address}</p>}
+            {/* The one line that answers "when", placed where the pin that
+                decides it was just chosen. */}
+            {arrival && !unserviceable && (
+              <p className="mt-2.5 flex items-center gap-1.5 font-body text-xs text-gray-500">
+                <span className="material-icons text-sm text-primary">schedule</span>
+                <span>
+                  {t('checkout.estimated_delivery')}:{' '}
+                  <span className="text-gray-800">{arrival}</span>
+                </span>
+              </p>
+            )}
+            {/* Directly under the thing that caused it, and above everything it
+                makes pointless to fill in. */}
+            {unserviceable && (
+              <UnserviceableNotice
+                onChangeAddress={() => setAddressOpen(true)}
+                onSwitchToPickup={() => {
+                  analytics.selectDeliveryMethod({ method: 'pickup', fee: 0 });
+                  onChange({ deliveryMethod: 'pickup' });
+                  clearError('unserviceable');
+                }}
+                t={t}
+              />
+            )}
           </div>
         </Section>
       ) : (
@@ -722,19 +917,33 @@ function CheckoutContent() {
         </Section>
       )}
 
-      {/* 3 — Optional, and the last thing asked for. */}
-      <Section label={t('checkout.email_optional')}>
-        <div data-field="email" data-field-error={errors.email ? 'true' : undefined}>
-          <Input
-            type="email"
-            aria-label={t('checkout.email_optional')}
-            placeholder={t('common.email_placeholder')}
-            value={form.email}
-            onChange={(e) => { onChange({ email: e.target.value }); clearError('email'); }}
-            error={errors.email}
-            helper={errors.email ? undefined : t('checkout.email_optional_hint')}
-          />
-        </div>
+      {/* 3 — Optional, and the last thing asked for. Signed in, it is not a
+             question at all: the account already has an address, and asking for
+             it again invites a second one that no order history will match. */}
+      <Section label={accountEmail ? t('checkout.email') : t('checkout.email_optional')}>
+        {accountEmail ? (
+          <div className="flex items-start gap-2.5 border border-gray-200 bg-gray-50 rounded-sm px-3 py-2.5">
+            <span className="material-icons text-base text-primary mt-0.5">mark_email_read</span>
+            <div className="min-w-0">
+              <p className="font-body text-sm text-gray-800 truncate">{accountEmail}</p>
+              <p className="font-body text-xs text-gray-400 mt-0.5">
+                {t('checkout.email_signed_in_hint')}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div data-field="email" data-field-error={errors.email ? 'true' : undefined}>
+            <Input
+              type="email"
+              aria-label={t('checkout.email_optional')}
+              placeholder={t('common.email_placeholder')}
+              value={form.email}
+              onChange={(e) => { onChange({ email: e.target.value }); clearError('email'); }}
+              error={errors.email}
+              helper={errors.email ? undefined : t('checkout.email_optional_hint')}
+            />
+          </div>
+        )}
       </Section>
 
       {/* 4 — A choice when collecting, a statement when delivering: there is no
@@ -790,8 +999,11 @@ function CheckoutContent() {
           deliveryFee={deliveryFee}
           baseFee={baseFee ?? 0}
           freeApplied={freeApplied}
+          freeAvailable={freeAvailable}
+          hasPin={hasPin}
           remainingForFree={remainingForFree}
           deliveryMethod={form.deliveryMethod}
+          unserviceable={Boolean(unserviceable)}
           locale={locale}
           t={t}
         />
@@ -834,8 +1046,15 @@ function CheckoutContent() {
 
       {/* 6 — One button, and on a phone it never leaves the screen. */}
       <div className="hidden sm:block pt-2">
-        <Button variant="primary" size="lg" fullWidth onClick={handleSubmit} loading={submitting}>
-          {placeOrderLabel}
+        <Button
+          variant="primary"
+          size="lg"
+          fullWidth
+          onClick={handleSubmit}
+          loading={submitting}
+          className={blocked ? 'opacity-60' : undefined}
+        >
+          {blocked ? t('checkout.unserviceable_short') : placeOrderLabel}
         </Button>
         <p className="mt-3 flex items-center justify-center gap-1.5 text-gray-400">
           <span className="material-icons text-sm">lock</span>
@@ -843,9 +1062,25 @@ function CheckoutContent() {
         </p>
       </div>
 
-      <div className="sm:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur border-t border-gray-100 px-4 py-3">
-        <Button variant="primary" size="lg" fullWidth onClick={handleSubmit} loading={submitting}>
-          {placeOrderLabel}
+      {/* Sticky, not fixed.
+          `position: fixed` resolves `bottom: 0` against the *layout* viewport,
+          which on a phone is not the viewport you can see: browsers with a
+          collapsing address bar keep the layout viewport at its tallest, so the
+          bar settled hundreds of pixels above the visible bottom and appeared to
+          float in the middle of the page while scrolling. A sticky element is
+          laid out in normal flow and pinned by the scroller itself, so there is
+          no second viewport for it to disagree with. `-mx-4` cancels the page
+          gutter so it still spans edge to edge. */}
+      <div className="sm:hidden sticky bottom-0 z-30 -mx-4 mt-4 bg-white/95 backdrop-blur border-t border-gray-100 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <Button
+          variant="primary"
+          size="lg"
+          fullWidth
+          onClick={handleSubmit}
+          loading={submitting}
+          className={blocked ? 'opacity-60' : undefined}
+        >
+          {blocked ? t('checkout.unserviceable_short') : placeOrderLabel}
         </Button>
       </div>
 

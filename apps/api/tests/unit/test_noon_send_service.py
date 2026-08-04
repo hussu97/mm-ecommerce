@@ -379,6 +379,8 @@ async def test_the_outlet_code_comes_from_the_branch_first(
         longitude=Decimal("55.3736131"),
         phone="+971501234567",
         noon_send_outlet_code=branch_code,
+        opening_from="09:00",
+        opening_to="23:00",
     )
 
     class _Db:

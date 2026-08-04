@@ -23,7 +23,7 @@ from app.services.delivery_service import calculate_fee
 from app.services.delivery_zone_service import Zone
 
 SETTINGS = DeliverySettings(
-    free_delivery_threshold=Decimal("200.00"),
+    free_delivery_threshold=Decimal("150.00"),
     pickup_fee=Decimal("0.00"),
     default_delivery_fee=Decimal("50.00"),
 )
@@ -38,6 +38,7 @@ SHARJAH_CITY = Zone(
     min_lng=55.2,
     max_lng=55.7,
     rings=(),
+    free_delivery_eligible=True,
 )
 
 #: Somewhere inside Sharjah City. The zone lookup is patched, so the exact
@@ -81,7 +82,7 @@ async def fee(subtotal: str, *, zone: Zone | None = SHARJAH_CITY, pin: bool = Tr
 async def test_pickup_is_free_whatever_the_basket():
     settings_patch, zone_patch = _with_zone(SHARJAH_CITY)
     with settings_patch, zone_patch:
-        for subtotal in ("1.00", "199.99", "1000.00"):
+        for subtotal in ("1.00", "149.99", "1000.00"):
             assert await calculate_fee(
                 DeliveryMethodEnum.PICKUP, Decimal(subtotal), _db(), **PIN
             ) == Decimal("0.00")
@@ -91,8 +92,8 @@ async def test_pickup_is_free_whatever_the_basket():
 
 
 async def test_free_at_exactly_the_threshold():
-    """200 is the promise. Charging at exactly 200 would make it a lie."""
-    assert await fee("200.00") == Decimal("0.00")
+    """150 is the promise. Charging at exactly 150 would make it a lie."""
+    assert await fee("150.00") == Decimal("0.00")
 
 
 async def test_free_above_the_threshold():
@@ -100,27 +101,46 @@ async def test_free_above_the_threshold():
 
 
 async def test_a_penny_short_still_pays():
-    assert await fee("199.99") == Decimal("15.00")
+    assert await fee("149.99") == Decimal("15.00")
 
 
-async def test_the_threshold_beats_the_zone_everywhere():
+async def test_the_threshold_is_one_number_but_not_one_promise():
     """
-    Free delivery is checked before the zone, so it applies identically in a
-    15 AED zone and a 50 AED one. That is the point: the threshold is the one
-    delivery number a customer can see, and it must not vary by address.
+    The figure never varies by address — a threshold that did would be the one
+    place the delivery map became visible to the customer. Where the offer
+    *lands* very much does vary: it is a flag on the zone, set on the three we
+    deliver ourselves and on nothing else. The 80 AED zones stay 80 AED whether
+    the basket is 50 or 500.
     """
+    near = Zone(
+        id=None,  # type: ignore[arg-type]
+        name="Sharjah City",
+        delivery_fee=Decimal("15.00"),
+        fulfilment_provider="lalamove",
+        min_lat=25.0,
+        max_lat=25.6,
+        min_lng=55.2,
+        max_lng=55.7,
+        rings=(),
+        free_delivery_eligible=True,
+    )
     far = Zone(
         id=None,  # type: ignore[arg-type]
         name="Fujairah",
-        delivery_fee=Decimal("50.00"),
+        delivery_fee=Decimal("80.00"),
         fulfilment_provider="third_party",
         min_lat=24.8,
         max_lat=25.7,
         min_lng=55.9,
         max_lng=56.4,
         rings=(),
+        free_delivery_eligible=False,
     )
-    assert await fee("250.00") == await fee("250.00", zone=far) == Decimal("0.00")
+
+    assert await fee("250.00", zone=near) == Decimal("0.00")
+    assert await fee("250.00", zone=far) != Decimal("0.00"), (
+        "a large basket bought free delivery in a zone we do not price"
+    )
 
 
 # ── the zone ──────────────────────────────────────────────────────────────────
@@ -158,7 +178,7 @@ async def test_the_public_rates_no_longer_publish_a_price_list():
         rates = await delivery_service.get_delivery_rates(_db())
 
     assert set(rates) == {"free_threshold", "pickup_fee", "default_delivery_fee"}
-    assert rates["free_threshold"] == 200.0
+    assert rates["free_threshold"] == 150.0
 
 
 @pytest.mark.parametrize("gone", ["get_active_regions", "get_all_regions"])

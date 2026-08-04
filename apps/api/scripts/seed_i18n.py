@@ -156,11 +156,27 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "new_address_option", "+ Enter a new address"),
     ("checkout", "address_placeholder", "Building, Street"),
     ("checkout", "address2_placeholder", "Apartment, floor"),
-    ("checkout", "first_name_placeholder", "Fatema"),
-    ("checkout", "last_name_placeholder", "Abbasi"),
+    ("checkout", "first_name_placeholder", "First name"),
+    ("checkout", "last_name_placeholder", "Last name"),
     ("checkout", "home_delivery", "Home Delivery"),
     ("checkout", "store_pickup", "Store Pickup"),
     ("checkout", "free_delivery_qualified", "Free delivery — your order qualifies!"),
+    # Shown before there is a pin, when whether the offer reaches this customer
+    # is still unknown. The qualifier is the whole point of the separate key:
+    # promising free delivery flatly and then charging 137 to Abu Dhabi is a
+    # broken promise however correct the arithmetic was.
+    (
+        "checkout",
+        "free_delivery_upsell_areas",
+        "Add {amount} AED more for free delivery in selected areas",
+    ),
+    # Shown once the pin lands somewhere the offer cannot reach, so a full
+    # basket is not left waiting for a discount that is never coming.
+    (
+        "checkout",
+        "free_delivery_not_in_area",
+        "Free delivery isn't available for this address",
+    ),
     ("checkout", "delivery_time", "Delivered in 2–3 business days"),
     ("checkout", "free_delivery_upsell", "Add {amount} AED more for free delivery"),
     (
@@ -209,6 +225,30 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "add_promo_or_note", "Add a promo code or a note"),
     ("checkout", "delivery_option", "Delivery"),
     ("checkout", "fee_from_address", "Confirmed once you add your address"),
+    # Shown when the pin has no price at all — nothing can be delivered there.
+    # Deliberately says nothing about couriers: who carries an order is not the
+    # shopper's business, and naming one here would be the first place the
+    # fulfilment map leaked onto the storefront.
+    ("checkout", "unserviceable_title", "We can't deliver to this address"),
+    (
+        "checkout",
+        "unserviceable_body",
+        "This location is outside our delivery range at the moment. Try a nearby "
+        "address, or collect your order from the store instead.",
+    ),
+    ("checkout", "unserviceable_change", "Change address"),
+    ("checkout", "unserviceable_pickup", "Collect from store instead"),
+    ("checkout", "unserviceable_short", "Delivery unavailable here"),
+    # The arrival estimate. "Today"/"Tomorrow" are words; the date and the time
+    # are formatted by the browser, which knows the customer's locale far better
+    # than a translation table does.
+    ("checkout", "estimated_delivery", "Estimated delivery"),
+    ("checkout", "delivery_today", "Today"),
+    ("checkout", "delivery_tomorrow", "Tomorrow"),
+    # A day with no hour on it. Used where the van is a partner's and naming an
+    # hour would be promising something we do not control.
+    ("checkout", "delivery_by_day", "{day}"),
+    ("checkout", "delivery_by_time", "{day}, {time}"),
     ("checkout", "view_pickup_location", "See where to collect from"),
     ("common", "address", "Address"),
     ("checkout", "email_optional", "Email (optional)"),
@@ -216,6 +256,12 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
         "checkout",
         "email_optional_hint",
         "Add it if you'd like a written confirmation of your order.",
+    ),
+    ("checkout", "email", "Email"),
+    (
+        "checkout",
+        "email_signed_in_hint",
+        "Your order confirmation and updates will be sent here.",
     ),
     ("checkout", "add_delivery_address", "Add a delivery address"),
     ("checkout", "add_address_hint", "Drop a pin on the map — we'll fill in the rest."),
@@ -242,6 +288,40 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("confirmation", "create_account_cta", "Create Account"),
     ("confirmation", "create_account_done", "Account created — you're signed in."),
     ("confirmation", "password_placeholder", "Choose a password"),
+    # Shown instead of the sign-up form when we recognise the email. Offering
+    # "create an account" to a returning customer is a dead end whose only
+    # outcome is "that email is taken".
+    ("confirmation", "sign_in_title", "Welcome back — sign in"),
+    (
+        "confirmation",
+        "sign_in_body",
+        "You already have an account with this email. Sign in to keep this order with it.",
+    ),
+    (
+        "confirmation",
+        "sign_in_body_address",
+        "You already have an account with this email. Sign in and we'll save this "
+        "delivery address to it for next time.",
+    ),
+    ("confirmation", "sign_in_password_placeholder", "Your password"),
+    ("confirmation", "sign_in_cta", "Sign In"),
+    ("confirmation", "signed_in_done", "Signed in — welcome back."),
+    (
+        "confirmation",
+        "signed_in_address_saved",
+        "Signed in, and this delivery address is saved to your account.",
+    ),
+    (
+        "confirmation",
+        "create_account_body_address",
+        "Create an account and we'll save this delivery address to it, so your "
+        "next order takes seconds.",
+    ),
+    (
+        "confirmation",
+        "create_account_address_saved",
+        "Account created, and this delivery address is saved to it.",
+    ),
     ("common", "try_again", "Try Again"),
     ("checkout", "cart_empty", "Your cart is empty"),
     ("checkout", "payment_cancelled", "Payment was cancelled. Please try again."),
@@ -470,7 +550,7 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("error", "contact_us", "Contact Us"),
     ("error", "tagline", "Made with 100% Love"),
     # promo_banner
-    ("promo_banner", "text", "Free delivery on orders over 200 AED!"),
+    ("promo_banner", "text", "Free delivery over 150 AED in selected areas"),
     # address labels
     ("address", "pin_location", "Pin Location"),
     ("address", "search_location", "Search for a location…"),
@@ -598,11 +678,21 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "new_address_option", "+ إدخال عنوان جديد"),
     ("checkout", "address_placeholder", "المبنى، الشارع"),
     ("checkout", "address2_placeholder", "الشقة، الطابق"),
-    ("checkout", "first_name_placeholder", "فاطمة"),
-    ("checkout", "last_name_placeholder", "عباسي"),
+    ("checkout", "first_name_placeholder", "الاسم الأول"),
+    ("checkout", "last_name_placeholder", "اسم العائلة"),
     ("checkout", "home_delivery", "التوصيل المنزلي"),
     ("checkout", "store_pickup", "الاستلام من المتجر"),
     ("checkout", "free_delivery_qualified", "توصيل مجاني — طلبك يستوفي الشرط!"),
+    (
+        "checkout",
+        "free_delivery_upsell_areas",
+        "أضف {amount} درهم أكثر للتوصيل المجاني في مناطق مختارة",
+    ),
+    (
+        "checkout",
+        "free_delivery_not_in_area",
+        "التوصيل المجاني غير متاح لهذا العنوان",
+    ),
     ("checkout", "delivery_time", "التوصيل خلال 2–3 أيام عمل"),
     ("checkout", "free_delivery_upsell", "أضف {amount} درهم أكثر للتوصيل المجاني"),
     (
@@ -651,6 +741,21 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "add_promo_or_note", "إضافة رمز خصم أو ملاحظة"),
     ("checkout", "delivery_option", "التوصيل"),
     ("checkout", "fee_from_address", "يُحتسب بدقة بعد إضافة عنوانك"),
+    ("checkout", "unserviceable_title", "لا يمكننا التوصيل إلى هذا العنوان"),
+    (
+        "checkout",
+        "unserviceable_body",
+        "هذا الموقع خارج نطاق التوصيل لدينا حالياً. جرّب عنواناً قريباً، أو استلم "
+        "طلبك من المتجر.",
+    ),
+    ("checkout", "unserviceable_change", "تغيير العنوان"),
+    ("checkout", "unserviceable_pickup", "الاستلام من المتجر بدلاً من ذلك"),
+    ("checkout", "unserviceable_short", "التوصيل غير متاح هنا"),
+    ("checkout", "estimated_delivery", "موعد التوصيل المتوقع"),
+    ("checkout", "delivery_today", "اليوم"),
+    ("checkout", "delivery_tomorrow", "غداً"),
+    ("checkout", "delivery_by_day", "{day}"),
+    ("checkout", "delivery_by_time", "{day}، {time}"),
     ("checkout", "view_pickup_location", "شاهد مكان الاستلام"),
     ("common", "address", "العنوان"),
     ("checkout", "email_optional", "البريد الإلكتروني (اختياري)"),
@@ -658,6 +763,12 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
         "checkout",
         "email_optional_hint",
         "أضف بريدك الإلكتروني لتصلك رسائل بتحديثات طلبك",
+    ),
+    ("checkout", "email", "البريد الإلكتروني"),
+    (
+        "checkout",
+        "email_signed_in_hint",
+        "سيصلك تأكيد الطلب وتحديثاته على هذا البريد الإلكتروني",
     ),
     ("checkout", "add_delivery_address", "أضف عنوان التوصيل"),
     ("checkout", "add_address_hint", "حدّد موقعك على الخريطة وسنكمل الباقي."),
@@ -684,6 +795,35 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("confirmation", "create_account_cta", "إنشاء حساب"),
     ("confirmation", "create_account_done", "تم إنشاء الحساب — تم تسجيل دخولك."),
     ("confirmation", "password_placeholder", "اختر كلمة مرور"),
+    ("confirmation", "sign_in_title", "أهلاً بعودتك — سجّل دخولك"),
+    (
+        "confirmation",
+        "sign_in_body",
+        "لديك حساب بهذا البريد الإلكتروني. سجّل دخولك لربط هذا الطلب به.",
+    ),
+    (
+        "confirmation",
+        "sign_in_body_address",
+        "لديك حساب بهذا البريد الإلكتروني. سجّل دخولك وسنحفظ عنوان التوصيل هذا في حسابك للمرة القادمة.",
+    ),
+    ("confirmation", "sign_in_password_placeholder", "كلمة المرور"),
+    ("confirmation", "sign_in_cta", "تسجيل الدخول"),
+    ("confirmation", "signed_in_done", "تم تسجيل الدخول — أهلاً بعودتك."),
+    (
+        "confirmation",
+        "signed_in_address_saved",
+        "تم تسجيل الدخول، وحُفظ عنوان التوصيل هذا في حسابك.",
+    ),
+    (
+        "confirmation",
+        "create_account_body_address",
+        "أنشئ حساباً وسنحفظ عنوان التوصيل هذا فيه، ليستغرق طلبك القادم ثوانٍ فقط.",
+    ),
+    (
+        "confirmation",
+        "create_account_address_saved",
+        "تم إنشاء الحساب، وحُفظ عنوان التوصيل هذا فيه.",
+    ),
     ("common", "try_again", "حاول مرة أخرى"),
     ("checkout", "cart_empty", "سلتك فارغة"),
     ("checkout", "payment_cancelled", "تم إلغاء الدفع. يرجى المحاولة مجدداً."),
@@ -900,7 +1040,7 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("error", "contact_us", "تواصل معنا"),
     ("error", "tagline", "مصنوعة بـ 100% حب"),
     # promo_banner
-    ("promo_banner", "text", "توصيل مجاني للطلبات التي تتجاوز 200 درهم!"),
+    ("promo_banner", "text", "توصيل مجاني للطلبات فوق 150 درهم في مناطق مختارة"),
     # address labels
     ("address", "pin_location", "تحديد الموقع على الخريطة"),
     ("address", "search_location", "ابحث عن موقع…"),
@@ -951,6 +1091,12 @@ async def seed(session: AsyncSession) -> None:
             print(f"  🔄 {locale}:{namespace}.{key} updated")
 
     await session.commit()
+    # Redis outlives the restart this seed runs inside. Without this, a deploy
+    # that adds a key writes it to Postgres and then serves the pre-deploy copy
+    # until the TTL lapses — which the storefront renders as raw key names.
+    from app.services import i18n_service
+
+    await i18n_service.invalidate_translations()
     print("\n✨ i18n seed complete!")
 
 

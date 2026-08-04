@@ -30,19 +30,25 @@ GEOJSON = (
 #: The migration that publishes the map currently in force. Everything here is
 #: read out of it rather than restated, so the test cannot agree with a fee
 #: table nobody is using.
-LIVE_MIGRATION = "057_noon_send_zone.py"
+LIVE_MIGRATION = "065_sharjah_central_noon_send.py"
+
+#: The flat price of everywhere we do not dispatch ourselves. Read by the
+#: fixture as well, so the migration's own constant is the only definition.
+OUTER_FEE = "80.00"
 
 LALAMOVE = "lalamove"
 NOON_SEND = "noon_send"
 THIRD_PARTY = "third_party"
 
 
-def _seeded_zones() -> dict[str, tuple[str, str]]:
+def _seeded_zones() -> list[tuple[str, str, str, bool]]:
     """The fee table straight out of the migration, so the two cannot drift."""
-    namespace: dict[str, object] = {}
+    namespace: dict[str, object] = {"OUTER_FEE": OUTER_FEE}
     source = (VERSIONS / LIVE_MIGRATION).read_text()
-    start = source.index("ZONES: dict[str, tuple[str, str]] = {")
-    end = source.index("}", start) + 1
+    start = source.index("ZONES: list[tuple[str, str, str, bool]] = [")
+    # From the opening bracket of the literal, not from the annotation — which
+    # has brackets of its own and would close the slice three characters in.
+    end = source.index("\n]", source.index("= [", start)) + 2
     exec(source[start:end], namespace)  # noqa: S102 — our own file, no input
     return namespace["ZONES"]  # type: ignore[return-value]
 
@@ -58,7 +64,7 @@ def zones() -> list[dict]:
             "provider": provider,
             "geometry": shapes[name],
         }
-        for name, (fee, provider) in _seeded_zones().items()
+        for name, fee, provider, _free in _seeded_zones()
     ]
 
 
@@ -72,7 +78,7 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
 @pytest.mark.parametrize(
     "label,lat,lng,expected,fee,provider",
     [
-        # ── Inside noon Send's 15 km reach ───────────────────────────────────
+        # ── Inside noon Send's 20 km reach ───────────────────────────────────
         # Same AED 15 the customer has always paid; the run behind it costs 12
         # instead of the 19-26 Lalamove wants for the same trip.
         (
@@ -93,7 +99,7 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
         ),
         ("Al Khan", 25.3306, 55.3600, "Sharjah Central", "15.00", NOON_SEND),
         ("Maysaloon", 25.3220, 55.4250, "Sharjah Central", "15.00", NOON_SEND),
-        # 12.8 road km — the furthest area that still clears the 15 km cap.
+        # 12.8 road km, comfortably inside.
         (
             "Muwaileh Commercial",
             25.3120,
@@ -102,12 +108,21 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "15.00",
             NOON_SEND,
         ),
-        # ── Sharjah, but past noon Send's cap ────────────────────────────────
-        # 15.3 and 16.8 road km. noon Send would be cheaper here too — it is not
-        # allowed to be, which is the whole reason this boundary is drawn where
-        # it is rather than where the prices cross at 31 km.
-        ("Al Zahia", 25.3000, 55.4700, "Sharjah City", "15.00", LALAMOVE),
-        ("University City", 25.2900, 55.4900, "Sharjah City", "15.00", LALAMOVE),
+        # 15.3 and 18.7 road km — inside the 20 km ceiling, and the two areas
+        # the corrected rate card moved across the line.
+        ("Al Zahia", 25.3000, 55.4700, "Sharjah Central", "15.00", NOON_SEND),
+        (
+            "University City",
+            25.2900,
+            55.4900,
+            "Sharjah Central",
+            "15.00",
+            NOON_SEND,
+        ),
+        # ── Sharjah, but past noon Send's ceiling ────────────────────────────
+        # 23.7 road km. noon Send would be cheaper here too — it is not allowed
+        # to be, which is why this boundary sits at the ceiling rather than
+        # where the prices cross.
         ("Al Rahmaniya", 25.2760, 55.5200, "Sharjah City", "15.00", LALAMOVE),
         # ── Another emirate, so never noon Send whatever the distance ────────
         ("Ajman Corniche", 25.4052, 55.4384, "Ajman City", "15.00", LALAMOVE),
@@ -129,35 +144,49 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             25.2880,
             55.8810,
             "Sharjah",
-            "50.00",
+            OUTER_FEE,
             THIRD_PARTY,
         ),
-        ("Khor Fakkan (east coast)", 25.3390, 56.3560, "Sharjah", "50.00", THIRD_PARTY),
-        ("Kalba (east coast)", 25.0400, 56.3500, "Sharjah", "50.00", THIRD_PARTY),
-        ("Masfout (Ajman exclave)", 24.8200, 56.0500, "Ajman", "50.00", THIRD_PARTY),
-        ("Manama (Ajman exclave)", 25.3100, 55.9800, "Ajman", "50.00", THIRD_PARTY),
-        ("Jebel Ali", 24.9500, 55.1500, "Dubai", "50.00", THIRD_PARTY),
+        (
+            "Khor Fakkan (east coast)",
+            25.3390,
+            56.3560,
+            "Sharjah",
+            OUTER_FEE,
+            THIRD_PARTY,
+        ),
+        ("Kalba (east coast)", 25.0400, 56.3500, "Sharjah", OUTER_FEE, THIRD_PARTY),
+        ("Masfout (Ajman exclave)", 24.8200, 56.0500, "Ajman", OUTER_FEE, THIRD_PARTY),
+        ("Manama (Ajman exclave)", 25.3100, 55.9800, "Ajman", OUTER_FEE, THIRD_PARTY),
+        ("Jebel Ali", 24.9500, 55.1500, "Dubai", OUTER_FEE, THIRD_PARTY),
         # Lalamove refuses Hatta outright — ERR_OUT_OF_SERVICE_AREA.
-        ("Hatta (Dubai exclave)", 24.7967, 56.1180, "Dubai", "50.00", THIRD_PARTY),
+        ("Hatta (Dubai exclave)", 24.7967, 56.1180, "Dubai", OUTER_FEE, THIRD_PARTY),
         (
             "Sheikh Zayed Grand Mosque",
             24.4128,
             54.4750,
             "Abu Dhabi",
-            "50.00",
+            OUTER_FEE,
             THIRD_PARTY,
         ),
-        ("Al Ain Oasis", 24.2154, 55.7614, "Abu Dhabi", "50.00", THIRD_PARTY),
+        ("Al Ain Oasis", 24.2154, 55.7614, "Abu Dhabi", OUTER_FEE, THIRD_PARTY),
         (
             "Ras Al Khaimah city",
             25.7895,
             55.9432,
             "Ras al-Khaimah",
-            "50.00",
+            OUTER_FEE,
             THIRD_PARTY,
         ),
-        ("Fujairah city", 25.1288, 56.3265, "Fujairah", "50.00", THIRD_PARTY),
-        ("Umm Al Quwain city", 25.5647, 55.5532, "Umm al-Quwain", "50.00", THIRD_PARTY),
+        ("Fujairah city", 25.1288, 56.3265, "Fujairah", OUTER_FEE, THIRD_PARTY),
+        (
+            "Umm Al Quwain city",
+            25.5647,
+            55.5532,
+            "Umm al-Quwain",
+            OUTER_FEE,
+            THIRD_PARTY,
+        ),
     ],
 )
 def test_real_addresses_get_the_right_zone(
@@ -220,11 +249,12 @@ def test_outside_the_country_matches_nothing(zones):
 def test_every_courier_zone_is_cheaper_than_the_third_party_fee(zones):
     """
     A courier zone exists to charge less than the manual one. If a redraw ever
-    left one at 50 it would be doing nothing but adding an integration.
+    left one at the outer fee it would be doing nothing but adding an
+    integration.
     """
     for zone in zones:
         if zone["provider"] != THIRD_PARTY:
-            assert zone["fee"] < Decimal("50.00"), zone["name"]
+            assert zone["fee"] < Decimal(OUTER_FEE), zone["name"]
 
 
 def test_every_zone_names_a_known_courier(zones):

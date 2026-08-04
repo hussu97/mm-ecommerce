@@ -101,6 +101,169 @@
 - The economics: Sharjah Central costs AED 12 against the AED 15 charged where Lalamove cost 19–26. Al Zahia, University City and Al Rahmaniya are all over the 15 km cap and stay Lalamove even though noon Send would be cheaper there too.
 - Zone names stay courier-free on purpose — `zone_name` reaches the browser. A test now asserts no zone name contains "noon", "rod", "lalamove" or "courier".
 
+> **Superseded on 2026-08-04** by the merge below. The 15 km cap and the 10 km
+> circle in items 1 and 2 came from a rate card that turned out to be wrong; the
+> real ceiling is 20 km, so `Sharjah Central` is now 13.4 km and takes Al Zahia
+> and University City with it. Migration `057_noon_send_zone` was renumbered to
+> `065_sharjah_central_noon_send` and rewritten onto `059`'s map, where the outer
+> zones are 80 AED rather than 50.
+
+## ⏳ 2026-08-04: Merge 26 commits of `origin/main`, and settle the delivery model
+
+Six commits of courier and POS work had been built on a `main` that was 26
+commits behind. The remote had since landed dynamic pricing, a `pricing_mode`
+flag, a free-delivery scope column, batch retry and a rewritten city map — none
+of it visible locally, and three migration numbers collided.
+
+### Plan
+- [x] 1. Merge `origin/main`. Thirteen conflicted files, resolved by keeping the remote's delivery model whole and layering the branch/courier/push work on top of it: `pricing_mode` + `free_delivery_eligible` + `branch_id` all coexist on a polygon, and `price()` now routes its cost estimate through `courier_service` so a noon Send zone is costed on noon Send's card from noon Send's kitchen.
+- [x] 2. Renumber the migration chain to `063`–`067`, rebased on `062_retire_cocoa_butter_phrase`.
+- [x] 3. Rebuild the map to the agreed model: `Sharjah Central` 13.4 km / 15 / noon Send / free over threshold, `Sharjah City` to 25 km / 15 / Lalamove / free, `Ajman City` 30 km / 15 / Lalamove / free, `Dubai City` 40 km / 25 / Lalamove / free, everything else 80 / third party / never free. All static, so nothing is refused for want of a quote.
+- [x] 4. Fold the arrival estimate together. A zone that books itself but is never batched — noon Send — is an hour from now at `"time"` precision, rather than falling into the third-party "tomorrow" branch. The storefront already renders this field, so "within the hour" needed no new copy.
+- [x] 5. Verify. 766 tests pass (7 skipped), admin and web `tsc` clean, and the whole chain runs up → down to `062` → up again on a throwaway PostgreSQL 16 with the seeded map checked in SQL each time.
+
+### Review
+
+- **13.4 km is 20 road km.** noon Send's ceiling is on road distance; the map is drawn in straight lines. 1.49x is the ratio measured across the sixteen Sharjah areas on the live Lalamove rate card, and it is the mean — so a few pins just inside the circle will be over 20 road km. noon Send refuses those and `courier_service` falls back to Lalamove, so the customer's fee never moves either way.
+- **Two areas changed hands** against the old 10 km circle: Al Zahia (15.3 road km) and University City (18.7). Al Rahmaniya (23.7) is over the ceiling and stays on Lalamove.
+- **A bug the merge introduced and the tests did not catch**: copying a map to a draft carried `pricing_mode`, `free_delivery_eligible` and the batch windows, but not `branch_id`. Publishing that draft would have pointed every zone at nothing and quietly stopped every website order reaching a register. Fixed in `delivery_zones.py`.
+- **Nothing about this changes what anyone pays.** noon Send is still gated to the trial account, so every other order in Sharjah Central is carried by Lalamove at the same AED 15 as before.
+
+## ⏳ 2026-08-04: Automatic retry for a run the courier refused
+
+A batch that failed parked in `FAILED` and nothing ever picked it up again — the
+sweeper only ever selected `PENDING`. The orders inside sat until somebody opened
+the admin batch list and pressed Dispatch. On the 22:30 and 23:00 city windows
+that plausibly means overnight.
+
+### Plan
+- [x] 1. `delivery_batches` gains `attempt_count` and `next_attempt_at` (migration 060).
+- [x] 2. The sweep selects `PENDING` **or** anything with `next_attempt_at <= now`, so
+       one column decides what comes back and no status needs special-casing.
+- [x] 3. Backoff ladder 5 / 15 / 45 minutes — four attempts in all, then it stops.
+- [x] 4. Never retry a terminal failure: no usable address, out of service area,
+       courier not configured, no pickup branch. Identical data gets an identical
+       answer and only burns courier API calls.
+- [x] 5. Never schedule a retry past the pickup kitchen's closing time. A driver
+       sent to a shuttered kitchen at 00:05 is worse than one that waits for a human.
+- [x] 6. Manual dispatch resets the ladder, so topping up the wallet buys a fresh
+       set of automatic attempts.
+- [x] 7. Surface attempts and the next retry in the admin batch list.
+- [x] 8. Tests, deploy, verify green. PR #14 merged; production run `30885816717`
+       green, including the `alembic upgrade head` step that hard-fails the
+       deploy — so 060 is applied on the live database. API healthy afterwards,
+       and the live quote still prices Sharjah City at 15 with a 13:00 batch
+       estimate and Abu Dhabi at 80 next-day.
+
+### Result
+
+- 34 new API tests; 634 pass in total. Migration 060 upgrades, downgrades and
+  re-upgrades on a clean PostgreSQL 16 chain, and the partial index lands as
+  `btree (next_attempt_at) WHERE next_attempt_at IS NOT NULL`.
+- Driven against a real database, not only fakes: of six batches — due, future,
+  retry-due, retry-later, given-up, half-booked — the sweep picked up exactly the
+  three it should. A refused run then wrote a retry five minutes out, was
+  collected when that moment came, and booked on attempt 2 with nothing left
+  owing.
+
+### Review
+
+Two defects surfaced while building it, both fixed by the same mechanism:
+
+1. A run that died mid-booking — container restart between the claim and the
+   courier's reply — stayed `dispatching` forever. It now carries a retry time
+   like any other unfinished attempt.
+2. A partly-booked run reported a clean dispatch while the orders in its failed
+   second courier order sat in the kitchen. Those come back on the ladder now,
+   and `_ready_deliveries` already excludes anything holding a
+   `courier_order_id`, so a retry books only the stragglers.
+
+The real-database run caught a third, which the fakes had missed: the sweep
+marks every run it claims `dispatching`, including a half-booked one, and the
+early returns never put the status back — so a failed retry of a run with a
+driver on it would have read as failed, or stuck on `dispatching` once the
+ladder ran out. `_fail` now derives that from `courier_order_id`, which is only
+ever set by a booking that worked.
+
+Not done, deliberately: no alerting. There is no notification channel in the API
+today and inventing one is a larger decision than the retry. A run that
+exhausts the ladder shows its error and "Gave up after N attempts" in the admin
+batch list, next to the manual button.
+
+## ⏳ 2026-08-04: Locale fallback, mobile viewport bugs, and a sign-in nudge
+
+### Plan
+- [x] 1. Audit locale-less URLs and set the fresh-visitor fallback to Arabic. The audit found no 404s — `proxy.ts` already redirects every page route and leaves the asset routes alone — so the only real gap was the fallback, which sent an unrecognised device to English.
+- [x] 2. Pin the mobile place-order bar with `sticky` instead of `fixed`, so it stops floating mid-screen.
+- [x] 3. Keep the map's search box on screen when its suggestion list opens.
+- [x] 4. Stop mobile browsers zooming the page when a form field is focused.
+- [x] 5. Offer sign-in rather than sign-up when the order's email is already an account, and save the order's address once there is an account to hang it on.
+- [ ] 6. Deploy, verify green, confirm on the live site.
+
+## ⏳ 2026-08-04: Three storefront fixes — map pin, name placeholders, dead promo band
+
+### Plan
+- [x] 1. Start the address map on the pin of the address being edited. The pan effect only ever ran when the map instance appeared, so the viewport was whatever `defaultCenter` was at mount and never moved; it now follows the pin, but only when the pin has left the view, so tapping the map does not drag it out from under the finger that tapped.
+- [x] 2. Replace the "Fatema"/"Abbasi" name placeholders with generic ones in both locales. The owner's own name read as a pre-filled value rather than a hint.
+- [x] 3. Stop a promo band advertising a category the storefront no longer serves. Yesterday's fix taught category *tiles* to disappear with their category; hero slides and promo bands carry a hand-typed `cta_href` with no link to the catalogue, so hiding every dessert left "Straight from the fridge — Shop desserts" filling the home page and pointing at an empty listing.
+- [x] 4. Deploy, verify green, confirm on the live site. PR #10 merged; production run `30881396167` green.
+
+### Result
+
+- The address map now opens centred on the address being edited. Verified in a browser against a Ras al-Khaimah pin: the map frames RAK with the marker in view, where before it showed the Dubai default with the marker off the edge.
+- Name placeholders read "First name" / "Last name" (`الاسم الأول` / `اسم العائلة`), replacing the owner's own name.
+- The desserts promo band is gone from the live home page in both locales — 0 `cat-desserts` links, 0 occurrences of "Straight from the fridge" — while the cookies band is untouched.
+
+### Review
+
+- Yesterday's visibility fix was working: the API had already dropped `cat-desserts` from `/categories` and returned 0 products for it. What survived was a *promo band*, a block type with no category relationship at all — the CTA URL was the only link back to the catalogue, so that is where the rule now lives. Hero slides were given the same guard so the next hidden category cannot reproduce this in the carousel.
+
+## ⏳ 2026-08-03: City courier zones, third-party beyond, and a delivery estimate
+
+### Plan
+- [x] 1. Give a polygon an explicit `free_delivery_eligible` flag. Free delivery no longer follows from `pricing_mode`, because the outer zones are about to become fixed-fee too — the property needs a home of its own rather than a proxy.
+- [x] 2. Publish a map where the three city zones keep Lalamove, batching, free delivery and their 15/15/25 fees, and every outer zone becomes third-party: flat 80 AED, no free delivery, no batch windows, no courier call.
+- [x] 3. Reshape the city schedule around the shop's hours — Batch 1 opens at 23:00 the night before and the last batch closes at 23:00, so the whole 24 hours is covered and nothing dispatches after the store shuts.
+- [x] 4. Quote an estimated delivery time from the pin: a batched zone gets its next batch close + 1 hour; a third-party zone gets next-day, whatever the clock says.
+- [x] 5. Show it at checkout in both locales, as a date and time where we have one and a date where we do not.
+- [x] 6. Expose the free-delivery flag in the admin zone editor.
+- [ ] 7. Tests, deploy, verify green, exercise the checkout against a city pin and an outer pin.
+
+## ⏳ 2026-08-03: Free delivery at 150 AED, in the fixed-fee zones only
+
+### Plan
+- [x] 1. Drop the threshold to 150 and make it the only one — no second tier at any figure. `058_free_delivery_scope` sets it and `alter_column`s the server default; the model, the service fallback, `@mm/config` and every test fixture now say 150.
+- [x] 2. Apply free delivery only where the fee is ours to set. `price()` sets `free_available` for a `static` zone and never for a dynamic one, so a 500 AED order to Abu Dhabi pays the courier's 137 like any other.
+- [x] 3. Carry the answer to the storefront. The quote gained `free_delivery_available`; the checkout no longer derives "free" from the subtotal, so it cannot promise what the address will not honour.
+- [x] 4. Qualify every customer-facing claim. Banner, checkout upsell, home/about/FAQ copy in both locales, `llms.txt`, `llms-full.txt` and the AI plugin manifest all now say "in selected areas" or name the three city areas outright.
+- [x] 5. Deploy, verify green, re-test the checkout against static, dynamic and unserviceable pins. PR #6 merged; production run `30846916357` green. Verified live below.
+
+### Result
+
+- `/delivery/rates` reports `free_threshold: 150`, and it is the only threshold in the system — there is no figure above which delivery is free outside the fixed-fee zones.
+- Static zones: 149 AED pays 15, 150 AED pays 0 (`applied: true`), Dubai City at 300 pays 0 against a struck-through 25.
+- Dynamic zones: Abu Dhabi at 500 pays 137 and Fujairah at 1000 pays 100, both `free_delivery_available: false`.
+- With no pin, a 500 AED basket is `applied: false, available: true` — nothing promised until the address is known.
+- Live checkout on a 160 AED basket: Dubai City shows "Free delivery — your order qualifies!" with 25.00 struck through; Abu Dhabi shows "Free delivery isn't available for this address" and charges 137.
+- The banner reads "FREE DELIVERY OVER 150 AED IN SELECTED AREAS" in English and the equivalent in Arabic; home, about and both FAQ answers carry the scope in both locales.
+
+## ⏳ 2026-08-03: Lalamove everywhere — static city fees, dynamic fee elsewhere
+
+### Plan
+- [x] 1. Add a `pricing_mode` (static | dynamic) to delivery polygons and publish a new map version where every zone is fulfilled by Lalamove: the three city zones keep their static 15/15/25 fees, every other zone prices dynamically from the courier quote. Migration `057_dynamic_delivery_pricing` publishes "Lalamove everywhere v1"; verified on a clean PostgreSQL chain with an upgrade → downgrade → upgrade round trip.
+- [x] 2. Price a dynamic area from the live courier quote, rounded up to the nearest whole AED, and treat "no quote" as unserviceable rather than silently falling back to a fee. `delivery_service.price()` is now the single place the decision is made, and both the checkout quote and order creation read it.
+- [x] 3. Block order creation for an unserviceable pin and surface it on the checkout page as a clear, actionable section (no courier named). `UnserviceableAreaError` is a 400 carrying its own message; the checkout shows an amber panel under the address with "Change address" and "Collect from store instead".
+- [x] 4. Seed batch windows on the new map: five slots for the static city zones (00:00–12:00, 12:00–18:00, 18:00–21:00, 21:00–22:30, 22:30–24:00) and two for every dynamic zone (00:00–17:00, 17:00–24:00). This also fixes a live bug — 055 republished the whole map as new rows without seeding schedules, so nothing has been batched since.
+- [x] 5. Make batching cross-polygon: runs closing at the same instant merge into one courier order. `_open_batch` now matches on departure time alone.
+- [x] 6. Expose pricing mode in the admin zone editor.
+- [x] 7. Tests, deploy, verify green, then exercise checkout against real pins. PR #4 merged; production run `30843656403` green across web, admin and API. Live `/delivery/quote` returns 15/15/25 in the city zones and whole-dirham courier prices beyond them (Al Dhaid 62, RAK 85, Fujairah 100, Khor Fakkan 103, Abu Dhabi 137); Hatta and Liwa Oasis come back `serviceable: false`. The live checkout was driven against all eleven pins in a browser: every fee on screen matched the server's to the dirham, and the two unquotable pins showed the unserviceable panel with the place-order button blocked.
+
+### Result
+
+- Fees beyond the three city zones are now the courier's own price for the pin, rounded up: the flat 50 was under-charging a Khor Fakkan or Abu Dhabi run by 50–90 AED and over-charging a short hop just outside Dubai City.
+- Hatta and Liwa Oasis are genuinely unquotable and are now refused at checkout rather than sold at 50 AED and discovered at dispatch.
+- Free delivery over 200 AED still applies in the dynamic zones, so a qualifying order to Abu Dhabi now waives a fee that is measured at ~137 AED rather than the assumed 50. Flagged rather than changed — the threshold is deliberately identical everywhere.
+
 ## ⏳ 2026-08-03: Enforce hidden website content across catalogue and CMS
 
 ### Plan

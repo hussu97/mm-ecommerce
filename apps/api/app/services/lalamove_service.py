@@ -109,6 +109,11 @@ class PickupPoint:
     #: them, so it can be a Lalamove pickup but not a noon Send one. Lalamove
     #: needs no equivalent — it takes coordinates and an address.
     noon_send_outlet_code: str = ""
+    #: The branch's trading hours as "HH:MM", carried because a driver can only
+    #: collect from a kitchen that is open. A retry is not worth scheduling for
+    #: a moment when nobody will be there to hand the boxes over.
+    opens_at: str = "00:00"
+    closes_at: str = "23:59"
 
     def as_stop(self) -> dict[str, Any]:
         return {
@@ -186,6 +191,8 @@ async def resolve_pickup(
         noon_send_outlet_code=(
             branch.noon_send_outlet_code or settings.NOON_SEND_OUTLET_CODE or ""
         ),
+        opens_at=branch.opening_from,
+        closes_at=branch.opening_to,
     )
 
 
@@ -208,6 +215,14 @@ _quote_cache: dict[
     tuple[float, Estimate | None, str | None],
 ] = {}
 
+#: A failure is cached far more briefly than a price. Outside the fixed-fee
+#: zones this answer *is* the fee, so a cached failure is a customer being told
+#: we do not deliver to their street — and holding that for two minutes after
+#: the courier came back would turn a blip into a lost order. Long enough to
+#: stop a re-render storm hammering an API that is already unhappy; short enough
+#: that reloading the page is a real retry.
+_FAILURE_CACHE_SECONDS = 15
+
 
 def clear_caches() -> None:
     _quote_cache.clear()
@@ -223,9 +238,10 @@ async def estimate_for_point(
     """
     What a courier would charge to reach this point, or why it could not say.
 
-    Returns `(estimate, error)` and never raises: this runs inside the pricing
-    call the checkout page makes on every keystroke-ish change, and a courier
-    outage must not be able to stop someone buying a cake.
+    Returns `(estimate, error)` and never raises. In a fixed-fee zone this is
+    margin data and a failure costs nothing. Outside one it is the price, and a
+    failure is the customer being told their address cannot be delivered to —
+    so the two halves of the answer are cached on very different clocks.
     """
     if not is_enabled():
         return None, None
@@ -236,8 +252,15 @@ async def estimate_for_point(
     # one branch's price for another's run.
     key = (branch_id, round(latitude, 4), round(longitude, 4))
     cached = _quote_cache.get(key)
-    if cached and time.monotonic() - cached[0] < settings.LALAMOVE_QUOTE_CACHE_SECONDS:
-        return cached[1], cached[2]
+    if cached:
+        age = time.monotonic() - cached[0]
+        ttl = (
+            settings.LALAMOVE_QUOTE_CACHE_SECONDS
+            if cached[1] is not None
+            else _FAILURE_CACHE_SECONDS
+        )
+        if age < ttl:
+            return cached[1], cached[2]
 
     pickup = await resolve_pickup(db, branch_id)
     if pickup is None:
@@ -258,9 +281,11 @@ async def estimate_for_point(
                 },
             ],
             special_requests=special_requests(),
-            # Half the checkout budget: a quote we will not show is not worth
-            # making anyone wait for.
-            timeout=min(settings.LALAMOVE_TIMEOUT_SECONDS, 4.0),
+            # The full budget. This used to be capped at four seconds on the
+            # grounds that a quote we would not show was not worth waiting for —
+            # but outside the fixed-fee zones it *is* the price, and giving up
+            # early there does not cost a second of latency, it costs the sale.
+            timeout=settings.LALAMOVE_TIMEOUT_SECONDS,
         )
         estimate = parse_quotation(quotation)
         if estimate is None:
@@ -292,7 +317,7 @@ async def record_cart_estimate(
 ) -> None:
     """Park the estimate on the basket. Written even when it failed."""
     cart.delivery_quote_provider = (
-        zone.fulfilment_provider if zone else FulfilmentProviderEnum.THIRD_PARTY.value
+        zone.fulfilment_provider if zone else FulfilmentProviderEnum.LALAMOVE.value
     )
     cart.delivery_quote_zone = zone.name if zone else None
     cart.delivery_quote_fee = fee
@@ -319,13 +344,16 @@ async def record_order_delivery(
     Third-party zones get one as well. Their row simply never gains a courier
     id, which is the honest representation of "someone drove it there and we
     have no telemetry".
+
+    An order that matched no zone at all still books itself. Every drawn zone is
+    now carried by Lalamove, so "outside the map" describes a gap in the map
+    rather than a different way of delivering, and the fee it was priced at came
+    from the courier in the first place.
     """
     delivery = OrderDelivery(
         order_id=order.id,
         provider=(
-            zone.fulfilment_provider
-            if zone
-            else FulfilmentProviderEnum.THIRD_PARTY.value
+            zone.fulfilment_provider if zone else FulfilmentProviderEnum.LALAMOVE.value
         ),
         zone_name=zone.name if zone else None,
         # The row, not just the name: batching needs to reach this zone's

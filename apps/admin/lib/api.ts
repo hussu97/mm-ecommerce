@@ -5,7 +5,7 @@ import type {
   PaginatedCustomers, PaginatedEmailLogs, PaginatedOrders, Product, ProductListResponse,
   PromoCode, PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
   TrafficData, UploadResponse, User, DeliverySettings, SalesChannel,
-  DeliveryMapVersion, DeliveryZone, DeliveryZoneSummary, FulfilmentProvider, OrderDelivery,
+  DeliveryMapVersion, DeliveryPricingMode, DeliveryZone, DeliveryZoneSummary, FulfilmentProvider, OrderDelivery,
   BatchWindow, BatchWindowWrite, DeliveryBatch, DeliveryZoneMap,
 } from './types';
 import type {
@@ -253,8 +253,11 @@ export const deliveryZonesApi = {
     zoneId: string,
     data: {
       delivery_fee?: number;
+      pricing_mode?: DeliveryPricingMode;
+      free_delivery_eligible?: boolean;
       fulfilment_provider?: FulfilmentProvider;
-      branch_id?: string;
+      /** Null hands the zone back to the default pickup branch. */
+      branch_id?: string | null;
       display_order?: number;
     },
   ) => api.put<DeliveryZone>(`/delivery-zones/polygons/${zoneId}`, data),

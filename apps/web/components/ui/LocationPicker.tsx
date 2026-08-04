@@ -65,11 +65,25 @@ function MapContent({ lat, lng, onChange, placeholder, height = '200px' }: Locat
 
   const position = lat !== null && lng !== null ? { lat, lng } : null;
 
-  // Pan map when position is set externally (e.g. saved address loaded)
+  /**
+   * Keep the pin on screen whenever it moves for a reason other than a tap.
+   *
+   * This used to fire only when the map instance appeared, so the viewport was
+   * whatever `defaultCenter` happened to be at mount and never moved again.
+   * Opening a saved address for editing then showed the map over Dubai (or over
+   * the address edited before it) with that address's marker somewhere off the
+   * edge — the pin was right, the thing the customer was looking at was not.
+   *
+   * Panning only when the pin has left the viewport is what keeps this from
+   * fighting the customer: tapping near an edge of the map moves the pin, and
+   * re-centring on every tap would drag the map out from under their finger.
+   */
   useEffect(() => {
-    if (map && position) map.panTo(position);
+    if (!map || !position) return;
+    const bounds = map.getBounds();
+    if (!bounds || !bounds.contains(position)) map.panTo(position);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map]);
+  }, [map, position?.lat, position?.lng]);
 
   // Wire up PlaceAutocompleteElement once the library is ready.
   // Deps exclude onChange/map so the element isn't torn down on every render.
@@ -108,9 +122,30 @@ function MapContent({ lat, lng, onChange, placeholder, height = '200px' }: Locat
       mapRef.current?.setZoom(15);
     };
 
+    /**
+     * Keep the box you are typing in on the screen.
+     *
+     * The picker lives inside a scrollable modal, and the suggestion list is
+     * tall. On a phone the keyboard then takes half the screen: the browser
+     * scrolls *something* into view, the list wins, and the input itself ends
+     * up above the top edge — so the customer is choosing between addresses
+     * without being able to see what they searched for.
+     *
+     * Scrolling the input to the top of its scroller leaves the whole list
+     * below it and the input visible. Deferred because the keyboard has not
+     * finished animating when `focus` fires, and scrolling into a viewport
+     * that is about to halve in height puts it back where it started.
+     */
+    const keepVisible = () => {
+      setTimeout(() => {
+        container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 350);
+    };
+    placeAc.addEventListener('focusin', keepVisible);
     placeAc.addEventListener('gmp-select', handler);
 
     return () => {
+      placeAc.removeEventListener('focusin', keepVisible);
       placeAc.removeEventListener('gmp-select', handler);
       container.innerHTML = '';
     };

@@ -21,8 +21,8 @@ If `K001` is missing — a database seeded before it existed — the column simp
 stays null and everything falls back to the single configured pickup branch,
 which is the behaviour before this migration.
 
-Revision ID: 059_polygon_branch
-Revises: 058_branch_noon_send_outlet
+Revision ID: 064_polygon_branch
+Revises: 063_branch_noon_send_outlet
 Create Date: 2026-08-04
 """
 
@@ -33,8 +33,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "059_polygon_branch"
-down_revision: Union[str, None] = "058_branch_noon_send_outlet"
+revision: str = "064_polygon_branch"
+down_revision: Union[str, None] = "063_branch_noon_send_outlet"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

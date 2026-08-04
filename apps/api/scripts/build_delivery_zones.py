@@ -19,16 +19,23 @@ area the rate card was actually measured over:
                        and stops short of Jebel Ali and Hatta.
 
 Sharjah is then cut once more, because a second courier is cheaper inside part
-of it. noon Send charges AED 12 flat to 10 road km against Lalamove's
-`17 + 0.70/km`, and stays cheaper all the way out to 31 road km — past the far
-edge of Sharjah City. Price therefore never decides the boundary; noon Send's
-**15 km cap on pickup-to-drop-off distance** does. Road distance runs about
-1.49x straight line across the sixteen Sharjah areas the rate card was measured
-over, so 15 road km is a 10 km circle:
+of it. noon Send charges AED 12 flat to 10 road km on a bike, then +1/km to 15
+and +1.50/km to 20, against Lalamove's `17 + 0.70/km` — cheaper at every
+distance it will carry, surge included. Price therefore never decides the
+boundary; noon Send's **20 km ceiling on pickup-to-drop-off distance** does.
+Road distance runs about 1.49x straight line across the sixteen Sharjah areas
+the rate card was measured over, so 20 road km is a 13.4 km circle:
 
-  * Sharjah Central  10 km — Al Khan through Muwaileh (12.8 road km), on noon
-                             Send. Al Zahia (15.3 road km) and everything
-                             beyond is over the cap and stays on Lalamove.
+  * Sharjah Central  13.4 km — Al Khan through Al Zahia and University City, on
+                               noon Send. Al Rahmaniya (21.1 road km) is over
+                               the ceiling and stays on Lalamove, as does
+                               everything beyond it.
+
+That the boundary is a circle around the kitchen rather than a road-distance
+isoline is the approximation being made here, and it is the conservative one:
+1.49x is the mean ratio, so a few pins just inside the circle will be a little
+over 20 road km. noon Send refuses those outright, and `courier_service` falls
+back to Lalamove when it does — the customer's fee never moves either way.
 
 The remainder of every emirate keeps the 50 AED third-party price, and is a
 genuine remainder: the served circle is punched out of it as a hole, so the two
@@ -86,8 +93,11 @@ SERVED_RADIUS_KM: dict[str, float] = {
 #: The inner slice of a served emirate that a second courier reaches, as
 #: (zone name, radius km). Only Sharjah has one: noon Send cannot cross an
 #: emirate boundary, so from a Sharjah kitchen it can only ever serve Sharjah.
+#:
+#: 13.4 km is noon Send's 20 km road ceiling divided by the 1.49x road-to-crow
+#: ratio measured across the Sharjah rate card.
 INNER_ZONE: dict[str, tuple[str, float]] = {
-    "Sharjah": ("Sharjah Central", 10.0),
+    "Sharjah": ("Sharjah Central", 13.4),
 }
 
 

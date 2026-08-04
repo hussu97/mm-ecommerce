@@ -18,10 +18,20 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.models.delivery_batch import DeliveryBatchWindow
+from app.models.delivery_batch import (
+    BatchStatusEnum,
+    DeliveryBatch,
+    DeliveryBatchWindow,
+)
 from app.models.order_delivery import OrderDelivery
 from app.services import batching_service
-from app.services.batching_service import find_window, next_dispatch_at, overlapping
+from app.services.batching_service import (
+    WindowMatch,
+    _open_batch,
+    find_window,
+    next_dispatch_at,
+    overlapping,
+)
 
 DUBAI = ZoneInfo("Asia/Dubai")
 
@@ -239,9 +249,123 @@ async def test_a_noon_send_order_never_joins_a_run(monkeypatch):
 
     monkeypatch.setattr(batching_service.lalamove_service, "get_delivery", get_delivery)
     monkeypatch.setattr(batching_service.courier_service, "dispatch", dispatch)
-    monkeypatch.setattr(batching_service, "_active_windows", windows)
+    monkeypatch.setattr(batching_service, "active_windows", windows)
 
     result = await batching_service.assign_or_dispatch(object(), order)
 
     assert dispatched == ["direct"]
     assert result.batch_id is None
+
+
+# ── one run, several zones ────────────────────────────────────────────────────
+#
+# Windows are per zone because density is local — the city fills a van in an
+# hour, Fujairah never would. A van is not per zone. Two schedules closing on
+# the same minute is two vans leaving the same kitchen for one journey's worth
+# of work, and the base fare gets paid twice for it.
+
+
+class _Result:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def scalars(self):
+        return self
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+
+class _Session:
+    """
+    Answers `_open_batch`'s lookup from a list, in Python.
+
+    The point of interest is *what the query is keyed on*, so the bound
+    parameters are captured: a `polygon_id` appearing among them would mean runs
+    had gone back to being per zone.
+    """
+
+    def __init__(self, existing: list[DeliveryBatch] | None = None):
+        self.rows = list(existing or [])
+        self.params: dict = {}
+
+    async def execute(self, stmt):
+        self.params = stmt.compile().params
+        target = self.params.get("dispatch_at_1")
+        status = self.params.get("status_1")
+        return _Result(
+            [b for b in self.rows if b.dispatch_at == target and b.status == status]
+        )
+
+    def add(self, obj):
+        self.rows.append(obj)
+
+    async def flush(self):
+        return None
+
+
+def _match(polygon_windows: DeliveryBatchWindow, leaves: datetime) -> WindowMatch:
+    polygon_windows.id = uuid.uuid4()
+    return WindowMatch(window=polygon_windows, dispatch_at=leaves)
+
+
+def _pending(dispatch_at: datetime, polygon_id: uuid.UUID) -> DeliveryBatch:
+    return DeliveryBatch(
+        id=uuid.uuid4(),
+        polygon_id=polygon_id,
+        dispatch_at=dispatch_at,
+        status=BatchStatusEnum.PENDING.value,
+        window_label="Batch 5",
+    )
+
+
+async def test_two_zones_closing_together_share_one_run():
+    city, outer = uuid.uuid4(), uuid.uuid4()
+    midnight = dubai(0, 0, day=3)
+    existing = _pending(midnight, city)
+    db = _Session([existing])
+
+    joined = await _open_batch(
+        db, outer, _match(window("Batch 2", "17:00", "24:00"), midnight)
+    )
+
+    assert joined is existing, "the outer zone opened a second van for the same trip"
+
+
+async def test_zones_closing_at_different_times_do_not_share():
+    city, outer = uuid.uuid4(), uuid.uuid4()
+    db = _Session([_pending(dubai(18, 0), city)])
+
+    joined = await _open_batch(
+        db, outer, _match(window("Batch 2", "17:00", "24:00"), dubai(17, 0))
+    )
+
+    assert joined.dispatch_at == dubai(17, 0)
+    assert joined.polygon_id == outer
+
+
+async def test_the_run_is_found_by_departure_time_not_by_zone():
+    db = _Session()
+
+    await _open_batch(
+        db, uuid.uuid4(), _match(window("Batch 3", "18:00", "21:00"), dubai(21, 0))
+    )
+
+    assert "dispatch_at_1" in db.params
+    assert not any("polygon" in key for key in db.params), (
+        "the lookup is filtering by zone again, so a shared departure would "
+        "open one run per zone"
+    )
+
+
+async def test_a_run_already_on_the_road_is_not_joined():
+    """Half a batch leaving and half of it still being loaded is not a batch."""
+    gone = _pending(dubai(21, 0), uuid.uuid4())
+    gone.status = BatchStatusEnum.DISPATCHED.value
+    db = _Session([gone])
+
+    joined = await _open_batch(
+        db, uuid.uuid4(), _match(window("Batch 3", "18:00", "21:00"), dubai(21, 0))
+    )
+
+    assert joined is not gone
