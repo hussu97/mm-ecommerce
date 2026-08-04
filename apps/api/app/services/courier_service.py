@@ -91,6 +91,17 @@ def may_use_noon_send(order: Order) -> tuple[bool, str | None]:
     return True, None
 
 
+def _is_trial_run(order: Order) -> bool:
+    """Whether this order should be offered to noon Send regardless of its zone."""
+    return (
+        noon_send_service.is_enabled()
+        and noon_send_service.trial_pickup() is not None
+        and trial_customer.is_trial_customer(
+            getattr(order, "user_id", None), getattr(order, "email", None)
+        )
+    )
+
+
 # ── dispatch ──────────────────────────────────────────────────────────────────
 
 
@@ -107,7 +118,17 @@ async def dispatch(db: AsyncSession, order: Order) -> OrderDelivery | None:
     if delivery is None or not books_itself(delivery.provider):
         return delivery
 
-    if delivery.provider != NOON_SEND:
+    # A trial order tries noon Send wherever it is going, not only where the map
+    # says so. The map is drawn for the real fleet out of the Sharjah kitchen;
+    # the staging fleet serves three Dubai outlets and cannot cross an emirate
+    # boundary, so a trial run has to leave from Dubai and arrive in Dubai —
+    # which is a `lalamove` zone on every map we have. Without this the trial
+    # account could only ever exercise noon Send by ordering into a zone the
+    # staging fleet cannot serve.
+    #
+    # Redrawing the map for a test fleet would be the wrong trade: the polygons
+    # describe the business, and this describes one account.
+    if delivery.provider != NOON_SEND and not _is_trial_run(order):
         return await lalamove_service.dispatch_order(db, order)
 
     allowed, reason = may_use_noon_send(order)
@@ -131,7 +152,7 @@ async def dispatch(db: AsyncSession, order: Order) -> OrderDelivery | None:
     # list. A `noon_send` zone showing a `lalamove` delivery is the signal, and
     # this line is the explanation.
     logger.info(
-        "Order %s is in a noon Send zone but going by Lalamove: %s",
+        "Order %s was offered to noon Send and is going by Lalamove: %s",
         order.order_number,
         reason,
     )

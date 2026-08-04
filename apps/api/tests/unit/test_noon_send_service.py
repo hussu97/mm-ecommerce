@@ -529,3 +529,78 @@ def test_the_distance_guard_is_not_tighter_than_the_zone_we_drew():
     # And not looser than the card can price, which would book a run at a fee
     # the rate card has no band for.
     assert guard_km <= noon_send_service.RATE_CARD_MAX_KM
+
+
+# ── the trial outlet ──────────────────────────────────────────────────────────
+
+
+def test_the_trial_outlet_is_one_noon_send_staging_actually_serves():
+    """
+    Pinned to the code and coordinates noon Send published for their staging
+    fleet. The three staging outlets are all in Dubai, and a task may not cross
+    an emirate boundary — so a trial run cannot leave the Sharjah kitchen, and
+    inventing a code or nudging the pin produces `Pickup point not found` at
+    task creation with nothing else to explain it.
+    """
+    assert noon_send_service.TRIAL_OUTLET.noon_send_outlet_code == "CMFRTF2DXS"
+    assert noon_send_service.TRIAL_OUTLET.latitude == 25.2519665
+    assert noon_send_service.TRIAL_OUTLET.longitude == 55.3150403
+
+
+def test_the_trial_outlet_never_applies_on_the_real_fleet(monkeypatch):
+    """
+    On production the kitchen is real and its outlet is registered against the
+    real fleet. A Dubai staging fixture there would send a rider to a building
+    we do not occupy, so the environment has to disable it rather than have it
+    overridden by whoever sets a variable last.
+    """
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "NOON_SEND_ENV", "staging")
+    assert noon_send_service.trial_pickup() is not None
+
+    monkeypatch.setattr(app_settings, "NOON_SEND_ENV", "production")
+    assert noon_send_service.trial_pickup() is None
+
+
+@pytest.mark.asyncio
+async def test_a_trial_order_collects_from_the_staging_outlet(monkeypatch):
+    """
+    And an ordinary order still collects from its own branch. One function
+    answers this, so the serviceability check, the task and the cost estimate
+    cannot disagree — a run quoted from Sharjah and booked from Dubai would be
+    wrong by thirty kilometres.
+    """
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "NOON_SEND_ENV", "staging")
+    monkeypatch.setattr(app_settings, "TRIAL_CUSTOMER_EMAILS", "trial@example.com")
+
+    branch_pickup = PickupPoint(
+        name="Melting Moments Cakes",
+        phone="+971501234567",
+        address="Al Majaz 3, Sharjah",
+        latitude=25.3304139,
+        longitude=55.3736131,
+        reference="K001",
+        noon_send_outlet_code="MLTNGM1GBF",
+    )
+
+    async def resolve(_db, _branch_id=None):
+        return branch_pickup
+
+    monkeypatch.setattr(noon_send_service, "resolve_pickup", resolve)
+
+    trial = SimpleNamespace(
+        user_id=uuid.uuid4(), email="trial@example.com", branch_id=None
+    )
+    ordinary = SimpleNamespace(
+        user_id=uuid.uuid4(), email="someone@else.com", branch_id=None
+    )
+
+    assert (await noon_send_service.pickup_for(None, trial)).noon_send_outlet_code == (
+        "CMFRTF2DXS"
+    )
+    assert (
+        await noon_send_service.pickup_for(None, ordinary)
+    ).noon_send_outlet_code == "MLTNGM1GBF"

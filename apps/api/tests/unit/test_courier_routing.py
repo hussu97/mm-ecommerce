@@ -270,10 +270,46 @@ async def test_a_refusal_from_noon_send_falls_through_to_lalamove(
 
 
 @pytest.mark.asyncio
-async def test_a_lalamove_zone_is_never_handed_to_noon_send(configured, spies):
-    """noon Send probably cannot reach it — that is why the zone says Lalamove."""
-    await courier_service.dispatch(_Db(_delivery("lalamove")), _order())
+async def test_a_lalamove_zone_stays_lalamove_for_an_ordinary_customer(
+    configured, spies
+):
+    """
+    The zone decides, for everybody who is not the trial account.
+
+    This is the guarantee that keeps the trial invisible: a real customer's
+    order goes exactly where the map sends it, and noon Send is never asked
+    about a zone it probably cannot reach.
+    """
+    await courier_service.dispatch(
+        _Db(_delivery("lalamove")), _order(email="someone@else.com")
+    )
     assert spies == ["lalamove"]
+
+
+@pytest.mark.asyncio
+async def test_the_trial_account_reaches_noon_send_from_a_lalamove_zone(
+    configured, monkeypatch, spies, in_range
+):
+    """
+    The trial is the one exception, and it has to be.
+
+    noon Send's staging fleet serves three outlets, all in Dubai, and a task
+    cannot cross an emirate boundary — so a trial run leaves Dubai and arrives
+    in Dubai, which is a `lalamove` zone on every map we have. Gating on the
+    zone would mean the trial account could only exercise noon Send by ordering
+    somewhere the staging fleet cannot go.
+    """
+
+    async def dispatched(db, order):
+        db.delivery.courier_order_id = "EHG84NNJMVG35BTDE"
+        spies.append("noon_send")
+        return db.delivery
+
+    monkeypatch.setattr(courier_service.noon_send_service, "dispatch_order", dispatched)
+    result = await courier_service.dispatch(_Db(_delivery("lalamove")), _order())
+
+    assert spies == ["noon_send"]
+    assert result.courier_order_id == "EHG84NNJMVG35BTDE"
 
 
 @pytest.mark.asyncio

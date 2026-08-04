@@ -56,8 +56,10 @@ from app.models.order_delivery import (
     OrderDelivery,
 )
 from app.models.webhook_event import WebhookEvent
+from app.services import trial_customer
 from app.services.lalamove_service import (
     Estimate,
+    PickupPoint,
     decimal_or_none,
     get_delivery,
     normalise_phone,
@@ -179,6 +181,64 @@ def rate_card_cost(
     return Decimal(f"{total:.2f}")
 
 
+#: The staging pickup point every trial order is dispatched from.
+#:
+#: noon Send's staging fleet only serves three outlets, all of them in Dubai, and
+#: a task may not cross an emirate boundary — so a trial run cannot leave the Al
+#: Qasimia kitchen at all. This is the northernmost of the three, which puts
+#: Deira, Bur Dubai, Festival City, the airport, Mirdif and Al Nahda inside the
+#: 20 km ceiling: the Dubai addresses closest to Sharjah, and so the ones most
+#: likely to be typed into a test order.
+#:
+#: It is a fixture, not configuration. The code, the coordinates and the fleet
+#: behind them exist only on staging, so `NOON_SEND_ENV` moving to production
+#: has to stop using it rather than have it overridden — which `trial_pickup`
+#: enforces.
+TRIAL_OUTLET = PickupPoint(
+    name="noon Send staging outlet (Oud Metha)",
+    phone="+971500000000",
+    address="Oud Metha, Dubai",
+    latitude=25.2519665,
+    longitude=55.3150403,
+    reference="ROD-STAGING",
+    noon_send_outlet_code="CMFRTF2DXS",
+)
+
+
+def trial_pickup() -> PickupPoint | None:
+    """
+    The outlet a trial order leaves from, or `None` if there is not one.
+
+    Only on staging, and only ever for the trial account. On production the
+    kitchen is real, its outlet is registered against the real fleet, and a
+    Dubai fixture would send a rider to a building we do not occupy.
+    """
+    if (settings.NOON_SEND_ENV or "").strip().lower() == "production":
+        return None
+    return TRIAL_OUTLET
+
+
+async def pickup_for(db: AsyncSession, order: Order) -> PickupPoint | None:
+    """
+    Where this order's rider collects from.
+
+    The trial account collects from the staging fixture; everybody else from the
+    branch that is making the order. One function so the serviceability check,
+    the task and the cost estimate cannot disagree about it — a run quoted from
+    Sharjah and booked from Dubai would be wrong by thirty kilometres.
+    """
+    # `getattr` because the order stub a dispatch test builds is deliberately
+    # thin — it carries what a task needs and nothing else, which is how the
+    # `MissingGreenlet` from touching a lazy relationship was caught.
+    if trial_customer.is_trial_customer(
+        getattr(order, "user_id", None), getattr(order, "email", None)
+    ):
+        fixture = trial_pickup()
+        if fixture is not None:
+            return fixture
+    return await resolve_pickup(db, order.branch_id)
+
+
 #: The partner limits noon Send reports for our own key, cached in process.
 #: `None` until the first successful read; a failed read leaves it None and
 #: every caller falls back to the configured numbers, so an outage narrows the
@@ -251,6 +311,7 @@ async def estimate_for_point(
     longitude: float,
     address: str | None = None,
     branch_id: uuid.UUID | None = None,
+    pickup: PickupPoint | None = None,
 ) -> tuple[Estimate | None, str | None]:
     """
     What a noon Send run to this point would cost us, or why we cannot say.
@@ -260,7 +321,7 @@ async def estimate_for_point(
     network call — there is nothing to call — so unlike the Lalamove version it
     costs nothing and cannot time out.
     """
-    pickup = await resolve_pickup(db, branch_id)
+    pickup = pickup or await resolve_pickup(db, branch_id)
     if pickup is None:
         return None, "No pickup branch is configured"
 
@@ -301,7 +362,7 @@ async def may_serve(db: AsyncSession, order: Order) -> tuple[bool, str | None]:
     except (KeyError, TypeError, ValueError):
         return False, "Order has no delivery coordinates"
 
-    pickup = await resolve_pickup(db, order.branch_id)
+    pickup = await pickup_for(db, order)
     if pickup is None:
         return False, "No pickup branch is configured"
     if not pickup.noon_send_outlet_code:
@@ -468,7 +529,7 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
     if delivery is None:
         return None
 
-    pickup = await resolve_pickup(db, order.branch_id)
+    pickup = await pickup_for(db, order)
     if pickup is None:
         delivery.last_error = "No pickup branch is configured"
         return delivery
@@ -527,6 +588,9 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
         float(order.shipping_address_snapshot["latitude"]),
         float(order.shipping_address_snapshot["longitude"]),
         branch_id=order.branch_id,
+        # The outlet the task was actually created against, so a trial run is
+        # costed over the distance a rider really travelled.
+        pickup=pickup,
     )
     if estimate is not None:
         delivery.quoted_cost = estimate.cost

@@ -828,6 +828,27 @@ There is no wallet to fund — billing is on the partner agreement. Once
 `NOON_SEND_ENV=production`, orders are real: a rider is dispatched and a
 cancellation is charged.
 
+#### The trial dispatches from Dubai, not from the kitchen
+
+noon Send's staging fleet serves three outlets and all of them are in Dubai. A
+task may not cross an emirate boundary, so a trial run cannot leave Al Qasimia
+at all — which would make the trial account the one account unable to exercise
+noon Send.
+
+So a trial order collects from a fixed staging outlet, `CMFRTF2DXS` in Oud
+Metha, and is offered to noon Send **whatever zone it is in** rather than only
+in `Sharjah Central`. It is the northernmost of the three, which puts Deira, Bur
+Dubai, Festival City, the airport, Mirdif and Al Nahda inside the 20 km ceiling
+— the Dubai addresses closest to Sharjah, and so the ones most likely to be
+typed into a test order. **Test with a Dubai delivery address**; a Sharjah one
+passes our own distance check and is then refused by noon Send for crossing an
+emirate, and falls back to Lalamove.
+
+The polygons are untouched by any of this. They describe the business and the
+real fleet out of the Sharjah kitchen; this describes one account. `trial_pickup`
+returns nothing once `NOON_SEND_ENV=production`, so the fixture cannot follow
+the trial onto the real fleet.
+
 #### Trial customers
 
 | Secret | Falls back to | Notes |
