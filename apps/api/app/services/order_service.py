@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
+from app.models.branch import Branch
 from app.models.cart import Cart, CartItem
 from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
 from app.models.product import Product
@@ -22,10 +24,13 @@ from app.services import (
     delivery_service,
     delivery_zone_service,
     lalamove_service,
+    pos_order_service,
     promo_code_service,
 )
 from app.services.storefront_visibility import is_website_product_visible
 from app.services.delivery_zone_service import Zone
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "VALID_TRANSITIONS",
@@ -285,6 +290,37 @@ async def _compute_order_totals(
     return delivery_fee, total, vat_amount, total_excl_vat, zone
 
 
+def _is_cash_on_delivery(data: OrderCreate) -> bool:
+    return str(getattr(data.payment_method, "value", data.payment_method)) == "cod"
+
+
+async def _attach_to_branch(db: AsyncSession, order: Order, zone: Zone | None) -> None:
+    """
+    Hand the order to the kitchen that serves its zone.
+
+    Best-effort by design. A zone with no branch, a branch that has been
+    deleted, or a pin outside every zone all leave the order exactly as it was —
+    visible in the admin, dispatchable, simply not on a register. Refusing the
+    sale because a kitchen is misconfigured would be a far worse trade, and the
+    orders this misses are findable by `branch_id IS NULL`.
+    """
+    branch_id = zone.branch_id if zone else None
+    if branch_id is None:
+        return
+
+    branch = await db.get(Branch, branch_id)
+    if branch is None or branch.deleted_at is not None or not branch.is_active:
+        logger.warning(
+            "Order %s is in zone %s, whose branch %s cannot take it",
+            order.order_number,
+            zone.name if zone else "-",
+            branch_id,
+        )
+        return
+
+    await pos_order_service.attach_online_order(db, order, branch)
+
+
 async def _persist_order(
     db: AsyncSession,
     data: OrderCreate,
@@ -465,6 +501,19 @@ async def create_order(
     #    not just the automated part of it.
     if data.delivery_method == DeliveryMethodEnum.DELIVERY:
         await lalamove_service.record_order_delivery(db, order, zone=zone, cart=cart)
+
+    # 8. Put it on a register. The zone that priced it names the kitchen that
+    #    bakes it; without this the order exists only in the admin and nobody at
+    #    the counter is told anything.
+    await _attach_to_branch(db, order, zone)
+
+    # 9. Cash orders confirm themselves. A card order is confirmed by Stripe's
+    #    `payment_intent.succeeded` and a failure lands it in `payment_failed`,
+    #    but cash has no such event — so without this it would sit in `created`
+    #    until an admin noticed, which for an order already printing in a
+    #    kitchen is a status that means nothing.
+    if _is_cash_on_delivery(data) and order.status == OrderStatusEnum.CREATED:
+        order.status = OrderStatusEnum.CONFIRMED
 
     stmt = select(Order).options(*_order_load_options()).where(Order.id == order.id)
     result = await db.execute(stmt)

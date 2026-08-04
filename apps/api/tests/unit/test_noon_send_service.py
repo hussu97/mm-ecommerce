@@ -76,6 +76,12 @@ def _push(status: str, at: datetime = NOW) -> dict:
 # ── the rate card ─────────────────────────────────────────────────────────────
 
 
+#: 10:00 and 20:00 on the shop's clock. The second is inside the evening surge
+#: window, which is where most orders land.
+OFF_PEAK = datetime(2026, 8, 4, 6, 0, tzinfo=timezone.utc)
+PEAK = datetime(2026, 8, 4, 16, 0, tzinfo=timezone.utc)
+
+
 @pytest.mark.parametrize(
     "km,expected",
     [
@@ -88,14 +94,74 @@ def _push(status: str, at: datetime = NOW) -> dict:
         (10.5, "12.50"),
         (12.0, "14.00"),
         (15.0, "17.00"),
-        (20.0, "22.00"),
-        # Then one-fifty, still marginal.
-        (25.0, "29.50"),
-        (30.0, "37.00"),
+        # And one-fifty from fifteen, not from twenty.
+        (17.0, "20.00"),
+        (20.0, "24.50"),
+        # The card has no band past twenty; it does not keep climbing.
+        (25.0, "24.50"),
+        (60.0, "24.50"),
     ],
 )
 def test_the_bands_are_marginal(km, expected):
-    assert noon_send_service.rate_card_cost(km) == Decimal(expected)
+    assert noon_send_service.rate_card_cost(km, at=OFF_PEAK) == Decimal(expected)
+
+
+@pytest.mark.parametrize("km", [3.0, 10.0, 12.0, 15.0, 20.0])
+def test_the_surge_adds_a_dirham_across_every_band(km):
+    off = noon_send_service.rate_card_cost(km, at=OFF_PEAK)
+    peak = noon_send_service.rate_card_cost(km, at=PEAK)
+    assert peak - off == Decimal("1.00")
+
+
+@pytest.mark.parametrize(
+    "hour_utc,surging",
+    [
+        (6, False),  # 10:00 — morning, quiet
+        (8, True),  # 12:00 — lunch window opens
+        (10, True),  # 14:00 — inside it
+        (11, False),  # 15:00 — closes on the hour, half-open
+        (15, True),  # 19:00 — evening window opens
+        (17, True),  # 21:00 — inside it
+        (18, False),  # 22:00 — closes
+    ],
+)
+def test_the_surge_windows_are_read_on_the_shops_clock(hour_utc, surging):
+    """
+    Quoted as 12:00–15:00 and 19:00–22:00 local. Read as UTC they would be four
+    hours out, which would put the surge in the middle of the afternoon lull and
+    miss the evening entirely.
+    """
+    moment = datetime(2026, 8, 4, hour_utc, 0, tzinfo=timezone.utc)
+    assert noon_send_service.is_surge(moment) is surging
+
+
+def test_the_bulky_car_tier_is_priced_separately():
+    """
+    AED 25 rather than 12, and the increments are the same on top. Kept honest
+    rather than absent: a large cake that has to go by car costs what it costs,
+    and pricing it as a bike would hide a loss.
+    """
+    assert noon_send_service.rate_card_cost(5.0, bulky=True, at=OFF_PEAK) == Decimal(
+        "25.00"
+    )
+    assert noon_send_service.rate_card_cost(15.0, bulky=True, at=OFF_PEAK) == Decimal(
+        "30.00"
+    )
+
+
+def test_the_car_tier_never_beats_lalamove_and_the_bike_always_does():
+    """
+    The whole case for this courier, in one assertion. On a bike they are
+    cheaper at every distance in range; in the bulky car product they are dearer
+    at every distance in range — so a zone priced on the car tier would be a
+    zone that should have stayed on Lalamove.
+    """
+    for km in (3, 5, 10, 12, 15, 20):
+        lalamove = Decimal(f"{17 + 0.70 * km:.2f}")
+        assert noon_send_service.rate_card_cost(km, at=PEAK) < lalamove, f"bike {km}km"
+        assert (
+            noon_send_service.rate_card_cost(km, bulky=True, at=OFF_PEAK) > lalamove
+        ), f"car {km}km"
 
 
 def test_the_card_never_charges_less_for_going_further():
@@ -113,18 +179,6 @@ def test_the_card_never_charges_less_for_going_further():
         assert cost >= previous, f"{km} km costs less than the distance before it"
         previous = cost
         km += step
-
-
-def test_it_is_cheaper_than_lalamove_everywhere_it_can_reach():
-    """
-    The reason the zone exists. Lalamove is `17 + 0.70/km` once the AED 5
-    door-to-door is dropped; the two cross at 31.25 km, which is well past
-    noon Send's own 15 km cap — so inside their reach they always win.
-    """
-    for km in (1, 5, 10, 12, 15):
-        assert noon_send_service.rate_card_cost(km) < Decimal(
-            f"{17 + 0.70 * km:.2f}"
-        ), f"{km} km"
 
 
 def test_distance_is_scaled_from_straight_line_by_the_measured_detour():
@@ -224,6 +278,7 @@ async def test_the_ack_from_create_task_is_not_stored_as_a_status(monkeypatch):
     order = SimpleNamespace(
         id=uuid.uuid4(),
         order_number="MM-1001",
+        branch_id=uuid.uuid4(),
         status=OrderStatusEnum.PACKED,
         total=Decimal("185.00"),
         amount_paid=Decimal("185.00"),
@@ -356,7 +411,8 @@ async def test_an_unregistered_branch_is_named_in_the_refusal(monkeypatch):
 
     monkeypatch.setattr(noon_send_service, "resolve_pickup", resolve_pickup)
     order = SimpleNamespace(
-        shipping_address_snapshot={"latitude": 25.0985, "longitude": 55.1742}
+        branch_id=uuid.uuid4(),
+        shipping_address_snapshot={"latitude": 25.0985, "longitude": 55.1742},
     )
 
     allowed, reason = await noon_send_service.may_serve(_FakeDb(order), order)

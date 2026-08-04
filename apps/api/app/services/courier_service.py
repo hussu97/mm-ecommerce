@@ -6,10 +6,10 @@ triggers a dispatch (an order being packed, an admin pressing re-dispatch, a
 batch window closing) should not have to know which. Everything provider-shaped
 lives here; the call sites just ask for the order to go out.
 
-**noon Send is the preferred courier where a zone names it**, because it is
-cheaper on everything it can reach: AED 12 flat to 10 road km against Lalamove's
-`17 + 0.70/km`, and still ahead out to 31 km. Two things stand between a
-`noon_send` zone and an actual noon Send task.
+**noon Send is the preferred courier where a zone names it**, because on a bike
+it is cheaper than Lalamove at every distance it can reach, surge included: AED
+12 flat to 10 road km against Lalamove's `17 + 0.70/km`. Two things stand
+between a `noon_send` zone and an actual noon Send task.
 
 *The trial list.* noon Send only carries orders placed by a signed-in customer
 on `TRIAL_CUSTOMER_EMAILS`. Everybody else in the zone is carried by Lalamove
@@ -31,6 +31,7 @@ Third-party zones fall through everything here untouched, exactly as before.
 from __future__ import annotations
 
 import logging
+import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -154,6 +155,7 @@ async def estimate_for_point(
     latitude: float,
     longitude: float,
     address: str | None = None,
+    branch_id: uuid.UUID | None = None,
 ):
     """
     What this zone's courier would charge us to reach this point.
@@ -174,6 +176,8 @@ async def estimate_for_point(
     """
     if provider == NOON_SEND and noon_send_service.is_enabled():
         return await noon_send_service.estimate_for_point(
-            db, latitude, longitude, address
+            db, latitude, longitude, address, branch_id
         )
-    return await lalamove_service.estimate_for_point(db, latitude, longitude, address)
+    return await lalamove_service.estimate_for_point(
+        db, latitude, longitude, address, branch_id
+    )

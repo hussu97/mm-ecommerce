@@ -133,6 +133,9 @@ async def quote(
             float(latitude),
             float(longitude),
             address,
+            # Costed from the kitchen that will actually bake it, not from
+            # whichever branch happens to be first in the list.
+            zone.branch_id if zone else None,
         )
         if estimate is not None or error is not None:
             await lalamove_service.record_cart_estimate(
@@ -162,6 +165,15 @@ async def quote(
         else float(max(Decimal("0.00"), settings.free_delivery_threshold - subtotal)),
         "zone_name": zone.name if zone else None,
         "in_known_zone": zone is not None,
+        # How long it takes, where we can say. A noon Send zone dispatches the
+        # moment an order is packed and the rider is already nearby, so an hour
+        # is a promise we can keep. Every other zone either waits for a batch
+        # window or is driven by hand, and no honest number exists for those —
+        # so the field is absent rather than guessed, and the storefront shows
+        # nothing at all.
+        "estimated_delivery_minutes": (
+            60 if zone is not None and zone.is_noon_send else None
+        ),
     }
 
 

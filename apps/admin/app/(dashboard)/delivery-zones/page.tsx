@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { deliveryZonesApi, ApiError } from '@/lib/api';
+import { branchesApi } from '@/lib/pos-api';
+import type { Branch } from '@/lib/pos-types';
 import type {
   DeliveryBatch,
   DeliveryMapVersion,
@@ -47,6 +49,9 @@ export default function DeliveryZonesPage() {
   const [tab, setTab] = useState('map');
   const [zoneMap, setZoneMap] = useState<DeliveryZoneMap | null>(null);
   const [batches, setBatches] = useState<DeliveryBatch[]>([]);
+  // Which kitchen bakes a zone's orders. Needed here rather than on the branch
+  // page because the choice belongs to the shape, not to the branch.
+  const [branches, setBranches] = useState<Branch[]>([]);
 
   useEffect(() => {
     load();
@@ -56,16 +61,18 @@ export default function DeliveryZonesPage() {
     setLoading(true);
     setError('');
     try {
-      const [v, s, m, b] = await Promise.all([
+      const [v, s, m, b, br] = await Promise.all([
         deliveryZonesApi.listVersions(),
         deliveryZonesApi.getSettings(),
         deliveryZonesApi.map(),
         deliveryZonesApi.listBatches({ limit: 50 }),
+        branchesApi.list(),
       ]);
       setVersions(v);
       setSettings(s);
       setZoneMap(m);
       setBatches(b);
+      setBranches(br.filter(x => x.is_active && !x.deleted_at));
       setOpenId(current => current ?? v.find(x => x.is_active)?.id ?? v[0]?.id ?? null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load delivery maps.');
@@ -175,6 +182,7 @@ export default function DeliveryZonesPage() {
           <VersionCard
             key={version.id}
             version={version}
+            branches={branches}
             open={openId === version.id}
             busy={busy}
             draftName={draftName}
@@ -202,6 +210,7 @@ export default function DeliveryZonesPage() {
 
 interface VersionCardProps {
   version: DeliveryMapVersion;
+  branches: Branch[];
   open: boolean;
   busy: boolean;
   draftName: string;
@@ -212,12 +221,17 @@ interface VersionCardProps {
   onDelete: () => void;
   onZoneChange: (
     zoneId: string,
-    data: { delivery_fee?: number; fulfilment_provider?: FulfilmentProvider },
+    data: {
+      delivery_fee?: number;
+      fulfilment_provider?: FulfilmentProvider;
+      branch_id?: string;
+    },
   ) => void;
 }
 
 function VersionCard({
   version,
+  branches,
   open,
   busy,
   draftName,
@@ -278,6 +292,9 @@ function VersionCard({
                 <th className="px-4 py-2 text-left text-[11px] font-body uppercase tracking-widest text-gray-400">
                   Fulfilled by
                 </th>
+                <th className="px-4 py-2 text-left text-[11px] font-body uppercase tracking-widest text-gray-400">
+                  Baked at
+                </th>
                 <th className="px-4 py-2 text-right text-[11px] font-body uppercase tracking-widest text-gray-400">
                   Order
                 </th>
@@ -289,8 +306,9 @@ function VersionCard({
                   // The saved values are part of the key so a reload after a
                   // save remounts the row with them, rather than leaving the
                   // input showing what was typed before the server answered.
-                  key={`${zone.id}:${zone.delivery_fee}:${zone.fulfilment_provider}`}
+                  key={`${zone.id}:${zone.delivery_fee}:${zone.fulfilment_provider}:${zone.branch_id}`}
                   zone={zone}
+                  branches={branches}
                   readOnly={version.is_active || busy}
                   onChange={data => onZoneChange(zone.id, data)}
                 />
@@ -337,14 +355,17 @@ function VersionCard({
 
 function ZoneRow({
   zone,
+  branches,
   readOnly,
   onChange,
 }: {
   zone: DeliveryZone;
+  branches: Branch[];
   readOnly: boolean;
   onChange: (data: {
     delivery_fee?: number;
     fulfilment_provider?: FulfilmentProvider;
+    branch_id?: string;
   }) => void;
 }) {
   const [fee, setFee] = useState(String(zone.delivery_fee));
@@ -394,6 +415,23 @@ function ZoneRow({
               onChange({ fulfilment_provider: e.target.value as FulfilmentProvider })
             }
             className="w-36"
+          />
+        )}
+      </td>
+      <td className="px-4 py-2.5">
+        {readOnly ? (
+          <span className="text-xs font-body text-gray-700">
+            {branches.find(b => b.id === zone.branch_id)?.reference ?? '—'}
+          </span>
+        ) : (
+          <Select
+            value={zone.branch_id ?? ''}
+            options={branches.map(b => ({
+              value: b.id,
+              label: `${b.reference} · ${b.name}`,
+            }))}
+            onChange={e => onChange({ branch_id: e.target.value })}
+            className="w-44"
           />
         )}
       </td>

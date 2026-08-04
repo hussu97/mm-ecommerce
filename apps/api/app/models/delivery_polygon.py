@@ -98,6 +98,23 @@ class DeliveryPolygon(Base, UUIDMixin):
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     delivery_fee: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    #: The branch that serves this zone — bakes the order, hands it to the
+    #: courier, and sees it on its register. Exactly one per zone: the shapes are
+    #: disjoint, so a pin resolves to one zone and therefore one kitchen, with
+    #: no tie-break to invent. A branch serves many zones.
+    #:
+    #: `RESTRICT` rather than `SET NULL`: a branch with live zones pointing at it
+    #: is a branch that is taking orders, and deleting it should fail loudly
+    #: rather than quietly orphan the map.
+    #:
+    #: Nullable, and null means "fall back to the single configured pickup
+    #: branch" — which is how the column could land without changing behaviour.
+    branch_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("branches.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     # Which courier serves this zone. Third party is the safe default: it means
     # "do what we have always done", so a zone added without thinking about
     # dispatch cannot start booking real couriers by accident.

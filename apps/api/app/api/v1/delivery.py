@@ -39,6 +39,10 @@ class DeliveryQuoteResponse(BaseModel):
     remaining_for_free: float
     zone_name: str | None = None
     in_known_zone: bool
+    #: Minutes, or absent where no honest number exists. A duration says nothing
+    #: about who carries the order, so it is safe to show; naming the courier
+    #: would not be.
+    estimated_delivery_minutes: int | None = None
 
 
 class DeliveryCalculateResponse(BaseModel):

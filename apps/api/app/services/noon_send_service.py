@@ -10,9 +10,10 @@ create-task response carries no price, and neither do the task details. The only
 cost figure that will ever exist for one of their tasks is the one this module
 computes from their published rate card:
 
-    AED 12            for the first 10 km
-      + 1.00 per km   for  10-20 km
-      + 1.50 per km   beyond 20 km
+    AED 12 by bike / 25 by bulky car   for the first 10 km
+      + 1.00 per km                    for  10-15 km
+      + 1.50 per km                    for  15-20 km
+      + 1.00                           during 12:00-15:00 and 19:00-22:00
 
 Distance is straight line from the kitchen times `NOON_SEND_DETOUR_FACTOR`,
 which is fitted (1.49x) against the sixteen Sharjah areas the live Lalamove rate
@@ -20,9 +21,12 @@ card was measured over. It is an estimate and it is labelled as one everywhere i
 surfaces; treating it as a billed figure would be inventing precision we do not
 have.
 
-For the shape of the money that estimate is compared against: at 15 AED charged,
-noon Send costs 12 across most of Sharjah Central where Lalamove costs 19-26.
-That gap is the whole reason this file exists.
+The vehicle tier is the whole argument. On a bike they beat Lalamove's
+`17 + 0.70/km` at every distance in range, surge included — 12.45 against 22.29
+on average across Sharjah Central, which turns a AED 15 fee from a loss into a
+margin. In the bulky car product at AED 25 they lose at every distance in range,
+so a zone that needed cars would be a zone that should have stayed on Lalamove.
+Standard cakes go by bike.
 """
 
 from __future__ import annotations
@@ -34,12 +38,14 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import case, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.models.delivery_batch import DELIVERY_TIMEZONE
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import Order, OrderStatusEnum
 from app.models.pos_order import OrderPayment
@@ -86,6 +92,9 @@ PROVIDER = FulfilmentProviderEnum.NOON_SEND.value
 #: fifteen kilometres this is ever asked about.
 _KM_PER_DEG_LAT = 111.32
 
+#: The shop's clock, which is what the surge windows are quoted against.
+TZ = ZoneInfo(DELIVERY_TIMEZONE)
+
 
 def is_enabled() -> bool:
     """Whether we can create a task at all.
@@ -114,20 +123,58 @@ def road_distance_km(lat_a: float, lng_a: float, lat_b: float, lng_b: float) -> 
     return math.hypot(dx, dy) * settings.NOON_SEND_DETOUR_FACTOR
 
 
-def rate_card_cost(distance_km: float) -> Decimal:
+#: Peak windows, on the shop's clock, in which every band costs AED 1 more.
+#: Both of ours matter: 58% of orders arrive in the evening one.
+SURGE_WINDOWS: tuple[tuple[int, int], ...] = ((12, 15), (19, 22))
+
+#: Their ceiling. The card has no band past 20 km, and our own
+#: `NOON_SEND_MAX_DISTANCE_M` is stricter still — this is the honest edge of
+#: what the published card can price rather than a limit we enforce.
+RATE_CARD_MAX_KM = 20.0
+
+
+def is_surge(at: datetime | None = None) -> bool:
+    """Whether a run booked now falls in one of the peak windows."""
+    local = (at or datetime.now(timezone.utc)).astimezone(TZ)
+    return any(start <= local.hour < end for start, end in SURGE_WINDOWS)
+
+
+def rate_card_cost(
+    distance_km: float,
+    *,
+    bulky: bool = False,
+    at: datetime | None = None,
+) -> Decimal:
     """
     What noon Send charges for a run of this length.
 
-    The bands are marginal, not selective: the 12 AED covers the first ten
+    The bands are marginal, not selective: the base covers the first ten
     kilometres and each band prices only the distance inside it. Read the other
     way the card would price eleven kilometres below ten, which no courier means.
+
+    Two things the base hides. The card has a **vehicle tier** — AED 12 on a bike
+    against AED 25 for the bulky car product — and the whole case for this
+    courier lives in that gap: on a bike they beat Lalamove at every distance in
+    range, and in a car they lose at every distance in range. Standard cakes go
+    by bike; `bulky` is here so that a large one can be priced honestly rather
+    than silently costed as if it were not.
+
+    And a **surge**: AED 1 on top across all bands during the peak windows. Small
+    per order and easy to leave out, but the evening window is where most orders
+    land, so leaving it out would understate the cost of the busiest hours.
     """
-    if distance_km <= 10:
-        total = 12.0
-    elif distance_km <= 20:
-        total = 12.0 + (distance_km - 10) * 1.00
+    base = float(settings.NOON_SEND_BULKY_BASE if bulky else settings.NOON_SEND_BASE)
+    capped = min(distance_km, RATE_CARD_MAX_KM)
+
+    if capped <= 10:
+        total = base
+    elif capped <= 15:
+        total = base + (capped - 10) * 1.00
     else:
-        total = 22.0 + (distance_km - 20) * 1.50
+        total = base + 5.0 + (capped - 15) * 1.50
+
+    if is_surge(at):
+        total += float(settings.NOON_SEND_SURGE_AED)
     return Decimal(f"{total:.2f}")
 
 
@@ -136,6 +183,7 @@ async def estimate_for_point(
     latitude: float,
     longitude: float,
     address: str | None = None,
+    branch_id: uuid.UUID | None = None,
 ) -> tuple[Estimate | None, str | None]:
     """
     What a noon Send run to this point would cost us, or why we cannot say.
@@ -145,7 +193,7 @@ async def estimate_for_point(
     network call — there is nothing to call — so unlike the Lalamove version it
     costs nothing and cannot time out.
     """
-    pickup = await resolve_pickup(db)
+    pickup = await resolve_pickup(db, branch_id)
     if pickup is None:
         return None, "No pickup branch is configured"
 
@@ -186,7 +234,7 @@ async def may_serve(db: AsyncSession, order: Order) -> tuple[bool, str | None]:
     except (KeyError, TypeError, ValueError):
         return False, "Order has no delivery coordinates"
 
-    pickup = await resolve_pickup(db)
+    pickup = await resolve_pickup(db, order.branch_id)
     if pickup is None:
         return False, "No pickup branch is configured"
     if not pickup.noon_send_outlet_code:
@@ -335,7 +383,7 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
     if delivery is None:
         return None
 
-    pickup = await resolve_pickup(db)
+    pickup = await resolve_pickup(db, order.branch_id)
     if pickup is None:
         delivery.last_error = "No pickup branch is configured"
         return delivery

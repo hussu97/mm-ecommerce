@@ -24,7 +24,7 @@ from app.models.branch import Branch
 from app.models.business_settings import BusinessSettings
 from app.models.charge import Charge
 from app.models.kitchen_flow import KitchenFlow
-from app.models.order import Order, OrderItem
+from app.models.order import DeliveryMethodEnum, Order, OrderItem
 from app.models.payment_method import PaymentMethod, PaymentMethodTypeEnum
 from app.models.pos_order import (
     DiscountSourceEnum,
@@ -226,6 +226,71 @@ async def open_order(
     await db.flush()
     await db.refresh(order)
     return await get_order(db, order.id)
+
+
+async def attach_online_order(db: AsyncSession, order: Order, branch: Branch) -> Order:
+    """
+    Put a storefront order onto a branch's register.
+
+    Web and POS orders already share one table; what a storefront order lacked
+    was any of the POS columns, so no register could see it. Filling them in is
+    the whole difference between an order the kitchen is told about and one that
+    exists only in the admin.
+
+    It becomes a genuine POS order — `is_pos` is what `/pos/orders`, the
+    dispatch board and the operations screens all filter on, and an order a
+    kitchen has to bake is a POS order in every operational sense. `source`
+    distinguishes it from one rung at the counter, which is the whole reason
+    that column exists.
+
+    It opens `pending` rather than `active`: nobody at the counter has seen it
+    yet. Accepting it on the register is what makes it active, and until then it
+    is a thing demanding attention rather than an open check.
+
+    The storefront order number is kept. It is on the customer's confirmation
+    email and it is what they will say on the phone; a second number would be a
+    second thing to reconcile. The check number is allocated alongside it so the
+    counter still has its short "order 12".
+    """
+    if order.branch_id is not None:
+        # Already attached. Re-running must not burn a second check number.
+        return order
+
+    settings = await _settings(db)
+    day = await business_day_service.get_or_open(db, branch)
+    check_number = await _next_check_number(
+        db, branch.id, day.business_date, settings.order_number_reset_daily
+    )
+
+    address = order.shipping_address_snapshot or {}
+    customer_name = " ".join(
+        str(part).strip()
+        for part in (address.get("first_name"), address.get("last_name"))
+        if part
+    ).strip()
+
+    order.is_pos = True
+    order.branch_id = branch.id
+    order.source = OrderSourceEnum.ONLINE.value
+    # `.value`, not `str()`: `DeliveryMethodEnum` mixes in `str` but is still an
+    # Enum, so `str()` gives "DeliveryMethodEnum.DELIVERY" and every comparison
+    # against "delivery" quietly fails — which sent delivery orders to the
+    # register labelled as pickups.
+    method = getattr(order.delivery_method, "value", order.delivery_method)
+    order.order_type = (
+        OrderTypeEnum.DELIVERY.value
+        if method == DeliveryMethodEnum.DELIVERY.value
+        else OrderTypeEnum.PICKUP.value
+    )
+    order.pos_status = PosOrderStatusEnum.PENDING.value
+    order.business_date = day.business_date
+    order.check_number = check_number
+    order.opened_at = utcnow()
+    # The counter needs somebody to call, and the storefront's snapshot is the
+    # only place a guest's name and number exist.
+    order.customer_name = customer_name or None
+    order.customer_phone = str(address.get("phone") or "") or None
+    return order
 
 
 # ─── Lines ────────────────────────────────────────────────────────────────────

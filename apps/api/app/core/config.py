@@ -197,6 +197,14 @@ class Settings(BaseSettings):
     #: estimate what a run costs us — noon Send has no quotation API, so this is
     #: the only cost figure that will ever exist for one of their tasks.
     NOON_SEND_DETOUR_FACTOR: float = 1.49
+    #: The published rate card, which has a vehicle tier. AED 12 on a bike is
+    #: what makes this courier worth having — on a bike they beat Lalamove at
+    #: every distance in range; in the bulky car product at AED 25 they lose at
+    #: every distance in range. Standard cakes go by bike.
+    NOON_SEND_BASE: float = 12.0
+    NOON_SEND_BULKY_BASE: float = 25.0
+    #: Added across all bands during 12:00–15:00 and 19:00–22:00 Dubai time.
+    NOON_SEND_SURGE_AED: float = 1.0
     #: The key noon Send presents on the status and tracking webhooks. They have
     #: no request signing, so this shared secret is the only thing separating a
     #: real status update from anyone who guesses the URL.

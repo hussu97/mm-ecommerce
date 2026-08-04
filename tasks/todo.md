@@ -1,5 +1,24 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ⏳ 2026-08-04: Polygons name a branch, and website orders reach its register
+
+### Plan
+- [x] 1. Correct the noon Send rate card against the real one. It has a **vehicle tier** (AED 12 bike / 25 bulky car), bands at **10–15** and **15–20** rather than 10–20 and 20+, no band past 20 km at all, and a **+AED 1 surge** during 12:00–15:00 and 19:00–22:00.
+- [x] 2. `delivery_polygons.branch_id`, migration `059`, every polygon on every map pointed at K001. `Zone` carries it, `resolve_pickup` prefers it, and the order records which kitchen it belongs to so a later redraw does not move an order that is already baking.
+- [x] 3. Website orders land on that branch's register — `is_pos`, `source=online`, `pos_status=pending`, `order_type`, business day, check number, customer name and phone.
+- [x] 4. COD orders confirm themselves. Card orders already did, via Stripe's `payment_intent.succeeded`.
+- [x] 5. A noon Send zone quotes "within 1 hour"; every other zone promises nothing. Plus a regression test pinning noon Send out of batching.
+- [x] 6. Branch selector per zone in the admin. 660 tests pass, ruff and `tsc` clean.
+
+### Review
+
+- **The rate card inverts the case depending on vehicle.** On a bike noon Send beats Lalamove at every distance in range, surge included — 12.45 mean against 22.29 across Sharjah Central, turning a AED 15 fee from a loss into a margin. In the bulky car product at AED 25 they lose at every distance in range. Confirmed with the owner that standard cakes go by bike. Both tiers are implemented so a large cake can be costed honestly rather than silently priced as a bike.
+- **The geometry did not change.** Below 15 km the new bands are arithmetically identical to the old ones, and 15 km is the whole zone — so `Sharjah Central` stays a 10 km circle and no map was republished.
+- **Verified end to end** on a fresh database: a website order arrives with `branch_id`, `is_pos`, `source=online`, `pos_status=pending`, `order_type=delivery`, business date and sequential check numbers, and `GET /pos/orders?branch_id=…&pos_status=pending` returns it. A cash order reached `confirmed` on its own while a card order stayed `created` awaiting Stripe. Migration `059` fills all 38 polygons across all four maps, and `RESTRICT` refuses to delete a branch with live zones.
+- **A bug the end-to-end run caught:** `DeliveryMethodEnum` mixes in `str` but is still an Enum, so `str()` gives `"DeliveryMethodEnum.DELIVERY"` and the comparison against `"delivery"` failed silently — every delivery order reached the register labelled a pickup. Now compared on `.value`, with a test.
+- **Deliberate consequence:** `is_pos=True` means POS reports now include website orders. They are real sales at that branch so this is right, but it moves existing numbers — worth looking at the before and after rather than discovering it later.
+- **Still to do:** APNs plumbing (blocked on an Apple push key), the unified admin orders screen, and the iPad/phone apps.
+
 ## ⏳ 2026-08-04: Move the noon Send outlet code onto the branch
 
 ### Plan

@@ -450,7 +450,13 @@ async def dispatch_batch(db: AsyncSession, batch: DeliveryBatch) -> DeliveryBatc
         batch.last_error = "Courier is not configured; dispatch these orders by hand"
         return batch
 
-    pickup = await lalamove_service.resolve_pickup(db)
+    # Every order on a run shares a zone, and a zone names one kitchen — so the
+    # run has one collection point by construction. Read off the polygon rather
+    # than the batch: the batch is a schedule, the polygon is the geography.
+    polygon = await db.get(DeliveryPolygon, batch.polygon_id)
+    pickup = await lalamove_service.resolve_pickup(
+        db, polygon.branch_id if polygon else None
+    )
     if pickup is None:
         batch.status = BatchStatusEnum.FAILED.value
         batch.last_error = "No pickup branch is configured"

@@ -243,7 +243,12 @@ export const deliveryZonesApi = {
   /** Only works on a draft — the live map is read-only by design. */
   updateZone: (
     zoneId: string,
-    data: { delivery_fee?: number; fulfilment_provider?: FulfilmentProvider; display_order?: number },
+    data: {
+      delivery_fee?: number;
+      fulfilment_provider?: FulfilmentProvider;
+      branch_id?: string;
+      display_order?: number;
+    },
   ) => api.put<DeliveryZone>(`/delivery-zones/polygons/${zoneId}`, data),
   publish: (versionId: string) =>
     api.post<DeliveryMapVersion>(`/delivery-zones/versions/${versionId}/activate`),

@@ -10,12 +10,17 @@ test.
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from app.models.delivery_batch import DeliveryBatchWindow
+from app.models.order_delivery import OrderDelivery
+from app.services import batching_service
 from app.services.batching_service import find_window, next_dispatch_at, overlapping
 
 DUBAI = ZoneInfo("Asia/Dubai")
@@ -195,3 +200,48 @@ def test_next_dispatch_rolls_to_tomorrow_once_the_window_has_passed():
     assert next_dispatch_at(window("Batch 2", "12:00", "18:00"), dubai(19)) == dubai(
         18, day=3
     )
+
+
+# ── noon Send never batches ───────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_noon_send_order_never_joins_a_run(monkeypatch):
+    """
+    Batching is a Lalamove product: one courier order carrying fifteen stops.
+    noon Send's equivalent is a different endpoint with a cap of three that we
+    do not use, so their orders always go out on their own — which is also what
+    lets a noon Send zone promise an hour, since nothing waits for a window.
+
+    Asserted rather than assumed, because the routing that guarantees it is one
+    `if` in `assign_or_dispatch` and nothing else would notice it going.
+    """
+    dispatched: list[str] = []
+
+    delivery = OrderDelivery(
+        order_id=uuid.uuid4(),
+        provider="noon_send",
+        zone_name="Sharjah Central",
+        polygon_id=uuid.uuid4(),
+        fee_charged=Decimal("15.00"),
+    )
+    order = SimpleNamespace(id=delivery.order_id, order_number="MM-1001")
+
+    async def get_delivery(_db, _order_id):
+        return delivery
+
+    async def dispatch(_db, _order):
+        dispatched.append("direct")
+        return delivery
+
+    async def windows(_db, _polygon_id):
+        raise AssertionError("a noon Send zone must never be matched to a window")
+
+    monkeypatch.setattr(batching_service.lalamove_service, "get_delivery", get_delivery)
+    monkeypatch.setattr(batching_service.courier_service, "dispatch", dispatch)
+    monkeypatch.setattr(batching_service, "_active_windows", windows)
+
+    result = await batching_service.assign_or_dispatch(object(), order)
+
+    assert dispatched == ["direct"]
+    assert result.batch_id is None

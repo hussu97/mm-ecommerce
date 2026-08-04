@@ -143,7 +143,31 @@ def test_the_response_model_has_no_field_that_could_leak_one():
         "remaining_for_free",
         "zone_name",
         "in_known_zone",
+        # A duration, which says nothing about who carries the order. Present
+        # only where an honest number exists.
+        "estimated_delivery_minutes",
     }
+
+
+async def test_only_a_zone_that_dispatches_directly_promises_a_time(cart):
+    """
+    A noon Send zone goes out the moment the box is packed, so an hour is a
+    promise that can be kept. Everything else either waits for a batch window or
+    is driven by hand — no honest number exists, so none is given rather than
+    one being guessed and missed.
+    """
+    assert (await _quote(cart, zone=SHARJAH_CENTRAL))[
+        "estimated_delivery_minutes"
+    ] == 60
+    assert (await _quote(cart, zone=SHARJAH_CITY))["estimated_delivery_minutes"] is None
+    assert (await _quote(cart, zone=None))["estimated_delivery_minutes"] is None
+
+
+async def test_the_promised_time_still_names_nobody(cart):
+    result = await _quote(cart, zone=SHARJAH_CENTRAL)
+    blob = repr(result).lower()
+    for leak in ("lalamove", "noon", "rod", "courier", "rider"):
+        assert leak not in blob, f"the storefront quote mentions {leak!r}"
 
 
 async def test_the_estimate_is_filed_against_the_basket(cart):
@@ -223,7 +247,7 @@ async def test_a_noon_send_zone_is_costed_on_its_own_rate_card(cart, monkeypatch
     monkeypatch.setattr(app_settings, "NOON_SEND_API_KEY", "test-key")
     monkeypatch.setattr(app_settings, "NOON_SEND_OUTLET_CODE", "PCKP_TEST123")
 
-    async def rate_card(db, latitude, longitude, address=None):
+    async def rate_card(db, latitude, longitude, address=None, branch_id=None):
         return (
             lalamove_service.Estimate(
                 cost=noon_send_service.rate_card_cost(4.4),

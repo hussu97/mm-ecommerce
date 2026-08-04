@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.deps import get_admin_user, get_db
+from app.models.branch import Branch
 from app.models.delivery_batch import (
     BatchStatusEnum,
     DeliveryBatch,
@@ -57,6 +58,9 @@ class PolygonResponse(BaseModel):
     name: str
     delivery_fee: float
     fulfilment_provider: str
+    #: The kitchen that bakes this zone's orders and hands them to the courier.
+    #: Null falls back to the single configured pickup branch.
+    branch_id: str | None
     display_order: int
     #: How many coordinates the outline has, so the admin can tell a hand-drawn
     #: box from a real boundary without fetching either.
@@ -69,6 +73,7 @@ class PolygonResponse(BaseModel):
             name=p.name,
             delivery_fee=float(p.delivery_fee),
             fulfilment_provider=p.fulfilment_provider,
+            branch_id=str(p.branch_id) if p.branch_id else None,
             display_order=p.display_order,
             point_count=_point_count(p.geometry),
         )
@@ -110,6 +115,7 @@ class VersionCreate(BaseModel):
 class PolygonUpdate(BaseModel):
     delivery_fee: Decimal | None = Field(None, ge=0)
     fulfilment_provider: str | None = None
+    branch_id: uuid.UUID | None = None
     display_order: int | None = None
 
 
@@ -480,6 +486,7 @@ async def update_polygon(
     before = {
         "delivery_fee": float(polygon.delivery_fee),
         "fulfilment_provider": polygon.fulfilment_provider,
+        "branch_id": str(polygon.branch_id) if polygon.branch_id else None,
         "display_order": polygon.display_order,
     }
 
@@ -494,6 +501,14 @@ async def update_polygon(
                 f"Choose one of: {', '.join(sorted(allowed))}",
             )
         polygon.fulfilment_provider = data.fulfilment_provider
+    if data.branch_id is not None:
+        branch = await db.get(Branch, data.branch_id)
+        if branch is None or branch.deleted_at is not None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "That branch does not exist, so nothing could bake this zone.",
+            )
+        polygon.branch_id = data.branch_id
     if data.display_order is not None:
         polygon.display_order = data.display_order
 
@@ -510,6 +525,7 @@ async def update_polygon(
             "to": {
                 "delivery_fee": float(polygon.delivery_fee),
                 "fulfilment_provider": polygon.fulfilment_provider,
+                "branch_id": str(polygon.branch_id) if polygon.branch_id else None,
                 "display_order": polygon.display_order,
             },
         },

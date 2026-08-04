@@ -383,6 +383,8 @@ export interface DeliveryZone {
   id: string;
   name: string;
   delivery_fee: number;
+  /** The kitchen that bakes this zone's orders. Null = the default pickup branch. */
+  branch_id: string | null;
   fulfilment_provider: FulfilmentProvider;
   display_order: number;
   point_count: number;

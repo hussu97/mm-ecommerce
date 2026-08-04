@@ -37,6 +37,11 @@ class Zone:
     min_lng: float
     max_lng: float
     rings: tuple[tuple[tuple[tuple[float, float], ...], ...], ...]
+    #: The kitchen that serves this zone. None falls back to the single
+    #: configured pickup branch, which is what every zone did before zones knew
+    #: about branches at all — so it defaults, and a map drawn before the column
+    #: existed behaves exactly as it did.
+    branch_id: uuid.UUID | None = None
 
     @property
     def is_lalamove(self) -> bool:
@@ -157,6 +162,7 @@ def _to_zone(p: DeliveryPolygon) -> Zone:
         fulfilment_provider=(
             p.fulfilment_provider or FulfilmentProviderEnum.THIRD_PARTY.value
         ),
+        branch_id=p.branch_id,
         min_lat=float(p.min_lat),
         max_lat=float(p.max_lat),
         min_lng=float(p.min_lng),

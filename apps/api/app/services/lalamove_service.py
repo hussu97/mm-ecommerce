@@ -120,20 +120,22 @@ class PickupPoint:
         }
 
 
-async def resolve_pickup(db: AsyncSession) -> PickupPoint | None:
+async def resolve_pickup(
+    db: AsyncSession, branch_id: uuid.UUID | None = None
+) -> PickupPoint | None:
     """
     The branch the courier collects from.
 
-    Configured by reference when there is more than one candidate; otherwise
-    the first active branch that takes online orders and has a pin, because a
-    branch without coordinates cannot be a pickup stop no matter how it is
-    flagged.
+    `branch_id` is the zone's own kitchen, and it wins when given: the shape
+    that priced the order is the shape that says who bakes it, so a second
+    kitchen serving its own area needs no other change. The caller passes
+    `zone.branch_id`, which is null only for a map drawn before zones knew about
+    branches.
 
-    Still one branch for the whole country. When a second one starts delivering,
-    this becomes a function of the destination — the zone that priced the order
-    naming the branch that serves it — and that is the only change needed:
-    everything downstream already takes the pickup point as an argument rather
-    than reaching for a global.
+    Without one, it falls back to what every order used before: configured by
+    reference when there is more than one candidate, otherwise the first active
+    branch that takes online orders and has a pin — because a branch without
+    coordinates cannot be a pickup stop no matter how it is flagged.
     """
     stmt = select(Branch).where(
         Branch.is_active.is_(True),
@@ -141,7 +143,9 @@ async def resolve_pickup(db: AsyncSession) -> PickupPoint | None:
         Branch.latitude.isnot(None),
         Branch.longitude.isnot(None),
     )
-    if settings.LALAMOVE_PICKUP_BRANCH_REF:
+    if branch_id is not None:
+        stmt = stmt.where(Branch.id == branch_id)
+    elif settings.LALAMOVE_PICKUP_BRANCH_REF:
         stmt = stmt.where(Branch.reference == settings.LALAMOVE_PICKUP_BRANCH_REF)
     else:
         stmt = stmt.where(Branch.receives_online_orders.is_(True))
@@ -152,6 +156,13 @@ async def resolve_pickup(db: AsyncSession) -> PickupPoint | None:
         .first()
     )
     if branch is None:
+        if branch_id is not None:
+            # The zone names a branch that is gone, deleted or has lost its pin.
+            # Falling through to the global default would silently bake the order
+            # in the wrong city, so this is a refusal rather than a guess.
+            logger.warning(
+                "Zone points at branch %s, which cannot be a pickup point", branch_id
+            )
         return None
 
     phone = normalise_phone(settings.LALAMOVE_SENDER_PHONE or branch.phone or "")
@@ -190,9 +201,12 @@ class Estimate:
 
 
 #: Checkout re-quotes whenever the pin or the basket moves, and the basket does
-#: not change the price of a courier run. Keyed on the rounded destination so
-#: nudging the pin a few metres does not spend another call.
-_quote_cache: dict[tuple[float, float], tuple[float, Estimate | None, str | None]] = {}
+#: not change the price of a courier run. Keyed on the origin and the rounded
+#: destination so nudging the pin a few metres does not spend another call.
+_quote_cache: dict[
+    tuple[uuid.UUID | None, float, float],
+    tuple[float, Estimate | None, str | None],
+] = {}
 
 
 def clear_caches() -> None:
@@ -204,6 +218,7 @@ async def estimate_for_point(
     latitude: float,
     longitude: float,
     address: str | None = None,
+    branch_id: uuid.UUID | None = None,
 ) -> tuple[Estimate | None, str | None]:
     """
     What a courier would charge to reach this point, or why it could not say.
@@ -216,13 +231,15 @@ async def estimate_for_point(
         return None, None
 
     # ~11 m of precision. Finer than a building, coarser than the jitter a
-    # dragged pin produces.
-    key = (round(latitude, 4), round(longitude, 4))
+    # dragged pin produces. Keyed on the origin too: the same doorstep costs a
+    # different amount from a different kitchen, and a shared key would serve
+    # one branch's price for another's run.
+    key = (branch_id, round(latitude, 4), round(longitude, 4))
     cached = _quote_cache.get(key)
     if cached and time.monotonic() - cached[0] < settings.LALAMOVE_QUOTE_CACHE_SECONDS:
         return cached[1], cached[2]
 
-    pickup = await resolve_pickup(db)
+    pickup = await resolve_pickup(db, branch_id)
     if pickup is None:
         return None, "No pickup branch is configured"
 
@@ -426,7 +443,7 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
         delivery.last_error = reason
         return delivery
 
-    pickup = await resolve_pickup(db)
+    pickup = await resolve_pickup(db, order.branch_id)
     if pickup is None:
         delivery.last_error = "No pickup branch is configured"
         return delivery
