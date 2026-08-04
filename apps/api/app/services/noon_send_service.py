@@ -434,10 +434,14 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
             delivery.courier_order_id,
         ]
 
+    # From the branch this task was actually created against. Without the
+    # `branch_id` this falls back to the globally configured pickup, so a second
+    # kitchen would dispatch from one place and be costed from another.
     estimate, _ = await estimate_for_point(
         db,
         float(order.shipping_address_snapshot["latitude"]),
         float(order.shipping_address_snapshot["longitude"]),
+        branch_id=order.branch_id,
     )
     if estimate is not None:
         delivery.quoted_cost = estimate.cost
@@ -757,8 +761,11 @@ async def refresh(db: AsyncSession, order_id: uuid.UUID) -> OrderDelivery | None
     """
     Pull the current state of a task, for when a webhook never arrived.
 
-    Their statuses only reach us by push, and a push that is lost is lost — so
-    the admin's "refresh" button needs a way to ask.
+    noon Send's statuses only reach us by push, and a push that is lost is lost:
+    unlike Lalamove they do not retry, and unlike Stripe there is nothing to
+    replay. Without a way to ask, a rider could deliver an order and the shop
+    would still be looking at "assigned" tomorrow. Reachable from the admin's
+    delivery panel — see `POST /orders/{n}/delivery/refresh`.
     """
     delivery = await get_delivery(db, order_id)
     if delivery is None or not delivery.courier_order_id:

@@ -184,15 +184,38 @@ def _db_for_create(
     db.flush = AsyncMock()
     db.begin_nested = MagicMock()
     db.execute = AsyncMock(
-        side_effect=[
-            _result(scalar_one_or_none=cart),
-            *(extra_results or []),
-            _result(scalar_one_or_none=last_order_seq),
-            _result(scalars_all=cart_items or []),
-            _result(scalar_one=final_order),
-        ]
+        side_effect=_sequenced(
+            [
+                _result(scalar_one_or_none=cart),
+                *(extra_results or []),
+                _result(scalar_one_or_none=last_order_seq),
+                _result(scalars_all=cart_items or []),
+                _result(scalar_one=final_order),
+            ]
+        )
     )
     return db
+
+
+def _sequenced(results):
+    """
+    Answer these queries in order, and keep answering with the last one.
+
+    A bare `side_effect` list asserts the exact number of queries the service
+    makes, which is not what any of these tests are about: adding one lookup
+    anywhere in `create_order` failed twenty-three of them at once with a
+    `StopAsyncIteration` that named nothing and pointed at mock internals.
+
+    The last entry is always the final reload, so holding it rather than
+    exhausting the list means a new query in the middle shifts nothing — the
+    reload still gets its order. Order still matters for everything before it.
+    """
+    remaining = list(results)
+
+    async def answer(*_args, **_kwargs):
+        return remaining.pop(0) if len(remaining) > 1 else remaining[0]
+
+    return answer
 
 
 def _db_for_update(order, updated_order=None) -> AsyncMock:
@@ -204,10 +227,12 @@ def _db_for_update(order, updated_order=None) -> AsyncMock:
     db.flush = AsyncMock()
     db.refresh = AsyncMock()
     db.execute = AsyncMock(
-        side_effect=[
-            _result(scalar_one_or_none=order),
-            _result(scalar_one=updated_order or order),
-        ]
+        side_effect=_sequenced(
+            [
+                _result(scalar_one_or_none=order),
+                _result(scalar_one=updated_order or order),
+            ]
+        )
     )
     return db
 
@@ -698,13 +723,15 @@ class TestCreateOrderWithPromo:
         db.flush = AsyncMock()
         db.begin_nested = MagicMock()
         db.execute = AsyncMock(
-            side_effect=[
-                _result(scalar_one_or_none=cart),  # cart lookup
-                _result(scalar_one_or_none=None),  # order number
-                _result(),  # promo uses UPDATE
-                _result(scalars_all=[]),  # cart item deletion
-                _result(scalar_one=final_order),  # final reload
-            ]
+            side_effect=_sequenced(
+                [
+                    _result(scalar_one_or_none=cart),  # cart lookup
+                    _result(scalar_one_or_none=None),  # order number
+                    _result(),  # promo uses UPDATE
+                    _result(scalars_all=[]),  # cart item deletion
+                    _result(scalar_one=final_order),  # final reload
+                ]
+            )
         )
         return db
 

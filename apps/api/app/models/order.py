@@ -136,7 +136,10 @@ class Order(Base, UUIDMixin, TimestampMixin):
     order_type: Mapped[str | None] = mapped_column(
         String(20), nullable=True, index=True
     )
-    source: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    #: Which channel rang this up — `online` or `cashier`. Not nullable: null
+    #: used to mean "a storefront order from before this column existed", which
+    #: made every reader carry a footnote. Backfilled by `061`.
+    source: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     pos_status: Mapped[str | None] = mapped_column(
         String(20), nullable=True, index=True
     )

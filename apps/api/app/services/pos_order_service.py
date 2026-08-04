@@ -271,7 +271,9 @@ async def attach_online_order(db: AsyncSession, order: Order, branch: Branch) ->
 
     order.is_pos = True
     order.branch_id = branch.id
-    order.source = OrderSourceEnum.ONLINE.value
+    # `source` is stamped at creation, not here — an order that never reaches a
+    # register is still a website order.
+    #
     # `.value`, not `str()`: `DeliveryMethodEnum` mixes in `str` but is still an
     # Enum, so `str()` gives "DeliveryMethodEnum.DELIVERY" and every comparison
     # against "delivery" quietly fails — which sent delivery orders to the

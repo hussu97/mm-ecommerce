@@ -51,9 +51,17 @@ _TOKEN_TTL_SECONDS = 50 * 60
 
 #: The device is gone — uninstalled, restored, or the token was reissued. The
 #: only correct response is to stop sending to it.
-_DEAD_TOKEN_REASONS = frozenset(
-    {"BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic"}
-)
+#:
+#: `DeviceTokenNotForTopic` is deliberately **not** here. It reads like a bad
+#: token and is almost always a bad *configuration* — the Push Notifications
+#: capability missing from the App ID, or a token registered under the other
+#: app's bundle id. Treating it as dead would retire every register in the shop
+#: over a setting in the Apple portal.
+_DEAD_TOKEN_REASONS = frozenset({"BadDeviceToken", "Unregistered"})
+
+#: Wrong app, or an App ID without the push capability. Loud, because it will be
+#: every device rather than one.
+_MISCONFIGURED_REASONS = frozenset({"DeviceTokenNotForTopic", "TopicDisallowed"})
 
 
 class ApnsError(RuntimeError):
@@ -174,9 +182,16 @@ class ApnsClient:
             reason = response.text[:120]
 
         dead = reason in _DEAD_TOKEN_REASONS or response.status_code == 410
+        if reason in _MISCONFIGURED_REASONS:
+            logger.error(
+                "APNs refused the topic (%s). Enable Push Notifications on the "
+                "App ID for %s and regenerate its provisioning profile.",
+                reason,
+                bundle_id,
+            )
         # A 403 is almost always the key, the team id or the wrong `.p8` — and
         # it will be every push, not one. Worth saying loudly once.
-        if response.status_code == 403:
+        elif response.status_code == 403:
             logger.error(
                 "APNs rejected our credentials (%s). Check APNS_KEY_ID, "
                 "APNS_TEAM_ID and that the .p8 is the push key, not the App "

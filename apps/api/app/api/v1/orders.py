@@ -27,10 +27,13 @@ from app.schemas.order import (
 from fastapi import Request
 
 from app.core.cache import cache_delete_pattern
+from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.services import (
     audit_service,
     courier_service,
     email_service,
+    lalamove_service,
+    noon_send_service,
     order_service,
 )
 
@@ -182,6 +185,44 @@ async def list_all_orders(
     pages = max(1, (total + per_page - 1) // per_page)
     return PaginatedOrders(
         items=items, total=total, page=page, per_page=per_page, pages=pages
+    )
+
+
+@router.post("/{order_number}/delivery/refresh", response_model=OrderDeliveryResponse)
+async def refresh_order_delivery(
+    order_number: str,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    """
+    Ask the courier where this order actually is.
+
+    Only noon Send needs it, and it needs it badly: their statuses arrive by
+    push only, they do not retry a delivery that failed, and there is nothing to
+    replay from their side. Lalamove retries for a day and Stripe can be resent;
+    a lost noon Send push is simply lost, and without this the shop would still
+    be looking at "assigned" the next morning.
+    """
+    order = (
+        (await db.execute(select(Order).where(Order.order_number == order_number)))
+        .scalars()
+        .first()
+    )
+    if order is None:
+        raise HTTPException(404, f"Order '{order_number}' not found")
+
+    delivery = await lalamove_service.get_delivery(db, order.id)
+    if delivery is None:
+        raise HTTPException(404, f"No delivery recorded for order '{order_number}'")
+    if delivery.provider != FulfilmentProviderEnum.NOON_SEND.value:
+        raise HTTPException(
+            400,
+            "Only noon Send needs asking — Lalamove pushes its own updates and "
+            "retries them for a day.",
+        )
+
+    return OrderDeliveryResponse.of(
+        await noon_send_service.refresh(db, order.id) or delivery
     )
 
 

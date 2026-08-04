@@ -298,27 +298,58 @@ def _is_cash_on_delivery(data: OrderCreate) -> bool:
 
 async def _attach_to_branch(db: AsyncSession, order: Order, zone: Zone | None) -> None:
     """
-    Hand the order to the kitchen that serves its zone.
+    Hand the order to the kitchen that will make it.
 
-    Best-effort by design. A zone with no branch, a branch that has been
-    deleted, or a pin outside every zone all leave the order exactly as it was —
-    visible in the admin, dispatchable, simply not on a register. Refusing the
-    sale because a kitchen is misconfigured would be a far worse trade, and the
-    orders this misses are findable by `branch_id IS NULL`.
+    The zone's own branch first — that is the whole point of mapping polygons to
+    branches. Failing that, the single configured pickup branch, which is where
+    the courier would collect from anyway: a zone drawn before branches existed,
+    or a pin outside every zone, still has to be baked *somewhere*, and the shop
+    that would have made it is the shop that should see it.
+
+    Falling back matters more than it looks. Migration `059` fills in the branch
+    for zones that exist when it runs; a database migrated before the kitchen row
+    was seeded gets nulls, and without this every website order would be written
+    with no branch and reach no register at all — silently, because the order
+    itself is perfectly fine.
+
+    Best-effort throughout. A deleted branch or none at all leaves the order
+    exactly as it was: visible in the admin, dispatchable, simply not on a
+    register. Refusing the sale because a kitchen is misconfigured would be a far
+    worse trade, and what this misses is findable by `branch_id IS NULL`.
     """
-    branch_id = zone.branch_id if zone else None
-    if branch_id is None:
-        return
+    branch: Branch | None = None
+    if zone is not None and zone.branch_id is not None:
+        branch = await db.get(Branch, zone.branch_id)
+        if branch is not None and (
+            branch.deleted_at is not None or not branch.is_active
+        ):
+            logger.warning(
+                "Order %s is in zone %s, whose branch %s cannot take it",
+                order.order_number,
+                zone.name,
+                zone.branch_id,
+            )
+            branch = None
 
-    branch = await db.get(Branch, branch_id)
-    if branch is None or branch.deleted_at is not None or not branch.is_active:
-        logger.warning(
-            "Order %s is in zone %s, whose branch %s cannot take it",
-            order.order_number,
-            zone.name if zone else "-",
-            branch_id,
+    if branch is None:
+        pickup = await lalamove_service.resolve_pickup(db)
+        if pickup is None:
+            logger.warning(
+                "Order %s has no branch to go to; it will not reach a register",
+                order.order_number,
+            )
+            return
+        branch = (
+            (
+                await db.execute(
+                    select(Branch).where(Branch.reference == pickup.reference)
+                )
+            )
+            .scalars()
+            .first()
         )
-        return
+        if branch is None:
+            return
 
     await pos_order_service.attach_online_order(db, order, branch)
 
@@ -370,6 +401,12 @@ async def _persist_order(
         vat_amount=vat_amount,
         total_excl_vat=total_excl_vat,
         status=OrderStatusEnum.CREATED,
+        # Which channel rang this up, stamped at creation and not later.
+        # `attach_online_order` used to be the only thing that set it, which
+        # meant an order in a zone with no branch — or a pickup outside every
+        # zone — was written with no channel at all, and every reader had to
+        # treat null as "probably the website".
+        source=OrderSourceEnum.ONLINE.value,
         promo_code_used=promo_code_used,
         shipping_address_snapshot=address_snapshot,
         payment_method=data.payment_method,
@@ -670,20 +707,16 @@ async def get_all_admin(
     """
     Every order, from either channel, newest first.
 
-    `channel` narrows to one: `counter` is what a cashier rang up, `online` is
-    everything else. Deliberately "everything else" rather than
-    `source == "online"` — orders placed before the storefront started stamping
-    a source are storefront orders, and a filter that quietly hid them would be
-    worse than no filter.
+    `channel` narrows to one. Both are a plain equality now: `061` backfilled
+    the storefront orders that predated the column and made it `NOT NULL`, so
+    there is no third state to write around.
     """
     base_stmt = select(Order)
 
     if channel == "counter":
         base_stmt = base_stmt.where(Order.source == OrderSourceEnum.CASHIER.value)
     elif channel == "online":
-        base_stmt = base_stmt.where(
-            Order.source.is_distinct_from(OrderSourceEnum.CASHIER.value)
-        )
+        base_stmt = base_stmt.where(Order.source == OrderSourceEnum.ONLINE.value)
     if branch_id is not None:
         base_stmt = base_stmt.where(Order.branch_id == branch_id)
 

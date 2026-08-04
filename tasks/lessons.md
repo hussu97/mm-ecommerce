@@ -10,6 +10,30 @@
 
 ## Lessons
 
+### [2026-08-04] Check the branch is current before designing on top of it
+- **What went wrong**: six commits of courier and POS work were built on a `main` that was 26 commits behind `origin/main`. The remote had since added dynamic delivery pricing, a `pricing_mode` flag on `delivery_polygons`, a free-delivery scope change and a batch-retry path — none of it visible locally. The result is three colliding migration numbers, two Alembic heads at `056`, and a delivery model that has diverged in both directions.
+- **Why it hid**: everything built, every test passed, and the local history looked linear. `git log origin/main..HEAD` reads "6 ahead" whether or not you are also behind; only the `[behind N]` in `git status -sb` says the other half.
+- **Rule**: `git fetch && git status -sb` before starting any change that adds a migration or touches a shared model, and again before writing the plan. A plan written against a stale base is wrong in ways no test can catch.
+
+### [2026-08-04] Read the lessons file before repeating what is in it
+- **What went wrong**: `057_noon_send_zone` published a fresh map version and seeded no `delivery_batch_windows` — the exact failure already written down two days earlier, in this file, as its own lesson. Every Lalamove order on the new map would have dispatched alone at roughly three times the per-delivery cost, silently.
+- **Also**: those three lessons had been deleted from this file somewhere in the same run of commits, which is presumably why they were not read. The deletion went unnoticed until a line count in `git diff --stat` looked wrong.
+- **Rule**: read `tasks/lessons.md` at the start of any delivery-map or batching work, and treat an unexplained deletion in `git diff --stat` as a bug to chase rather than noise. A `-14` on a file nobody edited is a fact, not a rounding error.
+
+### [2026-08-03] Publishing a delivery map version must publish its schedule too
+- **What went wrong**: `052` seeded batch windows against the polygons that existed when it ran. `055` then republished the entire map as fresh polygon rows and seeded nothing, so the live zones have carried no batch windows since and every order has been dispatched on its own — at roughly three times the per-delivery cost, with nothing on any screen saying so.
+- **Why it hid**: a zone with no windows is not an error state. `find_window` returns `None`, `assign_or_dispatch` falls through to the single-order path, and every order still gets delivered. The failure is purely economic and completely silent.
+- **Rule**: any migration or endpoint that creates `delivery_polygons` rows must create their `delivery_batch_windows` in the same transaction. The admin copy-to-draft flow already does this; migrations must too. When reviewing a new map version, query `(SELECT count(*) FROM delivery_batch_windows WHERE polygon_id = p.id)` per polygon before calling it done.
+
+### [2026-08-03] Name a zone by the property that drives the behaviour, not by its label
+- **What happened**: asked for batch schedules "for dubai, sharjah, ajman city", the user had to clarify that they meant the polygons with static fees rather than the three specifically-named ones.
+- **Rule**: when a rule splits zones, express and confirm the split by the property that decides it (`pricing_mode`, `fulfilment_provider`) rather than by the zone names that happen to hold that property today. The names change when the map is redrawn; the property is what the code branches on.
+
+### [2026-08-03] A quote that becomes a price needs different timeouts and caching
+- **What went wrong nearly**: `estimate_for_point` capped the checkout quote at 4s and cached failures for 120s, both correct while the quote was only margin data nobody saw. The moment the quote became the fee outside the fixed-price zones, a 4s cap meant a real address being told "we don't deliver here", and a 120s failure cache meant it stayed told for two minutes after the courier recovered.
+- **Rule**: when a value moves from "recorded" to "displayed and charged", re-read every timeout, retry and cache TTL around it. The settings that were cheap insurance for a background number become customer-visible failures for a foreground one.
+
+
 ### [2026-08-03] Treat each operational branch pin as an independently verified record
 - **What happened**: Correcting the Sharjah kitchen exposed a separate, substantially incorrect Barsha Heights branch longitude.
 - **Rule**: Resolve every owner-provided Google Maps place link and update the matching branch record independently; never infer one branch's coordinates or address from another branch or from a map viewport.

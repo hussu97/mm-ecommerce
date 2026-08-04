@@ -152,7 +152,9 @@ def _alert(title: str, body: str, *, sound: str, extra: dict) -> dict:
         "aps": {
             "alert": {"title": title, "body": body},
             "sound": sound,
-            # The register shows a queue, so the badge is the length of it.
+            # Cuts through a Focus mode. An order arriving is the one thing a
+            # counter iPad exists to be told about, and "time-sensitive" is what
+            # iOS calls exactly that.
             "interruption-level": "time-sensitive",
         },
         **extra,

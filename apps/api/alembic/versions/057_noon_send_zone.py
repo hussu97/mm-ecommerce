@@ -29,6 +29,15 @@ it, so Ajman City and Dubai City stay on Lalamove at 15 and 25 AED.
 Version 056's map is left in place and merely deactivated, so rolling back is
 pointing `is_active` at it again — the same contract as 050 and 055.
 
+**And the batch schedule comes with it.** Publishing a map as fresh polygon rows
+orphans the `delivery_batch_windows` that hung off the old ones, and a zone with
+no windows is not an error state: `find_window` returns `None`, every order
+falls through to the single-order path, and every one of them still arrives. The
+failure is purely economic — roughly three times the per-delivery cost — and
+completely silent. `055` did exactly this and the live map has carried no
+schedule since. So the windows are copied across by zone name, and where there
+is nothing to copy from, `052`'s six are seeded.
+
 Revision ID: 057_noon_send_zone
 Revises: 056_correct_barsha_heights_pin
 Create Date: 2026-08-04
@@ -69,6 +78,18 @@ ZONES: dict[str, tuple[str, str]] = {
     "Fujairah": ("50.00", "third_party"),
     "Umm al-Quwain": ("50.00", "third_party"),
 }
+
+#: `052`'s schedule, used only when there is nothing to copy — a database built
+#: from scratch, where the previous map never had windows either. They tighten
+#: through the evening because that is where the orders are.
+DEFAULT_WINDOWS = [
+    ("Batch 1", (0, 0), (12, 0)),
+    ("Batch 2", (12, 0), (18, 0)),
+    ("Batch 3", (18, 0), (21, 0)),
+    ("Batch 4", (21, 0), (22, 0)),
+    ("Batch 5", (22, 0), (23, 0)),
+    ("Batch 6", (23, 0), (24, 0)),
+]
 
 GEOJSON_PATH = (
     Path(__file__).resolve().parents[2]
@@ -159,6 +180,76 @@ def upgrade() -> None:
                 "display_order": order,
             },
         )
+
+    _carry_over_batch_windows(conn, version_id)
+
+
+def _carry_over_batch_windows(conn, version_id: str) -> None:
+    """
+    Give the new map the schedule the old one had.
+
+    Matched by zone name rather than by id, because the whole point of a new
+    version is that the ids are new. A zone that gains a schedule it never had —
+    `Sharjah Central` is new — takes the default, and only Lalamove zones get
+    one at all: a third-party zone has no run of ours to share, and noon Send's
+    shared run is a separate product we do not use.
+    """
+    rows = conn.execute(
+        sa.text(
+            "SELECT p.id, p.name FROM delivery_polygons p "
+            "WHERE p.version_id = :version_id "
+            "AND p.fulfilment_provider = 'lalamove'"
+        ),
+        {"version_id": version_id},
+    ).fetchall()
+
+    for polygon_id, name in rows:
+        previous = conn.execute(
+            sa.text(
+                "SELECT w.label, w.start_hour, w.start_minute, w.end_hour, "
+                "       w.end_minute, w.is_active "
+                "FROM delivery_batch_windows w "
+                "JOIN delivery_polygons p ON p.id = w.polygon_id "
+                "WHERE p.name = :name AND p.version_id <> :version_id "
+                "ORDER BY p.created_at DESC, w.start_hour, w.start_minute"
+            ),
+            {"name": name, "version_id": version_id},
+        ).fetchall()
+
+        windows = (
+            [(r[0], (r[1], r[2]), (r[3], r[4]), r[5]) for r in previous]
+            if previous
+            else [(label, start, end, True) for label, start, end in DEFAULT_WINDOWS]
+        )
+        # A zone can appear on several old versions; take one schedule, not one
+        # per version it ever had.
+        seen: set[str] = set()
+        for label, (start_hour, start_minute), (
+            end_hour,
+            end_minute,
+        ), active in windows:
+            if label in seen:
+                continue
+            seen.add(label)
+            conn.execute(
+                sa.text(
+                    "INSERT INTO delivery_batch_windows "
+                    "(id, polygon_id, label, start_hour, start_minute, end_hour, "
+                    " end_minute, is_active) "
+                    "VALUES (:id, :polygon_id, :label, :start_hour, :start_minute, "
+                    " :end_hour, :end_minute, :is_active)"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "polygon_id": str(polygon_id),
+                    "label": label,
+                    "start_hour": start_hour,
+                    "start_minute": start_minute,
+                    "end_hour": end_hour,
+                    "end_minute": end_minute,
+                    "is_active": active,
+                },
+            )
 
 
 def downgrade() -> None:

@@ -42,6 +42,9 @@ def _order(**overrides) -> Order:
         subtotal=Decimal("185.00"),
         total=Decimal("200.00"),
         status=OrderStatusEnum.CREATED,
+        # Stamped at creation by `_persist_order`, not by the attach — an order
+        # that never reaches a register is still a website order.
+        source=OrderSourceEnum.ONLINE.value,
         shipping_address_snapshot={
             "first_name": "Hussain",
             "last_name": "Abbasi",
@@ -88,6 +91,7 @@ async def test_it_arrives_on_the_register_as_a_pending_online_order(attach):
     # `is_pos` is what /pos/orders, the dispatch board and the operations
     # screens all filter on. Without it the order is invisible to every one.
     assert order.is_pos is True
+    # Set before this ran; asserted here because the register filters on it.
     assert order.source == OrderSourceEnum.ONLINE.value
     # Pending, not active: nobody at the counter has seen it yet.
     assert order.pos_status == PosOrderStatusEnum.PENDING.value
