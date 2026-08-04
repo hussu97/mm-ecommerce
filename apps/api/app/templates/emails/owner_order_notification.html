@@ -1,95 +1,69 @@
+{#
+  The shop's own copy of a new order.
+
+  Same chrome as the customer's, different priorities: what to make, where it is
+  going and how it was paid, above the fold and readable on a phone at the
+  counter. It is the one order email allowed to name operational facts, because
+  the only people who receive it are the two owners.
+#}
 {% extends "base.html" %}
-{% block title %}New Order — {{ order.order_number }}{% endblock %}
+{% import "_parts.html" as parts %}
+
+{% block title %}New order — {{ order.order_number }}{% endblock %}
+{% block preheader %}AED {{ totals.total }} &middot; {{ items|length }} line{{ '' if items|length == 1 else 's' }} &middot; {% if is_pickup %}collection{% else %}delivery{% endif %}{% endblock %}
 
 {% block content %}
-<h2>New Order</h2>
-<p>A customer order is confirmed and ready to prepare.</p>
-
-<div style="text-align:center;margin:24px 0;">
-  <span class="status status-confirmed">&#10003; Confirmed</span><br/>
-  <span class="order-badge">{{ order.order_number }}</span>
-</div>
-
-<div class="info-box">
-  <p class="label">Customer</p>
-  <p>{{ order.email }}</p>
-  {% if order.shipping_address_snapshot %}
-  {% set addr = order.shipping_address_snapshot %}
-  <p>{{ addr.get('first_name', '') }} {{ addr.get('last_name', '') }}<br/>
-  {{ addr.get('phone', '') }}</p>
-  {% endif %}
-</div>
-
-{% if order.delivery_method.value == "delivery" and order.shipping_address_snapshot %}
-{% set addr = order.shipping_address_snapshot %}
-<div class="info-box">
-  <p class="label">Delivery Address</p>
-  <p>{{ addr.get('address_line_1', '') }}{% if addr.get('address_line_2') %}, {{ addr.get('address_line_2') }}{% endif %}<br/>
-  {{ addr.get('region') or addr.get('city') or addr.get('emirate') or '' }}{% if addr.get('emirate') and addr.get('city') and addr.get('emirate') != addr.get('city') %}, {{ addr.get('emirate') }}{% endif %}, UAE</p>
-</div>
-{% else %}
-<div class="info-box">
-  <p class="label">Collection</p>
-  <p>The customer selected store pickup.</p>
-</div>
-{% endif %}
-
-{% if order.notes %}
-<div class="info-box">
-  <p class="label">Customer Notes</p>
-  <p>{{ order.notes }}</p>
-</div>
-{% endif %}
-
-<table class="items-table" cellpadding="0" cellspacing="0">
-  <thead>
-    <tr>
-      <th>Item</th>
-      <th style="text-align:center;width:50px;">Qty</th>
-      <th class="right" style="width:80px;">Total</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for item in order.items %}
-    <tr>
-      <td>
-        {{ item.product_name }}
-        {% if item.product_sku %}<span class="variant-label">SKU: {{ item.product_sku }}</span>{% endif %}
-        {% if item.selected_options_snapshot %}<span class="variant-label">{{ item.selected_options_snapshot | map(attribute='option_name') | join(', ') }}</span>{% endif %}
-      </td>
-      <td style="text-align:center;">{{ item.quantity }}</td>
-      <td class="right">{{ "%.2f"|format(item.total_price) }} AED</td>
-    </tr>
-    {% endfor %}
-  </tbody>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="hero" align="center">
+    <p class="hero-eyebrow">New order</p>
+    <h2 class="hero-title">AED {{ totals.total }}</h2>
+  </td></tr>
 </table>
 
-<table class="totals" cellpadding="0" cellspacing="0">
-  <tr>
-    <td class="label">Payment</td>
-    <td class="value">{{ order.payment_provider or order.payment_method or "Not recorded" }}</td>
-  </tr>
-  <tr>
-    <td class="label">Subtotal</td>
-    <td class="value">{{ "%.2f"|format(order.subtotal) }} AED</td>
-  </tr>
-  {% if order.discount_amount and order.discount_amount > 0 %}
-  <tr class="discount-row">
-    <td class="label">Discount{% if order.promo_code_used %} ({{ order.promo_code_used }}){% endif %}</td>
-    <td class="value">&minus;{{ "%.2f"|format(order.discount_amount) }} AED</td>
-  </tr>
-  {% endif %}
-  <tr>
-    <td class="label">Delivery</td>
-    <td class="value">{% if order.delivery_fee == 0 %}Free{% else %}{{ "%.2f"|format(order.delivery_fee) }} AED{% endif %}</td>
-  </tr>
-  <tr class="total-row">
-    <td class="label">Total Paid</td>
-    <td class="value">{{ "%.2f"|format(order.total) }} AED</td>
-  </tr>
+{{ parts.order_chip(order.order_number) }}
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" style="padding-top: 26px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="panel">
+      <tr><td class="panel-pad">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td class="kv-label" style="width: 120px; padding: 5px 0;">Fulfilment</td>
+            <td class="kv-value" style="padding: 5px 0;">{% if is_pickup %}Collection{% else %}Delivery{% endif %}</td>
+          </tr>
+          {% if branch %}
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Branch</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ branch.name }}{% if branch.city %} &middot; {{ branch.city }}{% endif %}</td>
+          </tr>
+          {% endif %}
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Payment</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ order.payment_provider or order.payment_method or '—' }}</td>
+          </tr>
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Customer</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ customer_name }}</td>
+          </tr>
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Email</td>
+            <td class="kv-value" style="padding: 5px 0; word-break: break-all;">{{ order.email }}</td>
+          </tr>
+          {% if customer_phone %}
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Phone</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ customer_phone }}</td>
+          </tr>
+          {% endif %}
+        </table>
+      </td></tr>
+    </table>
+  </td></tr>
 </table>
 
-<div style="text-align:center;margin:28px 0;">
-  <a href="{{ admin_order_url }}" class="btn">Open in Admin</a>
-</div>
+{{ parts.estimate_card(estimate) }}
+{{ parts.address_card(address) }}
+{{ parts.order_summary(items, totals) }}
+{{ parts.notes_card(order.notes) }}
+{{ parts.button(admin_order_url, 'Open in the admin') }}
 {% endblock %}

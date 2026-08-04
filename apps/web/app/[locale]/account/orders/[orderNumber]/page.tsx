@@ -5,11 +5,33 @@ import Link from 'next/link';
 import { use } from 'react';
 import { ordersApi } from '@/lib/api';
 import { Order, OrderStatus } from '@/lib/types';
-import { cn } from '@/lib/utils';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
+import { FulfilmentPanel } from '@/components/order/FulfilmentPanel';
 
-const STATUS_ORDER: OrderStatus[] = ['created', 'confirmed', 'packed'];
+/**
+ * How a status looks in the header chip.
+ *
+ * The order timeline used to live here as a hardcoded three-step list ending at
+ * "packed", which is where the lifecycle stopped when it was written. It is now
+ * `FulfilmentPanel`, driven by what the server says about this particular order
+ * — so a collection order shows the collection journey, and a delivery with a
+ * rider on it shows the rider.
+ */
+const STATUS_STYLE: Record<OrderStatus, string> = {
+  created: 'bg-yellow-50 text-yellow-700 border-yellow-200',
+  confirmed: 'bg-blue-50 text-blue-700 border-blue-200',
+  packed: 'bg-purple-50 text-purple-700 border-purple-200',
+  out_for_delivery: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+  delivered: 'bg-green-50 text-green-700 border-green-200',
+  cancelled: 'bg-red-50 text-red-700 border-red-200',
+  payment_failed: 'bg-red-50 text-red-700 border-red-200',
+  refunded: 'bg-gray-50 text-gray-600 border-gray-200',
+  disputed: 'bg-orange-50 text-orange-700 border-orange-200',
+};
+
+/** Statuses where nothing more is coming, so the progress panel is noise. */
+const SETTLED: OrderStatus[] = ['cancelled', 'payment_failed', 'refunded', 'disputed'];
 
 export default function OrderDetailPage({ params }: { params: Promise<{ orderNumber: string }> }) {
   const { orderNumber } = use(params);
@@ -18,19 +40,17 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const STATUS_CONFIG: Record<OrderStatus, { label: string; classes: string; icon: string }> = {
-    created:        { label: t('order.timeline_placed'),      classes: 'text-yellow-600',  icon: 'pending' },
-    confirmed:      { label: t('order.status_confirmed'),     classes: 'text-blue-600',    icon: 'check_circle' },
-    packed:         { label: t('order.status_packed'),        classes: 'text-purple-600',  icon: 'inventory_2' },
-    cancelled:      { label: t('order.status_cancelled'),     classes: 'text-red-500',     icon: 'cancel' },
-    payment_failed: { label: t('order.status_payment_failed'), classes: 'text-red-500',    icon: 'credit_card_off' },
+  const STATUS_LABEL: Record<OrderStatus, string> = {
+    created: t('order.timeline_placed'),
+    confirmed: t('order.status_confirmed'),
+    packed: t('order.status_packed'),
+    out_for_delivery: t('order.status_out_for_delivery'),
+    delivered: t('order.status_delivered'),
+    cancelled: t('order.status_cancelled'),
+    payment_failed: t('order.status_payment_failed'),
+    refunded: t('order.status_refunded'),
+    disputed: t('order.status_disputed'),
   };
-
-  const TIMELINE_STEPS: { status: OrderStatus; label: string; icon: string }[] = [
-    { status: 'created',   label: t('order.timeline_placed'),    icon: 'receipt' },
-    { status: 'confirmed', label: t('order.timeline_confirmed'), icon: 'check_circle' },
-    { status: 'packed',    label: t('order.timeline_ready'),     icon: 'inventory_2' },
-  ];
 
   useEffect(() => {
     ordersApi.get(orderNumber)
@@ -63,10 +83,13 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
     );
   }
 
-  const isCancelled = order.status === 'cancelled';
-  const currentIndex = STATUS_ORDER.indexOf(order.status);
-  const statusInfo = STATUS_CONFIG[order.status];
+  const isSettled = SETTLED.includes(order.status);
+  const isPickup = order.delivery_method === 'pickup';
   const addr = order.shipping_address_snapshot as Record<string, string> | null;
+  // Collection orders carry their branch on the fulfilment block, and
+  // `FulfilmentPanel` renders it. Rendering it here as well would put the same
+  // address on the page twice.
+  const branch = order.fulfilment?.branch ?? null;
 
   return (
     <div>
@@ -80,54 +103,16 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
             {t('order.placed')} {new Date(order.created_at).toLocaleDateString('en-AE', { day: 'numeric', month: 'long', year: 'numeric' })}
           </p>
         </div>
-        <span className={`ml-auto text-[11px] font-body uppercase tracking-wide px-2.5 py-1 border ${
-          isCancelled ? 'bg-red-50 text-red-700 border-red-200' :
-          order.status === 'packed' ? 'bg-purple-50 text-purple-700 border-purple-200' :
-          order.status === 'confirmed' ? 'bg-blue-50 text-blue-700 border-blue-200' :
-          'bg-yellow-50 text-yellow-700 border-yellow-200'
-        }`}>
-          {statusInfo.label}
+        <span className={`ml-auto text-[11px] font-body uppercase tracking-wide px-2.5 py-1 border ${STATUS_STYLE[order.status]}`}>
+          {STATUS_LABEL[order.status]}
         </span>
       </div>
 
-      {/* Status Timeline */}
-      {!isCancelled && (
-        <div className="mb-8 p-5 border border-gray-100 bg-gray-50">
-          <h2 className="text-xs font-body uppercase tracking-widest text-gray-500 mb-5">{t('order.order_progress')}</h2>
-          <div className="flex items-center">
-            {TIMELINE_STEPS.map((step, idx) => {
-              const done = currentIndex >= idx;
-              const active = currentIndex === idx;
-              return (
-                <div key={step.status} className="flex items-center flex-1 last:flex-none">
-                  <div className="flex flex-col items-center">
-                    <span className={cn(
-                      'material-icons text-[22px] transition-colors',
-                      done ? (active ? 'text-primary' : 'text-green-500') : 'text-gray-300',
-                    )}>
-                      {done && !active ? 'check_circle' : step.icon}
-                    </span>
-                    <p className={cn(
-                      'text-[10px] font-body mt-1.5 text-center leading-tight max-w-[70px] uppercase tracking-wider',
-                      done ? 'text-gray-700' : 'text-gray-300',
-                    )}>
-                      {step.label}
-                    </p>
-                  </div>
-                  {idx < TIMELINE_STEPS.length - 1 && (
-                    <div className={cn(
-                      'flex-1 h-px mx-2 mb-5',
-                      currentIndex > idx ? 'bg-green-400' : 'bg-gray-200',
-                    )} />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {/* When it arrives, where to collect it, whether there is a rider to
+          watch — the whole of what the server is willing to say about it. */}
+      <FulfilmentPanel fulfilment={order.fulfilment} className="mb-6" />
 
-      {isCancelled && order.admin_notes && (
+      {isSettled && order.admin_notes && (
         <div className="mb-6 bg-red-50 border border-red-200 p-4">
           <p className="text-xs font-medium text-red-700 uppercase tracking-widest mb-1">{t('order.cancellation_note')}</p>
           <p className="text-sm text-red-600 font-body">{order.admin_notes}</p>
@@ -173,7 +158,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
           </div>
         )}
         <div className="flex justify-between text-sm font-body text-gray-600">
-          <span>{t('common.delivery')}</span>
+          <span>{isPickup ? t('order.store_pickup') : t('common.delivery')}</span>
           <span>{Number(order.delivery_fee) === 0 ? t('common.free') : `AED ${Number(order.delivery_fee).toFixed(2)}`}</span>
         </div>
         <div className="flex justify-between text-sm font-semibold font-body text-gray-900 pt-2 border-t border-gray-100">
@@ -186,12 +171,19 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
         </div>
       </div>
 
-      {/* Delivery Info */}
+      {/* Where it is going, and how it was paid for. A collection order's
+          branch is already above, on the fulfilment panel. */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="border border-gray-200 p-4">
-          <h2 className="text-xs font-body uppercase tracking-widest text-gray-500 mb-2">{t('common.delivery')}</h2>
-          {order.delivery_method === 'pickup' ? (
-            <p className="text-sm text-gray-700 font-body">{t('order.store_pickup')}</p>
+          <h2 className="text-xs font-body uppercase tracking-widest text-gray-500 mb-2">
+            {isPickup ? t('order.store_pickup') : t('order.delivery_address')}
+          </h2>
+          {isPickup ? (
+            <p className="text-sm text-gray-700 font-body">
+              {branch
+                ? ((locale === 'ar' && branch.name_ar) || branch.name)
+                : t('order.store_pickup')}
+            </p>
           ) : addr ? (
             <div className="text-sm text-gray-700 font-body space-y-0.5">
               <p>{addr.first_name} {addr.last_name}</p>

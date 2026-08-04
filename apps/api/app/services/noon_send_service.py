@@ -56,7 +56,7 @@ from app.models.order_delivery import (
     OrderDelivery,
 )
 from app.models.webhook_event import WebhookEvent
-from app.services import trial_customer
+from app.services import email_service, trial_customer
 from app.services.lalamove_service import (
     Estimate,
     PickupPoint,
@@ -815,6 +815,8 @@ async def apply_webhook(
     if task_nr := payload.get("order_nr"):
         delivery.courier_order_id = str(task_nr)
 
+    failed_handover = False
+
     if status and status != delivery.courier_status:
         delivery.courier_previous_status = delivery.courier_status
         delivery.courier_status = status
@@ -840,6 +842,7 @@ async def apply_webhook(
             delivery.last_error = (
                 f"noon Send reported the task {status} — re-dispatch required"
             )
+            failed_handover = status == NoonSendStatusEnum.UNDELIVERED.value
 
     if updated_at is not None:
         delivery.status_updated_at = updated_at
@@ -847,6 +850,16 @@ async def apply_webhook(
         delivery.status_updated_at = datetime.now(timezone.utc)
 
     await _advance_order(db, delivery)
+
+    # A rider who arrived and could not hand the parcel over leaves the order
+    # exactly where it was, so `_advance_order` has nothing to do and nothing to
+    # announce. It is still the single most important thing to tell a customer
+    # about all day — somebody stood at their door — so it is announced here.
+    if failed_handover:
+        order = await _order_of(db, delivery)
+        if order is not None:
+            await email_service.notify_order(db, order)
+
     return delivery
 
 
@@ -927,16 +940,21 @@ def apply_tracking(delivery: OrderDelivery, payload: dict[str, Any]) -> None:
         delivery.driver_longitude = longitude
 
 
+async def _order_of(db: AsyncSession, delivery: OrderDelivery) -> Order | None:
+    """The order this delivery belongs to."""
+    return (
+        (await db.execute(select(Order).where(Order.id == delivery.order_id)))
+        .scalars()
+        .first()
+    )
+
+
 async def _advance_order(db: AsyncSession, delivery: OrderDelivery) -> None:
     target = _ORDER_STATUS_FOR.get(delivery.courier_status or "")
     if target is None:
         return
 
-    order = (
-        (await db.execute(select(Order).where(Order.id == delivery.order_id)))
-        .scalars()
-        .first()
-    )
+    order = await _order_of(db, delivery)
     if order is None:
         return
     # Refunded, disputed and cancelled orders are settled. A late courier update
@@ -955,6 +973,11 @@ async def _advance_order(db: AsyncSession, delivery: OrderDelivery) -> None:
         return
 
     order.status = target
+    # The customer hears about it from here, not from the admin screen. These
+    # two transitions only ever happen because a courier said so, so this is the
+    # only place that knows they happened — and "out for delivery" is the email
+    # that carries the live tracking link, which is worth nothing an hour late.
+    await email_service.notify_order(db, order)
 
 
 async def refresh(db: AsyncSession, order_id: uuid.UUID) -> OrderDelivery | None:

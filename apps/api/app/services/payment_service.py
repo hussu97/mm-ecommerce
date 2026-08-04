@@ -11,8 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.models.webhook_event import WebhookEvent
-from app.schemas.order import OrderResponse
-from app.services import email_service
+from app.services import email_service, order_service
 from app.services.providers.base import PaymentProvider
 from app.services.providers.stripe_provider import provider as stripe_provider
 
@@ -102,7 +101,7 @@ async def create_session(db: AsyncSession, order_number: str, provider: str) -> 
     if order_total <= Decimal("0.00"):
         order.status = OrderStatusEnum.CONFIRMED
         await db.flush()
-        order_response = OrderResponse.model_validate(order)
+        order_response = await order_service.to_response(db, order)
         await email_service.send_order_confirmation(order_response)
         await email_service.send_owner_order_notification(order_response)
         return {
@@ -128,7 +127,7 @@ async def create_session(db: AsyncSession, order_number: str, provider: str) -> 
         order.payment_provider = "cod"
         order.payment_id = None
         await db.flush()
-        order_response = OrderResponse.model_validate(order)
+        order_response = await order_service.to_response(db, order)
         await email_service.send_order_confirmation(order_response)
         await email_service.send_owner_order_notification(order_response)
         logger.info("Cash-on-delivery order confirmed: order=%s", order_number)
@@ -262,7 +261,7 @@ async def _handle_payment_succeeded(
     if payment_intent_id:
         order.payment_id = payment_intent_id
     order.status = OrderStatusEnum.CONFIRMED
-    order_response = OrderResponse.model_validate(order)
+    order_response = await order_service.to_response(db, order)
 
     logger.info(
         "Payment confirmed: order=%s payment_intent=%s",
@@ -312,7 +311,7 @@ async def _handle_payment_failed(
         return
 
     order.status = OrderStatusEnum.PAYMENT_FAILED
-    order_response = OrderResponse.model_validate(order)
+    order_response = await order_service.to_response(db, order)
 
     logger.warning(
         "Payment failed: event=%s order=%s",
@@ -355,7 +354,7 @@ async def _handle_charge_refunded(
         return
 
     order.status = OrderStatusEnum.REFUNDED
-    order_response = OrderResponse.model_validate(order)
+    order_response = await order_service.to_response(db, order)
 
     logger.info(
         "Refund processed: order=%s payment_intent=%s",

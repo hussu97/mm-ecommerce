@@ -13,11 +13,15 @@ export default function OrdersPage() {
   const [error, setError] = useState('');
 
   const STATUS_CONFIG: Record<OrderStatus, { label: string; classes: string }> = {
-    created:        { label: t('order.status_pending'),        classes: 'bg-yellow-50 text-yellow-700 border-yellow-200' },
-    confirmed:      { label: t('order.status_confirmed'),      classes: 'bg-blue-50 text-blue-700 border-blue-200' },
-    packed:         { label: t('order.status_packed'),         classes: 'bg-purple-50 text-purple-700 border-purple-200' },
-    cancelled:      { label: t('order.status_cancelled'),      classes: 'bg-red-50 text-red-700 border-red-200' },
-    payment_failed: { label: t('order.status_payment_failed'), classes: 'bg-red-50 text-red-700 border-red-200' },
+    created:          { label: t('order.status_pending'),           classes: 'bg-yellow-50 text-yellow-700 border-yellow-200' },
+    confirmed:        { label: t('order.status_confirmed'),         classes: 'bg-blue-50 text-blue-700 border-blue-200' },
+    packed:           { label: t('order.status_packed'),            classes: 'bg-purple-50 text-purple-700 border-purple-200' },
+    out_for_delivery: { label: t('order.status_out_for_delivery'),  classes: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+    delivered:        { label: t('order.status_delivered'),         classes: 'bg-green-50 text-green-700 border-green-200' },
+    cancelled:        { label: t('order.status_cancelled'),         classes: 'bg-red-50 text-red-700 border-red-200' },
+    payment_failed:   { label: t('order.status_payment_failed'),    classes: 'bg-red-50 text-red-700 border-red-200' },
+    refunded:         { label: t('order.status_refunded'),          classes: 'bg-gray-50 text-gray-600 border-gray-200' },
+    disputed:         { label: t('order.status_disputed'),          classes: 'bg-orange-50 text-orange-700 border-orange-200' },
   };
 
   useEffect(() => {

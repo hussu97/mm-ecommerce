@@ -1,104 +1,218 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" dir="ltr" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="x-apple-disable-message-reformatting" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="supported-color-schemes" content="light dark" />
   <title>{% block title %}Melting Moments{% endblock %}</title>
+  <!--[if mso]>
+  <noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript>
+  <![endif]-->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500;600&family=Raleway:wght@300;400;500&display=swap" rel="stylesheet" />
   <style>
-    /* Reset */
+    /* ─── Reset ────────────────────────────────────────────────────────────
+       Client defaults, not preferences. Outlook adds table spacing, iOS
+       resizes small text on rotate, Gmail underlines and recolours anything
+       that looks like a date or an address. */
+    html, body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
     body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
-    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
-    img { -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; }
-    /* General */
-    body { margin: 0 !important; padding: 0 !important; background-color: #f9f5f0; font-family: Georgia, 'Times New Roman', serif; color: #3a2a2d; }
-    .wrapper { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse; }
+    img { -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; display: block; }
+    a[x-apple-data-detectors] { color: inherit !important; text-decoration: none !important; font-size: inherit !important; font-family: inherit !important; font-weight: inherit !important; line-height: inherit !important; }
+    u + #body a { color: inherit; text-decoration: none; }
+
+    /* ─── Brand ────────────────────────────────────────────────────────────
+       The storefront's own tokens, copied from `apps/web/app/globals.css`
+       rather than approximated: an email that is nearly the right mauve reads
+       as a different company's email. Raleway sets headings and Jost sets
+       body, which is the pairing the site uses; the stacks fall back to system
+       sans rather than to a serif, because a client that drops the webfont
+       should render a plainer version of this design and not a different one. */
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #f4eeea;
+      font-family: 'Jost', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      color: #333333;
+      font-size: 16px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    .sr-only { display: none !important; visibility: hidden; opacity: 0; color: transparent; height: 0; width: 0; max-height: 0; max-width: 0; overflow: hidden; mso-hide: all; }
+    .shell { width: 100%; background-color: #f4eeea; }
+    .frame { width: 100%; max-width: 600px; margin: 0 auto; }
+    .card { background-color: #ffffff; }
+
     /* Header */
-    .header { background-color: #8a5a64; padding: 36px 32px; text-align: center; }
-    .header-brand { color: #ffffff; font-size: 26px; font-weight: normal; letter-spacing: 6px; margin: 0; text-transform: uppercase; }
-    .header-tagline { color: #d6acab; font-size: 10px; letter-spacing: 3px; margin: 8px 0 0; text-transform: uppercase; font-family: Arial, sans-serif; }
-    /* Content */
-    .content { padding: 40px 32px; }
-    h2 { color: #8a5a64; font-size: 22px; font-weight: normal; margin: 0 0 20px; letter-spacing: 1px; }
-    p { font-family: Arial, sans-serif; font-size: 15px; line-height: 1.7; color: #3a2a2d; margin: 0 0 16px; }
-    .muted { color: #888; font-size: 13px; }
-    /* Order number badge */
-    .order-badge { display: inline-block; background-color: #f9f5f0; border: 1px solid #dfbdc1; color: #8a5a64; font-family: 'Courier New', monospace; font-size: 16px; font-weight: bold; letter-spacing: 2px; padding: 10px 20px; border-radius: 4px; margin: 8px 0 24px; }
-    /* Items table */
-    .items-table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-    .items-table th { background-color: #8a5a64; color: #ffffff; font-family: Arial, sans-serif; font-size: 12px; font-weight: normal; letter-spacing: 1px; text-transform: uppercase; padding: 10px 12px; text-align: left; }
-    .items-table th.right { text-align: right; }
-    .items-table td { padding: 12px; border-bottom: 1px solid #f0e8e6; font-family: Arial, sans-serif; font-size: 14px; color: #3a2a2d; vertical-align: top; }
-    .items-table td.right { text-align: right; }
-    .items-table tr:last-child td { border-bottom: none; }
-    .variant-label { color: #8a5a64; font-size: 12px; display: block; margin-top: 2px; }
+    .masthead { padding: 34px 40px 30px; text-align: center; background-color: #8a5a64; }
+    .wordmark { margin: 0; font-family: 'Raleway', Helvetica, Arial, sans-serif; font-weight: 300; font-size: 25px; letter-spacing: 0.34em; text-transform: uppercase; color: #ffffff; }
+    .tagline { margin: 9px 0 0; font-size: 10px; letter-spacing: 0.24em; text-transform: uppercase; color: #e6cdcc; font-weight: 400; }
+
+    /* Hero — the one line that says what happened */
+    .hero { padding: 40px 40px 4px; text-align: center; }
+    .hero-eyebrow { margin: 0 0 12px; font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase; color: #a98089; font-weight: 500; }
+    .hero-title { margin: 0; font-family: 'Raleway', Helvetica, Arial, sans-serif; font-weight: 400; font-size: 27px; line-height: 1.25; color: #8a5a64; letter-spacing: 0.01em; }
+    .hero-title.is-warning { color: #b4443f; }
+
+    .body-copy { padding: 20px 40px 0; }
+    p { margin: 0 0 16px; font-size: 16px; line-height: 1.65; color: #4a4a4a; }
+    p.lead { font-size: 17px; color: #333333; }
+    p.muted { font-size: 14px; color: #7a7a7a; }
+    p:last-child { margin-bottom: 0; }
+    strong { font-weight: 600; color: #333333; }
+    a { color: #8a5a64; }
+
+    h2.section { margin: 0 0 14px; font-size: 11px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: #9a9a9a; }
+
+    /* Order number */
+    .order-chip { display: inline-block; padding: 9px 18px; border: 1px solid #e7d5d6; border-radius: 999px; background-color: #fbf7f5; font-size: 14px; font-weight: 500; letter-spacing: 0.12em; color: #8a5a64; }
+
+    /* Panels */
+    .panel { border: 1px solid #eee3e2; border-radius: 10px; background-color: #ffffff; }
+    .panel-tinted { border: 1px solid #eddfe0; border-radius: 10px; background-color: #fbf7f5; }
+    .panel-warning { border: 1px solid #f0d6c8; border-radius: 10px; background-color: #fdf4ee; }
+    .panel-pad { padding: 20px 22px; }
+
+    .kv-label { font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: #a08c8f; font-weight: 500; padding-bottom: 4px; }
+    .kv-value { font-size: 16px; color: #333333; line-height: 1.5; }
+    .kv-value-lg { font-size: 19px; color: #8a5a64; font-weight: 500; line-height: 1.35; font-family: 'Raleway', Helvetica, Arial, sans-serif; }
+
+    /* Items */
+    .items td { padding: 14px 0; border-bottom: 1px solid #f1eae8; vertical-align: top; }
+    .items tr:last-child td { border-bottom: 0; }
+    .item-name { font-size: 16px; color: #333333; line-height: 1.4; }
+    .item-options { font-size: 13px; color: #8f8f8f; padding-top: 3px; line-height: 1.5; }
+    .item-qty { font-size: 13px; color: #8f8f8f; padding-top: 3px; }
+    .item-price { font-size: 16px; color: #333333; text-align: right; white-space: nowrap; }
+
     /* Totals */
-    .totals { width: 100%; border-collapse: collapse; margin: 16px 0 0; }
-    .totals td { font-family: Arial, sans-serif; font-size: 14px; padding: 6px 12px; color: #3a2a2d; }
-    .totals td.label { text-align: left; color: #666; }
-    .totals td.value { text-align: right; }
-    .totals .total-row td { border-top: 2px solid #8a5a64; padding-top: 12px; font-size: 16px; font-weight: bold; color: #8a5a64; }
-    .totals .discount-row td { color: #2a7a4a; }
-    /* Divider */
-    .divider { border: none; border-top: 1px solid #dfbdc1; margin: 28px 0; }
-    /* CTA Button */
-    .btn { display: inline-block; background-color: #8a5a64; color: #ffffff !important; font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; text-decoration: none; padding: 14px 32px; border-radius: 2px; margin: 8px 0; }
-    /* Info box */
-    .info-box { background-color: #f9f5f0; border-left: 3px solid #8a5a64; padding: 16px 20px; margin: 20px 0; border-radius: 0 4px 4px 0; }
-    .info-box p { margin: 4px 0; font-size: 14px; }
-    .info-box .label { color: #8a5a64; font-weight: bold; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; }
-    /* Status badge */
-    .status { display: inline-block; padding: 4px 12px; border-radius: 20px; font-family: Arial, sans-serif; font-size: 12px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; }
-    .status-confirmed { background-color: #e8f5e9; color: #2e7d32; }
-    .status-packed { background-color: #e3f2fd; color: #1565c0; }
-    .status-cancelled { background-color: #fce4ec; color: #c62828; }
+    .totals td { padding: 6px 0; font-size: 15px; color: #6a6a6a; }
+    .totals td.amount { text-align: right; color: #4a4a4a; white-space: nowrap; }
+    .totals .discount td { color: #2e7d59; }
+    .totals .grand td { padding-top: 14px; border-top: 1px solid #eee3e2; font-size: 18px; font-weight: 600; color: #8a5a64; }
+    .totals .vat td { font-size: 13px; color: #a0a0a0; padding-top: 2px; }
+
+    /* Button — a bordered table so Outlook renders the fill */
+    .btn-wrap { padding: 26px 40px 0; }
+    .btn { border-radius: 6px; background-color: #8a5a64; }
+    .btn a { display: block; padding: 15px 30px; font-family: 'Jost', Helvetica, Arial, sans-serif; font-size: 14px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: #ffffff !important; text-decoration: none; }
+    .btn-ghost { border-radius: 6px; background-color: #ffffff; border: 1px solid #d9c4c6; }
+    .btn-ghost a { display: block; padding: 14px 28px; font-size: 14px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: #8a5a64 !important; text-decoration: none; }
+
+    /* Timeline */
+    .step-icon { width: 26px; font-size: 15px; line-height: 22px; color: #c9b2b5; text-align: center; }
+    .step-icon.is-done { color: #8a5a64; }
+    .step-label { font-size: 15px; color: #b3a5a7; padding-left: 4px; }
+    .step-label.is-done { color: #333333; }
+    .step-when { font-size: 13px; color: #a0a0a0; text-align: right; white-space: nowrap; }
+
     /* Footer */
-    .footer { background-color: #f9f5f0; border-top: 2px solid #dfbdc1; padding: 28px 32px; text-align: center; }
-    .footer p { font-family: Arial, sans-serif; font-size: 12px; color: #8a5a64; margin: 4px 0; line-height: 1.6; }
-    .footer .footer-links a { color: #8a5a64; text-decoration: none; margin: 0 8px; }
-    .footer .love { font-size: 13px; font-style: italic; margin-bottom: 10px; }
-    /* Mobile */
-    @media only screen and (max-width: 620px) {
-      .wrapper { width: 100% !important; }
-      .content { padding: 24px 16px !important; }
-      .header { padding: 28px 16px !important; }
-      .footer { padding: 20px 16px !important; }
+    .footer { padding: 30px 40px 36px; text-align: center; background-color: #f4eeea; border-top: 1px solid #e7dcd8; }
+    .footer p { margin: 0 0 6px; font-size: 13px; color: #8a7a7c; line-height: 1.6; }
+    .footer .signoff { font-family: 'Raleway', Helvetica, Arial, sans-serif; font-size: 15px; color: #8a5a64; margin-bottom: 14px; letter-spacing: 0.04em; }
+    .footer a { color: #8a5a64; text-decoration: none; }
+    .footer .links a { padding: 0 9px; }
+    .footer .fine { font-size: 11px; color: #ab9fa0; padding-top: 12px; }
+
+    /* ─── Phones ───────────────────────────────────────────────────────────
+       One breakpoint, because there is only one layout: everything is a single
+       column already and this is about giving it back the margins a 600px
+       design spends on air. `!important` throughout — Gmail's inliner writes
+       the base rules onto the element, and only a flagged media rule outranks
+       an inline style. */
+    @media only screen and (max-width: 480px) {
+      .masthead { padding: 26px 22px 24px !important; }
+      .wordmark { font-size: 20px !important; letter-spacing: 0.26em !important; }
+      .hero { padding: 30px 22px 4px !important; }
+      .hero-title { font-size: 23px !important; }
+      .body-copy { padding: 18px 22px 0 !important; }
+      .btn-wrap { padding: 22px 22px 0 !important; }
+      .footer { padding: 26px 22px 30px !important; }
+      .panel-pad { padding: 16px 16px !important; }
+      p, .kv-value, .item-name, .item-price { font-size: 15px !important; }
+      .item-price { font-size: 15px !important; }
+      /* An item's price drops under its name rather than squeezing the name
+         into a column two words wide. The row's hairline has to move with it:
+         both cells carry one, and stacked that puts a rule *inside* an item,
+         which reads as two items. It stays on the price — the cell that is now
+         last — and comes off the one above. */
+      .stack-full { display: block !important; width: 100% !important; }
+      .items td.stack-full { border-bottom: 0 !important; padding-bottom: 0 !important; }
+      .items td.item-price.stack-full {
+        text-align: left !important;
+        padding: 4px 0 14px !important;
+        border-bottom: 1px solid #f1eae8 !important;
+        font-weight: 500 !important;
+      }
+      .items tr:last-child td.item-price.stack-full { border-bottom: 0 !important; }
+      .btn a, .btn-ghost a { padding-left: 18px !important; padding-right: 18px !important; }
+    }
+
+    /* ─── Dark mode ────────────────────────────────────────────────────────
+       Apple Mail and Outlook.com honour this; Gmail inverts on its own and
+       ignores it. Both outcomes are legible, which is the bar — the mauve is
+       lightened rather than kept, because #8a5a64 on a near-black background
+       fails contrast at body size. */
+    @media (prefers-color-scheme: dark) {
+      body, .shell, .footer { background-color: #171315 !important; }
+      .card, .panel { background-color: #201a1c !important; }
+      .panel, .panel-tinted, .panel-warning { border-color: #3a2e31 !important; background-color: #241d1f !important; }
+      .hero-title, .kv-value-lg, .totals .grand td, .footer .signoff, .footer a, a { color: #e0b7bd !important; }
+      .hero-title.is-warning { color: #f0a49c !important; }
+      p, .kv-value, .item-name, .item-price, .step-label.is-done, strong { color: #e8e0e1 !important; }
+      p.muted, .item-options, .item-qty, .totals td, .footer p, .step-when { color: #a89a9d !important; }
+      .items td, .totals .grand td, .footer { border-color: #34292c !important; }
+      .order-chip { background-color: #2b2225 !important; border-color: #4a3b3f !important; color: #e0b7bd !important; }
+      .btn-ghost { background-color: #241d1f !important; border-color: #5a474b !important; }
+      .btn-ghost a { color: #e0b7bd !important; }
     }
   </style>
 </head>
-<body>
-  <div style="padding: 20px 0; background-color: #f9f5f0;">
-    <table class="wrapper" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;margin:0 auto;background:#ffffff;">
-      <!-- Header -->
-      <tr>
-        <td class="header">
-          <h1 class="header-brand">Melting Moments</h1>
-          <p class="header-tagline">Artisanal Cakes &amp; Baked Goods &middot; UAE</p>
-        </td>
-      </tr>
-      <!-- Content -->
-      <tr>
-        <td class="content">
-          {% block content %}{% endblock %}
-        </td>
-      </tr>
-      <!-- Footer -->
-      <tr>
-        <td class="footer">
-          <p class="love">Made with 100% Love</p>
-          <p>&copy; {{ now.year }} Melting Moments Cakes &middot; United Arab Emirates</p>
-          <p class="footer-links">
-            <a href="{{ web_url }}">Shop</a> &middot;
-            <a href="{{ web_url }}/about">About</a> &middot;
-            <a href="{{ web_url }}/contact">Contact</a>
-          </p>
-          <p style="margin-top:12px;color:#aaa;font-size:11px;">
-            This email was sent to {{ recipient_email }}.<br/>
-            If you have questions, contact us at orders@meltingmomentscakes.com
-          </p>
-        </td>
-      </tr>
-    </table>
-  </div>
+<body id="body">
+  <!-- The line the inbox shows next to the subject. Left empty by a template
+       that has nothing to add, and padded so the client does not fill the rest
+       of the preview with the first words of the header. -->
+  <div class="sr-only">{% block preheader %}{% endblock %}&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;</div>
+
+  <table role="presentation" class="shell" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f4eeea">
+    <tr>
+      <td align="center" style="padding: 24px 12px;">
+        <table role="presentation" class="frame" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;">
+
+          <tr>
+            <td class="masthead" bgcolor="#8a5a64" align="center">
+              <h1 class="wordmark">Melting Moments</h1>
+              <p class="tagline">Cakes &amp; Bakes &middot; United Arab Emirates</p>
+            </td>
+          </tr>
+
+          <tr>
+            <td class="card" bgcolor="#ffffff" style="padding-bottom: 40px;">
+              {% block content %}{% endblock %}
+            </td>
+          </tr>
+
+          <tr>
+            <td class="footer" bgcolor="#f4eeea" align="center">
+              <p class="signoff">Made with 100% love</p>
+              <p class="links">
+                <a href="{{ web_url }}">Shop</a>&middot;<a href="{{ web_url }}/about">Our story</a>&middot;<a href="{{ web_url }}/contact">Contact</a>
+              </p>
+              <p>&copy; {{ now.year }} Melting Moments Cakes &middot; United Arab Emirates</p>
+              <p class="fine">
+                Sent to {{ recipient_email }}. Questions? Reply to this email or write to
+                <a href="mailto:orders@meltingmomentscakes.com">orders@meltingmomentscakes.com</a>.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
 </body>
 </html>

@@ -127,7 +127,76 @@ export interface Cart {
 
 // ─── Order ────────────────────────────────────────────────────────────────────
 
-export type OrderStatus = 'created' | 'confirmed' | 'packed' | 'cancelled' | 'payment_failed';
+export type OrderStatus =
+  | 'created'
+  | 'confirmed'
+  | 'packed'
+  | 'out_for_delivery'
+  | 'delivered'
+  | 'cancelled'
+  | 'payment_failed'
+  | 'refunded'
+  | 'disputed';
+
+/**
+ * A place a customer can collect from.
+ *
+ * Both locales ride on one object because the API does not guess which one to
+ * serve — the same payload feeds an English page, an Arabic page and an email
+ * with no locale at all.
+ */
+export interface PickupBranch {
+  id: string;
+  reference: string;
+  name: string;
+  name_ar: string | null;
+  address: string | null;
+  address_ar: string | null;
+  city: string | null;
+  city_ar: string | null;
+  phone: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  /** Google Maps, built from the branch's own pin rather than its address text. */
+  maps_url: string | null;
+  opening_from: string;
+  opening_to: string;
+}
+
+/** Where an order is in the journey. See `fulfilment_service.Fulfilment`. */
+export type FulfilmentStage =
+  | 'preparing'
+  | 'ready'
+  | 'on_the_way'
+  | 'collected'
+  | 'delivered'
+  | 'undelivered'
+  | 'settled';
+
+/**
+ * How an order reaches its customer.
+ *
+ * Deliberately narrow: no courier name, no driver, no cost. The API keeps that
+ * on a separate admin-only model, and this is the whole of what the storefront
+ * is told.
+ */
+export interface Fulfilment {
+  method: DeliveryMethod;
+  stage: FulfilmentStage;
+  /** When to expect it. Null when there is nothing honest to promise. */
+  estimated_at: string | null;
+  /** `time` — an hour; `day` — a date only; `exact` — it already happened. */
+  precision: 'time' | 'day' | 'exact' | null;
+  /** The courier's live map, once a rider is actually carrying the order. */
+  tracking_url: string | null;
+  /** Whether a rider we hear back from carries this — decides what we promise. */
+  courier_managed: boolean;
+  packed_at: string | null;
+  picked_up_at: string | null;
+  delivered_at: string | null;
+  /** The pickup branch. Null for delivery orders. */
+  branch: PickupBranch | null;
+}
 export type DeliveryMethod = 'delivery' | 'pickup';
 
 export interface OrderItem {
@@ -173,6 +242,8 @@ export interface Order {
    * Decides whether the confirmation page offers to create one or to sign in.
    */
   email_has_account?: boolean;
+  /** When it arrives, where to collect it, and whether there is a rider to watch. */
+  fulfilment?: Fulfilment | null;
 }
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
@@ -242,10 +313,23 @@ export interface OrderCreate {
   email?: string;
   delivery_method: DeliveryMethod;
   shipping_address?: AddressCreate;
+  /** Which branch the customer is coming to. Pickup orders only. */
+  pickup_branch_id?: string;
   promo_code?: string;
   payment_method: string;
   notes?: string;
   session_id?: string;
+}
+
+/** What the public track lookup returns for an order number + email. */
+export interface TrackResult {
+  order_number: string;
+  status: OrderStatus;
+  delivery_method: DeliveryMethod;
+  items_count: number;
+  created_at: string;
+  total: number;
+  fulfilment: Fulfilment | null;
 }
 
 // ─── Blog ─────────────────────────────────────────────────────────────────────

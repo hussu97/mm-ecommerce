@@ -18,12 +18,14 @@ from app.models.product import Product
 from app.models.pos_order import OrderSourceEnum, PosOrderStatusEnum
 from app.models.promo_code import PromoCode
 from app.models.user import User
+from app.schemas.fulfilment import FulfilmentResponse
 from app.schemas.order import OrderCreate, OrderListResponse, OrderResponse
 from app.services import (
     batching_service,
     cart_service,
     courier_service,
     delivery_service,
+    fulfilment_service,
     lalamove_service,
     pos_order_service,
     promo_code_service,
@@ -38,6 +40,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "VALID_TRANSITIONS",
     "create_order",
+    "to_response",
     "get_all_admin",
     "get_by_order_number",
     "get_user_orders",
@@ -96,6 +99,24 @@ VALID_TRANSITIONS: dict[OrderStatusEnum, set[OrderStatusEnum]] = {
 
 def _order_load_options():
     return [selectinload(Order.items)]
+
+
+async def to_response(db: AsyncSession, order: Order) -> OrderResponse:
+    """
+    The order as its customer sees it, fulfilment included.
+
+    One function rather than a `model_validate` at each call site, because the
+    fulfilment block is the part every reader needs and the part every reader
+    would otherwise forget: the confirmation email, the account page, the track
+    page and the order returned from checkout all have to agree about when the
+    box arrives, and they only do that by construction.
+    """
+    response = OrderResponse.model_validate(order)
+    response.email_has_account = await _email_has_account(db, order.email)
+    response.fulfilment = FulfilmentResponse.of(
+        await fulfilment_service.for_order(db, order)
+    )
+    return response
 
 
 async def _generate_order_number(db: AsyncSession) -> str:
@@ -329,16 +350,28 @@ def _is_cash_on_delivery(data: OrderCreate) -> bool:
     return str(getattr(data.payment_method, "value", data.payment_method)) == "cod"
 
 
-async def resolve_branch(db: AsyncSession, zone: Zone | None) -> Branch | None:
+async def resolve_branch(
+    db: AsyncSession,
+    zone: Zone | None,
+    *,
+    pickup_branch_id: uuid.UUID | None = None,
+) -> Branch | None:
     """
     The kitchen that will make this order.
 
-    The zone's own branch first — that is the whole point of mapping polygons to
-    branches. Failing that, the configured pickup branch, which is where a
-    courier would collect from anyway: a zone drawn before branches existed, a
-    pickup order with no zone at all, or a pin outside every drawn shape still
-    has to be baked *somewhere*, and the shop that would have made it is the
-    shop that should see it.
+    A pickup order's chosen branch wins over everything, because for that order
+    it is not a guess at all — the customer said where they are going, and the
+    place they are driving to has to be the place the box is waiting. It is
+    validated rather than trusted: an id naming a branch that does not offer
+    collection falls through to the same resolution as any other order, so a
+    stale or hand-edited request cannot send somebody to a warehouse.
+
+    Otherwise the zone's own branch first — that is the whole point of mapping
+    polygons to branches. Failing that, the configured pickup branch, which is
+    where a courier would collect from anyway: a zone drawn before branches
+    existed, a pickup order with no zone at all, or a pin outside every drawn
+    shape still has to be baked *somewhere*, and the shop that would have made
+    it is the shop that should see it.
 
     Resolved **before** the order is written, because `orders.branch_id` is NOT
     NULL — an order with no kitchen is not a quieter order, it is an order
@@ -346,6 +379,22 @@ async def resolve_branch(db: AsyncSession, zone: Zone | None) -> Branch | None:
     online orders at all, which is a configuration failure the caller turns into
     a refusal rather than a silent sale.
     """
+    if pickup_branch_id is not None:
+        chosen = next(
+            (
+                branch
+                for branch in await fulfilment_service.pickup_branches(db)
+                if branch.id == pickup_branch_id
+            ),
+            None,
+        )
+        if chosen is not None:
+            return chosen
+        logger.warning(
+            "Order names pickup branch %s, which does not offer collection",
+            pickup_branch_id,
+        )
+
     if zone is not None and zone.branch_id is not None:
         branch = await db.get(Branch, zone.branch_id)
         if branch is not None and branch.deleted_at is None and branch.is_active:
@@ -576,7 +625,15 @@ async def create_order(
     #    NULL, so this is part of building the row rather than something done to
     #    it afterwards — and a shop with no branch that can take online orders
     #    is a shop that cannot take this one.
-    branch = await resolve_branch(db, zone)
+    branch = await resolve_branch(
+        db,
+        zone,
+        pickup_branch_id=(
+            data.pickup_branch_id
+            if data.delivery_method == DeliveryMethodEnum.PICKUP
+            else None
+        ),
+    )
     if branch is None:
         logger.error("No branch can take online orders; refusing %s", data.email)
         raise BadRequestError(
@@ -638,7 +695,7 @@ async def create_order(
 
     stmt = select(Order).options(*_order_load_options()).where(Order.id == order.id)
     result = await db.execute(stmt)
-    return OrderResponse.model_validate(result.scalar_one())
+    return await to_response(db, result.scalar_one())
 
 
 async def get_user_orders(
@@ -698,9 +755,7 @@ async def get_by_order_number(
             # prove ownership with the order's email, like /orders/track.
             raise ForbiddenError("Not your order")
 
-    response = OrderResponse.model_validate(order)
-    response.email_has_account = await _email_has_account(db, order.email)
-    return response
+    return await to_response(db, order)
 
 
 async def _email_has_account(db: AsyncSession, email: str | None) -> bool:
@@ -795,8 +850,7 @@ async def update_status(
 
     stmt = select(Order).options(*_order_load_options()).where(Order.id == order.id)
     result = await db.execute(stmt)
-    order = result.scalar_one()
-    return OrderResponse.model_validate(order)
+    return await to_response(db, result.scalar_one())
 
 
 async def get_all_admin(

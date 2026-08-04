@@ -1,66 +1,45 @@
 {% extends "base.html" %}
-{% block title %}Order Cancelled — {{ order.order_number }}{% endblock %}
+{% import "_parts.html" as parts %}
+
+{% block title %}Order cancelled — {{ order.order_number }}{% endblock %}
+{% block preheader %}{{ order.order_number }} has been cancelled. Any payment taken is being returned.{% endblock %}
 
 {% block content %}
-<h2>Order Cancelled</h2>
-<p>Hi {{ name }},</p>
-<p>We're sorry to let you know that your order <strong>{{ order.order_number }}</strong> has been cancelled.</p>
-
-<div style="text-align:center;margin:24px 0;">
-  <span class="status status-cancelled">&#10005; Cancelled</span><br/>
-  <span class="order-badge">{{ order.order_number }}</span>
-</div>
-
-<!-- Items summary -->
-<table class="items-table" cellpadding="0" cellspacing="0">
-  <thead>
-    <tr>
-      <th>Item</th>
-      <th style="text-align:center;width:50px;">Qty</th>
-      <th class="right" style="width:80px;">Price</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for item in order.items %}
-    <tr>
-      <td>
-        {{ item.product_name }}
-        {% if item.selected_options_snapshot %}<span class="variant-label">{{ item.selected_options_snapshot | map(attribute='option_name') | join(', ') }}</span>{% endif %}
-      </td>
-      <td style="text-align:center;">{{ item.quantity }}</td>
-      <td class="right">{{ "%.2f"|format(item.total_price) }} AED</td>
-    </tr>
-    {% endfor %}
-  </tbody>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="hero" align="center">
+    <p class="hero-eyebrow">Order cancelled</p>
+    <h2 class="hero-title is-warning">Your order has been cancelled.</h2>
+  </td></tr>
 </table>
 
-<table class="totals" cellpadding="0" cellspacing="0">
-  <tr class="total-row">
-    <td class="label">Order Total</td>
-    <td class="value">{{ "%.2f"|format(order.total) }} AED</td>
-  </tr>
-  <tr>
-    <td class="label" style="font-size:12px;color:#888;">VAT included (5%)</td>
-    <td class="value" style="font-size:12px;color:#888;">{{ "%.2f"|format(order.vat_amount) }} AED</td>
-  </tr>
+{{ parts.order_chip(order.order_number) }}
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" align="center" style="padding-top: 18px;">
+    <p class="lead" style="text-align:center;">
+      {{ name }}, order {{ order.order_number }} has been cancelled and nothing more
+      will happen with it.
+    </p>
+  </td></tr>
 </table>
 
 {% if order.admin_notes %}
-<hr class="divider" />
-<div class="info-box">
-  <p class="label">Note from Us</p>
-  <p>{{ order.admin_notes }}</p>
-</div>
+{{ parts.alert('Why', order.admin_notes) }}
 {% endif %}
 
-<hr class="divider" />
+{% if was_paid %}
+{{ parts.alert('Your refund', 'Any payment already taken is being returned to the card you paid with. Banks usually take five to ten working days to show it.') }}
+{% endif %}
 
-<p>If you were charged for this order, a refund will be processed to your original payment method within 5–7 business days.</p>
-<p>We'd love to have you back — please feel free to place a new order anytime.</p>
+{{ parts.order_summary(items, totals) }}
+{{ parts.button(web_url, 'Back to the shop') }}
 
-<div style="text-align:center;margin:28px 0;">
-  <a href="{{ web_url }}" class="btn">Shop Again</a>
-</div>
-
-<p class="muted" style="text-align:center;">Questions? Reply to this email or reach us on WhatsApp.</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" style="padding-top: 24px;">
+    <p class="muted">
+      If this wasn't expected, reply to this email — we would rather hear about it
+      than have you wonder.
+    </p>
+  </td></tr>
+</table>
 {% endblock %}

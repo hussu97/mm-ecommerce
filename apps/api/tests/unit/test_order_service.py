@@ -16,6 +16,7 @@ from app.schemas.order import OrderCreate
 from app.schemas.promo_code import PromoCodeValidateResponse
 from app.services import lalamove_service
 from app.services.delivery_zone_service import Zone
+from app.services.fulfilment_service import Fulfilment
 from app.services.order_service import VALID_TRANSITIONS, create_order, update_status
 
 
@@ -144,6 +145,26 @@ def mock_fulfilment():
             "app.services.order_service.batching_service.cancel_assignment",
             new_callable=AsyncMock,
         ),
+        # Every customer-facing response now carries "when does this arrive",
+        # which means a query for the delivery record and, for a collection
+        # order, one for the branch. Both would run off the end of the scripted
+        # session. `fulfilment_service` has its own tests.
+        patch(
+            "app.services.order_service.fulfilment_service.for_order",
+            new_callable=AsyncMock,
+            return_value=Fulfilment(
+                method="delivery",
+                stage="preparing",
+                estimated_at=None,
+                precision=None,
+                tracking_url=None,
+                courier_managed=False,
+                packed_at=None,
+                picked_up_at=None,
+                delivered_at=None,
+                branch=None,
+            ),
+        ),
     ):
         yield
 
@@ -226,6 +247,13 @@ def _order_mock(
     o.created_at = now
     o.updated_at = now
     o.items = []
+    # Response-only fields, set explicitly rather than left to the mock.
+    # Pydantic coerces a bare MagicMock to `True` for a bool, so leaving
+    # `email_has_account` unset quietly asserted the opposite of the default;
+    # `fulfilment` is a typed model and fails outright, which is the honest
+    # version of the same problem.
+    o.email_has_account = False
+    o.fulfilment = None
     return o
 
 

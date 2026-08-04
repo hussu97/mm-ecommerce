@@ -45,6 +45,7 @@ from app.models.order_delivery import (
     OrderDelivery,
 )
 from app.models.webhook_event import WebhookEvent
+from app.services import email_service
 from app.services.delivery_zone_service import Zone
 from app.services.providers.lalamove_provider import LalamoveError, provider
 
@@ -984,6 +985,11 @@ async def _advance_order(db: AsyncSession, delivery: OrderDelivery) -> None:
         return
 
     order.status = target
+    # The customer hears about it from here, not from the admin screen. These
+    # two transitions only ever happen because a courier said so, so this is the
+    # only place that knows they happened — and "out for delivery" is the email
+    # that carries the live tracking link, which is worth nothing an hour late.
+    await email_service.notify_order(db, order)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

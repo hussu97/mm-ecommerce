@@ -1,57 +1,49 @@
+{#
+  The card was declined.
+
+  Written as a thing that is fixable rather than a thing that went wrong: the
+  order still exists and is held, and the single action is to pay again. The
+  reason is deliberately not guessed at — the gateway tells us very little, and
+  "your card was declined" is both all we know and the only sentence that is
+  reliably true.
+#}
 {% extends "base.html" %}
-{% block title %}Payment Unsuccessful — {{ order.order_number }}{% endblock %}
+{% import "_parts.html" as parts %}
+
+{% block title %}Payment didn't go through — {{ order.order_number }}{% endblock %}
+{% block preheader %}Your order is held. Try the payment again and we'll start baking.{% endblock %}
 
 {% block content %}
-<h2>Payment Unsuccessful</h2>
-<p>Hi {{ name }},</p>
-<p>We weren't able to process your payment for order <strong>{{ order.order_number }}</strong>. Don't worry — your order is saved and you can try again.</p>
-
-<div style="text-align:center;margin:24px 0;">
-  <span class="status status-cancelled">&#10005; Payment Failed</span><br/>
-  <span class="order-badge">{{ order.order_number }}</span>
-</div>
-
-<!-- Items summary -->
-<table class="items-table" cellpadding="0" cellspacing="0">
-  <thead>
-    <tr>
-      <th>Item</th>
-      <th style="text-align:center;width:50px;">Qty</th>
-      <th class="right" style="width:80px;">Price</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for item in order.items %}
-    <tr>
-      <td>
-        {{ item.product_name }}
-        {% if item.selected_options_snapshot %}<span class="variant-label">{{ item.selected_options_snapshot | map(attribute='option_name') | join(', ') }}</span>{% endif %}
-      </td>
-      <td style="text-align:center;">{{ item.quantity }}</td>
-      <td class="right">{{ "%.2f"|format(item.total_price) }} AED</td>
-    </tr>
-    {% endfor %}
-  </tbody>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="hero" align="center">
+    <p class="hero-eyebrow">Payment unsuccessful</p>
+    <h2 class="hero-title is-warning">We couldn't take the payment.</h2>
+  </td></tr>
 </table>
 
-<table class="totals" cellpadding="0" cellspacing="0">
-  <tr class="total-row">
-    <td class="label">Order Total</td>
-    <td class="value">{{ "%.2f"|format(order.total) }} AED</td>
-  </tr>
-  <tr>
-    <td class="label" style="font-size:12px;color:#888;">VAT included (5%)</td>
-    <td class="value" style="font-size:12px;color:#888;">{{ "%.2f"|format(order.vat_amount) }} AED</td>
-  </tr>
+{{ parts.order_chip(order.order_number) }}
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" align="center" style="padding-top: 18px;">
+    <p class="lead" style="text-align:center;">
+      {{ name }}, your payment for order {{ order.order_number }} didn't go through,
+      so we haven't started baking yet. Nothing has been charged.
+    </p>
+  </td></tr>
 </table>
 
-<hr class="divider" />
+{{ parts.alert('Your order is held', 'We are keeping it for you. Try the payment again below — most declines are a bank check that clears on a second attempt or with a different card.') }}
 
-<p>To complete your order, click the button below to retry your payment.</p>
+{{ parts.button(retry_url, 'Try payment again') }}
 
-<div style="text-align:center;margin:28px 0;">
-  <a href="{{ web_url }}/checkout?order_number={{ order.order_number }}&step=payment" class="btn">Retry Payment</a>
-</div>
+{{ parts.order_summary(items, totals) }}
 
-<p class="muted" style="text-align:center;">Need help? Reply to this email or reach us on WhatsApp.</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" style="padding-top: 24px;">
+    <p class="muted">
+      Still not working? Reply to this email and we'll take it from there — we can
+      arrange payment another way.
+    </p>
+  </td></tr>
+</table>
 {% endblock %}

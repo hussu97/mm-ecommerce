@@ -22,6 +22,7 @@ from app.models import (
     TillStatusEnum,
 )
 from app.models.user import User
+from app.schemas.fulfilment import PickupBranchResponse
 from app.schemas.pos import (
     BranchCreate,
     BranchResponse,
@@ -34,7 +35,12 @@ from app.schemas.pos import (
     TableResponse,
     TableUpdate,
 )
-from app.services import audit_service, business_day_service, crud_service
+from app.services import (
+    audit_service,
+    business_day_service,
+    crud_service,
+    fulfilment_service,
+)
 
 router = APIRouter()
 
@@ -55,6 +61,27 @@ async def list_branches(
         include_deleted=include_deleted,
         include_inactive=include_inactive,
     )
+
+
+@router.get("/pickup-points", response_model=list[PickupBranchResponse])
+async def list_pickup_points(db: AsyncSession = Depends(get_db)):
+    """
+    The branches a customer may collect from. **Public.**
+
+    Unauthenticated on purpose: this is checkout furniture, and a guest picking
+    collection has to see the same list a signed-in customer does. It carries
+    only what somebody driving there needs — name, address and city in both
+    locales, a pin, opening hours and a phone number — and none of the
+    operational columns on `BranchResponse`, which is why it is a different
+    model rather than the same one with a different dependency.
+
+    Declared above `/{branch_id}` so the literal path is matched before the
+    UUID one gets a chance to reject it.
+    """
+    return [
+        PickupBranchResponse.of(branch)
+        for branch in await fulfilment_service.pickup_branches(db)
+    ]
 
 
 @router.post("", response_model=BranchResponse, status_code=status.HTTP_201_CREATED)

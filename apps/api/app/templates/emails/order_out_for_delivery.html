@@ -1,0 +1,50 @@
+{#
+  A rider is holding the box.
+
+  Sent from the courier's own `PICKED_UP` push rather than from anything a
+  person clicks, which is what makes it worth sending: it is the one moment in
+  the journey we learn about from the outside, and the estimate on it is
+  measured from a real event instead of from a schedule.
+
+  The live map only appears when the courier gave us one. Nothing here names
+  the courier — the link is "watch your order", not "watch our Lalamove
+  booking" — so the storefront still never says who carries the cake.
+#}
+{% extends "base.html" %}
+{% import "_parts.html" as parts %}
+
+{% block title %}Out for delivery — {{ order.order_number }}{% endblock %}
+{% block preheader %}{% if estimate %}{{ estimate.label }}: {{ estimate.value }}. {% endif %}Your order is with the driver.{% endblock %}
+
+{% block content %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="hero" align="center">
+    <p class="hero-eyebrow">Out for delivery</p>
+    <h2 class="hero-title">On the road to you, {{ name }}.</h2>
+  </td></tr>
+</table>
+
+{{ parts.order_chip(order.order_number) }}
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" align="center" style="padding-top: 18px;">
+    <p class="lead" style="text-align:center;">
+      Your order has been collected and is on its way. Please keep your phone
+      nearby — the driver may call when they arrive.
+    </p>
+  </td></tr>
+</table>
+
+{{ parts.estimate_card(estimate) }}
+
+{% if live_tracking_url %}
+{{ parts.button(live_tracking_url, 'Track live') }}
+{{ parts.button_ghost(tracking_url, 'Order details') }}
+{% else %}
+{{ parts.button(tracking_url, 'View order details') }}
+{% endif %}
+
+{{ parts.address_card(address) }}
+{{ parts.timeline(steps) }}
+{{ parts.order_summary(items, totals) }}
+{% endblock %}

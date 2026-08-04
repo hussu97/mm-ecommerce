@@ -1,5 +1,106 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ⏳ 2026-08-04: Rebuild the order emails, and give a pickup order a branch
+
+The transactional emails were a serif-on-mauve template from before the
+storefront had a design, and they covered four moments out of nine. A pickup
+order had no branch the customer chose — `resolve_branch` guessed one — so
+neither the email nor the account page could say where to collect from.
+
+### Plan
+- [x] 1. **Branch data.** `070_branch_pickup_details` adds `city`, `city_localized`,
+      `address_localized` and `offers_pickup`; backfills K001 (Sharjah) and B001
+      (Dubai) with address, city and Arabic names. `Branch.name_for` is fixed to
+      read the nested `translations` shape the rest of the codebase uses, and
+      gains `address_for`, `city_for` and `maps_url`.
+- [x] 2. **The customer picks the branch.** Public `GET /branches/pickup-points`;
+      `OrderCreate.pickup_branch_id` honoured by `resolve_branch`, so a pickup
+      order's `branch_id` is the branch the customer chose. Checkout grows a
+      picker showing localized name, address, city and a Google Maps link.
+- [x] 3. **One estimate that knows the order.** `fulfilment_service` answers "when
+      will this arrive" from the method, the zone's courier and the status —
+      sharper once a rider is holding the box. `OrderResponse` gains a branch
+      card and a customer-safe fulfilment block (estimate, tracking URL,
+      timeline). No courier name, no driver identity: that rule stays.
+- [x] 4. **Emails.** New base template on the storefront's palette and type, fluid
+      down to 320px, dark-mode aware. Every lifecycle moment covered: confirmed,
+      payment failed, packed (pickup and third-party delivery only), out for
+      delivery with a live-tracking CTA, delivered, undelivered, cancelled,
+      refunded.
+- [x] 5. **Storefront.** Account order detail and the guest track page show the
+      full timeline, the estimate, the pickup branch with its map link, and the
+      tracking CTA when there is one.
+- [x] 6. Tests, `ruff`, `tsc`, and every template rendered and eyeballed at desktop
+      and mobile widths.
+
+### Review
+
+- **The estimate is one function, not one per surface.** `fulfilment_service`
+  answers "when does this arrive" from the method, the courier that serves the
+  zone and the order's current status, and the confirmation email, the account
+  page and the guest tracking page all render the same answer. They could not
+  disagree before because only one of them said anything.
+- **Three arrangements, three honest answers.** Collection is prep time, then an
+  exact stamp once it is on the counter. A third-party zone is next-day at *day*
+  precision and never names an hour, because that is somebody else's van. A
+  courier we book is its batch window plus an hour — and once `picked_up_at`
+  arrives it becomes that stamp plus 45 minutes, which is the whole point of the
+  out-for-delivery email.
+- **"Packed" is not always news.** For collection it is come-and-get-it; for a
+  third-party zone it is the last thing anybody will ever tell us. For a courier
+  we book it means the box is on a shelf, and sending it would demote the email
+  that actually matters to second place. `should_send_packed` is where that
+  lives, so it is one function to change rather than a condition at each caller.
+- **`undelivered` is not a status and had to stop being treated as one.** The
+  order stays on `out_for_delivery` because it is still paid for and still ours
+  to deliver, so keying the email off status alone would have sent "your order
+  is on its way" to somebody who had just watched a driver leave.
+- **The customer still is not told who carries their cake.** `OrderDelivery` has
+  the provider, the driver and the cost; `Fulfilment` has nowhere to put any of
+  them, and a test asserts that. What crosses is a `courier_managed` boolean and
+  a link labelled "track live" — the consequence, not the brand.
+- **A bug the migration work surfaced:** `Branch.name_for` indexed `translations`
+  one level deep and treated the result as a string, but the column holds
+  `{locale: {field: value}}` like every other translatable model. It returned
+  nothing for every branch that had translations at all. Fixed, with
+  `address_for` and `city_for` alongside it.
+- **A bug the test suite surfaced:** pydantic coerces a bare `MagicMock` to
+  `True` for a `bool` field, so `_order()` in `test_order_service.py` had been
+  silently asserting `email_has_account = True` on every order it built. The
+  typed `fulfilment` field failed outright rather than quietly, which is how it
+  was found; both are now set explicitly.
+
+### Verification
+
+- **API**: 841 tests pass (7 skipped), `ruff check` and `ruff format` clean.
+  53 of those are new — the estimate matrix, the email-dispatch rules, branch
+  localisation and pickup-branch resolution.
+- **Web**: 183 tests pass, `tsc` clean, `eslint` 0 errors (10 warnings, all
+  pre-existing and none in touched files). **Admin**: `tsc` clean.
+- **Migration**, on a throwaway PostgreSQL 16: chain runs to head, then
+  `070 → 069 → 070` round-trips with real branch rows present. K001 and B001
+  come back with their Arabic names, cities, pins and `offers_pickup = true`;
+  a warehouse row is left untouched and stays closed.
+- **End to end against that database**, API running: `GET /branches/pickup-points`
+  returns both branches unauthenticated with both locales and their map links,
+  and the warehouse excluded. `POST /orders/track` was driven for all three
+  arrangements — collection packed (`ready`, exact stamp, branch card, no
+  tracking), Lalamove picked up (`on_the_way`, pickup + 45 min, live link,
+  `courier_managed: true`) and third party confirmed (`preparing`, tomorrow,
+  `day` precision, no link).
+- **Emails**: all 15 templates rendered and screenshotted in Chromium at 900px
+  and 390px. One fix came out of looking at them — stacking an item row put the
+  hairline *inside* an item, which read as two items.
+
+### Not verified here
+
+The storefront pages could not be driven in a browser in this environment: the
+Next dev server serves them but the client bundle does not hydrate, so a form
+submit falls through to a native GET. It reproduces on an unmodified checkout of
+`main`, so it is the sandbox rather than this change — but it does mean the
+account order page and the track page have been verified by unit test and by the
+API responses behind them, not by eye.
+
 ## ⏳ 2026-08-04: One orders screen, and the register learns about website orders
 
 ### Plan
