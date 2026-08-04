@@ -42,10 +42,22 @@ class Zone:
     #: before the column existed — charges its own fee rather than reaching for
     #: a courier that may not answer.
     pricing_mode: str = DeliveryPricingEnum.STATIC.value
+    #: Whether a qualifying basket delivers free here. Defaulted off so a zone
+    #: built by hand cannot give delivery away by omission.
+    free_delivery_eligible: bool = False
 
     @property
     def is_lalamove(self) -> bool:
         return self.fulfilment_provider == FulfilmentProviderEnum.LALAMOVE.value
+
+    @property
+    def is_batched(self) -> bool:
+        """Whether orders here wait for a shared run rather than going alone.
+
+        Only a zone we dispatch ourselves has a run to share; a third-party zone
+        is collected on somebody else's schedule, which we cannot see.
+        """
+        return self.is_lalamove
 
     @property
     def is_dynamic(self) -> bool:
@@ -159,6 +171,7 @@ def _to_zone(p: DeliveryPolygon) -> Zone:
             p.fulfilment_provider or FulfilmentProviderEnum.THIRD_PARTY.value
         ),
         pricing_mode=(p.pricing_mode or DeliveryPricingEnum.STATIC.value),
+        free_delivery_eligible=bool(p.free_delivery_eligible),
         min_lat=float(p.min_lat),
         max_lat=float(p.max_lat),
         min_lng=float(p.min_lng),

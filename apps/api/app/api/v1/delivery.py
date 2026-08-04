@@ -32,6 +32,12 @@ class DeliveryQuoteRequest(BaseModel):
     address: str | None = None
 
 
+class DeliveryEstimateResponse(BaseModel):
+    #: ISO 8601, on the shop's clock.
+    at: str
+    precision: str
+
+
 class DeliveryQuoteResponse(BaseModel):
     #: Null until there is something to price — no pin yet, or a pin nothing can
     #: be delivered to. `serviceable` is what tells the two apart.
@@ -46,6 +52,10 @@ class DeliveryQuoteResponse(BaseModel):
     remaining_for_free: float
     zone_name: str | None = None
     in_known_zone: bool
+    #: When the order should arrive, and how precisely. `precision` is "time"
+    #: where the schedule is ours to read and "day" where it is not. Null until
+    #: there is a pin to read it from.
+    delivery_estimate: DeliveryEstimateResponse | None = None
     #: False when we cannot deliver to this pin at all. The checkout says so and
     #: refuses to submit; the API refuses the order too, so the two agree.
     serviceable: bool = True

@@ -25,7 +25,7 @@ DELIVERY_SETTINGS = DeliverySettings(
 )
 
 
-def _zone(fee: str, pricing_mode: str = "static") -> Zone:
+def _zone(fee: str, pricing_mode: str = "static", *, free: bool = True) -> Zone:
     return Zone(
         id=uuid.uuid4(),
         name="Test Zone",
@@ -37,6 +37,7 @@ def _zone(fee: str, pricing_mode: str = "static") -> Zone:
         max_lng=57.0,
         rings=(),
         pricing_mode=pricing_mode,
+        free_delivery_eligible=free,
     )
 
 
@@ -678,7 +679,7 @@ class TestCreateOrderCalculations:
         it is the same 40 dirhams whether the order is 50 or 500.
         """
         find_zone, estimate_for_point = delivery_pricing
-        find_zone.return_value = _zone("0.00", pricing_mode="dynamic")
+        find_zone.return_value = _zone("0.00", pricing_mode="dynamic", free=False)
         cart = _cart(items=[_cart_item(_product("500.00"))])
         db = _db_for_create(cart, _order_mock(delivery_fee=Decimal("40.00")))
 

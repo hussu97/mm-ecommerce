@@ -178,6 +178,53 @@ function UnserviceableNotice({
   );
 }
 
+/**
+ * "Tomorrow, 13:00" — or just "Tomorrow" where an hour would be a lie.
+ *
+ * The words are translated; the date and the hour are formatted by the browser,
+ * which knows the customer's locale and calendar far better than a translation
+ * table ever will. Everything is read on the shop's clock rather than the
+ * device's: a customer checking out from London is still being delivered to in
+ * the UAE, and "tomorrow" has to mean the shop's tomorrow.
+ */
+const SHOP_TZ = 'Asia/Dubai';
+
+function formatEstimate(
+  estimate: { at: string; precision: 'time' | 'day' },
+  locale: string,
+  t: (k: string, p?: Record<string, string | number>) => string,
+): string {
+  const at = new Date(estimate.at);
+  if (Number.isNaN(at.getTime())) return '';
+
+  const dayKey = (d: Date) =>
+    new Intl.DateTimeFormat('en-CA', { timeZone: SHOP_TZ }).format(d);
+  const today = dayKey(new Date());
+  const tomorrow = dayKey(new Date(Date.now() + 86_400_000));
+  const target = dayKey(at);
+
+  const day =
+    target === today
+      ? t('checkout.delivery_today')
+      : target === tomorrow
+        ? t('checkout.delivery_tomorrow')
+        : new Intl.DateTimeFormat(locale, {
+            weekday: 'short',
+            day: 'numeric',
+            month: 'short',
+            timeZone: SHOP_TZ,
+          }).format(at);
+
+  if (estimate.precision === 'day') return t('checkout.delivery_by_day', { day });
+
+  const time = new Intl.DateTimeFormat(locale, {
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: SHOP_TZ,
+  }).format(at);
+  return t('checkout.delivery_by_time', { day, time });
+}
+
 /** One tappable choice: icon, label, and what it costs. */
 function ChoiceRow({
   selected, onSelect, icon, title, subtitle, trailing,
@@ -474,6 +521,13 @@ function CheckoutContent() {
   // not suppressed on a cold page; the copy for that state says "in selected
   // areas", which is exactly what we know at that point.
   const freeAvailable = quote?.free_delivery_available ?? true;
+  // The question every shopper actually has. Only ever rendered from what the
+  // server sent — the schedule that produces it is not something the browser
+  // can or should reconstruct.
+  const arrival =
+    isDelivery && !retryOrder && quote?.delivery_estimate
+      ? formatEstimate(quote.delivery_estimate, locale, t)
+      : '';
 
   // Priced off the pin against the active zone map. Close to the kitchen that is
   // a published flat fee; beyond it, the courier's own price for this exact
@@ -799,6 +853,17 @@ function CheckoutContent() {
               <span className="material-icons text-lg text-gray-300">chevron_right</span>
             </button>
             {errors.address && <p className="mt-1.5 text-xs text-red-500 font-body">{errors.address}</p>}
+            {/* The one line that answers "when", placed where the pin that
+                decides it was just chosen. */}
+            {arrival && !unserviceable && (
+              <p className="mt-2.5 flex items-center gap-1.5 font-body text-xs text-gray-500">
+                <span className="material-icons text-sm text-primary">schedule</span>
+                <span>
+                  {t('checkout.estimated_delivery')}:{' '}
+                  <span className="text-gray-800">{arrival}</span>
+                </span>
+              </p>
+            )}
             {/* Directly under the thing that caused it, and above everything it
                 makes pointless to fill in. */}
             {unserviceable && (

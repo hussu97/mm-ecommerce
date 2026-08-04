@@ -318,6 +318,13 @@ export interface DeliveryQuote {
   zone_name: string | null;
   in_known_zone: boolean;
   /**
+   * When the order should arrive. Null until there is a pin to read a schedule
+   * off. `precision` is `"time"` where the schedule is ours — the order joins a
+   * run whose departure we set — and `"day"` where the van belongs to a partner
+   * and an hour would be a promise we cannot keep.
+   */
+  delivery_estimate: { at: string; precision: 'time' | 'day' } | null;
+  /**
    * False when we cannot deliver to this pin at all. The order endpoint refuses
    * it too, so blocking the button here is a courtesy rather than the guard.
    */

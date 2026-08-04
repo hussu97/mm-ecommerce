@@ -30,7 +30,7 @@ SETTINGS = DeliverySettings(
 )
 
 
-def _zone(fee: str, pricing_mode: str) -> Zone:
+def _zone(fee: str, pricing_mode: str, *, free: bool = True) -> Zone:
     return Zone(
         id=uuid.uuid4(),
         name="Zone",
@@ -42,6 +42,7 @@ def _zone(fee: str, pricing_mode: str) -> Zone:
         max_lng=57.0,
         rings=(),
         pricing_mode=pricing_mode,
+        free_delivery_eligible=free,
     )
 
 
@@ -420,7 +421,7 @@ async def test_free_delivery_never_applies_in_a_courier_priced_zone():
     shrink because the basket grew.
     """
     priced = await _price(
-        zone=_zone("0.00", "dynamic"),
+        zone=_zone("0.00", "dynamic", free=False),
         estimate=_estimate("137.00"),
         subtotal="500.00",
     )
@@ -443,7 +444,7 @@ async def test_an_unpriceable_courier_falls_back_without_promising_free():
     still one we do not price, so the offer does not appear there.
     """
     priced = await _price(
-        zone=_zone("0.00", "dynamic"),
+        zone=_zone("0.00", "dynamic", free=False),
         estimate=None,
         enabled=False,
         subtotal="500.00",
@@ -466,7 +467,7 @@ async def test_the_quote_tells_the_storefront_where_the_offer_reaches():
         patch.object(
             delivery_service.delivery_zone_service,
             "find_zone",
-            new=AsyncMock(return_value=_zone("0.00", "dynamic")),
+            new=AsyncMock(return_value=_zone("0.00", "dynamic", free=False)),
         ),
         patch.object(
             delivery_service.lalamove_service,
@@ -475,6 +476,13 @@ async def test_the_quote_tells_the_storefront_where_the_offer_reaches():
         ),
         patch.object(
             delivery_service.lalamove_service, "is_enabled", return_value=True
+        ),
+        # The arrival estimate walks the zone's schedule; this test is about the
+        # offer, not the clock.
+        patch.object(
+            delivery_service.batching_service,
+            "active_windows",
+            new=AsyncMock(return_value=[]),
         ),
     ):
         result = await delivery_service.quote(

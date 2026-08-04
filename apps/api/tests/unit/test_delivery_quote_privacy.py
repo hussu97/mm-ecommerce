@@ -41,6 +41,7 @@ SHARJAH_CITY = Zone(
     min_lng=55.2,
     max_lng=55.7,
     rings=(),
+    free_delivery_eligible=True,
 )
 
 ESTIMATE = lalamove_service.Estimate(
@@ -68,14 +69,21 @@ def _patches(estimate, error, zone=SHARJAH_CITY):
             "estimate_for_point",
             new=AsyncMock(return_value=(estimate, error)),
         ),
+        # The arrival estimate walks the zone's schedule. Nothing here is about
+        # the clock, and an empty schedule is a legal state anyway.
+        patch.object(
+            delivery_service.batching_service,
+            "active_windows",
+            new=AsyncMock(return_value=[]),
+        ),
     )
 
 
 async def _quote(
     cart, estimate=ESTIMATE, error=None, subtotal="100.00", zone=SHARJAH_CITY
 ):
-    settings_p, zone_p, est_p = _patches(estimate, error, zone)
-    with settings_p, zone_p, est_p:
+    settings_p, zone_p, est_p, windows_p = _patches(estimate, error, zone)
+    with settings_p, zone_p, est_p, windows_p:
         return await delivery_service.quote(
             AsyncMock(),
             Decimal(subtotal),
@@ -115,6 +123,9 @@ def test_the_response_model_has_no_field_that_could_leak_one():
         "in_known_zone",
         # "we cannot deliver here", with no hint as to who would have.
         "serviceable",
+        # When it arrives. A date and an hour — never a driver, a run, or a
+        # courier's name.
+        "delivery_estimate",
     }
 
 
@@ -155,8 +166,8 @@ async def test_the_threshold_does_not_move_with_the_zone(cart):
     far = Zone(
         id=uuid.uuid4(),
         name="Fujairah",
-        delivery_fee=Decimal("50.00"),
-        fulfilment_provider="lalamove",
+        delivery_fee=Decimal("80.00"),
+        fulfilment_provider="third_party",
         min_lat=24.8,
         max_lat=25.7,
         min_lng=55.9,
