@@ -63,6 +63,25 @@ def _send(to: str, subject: str, html: str) -> dict:
     Send an email via Resend. Never raises — always returns a result dict:
       {"status": "sent"|"failed"|"skipped", "resend_id": str|None, "error": str|None}
     """
+    # Nobody to write to. A counter sale has no customer email — the field is
+    # nullable and for a walk-in it is simply empty — so "cancel this order"
+    # reaches here with nothing to send to. That is an absence, not a failure:
+    # before this guard it went to Resend, came back `Invalid \`to\` field`, and
+    # was logged as an error, which put five paging alerts on the board for
+    # five orders that never had a customer to notify.
+    if not to or not str(to).strip():
+        logger.info("No recipient address — skipping email: %s", subject)
+        return {"status": "skipped", "resend_id": None, "error": "no recipient address"}
+
+    to = str(to).strip()
+
+    # Nor anything that cannot be an address. Resend will refuse it, and a 4xx
+    # we could have predicted is noise on a board that should only carry
+    # surprises.
+    if "@" not in to or to.startswith("@") or to.endswith("@"):
+        logger.warning("Not a usable address — skipping email to %r: %s", to, subject)
+        return {"status": "skipped", "resend_id": None, "error": "malformed address"}
+
     # Guests who decline to give an email are stored under the generated
     # `…@guest.local` address the auth layer mints. It is a placeholder, not a
     # mailbox — writing to it would only earn us bounces.

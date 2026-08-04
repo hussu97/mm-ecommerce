@@ -30,7 +30,11 @@ class AuditLogItem(BaseModel):
     id: uuid.UUID
     action: str
     entity_type: str
-    entity_id: uuid.UUID
+    #: A `varchar`, not a UUID, whatever the name suggests — it holds whichever
+    #: identifier a reader would recognise, so an order logs `MM-20260605-001`
+    #: and a product logs its id. Typed as a UUID it took down every page that
+    #: contained an order.
+    entity_id: str
     #: Nullable in the table. Typed as such, or a row logged without a label
     #: takes the whole page down with it rather than showing a blank cell.
     entity_label: str | None = None

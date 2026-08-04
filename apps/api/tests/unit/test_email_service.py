@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from types import SimpleNamespace
+
+import pytest
 
 from app.models.order import DeliveryMethodEnum, OrderStatusEnum
 from app.schemas.order import OrderItemResponse, OrderResponse
@@ -108,3 +111,49 @@ class TestEmailService:
         assert "Classic" in html
         assert "Please call before delivery" in html
         assert "https://admin.meltingmomentscakes.com/orders/MM-20260606-001" in html
+
+
+# ── nobody to write to ────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "address", ["", "   ", None, "not-an-address", "@example.com", "someone@"]
+)
+def test_an_unusable_address_is_skipped_not_failed(address, monkeypatch):
+    """
+    A counter sale has no customer email, so cancelling one reaches the mailer
+    with nothing to send to.
+
+    Skipped, not failed. Before this, the empty string went to Resend, came
+    back `Invalid \\`to\\` field`, and was logged at error — five orders with no
+    customer to notify became five alerts on a board that should only carry
+    surprises. And `None` never reached Resend at all: it raised
+    `AttributeError` on `.lower()` first.
+    """
+    called = []
+    monkeypatch.setattr(
+        email_service.resend.Emails, "send", lambda *a, **k: called.append(a)
+    )
+
+    result = email_service._send(
+        address, "Order Cancelled — POS-B001-0004", "<p>hi</p>"
+    )
+
+    assert result["status"] == "skipped"
+    assert result["resend_id"] is None
+    assert called == [], "an address that cannot work was still sent to Resend"
+
+
+def test_a_real_address_still_sends(monkeypatch):
+    """The guard must not swallow the ordinary case."""
+    monkeypatch.setattr(email_service.settings, "RESEND_API_KEY", "re_test")
+    monkeypatch.setattr(
+        email_service.resend.Emails,
+        "send",
+        lambda params: SimpleNamespace(id="re_123"),
+    )
+
+    result = email_service._send("customer@example.com", "Your order", "<p>hi</p>")
+
+    assert result["status"] == "sent"
+    assert result["resend_id"] == "re_123"
