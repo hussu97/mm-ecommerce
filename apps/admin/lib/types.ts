@@ -477,6 +477,14 @@ export interface DeliveryBatch {
   cost_per_delivery: number | null;
   dispatched_at: string | null;
   last_error: string | null;
+  /** How many times this run has been offered to the courier. */
+  attempt_count: number;
+  /**
+   * When it will be offered again on its own. Null means nothing more happens
+   * without somebody pressing the button — it went out, or another attempt
+   * cannot change the answer.
+   */
+  next_attempt_at: string | null;
   order_numbers: string[];
 }
 

@@ -1,5 +1,62 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ⏳ 2026-08-04: Automatic retry for a run the courier refused
+
+A batch that failed parked in `FAILED` and nothing ever picked it up again — the
+sweeper only ever selected `PENDING`. The orders inside sat until somebody opened
+the admin batch list and pressed Dispatch. On the 22:30 and 23:00 city windows
+that plausibly means overnight.
+
+### Plan
+- [x] 1. `delivery_batches` gains `attempt_count` and `next_attempt_at` (migration 060).
+- [x] 2. The sweep selects `PENDING` **or** anything with `next_attempt_at <= now`, so
+       one column decides what comes back and no status needs special-casing.
+- [x] 3. Backoff ladder 5 / 15 / 45 minutes — four attempts in all, then it stops.
+- [x] 4. Never retry a terminal failure: no usable address, out of service area,
+       courier not configured, no pickup branch. Identical data gets an identical
+       answer and only burns courier API calls.
+- [x] 5. Never schedule a retry past the pickup kitchen's closing time. A driver
+       sent to a shuttered kitchen at 00:05 is worse than one that waits for a human.
+- [x] 6. Manual dispatch resets the ladder, so topping up the wallet buys a fresh
+       set of automatic attempts.
+- [x] 7. Surface attempts and the next retry in the admin batch list.
+- [ ] 8. Tests, deploy, verify green.
+
+### Result
+
+- 34 new API tests; 634 pass in total. Migration 060 upgrades, downgrades and
+  re-upgrades on a clean PostgreSQL 16 chain, and the partial index lands as
+  `btree (next_attempt_at) WHERE next_attempt_at IS NOT NULL`.
+- Driven against a real database, not only fakes: of six batches — due, future,
+  retry-due, retry-later, given-up, half-booked — the sweep picked up exactly the
+  three it should. A refused run then wrote a retry five minutes out, was
+  collected when that moment came, and booked on attempt 2 with nothing left
+  owing.
+
+### Review
+
+Two defects surfaced while building it, both fixed by the same mechanism:
+
+1. A run that died mid-booking — container restart between the claim and the
+   courier's reply — stayed `dispatching` forever. It now carries a retry time
+   like any other unfinished attempt.
+2. A partly-booked run reported a clean dispatch while the orders in its failed
+   second courier order sat in the kitchen. Those come back on the ladder now,
+   and `_ready_deliveries` already excludes anything holding a
+   `courier_order_id`, so a retry books only the stragglers.
+
+The real-database run caught a third, which the fakes had missed: the sweep
+marks every run it claims `dispatching`, including a half-booked one, and the
+early returns never put the status back — so a failed retry of a run with a
+driver on it would have read as failed, or stuck on `dispatching` once the
+ladder ran out. `_fail` now derives that from `courier_order_id`, which is only
+ever set by a booking that worked.
+
+Not done, deliberately: no alerting. There is no notification channel in the API
+today and inventing one is a larger decision than the retry. A run that
+exhausts the ladder shows its error and "Gave up after N attempts" in the admin
+batch list, next to the manual button.
+
 ## ⏳ 2026-08-04: Locale fallback, mobile viewport bugs, and a sign-in nudge
 
 ### Plan

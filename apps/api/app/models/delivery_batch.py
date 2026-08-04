@@ -204,6 +204,26 @@ class DeliveryBatch(Base, UUIDMixin, TimestampMixin):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_payload: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
 
+    #: How many times we have tried to book this run. Counts the scheduled
+    #: attempt as well as the retries, so it reads as "tried 3 times".
+    attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    #: When to try again, or null for a run nothing more will be done to
+    #: automatically — either because it went out, or because trying again
+    #: cannot change the answer.
+    #:
+    #: This is the whole of the retry queue. The sweep asks for batches whose
+    #: time has come and does not look at status, so whatever writes this column
+    #: decides what comes back.
+    #:
+    #: Indexed in migration 060 rather than here, because the index is partial —
+    #: all but a handful of rows are null forever and only the ones owing an
+    #: attempt are worth carrying.
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     window: Mapped[DeliveryBatchWindow | None] = relationship(
         "DeliveryBatchWindow", back_populates="batches"
     )

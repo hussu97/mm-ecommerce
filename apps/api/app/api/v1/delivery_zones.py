@@ -187,6 +187,12 @@ class BatchResponse(BaseModel):
     cost_per_delivery: float | None
     dispatched_at: datetime | None
     last_error: str | None
+    #: How many times this run has been offered to the courier.
+    attempt_count: int
+    #: When it will be offered again on its own. Null means nothing more will
+    #: happen without somebody pressing the button — either it went out, or
+    #: another attempt cannot change the answer.
+    next_attempt_at: datetime | None
     order_numbers: list[str]
 
     @classmethod
@@ -211,6 +217,8 @@ class BatchResponse(BaseModel):
             cost_per_delivery=float(per) if per is not None else None,
             dispatched_at=b.dispatched_at,
             last_error=b.last_error,
+            attempt_count=b.attempt_count,
+            next_attempt_at=b.next_attempt_at,
             order_numbers=order_numbers,
         )
 
@@ -895,16 +903,22 @@ async def dispatch_batch_now(
     """
     Send a run early, or retry one the courier refused.
 
-    The sweeper fires these on schedule; this is for the shop deciding it is
-    not worth waiting, and for the wallet-was-empty case where the run failed
-    and needs another go once it is topped up.
+    The sweeper fires these on schedule and retries a refusal a few times on its
+    own; this is for the shop deciding it is not worth waiting, and for the run
+    that has already exhausted those attempts.
+
+    Pressing it resets the ladder. Somebody doing this by hand has almost always
+    just changed something the automatic attempts could not — topped up the
+    wallet, fixed an address — so the run deserves the full set of tries again
+    rather than the one that was left.
     """
     batch = await db.get(DeliveryBatch, batch_id)
     if batch is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Batch not found")
-    if batch.status == BatchStatusEnum.DISPATCHED.value:
+    if batch.status == BatchStatusEnum.DISPATCHED.value and not batch.next_attempt_at:
         raise HTTPException(status.HTTP_409_CONFLICT, "This run has already gone out.")
 
+    batch.attempt_count = 0
     await batching_service.dispatch_batch(db, batch)
     await db.flush()
     await audit_service.log_action(
