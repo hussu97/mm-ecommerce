@@ -137,10 +137,16 @@ async def resolve_pickup(
     `zone.branch_id`, which is null only for a map drawn before zones knew about
     branches.
 
-    Without one, it falls back to what every order used before: configured by
-    reference when there is more than one candidate, otherwise the first active
-    branch that takes online orders and has a pin — because a branch without
-    coordinates cannot be a pickup stop no matter how it is flagged.
+    Without one — a pickup order, or a pin outside every drawn shape — it is the
+    first active branch flagged `receives_online_orders` that has a pin, because
+    a branch without coordinates cannot be a pickup stop no matter how it is
+    flagged. Ties break on `display_order` then name.
+
+    Every fact used here comes off the branch row. It used to be possible to
+    override the choice and the phone number from the environment, which meant
+    the answer to "where does this leave from, and who does the driver call"
+    lived in two places that could disagree — and the environment copy won.
+    Both are columns in the admin now.
     """
     stmt = select(Branch).where(
         Branch.is_active.is_(True),
@@ -150,8 +156,6 @@ async def resolve_pickup(
     )
     if branch_id is not None:
         stmt = stmt.where(Branch.id == branch_id)
-    elif settings.LALAMOVE_PICKUP_BRANCH_REF:
-        stmt = stmt.where(Branch.reference == settings.LALAMOVE_PICKUP_BRANCH_REF)
     else:
         stmt = stmt.where(Branch.receives_online_orders.is_(True))
 
@@ -170,10 +174,11 @@ async def resolve_pickup(
             )
         return None
 
-    phone = normalise_phone(settings.LALAMOVE_SENDER_PHONE or branch.phone or "")
+    phone = normalise_phone(branch.phone or "")
     if not phone:
+        # Fixable in one place — the branch row — rather than by a deploy.
         logger.warning(
-            "Branch %s has no phone number; Lalamove needs one for the sender",
+            "Branch %s has no phone number; the courier needs one for the sender",
             branch.reference,
         )
         return None
@@ -185,12 +190,9 @@ async def resolve_pickup(
         latitude=float(branch.latitude),
         longitude=float(branch.longitude),
         reference=branch.reference,
-        # The setting is the fallback, not the source: a branch that names its
-        # own outlet wins, so a second kitchen is a row in the admin rather than
-        # a deploy.
-        noon_send_outlet_code=(
-            branch.noon_send_outlet_code or settings.NOON_SEND_OUTLET_CODE or ""
-        ),
+        # Off the branch and nowhere else. A second kitchen is a row in the
+        # admin — `scripts/register_noon_send_pickup.py` writes the code there.
+        noon_send_outlet_code=branch.noon_send_outlet_code or "",
         opens_at=branch.opening_from,
         closes_at=branch.opening_to,
     )

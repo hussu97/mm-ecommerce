@@ -68,8 +68,9 @@ def _delivery(provider="noon_send") -> OrderDelivery:
 @pytest.fixture
 def configured(monkeypatch):
     """A working noon Send, so the gate is the only thing under test."""
+    # The API key alone decides whether noon Send is configured. The outlet is a
+    # branch column, so it belongs to whatever pickup the zone resolves to.
     monkeypatch.setattr(settings, "NOON_SEND_API_KEY", "test-key")
-    monkeypatch.setattr(settings, "NOON_SEND_OUTLET_CODE", "PCKP_TEST123")
     monkeypatch.setattr(settings, "TRIAL_CUSTOMER_EMAILS", TRIAL_EMAIL)
     return settings
 

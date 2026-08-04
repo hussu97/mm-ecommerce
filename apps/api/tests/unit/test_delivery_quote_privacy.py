@@ -14,8 +14,10 @@ added to a response model, by someone who had no idea it mattered.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -291,12 +293,17 @@ async def test_a_noon_send_zone_is_costed_on_its_own_rate_card(cart, monkeypatch
     from app.services import courier_service, noon_send_service
 
     monkeypatch.setattr(app_settings, "NOON_SEND_API_KEY", "test-key")
-    monkeypatch.setattr(app_settings, "NOON_SEND_OUTLET_CODE", "PCKP_TEST123")
+
+    # A fixed off-peak instant. `rate_card_cost` reads the clock when it is not
+    # given one, and the surge adds a dirham for a quarter of every day — so
+    # without this the expected 12.00 becomes 13.00 between 12:00-15:00 and
+    # 19:00-22:00 Dubai, which is most of when anyone would be running it.
+    off_peak = datetime(2026, 8, 4, 10, 0, tzinfo=ZoneInfo("Asia/Dubai"))
 
     async def rate_card(db, latitude, longitude, address=None, branch_id=None):
         return (
             lalamove_service.Estimate(
-                cost=noon_send_service.rate_card_cost(4.4),
+                cost=noon_send_service.rate_card_cost(4.4, at=off_peak),
                 currency="AED",
                 distance_m=4400,
                 # There is no quotation to reference — nobody issued one.

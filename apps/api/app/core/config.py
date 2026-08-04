@@ -142,11 +142,6 @@ class Settings(BaseSettings):
     #: Checkout re-quotes on every pin move, so identical points inside this
     #: window reuse the last answer rather than spending the 100/min budget.
     LALAMOVE_QUOTE_CACHE_SECONDS: int = 120
-    #: Which branch the courier collects from. Falls back to the first active
-    #: branch that takes online orders and has coordinates.
-    LALAMOVE_PICKUP_BRANCH_REF: str = ""
-    #: Who the driver calls at the shop. Falls back to the branch's own phone.
-    LALAMOVE_SENDER_PHONE: str = ""
     #: The in-process loop that sends a batch when its window closes. There is
     #: no queue in this stack, so this is the only thing that fires them.
     #: Turning it off leaves batches sitting until someone dispatches them by
@@ -176,15 +171,6 @@ class Settings(BaseSettings):
     NOON_SEND_ENV: str = "staging"
     #: Sent on every call. `en-ae` or `en-sa`; only the UAE fleet concerns us.
     NOON_SEND_LOCALE: str = "en-ae"
-    #: Fallback pickup point, for a branch with no code of its own.
-    #:
-    #: The real home for this is `branches.noon_send_outlet_code`, set in the
-    #: admin — a courier collects from a *place*, and one environment variable
-    #: cannot hold two answers once a second kitchen starts delivering. This
-    #: remains so the current single-kitchen deployment keeps working without
-    #: anyone touching the admin, and so a fresh environment has something to
-    #: point at before any branch is registered.
-    NOON_SEND_OUTLET_CODE: str = ""
     #: `noon_food` or `nownow` — which side of noon owns the pickup point.
     NOON_SEND_CLIENT_CODE: str = "noon_food"
     #: Their hard cap on pickup-to-drop-off distance, and the belt to the zone

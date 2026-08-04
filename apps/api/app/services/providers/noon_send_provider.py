@@ -330,8 +330,10 @@ class NoonSendClient:
         """
         POST /public/v1/pickup-points/create — register the kitchen.
 
-        Run once, by hand, from `scripts/register_noon_send_pickup.py`. The
-        `code` it returns is what `NOON_SEND_OUTLET_CODE` holds.
+        Run once per kitchen, by hand, from
+        `scripts/register_noon_send_pickup.py`. The `code` it returns is what
+        `branches.noon_send_outlet_code` holds; a branch without one cannot be a
+        noon Send pickup.
         """
         body: dict[str, Any] = {
             "name": name,

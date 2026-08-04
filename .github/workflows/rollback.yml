@@ -99,12 +99,9 @@ jobs:
           LALAMOVE_WEBHOOK_PATH=${{ secrets.LALAMOVE_WEBHOOK_PATH || '/api/v1/webhooks/lalamove' }}
           LALAMOVE_TIMEOUT_SECONDS=${{ secrets.LALAMOVE_TIMEOUT_SECONDS || '8' }}
           LALAMOVE_QUOTE_CACHE_SECONDS=${{ secrets.LALAMOVE_QUOTE_CACHE_SECONDS || '120' }}
-          LALAMOVE_PICKUP_BRANCH_REF=${{ secrets.LALAMOVE_PICKUP_BRANCH_REF }}
-          LALAMOVE_SENDER_PHONE=${{ secrets.LALAMOVE_SENDER_PHONE }}
           NOON_SEND_API_KEY=${{ secrets.NOON_SEND_API_KEY }}
           NOON_SEND_ENV=${{ secrets.NOON_SEND_ENV || 'staging' }}
           NOON_SEND_LOCALE=${{ secrets.NOON_SEND_LOCALE || 'en-ae' }}
-          NOON_SEND_OUTLET_CODE=${{ secrets.NOON_SEND_OUTLET_CODE }}
           NOON_SEND_CLIENT_CODE=${{ secrets.NOON_SEND_CLIENT_CODE || 'noon_food' }}
           NOON_SEND_MAX_DISTANCE_M=${{ secrets.NOON_SEND_MAX_DISTANCE_M || '20000' }}
           NOON_SEND_DETOUR_FACTOR=${{ secrets.NOON_SEND_DETOUR_FACTOR || '1.49' }}

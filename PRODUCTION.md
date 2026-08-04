@@ -673,10 +673,14 @@ exactly like third-party ones — same price, dispatched by hand.
 |--------|-----------------|-------|
 | `LALAMOVE_API_KEY` | `pk_prod_...` | Partner Portal → Developers, **Production** tab |
 | `LALAMOVE_API_SECRET` | `sk_prod_...` | Same screen. Also signs inbound webhooks |
-| `LALAMOVE_PICKUP_BRANCH_REF` | branch reference | Optional. Empty = first active branch taking online orders that has coordinates |
-| `LALAMOVE_SENDER_PHONE` | `+9715...` | Optional. Empty = that branch's own phone |
 
-These five are the only ones worth setting by hand. The rest are written to
+Which kitchen a run collects from, and the number the driver calls, are **not
+settings** — they are columns on the branch (Admin → Branches). A zone names its
+own branch; anything without a zone uses the first active branch flagged
+"receives online orders" that has coordinates and a phone. A branch with no
+phone number cannot be a pickup point, and the API log says so by reference.
+
+These three are the only ones worth setting by hand. The rest are written to
 `.env` with a literal fallback in the deploy workflow, so leaving them unset
 gives the intended value rather than an empty one:
 
@@ -751,7 +755,6 @@ The rest fall back in the deploy workflow:
 | Secret | Falls back to | Notes |
 |--------|---------------|-------|
 | `NOON_SEND_ENV` | `staging` | Deliberate while the trial runs — see the note above. `production` once the live key exists |
-| `NOON_SEND_OUTLET_CODE` | *(empty)* | **Not the place to set this.** It is a fallback for a branch with no code of its own; the real value lives on the branch (below). Leave it unset |
 | `NOON_SEND_LOCALE` | `en-ae` | |
 | `NOON_SEND_CLIENT_CODE` | `noon_food` | `noon_food` or `nownow` |
 | `NOON_SEND_MAX_DISTANCE_M` | `20000` | Matches the 20 km the rate card prices to and the radius `Sharjah Central` is drawn at. Never set it tighter than the zone — see the note above. `GET /public/v1/configurations` reports the real per-partner limit |

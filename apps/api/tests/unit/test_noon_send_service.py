@@ -17,6 +17,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -171,11 +172,16 @@ def test_the_card_never_charges_less_for_going_further():
     and the monotonic reading is the one implemented — this is the test that
     would catch the other one being introduced.
     """
+    # Pinned off-peak so the curve under test is the same one every run. The
+    # surge is a constant and would not break monotonicity, but a test that
+    # quietly measures a different curve depending on the hour is a test whose
+    # failures nobody can reproduce.
+    off_peak = datetime(2026, 8, 4, 10, 0, tzinfo=ZoneInfo("Asia/Dubai"))
     previous = Decimal("0")
     step = 0.25
     km = 0.0
     while km <= 40:
-        cost = noon_send_service.rate_card_cost(km)
+        cost = noon_send_service.rate_card_cost(km, at=off_peak)
         assert cost >= previous, f"{km} km costs less than the distance before it"
         previous = cost
         km += step
@@ -346,30 +352,22 @@ async def test_the_ack_from_create_task_is_not_stored_as_a_status(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "branch_code,setting,expected",
-    [
-        # The branch is the source of truth.
-        ("PCKP_BRANCH01", "PCKP_GLOBAL01", "PCKP_BRANCH01"),
-        # The setting is the fallback that keeps the single-kitchen deployment
-        # working with nothing filled in.
-        (None, "PCKP_GLOBAL01", "PCKP_GLOBAL01"),
-        (None, "", ""),
-    ],
+    "branch_code,expected", [("PCKP_BRANCH01", "PCKP_BRANCH01"), (None, "")]
 )
-async def test_the_outlet_code_comes_from_the_branch_first(
-    monkeypatch, branch_code, setting, expected
+async def test_the_outlet_code_comes_from_the_branch_and_nowhere_else(
+    branch_code, expected
 ):
     """
-    Which outlet a rider collects from is a property of the place, not of the
-    account. One environment variable cannot hold two answers, and the second
-    kitchen is the whole reason this moved onto the branch.
-    """
-    from app.core.config import settings as app_settings
-    from app.services import lalamove_service
+    Which outlet a rider collects from is a property of the place.
 
-    monkeypatch.setattr(app_settings, "NOON_SEND_OUTLET_CODE", setting)
-    monkeypatch.setattr(app_settings, "LALAMOVE_PICKUP_BRANCH_REF", "")
-    monkeypatch.setattr(app_settings, "LALAMOVE_SENDER_PHONE", "")
+    There used to be a `NOON_SEND_OUTLET_CODE` setting behind this as a
+    fallback, which meant one environment variable was answering a question that
+    has one answer per kitchen — and the moment a second kitchen exists it is
+    wrong for one of them, silently, by dispatching from the other one's door.
+    A branch with no code simply cannot dispatch through noon Send, which is a
+    refusal an admin can fix in the field it belongs to.
+    """
+    from app.services import lalamove_service
 
     branch = SimpleNamespace(
         name="Melting Moments Cakes",
@@ -390,6 +388,8 @@ async def test_the_outlet_code_comes_from_the_branch_first(
     pickup = await lalamove_service.resolve_pickup(_Db())
     assert pickup.noon_send_outlet_code == expected
     assert pickup.reference == "K001"
+    # The driver's number is the branch's, with nothing able to override it.
+    assert pickup.phone == "+971501234567"
 
 
 @pytest.mark.asyncio
