@@ -143,7 +143,12 @@ export default async function AboutPage({
             <h2 className="font-display text-3xl sm:text-4xl text-primary mb-6 leading-snug">
               {c.story_1?.title ?? ''}
             </h2>
-            <div className="space-y-4 text-sm font-body text-gray-600 leading-relaxed">
+            {/* Blank lines separate paragraphs; a single newline is a line
+                break inside one. The story copy uses both — "The photo everyone
+                takes. / The bite everyone remembers." is three lines of one
+                thought, and running them together loses the rhythm they were
+                written for. */}
+            <div className="space-y-4 text-sm font-body text-gray-600 leading-relaxed whitespace-pre-line">
               {(c.story_1?.body ?? '').split('\n\n').filter(Boolean).map((p, i) => (
                 <p key={i}>{p}</p>
               ))}
@@ -187,7 +192,7 @@ export default async function AboutPage({
               <h2 className="font-display text-3xl sm:text-4xl text-primary mb-6 leading-snug">
                 {c.story_2?.title ?? ''}
               </h2>
-              <div className="space-y-4 text-sm font-body text-gray-600 leading-relaxed">
+              <div className="space-y-4 text-sm font-body text-gray-600 leading-relaxed whitespace-pre-line">
                 {(c.story_2?.body ?? '').split('\n\n').filter(Boolean).map((p, i) => (
                   <p key={i}>{p}</p>
                 ))}
