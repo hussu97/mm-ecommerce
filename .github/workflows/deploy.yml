@@ -361,7 +361,7 @@ jobs:
           NOON_SEND_CLIENT_CODE=${{ secrets.NOON_SEND_CLIENT_CODE || 'noon_food' }}
           NOON_SEND_MAX_DISTANCE_M=${{ secrets.NOON_SEND_MAX_DISTANCE_M || '15000' }}
           NOON_SEND_DETOUR_FACTOR=${{ secrets.NOON_SEND_DETOUR_FACTOR || '1.49' }}
-          NOON_SEND_ALLOWED_EMAILS=${{ secrets.NOON_SEND_ALLOWED_EMAILS || 'h_abbasi97@hotmail.com' }}
+          TRIAL_CUSTOMER_EMAILS=${{ secrets.TRIAL_CUSTOMER_EMAILS || 'h_abbasi97@hotmail.com' }}
           NOON_SEND_WEBHOOK_API_KEY=${{ secrets.NOON_SEND_WEBHOOK_API_KEY }}
           NOON_SEND_TIMEOUT_SECONDS=${{ secrets.NOON_SEND_TIMEOUT_SECONDS || '8' }}
           BATCH_DISPATCHER_ENABLED=${{ secrets.BATCH_DISPATCHER_ENABLED || 'true' }}

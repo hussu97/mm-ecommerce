@@ -728,29 +728,40 @@ Only the `Sharjah Central` zone uses it. noon Send cannot cross an emirate
 boundary and the kitchen is in Sharjah, so Ajman and Dubai are not candidates
 however the map is redrawn.
 
+> **Read this before deploying.** Production currently runs noon Send against
+> **their staging fleet** (`NOON_SEND_ENV=staging`), because there is no
+> production key yet. Staging creates, tracks and cancels tasks for real — but
+> **it never sends a rider**. Only the accounts in `TRIAL_CUSTOMER_EMAILS` are
+> routed there, and **somebody has to deliver those orders by hand.** That is
+> also why those accounts get free delivery: they are test orders. Every other
+> customer in `Sharjah Central` is carried by Lalamove exactly as before and is
+> completely unaffected.
+>
+> When the production key arrives, set `NOON_SEND_ENV=production` and the same
+> trial accounts start getting real riders. Widening beyond them is a separate,
+> deliberate change to `TRIAL_CUSTOMER_EMAILS`.
+
 | Secret | Production value | Notes |
 |--------|-----------------|-------|
-| `NOON_SEND_API_KEY` | production key | Request it from the noon RoD integrations team (`kasinghal@noon.com`) |
-| `NOON_SEND_OUTLET_CODE` | `PCKP_...` | From `python -m scripts.register_noon_send_pickup --create`, run once against production |
+| `NOON_SEND_API_KEY` | staging key for now | The staging key is in the ROD integration doc. Request a production key from the noon RoD integrations team (`kasinghal@noon.com`) |
+| `NOON_SEND_OUTLET_CODE` | `PCKP_MLTNGM3W62` | The kitchen's staging pickup point, already created and serviceable. Re-run `python -m scripts.register_noon_send_pickup --create` against production when the production key arrives |
 | `NOON_SEND_WEBHOOK_API_KEY` | a secret you generate | Hand the same value to the integrations team with the webhook URLs |
-| `NOON_SEND_ENV` | `production` | **Defaults to `staging`** — this one has to be set explicitly or nothing reaches the live fleet |
 
 The rest fall back in the deploy workflow:
 
 | Secret | Falls back to | Notes |
 |--------|---------------|-------|
+| `NOON_SEND_ENV` | `staging` | Deliberate while the trial runs — see the note above. `production` once the live key exists |
 | `NOON_SEND_LOCALE` | `en-ae` | |
 | `NOON_SEND_CLIENT_CODE` | `noon_food` | `noon_food` or `nownow` |
 | `NOON_SEND_MAX_DISTANCE_M` | `15000` | Their documented cap. `GET /public/v1/configurations` reports the real per-partner limit |
 | `NOON_SEND_DETOUR_FACTOR` | `1.49` | Straight line to road distance. Only used to estimate cost — there is no quotation API |
-| `NOON_SEND_ALLOWED_EMAILS` | `h_abbasi97@hotmail.com` | **The live-fire gate.** On production, only a signed-in customer whose own email is on this list is carried by noon Send; everyone else goes Lalamove without noticing. Set it to an empty string to open noon Send to all customers |
 | `NOON_SEND_TIMEOUT_SECONDS` | `8` | |
 
 ```bash
 gh secret set NOON_SEND_API_KEY --repo hussu97/mm-ecommerce
-gh secret set NOON_SEND_OUTLET_CODE --repo hussu97/mm-ecommerce
+gh secret set NOON_SEND_OUTLET_CODE --repo hussu97/mm-ecommerce   # PCKP_MLTNGM3W62
 gh secret set NOON_SEND_WEBHOOK_API_KEY --repo hussu97/mm-ecommerce
-gh secret set NOON_SEND_ENV --repo hussu97/mm-ecommerce   # "production"
 ```
 
 Two things have to be done by the noon RoD integrations team, not here:
@@ -760,14 +771,28 @@ Two things have to be done by the noon RoD integrations team, not here:
    tracking → `.../api/v1/webhooks/noon-send/tracking`. Give them
    `NOON_SEND_WEBHOOK_API_KEY` to send as `X-API-Key`; they do not sign
    requests, so a push without the right key is dropped. Unlike Lalamove the
-   path is not part of any signature, so it can be changed freely.
+   path is not part of any signature, so it can be changed freely. These have to
+   be registered **on the staging side** for the trial, and again on production
+   later.
 2. **Confirm the distance limit.** The standard partner cap is 15 km. Anything
    wider has to be agreed with the commercial team (`sbhatti@noon.com`), after
    which `NOON_SEND_MAX_DISTANCE_M` and the 10 km radius in
    `scripts/build_delivery_zones.py` can both grow.
 
-Orders placed on production are real: a rider is dispatched and a cancellation
-is charged. There is no wallet to fund — billing is on the partner agreement.
+There is no wallet to fund — billing is on the partner agreement. Once
+`NOON_SEND_ENV=production`, orders are real: a rider is dispatched and a
+cancellation is charged.
+
+#### Trial customers
+
+| Secret | Falls back to | Notes |
+|--------|---------------|-------|
+| `TRIAL_CUSTOMER_EMAILS` | `h_abbasi97@hotmail.com` | Comma-separated. A **signed-in** customer on this list is carried by noon Send and pays no delivery fee; a guest typing the same address is not, and gets neither. Empty ends the trial: noon Send opens to every customer in its zone and nobody gets free delivery |
+
+This one list is the only thing gating noon Send, and it is deliberately not
+tied to `APP_ENV` or `NOON_SEND_ENV` — production points `NOON_SEND_ENV` at
+noon's staging fleet, so an environment-shaped gate would have opened the trial
+to every customer the moment that was configured.
 
 #### Frontend URLs (used in email templates & CORS)
 

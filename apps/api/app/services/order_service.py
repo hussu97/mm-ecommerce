@@ -240,6 +240,8 @@ async def _compute_order_totals(
     subtotal: Decimal,
     discount_amount: Decimal,
     db: AsyncSession,
+    user_id: uuid.UUID | None = None,
+    email: str | None = None,
 ) -> tuple[Decimal, Decimal, Decimal, Decimal, Zone | None]:
     """
     Compute delivery fee, order total, and VAT figures.
@@ -259,13 +261,18 @@ async def _compute_order_totals(
         and address.longitude is not None
         else None
     )
-    # The fee is priced off the pin, and only the pin.
+    # The fee is priced off the pin, and only the pin — with one exception, the
+    # trial accounts, who pay nothing. Their identity has to reach this call or
+    # the checkout would show them free delivery and the order would charge for
+    # it anyway.
     delivery_fee = await delivery_service.calculate_fee(
         data.delivery_method,
         discounted_subtotal,
         db,
         latitude=address.latitude if address else None,
         longitude=address.longitude if address else None,
+        user_id=user_id,
+        email=email,
     )
     total = discounted_subtotal + delivery_fee
 
@@ -420,7 +427,17 @@ async def create_order(
         vat_amount,
         total_excl_vat,
         zone,
-    ) = await _compute_order_totals(data, subtotal, discount_amount, db)
+    ) = await _compute_order_totals(
+        data,
+        subtotal,
+        discount_amount,
+        db,
+        user_id=user_id,
+        # The same address `_persist_order` will stamp on the order, resolved
+        # the same way, so the fee and the identity it was priced for cannot
+        # disagree.
+        email=data.email or fallback_email,
+    )
 
     # 5. Claim stock for stock-tracked products (fails if any is out of stock)
     await _decrement_stock(db, cart)

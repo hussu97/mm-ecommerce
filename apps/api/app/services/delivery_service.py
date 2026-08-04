@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -8,7 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.cart import Cart
 from app.models.delivery_settings import DeliverySettings
 from app.models.order import DeliveryMethodEnum
-from app.services import courier_service, delivery_zone_service, lalamove_service
+from app.services import (
+    courier_service,
+    delivery_zone_service,
+    lalamove_service,
+    trial_customer,
+)
 
 __all__ = [
     "calculate_fee",
@@ -42,6 +48,8 @@ async def calculate_fee(
     settings: DeliverySettings | None = None,
     latitude: Decimal | float | None = None,
     longitude: Decimal | float | None = None,
+    user_id: uuid.UUID | None = None,
+    email: str | None = None,
 ) -> Decimal:
     """
     The delivery fee in AED.
@@ -51,12 +59,22 @@ async def calculate_fee(
     hundred metres over a boundary, and wrong for everyone who left the
     dropdown on its default — and an order without coordinates cannot be
     delivered anyway, so the default fee is the honest answer for one.
+
+    The single exception is the trial accounts, who pay nothing: their orders
+    exist to exercise the courier pipeline on production, and a test that costs
+    the tester money is a test that gets run less often than it should. The
+    identity is passed in rather than looked up here so that the two callers
+    that know it — the checkout quote and the order being written — are the only
+    two that can grant it.
     """
     if settings is None:
         settings = await get_settings(db)
 
     if delivery_method == DeliveryMethodEnum.PICKUP:
         return settings.pickup_fee
+
+    if trial_customer.is_trial_customer(user_id, email):
+        return Decimal("0.00")
 
     if subtotal >= settings.free_delivery_threshold:
         return Decimal("0.00")
@@ -80,6 +98,8 @@ async def quote(
     longitude: Decimal | float | None = None,
     cart: Cart | None = None,
     address: str | None = None,
+    user_id: uuid.UUID | None = None,
+    email: str | None = None,
 ) -> dict:
     """
     What delivery would cost to this point, for the checkout to show live.
@@ -89,6 +109,11 @@ async def quote(
     told: the fee they see is the zone's, and the courier's number exists so
     the zone's number can be argued with later. It is deliberately absent from
     the response — nothing that reaches a browser should hint at who delivers.
+
+    A trial account sees free delivery, and sees it the same way anyone over the
+    threshold does. Presenting it as its own kind of discount would mean a
+    second state for the checkout to render, and the account exists to walk the
+    ordinary path rather than a special one.
     """
     settings = await get_settings(db)
     zone = (
@@ -97,7 +122,9 @@ async def quote(
         else None
     )
     base_fee = zone.delivery_fee if zone else settings.default_delivery_fee
-    qualifies = subtotal >= settings.free_delivery_threshold
+    qualifies = subtotal >= settings.free_delivery_threshold or (
+        trial_customer.is_trial_customer(user_id, email)
+    )
 
     if cart is not None and latitude is not None and longitude is not None:
         estimate, error = await courier_service.estimate_for_point(
@@ -128,9 +155,11 @@ async def quote(
         "base_fee": float(base_fee),
         "free_delivery_applied": qualifies,
         "free_threshold": float(settings.free_delivery_threshold),
-        "remaining_for_free": float(
-            max(Decimal("0.00"), settings.free_delivery_threshold - subtotal)
-        ),
+        # Zero once it is free, however it became free. Otherwise a trial
+        # account would be shown "free delivery" and "AED 150 to go" at once.
+        "remaining_for_free": 0.0
+        if qualifies
+        else float(max(Decimal("0.00"), settings.free_delivery_threshold - subtotal)),
         "zone_name": zone.name if zone else None,
         "in_known_zone": zone is not None,
     }

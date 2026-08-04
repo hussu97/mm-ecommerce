@@ -70,69 +70,71 @@ def configured(monkeypatch):
     """A working noon Send, so the gate is the only thing under test."""
     monkeypatch.setattr(settings, "NOON_SEND_API_KEY", "test-key")
     monkeypatch.setattr(settings, "NOON_SEND_OUTLET_CODE", "PCKP_TEST123")
-    monkeypatch.setattr(settings, "NOON_SEND_ALLOWED_EMAILS", TRIAL_EMAIL)
+    monkeypatch.setattr(settings, "TRIAL_CUSTOMER_EMAILS", TRIAL_EMAIL)
     return settings
 
 
-# ── the allow-list ────────────────────────────────────────────────────────────
+# ── the trial list ────────────────────────────────────────────────────────────
 
 
-def test_staging_does_not_consult_the_list_at_all(configured, monkeypatch):
-    """Staging is where the integration is exercised, so it is open."""
-    monkeypatch.setattr(settings, "NOON_SEND_ENV", "staging")
-    allowed, reason = courier_service.may_use_noon_send(
-        _order(email="someone@example.com")
-    )
+@pytest.mark.parametrize("app_env", ["development", "staging", "production"])
+@pytest.mark.parametrize("noon_env", ["staging", "production"])
+def test_the_list_is_the_only_gate_in_every_environment(
+    configured, monkeypatch, app_env, noon_env
+):
+    """
+    The gate deliberately does not read either environment setting.
+
+    Production currently points `NOON_SEND_ENV` at noon's *staging* fleet, so a
+    gate written as "apply the list only on production" would have opened the
+    trial to every customer the moment that was configured — silently, and on
+    real orders. The list applies everywhere or it is not a gate.
+    """
+    monkeypatch.setattr(settings, "APP_ENV", app_env)
+    monkeypatch.setattr(settings, "NOON_SEND_ENV", noon_env)
+
+    assert courier_service.may_use_noon_send(_order())[0]
+    assert not courier_service.may_use_noon_send(_order(email="other@example.com"))[0]
+
+
+def test_the_trial_account_is_carried(configured):
+    allowed, reason = courier_service.may_use_noon_send(_order())
     assert allowed and reason is None
 
 
-def test_production_carries_the_trial_customer(configured, monkeypatch):
-    monkeypatch.setattr(settings, "NOON_SEND_ENV", "production")
-    allowed, _ = courier_service.may_use_noon_send(_order())
-    assert allowed
-
-
-def test_production_matches_the_address_case_insensitively(configured, monkeypatch):
+def test_an_address_is_matched_case_insensitively(configured):
     """An address typed with a capital is the same address."""
-    monkeypatch.setattr(settings, "NOON_SEND_ENV", "production")
-    allowed, _ = courier_service.may_use_noon_send(
-        _order(email="H_Abbasi97@Hotmail.com")
-    )
-    assert allowed
+    assert courier_service.may_use_noon_send(_order(email="H_Abbasi97@Hotmail.com"))[0]
 
 
-def test_production_refuses_a_guest_even_at_the_right_address(configured, monkeypatch):
+def test_a_guest_is_refused_even_at_the_right_address(configured):
     """
     "Signed in" is half the rule, and it is the half a guest checkout can forge:
     anybody may type the trial address into the email box.
     """
-    monkeypatch.setattr(settings, "NOON_SEND_ENV", "production")
     allowed, reason = courier_service.may_use_noon_send(_order(user_id=None))
     assert not allowed
     assert "signed-in" in reason
 
 
-def test_production_refuses_a_different_customer(configured, monkeypatch):
-    monkeypatch.setattr(settings, "NOON_SEND_ENV", "production")
+def test_a_different_customer_is_refused(configured):
     allowed, reason = courier_service.may_use_noon_send(
         _order(email="someone@example.com")
     )
     assert not allowed
-    assert "trial customer" in reason
+    assert "trial account" in reason
 
 
-def test_an_empty_list_opens_production_to_everyone(configured, monkeypatch):
+def test_an_empty_list_opens_noon_send_to_everyone(configured, monkeypatch):
     """How the trial ends: clear the list rather than edit code."""
-    monkeypatch.setattr(settings, "NOON_SEND_ENV", "production")
-    monkeypatch.setattr(settings, "NOON_SEND_ALLOWED_EMAILS", "")
+    monkeypatch.setattr(settings, "TRIAL_CUSTOMER_EMAILS", "")
     allowed, _ = courier_service.may_use_noon_send(_order(email="anyone@example.com"))
     assert allowed
 
 
 def test_several_addresses_may_be_listed(configured, monkeypatch):
-    monkeypatch.setattr(settings, "NOON_SEND_ENV", "production")
     monkeypatch.setattr(
-        settings, "NOON_SEND_ALLOWED_EMAILS", f"{TRIAL_EMAIL}, second@example.com"
+        settings, "TRIAL_CUSTOMER_EMAILS", f"{TRIAL_EMAIL}, second@example.com"
     )
     assert courier_service.may_use_noon_send(_order(email="second@example.com"))[0]
     assert not courier_service.may_use_noon_send(_order(email="third@example.com"))[0]
@@ -140,7 +142,6 @@ def test_several_addresses_may_be_listed(configured, monkeypatch):
 
 def test_unconfigured_credentials_are_a_refusal_not_a_crash(monkeypatch):
     monkeypatch.setattr(settings, "NOON_SEND_API_KEY", "")
-    monkeypatch.setattr(settings, "NOON_SEND_ENV", "production")
     allowed, reason = courier_service.may_use_noon_send(_order())
     assert not allowed
     assert "not configured" in reason
@@ -201,7 +202,6 @@ def in_range(monkeypatch):
 async def test_a_noon_send_zone_uses_noon_send(
     configured, monkeypatch, spies, in_range
 ):
-    monkeypatch.setattr(settings, "NOON_SEND_ENV", "staging")
     delivery = _delivery()
 
     async def dispatched(db, order):
@@ -218,9 +218,8 @@ async def test_a_noon_send_zone_uses_noon_send(
 
 @pytest.mark.asyncio
 async def test_a_customer_off_the_list_is_carried_by_lalamove(
-    configured, monkeypatch, spies, in_range
+    configured, spies, in_range
 ):
-    monkeypatch.setattr(settings, "NOON_SEND_ENV", "production")
     delivery = _delivery()
 
     result = await courier_service.dispatch(
@@ -237,8 +236,6 @@ async def test_a_customer_off_the_list_is_carried_by_lalamove(
 async def test_a_drop_past_the_cap_is_carried_by_lalamove(
     configured, monkeypatch, spies
 ):
-    monkeypatch.setattr(settings, "NOON_SEND_ENV", "staging")
-
     async def too_far(db, order):
         return False, "Drop-off is about 18.2 km away, past noon Send's 15 km limit"
 
@@ -254,7 +251,6 @@ async def test_a_refusal_from_noon_send_falls_through_to_lalamove(
     configured, monkeypatch, spies, in_range
 ):
     """The order is already paid for. Somebody has to collect it."""
-    monkeypatch.setattr(settings, "NOON_SEND_ENV", "staging")
     delivery = _delivery()
 
     async def refused(db, order):
@@ -273,11 +269,8 @@ async def test_a_refusal_from_noon_send_falls_through_to_lalamove(
 
 
 @pytest.mark.asyncio
-async def test_a_lalamove_zone_is_never_handed_to_noon_send(
-    configured, monkeypatch, spies
-):
+async def test_a_lalamove_zone_is_never_handed_to_noon_send(configured, spies):
     """noon Send probably cannot reach it — that is why the zone says Lalamove."""
-    monkeypatch.setattr(settings, "NOON_SEND_ENV", "staging")
     await courier_service.dispatch(_Db(_delivery("lalamove")), _order())
     assert spies == ["lalamove"]
 

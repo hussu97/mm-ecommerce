@@ -11,12 +11,13 @@ cheaper on everything it can reach: AED 12 flat to 10 road km against Lalamove's
 `17 + 0.70/km`, and still ahead out to 31 km. Two things stand between a
 `noon_send` zone and an actual noon Send task.
 
-*The allow-list.* On production, noon Send only carries orders placed by a
-signed-in customer whose own email address is in `NOON_SEND_ALLOWED_EMAILS`.
-This is a live-fire trial on real orders: a guest checkout never qualifies, and
-everybody else in the zone is carried by Lalamove without noticing anything.
-Off production the list is not consulted at all, because staging is where the
-integration is exercised.
+*The trial list.* noon Send only carries orders placed by a signed-in customer
+on `TRIAL_CUSTOMER_EMAILS`. Everybody else in the zone is carried by Lalamove
+and notices nothing. The list applies in every environment and is the only
+thing gating noon Send — deliberately not tied to `APP_ENV` or to
+`NOON_SEND_ENV`, because production currently points at noon's *staging* fleet
+and an environment-shaped gate would have opened the trial to every customer
+the moment it did. Emptying the list is how the trial ends.
 
 *The fallback.* noon Send caps a run at 15 km, cannot cross an emirate boundary,
 and can simply have nobody free. Any of those is a refusal, and a refusal must
@@ -33,11 +34,10 @@ import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import Order
 from app.models.order_delivery import OrderDelivery
-from app.services import lalamove_service, noon_send_service
+from app.services import lalamove_service, noon_send_service, trial_customer
 
 logger = logging.getLogger(__name__)
 
@@ -69,11 +69,6 @@ def is_enabled(provider: str | None) -> bool:
     return False
 
 
-def _allowed_emails() -> set[str]:
-    raw = settings.NOON_SEND_ALLOWED_EMAILS or ""
-    return {part.strip().lower() for part in raw.split(",") if part.strip()}
-
-
 def may_use_noon_send(order: Order) -> tuple[bool, str | None]:
     """
     Whether this particular order is allowed onto noon Send, and why not.
@@ -84,18 +79,14 @@ def may_use_noon_send(order: Order) -> tuple[bool, str | None]:
     """
     if not noon_send_service.is_enabled():
         return False, "noon Send is not configured"
-    if settings.NOON_SEND_ENV != "production":
-        # Staging is where the integration is exercised, so it is open.
-        return True, None
 
-    allowed = _allowed_emails()
-    if not allowed:
+    if not trial_customer.emails():
         # Deliberately open: emptying the list is how the trial ends.
         return True, None
     if order.user_id is None:
-        return False, "noon Send is limited to signed-in customers on production"
-    if (order.email or "").strip().lower() not in allowed:
-        return False, "noon Send is limited to the trial customer on production"
+        return False, "noon Send is limited to signed-in trial accounts"
+    if not trial_customer.is_trial_customer(order.user_id, order.email):
+        return False, "noon Send is limited to the trial account"
     return True, None
 
 

@@ -29,11 +29,15 @@ TASK_NR = "EHG84NNJMVG35BTDE"
 
 
 class _FakeResult:
-    def __init__(self, value):
+    def __init__(self, value, scalar=None):
         self._value = value
+        self._scalar = scalar
 
     def scalars(self):
         return SimpleNamespace(first=lambda: self._value)
+
+    def scalar(self):
+        return self._scalar
 
 
 class _FakeDb:
@@ -237,7 +241,10 @@ async def test_the_ack_from_create_task_is_not_stored_as_a_status(monkeypatch):
 
     class _Db:
         async def execute(self, _stmt):
-            return _FakeResult(order)
+            # `scalar` answers the payments SUM; `scalars().first()` answers
+            # the order lookup. One stub serves both because the two calls
+            # never read the same attribute.
+            return _FakeResult(order, scalar=Decimal("185.00"))
 
         async def commit(self):
             pass
@@ -261,6 +268,67 @@ async def test_the_ack_from_create_task_is_not_stored_as_a_status(monkeypatch):
     assert result.courier_status in {
         s.value for s in noon_send_service.NoonSendStatusEnum
     }
+
+
+def test_building_a_task_touches_only_plain_columns():
+    """
+    `build_task` runs synchronously inside an async dispatch, so reading a
+    relationship off the order would not be a wrong number — it would be a
+    `MissingGreenlet` and a failed dispatch for every order that did not happen
+    to arrive with that relationship already loaded.
+
+    This is a regression test. The first version derived the COD amount from
+    `order.amount_paid`, which walks `order.payments`; it survived every unit
+    test and blew up the first time a real order was dispatched. The order stub
+    below has no `payments`, `amount_paid` or `balance_due` at all, so touching
+    one raises rather than silently working.
+    """
+    order = SimpleNamespace(
+        order_number="MM-1001",
+        total=Decimal("185.00"),
+        payment_method="cod",
+        notes=None,
+        shipping_address_snapshot={
+            "latitude": 25.3213,
+            "longitude": 55.3820,
+            "phone": "+971501234567",
+            "first_name": "Hussain",
+            "address_line_1": "Al Majaz Waterfront, Al Majaz 3",
+            "unit_number": "1",
+            "city": "Sharjah",
+        },
+    )
+
+    task, reason = noon_send_service.build_task(order, Decimal("185.00"))
+
+    assert reason is None
+    assert task.cod_value == 18500
+    assert task.prepaid_value == 0
+    assert task.drop_off_address["lat"] == 253213000
+    assert task.drop_off_address["lng"] == 553820000
+
+
+def test_a_paid_order_is_sent_as_prepaid_even_when_flagged_cod():
+    """Nothing left to collect means nothing for the rider to collect."""
+    order = SimpleNamespace(
+        order_number="MM-1002",
+        total=Decimal("185.00"),
+        payment_method="cod",
+        notes=None,
+        shipping_address_snapshot={
+            "latitude": 25.3213,
+            "longitude": 55.3820,
+            "phone": "+971501234567",
+            "first_name": "Hussain",
+            "address_line_1": "Al Majaz Waterfront, Al Majaz 3",
+            "city": "Sharjah",
+        },
+    )
+
+    task, _ = noon_send_service.build_task(order, Decimal("0.00"))
+
+    assert task.cod_value == 0
+    assert task.prepaid_value == 18500
 
 
 def test_rider_position_overwrites_rather_than_accumulates():

@@ -35,13 +35,14 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import Order, OrderStatusEnum
+from app.models.pos_order import OrderPayment
 from app.models.order_delivery import (
     NOON_SEND_FAILED_STATUSES,
     NoonSendStatusEnum,
@@ -214,13 +215,43 @@ class Task:
     tags: list[str]
 
 
-def build_task(order: Order) -> tuple[Task | None, str | None]:
+async def outstanding_balance(db: AsyncSession, order: Order) -> Decimal:
+    """
+    What is still owed on this order, asked for rather than read off the object.
+
+    `Order.amount_paid` walks `order.payments`, which is a relationship. It is
+    `lazy="selectin"` so it is already loaded whenever the order came out of a
+    query — but `dispatch_order` is called from four places and only has to meet
+    one order that did not, and a lazy load from inside async SQLAlchemy is not
+    a wrong number, it is a `MissingGreenlet` and a failed dispatch. Summing in
+    SQL is one query and cannot be surprised.
+    """
+    paid = (
+        await db.execute(
+            select(
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (OrderPayment.is_refund.is_(True), -OrderPayment.amount),
+                            else_=OrderPayment.amount,
+                        )
+                    ),
+                    0,
+                )
+            ).where(OrderPayment.order_id == order.id)
+        )
+    ).scalar() or Decimal("0")
+    return Decimal(str(order.total or 0)) - Decimal(str(paid))
+
+
+def build_task(order: Order, outstanding: Decimal) -> tuple[Task | None, str | None]:
     """
     Turn an order's shipping snapshot into a task, or say why it cannot be one.
 
     Mirrors `lalamove_service.build_drop`: the reason is written to the delivery
     row so an admin reads "no reachable phone number" rather than a 422 about a
-    field they have never heard of.
+    field they have never heard of. Reads nothing but plain columns, for the
+    same reason — `outstanding` is passed in rather than derived here.
     """
     address = order.shipping_address_snapshot or {}
     try:
@@ -248,7 +279,6 @@ def build_task(order: Order) -> tuple[Task | None, str | None]:
     ).strip()
 
     total = Decimal(str(order.total or 0))
-    outstanding = total - order.amount_paid
     is_cod = (order.payment_method or "").lower() == "cod" and outstanding > 0
 
     notes = [f"Order {order.order_number}"]
@@ -297,7 +327,7 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
     if delivery is None:
         return None
 
-    task, reason = build_task(order)
+    task, reason = build_task(order, await outstanding_balance(db, order))
     if task is None:
         delivery.last_error = reason
         return delivery
@@ -521,6 +551,14 @@ async def apply_webhook(
 
     Out-of-order pushes are dropped rather than allowed to walk a delivered
     order back to "assigned", exactly as on the Lalamove side.
+
+    Their `timestamp` is `YYYY-MM-DD HH:MM:SS` with no zone, and it is **UTC** —
+    confirmed by reading `created_at` off a live task and comparing it against
+    our own clock, which agreed to the second rather than being four hours out.
+    `parse_time` reads a naive stamp as UTC, so the comparison below is like
+    for like. If that ever changed to Gulf local time every push would arrive
+    stamped four hours in the future, which would not reorder anything but
+    would put `delivered_at` four hours late on every order.
     """
     updated_at = parse_time(payload.get("timestamp"))
     if (

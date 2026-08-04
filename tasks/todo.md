@@ -1,5 +1,20 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ⏳ 2026-08-04: Route the trial account to noon Send staging, and run it end to end
+
+### Plan
+- [x] 1. Make the trial list the only gate, in every environment. Production points `NOON_SEND_ENV` at noon's **staging** fleet — we have no production key — so the previous "apply the list only when `NOON_SEND_ENV == production`" would have opened noon Send to every Sharjah Central customer the moment that was configured. The list now applies unconditionally, and `TRIAL_CUSTOMER_EMAILS` replaces `NOON_SEND_ALLOWED_EMAILS` because it governs two things rather than one.
+- [x] 2. Give the trial account free delivery. New `app/services/trial_customer.py` holds the one membership test — signed in **and** on the list, so a guest typing the address gets neither the discount nor noon Send. Threaded through `calculate_fee` and `quote` and both endpoints, so the checkout and the order can never disagree.
+- [x] 3. Run the whole thing end to end against the real noon Send staging API, through the application's own dispatch path rather than a hand-rolled script.
+- [x] 4. Fix what the end-to-end run found, and cover it. Full suite 633 passing, ruff and format clean.
+
+### Review
+
+- **The end-to-end run**, on a fresh database migrated to head: a pin at Al Majaz resolves to `Sharjah Central`/`noon_send`/AED 15; the trial account is quoted AED 0 while another signed-in customer and a guest at the same address are both quoted AED 15; a `noon_send` order for a non-trial customer falls through to Lalamove; the trial order creates a real staging task (`HG84NNG6XZ6N6PNN`), estimated at AED 12 over 1,966 m. Feeding the status webhooks in as noon Send would POST them walked the order `packed → out_for_delivery → delivered`, a replay was deduplicated, and a late push was rejected by the ordering guard. All five staging tasks opened during testing were cancelled afterwards.
+- **A real bug, found only by that run.** `build_task` derived the COD amount from `order.amount_paid`, which walks the `payments` relationship. It is `lazy="selectin"`, so it is loaded whenever the order came out of a query — and every unit test passed — but a lazy load from inside async SQLAlchemy is a `MissingGreenlet`, not a wrong number, and it killed the first real dispatch. The balance is now summed in SQL by `outstanding_balance()` and passed in, and `build_task` reads plain columns only. The regression test uses an order stub with no `payments` attribute at all, so a reintroduction raises rather than passing.
+- **noon Send's webhook timestamps are naive UTC.** Confirmed by reading `created_at` off a live task (`10:26:51`) against our own clock (`10:27:21`) — not Gulf local, which would have been four hours out. Documented at the ordering guard, since local time would silently put `delivered_at` four hours late on every order.
+- **The thing to remember about this deployment:** a staging task never sends a rider. The trial account's orders have to be delivered by hand, which is the reason those orders are free.
+
 ## ⏳ 2026-08-04: Add noon Send as a second courier, and split Sharjah for it
 
 ### Plan
