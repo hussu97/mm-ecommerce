@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -153,15 +154,30 @@ async def list_my_orders(
 @router.get("/admin/all", response_model=PaginatedOrders)
 async def list_all_orders(
     status: OrderStatusEnum | None = Query(None),
-    search: str | None = Query(None, description="Filter by order number or email"),
+    search: str | None = Query(
+        None, description="Order number, email, customer name or phone"
+    ),
+    channel: str | None = Query(
+        None,
+        pattern="^(online|counter)$",
+        description="`online` for the storefront, `counter` for the till. "
+        "Omit for both — they are one ledger.",
+    ),
+    branch_id: uuid.UUID | None = Query(None),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_admin_user),
 ):
-    """List all orders with optional filters (admin only)."""
+    """Every order, from either channel (admin only)."""
     items, total = await order_service.get_all_admin(
-        db, status=status, search=search, page=page, per_page=per_page
+        db,
+        status=status,
+        search=search,
+        page=page,
+        per_page=per_page,
+        channel=channel,
+        branch_id=branch_id,
     )
     pages = max(1, (total + per_page - 1) // per_page)
     return PaginatedOrders(

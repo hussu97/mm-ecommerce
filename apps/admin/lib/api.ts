@@ -207,7 +207,15 @@ export const importApi = {
 // ─── Orders ───────────────────────────────────────────────────────────────────
 
 export const ordersApi = {
-  listAll: (params?: { status?: string; search?: string; page?: number; per_page?: number }) => {
+  listAll: (params?: {
+    status?: string;
+    search?: string;
+    /** `online` for the storefront, `counter` for the till. Omit for both. */
+    channel?: string;
+    branch_id?: string;
+    page?: number;
+    per_page?: number;
+  }) => {
     const qs = params
       ? '?' + new URLSearchParams(
           Object.entries(params)

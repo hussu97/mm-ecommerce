@@ -15,6 +15,7 @@ from app.models.branch import Branch
 from app.models.cart import Cart, CartItem
 from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
 from app.models.product import Product
+from app.models.pos_order import OrderSourceEnum
 from app.models.promo_code import PromoCode
 from app.schemas.order import OrderCreate, OrderListResponse, OrderResponse
 from app.services import (
@@ -663,8 +664,28 @@ async def get_all_admin(
     search: str | None = None,
     page: int = 1,
     per_page: int = 20,
+    channel: str | None = None,
+    branch_id: uuid.UUID | None = None,
 ) -> tuple[list[OrderListResponse], int]:
+    """
+    Every order, from either channel, newest first.
+
+    `channel` narrows to one: `counter` is what a cashier rang up, `online` is
+    everything else. Deliberately "everything else" rather than
+    `source == "online"` — orders placed before the storefront started stamping
+    a source are storefront orders, and a filter that quietly hid them would be
+    worse than no filter.
+    """
     base_stmt = select(Order)
+
+    if channel == "counter":
+        base_stmt = base_stmt.where(Order.source == OrderSourceEnum.CASHIER.value)
+    elif channel == "online":
+        base_stmt = base_stmt.where(
+            Order.source.is_distinct_from(OrderSourceEnum.CASHIER.value)
+        )
+    if branch_id is not None:
+        base_stmt = base_stmt.where(Order.branch_id == branch_id)
 
     if status:
         base_stmt = base_stmt.where(Order.status == status)
@@ -673,6 +694,8 @@ async def get_all_admin(
         base_stmt = base_stmt.where(
             Order.order_number.ilike(f"%{escaped}%", escape="\\")
             | Order.email.ilike(f"%{escaped}%", escape="\\")
+            | Order.customer_name.ilike(f"%{escaped}%", escape="\\")
+            | Order.customer_phone.ilike(f"%{escaped}%", escape="\\")
         )
 
     count_result = await db.execute(

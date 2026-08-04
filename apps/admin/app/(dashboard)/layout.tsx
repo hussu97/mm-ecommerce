@@ -21,7 +21,9 @@ const NAV: Array<
   { href: '/menu-groups',   label: 'Menu Groups',     icon: 'account_tree' },
 
   { section: 'Point of Sale' },
-  { href: '/pos-orders',    label: 'POS Orders',      icon: 'point_of_sale' },
+  // Counter orders live on the one Orders screen now — the two channels have
+  // always shared a table, and two entries here meant counting today's takings
+  // twice and adding them up.
   { href: '/branches',      label: 'Branches',        icon: 'storefront' },
   { href: '/staff',         label: 'Staff & Roles',   icon: 'badge' },
   { href: '/devices',       label: 'Devices',         icon: 'tablet_mac' },

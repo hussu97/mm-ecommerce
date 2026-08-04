@@ -210,6 +210,9 @@ class PosOrderResponse(ORMModel):
     customer_phone: str | None
     notes: str | None
     kitchen_notes: str | None
+    #: Where a website order is going, flattened for the ticket. Null for a
+    #: counter order, which has nowhere to go but the counter.
+    delivery_address: str | None = None
 
     subtotal: Decimal
     discount_amount: Decimal

@@ -86,6 +86,15 @@ class OrderResponse(BaseModel):
 
 
 class OrderListResponse(BaseModel):
+    """
+    One row on the admin's orders screen, whichever channel it came from.
+
+    Web and POS orders share one table, so they share one row shape. The
+    channel-specific fields are null for the other channel rather than split
+    across two models — a single list that has to union two shapes is how the
+    admin ended up with two screens in the first place.
+    """
+
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
@@ -97,3 +106,17 @@ class OrderListResponse(BaseModel):
     payment_provider: str | None
     created_at: datetime
     item_count: int = 0
+
+    # ── which channel, and what that channel needs shown ──────────────────────
+    #: `online` for the storefront, `cashier` for the counter. Null on orders
+    #: placed before the two channels shared a table.
+    source: str | None = None
+    #: The counter lifecycle, which is a different shape from `status`.
+    pos_status: str | None = None
+    order_type: str | None = None
+    #: The kitchen. Null for an order placed before zones named a branch.
+    branch_id: UUID | None = None
+    #: The short number the counter calls out — "order 12".
+    check_number: int | None = None
+    customer_name: str | None = None
+    delivery_fee: float | None = None

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -47,11 +47,29 @@ from app.services import crud_service, pos_order_service
 router = APIRouter()
 
 
+def _flat_address(order: Order) -> str | None:
+    """
+    Where a website order is going, in one line a rider or a ticket can read.
+
+    Unit first, because a formatted Google address gets someone to the building
+    and the flat number is the only part that finishes the job — the same order
+    the courier payloads use.
+    """
+    snapshot = order.shipping_address_snapshot or {}
+    parts = [
+        str(snapshot.get(key) or "").strip()
+        for key in ("unit_number", "address_line_1", "city")
+    ]
+    joined = ", ".join(part for part in parts if part)
+    return joined or None
+
+
 def _serialise(order: Order) -> PosOrderResponse:
     payload = PosOrderResponse.model_validate(order)
     payload.customer_id = order.user_id
     payload.amount_paid = order.amount_paid
     payload.balance_due = order.balance_due
+    payload.delivery_address = _flat_address(order)
     # Voided lines stay in the database for audit but never render on the check.
     payload.items = [
         OrderItemResponse.model_validate(i) for i in order.items if i.status != "void"
@@ -636,3 +654,40 @@ async def open_checks(
 
 
 __all__ = ["kitchen_router", "router"]
+
+
+@router.post("/{order_id}/accept", response_model=PosOrderResponse)
+async def accept_order(
+    order_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """
+    Take a waiting online order onto the register.
+
+    This is the moment a cashier has *seen* the order: it moves `pending →
+    active`, which is what silences the alert on every device at the branch and
+    what makes it an open check like any other. Everything after this point —
+    sending to the kitchen, marking it packed, printing — is the ordinary flow.
+
+    Idempotent, because two cashiers will press it at once on a busy counter and
+    the second one should not get an error for being slower.
+    """
+    await _require_permission(user, "pos.register.access")
+    order = await pos_order_service.get_order(db, order_id)
+
+    if order.pos_status == PosOrderStatusEnum.ACTIVE.value:
+        return _serialise(order)
+    if order.pos_status != PosOrderStatusEnum.PENDING.value:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Order is {order.pos_status} and cannot be accepted.",
+        )
+
+    order.pos_status = PosOrderStatusEnum.ACTIVE.value
+    order.accepted_at = utcnow()
+    # Who took it, where a cashier had not already been recorded — a storefront
+    # order has no creator until somebody claims it.
+    order.creator_id = order.creator_id or user.id
+    await db.flush()
+    return _serialise(await pos_order_service.get_order(db, order_id))

@@ -217,6 +217,17 @@ export interface Order {
   updated_at: string;
   items: OrderItem[];
   item_count?: number;
+
+  // ── which channel, and what that channel needs shown ───────────────────────
+  /** `online` for the storefront, `cashier` for the counter. */
+  source?: string | null;
+  /** The counter lifecycle — a different shape from `status`. */
+  pos_status?: string | null;
+  order_type?: string | null;
+  branch_id?: string | null;
+  /** The short number the counter calls out — "order 12". */
+  check_number?: number | null;
+  customer_name?: string | null;
 }
 
 export interface PaginatedOrders {

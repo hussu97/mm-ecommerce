@@ -1,5 +1,22 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ⏳ 2026-08-04: One orders screen, and the register learns about website orders
+
+### Plan
+- [x] 1. **Phase 2** — merge the three order views into one. `/orders` gains a channel tab (All / Website / Counter), a branch filter, and columns that change with the tab. `/pos-orders` redirects rather than 404s, and leaves the sidebar.
+- [x] 2. `GET /orders/admin/all` gains `channel` and `branch_id`; the row model gains `source`, `pos_status`, `order_type`, `branch_id`, `check_number`, `customer_name`, `delivery_fee`. Search now also matches customer name and phone.
+- [x] 3. **Phase 3** — push entitlements on both app targets, APNs registration, the waiting-orders queue, the repeating alarm, accept, and the receipt.
+- [x] 4. `POST /pos/orders/{id}/accept` — pending → active, idempotent because two cashiers will press it at once.
+- [x] 5. Verified: 668 API tests, 142 kit tests, both iOS targets build, ruff and `tsc` clean.
+
+### Review
+
+- **The channel filter is "everything that is not the counter", not "source == online".** Orders placed before the storefront stamped a source are storefront orders, and a filter that quietly hid them would be worse than no filter at all.
+- **Push cannot make the sound.** iOS plays a notification sound once and will not loop it, so the payload carries `requires_acknowledgement` and `OrderAlert` owns the tone. It stops for exactly one reason — a person accepted the order or pressed Silence — and deliberately not on a timer, on backgrounding, or on the queue merely being looked at. Three orders take three acknowledgements.
+- **Polling is the mechanism; push is the accelerator.** The queue refreshes every 20s regardless, so a terminal with notifications declined or a dead APNs key still gets its orders — and the alarm is re-raised from the poll, which is what makes a missed notification survivable. Built the other way round, a missed push would be a missed order.
+- **Per the mm-pos consistency rule**, every decision lives in `MMPos/` — the queue, the alarm, the card, the accept, the print — and each app layer only applies `.incomingOrders(session:)`. The app layers contain no `if` and no prose.
+- **Two things worth knowing before this is live:** the Push Notifications capability still has to be enabled on both App IDs in the Apple portal, and there is no `new-order.caf` bundled yet — without it the alarm falls back to a repeating system alert, which works but is not the sound you want.
+
 ## ⏳ 2026-08-04: Stripe webhooks were failing silently, and the APNs groundwork
 
 ### Plan
