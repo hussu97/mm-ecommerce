@@ -132,6 +132,35 @@ describe('TrackPage', () => {
     expect(screen.getByText(/6:30 PM/)).toBeInTheDocument();
   });
 
+  it('degrades cleanly against an API that has not deployed yet', async () => {
+    // `deploy-web` and `deploy-api` run in parallel, so for a minute or two
+    // after a release this page is live against the previous API: no `total`,
+    // no `fulfilment`. It has to render what it has rather than "AED NaN" and
+    // an empty panel.
+    mocks.lookup.mockResolvedValue({
+      order_number: 'MM-20260605-004',
+      status: 'confirmed',
+      delivery_method: 'delivery',
+      items_count: 3,
+      created_at: '2026-06-05',
+    });
+
+    render(<TrackPage />);
+    fireEvent.change(screen.getByLabelText('Order Number'), {
+      target: { value: 'MM-20260605-004' },
+    });
+    fireEvent.change(screen.getByLabelText('Email Address'), {
+      target: { value: 'guest@example.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Track Order' }));
+
+    expect(await screen.findByText('MM-20260605-004')).toBeInTheDocument();
+    expect(screen.getByText('Confirmed')).toBeInTheDocument();
+    expect(screen.getByText('3')).toBeInTheDocument();
+    expect(screen.queryByText(/NaN/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Total')).not.toBeInTheDocument();
+  });
+
   it('shows the branch and its map link for a collection order', async () => {
     mocks.lookup.mockResolvedValue({
       order_number: 'MM-20260605-003',

@@ -159,10 +159,17 @@ export default function TrackPage() {
                   <dt className="text-xs font-body uppercase tracking-widest text-gray-400">{t('track.items')}</dt>
                   <dd className="text-sm font-body text-gray-700">{result.items_count}</dd>
                 </div>
+                {/* Only when the API sent one. `deploy-web` and `deploy-api`
+                    run in parallel, so for a minute or two after a release this
+                    page is live against an API that does not return a total
+                    yet — and `Number(undefined).toFixed(2)` is the string
+                    "NaN", printed as a price. */}
+                {Number.isFinite(Number(result.total)) && (
                 <div className="flex justify-between items-center">
                   <dt className="text-xs font-body uppercase tracking-widest text-gray-400">{t('track.total')}</dt>
                   <dd className="text-sm font-body text-gray-700">AED {Number(result.total).toFixed(2)}</dd>
                 </div>
+                )}
                 <div className="flex justify-between items-center">
                   <dt className="text-xs font-body uppercase tracking-widest text-gray-400">{t('track.placed')}</dt>
                   <dd className="text-sm font-body text-gray-700">{result.created_at}</dd>
