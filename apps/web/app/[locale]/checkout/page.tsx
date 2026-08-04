@@ -10,7 +10,7 @@ import {
   getSessionId,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { ensureCheckoutAuth } from '@/lib/checkout-auth';
+import { accountEmailOf, ensureCheckoutAuth } from '@/lib/checkout-auth';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { PhoneInput, isValidPhone } from '@/components/ui/PhoneInput';
@@ -422,6 +422,9 @@ function CheckoutContent() {
   const [quote, setQuote] = useState<DeliveryQuote | null>(null);
 
   const isDelivery = form.deliveryMethod === 'delivery';
+  // Where the receipt is already going, when there is an account to read it
+  // off. Null for guests — see accountEmailOf.
+  const accountEmail = accountEmailOf(user);
   const paymentOptions = paymentOptionsFor(form.deliveryMethod);
   // Keep the selection legal: switching to delivery must not leave cash chosen.
   const paymentMethod = paymentOptions.includes(form.paymentMethod)
@@ -599,8 +602,11 @@ function CheckoutContent() {
     if (!retryOrder) {
       const found: Record<string, string> = {};
       // Email is only checked when something was typed: a typo is caught, a
-      // blank never blocks.
-      if (form.email.trim() && !isValidEmail(form.email)) found.email = t('checkout.valid_email_required');
+      // blank never blocks. Nothing to check at all when it came from the
+      // account rather than the keyboard.
+      if (!accountEmail && form.email.trim() && !isValidEmail(form.email)) {
+        found.email = t('checkout.valid_email_required');
+      }
 
       if (isDelivery) {
         if (!form.addressLine1.trim()) found.address = t('checkout.address_required');
@@ -643,7 +649,7 @@ function CheckoutContent() {
         const order = await ordersApi.create({
           // Blank means "no email" — the API falls back to the session's own
           // address rather than refusing the order.
-          email: form.email.trim() ? form.email.trim().toLowerCase() : undefined,
+          email: accountEmail ?? (form.email.trim() ? form.email.trim().toLowerCase() : undefined),
           delivery_method: form.deliveryMethod,
           shipping_address: isDelivery
             ? {
@@ -678,7 +684,8 @@ function CheckoutContent() {
       // Cash and zero-total orders are confirmed server-side — there is no
       // gateway to visit, so go straight to the confirmation.
       if (session.confirmed) {
-        const orderEmail = createdOrder?.email ?? retryOrder?.email ?? form.email.trim().toLowerCase();
+        const orderEmail =
+          createdOrder?.email ?? retryOrder?.email ?? accountEmail ?? form.email.trim().toLowerCase();
         window.location.href =
           `/${locale}/checkout/confirmation?order_number=${orderNumber}&email=${encodeURIComponent(orderEmail)}`;
         return;
@@ -695,7 +702,7 @@ function CheckoutContent() {
       addToast(message, 'error');
       setSubmitting(false);
     }
-  }, [form, cart, retryOrder, user, locale, addToast, refreshCart, t, paymentMethod, isDelivery, unserviceable]);
+  }, [form, cart, retryOrder, user, accountEmail, locale, addToast, refreshCart, t, paymentMethod, isDelivery, unserviceable]);
 
   // ── Non-form states ────────────────────────────────────────────────────────
 
@@ -910,19 +917,33 @@ function CheckoutContent() {
         </Section>
       )}
 
-      {/* 3 — Optional, and the last thing asked for. */}
-      <Section label={t('checkout.email_optional')}>
-        <div data-field="email" data-field-error={errors.email ? 'true' : undefined}>
-          <Input
-            type="email"
-            aria-label={t('checkout.email_optional')}
-            placeholder={t('common.email_placeholder')}
-            value={form.email}
-            onChange={(e) => { onChange({ email: e.target.value }); clearError('email'); }}
-            error={errors.email}
-            helper={errors.email ? undefined : t('checkout.email_optional_hint')}
-          />
-        </div>
+      {/* 3 — Optional, and the last thing asked for. Signed in, it is not a
+             question at all: the account already has an address, and asking for
+             it again invites a second one that no order history will match. */}
+      <Section label={accountEmail ? t('checkout.email') : t('checkout.email_optional')}>
+        {accountEmail ? (
+          <div className="flex items-start gap-2.5 border border-gray-200 bg-gray-50 rounded-sm px-3 py-2.5">
+            <span className="material-icons text-base text-primary mt-0.5">mark_email_read</span>
+            <div className="min-w-0">
+              <p className="font-body text-sm text-gray-800 truncate">{accountEmail}</p>
+              <p className="font-body text-xs text-gray-400 mt-0.5">
+                {t('checkout.email_signed_in_hint')}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div data-field="email" data-field-error={errors.email ? 'true' : undefined}>
+            <Input
+              type="email"
+              aria-label={t('checkout.email_optional')}
+              placeholder={t('common.email_placeholder')}
+              value={form.email}
+              onChange={(e) => { onChange({ email: e.target.value }); clearError('email'); }}
+              error={errors.email}
+              helper={errors.email ? undefined : t('checkout.email_optional_hint')}
+            />
+          </div>
+        )}
       </Section>
 
       {/* 4 — A choice when collecting, a statement when delivering: there is no
