@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { BannerPicture } from './BannerPicture';
+import { isLiveLink, liveSlugSet } from '@/lib/category-links';
+import type { Category } from '@/lib/types';
 
 export interface HeroSlide {
   /** Wide banner, ~12:5. Falls back to `image_mobile` if omitted. */
@@ -74,8 +76,22 @@ function prefersReducedMotion(): boolean {
   );
 }
 
-export function HeroCarousel({ c, locale }: { c: HeroContent; locale: string }) {
-  const slides = slidesFrom(c);
+export function HeroCarousel({
+  c,
+  locale,
+  categories = [],
+}: {
+  c: HeroContent;
+  locale: string;
+  categories?: Category[];
+}) {
+  // A slide selling a category the storefront no longer serves is a headline
+  // over a dead end. Dropped — but never down to nothing: the hero is the top
+  // of the page, and an empty one is worse than a generic one, so the shipped
+  // fallback (which points at /all-products) takes over if every slide goes.
+  const live = liveSlugSet(categories);
+  const configured = slidesFrom(c).filter(s => isLiveLink(s.cta_href, live));
+  const slides = configured.length > 0 ? configured : FALLBACK_SLIDES;
   const count = slides.length;
   const interval = c.autoplay_ms ?? DEFAULT_AUTOPLAY;
 

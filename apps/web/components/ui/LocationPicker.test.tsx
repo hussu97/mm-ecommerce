@@ -6,7 +6,16 @@ import { LocationPicker } from './LocationPicker';
 
 const mockPanTo = vi.fn();
 const mockSetZoom = vi.fn();
-const mockUseMap = vi.fn(() => ({ panTo: mockPanTo, setZoom: mockSetZoom }));
+//: What the map currently has in view. `null` is the real pre-idle state — a
+//: freshly mounted Google map has no bounds yet — and the picker has to treat
+//: that as "cannot tell, so centre on the pin".
+let mockBounds: { contains: (p: unknown) => boolean } | null = null;
+const mockGetBounds = vi.fn(() => mockBounds);
+const mockUseMap = vi.fn(() => ({
+  panTo: mockPanTo,
+  setZoom: mockSetZoom,
+  getBounds: mockGetBounds,
+}));
 const mockUseMapsLibrary = vi.fn();
 
 vi.mock('@vis.gl/react-google-maps', () => ({
@@ -61,6 +70,7 @@ function renderLocationPicker(props: Partial<Parameters<typeof LocationPicker>[0
 describe('LocationPicker', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockBounds = null;
     mockPlaceAutocompleteElement = makeMockElement();
     mockUseMapsLibrary.mockReturnValue({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -271,5 +281,73 @@ describe('LocationPicker', () => {
         expect.any(Function),
       );
     });
+  });
+});
+
+// ─── Following the pin ────────────────────────────────────────────────────────
+
+describe('LocationPicker viewport', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockBounds = null;
+    // Without a key the component renders its "not configured" placeholder and
+    // no map exists to pan.
+    vi.stubEnv('NEXT_PUBLIC_GOOGLE_MAPS_API_KEY', 'test-api-key');
+    mockPlaceAutocompleteElement = makeMockElement();
+    mockUseMapsLibrary.mockReturnValue({
+      // Called with `new`, so it has to be constructible.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      PlaceAutocompleteElement: vi.fn(function (this: any) {
+        return mockPlaceAutocompleteElement;
+      }),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('centres on the pin it is given, before the map reports any bounds', () => {
+    // Opening a saved address for editing. The marker was always right; the
+    // map used to stay wherever `defaultCenter` put it at mount, so the pin sat
+    // off the edge of the view.
+    renderLocationPicker({ lat: 25.33, lng: 55.37 });
+
+    expect(mockPanTo).toHaveBeenCalledWith({ lat: 25.33, lng: 55.37 });
+  });
+
+  it('follows the pin when it moves somewhere off screen', () => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <LocationPicker lat={25.33} lng={55.37} onChange={onChange} />,
+    );
+    mockBounds = { contains: () => false };
+    mockPanTo.mockClear();
+
+    // Editing a different saved address without remounting the picker.
+    rerender(<LocationPicker lat={24.47} lng={54.35} onChange={onChange} />);
+
+    expect(mockPanTo).toHaveBeenCalledWith({ lat: 24.47, lng: 54.35 });
+  });
+
+  it('leaves the map alone when the pin is already in view', () => {
+    // Tapping the map moves the pin. Re-centring on every tap would drag the
+    // map out from under the finger that just tapped it.
+    const onChange = vi.fn();
+    mockBounds = { contains: () => true };
+    const { rerender } = render(
+      <LocationPicker lat={25.33} lng={55.37} onChange={onChange} />,
+    );
+    mockPanTo.mockClear();
+
+    rerender(<LocationPicker lat={25.3301} lng={55.3701} onChange={onChange} />);
+
+    expect(mockPanTo).not.toHaveBeenCalled();
+  });
+
+  it('does not try to centre on a pin that does not exist yet', () => {
+    renderLocationPicker({ lat: null, lng: null });
+
+    expect(mockPanTo).not.toHaveBeenCalled();
   });
 });

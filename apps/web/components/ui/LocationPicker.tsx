@@ -65,11 +65,25 @@ function MapContent({ lat, lng, onChange, placeholder, height = '200px' }: Locat
 
   const position = lat !== null && lng !== null ? { lat, lng } : null;
 
-  // Pan map when position is set externally (e.g. saved address loaded)
+  /**
+   * Keep the pin on screen whenever it moves for a reason other than a tap.
+   *
+   * This used to fire only when the map instance appeared, so the viewport was
+   * whatever `defaultCenter` happened to be at mount and never moved again.
+   * Opening a saved address for editing then showed the map over Dubai (or over
+   * the address edited before it) with that address's marker somewhere off the
+   * edge — the pin was right, the thing the customer was looking at was not.
+   *
+   * Panning only when the pin has left the viewport is what keeps this from
+   * fighting the customer: tapping near an edge of the map moves the pin, and
+   * re-centring on every tap would drag the map out from under their finger.
+   */
   useEffect(() => {
-    if (map && position) map.panTo(position);
+    if (!map || !position) return;
+    const bounds = map.getBounds();
+    if (!bounds || !bounds.contains(position)) map.panTo(position);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map]);
+  }, [map, position?.lat, position?.lng]);
 
   // Wire up PlaceAutocompleteElement once the library is ready.
   // Deps exclude onChange/map so the element isn't torn down on every render.

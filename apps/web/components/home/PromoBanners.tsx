@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import { Reveal } from './Reveal';
 import { BannerPicture } from './BannerPicture';
+import { isLiveLink, liveSlugSet } from '@/lib/category-links';
+import type { Category } from '@/lib/types';
 
 export interface PromoItem {
   image?: string;
@@ -19,9 +21,26 @@ export interface PromosContent {
 /**
  * Wide editorial bands between the product rails — one photograph, four words
  * and a link. These are what the old wall-of-paragraph sections became.
+ *
+ * A band exists to sell whatever its button points at, so a band pointing at a
+ * category the storefront is no longer serving is dropped whole rather than
+ * shown with a dead button. Hiding every dessert used to leave "Straight from
+ * the fridge — Shop desserts" filling the width of the home page, linking to a
+ * page that listed nothing.
  */
-export function PromoBanners({ c, locale }: { c: PromosContent; locale: string }) {
-  const items = (c.items ?? []).filter(p => p.image || p.image_mobile);
+export function PromoBanners({
+  c,
+  locale,
+  categories = [],
+}: {
+  c: PromosContent;
+  locale: string;
+  categories?: Category[];
+}) {
+  const live = liveSlugSet(categories);
+  const items = (c.items ?? [])
+    .filter(p => p.image || p.image_mobile)
+    .filter(p => isLiveLink(p.cta_href, live));
   if (items.length === 0) return null;
 
   return (

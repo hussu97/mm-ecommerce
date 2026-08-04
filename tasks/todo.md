@@ -1,5 +1,13 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ⏳ 2026-08-04: Three storefront fixes — map pin, name placeholders, dead promo band
+
+### Plan
+- [x] 1. Start the address map on the pin of the address being edited. The pan effect only ever ran when the map instance appeared, so the viewport was whatever `defaultCenter` was at mount and never moved; it now follows the pin, but only when the pin has left the view, so tapping the map does not drag it out from under the finger that tapped.
+- [x] 2. Replace the "Fatema"/"Abbasi" name placeholders with generic ones in both locales. The owner's own name read as a pre-filled value rather than a hint.
+- [x] 3. Stop a promo band advertising a category the storefront no longer serves. Yesterday's fix taught category *tiles* to disappear with their category; hero slides and promo bands carry a hand-typed `cta_href` with no link to the catalogue, so hiding every dessert left "Straight from the fridge — Shop desserts" filling the home page and pointing at an empty listing.
+- [ ] 4. Deploy, verify green, confirm on the live site.
+
 ## ⏳ 2026-08-03: City courier zones, third-party beyond, and a delivery estimate
 
 ### Plan

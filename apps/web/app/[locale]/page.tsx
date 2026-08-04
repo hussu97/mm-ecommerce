@@ -184,7 +184,7 @@ export default async function HomePage({
   const activeCategories = categories.filter(cat => cat.is_active);
 
   const sections: Record<SectionKey, React.ReactNode> = {
-    hero: <HeroCarousel c={c.hero ?? {}} locale={locale} />,
+    hero: <HeroCarousel c={c.hero ?? {}} locale={locale} categories={activeCategories} />,
     usps: <UspMarquee c={c.usps ?? {}} />,
     featured: (
       <FeaturedProducts products={featuredProducts} c={c.featured ?? {}} locale={locale} />
@@ -192,7 +192,7 @@ export default async function HomePage({
     categories: (
       <CategoryTiles c={c.categories ?? {}} categories={activeCategories} locale={locale} />
     ),
-    promos: <PromoBanners c={c.promos ?? {}} locale={locale} />,
+    promos: <PromoBanners c={c.promos ?? {}} locale={locale} categories={activeCategories} />,
     baker: <MeetTheBaker c={c.baker ?? {}} locale={locale} />,
     cater: <CaterSection c={c.cater ?? {}} locale={locale} />,
   };
