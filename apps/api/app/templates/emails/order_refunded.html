@@ -1,49 +1,39 @@
 {% extends "base.html" %}
-{% block title %}Refund Processed — {{ order.order_number }}{% endblock %}
+{% import "_parts.html" as parts %}
+
+{% block title %}Refund processed — {{ order.order_number }}{% endblock %}
+{% block preheader %}AED {{ totals.total }} is on its way back to your card.{% endblock %}
 
 {% block content %}
-<h2>Refund Processed</h2>
-<p>Hi {{ name }},</p>
-<p>We've processed a refund for your order <strong>{{ order.order_number }}</strong>. The amount will be returned to your original payment method within 5–10 business days depending on your bank.</p>
-
-<div style="text-align:center;margin:24px 0;">
-  <span class="status status-cancelled">↩ Refunded</span><br/>
-  <span class="order-badge">{{ order.order_number }}</span>
-</div>
-
-<!-- Items summary -->
-<table class="items-table" cellpadding="0" cellspacing="0">
-  <thead>
-    <tr>
-      <th>Item</th>
-      <th style="text-align:center;width:50px;">Qty</th>
-      <th class="right" style="width:80px;">Price</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for item in order.items %}
-    <tr>
-      <td>
-        {{ item.product_name }}
-        {% if item.selected_options_snapshot %}<span class="variant-label">{{ item.selected_options_snapshot | map(attribute='option_name') | join(', ') }}</span>{% endif %}
-      </td>
-      <td style="text-align:center;">{{ item.quantity }}</td>
-      <td class="right">{{ "%.2f"|format(item.total_price) }} AED</td>
-    </tr>
-    {% endfor %}
-  </tbody>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="hero" align="center">
+    <p class="hero-eyebrow">Refund processed</p>
+    <h2 class="hero-title">Your money is on its way back.</h2>
+  </td></tr>
 </table>
 
-<table class="totals" cellpadding="0" cellspacing="0">
-  <tr class="total-row">
-    <td class="label">Refund Amount</td>
-    <td class="value">{{ "%.2f"|format(order.total) }} AED</td>
-  </tr>
+{{ parts.order_chip(order.order_number) }}
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" align="center" style="padding-top: 18px;">
+    <p class="lead" style="text-align:center;">
+      {{ name }}, we've refunded <strong>AED {{ totals.total }}</strong> for order
+      {{ order.order_number }} to the card you paid with.
+    </p>
+  </td></tr>
 </table>
 
-<hr class="divider" />
+{{ parts.alert('When you will see it', 'Banks typically take five to ten working days to post a refund. It will appear on the same card and statement as the original payment.') }}
 
-<p>We're sorry things didn't work out this time. If you have any questions about your refund, please don't hesitate to get in touch.</p>
+{{ parts.order_summary(items, totals) }}
+{{ parts.button(web_url, 'Back to the shop') }}
 
-<p class="muted" style="text-align:center;">Questions? Reply to this email or reach us on WhatsApp.</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" style="padding-top: 24px;">
+    <p class="muted">
+      If it hasn't landed after ten working days, reply to this email with your
+      order number and we'll chase it with the bank.
+    </p>
+  </td></tr>
+</table>
 {% endblock %}

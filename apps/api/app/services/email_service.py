@@ -3,22 +3,30 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 import resend
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
+from app.models.delivery_batch import DELIVERY_TIMEZONE
 from app.models.email_log import EmailLog
 from app.schemas.order import OrderResponse
 
 __all__ = [
+    "notify_status_change",
     "send_order_cancelled",
     "send_order_confirmation",
-    "send_owner_order_notification",
+    "send_order_delivered",
+    "send_order_out_for_delivery",
     "send_order_packed",
+    "send_order_undelivered",
+    "send_owner_order_notification",
     "send_password_reset",
     "send_payment_failed",
     "send_refund_notification",
@@ -32,6 +40,11 @@ OWNER_ORDER_RECIPIENTS = (
     "fatema_f@hotmail.co.uk",
     "fahimakhtarabbasi@gmail.com",
 )
+
+#: The clock every date in an email is printed on. A customer in Sharjah reading
+#: "ready at 16:30" is standing on this one, and a UTC stamp would be four hours
+#: wrong in the direction that makes people arrive to a closed counter.
+TZ = ZoneInfo(DELIVERY_TIMEZONE)
 
 _jinja_env = Environment(
     loader=FileSystemLoader(str(TEMPLATES_DIR)),
@@ -54,8 +67,227 @@ def _order_tracking_url(order_number: str, email: str) -> str:
     return f"{settings.WEB_URL.rstrip('/')}/en/track?{query}"
 
 
+def _account_order_url(order_number: str) -> str:
+    return f"{settings.WEB_URL.rstrip('/')}/en/account/orders/{order_number}"
+
+
 def _admin_order_url(order_number: str) -> str:
     return f"{settings.ADMIN_URL.rstrip('/')}/orders/{order_number}"
+
+
+# ─── Building the picture an order email paints ───────────────────────────────
+
+
+def _money(value: Any) -> str:
+    return f"{Decimal(str(value or 0)):.2f}"
+
+
+def _customer_name(order: OrderResponse) -> str:
+    snapshot = order.shipping_address_snapshot or {}
+    name = str(snapshot.get("first_name") or "").strip()
+    return name or "there"
+
+
+def _item_rows(order: OrderResponse) -> list[dict[str, Any]]:
+    """
+    The order's lines, flattened for a template.
+
+    The option list becomes one string here rather than in Jinja, because
+    joining names out of a list of snapshot dicts is logic and a template that
+    does logic is a template nobody can read.
+    """
+    rows: list[dict[str, Any]] = []
+    for item in order.items:
+        options = ", ".join(
+            str(option.get("option_name"))
+            for option in (item.selected_options_snapshot or [])
+            if isinstance(option, dict) and option.get("option_name")
+        )
+        rows.append(
+            {
+                "name": item.product_name,
+                "options": options,
+                "quantity": item.quantity,
+                "unit_price": _money(item.unit_price),
+                "total_price": _money(item.total_price),
+            }
+        )
+    return rows
+
+
+def _totals(order: OrderResponse, *, is_pickup: bool) -> dict[str, Any]:
+    fee = Decimal(str(order.delivery_fee or 0))
+    return {
+        "subtotal": _money(order.subtotal),
+        "discount": _money(order.discount_amount) if order.discount_amount else None,
+        "promo_code": order.promo_code_used,
+        "fee_label": "Collection" if is_pickup else "Delivery",
+        # Zero reads better as the word than as 0.00 — it is the difference
+        # between "we charged you nothing" and "there is a line here".
+        "delivery_fee": "Free" if fee == 0 else f"AED {_money(fee)}",
+        "total": _money(order.total),
+        "vat": _money(order.vat_amount),
+    }
+
+
+def _when(moment: datetime, *, precision: str, now: datetime) -> str:
+    """
+    A stamp as a person would say it.
+
+    "Today" and "tomorrow" rather than a date whenever they apply, because those
+    are the two answers a customer is actually looking for and a date makes them
+    do the arithmetic. Beyond that it is a weekday and a date, which is
+    unambiguous without being a timestamp.
+    """
+    local = moment.astimezone(TZ)
+    today = now.astimezone(TZ).date()
+    delta = (local.date() - today).days
+
+    if delta == 0:
+        day = "Today"
+    elif delta == 1:
+        day = "Tomorrow"
+    elif delta == -1:
+        day = "Yesterday"
+    else:
+        day = local.strftime("%a %-d %b")
+
+    if precision == "day":
+        return day
+    return f"{day}, {local.strftime('%-I:%M %p')}"
+
+
+def _estimate_block(
+    order: OrderResponse, *, is_pickup: bool, now: datetime
+) -> dict[str, str] | None:
+    """
+    The "when" panel, or nothing.
+
+    Nothing is a real answer here and appears in three cases: a settled order, a
+    failed handover, and a delivery on somebody else's van that has not moved
+    yet. In all three the honest thing is an email with no promise on it rather
+    than a panel containing a guess.
+    """
+    fulfilment = order.fulfilment
+    if fulfilment is None or fulfilment.estimated_at is None:
+        return None
+
+    stage = fulfilment.stage
+    value = _when(
+        fulfilment.estimated_at, precision=fulfilment.precision or "day", now=now
+    )
+
+    if stage == "collected":
+        return {"label": "Collected", "value": value, "note": ""}
+    if stage == "delivered":
+        return {"label": "Delivered", "value": value, "note": ""}
+    if stage == "ready" and is_pickup:
+        return {
+            "label": "Ready since",
+            "value": value,
+            "note": "Waiting for you at the counter.",
+        }
+    if stage == "on_the_way":
+        return {
+            "label": "Arriving",
+            "value": value,
+            "note": "Now that a driver is carrying it, this is our best estimate.",
+        }
+
+    note = ""
+    if fulfilment.precision == "day":
+        # An area a third party covers. Their van, their schedule; naming an
+        # hour would be borrowing a precision that is not ours.
+        note = "We'll confirm a time once it's collected."
+    return {
+        "label": "Ready to collect" if is_pickup else "Estimated delivery",
+        "value": value,
+        "note": note,
+    }
+
+
+def _timeline(order: OrderResponse, *, is_pickup: bool, now: datetime) -> list[dict]:
+    """
+    The journey this order is actually on.
+
+    Built per order rather than from one fixed list, because the two journeys
+    genuinely differ: a collection order never goes out for delivery, and greying
+    out a step nobody is waiting for reads as a step that was skipped.
+    """
+    fulfilment = order.fulfilment
+    if fulfilment is None:
+        return []
+    stage = fulfilment.stage
+    if stage == "settled":
+        return []
+
+    if is_pickup:
+        order_of = ["preparing", "ready", "collected"]
+        labels = {
+            "preparing": "Baking your order",
+            "ready": "Ready to collect",
+            "collected": "Collected",
+        }
+        stamps = {"collected": fulfilment.delivered_at}
+    elif fulfilment.courier_managed:
+        order_of = ["preparing", "ready", "on_the_way", "delivered"]
+        labels = {
+            "preparing": "Baking your order",
+            "ready": "Packed",
+            "on_the_way": "Out for delivery",
+            "delivered": "Delivered",
+        }
+        stamps = {
+            "ready": fulfilment.packed_at,
+            "on_the_way": fulfilment.picked_up_at,
+            "delivered": fulfilment.delivered_at,
+        }
+    else:
+        # No courier reporting back, so there is no honest middle step: the box
+        # is packed, and the next thing anybody knows is that it arrived.
+        order_of = ["preparing", "ready", "delivered"]
+        labels = {
+            "preparing": "Baking your order",
+            "ready": "Packed and handed over",
+            "delivered": "Delivered",
+        }
+        stamps = {"ready": fulfilment.packed_at, "delivered": fulfilment.delivered_at}
+
+    reached = order_of.index(stage) if stage in order_of else 0
+    return [
+        {
+            "label": labels[key],
+            "done": index <= reached,
+            "when": (
+                _when(stamps[key], precision="time", now=now)
+                if index <= reached and stamps.get(key) is not None
+                else ""
+            ),
+        }
+        for index, key in enumerate(order_of)
+    ]
+
+
+def _order_context(order: OrderResponse) -> dict[str, Any]:
+    """Everything every order template reads, built once."""
+    now = datetime.now(timezone.utc)
+    is_pickup = order.delivery_method.value == "pickup"
+    fulfilment = order.fulfilment
+
+    return {
+        "order": order,
+        "name": _customer_name(order),
+        "is_pickup": is_pickup,
+        "items": _item_rows(order),
+        "totals": _totals(order, is_pickup=is_pickup),
+        "estimate": _estimate_block(order, is_pickup=is_pickup, now=now),
+        "steps": _timeline(order, is_pickup=is_pickup, now=now),
+        "branch": fulfilment.branch if fulfilment else None,
+        "address": None if is_pickup else (order.shipping_address_snapshot or None),
+        "tracking_url": _order_tracking_url(order.order_number, order.email),
+        "live_tracking_url": fulfilment.tracking_url if fulfilment else None,
+        "retry_url": _account_order_url(order.order_number),
+    }
 
 
 def _send(to: str, subject: str, html: str) -> dict:
@@ -151,46 +383,82 @@ async def _log(
         logger.error("EmailLog persist failed: %s", exc)
 
 
-# ─── Order Emails ─────────────────────────────────────────────────────────────
+async def _send_order_email(
+    order: OrderResponse,
+    *,
+    template: str,
+    subject: str,
+    **extra,
+) -> None:
+    """
+    Render one order email, send it, log it, and never raise.
 
-
-async def send_order_confirmation(order: OrderResponse) -> None:
-    subject = f"Order Confirmed — {order.order_number} | Melting Moments"
+    Every order email funnels through here so the rendering failure mode is the
+    same everywhere: a template that throws is logged as a failed email against
+    the order rather than becoming an exception in whatever was updating the
+    order's status. A cake that is baked and boxed must not be blocked by a
+    typo in a Jinja file.
+    """
     try:
-        name = (
-            order.shipping_address_snapshot.get("first_name", "there")
-            if order.shipping_address_snapshot
-            else "there"
-        )
         html = _render(
-            "order_confirmation.html",
+            template,
             recipient_email=order.email,
-            name=name,
-            order=order,
-            tracking_url=_order_tracking_url(order.order_number, order.email),
+            **_order_context(order),
+            **extra,
         )
         result = await asyncio.to_thread(_send, order.email, subject, html)
     except Exception as exc:
         logger.error(
-            "order_confirmation render/send failed for %s: %s",
+            "%s render/send failed for %s: %s",
+            template,
             order.order_number,
             exc,
             exc_info=True,
         )
         result = {"status": "failed", "resend_id": None, "error": str(exc)}
-    await _log("order_confirmation", order.email, subject, result, order.order_number)
+    await _log(
+        template.removesuffix(".html"), order.email, subject, result, order.order_number
+    )
+
+
+# ─── Order emails ─────────────────────────────────────────────────────────────
+
+
+def _subject(headline: str, order: OrderResponse) -> str:
+    return f"{headline} — {order.order_number} | Melting Moments"
+
+
+async def send_order_confirmation(order: OrderResponse) -> None:
+    await _send_order_email(
+        order,
+        template="order_confirmation.html",
+        subject=_subject("Order confirmed", order),
+    )
 
 
 async def send_owner_order_notification(order: OrderResponse) -> None:
-    subject = f"New Order — {order.order_number} | Melting Moments"
-    admin_order_url = _admin_order_url(order.order_number)
+    subject = _subject("New order", order)
+    context = _order_context(order)
+    snapshot = order.shipping_address_snapshot or {}
     for recipient in OWNER_ORDER_RECIPIENTS:
         try:
             html = _render(
                 "owner_order_notification.html",
                 recipient_email=recipient,
-                order=order,
-                admin_order_url=admin_order_url,
+                admin_order_url=_admin_order_url(order.order_number),
+                customer_name=(
+                    " ".join(
+                        part
+                        for part in (
+                            snapshot.get("first_name"),
+                            snapshot.get("last_name"),
+                        )
+                        if part
+                    )
+                    or "—"
+                ),
+                customer_phone=snapshot.get("phone"),
+                **context,
             )
             result = await asyncio.to_thread(_send, recipient, subject, html)
         except Exception as exc:
@@ -212,107 +480,171 @@ async def send_owner_order_notification(order: OrderResponse) -> None:
 
 
 async def send_order_packed(order: OrderResponse) -> None:
-    is_delivery = order.delivery_method.value == "delivery"
-    subject = (
-        f"Your Order is On Its Way — {order.order_number}"
-        if is_delivery
-        else f"Ready for Pickup — {order.order_number}"
+    """
+    The box is finished.
+
+    Worth an email for a collection order — it is the "come and get it" — and
+    for a delivery in an area a third party covers, where "packed" is the last
+    thing anybody will tell us and so the last email the customer would ever
+    get. Not worth one for a delivery we book ourselves: there, packed means the
+    box is on a shelf waiting for a rider, and the news the customer wants is
+    the next event, when somebody is actually carrying it. Sending both turns
+    the useful email into the second of two.
+
+    The decision is `should_send_packed`, so it is one function to test rather
+    than an `if` at each of the two call sites.
+    """
+    is_pickup = order.delivery_method.value == "pickup"
+    await _send_order_email(
+        order,
+        template="order_packed.html",
+        subject=_subject("Ready to collect" if is_pickup else "On its way", order),
     )
-    try:
-        name = (
-            order.shipping_address_snapshot.get("first_name", "there")
-            if order.shipping_address_snapshot
-            else "there"
-        )
-        html = _render(
-            "order_packed.html", recipient_email=order.email, name=name, order=order
-        )
-        result = await asyncio.to_thread(_send, order.email, subject, html)
-    except Exception as exc:
-        logger.error(
-            "order_packed render/send failed for %s: %s",
-            order.order_number,
-            exc,
-            exc_info=True,
-        )
-        result = {"status": "failed", "resend_id": None, "error": str(exc)}
-    await _log("order_packed", order.email, subject, result, order.order_number)
+
+
+def should_send_packed(order: OrderResponse) -> bool:
+    """Whether `packed` is news for this order. See `send_order_packed`."""
+    if order.delivery_method.value == "pickup":
+        return True
+    return not (order.fulfilment is not None and order.fulfilment.courier_managed)
+
+
+async def send_order_out_for_delivery(order: OrderResponse) -> None:
+    await _send_order_email(
+        order,
+        template="order_out_for_delivery.html",
+        subject=_subject("Out for delivery", order),
+    )
+
+
+async def send_order_delivered(order: OrderResponse) -> None:
+    is_pickup = order.delivery_method.value == "pickup"
+    await _send_order_email(
+        order,
+        template="order_delivered.html",
+        subject=_subject("Collected" if is_pickup else "Delivered", order),
+    )
+
+
+async def send_order_undelivered(order: OrderResponse) -> None:
+    await _send_order_email(
+        order,
+        template="order_undelivered.html",
+        subject=_subject("We couldn't deliver", order),
+    )
 
 
 async def send_payment_failed(order: OrderResponse) -> None:
-    subject = f"Payment Failed — {order.order_number} | Melting Moments"
-    try:
-        name = (
-            order.shipping_address_snapshot.get("first_name", "there")
-            if order.shipping_address_snapshot
-            else "there"
-        )
-        html = _render(
-            "payment_failed.html", recipient_email=order.email, name=name, order=order
-        )
-        result = await asyncio.to_thread(_send, order.email, subject, html)
-    except Exception as exc:
-        logger.error(
-            "payment_failed render/send failed for %s: %s",
-            order.order_number,
-            exc,
-            exc_info=True,
-        )
-        result = {"status": "failed", "resend_id": None, "error": str(exc)}
-    await _log("payment_failed", order.email, subject, result, order.order_number)
+    await _send_order_email(
+        order,
+        template="payment_failed.html",
+        subject=_subject("Payment didn't go through", order),
+    )
 
 
 async def send_refund_notification(order: OrderResponse) -> None:
-    subject = f"Refund Processed — {order.order_number} | Melting Moments"
-    try:
-        name = (
-            order.shipping_address_snapshot.get("first_name", "there")
-            if order.shipping_address_snapshot
-            else "there"
-        )
-        html = _render(
-            "order_refunded.html", recipient_email=order.email, name=name, order=order
-        )
-        result = await asyncio.to_thread(_send, order.email, subject, html)
-    except Exception as exc:
-        logger.error(
-            "order_refunded render/send failed for %s: %s",
-            order.order_number,
-            exc,
-            exc_info=True,
-        )
-        result = {"status": "failed", "resend_id": None, "error": str(exc)}
-    await _log("order_refunded", order.email, subject, result, order.order_number)
+    await _send_order_email(
+        order,
+        template="order_refunded.html",
+        subject=_subject("Refund processed", order),
+    )
 
 
 async def send_order_cancelled(order: OrderResponse) -> None:
-    subject = f"Order Cancelled — {order.order_number} | Melting Moments"
+    await _send_order_email(
+        order,
+        template="order_cancelled.html",
+        subject=_subject("Order cancelled", order),
+        # A card order that reached `confirmed` was paid for; one cancelled out
+        # of `created` or `payment_failed` never was. Telling somebody a refund
+        # is coming when no money was taken is the kind of thing that generates
+        # a support email a week later.
+        was_paid=bool(order.payment_id) and order.payment_method != "cod",
+    )
+
+
+#: Order status -> the email it earns, if any. Statuses absent from this map are
+#: silent on purpose: `created` is answered by the checkout page itself, and
+#: `disputed` is a conversation with a bank rather than with a customer.
+_EMAIL_FOR_STATUS = {
+    "confirmed": send_order_confirmation,
+    "packed": send_order_packed,
+    "out_for_delivery": send_order_out_for_delivery,
+    "delivered": send_order_delivered,
+    "cancelled": send_order_cancelled,
+    "payment_failed": send_payment_failed,
+    "refunded": send_refund_notification,
+}
+
+
+async def notify_status_change(order: OrderResponse) -> str | None:
+    """
+    Send whichever email this order's current state earns.
+
+    One entry point rather than a `match` at every call site. Three places move
+    an order — the admin's status endpoint, Stripe's webhooks and the couriers'
+    — and before this each of them decided independently which emails existed,
+    which is why a courier marking an order delivered sent nothing at all.
+
+    Returns the name of the event it acted on, or None when the state is
+    deliberately silent. Never raises: `_send_order_email` swallows its own
+    failures, so a caller can await this inside the transaction that moved the
+    order.
+    """
+    # A failed handover is not a status — the order stays exactly where it was,
+    # because it is still paid for and still ours to deliver. It is only visible
+    # on the courier record, which is why it is checked before the status map
+    # rather than in it.
+    if order.fulfilment is not None and order.fulfilment.stage == "undelivered":
+        await send_order_undelivered(order)
+        return "undelivered"
+
+    status = order.status.value
+    handler = _EMAIL_FOR_STATUS.get(status)
+    if handler is None:
+        return None
+    if handler is send_order_packed and not should_send_packed(order):
+        logger.info(
+            "Packed email skipped for %s — a rider will be the news", order.order_number
+        )
+        return None
+    await handler(order)
+    return status
+
+
+async def notify_order(db, order) -> str | None:
+    """
+    `notify_status_change` for a caller holding the ORM row rather than the
+    response model — which is both couriers, since a webhook arrives with a
+    delivery record and works back to the order from it.
+
+    The import is deferred because `order_service` imports this module's package
+    at load time and a top-level import here would close the cycle. It is the
+    only one in this file, and it is here rather than at each courier so there
+    is one of it.
+    """
+    from app.services import order_service
+
     try:
-        name = (
-            order.shipping_address_snapshot.get("first_name", "there")
-            if order.shipping_address_snapshot
-            else "there"
-        )
-        html = _render(
-            "order_cancelled.html", recipient_email=order.email, name=name, order=order
-        )
-        result = await asyncio.to_thread(_send, order.email, subject, html)
-    except Exception as exc:
+        return await notify_status_change(await order_service.to_response(db, order))
+    except Exception as exc:  # pragma: no cover — defensive
+        # A courier push that moved an order must not be rejected because we
+        # could not write about it. Lalamove would retry the whole event for a
+        # day; noon Send would not retry at all.
         logger.error(
-            "order_cancelled render/send failed for %s: %s",
-            order.order_number,
+            "Could not notify %s about its new status: %s",
+            getattr(order, "order_number", "?"),
             exc,
             exc_info=True,
         )
-        result = {"status": "failed", "resend_id": None, "error": str(exc)}
-    await _log("order_cancelled", order.email, subject, result, order.order_number)
+        return None
 
 
-# ─── User Emails ──────────────────────────────────────────────────────────────
+# ─── User emails ──────────────────────────────────────────────────────────────
 
 
 async def send_welcome(email: str) -> None:
-    subject = "Welcome to Melting Moments!"
+    subject = "Welcome to Melting Moments"
     html = _render("welcome.html", recipient_email=email)
     result = await asyncio.to_thread(_send, email, subject, html)
     await _log("welcome", email, subject, result)
@@ -320,7 +652,7 @@ async def send_welcome(email: str) -> None:
 
 async def send_password_reset(email: str, reset_token: str) -> None:
     reset_link = f"{settings.WEB_URL}/reset-password?token={reset_token}"
-    subject = "Reset Your Password — Melting Moments"
+    subject = "Reset your password — Melting Moments"
     html = _render(
         "password_reset.html",
         recipient_email=email,

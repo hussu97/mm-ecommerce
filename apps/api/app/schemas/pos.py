@@ -102,6 +102,9 @@ class BranchCreate(BaseModel):
     longitude: Decimal | None = Field(None, ge=-180, le=180)
     phone: str | None = Field(None, max_length=30)
     address: str | None = None
+    address_localized: str | None = None
+    city: str | None = Field(None, max_length=100)
+    city_localized: str | None = Field(None, max_length=100)
     opening_from: str = Field("00:00", pattern=_TIME_RE)
     opening_to: str = Field("23:59", pattern=_TIME_RE)
     business_day_start: str = Field("04:00", pattern=_TIME_RE)
@@ -116,6 +119,9 @@ class BranchCreate(BaseModel):
     noon_send_outlet_code: str | None = Field(None, max_length=50)
     noon_send_outlet_address_code: str | None = Field(None, max_length=120)
     receives_online_orders: bool = True
+    #: Whether a customer may choose to collect from here. False by default —
+    #: a kitchen that bakes website orders is not automatically a counter.
+    offers_pickup: bool = False
     accepts_reservations: bool = False
     reservation_duration: int = Field(60, ge=5, le=600)
     reservation_times: dict | None = None
@@ -133,6 +139,9 @@ class BranchUpdate(BaseModel):
     longitude: Decimal | None = Field(None, ge=-180, le=180)
     phone: str | None = Field(None, max_length=30)
     address: str | None = None
+    address_localized: str | None = None
+    city: str | None = Field(None, max_length=100)
+    city_localized: str | None = Field(None, max_length=100)
     opening_from: str | None = Field(None, pattern=_TIME_RE)
     opening_to: str | None = Field(None, pattern=_TIME_RE)
     business_day_start: str | None = Field(None, pattern=_TIME_RE)
@@ -145,6 +154,7 @@ class BranchUpdate(BaseModel):
     noon_send_outlet_code: str | None = Field(None, max_length=50)
     noon_send_outlet_address_code: str | None = Field(None, max_length=120)
     receives_online_orders: bool | None = None
+    offers_pickup: bool | None = None
     accepts_reservations: bool | None = None
     reservation_duration: int | None = Field(None, ge=5, le=600)
     reservation_times: dict | None = None
@@ -163,6 +173,9 @@ class BranchResponse(ORMModel):
     longitude: Decimal | None
     phone: str | None
     address: str | None
+    address_localized: str | None
+    city: str | None
+    city_localized: str | None
     opening_from: str
     opening_to: str
     business_day_start: str
@@ -175,6 +188,7 @@ class BranchResponse(ORMModel):
     noon_send_outlet_code: str | None
     noon_send_outlet_address_code: str | None
     receives_online_orders: bool
+    offers_pickup: bool
     accepts_reservations: bool
     reservation_duration: int
     reservation_times: dict | None

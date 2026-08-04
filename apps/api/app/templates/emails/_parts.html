@@ -1,0 +1,236 @@
+{#
+  The pieces every order email is built from.
+
+  They are macros rather than includes so each one takes its data as arguments:
+  an include reads whatever happens to be in scope, which is how the same block
+  ends up rendering different things in two templates that look identical.
+
+  Every macro renders a table. Nothing here uses div-and-float, because Outlook
+  is still a Word rendering engine and always has been.
+#}
+
+{# The order number, centred under the hero. #}
+{% macro order_chip(order_number) %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td align="center" style="padding: 22px 40px 0;">
+    <span class="order-chip">{{ order_number }}</span>
+  </td></tr>
+</table>
+{% endmacro %}
+
+
+{# A full-width primary call to action. #}
+{% macro button(href, label) %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="btn-wrap" align="center">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" class="btn" bgcolor="#8a5a64">
+      <tr><td align="center"><a href="{{ href }}" target="_blank" rel="noopener">{{ label }}</a></td></tr>
+    </table>
+  </td></tr>
+</table>
+{% endmacro %}
+
+
+{# The quieter second action, for when there are two. #}
+{% macro button_ghost(href, label) %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="btn-wrap" align="center" style="padding-top: 12px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" class="btn-ghost" bgcolor="#ffffff">
+      <tr><td align="center"><a href="{{ href }}" target="_blank" rel="noopener">{{ label }}</a></td></tr>
+    </table>
+  </td></tr>
+</table>
+{% endmacro %}
+
+
+{#
+  When the customer gets it.
+
+  `estimate` is the dict `email_service._estimate_block` builds — already
+  resolved to words, because "tomorrow" versus a date is a decision about the
+  shop's clock and Jinja has no business making it.
+#}
+{% macro estimate_card(estimate) %}
+{% if estimate %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td style="padding: 26px 40px 0;" class="body-copy">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="panel-tinted" bgcolor="#fbf7f5">
+      <tr><td class="panel-pad">
+        <div class="kv-label">{{ estimate.label }}</div>
+        <div class="kv-value-lg">{{ estimate.value }}</div>
+        {% if estimate.note %}<div class="kv-value" style="font-size:14px;color:#8a7a7c;padding-top:6px;">{{ estimate.note }}</div>{% endif %}
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+{% endif %}
+{% endmacro %}
+
+
+{#
+  Where to collect from.
+
+  The Arabic name and address are on separate lines rather than replacing the
+  English: the email has no locale of its own — nothing on an order records
+  which language it was placed in — so it shows both and lets the reader use
+  whichever they read.
+#}
+{% macro branch_card(branch) %}
+{% if branch %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" style="padding-top: 26px;">
+    <h2 class="section">Collect from</h2>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="panel">
+      <tr><td class="panel-pad">
+        <div class="kv-value-lg">{{ branch.name }}</div>
+        {% if branch.name_ar %}<div class="kv-value" style="font-size:15px;color:#8a7a7c;padding-top:2px;" dir="rtl">{{ branch.name_ar }}</div>{% endif %}
+
+        {% if branch.address %}
+        <div class="kv-value" style="padding-top:10px;">{{ branch.address }}</div>
+        {% endif %}
+        {% if branch.address_ar %}
+        <div class="kv-value" style="font-size:14px;color:#8a7a7c;padding-top:2px;" dir="rtl">{{ branch.address_ar }}</div>
+        {% endif %}
+        {% if branch.city %}
+        <div class="kv-value" style="font-size:14px;color:#8a7a7c;padding-top:6px;">{{ branch.city }}{% if branch.city_ar %} &middot; <span dir="rtl">{{ branch.city_ar }}</span>{% endif %}</div>
+        {% endif %}
+
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:14px;">
+          {% if branch.opening_from and branch.opening_to %}
+          <tr>
+            <td class="kv-label" style="padding: 8px 0 0; width: 96px;">Open</td>
+            <td class="kv-value" style="font-size:15px;padding-top:6px;">{{ branch.opening_from }} – {{ branch.opening_to }}</td>
+          </tr>
+          {% endif %}
+          {% if branch.phone %}
+          <tr>
+            <td class="kv-label" style="padding: 8px 0 0; width: 96px;">Phone</td>
+            <td class="kv-value" style="font-size:15px;padding-top:6px;"><a href="tel:{{ branch.phone|replace(' ', '') }}" style="color:#8a5a64;text-decoration:none;">{{ branch.phone }}</a></td>
+          </tr>
+          {% endif %}
+        </table>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+{% if branch.maps_url %}{{ button_ghost(branch.maps_url, 'Open in Google Maps') }}{% endif %}
+{% endif %}
+{% endmacro %}
+
+
+{# Where the order is going. Delivery only — a pickup order has a branch card. #}
+{% macro address_card(address) %}
+{% if address %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" style="padding-top: 26px;">
+    <h2 class="section">Delivering to</h2>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="panel">
+      <tr><td class="panel-pad">
+        {% if address.first_name or address.last_name %}
+        <div class="kv-value" style="font-weight:500;">{{ address.first_name }} {{ address.last_name }}</div>
+        {% endif %}
+        {% if address.address_line_1 %}<div class="kv-value">{{ address.address_line_1 }}</div>{% endif %}
+        {% if address.address_line_2 %}<div class="kv-value">{{ address.address_line_2 }}</div>{% endif %}
+        {% if address.city %}<div class="kv-value">{{ address.city }}</div>{% endif %}
+        {% if address.phone %}<div class="kv-value" style="font-size:14px;color:#8a7a7c;padding-top:6px;">{{ address.phone }}</div>{% endif %}
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+{% endif %}
+{% endmacro %}
+
+
+{#
+  What was ordered, and what it came to.
+
+  `items` is a list of dicts from `email_service._item_rows` rather than the ORM
+  rows: an option list has to be flattened to a string somewhere, and doing it
+  in Python keeps the template to layout.
+#}
+{% macro order_summary(items, totals) %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" style="padding-top: 30px;">
+    <h2 class="section">Your order</h2>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="items">
+      {% for item in items %}
+      <tr>
+        <td class="stack-full" style="width: 70%;">
+          <div class="item-name">{{ item.name }}</div>
+          {% if item.options %}<div class="item-options">{{ item.options }}</div>{% endif %}
+          <div class="item-qty">{{ item.quantity }} &times; AED {{ item.unit_price }}</div>
+        </td>
+        <td class="item-price stack-full" style="width: 30%;">AED {{ item.total_price }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="totals" style="margin-top: 14px;">
+      <tr><td>Subtotal</td><td class="amount">AED {{ totals.subtotal }}</td></tr>
+      {% if totals.discount %}
+      <tr class="discount"><td>Discount{% if totals.promo_code %} ({{ totals.promo_code }}){% endif %}</td><td class="amount">&minus; AED {{ totals.discount }}</td></tr>
+      {% endif %}
+      <tr><td>{{ totals.fee_label }}</td><td class="amount">{{ totals.delivery_fee }}</td></tr>
+      <tr class="grand"><td>Total</td><td class="amount">AED {{ totals.total }}</td></tr>
+      <tr class="vat"><td>Includes VAT</td><td class="amount">AED {{ totals.vat }}</td></tr>
+    </table>
+  </td></tr>
+</table>
+{% endmacro %}
+
+
+{#
+  What has happened so far, and what is next.
+
+  `steps` comes from `email_service._timeline`, already trimmed to the journey
+  this order is actually on — a pickup order has no "out for delivery" step to
+  grey out, and showing one would be inventing a stage nobody is waiting for.
+#}
+{% macro timeline(steps) %}
+{% if steps %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" style="padding-top: 28px;">
+    <h2 class="section">Progress</h2>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      {% for step in steps %}
+      <tr>
+        <td class="step-icon{% if step.done %} is-done{% endif %}" style="width: 26px; padding: 5px 0;">{% if step.done %}&#10003;{% else %}&#9675;{% endif %}</td>
+        <td class="step-label{% if step.done %} is-done{% endif %}" style="padding: 5px 0;">{{ step.label }}</td>
+        <td class="step-when" style="padding: 5px 0;">{{ step.when or '' }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </td></tr>
+</table>
+{% endif %}
+{% endmacro %}
+
+
+{# A note the customer left with the order. #}
+{% macro notes_card(notes) %}
+{% if notes %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" style="padding-top: 26px;">
+    <h2 class="section">Your note</h2>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="panel-tinted" bgcolor="#fbf7f5">
+      <tr><td class="panel-pad"><div class="kv-value">{{ notes }}</div></td></tr>
+    </table>
+  </td></tr>
+</table>
+{% endif %}
+{% endmacro %}
+
+
+{# Something the customer needs to read before anything else on the page. #}
+{% macro alert(label, body) %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" style="padding-top: 24px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="panel-warning" bgcolor="#fdf4ee">
+      <tr><td class="panel-pad">
+        <div class="kv-label" style="color:#b4744f;">{{ label }}</div>
+        <div class="kv-value" style="padding-top:4px;">{{ body }}</div>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+{% endmacro %}

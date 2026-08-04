@@ -6,7 +6,7 @@ import { Suspense, useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useCart } from '@/lib/cart-context';
 import {
-  ordersApi, paymentsApi, addressesApi, deliveryApi,
+  ordersApi, paymentsApi, addressesApi, branchesApi, deliveryApi,
   getSessionId,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
@@ -22,7 +22,7 @@ import { analytics } from '@/lib/analytics';
 import { guestAddresses } from '@/lib/guest-addresses';
 import { AddressModal, formatAddress, toDraft, type AddressDraft } from './components/AddressModal';
 import { PromoCodeStep } from './components/PromoCodeStep';
-import type { Address, Cart, CartItem, DeliveryRates, DeliveryQuote } from '@/lib/types';
+import type { Address, Cart, CartItem, DeliveryRates, DeliveryQuote, PickupBranch } from '@/lib/types';
 
 // ─── Session persistence ──────────────────────────────────────────────────────
 
@@ -53,6 +53,8 @@ interface CheckoutForm {
   locationLng: number | null;
   selectedAddressId: string; // '' = new address
   deliveryMethod: 'delivery' | 'pickup';
+  /** Which branch to collect from. Empty until one is chosen; pickup only. */
+  pickupBranchId: string;
   paymentMethod: 'stripe' | 'cod';
   promoCode: string;
   promoDiscount: number;
@@ -66,6 +68,7 @@ const INITIAL_FORM: CheckoutForm = {
   locationLat: null, locationLng: null,
   selectedAddressId: '',
   deliveryMethod: 'delivery',
+  pickupBranchId: '',
   paymentMethod: 'stripe',
   promoCode: '', promoDiscount: 0, promoMessage: '',
   notes: '',
@@ -78,11 +81,6 @@ const INITIAL_FORM: CheckoutForm = {
 function paymentOptionsFor(method: 'delivery' | 'pickup'): ('stripe' | 'cod')[] {
   return method === 'pickup' ? ['cod', 'stripe'] : ['stripe'];
 }
-
-/** Where to send someone who wants to see the counter before choosing pickup. */
-const STORE_LOCATION = { lat: 25.3304139, lng: 55.3736131 };
-const STORE_MAPS_URL =
-  `https://www.google.com/maps/search/?api=1&query=${STORE_LOCATION.lat},${STORE_LOCATION.lng}`;
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 
@@ -255,6 +253,92 @@ function ChoiceRow({
   );
 }
 
+/**
+ * Which counter to collect from.
+ *
+ * A pickup order is a promise to walk into a specific shop, so the shop is part
+ * of the order rather than something resolved afterwards — before this, the API
+ * picked the first branch that could take the job and the customer was shown
+ * one hardcoded pin that had no connection to it.
+ *
+ * Rendered even when there is only one branch. A single row that names the
+ * place, its city and a map link is the answer to "where am I going", and
+ * hiding it because there was no choice to make is what left people asking.
+ */
+function PickupBranchPicker({
+  branches, selectedId, onSelect, error, locale, t,
+}: {
+  branches: PickupBranch[];
+  selectedId: string;
+  onSelect: (id: string) => void;
+  error?: string;
+  locale: string;
+  t: (k: string, p?: Record<string, string | number>) => string;
+}) {
+  if (branches.length === 0) {
+    return (
+      <p className="font-body text-sm text-gray-500">{t('checkout.pickup_branch_unavailable')}</p>
+    );
+  }
+
+  const isAr = locale === 'ar';
+
+  return (
+    <div data-field="pickupBranch" data-field-error={error ? 'true' : undefined}>
+      <p className="font-body text-xs text-gray-400 mb-2">{t('checkout.pickup_branch_hint')}</p>
+      <div className="space-y-2">
+        {branches.map((branch) => {
+          const selected = branch.id === selectedId;
+          const name = (isAr && branch.name_ar) || branch.name;
+          const address = (isAr && branch.address_ar) || branch.address;
+          const city = (isAr && branch.city_ar) || branch.city;
+          return (
+            <div
+              key={branch.id}
+              className={`border rounded-sm transition-colors ${
+                selected ? 'border-primary bg-primary/5'
+                  : error ? 'border-red-400' : 'border-gray-200 hover:border-primary/40'
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => onSelect(branch.id)}
+                aria-pressed={selected}
+                className="w-full flex items-start gap-3 px-3.5 py-3 text-start"
+              >
+                <span className={`material-icons text-xl mt-0.5 ${selected ? 'text-primary' : 'text-gray-400'}`}>
+                  {selected ? 'radio_button_checked' : 'radio_button_unchecked'}
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="block font-body text-sm text-gray-800">{name}</span>
+                  {address && (
+                    <span className="block font-body text-xs text-gray-500 mt-0.5">{address}</span>
+                  )}
+                  <span className="block font-body text-xs text-gray-400 mt-0.5">
+                    {[city, `${branch.opening_from} – ${branch.opening_to}`].filter(Boolean).join(' · ')}
+                  </span>
+                </span>
+              </button>
+              {branch.maps_url && (
+                <a
+                  href={branch.maps_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mx-3.5 mb-3 inline-flex items-center gap-1.5 font-body text-xs text-primary hover:underline"
+                >
+                  <span className="material-icons text-sm">place</span>
+                  {t('checkout.branch_directions')}
+                </a>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {error && <p className="mt-1.5 text-xs text-red-500 font-body">{error}</p>}
+    </div>
+  );
+}
+
 // ─── Order summary ────────────────────────────────────────────────────────────
 
 function OrderSummary({
@@ -420,6 +504,7 @@ function CheckoutContent() {
   const [addressOpen, setAddressOpen] = useState(false);
   const [showExtras, setShowExtras] = useState(false);
   const [quote, setQuote] = useState<DeliveryQuote | null>(null);
+  const [pickupBranches, setPickupBranches] = useState<PickupBranch[]>([]);
 
   const isDelivery = form.deliveryMethod === 'delivery';
   // Where the receipt is already going, when there is an account to read it
@@ -457,6 +542,27 @@ function CheckoutContent() {
 
   useEffect(() => {
     deliveryApi.getRates().then(setDeliveryRates).catch(() => { /* the quote carries the numbers */ });
+  }, []);
+
+  // Loaded up front rather than when collection is chosen, so the list is
+  // already there the moment somebody switches — a spinner between "I'll
+  // collect" and "from where?" is a spinner in the middle of one decision.
+  useEffect(() => {
+    let cancelled = false;
+    branchesApi
+      .pickupPoints()
+      .then((list) => {
+        if (cancelled) return;
+        setPickupBranches(list);
+        // One branch is not a choice, so it is made. Two or more is, and is
+        // left blank on purpose: preselecting one is how somebody drives to
+        // the wrong city.
+        if (list.length === 1) {
+          setForm((prev) => (prev.pickupBranchId ? prev : { ...prev, pickupBranchId: list[0].id }));
+        }
+      })
+      .catch(() => { /* the picker says so, and delivery is unaffected */ });
+    return () => { cancelled = true; };
   }, []);
 
   // The address book: the API when signed in, localStorage when not. Either way
@@ -620,6 +726,12 @@ function CheckoutContent() {
       } else {
         if (!form.firstName.trim()) found.firstName = t('checkout.first_name_required');
         if (!form.phone.trim() || !isValidPhone(form.phone)) found.phone = t('checkout.valid_phone_required');
+        // Only when there is a list to choose from. If the branches could not be
+        // loaded the order still goes through and the API resolves one, because
+        // losing a paid sale to a failed GET is the worse trade.
+        if (pickupBranches.length > 0 && !form.pickupBranchId) {
+          found.pickupBranch = t('checkout.pickup_branch_required');
+        }
       }
 
       if (Object.keys(found).length > 0) {
@@ -664,6 +776,7 @@ function CheckoutContent() {
                 longitude: form.locationLng ?? undefined,
               }
             : undefined,
+          pickup_branch_id: isDelivery ? undefined : form.pickupBranchId || undefined,
           promo_code: form.promoDiscount > 0 ? form.promoCode : undefined,
           payment_method: paymentMethod,
           notes: form.notes || undefined,
@@ -702,7 +815,7 @@ function CheckoutContent() {
       addToast(message, 'error');
       setSubmitting(false);
     }
-  }, [form, cart, retryOrder, user, accountEmail, locale, addToast, refreshCart, t, paymentMethod, isDelivery, unserviceable]);
+  }, [form, cart, retryOrder, user, accountEmail, locale, addToast, refreshCart, t, paymentMethod, isDelivery, unserviceable, pickupBranches]);
 
   // ── Non-form states ────────────────────────────────────────────────────────
 
@@ -810,21 +923,25 @@ function CheckoutContent() {
               subtitle={t('checkout.pickup_description')}
               trailing={<span className="text-green-600">{t('common.free')}</span>}
             />
-            {/* Nobody agrees to collect from somewhere they cannot picture. */}
-            {!isDelivery && (
-              <a
-                href={STORE_MAPS_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-2 inline-flex items-center gap-1.5 font-body text-xs text-primary hover:underline"
-              >
-                <span className="material-icons text-sm">place</span>
-                {t('checkout.view_pickup_location')}
-              </a>
-            )}
           </div>
         </div>
       </Section>
+
+      {/* 1b — Which counter. Only a question when collection is chosen, and it
+          sits directly under the choice that raised it rather than further down
+          the form, because it is part of the same decision. */}
+      {!isDelivery && !retryOrder && (
+        <Section label={t('checkout.pickup_branch')}>
+          <PickupBranchPicker
+            branches={pickupBranches}
+            selectedId={form.pickupBranchId}
+            onSelect={(id) => { onChange({ pickupBranchId: id }); clearError('pickupBranch'); }}
+            error={errors.pickupBranch}
+            locale={locale}
+            t={t}
+          />
+        </Section>
+      )}
 
       {/* 2 — Where it goes and who receives it. */}
       {isDelivery ? (

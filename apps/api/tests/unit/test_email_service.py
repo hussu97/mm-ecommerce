@@ -98,11 +98,17 @@ class TestEmailService:
             ],
         )
 
+        # Through `_order_context`, which is what the real send does — the
+        # template reads flattened item rows and totals rather than the ORM
+        # shapes, so rendering it with a bare order proves nothing about what an
+        # owner actually receives.
         html = email_service._render(
             "owner_order_notification.html",
             recipient_email="fatema_f@hotmail.co.uk",
-            order=order,
             admin_order_url=email_service._admin_order_url(order.order_number),
+            customer_name="Fatema Akhtar",
+            customer_phone="+971500000000",
+            **email_service._order_context(order),
         )
 
         assert "MM-20260606-001" in html

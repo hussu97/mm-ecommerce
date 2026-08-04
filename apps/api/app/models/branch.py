@@ -62,6 +62,17 @@ class Branch(Base, UUIDMixin, TimestampMixin):
     longitude: Mapped[Any | None] = mapped_column(Numeric(10, 7), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
     address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: The city the branch is in, as a customer would name it — "Sharjah",
+    #: "Dubai". Its own column rather than something parsed out of `address`:
+    #: the address is one free-text line written for a driver, and the last
+    #: comma-separated fragment of it is a guess, not a city.
+    city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    #: Arabic address and city, shown to a customer reading the site in Arabic.
+    #: Alongside `name_localized` rather than folded into `translations`,
+    #: because that is where the branch's Arabic name already lives and one
+    #: shape for all three is easier to fill in than two.
+    address_localized: Mapped[str | None] = mapped_column(Text, nullable=True)
+    city_localized: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     # Trading hours. `opening_from`/`opening_to` are "HH:MM" strings so a branch can
     # trade past midnight (e.g. 09:00 → 02:00) without date arithmetic.
@@ -119,6 +130,17 @@ class Branch(Base, UUIDMixin, TimestampMixin):
     receives_online_orders: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"
     )
+    #: Whether a customer may choose to collect from here.
+    #:
+    #: Separate from `receives_online_orders`, which says the branch bakes
+    #: website orders — a production kitchen can do that without being somewhere
+    #: we would send a customer with a cake box and no counter. Inferring one
+    #: from the other would put every new kitchen on the checkout the day it
+    #: starts taking orders, which is not a decision that should happen by
+    #: accident.
+    offers_pickup: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false", index=True
+    )
     accepts_reservations: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false"
     )
@@ -149,12 +171,59 @@ class Branch(Base, UUIDMixin, TimestampMixin):
         "BranchBusinessDay", back_populates="branch", cascade="all, delete-orphan"
     )
 
+    def _translated(self, field: str, locale: str) -> str | None:
+        """
+        One field of this branch in one locale, or None.
+
+        `translations` is `{locale: {field: value}}` — the shape every other
+        translatable model in the codebase uses, and the shape the storefront's
+        `localizedField` reads. This used to index it one level deep and treat
+        the result as a string, so it silently returned nothing for every branch
+        that had translations at all.
+        """
+        if not isinstance(self.translations, dict):
+            return None
+        fields = self.translations.get(locale)
+        if not isinstance(fields, dict):
+            return None
+        value = fields.get(field)
+        return str(value) if value else None
+
     def name_for(self, locale: str = "en") -> str:
-        if isinstance(self.translations, dict):
-            value = self.translations.get(locale)
-            if value:
-                return str(value)
-        return self.name
+        if locale == "en":
+            return self.name
+        return self._translated("name", locale) or self.name_localized or self.name
+
+    def address_for(self, locale: str = "en") -> str | None:
+        if locale == "en":
+            return self.address
+        return (
+            self._translated("address", locale)
+            or self.address_localized
+            or (self.address)
+        )
+
+    def city_for(self, locale: str = "en") -> str | None:
+        if locale == "en":
+            return self.city
+        return self._translated("city", locale) or self.city_localized or self.city
+
+    @property
+    def maps_url(self) -> str | None:
+        """
+        A Google Maps link to this branch's own pin.
+
+        Built from the coordinates rather than the address: a search by address
+        text lands on whatever Google decides that string means, which for a
+        shop inside a tower is regularly the tower's other entrance. `?api=1`
+        with a `query` of `lat,lng` is the documented, app-opening form.
+        """
+        if self.latitude is None or self.longitude is None:
+            return None
+        return (
+            "https://www.google.com/maps/search/?api=1"
+            f"&query={self.latitude},{self.longitude}"
+        )
 
     def __repr__(self) -> str:
         return f"<Branch {self.reference} {self.name}>"

@@ -1,83 +1,51 @@
+{#
+  Packed.
+
+  Two very different pieces of news share this template, because they are the
+  same event: the box is finished. For a collection order that means come and
+  get it, and the branch card is the whole point of the email. For a delivery
+  in an area a third party covers it means it has left our hands — we cannot
+  say when their van arrives, so the email says the day and does not pretend to
+  know the hour.
+
+  A delivery we book ourselves never sends this at all. There, "packed" is an
+  internal moment — the box is waiting for a rider — and the email worth having
+  is the next one, when somebody is actually carrying it.
+#}
 {% extends "base.html" %}
-{% block title %}
-  {% if order.delivery_method.value == "delivery" %}Your Order is On Its Way — {{ order.order_number }}
-  {% else %}Ready for Pickup — {{ order.order_number }}{% endif %}
-{% endblock %}
+{% import "_parts.html" as parts %}
+
+{% block title %}{% if is_pickup %}Ready to collect{% else %}On its way{% endif %} — {{ order.order_number }}{% endblock %}
+{% block preheader %}{% if is_pickup %}{{ order.order_number }} is boxed and waiting at the counter.{% else %}{{ order.order_number }} has left the kitchen.{% endif %}{% endblock %}
 
 {% block content %}
-{% if order.delivery_method.value == "delivery" %}
-<h2>Your Order is On Its Way!</h2>
-<p>Hi {{ name }},</p>
-<p>Great news — your order has been packed and is on its way to you. Your freshly baked treats will be with you soon!</p>
-{% else %}
-<h2>Ready for Pickup</h2>
-<p>Hi {{ name }},</p>
-<p>Your order has been freshly packed and is ready for collection. We look forward to seeing you!</p>
-{% endif %}
-
-<div style="text-align:center;margin:24px 0;">
-  <span class="status status-packed">&#9998; Packed</span><br/>
-  <span class="order-badge">{{ order.order_number }}</span>
-</div>
-
-<!-- Items summary -->
-<table class="items-table" cellpadding="0" cellspacing="0">
-  <thead>
-    <tr>
-      <th>Item</th>
-      <th style="text-align:center;width:50px;">Qty</th>
-      <th class="right" style="width:80px;">Price</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for item in order.items %}
-    <tr>
-      <td>
-        {{ item.product_name }}
-        {% if item.selected_options_snapshot %}<span class="variant-label">{{ item.selected_options_snapshot | map(attribute='option_name') | join(', ') }}</span>{% endif %}
-      </td>
-      <td style="text-align:center;">{{ item.quantity }}</td>
-      <td class="right">{{ "%.2f"|format(item.total_price) }} AED</td>
-    </tr>
-    {% endfor %}
-  </tbody>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="hero" align="center">
+    <p class="hero-eyebrow">{% if is_pickup %}Ready for collection{% else %}Out of the kitchen{% endif %}</p>
+    <h2 class="hero-title">{% if is_pickup %}It's ready, {{ name }}.{% else %}It's on its way, {{ name }}.{% endif %}</h2>
+  </td></tr>
 </table>
 
-<table class="totals" cellpadding="0" cellspacing="0">
-  <tr class="total-row">
-    <td class="label">Total Paid</td>
-    <td class="value">{{ "%.2f"|format(order.total) }} AED</td>
-  </tr>
-  <tr>
-    <td class="label" style="font-size:12px;color:#888;">VAT included (5%)</td>
-    <td class="value" style="font-size:12px;color:#888;">{{ "%.2f"|format(order.vat_amount) }} AED</td>
-  </tr>
+{{ parts.order_chip(order.order_number) }}
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" align="center" style="padding-top: 18px;">
+    <p class="lead" style="text-align:center;">
+      {% if is_pickup %}
+        Freshly boxed and waiting for you at the counter. Bring your order number —
+        that's all we need.
+      {% else %}
+        Your order is packed and has been handed over for delivery. Keep your phone
+        nearby so the driver can reach you.
+      {% endif %}
+    </p>
+  </td></tr>
 </table>
 
-<hr class="divider" />
-
-{% if order.delivery_method.value == "delivery" and order.shipping_address_snapshot %}
-{% set addr = order.shipping_address_snapshot %}
-<div class="info-box">
-  <p class="label">Delivering To</p>
-  <p>{{ addr.get('first_name', '') }} {{ addr.get('last_name', '') }}<br/>
-  {{ addr.get('address_line_1', '') }}{% if addr.get('address_line_2') %}, {{ addr.get('address_line_2') }}{% endif %}<br/>
-  {{ addr.get('region', '') }}, UAE</p>
-</div>
-{% else %}
-<div class="info-box">
-  <p class="label">Pickup Details</p>
-  <p>Please bring your order confirmation when collecting. Contact us on WhatsApp if you need to arrange a specific time.</p>
-</div>
-{% endif %}
-
-<div style="text-align:center;margin:28px 0;">
-  <a href="{{ web_url }}/account/orders/{{ order.order_number }}" class="btn">View Order</a>
-</div>
-<div style="text-align:center;margin:8px 0 24px 0;">
-  <a href="{{ web_url }}/en/track"
-     style="font-size:12px;color:#8a5a64;text-decoration:underline;font-family:Arial,sans-serif;">
-    Track your order status →
-  </a>
-</div>
+{{ parts.estimate_card(estimate) }}
+{{ parts.branch_card(branch) }}
+{{ parts.address_card(address) }}
+{{ parts.timeline(steps) }}
+{{ parts.order_summary(items, totals) }}
+{{ parts.button(tracking_url, 'View order details') }}
 {% endblock %}

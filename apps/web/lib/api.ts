@@ -1,4 +1,4 @@
-import { Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, DeliveryRates, DeliveryQuote } from './types';
+import { Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, DeliveryRates, DeliveryQuote, PickupBranch, TrackResult } from './types';
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -170,6 +170,14 @@ export const ordersApi = {
     api.get<Order>(`/orders/${orderNumber}${email ? `?email=${encodeURIComponent(email)}` : ''}`),
 };
 
+export const branchesApi = {
+  /**
+   * The branches a customer may collect from. Public — a guest choosing pickup
+   * has to see the same list a signed-in customer does.
+   */
+  pickupPoints: () => api.get<PickupBranch[]>('/branches/pickup-points'),
+};
+
 export const paymentsApi = {
   createSession: (orderNumber: string, provider: string) =>
     api.post<PaymentSessionResponse>('/payments/create-session', {
@@ -179,7 +187,7 @@ export const paymentsApi = {
 };
 
 export const trackApi = {
-  lookup: async (order_number: string, email: string) => {
+  lookup: async (order_number: string, email: string): Promise<TrackResult> => {
     const res = await fetch(`${API_BASE}/orders/track`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -190,7 +198,7 @@ export const trackApi = {
       const body = await res.json().catch(() => ({ detail: 'Order not found.' }));
       throw new ApiError(res.status, body.detail);
     }
-    return res.json();
+    return res.json() as Promise<TrackResult>;
   },
 };
 

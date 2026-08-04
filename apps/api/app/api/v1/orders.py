@@ -18,6 +18,7 @@ from app.core.deps import (
 from app.models.order import Order, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
 from app.models.user import User
+from app.schemas.fulfilment import FulfilmentResponse
 from app.schemas.order import (
     OrderCreate,
     OrderListResponse,
@@ -32,6 +33,7 @@ from app.services import (
     audit_service,
     courier_service,
     email_service,
+    fulfilment_service,
     lalamove_service,
     noon_send_service,
     order_service,
@@ -231,7 +233,29 @@ class TrackOrderRequest(BaseModel):
     email: str
 
 
-@router.post("/track")
+class TrackOrderResponse(BaseModel):
+    """
+    What a guest sees on the track page.
+
+    Everything here is also on `OrderResponse`, and it stops well short of it:
+    the tracking page is reached with an order number and an email, which two
+    people can plausibly both hold, so it shows where the order is rather than
+    what was bought, what it cost or where it is going. What it *did* lack was
+    the part that makes the page worth loading twice — when the order arrives,
+    where to collect it, and whether there is a rider to watch — and that is
+    the same `fulfilment` block the account page and the emails read.
+    """
+
+    order_number: str
+    status: str
+    delivery_method: str
+    items_count: int
+    created_at: str
+    total: float
+    fulfilment: FulfilmentResponse | None = None
+
+
+@router.post("/track", response_model=TrackOrderResponse)
 async def track_order(data: TrackOrderRequest, db: AsyncSession = Depends(get_db)):
     """Public endpoint to look up order status by order number + email."""
     stmt = (
@@ -245,13 +269,15 @@ async def track_order(data: TrackOrderRequest, db: AsyncSession = Depends(get_db
     order = (await db.execute(stmt)).scalar_one_or_none()
     if not order:
         raise HTTPException(404, "Order not found. Check your order number and email.")
-    return {
-        "order_number": order.order_number,
-        "status": order.status.value,
-        "delivery_method": order.delivery_method.value,
-        "items_count": len(order.items),
-        "created_at": order.created_at.strftime("%Y-%m-%d"),
-    }
+    return TrackOrderResponse(
+        order_number=order.order_number,
+        status=order.status.value,
+        delivery_method=order.delivery_method.value,
+        items_count=sum(item.quantity for item in order.items),
+        created_at=order.created_at.strftime("%Y-%m-%d"),
+        total=float(order.total),
+        fulfilment=FulfilmentResponse.of(await fulfilment_service.for_order(db, order)),
+    )
 
 
 @router.get("/{order_number}", response_model=OrderResponse)
@@ -293,17 +319,13 @@ async def update_order_status(
 
     # Send email inline (never raises — safe to await before response).
     # Background tasks can be silently dropped on Cloud Run / serverless.
+    #
+    # Which email a status earns is `email_service.notify_status_change`'s
+    # decision, not this endpoint's — the couriers move orders too, and a
+    # per-caller `if` chain is how "delivered" ended up notifying nobody.
+    await email_service.notify_status_change(order)
     if data.status == OrderStatusEnum.CONFIRMED:
-        await email_service.send_order_confirmation(order)
         await email_service.send_owner_order_notification(order)
-    elif data.status == OrderStatusEnum.PACKED:
-        await email_service.send_order_packed(order)
-    elif data.status == OrderStatusEnum.CANCELLED:
-        await email_service.send_order_cancelled(order)
-    elif data.status == OrderStatusEnum.PAYMENT_FAILED:
-        await email_service.send_payment_failed(order)
-    elif data.status == OrderStatusEnum.REFUNDED:
-        await email_service.send_refund_notification(order)
 
     await audit_service.log_action(
         db,

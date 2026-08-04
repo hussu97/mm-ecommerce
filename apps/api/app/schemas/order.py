@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.models.order import DeliveryMethodEnum, OrderStatusEnum
 from .address import AddressCreate
+from .fulfilment import FulfilmentResponse
 
 
 class PaymentMethodEnum(str, enum.Enum):
@@ -43,6 +44,11 @@ class OrderCreate(BaseModel):
     shipping_address: AddressCreate | None = (
         None  # required if delivery_method == delivery
     )
+    #: Which branch the customer is coming to. Only read for a pickup order, and
+    #: optional even then: an order placed by a client that predates the picker
+    #: still has to be accepted, and falls back to the branch the shop would have
+    #: resolved for it anyway.
+    pickup_branch_id: UUID | None = None
     promo_code: str | None = None
     payment_method: PaymentMethodEnum = Field(
         description="stripe | cod | tabby | tamara"
@@ -92,6 +98,16 @@ class OrderResponse(BaseModel):
     #: one only answers it for someone who already holds the order number and
     #: the email that placed it.
     email_has_account: bool = False
+    #: How the order reaches this customer — when to expect it, where to collect
+    #: it, and a live map when there is one. Null on a response built without a
+    #: session to load it from (the POS path, and anything constructed in a
+    #: test); every customer-facing route fills it in.
+    #:
+    #: Deliberately narrow. The admin's `OrderDeliveryResponse` carries the
+    #: courier, the driver and what the run cost; none of that is here, and the
+    #: separation is what keeps "the customer is not told who carries their
+    #: cake" a property of the type rather than a rule someone has to remember.
+    fulfilment: FulfilmentResponse | None = None
 
 
 class OrderListResponse(BaseModel):

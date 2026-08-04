@@ -24,6 +24,7 @@ export default function BranchesPage() {
         opening_to: '23:00',
         business_day_start: '04:00',
         receives_online_orders: true,
+        offers_pickup: false,
         accepts_reservations: false,
         is_active: true,
         display_order: 0,
@@ -35,6 +36,7 @@ export default function BranchesPage() {
         { header: 'Hours', render: (b) => `${b.opening_from} – ${b.opening_to}` },
         { header: 'Day starts', render: (b) => b.business_day_start },
         { header: 'Online', render: (b) => (b.receives_online_orders ? 'Yes' : 'No') },
+        { header: 'Collection', render: (b) => (b.offers_pickup ? 'Yes' : 'No') },
         {
           header: 'noon Send',
           render: (b) =>
@@ -67,6 +69,14 @@ export default function BranchesPage() {
         },
         { name: 'phone', label: 'Phone' },
         { name: 'address', label: 'Address', type: 'textarea' },
+        { name: 'address_localized', label: 'Address (Arabic)', type: 'textarea' },
+        {
+          name: 'city',
+          label: 'City',
+          placeholder: 'Sharjah',
+          helper: 'Shown to customers choosing where to collect from',
+        },
+        { name: 'city_localized', label: 'City (Arabic)', placeholder: 'الشارقة' },
         { name: 'opening_from', label: 'Opens', placeholder: '09:00' },
         { name: 'opening_to', label: 'Closes', placeholder: '23:00' },
         {
@@ -94,6 +104,13 @@ export default function BranchesPage() {
             'Optional. Pins the outlet address revision. The trailing number changes whenever noon edits the address, so leave it empty rather than let it go stale.',
         },
         { name: 'receives_online_orders', label: 'Accepts online orders', type: 'checkbox' },
+        {
+          name: 'offers_pickup',
+          label: 'Customers can collect from here',
+          type: 'checkbox',
+          helper:
+            'Puts this branch on the checkout as a collection point. Needs a pin, an address and a city — a kitchen that bakes online orders is not automatically somewhere to send a customer.',
+        },
         { name: 'accepts_reservations', label: 'Accepts reservations', type: 'checkbox' },
         { name: 'display_order', label: 'Display order', type: 'number' },
         { name: 'is_active', label: 'Active', type: 'checkbox' },

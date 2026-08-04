@@ -10,6 +10,17 @@
 
 ## Lessons
 
+### [2026-08-04] Pydantic coerces a MagicMock to `True`, so a bool default in a test fixture asserts nothing
+- **What went wrong**: `_order()` in `test_order_service.py` builds a `MagicMock` and sets every column by hand, but never set `email_has_account`. `OrderResponse` has `from_attributes=True`, so validation read the attribute off the mock, got a `MagicMock`, and coerced it to `True` — the opposite of the field's default. Every test in that file had been quietly asserting a value nobody chose.
+- **Why it hid**: it only breaks on a *typed* field. Adding `fulfilment: FulfilmentResponse | None` raised immediately and 31 tests went red at once; the bool had been wrong in silence for as long as the field had existed.
+- **Rule**: when a mock stands in for an ORM row on a model with `from_attributes=True`, set **every** field the response declares, including the ones with defaults. A field left to the mock is not a default — it is whatever pydantic can coerce a `MagicMock` into, and for `bool` that is always `True`.
+
+### [2026-08-04] A `translations` column has one shape; check which one before reading it
+- **What went wrong**: `Branch.name_for` did `self.translations.get(locale)` and returned it as a string. The column holds `{locale: {field: value}}` — the shape `Translations = dict[str, dict[str, str]]` declares in the schemas and the shape the storefront's `localizedField` reads — so it returned a dict, failed the truthiness-then-`str()` path, and fell back to English for every branch that had translations at all.
+- **Why it hid**: the method had no callers. It was written alongside a model that had no Arabic data to read, so it was never wrong about anything until a branch needed a name in two languages.
+- **Rule**: before reading a JSONB translations column, find one other model that reads the same column name and copy its access pattern. And a helper with no callers is not tested by anything — either give it one or do not write it yet.
+
+
 ### [2026-08-04] Check the branch is current before designing on top of it
 - **What went wrong**: six commits of courier and POS work were built on a `main` that was 26 commits behind `origin/main`. The remote had since added dynamic delivery pricing, a `pricing_mode` flag on `delivery_polygons`, a free-delivery scope change and a batch-retry path — none of it visible locally. The result is three colliding migration numbers, two Alembic heads at `056`, and a delivery model that has diverged in both directions.
 - **Why it hid**: everything built, every test passed, and the local history looked linear. `git log origin/main..HEAD` reads "6 ahead" whether or not you are also behind; only the `[behind N]` in `git status -sb` says the other half.

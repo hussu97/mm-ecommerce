@@ -1,0 +1,445 @@
+"""
+Which email an order earns, and what is in it.
+
+Three places move an order — the admin's status endpoint, Stripe's webhooks and
+the couriers' — and each of them used to decide independently which emails
+existed. That is why a courier marking an order delivered notified nobody. The
+decision lives in `email_service.notify_status_change` now, so it is testable
+once rather than in three shapes.
+"""
+
+from __future__ import annotations
+
+import html as html_lib
+import re
+import uuid
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from app.models.order import DeliveryMethodEnum, OrderStatusEnum
+from app.schemas.fulfilment import FulfilmentResponse, PickupBranchResponse
+from app.schemas.order import OrderItemResponse, OrderResponse
+from app.services import email_service
+
+NOW = datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc)
+
+BRANCH = PickupBranchResponse(
+    id=uuid.uuid4(),
+    reference="K001",
+    name="Melting Moments Cakes",
+    name_ar="ملتينج مومنتس كيكس",
+    address="Garden Tower 1 Shop no 1, Al Majaz 3, Sharjah",
+    address_ar="جاردن تاور 1 محل رقم 1، المجاز 3، الشارقة",
+    city="Sharjah",
+    city_ar="الشارقة",
+    phone="06 552 1234",
+    latitude=25.3304139,
+    longitude=55.3736131,
+    maps_url="https://www.google.com/maps/search/?api=1&query=25.3304139,55.3736131",
+    opening_from="09:00",
+    opening_to="23:00",
+)
+
+
+def _order(
+    *,
+    status: OrderStatusEnum = OrderStatusEnum.CONFIRMED,
+    method: DeliveryMethodEnum = DeliveryMethodEnum.DELIVERY,
+    stage: str = "preparing",
+    estimated_at: datetime | None = None,
+    precision: str | None = "time",
+    tracking_url: str | None = None,
+    courier_managed: bool = False,
+    branch: PickupBranchResponse | None = None,
+    payment_id: str | None = "pi_test",
+    payment_method: str | None = "stripe",
+    **stamps,
+) -> OrderResponse:
+    return OrderResponse(
+        id=uuid.uuid4(),
+        order_number="MM-20260804-014",
+        user_id=None,
+        email="customer@example.com",
+        delivery_method=method,
+        delivery_fee=15.0,
+        subtotal=250.0,
+        discount_amount=25.0,
+        total=240.0,
+        status=status,
+        promo_code_used="WELCOME10",
+        shipping_address_snapshot={
+            "first_name": "Layla",
+            "last_name": "Al Nuaimi",
+            "address_line_1": "Villa 14, Al Majaz 3",
+            "city": "Sharjah",
+            "phone": "+971501234567",
+        },
+        payment_method=payment_method,
+        payment_provider="stripe",
+        payment_id=payment_id,
+        vat_rate=0.05,
+        vat_amount=11.43,
+        total_excl_vat=228.57,
+        notes="Happy Birthday Sara",
+        admin_notes=None,
+        created_at=NOW - timedelta(hours=1),
+        updated_at=NOW,
+        items=[
+            OrderItemResponse(
+                id=uuid.uuid4(),
+                product_id=uuid.uuid4(),
+                product_name="Belgian Chocolate Brownie Box",
+                product_sku="BRW-12",
+                quantity=2,
+                base_price=110.0,
+                options_price=15.0,
+                unit_price=125.0,
+                total_price=250.0,
+                selected_options_snapshot=[{"option_name": "12 pieces"}],
+            )
+        ],
+        fulfilment=FulfilmentResponse(
+            method=method.value,
+            stage=stage,
+            estimated_at=estimated_at,
+            precision=precision,
+            tracking_url=tracking_url,
+            courier_managed=courier_managed,
+            branch=branch,
+            **stamps,
+        ),
+    )
+
+
+def body(message: dict) -> str:
+    """
+    The message as a reader sees it.
+
+    Two things stand between the source and the copy. Jinja autoescapes, so
+    every apostrophe and ampersand that arrived through a variable is `&#39;`
+    and `&amp;`; and a sentence in a template is wrapped across lines with
+    indentation, so it contains whitespace a reader never sees. Asserting
+    against the raw HTML means asserting against both of those rather than
+    against the copy, and the copy is the thing under test.
+    """
+    return re.sub(r"\s+", " ", html_lib.unescape(message["html"]))
+
+
+@pytest.fixture
+def sent(monkeypatch):
+    """Capture what would have gone to Resend, and never touch the database."""
+    outbox: list[dict] = []
+
+    def _fake_send(to, subject, html):
+        outbox.append({"to": to, "subject": subject, "html": html})
+        return {"status": "sent", "resend_id": "re_test", "error": None}
+
+    async def _no_log(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(email_service, "_send", _fake_send)
+    monkeypatch.setattr(email_service, "_log", _no_log)
+    return outbox
+
+
+# ── which email ───────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status,expected",
+    [
+        (OrderStatusEnum.CONFIRMED, "confirmed"),
+        (OrderStatusEnum.OUT_FOR_DELIVERY, "out_for_delivery"),
+        (OrderStatusEnum.DELIVERED, "delivered"),
+        (OrderStatusEnum.CANCELLED, "cancelled"),
+        (OrderStatusEnum.PAYMENT_FAILED, "payment_failed"),
+        (OrderStatusEnum.REFUNDED, "refunded"),
+        # Deliberately silent: the checkout page itself answers `created`, and a
+        # dispute is a conversation with a bank rather than with a customer.
+        (OrderStatusEnum.CREATED, None),
+        (OrderStatusEnum.DISPUTED, None),
+    ],
+)
+async def test_every_status_sends_exactly_the_email_it_earns(status, expected, sent):
+    acted = await email_service.notify_status_change(_order(status=status))
+    assert acted == expected
+    assert len(sent) == (1 if expected else 0)
+
+
+@pytest.mark.asyncio
+async def test_packed_is_the_come_and_get_it_email_for_a_collection_order(sent):
+    order = _order(
+        status=OrderStatusEnum.PACKED,
+        method=DeliveryMethodEnum.PICKUP,
+        stage="ready",
+        estimated_at=NOW,
+        precision="exact",
+        branch=BRANCH,
+    )
+    assert email_service.should_send_packed(order) is True
+    assert await email_service.notify_status_change(order) == "packed"
+    assert "Ready to collect" in sent[0]["subject"]
+
+
+@pytest.mark.asyncio
+async def test_packed_is_the_last_word_for_a_third_party_delivery(sent):
+    """
+    Nobody will tell us anything after this, so it is the last email the
+    customer would ever get — which is exactly why it has to be sent.
+    """
+    order = _order(status=OrderStatusEnum.PACKED, stage="ready", courier_managed=False)
+    assert email_service.should_send_packed(order) is True
+    assert await email_service.notify_status_change(order) == "packed"
+    assert "On its way" in sent[0]["subject"]
+
+
+@pytest.mark.asyncio
+async def test_packed_says_nothing_when_a_rider_will_be_the_news(sent):
+    """
+    For a courier we book, "packed" means the box is on a shelf. The email worth
+    having is the next one, when somebody is actually carrying it — and sending
+    both turns the useful one into the second of two.
+    """
+    order = _order(status=OrderStatusEnum.PACKED, stage="ready", courier_managed=True)
+    assert email_service.should_send_packed(order) is False
+    assert await email_service.notify_status_change(order) is None
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_a_failed_handover_wins_over_the_status(sent):
+    """
+    `undelivered` leaves the order on `out_for_delivery`, so keying on status
+    alone would send "your order is on its way" to somebody who just watched a
+    driver leave.
+    """
+    order = _order(
+        status=OrderStatusEnum.OUT_FOR_DELIVERY,
+        stage="undelivered",
+        estimated_at=None,
+        precision=None,
+        courier_managed=True,
+    )
+    assert await email_service.notify_status_change(order) == "undelivered"
+    assert "couldn't deliver" in sent[0]["subject"]
+    assert "wasn't able to complete the delivery" in body(sent[0])
+
+
+# ── what is in it ─────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_collection_email_carries_the_branch_and_its_map_link(sent):
+    await email_service.send_order_packed(
+        _order(
+            status=OrderStatusEnum.PACKED,
+            method=DeliveryMethodEnum.PICKUP,
+            stage="ready",
+            estimated_at=NOW,
+            precision="exact",
+            branch=BRANCH,
+        )
+    )
+    html = body(sent[0])
+    assert "Melting Moments Cakes" in html
+    assert "Garden Tower 1 Shop no 1, Al Majaz 3, Sharjah" in html
+    assert "Sharjah" in html
+    assert BRANCH.maps_url in html
+    assert "09:00" in html and "23:00" in html
+    # The Arabic is shown alongside rather than instead: an order records no
+    # locale, so the email offers both and lets the reader use one.
+    assert "ملتينج مومنتس كيكس" in html
+
+
+@pytest.mark.asyncio
+async def test_the_out_for_delivery_email_leads_with_the_live_link(sent):
+    await email_service.send_order_out_for_delivery(
+        _order(
+            status=OrderStatusEnum.OUT_FOR_DELIVERY,
+            stage="on_the_way",
+            estimated_at=NOW + timedelta(minutes=45),
+            tracking_url="https://share.lalamove.com/?SG100250001",
+            courier_managed=True,
+            picked_up_at=NOW,
+        )
+    )
+    html = body(sent[0])
+    assert "https://share.lalamove.com/?SG100250001" in html
+    assert "Track live" in html
+    assert "Arriving" in html
+
+
+@pytest.mark.asyncio
+async def test_an_order_email_never_names_the_courier(sent):
+    """
+    The storefront rule, enforced at the last place it could leak. The link says
+    "track live", not "track your Lalamove booking".
+    """
+    await email_service.send_order_out_for_delivery(
+        _order(
+            status=OrderStatusEnum.OUT_FOR_DELIVERY,
+            stage="on_the_way",
+            estimated_at=NOW + timedelta(minutes=45),
+            courier_managed=True,
+            picked_up_at=NOW,
+        )
+    )
+    text = body(sent[0]).lower()
+    for word in ("lalamove", "noon send", "noon_send", "courier", "rider on demand"):
+        assert word not in text
+
+
+@pytest.mark.asyncio
+async def test_a_delivery_with_no_estimate_shows_no_panel_rather_than_a_guess(sent):
+    """
+    Nothing to promise is a real answer, and an empty panel beats a made-up
+    time on an email somebody is planning their afternoon around.
+    """
+    await email_service.send_order_cancelled(
+        _order(
+            status=OrderStatusEnum.CANCELLED,
+            stage="settled",
+            estimated_at=None,
+            precision=None,
+        )
+    )
+    html = body(sent[0])
+    assert "Estimated delivery" not in html
+    assert "Order cancelled" in html
+
+
+@pytest.mark.asyncio
+async def test_a_cancellation_only_mentions_a_refund_when_money_was_taken(sent):
+    """Promising a refund on an unpaid order generates a support email a week later."""
+    await email_service.send_order_cancelled(
+        _order(status=OrderStatusEnum.CANCELLED, stage="settled", estimated_at=None)
+    )
+    assert "Your refund" in body(sent[0])
+
+    sent.clear()
+    await email_service.send_order_cancelled(
+        _order(
+            status=OrderStatusEnum.CANCELLED,
+            stage="settled",
+            estimated_at=None,
+            payment_id=None,
+        )
+    )
+    assert "Your refund" not in body(sent[0])
+
+
+@pytest.mark.asyncio
+async def test_a_cash_collection_order_is_not_promised_a_card_refund(sent):
+    await email_service.send_order_cancelled(
+        _order(
+            status=OrderStatusEnum.CANCELLED,
+            method=DeliveryMethodEnum.PICKUP,
+            stage="settled",
+            estimated_at=None,
+            payment_method="cod",
+        )
+    )
+    assert "Your refund" not in body(sent[0])
+
+
+@pytest.mark.asyncio
+async def test_a_collection_timeline_has_no_delivery_step(sent):
+    """
+    Greying out a stage nobody is waiting for reads as a stage that was skipped.
+    """
+    await email_service.send_order_packed(
+        _order(
+            status=OrderStatusEnum.PACKED,
+            method=DeliveryMethodEnum.PICKUP,
+            stage="ready",
+            estimated_at=NOW,
+            precision="exact",
+            branch=BRANCH,
+        )
+    )
+    html = body(sent[0])
+    assert "Ready to collect" in html
+    assert "Out for delivery" not in html
+
+
+@pytest.mark.asyncio
+async def test_a_render_failure_is_logged_against_the_order_not_raised(monkeypatch):
+    """
+    A cake that is baked and boxed must not be blocked by a typo in a Jinja
+    file — and a courier webhook must not be rejected because we could not write
+    about it. Lalamove would retry the whole event for a day.
+    """
+    logged: list[tuple] = []
+
+    async def _capture(template, recipient, subject, result, order_number=None):
+        logged.append((template, result["status"], order_number))
+
+    monkeypatch.setattr(email_service, "_log", _capture)
+    monkeypatch.setattr(
+        email_service,
+        "_render",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bad template")),
+    )
+
+    await email_service.send_order_confirmation(_order())
+
+    assert logged == [("order_confirmation", "failed", "MM-20260804-014")]
+
+
+@pytest.mark.asyncio
+async def test_every_template_renders_for_the_status_that_uses_it(sent):
+    """
+    A smoke test across the whole matrix. Each of these is one production email
+    nobody would see fail until it did not arrive.
+    """
+    cases = [
+        (email_service.send_order_confirmation, OrderStatusEnum.CONFIRMED, {}),
+        (
+            email_service.send_order_packed,
+            OrderStatusEnum.PACKED,
+            {"stage": "ready", "method": DeliveryMethodEnum.PICKUP, "branch": BRANCH},
+        ),
+        (
+            email_service.send_order_out_for_delivery,
+            OrderStatusEnum.OUT_FOR_DELIVERY,
+            {"stage": "on_the_way", "courier_managed": True, "picked_up_at": NOW},
+        ),
+        (
+            email_service.send_order_delivered,
+            OrderStatusEnum.DELIVERED,
+            {"stage": "delivered", "precision": "exact", "delivered_at": NOW},
+        ),
+        (
+            email_service.send_order_undelivered,
+            OrderStatusEnum.OUT_FOR_DELIVERY,
+            {"stage": "undelivered", "estimated_at": None, "precision": None},
+        ),
+        (
+            email_service.send_order_cancelled,
+            OrderStatusEnum.CANCELLED,
+            {"stage": "settled", "estimated_at": None, "precision": None},
+        ),
+        (
+            email_service.send_refund_notification,
+            OrderStatusEnum.REFUNDED,
+            {"stage": "settled", "estimated_at": None, "precision": None},
+        ),
+        (
+            email_service.send_payment_failed,
+            OrderStatusEnum.PAYMENT_FAILED,
+            {"stage": "settled", "estimated_at": None, "precision": None},
+        ),
+        (email_service.send_owner_order_notification, OrderStatusEnum.CONFIRMED, {}),
+    ]
+    for send, status, extra in cases:
+        extra.setdefault("estimated_at", NOW + timedelta(hours=2))
+        await send(_order(status=status, **extra))
+
+    # The owner notification goes to both owners, so one more than the calls.
+    assert len(sent) == len(cases) + 1
+    for message in sent:
+        assert "<!DOCTYPE html>" in message["html"]
+        assert "MELTING MOMENTS" in message["html"].upper()
+        assert message["subject"].endswith("Melting Moments")

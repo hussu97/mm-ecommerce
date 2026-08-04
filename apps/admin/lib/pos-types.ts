@@ -28,6 +28,10 @@ export interface Branch {
   longitude: number | null;
   phone: string | null;
   address: string | null;
+  address_localized: string | null;
+  /** The city, as a customer would name it. Shown on the collection picker. */
+  city: string | null;
+  city_localized: string | null;
   opening_from: string;
   opening_to: string;
   business_day_start: string;
@@ -42,6 +46,8 @@ export interface Branch {
   /** Optional address revision for that outlet, `addr::…::CODE::2`. */
   noon_send_outlet_address_code: string | null;
   receives_online_orders: boolean;
+  /** Whether customers may choose to collect from here. Not implied by the flag above. */
+  offers_pickup: boolean;
   accepts_reservations: boolean;
   reservation_duration: number;
   is_active: boolean;
