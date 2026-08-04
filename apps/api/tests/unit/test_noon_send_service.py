@@ -500,3 +500,32 @@ def test_a_position_push_without_coordinates_is_ignored():
     delivery = _delivery(driver_latitude=Decimal("25.33"))
     noon_send_service.apply_tracking(delivery, {"da_details": {}})
     assert delivery.driver_latitude == Decimal("25.33")
+
+
+def test_the_distance_guard_is_not_tighter_than_the_zone_we_drew():
+    """
+    Our own pre-check must not refuse addresses the map hands to noon Send.
+
+    `Sharjah Central` is a 13.4 km circle because that is 20 road km over the
+    measured detour factor, and 20 km is where noon Send's rate card stops. If
+    `NOON_SEND_MAX_DISTANCE_M` is set below that, every pin in the outer ring of
+    the zone is refused here — before noon Send is ever asked — and falls back to
+    Lalamove. Nothing breaks and nobody is overcharged, which is exactly why it
+    would go unnoticed: the zone simply stops doing the thing it was drawn for.
+
+    This shipped once, at 15000 against a 20 km zone, and would have excluded Al
+    Zahia and University City — the two areas the redraw was for.
+    """
+    from app.core.config import settings
+
+    zone_radius_km = 13.4
+    reachable_km = zone_radius_km * settings.NOON_SEND_DETOUR_FACTOR
+    guard_km = settings.NOON_SEND_MAX_DISTANCE_M / 1000
+
+    assert guard_km >= reachable_km, (
+        f"the guard stops at {guard_km:.1f} km but the zone reaches "
+        f"{reachable_km:.1f} road km"
+    )
+    # And not looser than the card can price, which would book a run at a fee
+    # the rate card has no band for.
+    assert guard_km <= noon_send_service.RATE_CARD_MAX_KM

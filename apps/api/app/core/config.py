@@ -187,11 +187,17 @@ class Settings(BaseSettings):
     NOON_SEND_OUTLET_CODE: str = ""
     #: `noon_food` or `nownow` — which side of noon owns the pickup point.
     NOON_SEND_CLIENT_CODE: str = "noon_food"
-    #: Their hard cap on pickup-to-drop-off distance. The zone map already keeps
-    #: orders well inside it; this is the belt to that pair of braces, so a task
-    #: that would be rejected is never sent. `GET /public/v1/configurations`
-    #: reports the real per-partner limit if commercial ever raise ours.
-    NOON_SEND_MAX_DISTANCE_M: int = 15000
+    #: Their hard cap on pickup-to-drop-off distance, and the belt to the zone
+    #: map's braces: a task that would be rejected is never sent.
+    #:
+    #: Must not be tighter than the circle `Sharjah Central` is drawn to, or the
+    #: outer ring of that zone is refused by us before noon Send ever sees it and
+    #: falls back to Lalamove — invisibly, and on exactly the addresses the zone
+    #: exists to serve. It was 15000 against a 20 km zone for one release, which
+    #: silently excluded Al Zahia and University City. `test_noon_send_service`
+    #: now ties the two together. `GET /public/v1/configurations` reports the
+    #: real per-partner limit if commercial ever raise ours.
+    NOON_SEND_MAX_DISTANCE_M: int = 20000
     #: Straight-line to road-distance multiplier, fitted across the sixteen
     #: Sharjah areas the Lalamove rate card was measured over. Only used to
     #: estimate what a run costs us — noon Send has no quotation API, so this is

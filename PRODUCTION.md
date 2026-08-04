@@ -720,9 +720,9 @@ Two things have to be done in the Partner Portal, not here:
 #### Courier — noon Send (Rider-on-Demand)
 
 Optional, and safe to leave unset: a `noon_send` zone with no credentials simply
-dispatches through Lalamove. Same for anything noon Send refuses — over their
-15 km cap, outside the fleet area, or nobody free — so this can never strand an
-order.
+dispatches through Lalamove. Same for anything noon Send refuses — past their
+distance cap, outside the fleet area, or nobody free — so this can never strand
+an order.
 
 Only the `Sharjah Central` zone uses it. noon Send cannot cross an emirate
 boundary and the kitchen is in Sharjah, so Ajman and Dubai are not candidates
@@ -754,7 +754,7 @@ The rest fall back in the deploy workflow:
 | `NOON_SEND_OUTLET_CODE` | *(empty)* | **Not the place to set this.** It is a fallback for a branch with no code of its own; the real value lives on the branch (below). Leave it unset |
 | `NOON_SEND_LOCALE` | `en-ae` | |
 | `NOON_SEND_CLIENT_CODE` | `noon_food` | `noon_food` or `nownow` |
-| `NOON_SEND_MAX_DISTANCE_M` | `15000` | Their documented cap. `GET /public/v1/configurations` reports the real per-partner limit |
+| `NOON_SEND_MAX_DISTANCE_M` | `20000` | Matches the 20 km the rate card prices to and the radius `Sharjah Central` is drawn at. Never set it tighter than the zone — see the note above. `GET /public/v1/configurations` reports the real per-partner limit |
 | `NOON_SEND_DETOUR_FACTOR` | `1.49` | Straight line to road distance. Only used to estimate cost — there is no quotation API |
 | `NOON_SEND_TIMEOUT_SECONDS` | `8` | |
 
@@ -793,10 +793,23 @@ Two things have to be done by the noon RoD integrations team, not here:
    path is not part of any signature, so it can be changed freely. These have to
    be registered **on the staging side** for the trial, and again on production
    later.
-2. **Confirm the distance limit.** The standard partner cap is 15 km. Anything
-   wider has to be agreed with the commercial team (`sbhatti@noon.com`), after
-   which `NOON_SEND_MAX_DISTANCE_M` and the 10 km radius in
-   `scripts/build_delivery_zones.py` can both grow.
+2. **Confirm the distance limit — this one is open.** The rate card we were
+   given prices bands out to 20 km, and the map is drawn to match: `Sharjah
+   Central` is a 13.4 km circle, which is 20 road km over the measured detour
+   factor, and `NOON_SEND_MAX_DISTANCE_M` is 20000 to match it. An earlier
+   version of the integration doc said the *standard partner cap* is 15 km,
+   which is a commercial parameter and not the same thing as the card's bands.
+   Confirm with the commercial team (`sbhatti@noon.com`) which applies to this
+   account.
+
+   Nothing breaks if the cap really is 15: noon Send refuses the task, the
+   refusal is recognised as unserviceable, and the order falls back to Lalamove
+   at the same fee to the customer. What is lost is the saving on the outer ring
+   — Al Zahia and University City — and it is lost silently, so it is worth
+   asking rather than discovering. If the answer is 15 km, set
+   `NOON_SEND_MAX_DISTANCE_M=15000` **and** shrink `INNER_ZONE` in
+   `scripts/build_delivery_zones.py` to 10.0 km, then republish the map: the two
+   must move together or the zone claims addresses it cannot serve.
 
 There is no wallet to fund — billing is on the partner agreement. Once
 `NOON_SEND_ENV=production`, orders are real: a rider is dispatched and a

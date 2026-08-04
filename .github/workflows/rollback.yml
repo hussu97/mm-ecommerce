@@ -106,7 +106,7 @@ jobs:
           NOON_SEND_LOCALE=${{ secrets.NOON_SEND_LOCALE || 'en-ae' }}
           NOON_SEND_OUTLET_CODE=${{ secrets.NOON_SEND_OUTLET_CODE }}
           NOON_SEND_CLIENT_CODE=${{ secrets.NOON_SEND_CLIENT_CODE || 'noon_food' }}
-          NOON_SEND_MAX_DISTANCE_M=${{ secrets.NOON_SEND_MAX_DISTANCE_M || '15000' }}
+          NOON_SEND_MAX_DISTANCE_M=${{ secrets.NOON_SEND_MAX_DISTANCE_M || '20000' }}
           NOON_SEND_DETOUR_FACTOR=${{ secrets.NOON_SEND_DETOUR_FACTOR || '1.49' }}
           TRIAL_CUSTOMER_EMAILS=${{ secrets.TRIAL_CUSTOMER_EMAILS || 'h_abbasi97@hotmail.com' }}
           APNS_KEY_P8=${{ secrets.APNS_KEY_P8 }}
