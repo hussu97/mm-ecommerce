@@ -234,6 +234,17 @@ export const ordersApi = {
   /** Book the courier again after a failed or abandoned dispatch. */
   dispatchDelivery: (orderNumber: string) =>
     api.post<OrderDelivery>(`/orders/${orderNumber}/delivery/dispatch`),
+  /**
+   * Ask the courier where this order actually is.
+   *
+   * For when a status push never arrived. noon Send does not retry a failed
+   * webhook and there is nothing to replay, so without this a rider could
+   * deliver an order and the shop would still be looking at "assigned"
+   * tomorrow. It pulls the live status, the rider's name and number, and walks
+   * the order forward exactly as the push would have.
+   */
+  refreshDelivery: (orderNumber: string) =>
+    api.post<OrderDelivery>(`/orders/${orderNumber}/delivery/refresh`),
 };
 
 // ─── Delivery zones ───────────────────────────────────────────────────────────

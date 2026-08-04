@@ -95,6 +95,22 @@ export default function OrderDetailPage() {
     }
   }
 
+  async function refreshCourier() {
+    setActionLoading(true);
+    try {
+      setDelivery(await ordersApi.refreshDelivery(orderNumber));
+      const fresh = await ordersApi.get(orderNumber);
+      // The status may have moved with it — a pull that finds "delivered" walks
+      // the order there, and leaving the header showing "packed" would make the
+      // refresh look like it did nothing.
+      setOrder(fresh);
+    } catch (err) {
+      alert((err as Error).message);
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
   async function saveNotes() {
     if (!order) return;
     setActionLoading(true);
@@ -245,6 +261,7 @@ export default function OrderDetailPage() {
           delivery={delivery}
           busy={actionLoading}
           onRedispatch={redispatch}
+          onRefresh={refreshCourier}
         />
       )}
 
@@ -366,10 +383,12 @@ function DeliveryPanel({
   delivery,
   busy,
   onRedispatch,
+  onRefresh,
 }: {
   delivery: OrderDelivery;
   busy: boolean;
   onRedispatch: () => void;
+  onRefresh: () => void;
 }) {
   const cost = delivery.cost_total ?? delivery.quoted_cost;
   const isCourier = delivery.provider !== 'third_party';
@@ -504,6 +523,15 @@ function DeliveryPanel({
             </a>
           )}
           <div className="flex-1" />
+          {/* noon Send only. Lalamove pushes its own updates and retries them
+              for a day, so the endpoint refuses it and a button here would be a
+              400 waiting to happen. */}
+          {delivery.provider === 'noon_send' && delivery.courier_order_id && (
+            <Button size="sm" variant="ghost" onClick={onRefresh} disabled={busy}>
+              <span className="material-icons text-[14px]">sync</span>
+              Check status
+            </Button>
+          )}
           {isCourier && (
             <Button size="sm" variant="ghost" onClick={onRedispatch} disabled={busy}>
               <span className="material-icons text-[14px]">refresh</span>
