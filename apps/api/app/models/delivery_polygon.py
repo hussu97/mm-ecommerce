@@ -122,6 +122,18 @@ class DeliveryPolygon(Base, UUIDMixin):
         default=DeliveryPricingEnum.STATIC.value,
         server_default=DeliveryPricingEnum.STATIC.value,
     )
+    #: Whether a basket over the threshold delivers free here.
+    #:
+    #: A flag of its own rather than something inferred from the fee or the
+    #: courier. It used to be read off `pricing_mode`, which worked only while
+    #: the fixed-fee zones and the ones we deliver ourselves were the same set;
+    #: the moment a third-party zone got a fixed fee too, that proxy started
+    #: giving delivery away in the places it costs the most to reach. False by
+    #: default, because a zone drawn without anyone thinking about the offer
+    #: should not be making it.
+    free_delivery_eligible: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     # Which courier serves this zone. Third party is the safe default: it means
     # "do what we have always done", so a zone added without thinking about
     # dispatch cannot start booking real couriers by accident.

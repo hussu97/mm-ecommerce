@@ -239,6 +239,16 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "unserviceable_change", "Change address"),
     ("checkout", "unserviceable_pickup", "Collect from store instead"),
     ("checkout", "unserviceable_short", "Delivery unavailable here"),
+    # The arrival estimate. "Today"/"Tomorrow" are words; the date and the time
+    # are formatted by the browser, which knows the customer's locale far better
+    # than a translation table does.
+    ("checkout", "estimated_delivery", "Estimated delivery"),
+    ("checkout", "delivery_today", "Today"),
+    ("checkout", "delivery_tomorrow", "Tomorrow"),
+    # A day with no hour on it. Used where the van is a partner's and naming an
+    # hour would be promising something we do not control.
+    ("checkout", "delivery_by_day", "{day}"),
+    ("checkout", "delivery_by_time", "{day}, {time}"),
     ("checkout", "view_pickup_location", "See where to collect from"),
     ("common", "address", "Address"),
     ("checkout", "email_optional", "Email (optional)"),
@@ -701,6 +711,11 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "unserviceable_change", "تغيير العنوان"),
     ("checkout", "unserviceable_pickup", "الاستلام من المتجر بدلاً من ذلك"),
     ("checkout", "unserviceable_short", "التوصيل غير متاح هنا"),
+    ("checkout", "estimated_delivery", "موعد التوصيل المتوقع"),
+    ("checkout", "delivery_today", "اليوم"),
+    ("checkout", "delivery_tomorrow", "غداً"),
+    ("checkout", "delivery_by_day", "{day}"),
+    ("checkout", "delivery_by_time", "{day}، {time}"),
     ("checkout", "view_pickup_location", "شاهد مكان الاستلام"),
     ("common", "address", "العنوان"),
     ("checkout", "email_optional", "البريد الإلكتروني (اختياري)"),

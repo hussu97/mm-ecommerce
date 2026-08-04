@@ -1,28 +1,42 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from decimal import ROUND_CEILING, Decimal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestError
 from app.models.cart import Cart
+from app.models.delivery_batch import DELIVERY_TIMEZONE
 from app.models.delivery_settings import DeliverySettings
 from app.models.order import DeliveryMethodEnum
-from app.services import delivery_zone_service, lalamove_service
+from app.services import batching_service, delivery_zone_service, lalamove_service
 from app.services.delivery_zone_service import Zone
 
 __all__ = [
+    "DeliveryEstimate",
     "DeliveryPrice",
     "UnserviceableAreaError",
     "calculate_fee",
+    "estimate_arrival",
     "price",
     "quote",
     "get_delivery_rates",
     "get_settings",
     "round_up_aed",
 ]
+
+TZ = ZoneInfo(DELIVERY_TIMEZONE)
+
+#: How long after a run leaves the kitchen the last box on it is through a door.
+#: One number for every drop on the route rather than a per-stop calculation:
+#: the route is optimised by the courier after we hand it over, so which stop is
+#: last is not knowable when the promise is made. An hour covers the city zones,
+#: which are the only ones this applies to.
+DISPATCH_TO_DOOR = timedelta(hours=1)
 
 #: What the customer is told when nothing can be quoted to their pin. Says
 #: nothing about who would have carried it — that a courier exists at all is not
@@ -61,6 +75,58 @@ def round_up_aed(amount: Decimal) -> Decimal:
     the one that cannot quietly cost money.
     """
     return amount.to_integral_value(rounding=ROUND_CEILING).quantize(Decimal("0.01"))
+
+
+@dataclass(frozen=True)
+class DeliveryEstimate:
+    """When the customer should expect the box, and how precisely we know it."""
+
+    #: On the shop's clock, which is the clock the customer is standing on.
+    at: datetime
+    #: `"time"` when we can name an hour, `"day"` when only the date is ours to
+    #: promise. The distinction is the whole value of this object: rendering a
+    #: third-party delivery as "tomorrow, 14:00" would invent a precision that
+    #: belongs to somebody else's schedule.
+    precision: str
+
+
+async def estimate_arrival(
+    db: AsyncSession, zone: Zone | None, *, now: datetime | None = None
+) -> DeliveryEstimate:
+    """
+    When delivery to this zone should land.
+
+    Two very different kinds of answer, because there are two very different
+    kinds of knowledge behind them.
+
+    In a zone we dispatch ourselves the schedule is ours: the order joins the
+    run whose window is open now, that run leaves when the window closes, and an
+    hour later it is delivered. Every term in that is a number we control, so it
+    is safe to name an hour.
+
+    A third-party zone is collected on a schedule we cannot see. The only thing
+    we can honestly commit to is the next day, and it is the next day whether
+    the order came in at nine in the morning or five past eleven at night —
+    saying "today" for an early order would be guessing with someone else's van.
+    """
+    now = now or datetime.now(timezone.utc)
+    local = now.astimezone(TZ)
+
+    if zone is None or not zone.is_batched:
+        return DeliveryEstimate(
+            at=datetime.combine(
+                local.date() + timedelta(days=1), local.time().min, tzinfo=TZ
+            ),
+            precision="day",
+        )
+
+    windows = await batching_service.active_windows(db, zone.id)
+    match = batching_service.find_window(windows, now)
+    if match is None:
+        # No schedule, or a hole in one. Dispatch does not wait in that case —
+        # the order goes out on its own immediately — so neither does this.
+        return DeliveryEstimate(at=local + DISPATCH_TO_DOOR, precision="time")
+    return DeliveryEstimate(at=match.dispatch_at + DISPATCH_TO_DOOR, precision="time")
 
 
 @dataclass(frozen=True)
@@ -151,10 +217,11 @@ async def price(
     nobody will quote is not a cheap delivery — it is one we cannot make, and
     saying so is better than taking the money and finding out later.
 
-    Free delivery follows the same split. Waiving a published 15 or 25 is a
-    margin we chose and can afford at a basket that size; waiving a courier bill
-    of 137 to Abu Dhabi is not, and it does not shrink because the order is
-    large. So the offer lives where the fee is ours to set, and nowhere else.
+    Free delivery is a flag on the zone and nothing else. It used to be read off
+    the pricing mode, which held only while "fixed fee" and "we deliver it
+    ourselves" described the same three zones. They no longer do — the outer
+    zones are fixed-fee and third-party — and a proxy that has stopped being
+    true gives delivery away in exactly the places that cost most to reach.
     """
     if settings is None:
         settings = await get_settings(db)
@@ -188,12 +255,14 @@ async def price(
         db, float(latitude), float(longitude), address
     )
 
+    eligible = zone is not None and zone.free_delivery_eligible
+
     if not is_dynamic:
         return DeliveryPrice(
             zone=zone,
             base_fee=zone.delivery_fee,
-            free_applied=qualifies,
-            free_available=True,
+            free_applied=qualifies and eligible,
+            free_available=eligible,
             serviceable=True,
             is_dynamic=False,
             estimate=estimate,
@@ -204,8 +273,8 @@ async def price(
         return DeliveryPrice(
             zone=zone,
             base_fee=round_up_aed(estimate.cost),
-            free_applied=False,
-            free_available=False,
+            free_applied=qualifies and eligible,
+            free_available=eligible,
             serviceable=True,
             is_dynamic=True,
             estimate=estimate,
@@ -295,6 +364,10 @@ async def quote(
     `free_delivery_available` is the one thing here that is about the offer
     rather than the price. It says whether free delivery can reach this pin at
     all, so the storefront can stop advertising it where it cannot.
+
+    `delivery_estimate` answers the question every shopper actually has, which
+    is not "how much" but "when". It is only present once there is a pin,
+    because before then there is no schedule to read it off.
     """
     settings = await get_settings(db)
     priced = await price(
@@ -326,6 +399,12 @@ async def quote(
             error=priced.error,
         )
 
+    estimate = (
+        await estimate_arrival(db, priced.zone)
+        if latitude is not None and longitude is not None and priced.serviceable
+        else None
+    )
+
     return {
         "delivery_fee": float(priced.fee) if priced.fee is not None else None,
         # What it would have cost, so the summary can strike it through and
@@ -343,6 +422,14 @@ async def quote(
         "zone_name": priced.zone.name if priced.zone else None,
         "in_known_zone": priced.zone is not None,
         "serviceable": priced.serviceable,
+        # Sent as an instant plus how precisely we mean it, and formatted by the
+        # storefront: "tomorrow" and the time format are language, and language
+        # is the browser's job, not this endpoint's.
+        "delivery_estimate": (
+            {"at": estimate.at.isoformat(), "precision": estimate.precision}
+            if estimate is not None
+            else None
+        ),
     }
 
 

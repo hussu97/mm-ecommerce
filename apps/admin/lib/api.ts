@@ -246,6 +246,7 @@ export const deliveryZonesApi = {
     data: {
       delivery_fee?: number;
       pricing_mode?: DeliveryPricingMode;
+      free_delivery_eligible?: boolean;
       fulfilment_provider?: FulfilmentProvider;
       display_order?: number;
     },

@@ -70,6 +70,7 @@ TZ = ZoneInfo(DELIVERY_TIMEZONE)
 
 __all__ = [
     "WindowMatch",
+    "active_windows",
     "assign_or_dispatch",
     "cancel_assignment",
     "dispatch_batch",
@@ -184,9 +185,10 @@ def _segments_overlap(a: DeliveryBatchWindow, b: DeliveryBatchWindow) -> bool:
 # ── assignment ────────────────────────────────────────────────────────────────
 
 
-async def _active_windows(
+async def active_windows(
     db: AsyncSession, polygon_id: uuid.UUID
 ) -> list[DeliveryBatchWindow]:
+    """This zone's live schedule, earliest first."""
     result = await db.execute(
         select(DeliveryBatchWindow)
         .where(
@@ -283,7 +285,7 @@ async def assign_or_dispatch(
         # since been deleted. It still has to go out; it just goes alone.
         return await lalamove_service.dispatch_order(db, order)
 
-    windows = await _active_windows(db, delivery.polygon_id)
+    windows = await active_windows(db, delivery.polygon_id)
     match = find_window(windows, now)
     if match is None:
         logger.info(
@@ -341,7 +343,7 @@ async def reschedule_polygon(db: AsyncSession, polygon_id: uuid.UUID) -> int:
 
     Returns how many assignments changed.
     """
-    windows = await _active_windows(db, polygon_id)
+    windows = await active_windows(db, polygon_id)
     now = datetime.now(timezone.utc)
 
     # Selected by the *order's* zone rather than the batch's. A run is shared

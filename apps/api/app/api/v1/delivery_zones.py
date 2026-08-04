@@ -60,6 +60,10 @@ class PolygonResponse(BaseModel):
     #: courier's own quote for the customer's pin and never reads this.
     delivery_fee: float
     pricing_mode: str
+    #: Whether a qualifying basket delivers free here. Independent of the fee
+    #: and of the courier: a fixed-fee third-party zone is not automatically an
+    #: offer, and reading it off either of those was how it last went wrong.
+    free_delivery_eligible: bool
     fulfilment_provider: str
     display_order: int
     #: How many coordinates the outline has, so the admin can tell a hand-drawn
@@ -73,6 +77,7 @@ class PolygonResponse(BaseModel):
             name=p.name,
             delivery_fee=float(p.delivery_fee),
             pricing_mode=p.pricing_mode,
+            free_delivery_eligible=p.free_delivery_eligible,
             fulfilment_provider=p.fulfilment_provider,
             display_order=p.display_order,
             point_count=_point_count(p.geometry),
@@ -115,6 +120,7 @@ class VersionCreate(BaseModel):
 class PolygonUpdate(BaseModel):
     delivery_fee: Decimal | None = Field(None, ge=0)
     pricing_mode: str | None = None
+    free_delivery_eligible: bool | None = None
     fulfilment_provider: str | None = None
     display_order: int | None = None
 
@@ -336,6 +342,7 @@ async def zone_map(
                 "name": polygon.name,
                 "delivery_fee": float(polygon.delivery_fee),
                 "pricing_mode": polygon.pricing_mode,
+                "free_delivery_eligible": polygon.free_delivery_eligible,
                 "fulfilment_provider": polygon.fulfilment_provider,
                 "display_order": polygon.display_order,
                 "geometry": _simplify(polygon.geometry, tolerance),
@@ -377,6 +384,7 @@ async def get_polygon_geometry(
         "name": polygon.name,
         "delivery_fee": float(polygon.delivery_fee),
         "pricing_mode": polygon.pricing_mode,
+        "free_delivery_eligible": polygon.free_delivery_eligible,
         "fulfilment_provider": polygon.fulfilment_provider,
         "geometry": polygon.geometry,
     }
@@ -420,6 +428,7 @@ async def create_version(
             name=polygon.name,
             delivery_fee=polygon.delivery_fee,
             pricing_mode=polygon.pricing_mode,
+            free_delivery_eligible=polygon.free_delivery_eligible,
             fulfilment_provider=polygon.fulfilment_provider,
             geometry=polygon.geometry,
             min_lat=polygon.min_lat,
@@ -493,6 +502,7 @@ async def update_polygon(
     before = {
         "delivery_fee": float(polygon.delivery_fee),
         "pricing_mode": polygon.pricing_mode,
+        "free_delivery_eligible": polygon.free_delivery_eligible,
         "fulfilment_provider": polygon.fulfilment_provider,
         "display_order": polygon.display_order,
     }
@@ -513,6 +523,8 @@ async def update_polygon(
             # left in the column is how someone later reads the table as "we
             # charge 50 here".
             polygon.delivery_fee = Decimal("0.00")
+    if data.free_delivery_eligible is not None:
+        polygon.free_delivery_eligible = data.free_delivery_eligible
     if data.fulfilment_provider is not None:
         allowed = {p.value for p in FulfilmentProviderEnum}
         if data.fulfilment_provider not in allowed:
@@ -538,6 +550,7 @@ async def update_polygon(
             "to": {
                 "delivery_fee": float(polygon.delivery_fee),
                 "pricing_mode": polygon.pricing_mode,
+                "free_delivery_eligible": polygon.free_delivery_eligible,
                 "fulfilment_provider": polygon.fulfilment_provider,
                 "display_order": polygon.display_order,
             },
@@ -638,6 +651,7 @@ async def zone_summary(
                 # comes from the pin. `pricing_mode` is what says which it is.
                 "delivery_fee": float(z.delivery_fee),
                 "pricing_mode": z.pricing_mode,
+                "free_delivery_eligible": z.free_delivery_eligible,
                 "fulfilment_provider": z.fulfilment_provider,
             }
             for z in zones

@@ -216,6 +216,7 @@ interface VersionCardProps {
     data: {
       delivery_fee?: number;
       pricing_mode?: DeliveryPricingMode;
+      free_delivery_eligible?: boolean;
       fulfilment_provider?: FulfilmentProvider;
     },
   ) => void;
@@ -286,6 +287,9 @@ function VersionCard({
                 <th className="px-4 py-2 text-left text-[11px] font-body uppercase tracking-widest text-gray-400">
                   Fulfilled by
                 </th>
+                <th className="px-4 py-2 text-center text-[11px] font-body uppercase tracking-widest text-gray-400">
+                  Free over threshold
+                </th>
                 <th className="px-4 py-2 text-right text-[11px] font-body uppercase tracking-widest text-gray-400">
                   Order
                 </th>
@@ -297,7 +301,7 @@ function VersionCard({
                   // The saved values are part of the key so a reload after a
                   // save remounts the row with them, rather than leaving the
                   // input showing what was typed before the server answered.
-                  key={`${zone.id}:${zone.delivery_fee}:${zone.pricing_mode}:${zone.fulfilment_provider}`}
+                  key={`${zone.id}:${zone.delivery_fee}:${zone.pricing_mode}:${zone.fulfilment_provider}:${zone.free_delivery_eligible}`}
                   zone={zone}
                   readOnly={version.is_active || busy}
                   onChange={data => onZoneChange(zone.id, data)}
@@ -355,6 +359,7 @@ function ZoneRow({
   onChange: (data: {
     delivery_fee?: number;
     pricing_mode?: DeliveryPricingMode;
+    free_delivery_eligible?: boolean;
     fulfilment_provider?: FulfilmentProvider;
   }) => void;
 }) {
@@ -427,6 +432,21 @@ function ZoneRow({
               onChange({ fulfilment_provider: e.target.value as FulfilmentProvider })
             }
             className="w-36"
+          />
+        )}
+      </td>
+      <td className="px-4 py-2.5 text-center">
+        {readOnly ? (
+          <Badge variant={zone.free_delivery_eligible ? 'success' : 'neutral'}>
+            {zone.free_delivery_eligible ? 'Free' : 'Always charged'}
+          </Badge>
+        ) : (
+          <input
+            type="checkbox"
+            aria-label={`Free delivery over the threshold in ${zone.name}`}
+            checked={zone.free_delivery_eligible}
+            onChange={e => onChange({ free_delivery_eligible: e.target.checked })}
+            className="w-4 h-4 accent-primary cursor-pointer"
           />
         )}
       </td>

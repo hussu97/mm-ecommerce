@@ -1,5 +1,16 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ⏳ 2026-08-03: City courier zones, third-party beyond, and a delivery estimate
+
+### Plan
+- [x] 1. Give a polygon an explicit `free_delivery_eligible` flag. Free delivery no longer follows from `pricing_mode`, because the outer zones are about to become fixed-fee too — the property needs a home of its own rather than a proxy.
+- [x] 2. Publish a map where the three city zones keep Lalamove, batching, free delivery and their 15/15/25 fees, and every outer zone becomes third-party: flat 80 AED, no free delivery, no batch windows, no courier call.
+- [x] 3. Reshape the city schedule around the shop's hours — Batch 1 opens at 23:00 the night before and the last batch closes at 23:00, so the whole 24 hours is covered and nothing dispatches after the store shuts.
+- [x] 4. Quote an estimated delivery time from the pin: a batched zone gets its next batch close + 1 hour; a third-party zone gets next-day, whatever the clock says.
+- [x] 5. Show it at checkout in both locales, as a date and time where we have one and a date where we do not.
+- [x] 6. Expose the free-delivery flag in the admin zone editor.
+- [ ] 7. Tests, deploy, verify green, exercise the checkout against a city pin and an outer pin.
+
 ## ⏳ 2026-08-03: Free delivery at 150 AED, in the fixed-fee zones only
 
 ### Plan

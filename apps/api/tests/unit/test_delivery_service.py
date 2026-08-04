@@ -38,6 +38,7 @@ SHARJAH_CITY = Zone(
     min_lng=55.2,
     max_lng=55.7,
     rings=(),
+    free_delivery_eligible=True,
 )
 
 #: Somewhere inside Sharjah City. The zone lookup is patched, so the exact
@@ -107,9 +108,9 @@ async def test_the_threshold_is_one_number_but_not_one_promise():
     """
     The figure never varies by address — a threshold that did would be the one
     place the delivery map became visible to the customer. Where the offer
-    *lands* very much does vary: it reaches the zones whose fee we set, and
-    stops there. Beyond them the fee is a courier bill that is the same 90
-    dirhams whether the basket is 50 or 500, so there is nothing to waive.
+    *lands* very much does vary: it is a flag on the zone, set on the three we
+    deliver ourselves and on nothing else. The 80 AED zones stay 80 AED whether
+    the basket is 50 or 500.
     """
     near = Zone(
         id=None,  # type: ignore[arg-type]
@@ -121,19 +122,19 @@ async def test_the_threshold_is_one_number_but_not_one_promise():
         min_lng=55.2,
         max_lng=55.7,
         rings=(),
-        pricing_mode="static",
+        free_delivery_eligible=True,
     )
     far = Zone(
         id=None,  # type: ignore[arg-type]
         name="Fujairah",
-        delivery_fee=Decimal("0.00"),
-        fulfilment_provider="lalamove",
+        delivery_fee=Decimal("80.00"),
+        fulfilment_provider="third_party",
         min_lat=24.8,
         max_lat=25.7,
         min_lng=55.9,
         max_lng=56.4,
         rings=(),
-        pricing_mode="dynamic",
+        free_delivery_eligible=False,
     )
 
     assert await fee("250.00", zone=near) == Decimal("0.00")

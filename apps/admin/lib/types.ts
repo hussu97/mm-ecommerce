@@ -392,6 +392,12 @@ export interface DeliveryZone {
   /** Only charged when `pricing_mode` is `static`. */
   delivery_fee: number;
   pricing_mode: DeliveryPricingMode;
+  /**
+   * Whether a qualifying basket delivers free here. Independent of the fee and
+   * of the courier — a fixed-fee third-party zone is not automatically an
+   * offer, and inferring it from either of those is how it last went wrong.
+   */
+  free_delivery_eligible: boolean;
   fulfilment_provider: FulfilmentProvider;
   display_order: number;
   point_count: number;
@@ -422,6 +428,7 @@ export interface DeliveryZoneShape {
   name: string;
   delivery_fee: number;
   pricing_mode: DeliveryPricingMode;
+  free_delivery_eligible: boolean;
   fulfilment_provider: FulfilmentProvider;
   display_order: number;
   geometry: ZoneGeometry;
