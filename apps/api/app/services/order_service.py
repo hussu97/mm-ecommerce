@@ -14,6 +14,7 @@ from app.models.cart import Cart, CartItem
 from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
 from app.models.product import Product
 from app.models.promo_code import PromoCode
+from app.models.user import User
 from app.schemas.order import OrderCreate, OrderListResponse, OrderResponse
 from app.services import (
     batching_service,
@@ -525,7 +526,29 @@ async def get_by_order_number(
             # prove ownership with the order's email, like /orders/track.
             raise ForbiddenError("Not your order")
 
-    return OrderResponse.model_validate(order)
+    response = OrderResponse.model_validate(order)
+    response.email_has_account = await _email_has_account(db, order.email)
+    return response
+
+
+async def _email_has_account(db: AsyncSession, email: str | None) -> bool:
+    """
+    Whether this address can already be signed in to.
+
+    Guests are excluded deliberately. Checkout mints a `…@guest.local` user for
+    every anonymous order, so "a user row exists" is true for practically every
+    order ever placed and would tell the confirmation page to ask people to sign
+    in to an account that has no password.
+    """
+    if not email:
+        return False
+    result = await db.execute(
+        select(User.id).where(
+            func.lower(User.email) == email.lower().strip(),
+            User.is_guest.is_(False),
+        )
+    )
+    return result.first() is not None
 
 
 async def update_status(

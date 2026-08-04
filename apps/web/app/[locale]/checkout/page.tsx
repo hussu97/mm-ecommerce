@@ -741,7 +741,7 @@ function CheckoutContent() {
   const blocked = Boolean(unserviceable);
 
   return (
-    <div className="max-w-xl mx-auto px-4 py-8 sm:py-10 pb-28 sm:pb-10">
+    <div className="max-w-xl mx-auto px-4 py-8 sm:py-10">
       <header className="flex items-baseline justify-between mb-6">
         <h1 className="font-display text-2xl sm:text-3xl text-primary uppercase tracking-[0.15em]">
           {t('breadcrumb.checkout')}
@@ -1041,7 +1041,16 @@ function CheckoutContent() {
         </p>
       </div>
 
-      <div className="sm:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur border-t border-gray-100 px-4 py-3">
+      {/* Sticky, not fixed.
+          `position: fixed` resolves `bottom: 0` against the *layout* viewport,
+          which on a phone is not the viewport you can see: browsers with a
+          collapsing address bar keep the layout viewport at its tallest, so the
+          bar settled hundreds of pixels above the visible bottom and appeared to
+          float in the middle of the page while scrolling. A sticky element is
+          laid out in normal flow and pinned by the scroller itself, so there is
+          no second viewport for it to disagree with. `-mx-4` cancels the page
+          gutter so it still spans edge to edge. */}
+      <div className="sm:hidden sticky bottom-0 z-30 -mx-4 mt-4 bg-white/95 backdrop-blur border-t border-gray-100 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <Button
           variant="primary"
           size="lg"

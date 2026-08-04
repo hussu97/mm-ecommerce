@@ -168,6 +168,11 @@ export interface Order {
   created_at: string;
   updated_at: string;
   items: OrderItem[];
+  /**
+   * Whether this order's email already belongs to a real (non-guest) account.
+   * Decides whether the confirmation page offers to create one or to sign in.
+   */
+  email_has_account?: boolean;
 }
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────

@@ -1,5 +1,15 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ⏳ 2026-08-04: Locale fallback, mobile viewport bugs, and a sign-in nudge
+
+### Plan
+- [x] 1. Audit locale-less URLs and set the fresh-visitor fallback to Arabic. The audit found no 404s — `proxy.ts` already redirects every page route and leaves the asset routes alone — so the only real gap was the fallback, which sent an unrecognised device to English.
+- [x] 2. Pin the mobile place-order bar with `sticky` instead of `fixed`, so it stops floating mid-screen.
+- [x] 3. Keep the map's search box on screen when its suggestion list opens.
+- [x] 4. Stop mobile browsers zooming the page when a form field is focused.
+- [x] 5. Offer sign-in rather than sign-up when the order's email is already an account, and save the order's address once there is an account to hang it on.
+- [ ] 6. Deploy, verify green, confirm on the live site.
+
 ## ⏳ 2026-08-04: Three storefront fixes — map pin, name placeholders, dead promo band
 
 ### Plan
