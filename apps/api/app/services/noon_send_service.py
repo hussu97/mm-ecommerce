@@ -209,6 +209,7 @@ TRIAL_OUTLET = PickupPoint(
     longitude=55.3150403,
     reference="ROD-STAGING",
     noon_send_outlet_code="CMFRTF2DXS",
+    noon_send_outlet_address_code="addr::restaurant_outlet::ae::CMFRTF2DXS::2",
 )
 
 
@@ -558,6 +559,9 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
             # The branch that actually resolved, not a global. When a second
             # kitchen starts delivering this is already the right value.
             outlet_code=pickup.noon_send_outlet_code,
+            # Sent when the branch has one. Absent is fine — the outlet code is
+            # what identifies the pickup.
+            outlet_address_code=pickup.noon_send_outlet_address_code or None,
             drop_off_address=task.drop_off_address,
             prepaid_value=task.prepaid_value,
             cod_value=task.cod_value,

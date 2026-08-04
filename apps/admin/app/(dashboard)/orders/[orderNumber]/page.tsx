@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { ordersApi, ApiError } from '@/lib/api';
 import type { Order, OrderDelivery, OrderStatus } from '@/lib/types';
 import { Badge, Button } from '@/components/ui';
-import { cn, formatCurrency, formatDate } from '@/lib/utils';
+import { cn, formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
 
 const STATUS_STEPS: OrderStatus[] = [
   'created',
@@ -134,7 +134,7 @@ export default function OrderDetailPage() {
         </Link>
         <div className="flex-1">
           <h1 className="font-display text-xl text-gray-800">{order.order_number}</h1>
-          <p className="text-xs text-gray-400 font-body">{formatDate(order.created_at)}</p>
+          <p className="text-xs text-gray-400 font-body">{formatDateTime(order.created_at)}</p>
         </div>
         <Badge variant={STATUS_VARIANT[order.status]}>{order.status}</Badge>
       </div>
@@ -470,13 +470,13 @@ function DeliveryPanel({
         {delivery.booked_at && (
           <div>
             <dt className="text-gray-500">Booked</dt>
-            <dd className="text-gray-800">{formatDate(delivery.booked_at)}</dd>
+            <dd className="text-gray-800">{formatDateTime(delivery.booked_at)}</dd>
           </div>
         )}
         {delivery.delivered_at && (
           <div>
             <dt className="text-gray-500">Delivered</dt>
-            <dd className="text-gray-800">{formatDate(delivery.delivered_at)}</dd>
+            <dd className="text-gray-800">{formatDateTime(delivery.delivered_at)}</dd>
           </div>
         )}
       </dl>

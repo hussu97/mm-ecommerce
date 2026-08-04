@@ -106,6 +106,14 @@ class Branch(Base, UUIDMixin, TimestampMixin):
     # `python -m scripts.register_noon_send_pickup --create --branch <ref>`,
     # which writes the code it gets back into this column.
     noon_send_outlet_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    #: The outlet's exact address revision — `addr::restaurant_outlet::ae::X::2`.
+    #: Optional on noon's side and optional here: the outlet code alone
+    #: identifies where a rider collects, and this is a nicety that pins the
+    #: address revision with it. Longer than the code because it carries a
+    #: registry, a country and a revision as well.
+    noon_send_outlet_address_code: Mapped[str | None] = mapped_column(
+        String(120), nullable=True
+    )
 
     # Capabilities
     receives_online_orders: Mapped[bool] = mapped_column(

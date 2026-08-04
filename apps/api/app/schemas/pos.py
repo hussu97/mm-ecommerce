@@ -114,6 +114,7 @@ class BranchCreate(BaseModel):
     #: What noon Send calls this branch. Null means it cannot dispatch through
     #: them — which is every branch until one is registered.
     noon_send_outlet_code: str | None = Field(None, max_length=50)
+    noon_send_outlet_address_code: str | None = Field(None, max_length=120)
     receives_online_orders: bool = True
     accepts_reservations: bool = False
     reservation_duration: int = Field(60, ge=5, le=600)
@@ -142,6 +143,7 @@ class BranchUpdate(BaseModel):
     tax_registration_name: str | None = Field(None, max_length=200)
     tax_group_id: UUID | None = None
     noon_send_outlet_code: str | None = Field(None, max_length=50)
+    noon_send_outlet_address_code: str | None = Field(None, max_length=120)
     receives_online_orders: bool | None = None
     accepts_reservations: bool | None = None
     reservation_duration: int | None = Field(None, ge=5, le=600)
@@ -171,6 +173,7 @@ class BranchResponse(ORMModel):
     tax_registration_name: str | None
     tax_group_id: UUID | None
     noon_send_outlet_code: str | None
+    noon_send_outlet_address_code: str | None
     receives_online_orders: bool
     accepts_reservations: bool
     reservation_duration: int

@@ -39,6 +39,8 @@ export interface Branch {
   tax_group_id: string | null;
   /** What noon Send calls this branch. Null = it cannot dispatch through them. */
   noon_send_outlet_code: string | null;
+  /** Optional address revision for that outlet, `addr::…::CODE::2`. */
+  noon_send_outlet_address_code: string | null;
   receives_online_orders: boolean;
   accepts_reservations: boolean;
   reservation_duration: number;

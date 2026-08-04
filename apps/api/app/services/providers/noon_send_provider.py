@@ -215,6 +215,7 @@ class NoonSendClient:
         *,
         order_reference: str,
         outlet_code: str,
+        outlet_address_code: str | None = None,
         drop_off_address: dict[str, Any],
         prepaid_value: int = 0,
         cod_value: int = 0,
@@ -231,6 +232,12 @@ class NoonSendClient:
         deliberately not defaulted from configuration. A task sent to the wrong
         kitchen is a rider standing outside a closed door, and the caller always
         knows which branch it resolved.
+
+        `outlet_address_code` names the exact address revision of that outlet —
+        `addr::restaurant_outlet::ae::CMFRTF2DXS::2`, where the trailing number
+        is the revision. Optional, and sent only when we have one: an outlet is
+        already fully identified by its code, and a stale revision is worse than
+        no revision at all.
 
         The idempotency key is what stops a retried request from putting two
         riders on one cake, so it defaults to the order reference rather than
@@ -254,6 +261,8 @@ class NoonSendClient:
             body["cod_value"] = cod_value
         else:
             body["prepaid_value"] = prepaid_value
+        if outlet_address_code:
+            body["outlet_address_code"] = outlet_address_code
         if delivery_notes:
             body["delivery_notes"] = delivery_notes[:250]
         if pickup_notes:

@@ -110,6 +110,11 @@ class PickupPoint:
     #: them, so it can be a Lalamove pickup but not a noon Send one. Lalamove
     #: needs no equivalent — it takes coordinates and an address.
     noon_send_outlet_code: str = ""
+    #: The exact address revision of that outlet, as
+    #: `addr::restaurant_outlet::ae::CODE::2`. Optional on their side and sent
+    #: only when present: the code alone identifies the outlet, and the trailing
+    #: revision goes stale the moment noon edits the address.
+    noon_send_outlet_address_code: str = ""
     #: The branch's trading hours as "HH:MM", carried because a driver can only
     #: collect from a kitchen that is open. A retry is not worth scheduling for
     #: a moment when nobody will be there to hand the boxes over.
@@ -194,6 +199,7 @@ async def resolve_pickup(
         # Off the branch and nowhere else. A second kitchen is a row in the
         # admin — `scripts/register_noon_send_pickup.py` writes the code there.
         noon_send_outlet_code=branch.noon_send_outlet_code or "",
+        noon_send_outlet_address_code=branch.noon_send_outlet_address_code or "",
         opens_at=branch.opening_from,
         closes_at=branch.opening_to,
     )

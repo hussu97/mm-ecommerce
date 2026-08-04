@@ -82,9 +82,16 @@ export default function BranchesPage() {
         {
           name: 'noon_send_outlet_code',
           label: 'noon Send outlet code',
-          placeholder: 'PCKP_...',
+          placeholder: 'PCKP_... or CMFRTF2DXS',
           helper:
             'From registering this branch with noon Send. Leave empty and its orders go by Lalamove instead.',
+        },
+        {
+          name: 'noon_send_outlet_address_code',
+          label: 'noon Send outlet address code',
+          placeholder: 'addr::restaurant_outlet::ae::CODE::2',
+          helper:
+            'Optional. Pins the outlet address revision. The trailing number changes whenever noon edits the address, so leave it empty rather than let it go stale.',
         },
         { name: 'receives_online_orders', label: 'Accepts online orders', type: 'checkbox' },
         { name: 'accepts_reservations', label: 'Accepts reservations', type: 'checkbox' },

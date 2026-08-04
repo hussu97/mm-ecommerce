@@ -252,3 +252,43 @@ def test_a_refusal_to_carry_is_told_apart_from_a_breakage(status, message):
 def test_a_breakage_is_not_mistaken_for_a_refusal(status, message):
     """Retrying is the right answer here; swapping courier is not."""
     assert not NoonSendError(message, status=status).is_unserviceable
+
+
+@pytest.mark.asyncio
+async def test_the_outlet_address_code_is_sent_only_when_we_have_one(monkeypatch):
+    """
+    Optional on their side, so optional on ours.
+
+    An outlet is fully identified by its code; the address code pins a
+    *revision* of that outlet's address — the `::2` on the end — and noon bumps
+    it whenever the address is edited. A stale one is worse than none, so a
+    branch with the field empty has to produce a body without the key rather
+    than a body carrying an empty string.
+    """
+    recorder = _Recorder(
+        [
+            _response(200, {"mp_task_nr": "A", "status": "created"}),
+            _response(200, {"mp_task_nr": "B", "status": "created"}),
+        ]
+    )
+    monkeypatch.setattr(ns.httpx, "AsyncClient", recorder)
+    client = NoonSendClient(_config())
+
+    await client.create_task(
+        order_reference="MM-1001",
+        outlet_code="CMFRTF2DXS",
+        outlet_address_code="addr::restaurant_outlet::ae::CMFRTF2DXS::2",
+        drop_off_address={},
+    )
+    await client.create_task(
+        order_reference="MM-1002",
+        outlet_code="CMFRTF2DXS",
+        outlet_address_code=None,
+        drop_off_address={},
+    )
+
+    with_code, without = (r["json"] for r in recorder.requests)
+    assert (
+        with_code["outlet_address_code"] == "addr::restaurant_outlet::ae::CMFRTF2DXS::2"
+    )
+    assert "outlet_address_code" not in without
