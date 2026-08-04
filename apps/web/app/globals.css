@@ -44,10 +44,32 @@ body {
   color: var(--color-text-light);
 }
 
+/* ─── No zoom-on-focus ──────────────────────────────────────────────────────
+   Mobile Safari — and Chrome on iOS, which is Safari — zooms the whole page in
+   when a form control it considers too small to read receives focus. The
+   threshold is 16px. Our controls are 14px (`text-sm`) for visual density, so
+   tapping any of them scaled the entire checkout up and left it that way.
+
+   Fixed by making the controls big enough to be left alone, rather than by
+   pinning `maximum-scale` in the viewport meta: that would suppress the zoom by
+   taking pinch-zoom away from everybody, which is a real accessibility loss to
+   pay for a cosmetic bug. Desktop keeps the tighter size — the behaviour only
+   exists on touch devices, and only below 16px. */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
 /* ─── PlaceAutocompleteElement (Google Maps) — MM brand overrides ──────────── */
 gmp-placeautocomplete {
   width: 100%;
   font-family: var(--font-body);
+  /* The element renders its own input inside a shadow root, out of reach of the
+     rule above; it inherits this instead, which is enough to clear 16px. */
+  font-size: 16px;
 
   /* Material Design tokens exposed by the element */
   --gmp-mat-color-primary: #8a5a64;

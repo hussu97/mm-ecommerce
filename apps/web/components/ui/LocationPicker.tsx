@@ -122,9 +122,30 @@ function MapContent({ lat, lng, onChange, placeholder, height = '200px' }: Locat
       mapRef.current?.setZoom(15);
     };
 
+    /**
+     * Keep the box you are typing in on the screen.
+     *
+     * The picker lives inside a scrollable modal, and the suggestion list is
+     * tall. On a phone the keyboard then takes half the screen: the browser
+     * scrolls *something* into view, the list wins, and the input itself ends
+     * up above the top edge — so the customer is choosing between addresses
+     * without being able to see what they searched for.
+     *
+     * Scrolling the input to the top of its scroller leaves the whole list
+     * below it and the input visible. Deferred because the keyboard has not
+     * finished animating when `focus` fires, and scrolling into a viewport
+     * that is about to halve in height puts it back where it started.
+     */
+    const keepVisible = () => {
+      setTimeout(() => {
+        container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 350);
+    };
+    placeAc.addEventListener('focusin', keepVisible);
     placeAc.addEventListener('gmp-select', handler);
 
     return () => {
+      placeAc.removeEventListener('focusin', keepVisible);
       placeAc.removeEventListener('gmp-select', handler);
       container.innerHTML = '';
     };

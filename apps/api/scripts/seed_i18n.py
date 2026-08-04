@@ -282,6 +282,40 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("confirmation", "create_account_cta", "Create Account"),
     ("confirmation", "create_account_done", "Account created — you're signed in."),
     ("confirmation", "password_placeholder", "Choose a password"),
+    # Shown instead of the sign-up form when we recognise the email. Offering
+    # "create an account" to a returning customer is a dead end whose only
+    # outcome is "that email is taken".
+    ("confirmation", "sign_in_title", "Welcome back — sign in"),
+    (
+        "confirmation",
+        "sign_in_body",
+        "You already have an account with this email. Sign in to keep this order with it.",
+    ),
+    (
+        "confirmation",
+        "sign_in_body_address",
+        "You already have an account with this email. Sign in and we'll save this "
+        "delivery address to it for next time.",
+    ),
+    ("confirmation", "sign_in_password_placeholder", "Your password"),
+    ("confirmation", "sign_in_cta", "Sign In"),
+    ("confirmation", "signed_in_done", "Signed in — welcome back."),
+    (
+        "confirmation",
+        "signed_in_address_saved",
+        "Signed in, and this delivery address is saved to your account.",
+    ),
+    (
+        "confirmation",
+        "create_account_body_address",
+        "Create an account and we'll save this delivery address to it, so your "
+        "next order takes seconds.",
+    ),
+    (
+        "confirmation",
+        "create_account_address_saved",
+        "Account created, and this delivery address is saved to it.",
+    ),
     ("common", "try_again", "Try Again"),
     ("checkout", "cart_empty", "Your cart is empty"),
     ("checkout", "payment_cancelled", "Payment was cancelled. Please try again."),
@@ -749,6 +783,35 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("confirmation", "create_account_cta", "إنشاء حساب"),
     ("confirmation", "create_account_done", "تم إنشاء الحساب — تم تسجيل دخولك."),
     ("confirmation", "password_placeholder", "اختر كلمة مرور"),
+    ("confirmation", "sign_in_title", "أهلاً بعودتك — سجّل دخولك"),
+    (
+        "confirmation",
+        "sign_in_body",
+        "لديك حساب بهذا البريد الإلكتروني. سجّل دخولك لربط هذا الطلب به.",
+    ),
+    (
+        "confirmation",
+        "sign_in_body_address",
+        "لديك حساب بهذا البريد الإلكتروني. سجّل دخولك وسنحفظ عنوان التوصيل هذا في حسابك للمرة القادمة.",
+    ),
+    ("confirmation", "sign_in_password_placeholder", "كلمة المرور"),
+    ("confirmation", "sign_in_cta", "تسجيل الدخول"),
+    ("confirmation", "signed_in_done", "تم تسجيل الدخول — أهلاً بعودتك."),
+    (
+        "confirmation",
+        "signed_in_address_saved",
+        "تم تسجيل الدخول، وحُفظ عنوان التوصيل هذا في حسابك.",
+    ),
+    (
+        "confirmation",
+        "create_account_body_address",
+        "أنشئ حساباً وسنحفظ عنوان التوصيل هذا فيه، ليستغرق طلبك القادم ثوانٍ فقط.",
+    ),
+    (
+        "confirmation",
+        "create_account_address_saved",
+        "تم إنشاء الحساب، وحُفظ عنوان التوصيل هذا فيه.",
+    ),
     ("common", "try_again", "حاول مرة أخرى"),
     ("checkout", "cart_empty", "سلتك فارغة"),
     ("checkout", "payment_cancelled", "تم إلغاء الدفع. يرجى المحاولة مجدداً."),
