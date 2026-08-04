@@ -9,7 +9,7 @@ vi.mock('./api', () => ({
 }));
 
 import { authApi, ensureSessionId } from './api';
-import { ensureCheckoutAuth } from './checkout-auth';
+import { accountEmailOf, ensureCheckoutAuth } from './checkout-auth';
 import type { User } from './types';
 
 describe('ensureCheckoutAuth', () => {
@@ -43,5 +43,31 @@ describe('ensureCheckoutAuth', () => {
 
     expect(authApi.me).toHaveBeenCalledOnce();
     expect(authApi.guest).toHaveBeenCalledOnce();
+  });
+});
+
+describe('accountEmailOf', () => {
+  const asUser = (u: Partial<User>) => u as User;
+
+  it('gives back the address a signed-in customer will be written to', () => {
+    expect(accountEmailOf(asUser({ email: 'Sara@example.com', is_guest: false })))
+      .toBe('Sara@example.com');
+  });
+
+  it('has nothing to show when nobody is signed in', () => {
+    expect(accountEmailOf(null)).toBeNull();
+  });
+
+  it('refuses a guest, whose address is minted and reaches nobody', () => {
+    expect(accountEmailOf(asUser({ email: 'abc123@guest.local', is_guest: true }))).toBeNull();
+  });
+
+  it('refuses the synthetic domain even when the guest flag says otherwise', () => {
+    // The flag is only as good as whatever set it; the domain is the fact.
+    expect(accountEmailOf(asUser({ email: 'abc123@Guest.Local', is_guest: false }))).toBeNull();
+  });
+
+  it('treats a blank address as no address', () => {
+    expect(accountEmailOf(asUser({ email: '   ', is_guest: false }))).toBeNull();
   });
 });

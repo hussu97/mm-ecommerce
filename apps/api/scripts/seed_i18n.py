@@ -257,6 +257,12 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
         "email_optional_hint",
         "Add it if you'd like a written confirmation of your order.",
     ),
+    ("checkout", "email", "Email"),
+    (
+        "checkout",
+        "email_signed_in_hint",
+        "Your order confirmation and updates will be sent here.",
+    ),
     ("checkout", "add_delivery_address", "Add a delivery address"),
     ("checkout", "add_address_hint", "Drop a pin on the map — we'll fill in the rest."),
     (
@@ -757,6 +763,12 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
         "checkout",
         "email_optional_hint",
         "أضف بريدك الإلكتروني لتصلك رسائل بتحديثات طلبك",
+    ),
+    ("checkout", "email", "البريد الإلكتروني"),
+    (
+        "checkout",
+        "email_signed_in_hint",
+        "سيصلك تأكيد الطلب وتحديثاته على هذا البريد الإلكتروني",
     ),
     ("checkout", "add_delivery_address", "أضف عنوان التوصيل"),
     ("checkout", "add_address_hint", "حدّد موقعك على الخريطة وسنكمل الباقي."),
