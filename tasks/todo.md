@@ -20,7 +20,11 @@ that plausibly means overnight.
 - [x] 6. Manual dispatch resets the ladder, so topping up the wallet buys a fresh
        set of automatic attempts.
 - [x] 7. Surface attempts and the next retry in the admin batch list.
-- [ ] 8. Tests, deploy, verify green.
+- [x] 8. Tests, deploy, verify green. PR #14 merged; production run `30885816717`
+       green, including the `alembic upgrade head` step that hard-fails the
+       deploy — so 060 is applied on the live database. API healthy afterwards,
+       and the live quote still prices Sharjah City at 15 with a 13:00 batch
+       estimate and Abu Dhabi at 80 next-day.
 
 ### Result
 
