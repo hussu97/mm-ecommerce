@@ -92,6 +92,26 @@ NOON_SEND_TERMINAL_STATUSES = frozenset(
     }
 )
 
+#: How far through the journey each status is. Used to refuse a push that would
+#: walk a task backwards — their status webhook carries no usable timestamp
+#: (`order_nr`, `status_code` and `order_reference` are the whole contract), so
+#: the ordering has to come from the words themselves rather than from a clock.
+#: Anything unlisted ranks -1 and can never displace a status we already have.
+NOON_SEND_STATUS_RANK: dict[str, int] = {
+    NoonSendStatusEnum.CREATED.value: 0,
+    NoonSendStatusEnum.PENDING_ASSIGNMENT.value: 1,
+    NoonSendStatusEnum.ASSIGNED.value: 2,
+    NoonSendStatusEnum.ARRIVED_AT_PICKUP_LOCATION.value: 3,
+    NoonSendStatusEnum.PICKED_UP.value: 4,
+    NoonSendStatusEnum.ARRIVED_AT_DELIVERY.value: 5,
+    # The three ways it ends all sit at the top: none of them may be undone by
+    # a late push describing something that happened earlier.
+    NoonSendStatusEnum.DELIVERED.value: 6,
+    NoonSendStatusEnum.UNDELIVERED.value: 6,
+    NoonSendStatusEnum.CANCELLED.value: 6,
+}
+
+
 NOON_SEND_FAILED_STATUSES = frozenset(
     {
         NoonSendStatusEnum.UNDELIVERED.value,

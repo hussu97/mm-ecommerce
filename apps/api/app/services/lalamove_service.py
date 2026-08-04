@@ -69,6 +69,7 @@ __all__ = [
     "normalise_phone",
     "parse_quotation",
     "parse_time",
+    "webhook_time",
     "record_cart_estimate",
     "record_order_delivery",
     "resolve_pickup",
@@ -758,7 +759,7 @@ async def apply_webhook(
             logger.info("Lalamove webhook for unknown order %s", courier_order_id)
             return None
 
-    updated_at = parse_time(data.get("updatedAt"))
+    updated_at = webhook_time(payload)
     if (
         updated_at is not None
         and delivery.status_updated_at is not None
@@ -775,6 +776,8 @@ async def apply_webhook(
     event_type = payload.get("eventType")
     delivery.last_payload = payload
 
+    had_driver = bool(delivery.driver_id)
+
     if event_type == "DRIVER_ASSIGNED":
         driver = data.get("driver") or {}
         delivery.driver_id = driver.get("driverId") or delivery.driver_id
@@ -784,7 +787,6 @@ async def apply_webhook(
         location = data.get("location") or {}
         delivery.driver_latitude = decimal_or_none(location.get("lat"))
         delivery.driver_longitude = decimal_or_none(location.get("lng"))
-        await _announce_driver(db, delivery)
 
     if event_type == "POD_STATUS_CHANGED":
         pod = _pod_for(delivery, courier_order.get("stops") or [])
@@ -797,6 +799,17 @@ async def apply_webhook(
         delivery.share_link = courier_order["shareLink"]
     if courier_order.get("driverId"):
         delivery.driver_id = str(courier_order["driverId"])
+
+    # A driver we did not know about a moment ago. Announced here rather than
+    # only under `DRIVER_ASSIGNED`, because that event has never once arrived:
+    # across every webhook production has received, the types were
+    # ORDER_CREATED, ORDER_STATUS_CHANGED, POD_STATUS_CHANGED and
+    # WALLET_BALANCE_CHANGED, and the driver id came in on the status change.
+    # Hanging the announcement off an event we do not get meant the counter was
+    # never told a rider was coming.
+    if delivery.driver_id and not had_driver:
+        await _fill_driver_details(db, delivery)
+        await _announce_driver(db, delivery)
 
     status = courier_order.get("status")
     if status and status != delivery.courier_status:
@@ -825,6 +838,47 @@ async def apply_webhook(
 
     await _advance_order(db, delivery)
     return delivery
+
+
+async def _fill_driver_details(db: AsyncSession, delivery: OrderDelivery) -> None:
+    """
+    Put a name and a number to the driver id.
+
+    The status webhook carries only `driverId`, so without this every Lalamove
+    delivery kept an empty `driver_name` and the shop had no way to reach the
+    person holding the cake — the two production orders both ended that way.
+
+    Best-effort: the webhook must still answer 200, and a delivery with an
+    anonymous driver is worse than one with a named driver but far better than
+    a status update we dropped on the floor.
+    """
+    if not delivery.courier_order_id or not delivery.driver_id:
+        return
+    if not is_enabled():
+        return
+    try:
+        driver = await provider.get_driver(
+            str(delivery.courier_order_id), str(delivery.driver_id)
+        )
+    except Exception:  # pragma: no cover — network, and never worth failing on
+        logger.warning(
+            "Could not read driver %s for order %s",
+            delivery.driver_id,
+            delivery.courier_order_id,
+        )
+        return
+
+    detail = driver.get("data") if isinstance(driver.get("data"), dict) else driver
+    delivery.driver_name = detail.get("name") or delivery.driver_name
+    delivery.driver_phone = detail.get("phone") or delivery.driver_phone
+    delivery.driver_plate = detail.get("plateNumber") or delivery.driver_plate
+    coords = detail.get("coordinates") or {}
+    delivery.driver_latitude = (
+        decimal_or_none(coords.get("lat")) or delivery.driver_latitude
+    )
+    delivery.driver_longitude = (
+        decimal_or_none(coords.get("lng")) or delivery.driver_longitude
+    )
 
 
 async def _announce_driver(db: AsyncSession, delivery: OrderDelivery) -> None:
@@ -972,6 +1026,7 @@ def decimal_or_none(value: Any) -> Decimal | None:
 
 
 def parse_time(value: Any) -> datetime | None:
+    """A naive stamp is read as UTC; anything unparseable is None."""
     if not value:
         return None
     text = str(value).replace("Z", "+00:00")
@@ -980,6 +1035,36 @@ def parse_time(value: Any) -> datetime | None:
     except ValueError:
         return None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def webhook_time(payload: dict[str, Any]) -> datetime | None:
+    """
+    When a Lalamove webhook says its event happened.
+
+    Read off the top-level epoch `timestamp`, **not** `data.updatedAt`, because
+    `updatedAt` is wrong in two separate ways that happen to cancel out into a
+    plausible-looking value:
+
+    1. It is Gulf local time carrying a `Z`. Both production orders prove it —
+       task 3554059933802783529 arrived stamped `2026-08-03T21:38.00Z` with
+       `timestamp` 1785778684, which is 17:38:04 UTC, and our own clock agreed
+       with the epoch to the second. Trusting the string put `delivered_at`
+       four hours in the future on every order.
+    2. Its format is `HH:MM.ss`, which is not a time. Python 3.12 happens to
+       accept it, 3.14 raises — so a runtime upgrade silently changes what gets
+       recorded, and the out-of-order guard that depends on it goes dead
+       without a test failing.
+
+    The epoch has neither problem: it is unambiguous, it needs no parsing, and
+    it agreed with the received-at time on every webhook we have.
+    """
+    epoch = payload.get("timestamp")
+    if epoch is None:
+        return None
+    try:
+        return datetime.fromtimestamp(float(epoch), timezone.utc)
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
 
 
 def _coordinates(address: dict[str, Any]) -> tuple[float | None, float | None]:

@@ -293,7 +293,15 @@ class NoonSendClient:
     # ── account ───────────────────────────────────────────────────────────────
 
     async def get_configurations(self) -> dict[str, Any]:
-        """GET /public/v1/configurations — our real distance and payment caps."""
+        """
+        GET /public/v1/configurations — the limits this partner actually has.
+
+        Distance, COD ceiling, prepaid ceiling and batching, resolved from the
+        API key. Worth asking rather than guessing: the integration doc says the
+        standard distance limit is 15 km, the rate card prices bands out to 20,
+        and the staging partner answers 50 km — three numbers for one question,
+        and only this one is about our own account.
+        """
         return await self._call("GET", "/public/v1/configurations") or {}
 
     async def get_outlets(self) -> list[dict[str, Any]]:

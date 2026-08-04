@@ -22,7 +22,7 @@ import pytest
 
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.models.pos_order import OrderSourceEnum, OrderTypeEnum, PosOrderStatusEnum
-from app.services import pos_order_service
+from app.services import order_service, pos_order_service
 
 
 BRANCH = SimpleNamespace(
@@ -151,3 +151,40 @@ async def test_attaching_twice_does_not_burn_a_second_check_number(attach):
     await pos_order_service.attach_online_order(None, order, BRANCH)
     assert attach["checks"] == 1
     assert order.check_number == 7
+
+
+# ── cancelling closes the check ───────────────────────────────────────────────
+
+
+def test_only_an_open_check_is_voided_by_a_cancellation():
+    """
+    An order cancelled in the admin has to stop being a live check — and must
+    not relabel one the till has already settled.
+
+    Without the first half the iPad keeps showing a cancelled sale: the cashier
+    can still add to it and it still counts towards the business day. Production
+    has cashier orders sitting `cancelled` with `pos_status = active` from
+    exactly that gap. Without the second half a late cancellation would stamp
+    `void` over a paid, closed check, or reopen one already merged into another.
+
+    Asserted against the real set rather than a copy of it, and by naming every
+    state, so a new `PosOrderStatusEnum` member has to be classified here rather
+    than defaulting to "leave it open".
+    """
+    open_now = order_service._OPEN_ON_THE_REGISTER
+
+    assert open_now == {
+        PosOrderStatusEnum.DRAFT.value,
+        PosOrderStatusEnum.PENDING.value,
+        PosOrderStatusEnum.ACTIVE.value,
+    }
+    settled = {s.value for s in PosOrderStatusEnum} - open_now
+    assert settled == {
+        PosOrderStatusEnum.CLOSED.value,
+        PosOrderStatusEnum.DECLINED.value,
+        PosOrderStatusEnum.VOID.value,
+        PosOrderStatusEnum.RETURNED.value,
+        PosOrderStatusEnum.JOINED.value,
+    }
+    # A storefront order that never reached a register has no state to close.
+    assert None not in open_now

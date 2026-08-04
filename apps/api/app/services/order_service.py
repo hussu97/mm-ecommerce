@@ -15,7 +15,7 @@ from app.models.branch import Branch
 from app.models.cart import Cart, CartItem
 from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
 from app.models.product import Product
-from app.models.pos_order import OrderSourceEnum
+from app.models.pos_order import OrderSourceEnum, PosOrderStatusEnum
 from app.models.promo_code import PromoCode
 from app.models.user import User
 from app.schemas.order import OrderCreate, OrderListResponse, OrderResponse
@@ -311,6 +311,18 @@ def _vat_of(taxable: Decimal) -> tuple[Decimal, Decimal]:
         (taxable * VAT_RATE / (1 + VAT_RATE)).quantize(Decimal("0.01")),
         (taxable / (1 + VAT_RATE)).quantize(Decimal("0.01")),
     )
+
+
+#: Register states a cancellation still has to close. `closed`, `void`,
+#: `joined` and the rest are already finished, and a cancellation arriving after
+#: them must not reopen or relabel what the till already settled.
+_OPEN_ON_THE_REGISTER = frozenset(
+    {
+        PosOrderStatusEnum.DRAFT.value,
+        PosOrderStatusEnum.PENDING.value,
+        PosOrderStatusEnum.ACTIVE.value,
+    }
+)
 
 
 def _is_cash_on_delivery(data: OrderCreate) -> bool:
@@ -717,6 +729,17 @@ async def update_status(
 
     # A cancelled order releases the stock it claimed at creation.
     if new_status == OrderStatusEnum.CANCELLED:
+        # And closes on the register, if it ever reached one. Without this the
+        # check stays open on the iPad forever: the cashier sees a live order
+        # for a cancelled sale, can still add items to it, and it still counts
+        # towards the day. Production already has cashier orders sitting
+        # `cancelled` with `pos_status = active` from exactly this.
+        #
+        # Void rather than closed — closed means paid and finished, and this was
+        # neither.
+        if order.pos_status in _OPEN_ON_THE_REGISTER:
+            order.pos_status = PosOrderStatusEnum.VOID.value
+
         for item in order.items:
             if item.product_id:
                 await db.execute(

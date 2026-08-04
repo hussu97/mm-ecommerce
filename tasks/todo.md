@@ -108,6 +108,29 @@
 > `065_sharjah_central_noon_send` and rewritten onto `059`'s map, where the outer
 > zones are 80 AED rather than 50.
 
+## ⏳ 2026-08-04: Audit the live courier data against both API specs
+
+Read the two real Lalamove deliveries in production against Lalamove's webhook
+docs and noon Send's OpenAPI spec, and walked the order journey for all three
+providers looking for the unhappy paths nobody had exercised.
+
+### Findings and fixes
+- [x] 1. **Lalamove delivery times were four hours in the future**, on both orders. `data.updatedAt` is Gulf local wearing a `Z`, in the non-time format `HH:MM.ss`; the top-level epoch `timestamp` is the truth and matched our own receipt clock to the second. `webhook_time()` now reads the epoch. The string also parsed only under Python 3.12 — 3.14 raises — so the recorded value would have changed on a runtime upgrade with no test failing.
+- [x] 2. **The POS was never told a rider was coming, for either courier.** Lalamove's announcement hung off `DRIVER_ASSIGNED`, an event production has never once received; the driver id arrives on the status change instead. noon Send's status webhook is three fields and carries no rider at all. Both now fetch the details — `GET /v3/orders/{id}/drivers/{driverId}` and `GET /public/v1/tasks/{nr}` — the first time a driver id appears, then announce.
+- [x] 3. **noon Send's out-of-order guard was never armed.** It compared a `timestamp` their published webhook contract does not include. Replaced with a status rank, so a late `assigned` cannot displace `delivered`.
+- [x] 4. **The partner limits are now asked for, not guessed.** `GET /public/v1/configurations` reports `distance_limit`, `cod_limit` and `prepaid_limit` for our own key. Three sources disagreed about the distance cap — doc 15 km, rate card 20 km, staging key 50 km. `max_distance_m()` takes the stricter of theirs and ours, and `may_serve` refuses an order over the money ceilings instead of letting task creation reject it.
+- [x] 5. **A cancelled order stayed open on the register.** Nothing cleared `pos_status`, so the check stayed live on the iPad — production already has cashier orders sitting `cancelled` with `pos_status = active`. Cancelling now voids an open check and leaves a settled one alone.
+
+### Not bugs, checked and cleared
+- The two e2e orders show `total` = delivery fee only. Correct: both used the 100% promo `CLAUDETEST100`, so the discounted subtotal really is zero.
+- `specialRequests: 5` in both price breakdowns is the door-to-door charge, dropped in this session's earlier work — both orders predate that deploy.
+- A batch showing `cancelled` against a delivered order is the empty-batch path working: the order was dispatched directly before the window closed, so the run had nothing left to collect.
+
+### Still open
+- **Tracking pushes are switched off.** `is_external_tracking_enabled: false` on our key, and the integration doc says live telemetry "will be live soon", so `/webhooks/noon-send/tracking` will not fire yet. The endpoint stays; live position has to be pulled from the task detail until they enable it.
+- **The economics are negative on both real orders**: Sharjah City charged 15 against a 23 cost, Dubai City charged 25 against 39. Dropping door-to-door takes those to 18 and 34 — still −3 and −9.
+- **No website order has ever reached a register.** Every online order in the database has `branch_id` null; the routing shipped today and is unexercised in production.
+
 ## ⏳ 2026-08-04: Merge 26 commits of `origin/main`, and settle the delivery model
 
 Six commits of courier and POS work had been built on a `main` that was 26

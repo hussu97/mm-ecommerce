@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -63,8 +64,19 @@ def _order(status=OrderStatusEnum.PACKED):
 
 
 def _event(status: str, *, at: datetime = NOW, previous: str = "ON_GOING") -> dict:
+    """
+    A webhook shaped like the ones production actually receives.
+
+    `updatedAt` is deliberately built the way Lalamove really sends it — Gulf
+    local time, four hours ahead, wearing a `Z`, in the `HH:MM.ss` format that
+    is not a time at all — so that anything reading it instead of the epoch
+    `timestamp` fails a test here rather than four hours off in the database.
+    Both production orders arrived exactly like this.
+    """
+    local = at.astimezone(ZoneInfo("Asia/Dubai"))
     return {
         "eventType": "ORDER_STATUS_CHANGED",
+        "timestamp": int(at.timestamp()),
         "data": {
             "order": {
                 "orderId": COURIER_ID,
@@ -72,7 +84,7 @@ def _event(status: str, *, at: datetime = NOW, previous: str = "ON_GOING") -> di
                 "previousStatus": previous,
                 "shareLink": "https://share.lalamove.com/abc",
             },
-            "updatedAt": at.isoformat().replace("+00:00", "Z"),
+            "updatedAt": f"{local:%Y-%m-%dT%H:%M}.00Z",
         },
     }
 
@@ -384,3 +396,49 @@ async def test_nothing_is_batched_when_no_courier_is_configured():
     assert calls == [order.order_number], "the single-order path should have run"
     assert result.batch_id is None
     assert "by hand" in (result.last_error or "")
+
+
+# ── the clock ─────────────────────────────────────────────────────────────────
+
+
+def test_the_event_time_comes_from_the_epoch_not_the_iso_string():
+    """
+    Lalamove's `updatedAt` is Gulf local time wearing a `Z`, and the top-level
+    `timestamp` is the truth. Taken from production task 3554059933802783529:
+    the string said `2026-08-03T21:38.00Z`, the epoch said 1785778684 — 17:38:04
+    UTC — and our own clock agreed with the epoch to the second.
+
+    Reading the string put `delivered_at` four hours in the future on every
+    Lalamove order we have ever taken. It also parses only by accident: Python
+    3.12 accepts `HH:MM.ss`, 3.14 raises, so the recorded value changed with the
+    runtime and nothing would have failed.
+    """
+    real = {
+        "timestamp": 1785778684,
+        "data": {"updatedAt": "2026-08-03T21:38.00Z", "order": {"status": "COMPLETED"}},
+    }
+    assert lalamove_service.webhook_time(real) == datetime(
+        2026, 8, 3, 17, 38, 4, tzinfo=timezone.utc
+    )
+    # And the string, whatever any Python does with it, is never consulted.
+    assert (
+        lalamove_service.webhook_time({"data": {"updatedAt": "2026-08-03T21:38.00Z"}})
+        is None
+    )
+
+
+async def test_a_completion_is_stamped_when_it_happened():
+    """The end-to-end version of the above, through `apply_webhook`."""
+    delivery, order = (
+        _delivery(courier_status="PICKED_UP"),
+        _order(OrderStatusEnum.OUT_FOR_DELIVERY),
+    )
+    completed_at = NOW + timedelta(minutes=30)
+
+    await lalamove_service.apply_webhook(
+        _FakeDb(order), _event("COMPLETED", at=completed_at), delivery
+    )
+
+    assert delivery.delivered_at == completed_at, (
+        "delivered_at drifted — the local-time `updatedAt` is being read again"
+    )

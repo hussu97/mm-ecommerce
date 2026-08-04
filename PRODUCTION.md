@@ -796,23 +796,33 @@ Two things have to be done by the noon RoD integrations team, not here:
    path is not part of any signature, so it can be changed freely. These have to
    be registered **on the staging side** for the trial, and again on production
    later.
-2. **Confirm the distance limit — this one is open.** The rate card we were
-   given prices bands out to 20 km, and the map is drawn to match: `Sharjah
-   Central` is a 13.4 km circle, which is 20 road km over the measured detour
-   factor, and `NOON_SEND_MAX_DISTANCE_M` is 20000 to match it. An earlier
-   version of the integration doc said the *standard partner cap* is 15 km,
-   which is a commercial parameter and not the same thing as the card's bands.
-   Confirm with the commercial team (`sbhatti@noon.com`) which applies to this
-   account.
+2. **The distance limit answers itself.** `GET /public/v1/configurations`
+   reports the real cap for whichever key is configured, and the code now asks:
+   `noon_send_service.max_distance_m()` takes the stricter of their number and
+   `NOON_SEND_MAX_DISTANCE_M`, so their answer can only narrow the zone, never
+   silently widen one nobody has redrawn.
 
-   Nothing breaks if the cap really is 15: noon Send refuses the task, the
-   refusal is recognised as unserviceable, and the order falls back to Lalamove
-   at the same fee to the customer. What is lost is the saving on the outer ring
-   — Al Zahia and University City — and it is lost silently, so it is worth
-   asking rather than discovering. If the answer is 15 km, set
-   `NOON_SEND_MAX_DISTANCE_M=15000` **and** shrink `INNER_ZONE` in
-   `scripts/build_delivery_zones.py` to 10.0 km, then republish the map: the two
-   must move together or the zone claims addresses it cannot serve.
+   The three numbers that used to disagree: the integration doc says the
+   standard partner limit is 15 km, the rate card prices bands out to 20, and
+   the staging key answers **50 km**. Only the API is about our own account.
+   Check production's with:
+
+   ```bash
+   curl -s -H "X-API-Key: $NOON_SEND_API_KEY" -H "X-Locale: en-ae" \
+     https://food-api-team.noon.team/public/v1/configurations
+   ```
+
+   If it comes back under 20 km, nothing breaks — the guard narrows, those pins
+   fall back to Lalamove at the same fee to the customer, and the only loss is
+   the saving on the outer ring. To reclaim it, agree a wider cap with the
+   commercial team (`sbhatti@noon.com`). To match the map to a permanently
+   narrower cap instead, shrink `INNER_ZONE` in
+   `scripts/build_delivery_zones.py` and republish: the guard and the radius
+   have to move together or the zone claims addresses it cannot serve.
+
+   The same call reports `cod_limit` and `prepaid_limit` in fils — staging says
+   AED 300 and AED 5,000 — and `may_serve` now refuses an order over either
+   rather than letting task creation reject it.
 
 There is no wallet to fund — billing is on the partner agreement. Once
 `NOON_SEND_ENV=production`, orders are real: a rider is dispatched and a

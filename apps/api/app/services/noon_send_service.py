@@ -50,6 +50,7 @@ from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import Order, OrderStatusEnum
 from app.models.pos_order import OrderPayment
 from app.models.order_delivery import (
+    NOON_SEND_STATUS_RANK,
     NOON_SEND_FAILED_STATUSES,
     NoonSendStatusEnum,
     OrderDelivery,
@@ -178,6 +179,59 @@ def rate_card_cost(
     return Decimal(f"{total:.2f}")
 
 
+#: The partner limits noon Send reports for our own key, cached in process.
+#: `None` until the first successful read; a failed read leaves it None and
+#: every caller falls back to the configured numbers, so an outage narrows the
+#: decision rather than breaking it.
+_limits: dict[str, Any] | None = None
+
+
+def invalidate_limits() -> None:
+    global _limits
+    _limits = None
+
+
+async def partner_limits() -> dict[str, Any]:
+    """
+    What noon Send says this account may actually do.
+
+    Asked once per process rather than assumed, because three different numbers
+    claim to be the distance cap: the integration doc says the standard partner
+    limit is 15 km, the rate card prices bands out to 20, and the staging
+    partner answers 50. Only one of them is about our key, and it is this one.
+
+    Also carries `cod_limit` and `prepaid_limit` in fils, which nothing else
+    tells us and which reject a task outright when exceeded.
+    """
+    global _limits
+    if _limits is not None:
+        return _limits
+    if not is_enabled():
+        return {}
+    try:
+        _limits = await provider.get_configurations() or {}
+    except Exception:  # pragma: no cover — network; the caller has a fallback
+        logger.warning("Could not read noon Send partner limits")
+        return {}
+    return _limits
+
+
+async def max_distance_m() -> int:
+    """
+    The drop-off ceiling, theirs if they will tell us and ours otherwise.
+
+    The stricter of the two wins. Their number is authoritative about what they
+    will accept; ours is a deliberate floor under it, so raising the commercial
+    limit does not silently widen a zone nobody has re-drawn.
+    """
+    reported = (await partner_limits()).get("distance_limit")
+    try:
+        theirs = int(reported)
+    except (TypeError, ValueError):
+        return settings.NOON_SEND_MAX_DISTANCE_M
+    return min(theirs, settings.NOON_SEND_MAX_DISTANCE_M)
+
+
 async def estimate_for_point(
     db: AsyncSession,
     latitude: float,
@@ -199,10 +253,10 @@ async def estimate_for_point(
 
     distance = road_distance_km(pickup.latitude, pickup.longitude, latitude, longitude)
     distance_m = int(distance * 1000)
-    if distance_m > settings.NOON_SEND_MAX_DISTANCE_M:
+    limit_m = await max_distance_m()
+    if distance_m > limit_m:
         return None, (
-            f"{distance:.1f} km is past noon Send's "
-            f"{settings.NOON_SEND_MAX_DISTANCE_M / 1000:.0f} km limit"
+            f"{distance:.1f} km is past noon Send's {limit_m / 1000:.0f} km limit"
         )
 
     return (
@@ -247,11 +301,29 @@ async def may_serve(db: AsyncSession, order: Order) -> tuple[bool, str | None]:
         )
 
     distance = road_distance_km(pickup.latitude, pickup.longitude, latitude, longitude)
-    limit_km = settings.NOON_SEND_MAX_DISTANCE_M / 1000
+    limit_km = (await max_distance_m()) / 1000
     if distance > limit_km:
         return False, (
             f"Drop-off is about {distance:.1f} km away, past noon Send's "
             f"{limit_km:.0f} km limit"
+        )
+
+    # The money ceilings, which nothing but `/configurations` reports. A task
+    # over either is rejected at creation, and on production a rejection after
+    # a rider has been engaged is a cancellation we pay for. Staging answers
+    # AED 300 for COD, which a two-tier cake passes comfortably.
+    limits = await partner_limits()
+    is_cod = (order.payment_method or "").lower() == "cod"
+    if is_cod and limits.get("is_cod_blocked"):
+        return False, "noon Send is not accepting cash on delivery for this account"
+    outstanding = await outstanding_balance(db, order)
+    ceiling = limits.get("cod_limit") if is_cod else limits.get("prepaid_limit")
+    value = fils(outstanding if is_cod else (order.total or Decimal("0")))
+    if ceiling and value > int(ceiling):
+        kind = "cash on delivery" if is_cod else "prepaid"
+        return False, (
+            f"AED {value / 100:.2f} is over noon Send's {kind} ceiling of "
+            f"AED {int(ceiling) / 100:.2f}"
         )
     return True, None
 
@@ -625,40 +697,48 @@ async def apply_webhook(
     Fold one push into the delivery record, and move the order if it should.
 
     Out-of-order pushes are dropped rather than allowed to walk a delivered
-    order back to "assigned", exactly as on the Lalamove side.
+    task back to "assigned" — but by rank rather than by clock. Their published
+    webhook contract is three fields, `order_nr`, `status_code` and
+    `order_reference`, with no timestamp at all, so there is nothing to compare.
+    Reading one anyway meant the guard was never once armed.
 
-    Their `timestamp` is `YYYY-MM-DD HH:MM:SS` with no zone, and it is **UTC** —
-    confirmed by reading `created_at` off a live task and comparing it against
-    our own clock, which agreed to the second rather than being four hours out.
-    `parse_time` reads a naive stamp as UTC, so the comparison below is like
-    for like. If that ever changed to Gulf local time every push would arrive
-    stamped four hours in the future, which would not reorder anything but
-    would put `delivered_at` four hours late on every order.
+    A `timestamp` is still read when present, because their documentation
+    describes one and the tracking webhook does carry it. It is naive
+    `YYYY-MM-DD HH:MM:SS` and it is **UTC** — confirmed by reading `created_at`
+    off a live task against our own clock, which agreed to the second rather
+    than being four hours out. It is used to stamp the record, never to decide
+    ordering.
     """
     updated_at = parse_time(payload.get("timestamp"))
-    if (
-        updated_at is not None
-        and delivery.status_updated_at is not None
-        and updated_at < delivery.status_updated_at
-    ):
-        logger.info(
-            "Ignoring out-of-order noon Send webhook for %s (%s < %s)",
-            delivery.courier_order_id,
-            updated_at,
-            delivery.status_updated_at,
-        )
-        return delivery
+    status = str(payload.get("status_code") or "").strip().lower()
+    if delivery.courier_status and status:
+        arriving = NOON_SEND_STATUS_RANK.get(status, -1)
+        current = NOON_SEND_STATUS_RANK.get(delivery.courier_status, -1)
+        if arriving < current:
+            logger.info(
+                "Ignoring out-of-order noon Send webhook for %s (%s after %s)",
+                delivery.courier_order_id,
+                status or "(none)",
+                delivery.courier_status,
+            )
+            return delivery
 
     delivery.last_payload = payload
     if task_nr := payload.get("order_nr"):
         delivery.courier_order_id = str(task_nr)
 
-    status = str(payload.get("status_code") or "").strip().lower()
     if status and status != delivery.courier_status:
         delivery.courier_previous_status = delivery.courier_status
         delivery.courier_status = status
         moment = updated_at or datetime.now(timezone.utc)
         if status == NoonSendStatusEnum.ASSIGNED.value:
+            # Their status push is three fields — task, status, reference — so
+            # the rider's name is not in it. The integration doc is explicit
+            # that "once a Delivery Agent is assigned, their contact details
+            # will be shared in the task detail", so the detail is what we ask.
+            # Without this the counter was told "a rider is on the way" with no
+            # name and no number to call.
+            await _fill_rider_details(delivery)
             await _announce_rider(db, delivery)
         if status == NoonSendStatusEnum.PICKED_UP.value:
             delivery.picked_up_at = moment
@@ -680,6 +760,38 @@ async def apply_webhook(
 
     await _advance_order(db, delivery)
     return delivery
+
+
+async def _fill_rider_details(delivery: OrderDelivery) -> None:
+    """
+    Put a name and a number to the rider, from the task detail.
+
+    Best-effort: the webhook must still answer 200. Their doc warns the details
+    are "only available for active tasks or recently completed ones", so this is
+    called on assignment rather than left until someone opens the admin.
+    """
+    if not delivery.courier_order_id or not is_enabled():
+        return
+    try:
+        details = await provider.get_task(str(delivery.courier_order_id))
+    except Exception:  # pragma: no cover — network, never worth failing on
+        logger.warning(
+            "Could not read the noon Send task %s for rider details",
+            delivery.courier_order_id,
+        )
+        return
+    rider = details.get("da_details") or {}
+    if not rider:
+        return
+    delivery.driver_name = rider.get("name") or delivery.driver_name
+    delivery.driver_phone = rider.get("phone_number") or delivery.driver_phone
+    location = rider.get("location") or {}
+    delivery.driver_latitude = (
+        decimal_or_none(location.get("latitude")) or delivery.driver_latitude
+    )
+    delivery.driver_longitude = (
+        decimal_or_none(location.get("longitude")) or delivery.driver_longitude
+    )
 
 
 async def _announce_rider(db: AsyncSession, delivery: OrderDelivery) -> None:
