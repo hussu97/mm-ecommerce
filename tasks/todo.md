@@ -126,6 +126,10 @@ providers looking for the unhappy paths nobody had exercised.
 - `specialRequests: 5` in both price breakdowns is the door-to-door charge, dropped in this session's earlier work — both orders predate that deploy.
 - A batch showing `cancelled` against a delivered order is the empty-batch path working: the order was dispatched directly before the window closed, so the run had nothing left to collect.
 
+### Follow-up, same day
+- [x] 6. **Every order names its kitchen.** `orders.branch_id` was nullable and null on every website order, so the column meant "the branch that made this" for a POS order and "nobody knows" for a storefront one. Migration `068` gives the historical rows K001 and closes the column. Creation now resolves the branch *before* the insert — zone's kitchen, then the configured pickup branch, then any active branch — so the row cannot be written without one.
+- [x] 7. **noon Send's ceiling is ours, full stop.** `/configurations` reports whatever an environment is set up for and staging answers 50 km, which describes no real fleet. 20 km is the agreed limit, the distance the card prices to, and what `Sharjah Central` is drawn against, so their number is logged when it disagrees and never moves the guard. The COD and prepaid ceilings from the same call are still enforced — those are real.
+
 ### Still open
 - **Tracking pushes are switched off.** `is_external_tracking_enabled: false` on our key, and the integration doc says live telemetry "will be live soon", so `/webhooks/noon-send/tracking` will not fire yet. The endpoint stays; live position has to be pulled from the task detail until they enable it.
 - **The economics are negative on both real orders**: Sharjah City charged 15 against a 23 cost, Dubai City charged 25 against 39. Dropping door-to-door takes those to 18 and 34 — still −3 and −9.

@@ -329,49 +329,35 @@ def _is_cash_on_delivery(data: OrderCreate) -> bool:
     return str(getattr(data.payment_method, "value", data.payment_method)) == "cod"
 
 
-async def _attach_to_branch(db: AsyncSession, order: Order, zone: Zone | None) -> None:
+async def resolve_branch(db: AsyncSession, zone: Zone | None) -> Branch | None:
     """
-    Hand the order to the kitchen that will make it.
+    The kitchen that will make this order.
 
     The zone's own branch first — that is the whole point of mapping polygons to
-    branches. Failing that, the single configured pickup branch, which is where
-    the courier would collect from anyway: a zone drawn before branches existed,
-    or a pin outside every zone, still has to be baked *somewhere*, and the shop
-    that would have made it is the shop that should see it.
+    branches. Failing that, the configured pickup branch, which is where a
+    courier would collect from anyway: a zone drawn before branches existed, a
+    pickup order with no zone at all, or a pin outside every drawn shape still
+    has to be baked *somewhere*, and the shop that would have made it is the
+    shop that should see it.
 
-    Falling back matters more than it looks. Migration `059` fills in the branch
-    for zones that exist when it runs; a database migrated before the kitchen row
-    was seeded gets nulls, and without this every website order would be written
-    with no branch and reach no register at all — silently, because the order
-    itself is perfectly fine.
-
-    Best-effort throughout. A deleted branch or none at all leaves the order
-    exactly as it was: visible in the admin, dispatchable, simply not on a
-    register. Refusing the sale because a kitchen is misconfigured would be a far
-    worse trade, and what this misses is findable by `branch_id IS NULL`.
+    Resolved **before** the order is written, because `orders.branch_id` is NOT
+    NULL — an order with no kitchen is not a quieter order, it is an order
+    nobody is making. `None` here means the shop has no branch that can take
+    online orders at all, which is a configuration failure the caller turns into
+    a refusal rather than a silent sale.
     """
-    branch: Branch | None = None
     if zone is not None and zone.branch_id is not None:
         branch = await db.get(Branch, zone.branch_id)
-        if branch is not None and (
-            branch.deleted_at is not None or not branch.is_active
-        ):
-            logger.warning(
-                "Order %s is in zone %s, whose branch %s cannot take it",
-                order.order_number,
-                zone.name,
-                zone.branch_id,
-            )
-            branch = None
+        if branch is not None and branch.deleted_at is None and branch.is_active:
+            return branch
+        logger.warning(
+            "Zone %s names branch %s, which cannot take orders",
+            zone.name,
+            zone.branch_id,
+        )
 
-    if branch is None:
-        pickup = await lalamove_service.resolve_pickup(db)
-        if pickup is None:
-            logger.warning(
-                "Order %s has no branch to go to; it will not reach a register",
-                order.order_number,
-            )
-            return
+    pickup = await lalamove_service.resolve_pickup(db)
+    if pickup is not None:
         branch = (
             (
                 await db.execute(
@@ -381,10 +367,44 @@ async def _attach_to_branch(db: AsyncSession, order: Order, zone: Zone | None) -
             .scalars()
             .first()
         )
-        if branch is None:
-            return
+        if branch is not None:
+            return branch
 
-    await pos_order_service.attach_online_order(db, order, branch)
+    # Last resort: any branch that is open for business. `resolve_pickup` is
+    # stricter than this on purpose — it needs coordinates and a phone number,
+    # because a courier has to be sent somewhere and someone has to answer — but
+    # a kitchen missing its pin can still bake a cake and print a ticket. Losing
+    # the sale over a field nobody filled in would be the worse trade by far.
+    return (
+        (
+            await db.execute(
+                select(Branch)
+                .where(Branch.is_active.is_(True), Branch.deleted_at.is_(None))
+                .order_by(Branch.display_order, Branch.name)
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+
+async def _attach_to_branch(db: AsyncSession, order: Order, branch: Branch) -> None:
+    """
+    Give the order its place on the register: check number, business day, state.
+
+    Separate from `resolve_branch` and deliberately best-effort. Which kitchen
+    is making it is part of the order and is written with it; whether the till
+    could open a business day for it is not worth losing a paid sale over. What
+    this misses is findable by `is_pos = false AND source = 'online'`.
+    """
+    try:
+        await pos_order_service.attach_online_order(db, order, branch)
+    except Exception:  # pragma: no cover — defensive
+        logger.exception(
+            "Order %s could not be put on %s's register",
+            order.order_number,
+            branch.reference,
+        )
 
 
 async def _persist_order(
@@ -402,6 +422,7 @@ async def _persist_order(
     vat_amount: Decimal,
     total_excl_vat: Decimal,
     fallback_email: str | None = None,
+    branch: Branch | None = None,
 ) -> Order:
     """
     Write the order, its items, and update promo usage atomically.
@@ -440,6 +461,10 @@ async def _persist_order(
         # zone — was written with no channel at all, and every reader had to
         # treat null as "probably the website".
         source=OrderSourceEnum.ONLINE.value,
+        # The kitchen, stamped with the row rather than onto it afterwards. The
+        # column is NOT NULL: an order nobody is making is not a state worth
+        # being able to represent.
+        branch_id=branch.id if branch is not None else None,
         promo_code_used=promo_code_used,
         shipping_address_snapshot=address_snapshot,
         payment_method=data.payment_method,
@@ -547,10 +572,21 @@ async def create_order(
         email=data.email or fallback_email,
     )
 
-    # 5. Claim stock for stock-tracked products (fails if any is out of stock)
+    # 5. Find the kitchen before writing anything. `orders.branch_id` is NOT
+    #    NULL, so this is part of building the row rather than something done to
+    #    it afterwards — and a shop with no branch that can take online orders
+    #    is a shop that cannot take this one.
+    branch = await resolve_branch(db, zone)
+    if branch is None:
+        logger.error("No branch can take online orders; refusing %s", data.email)
+        raise BadRequestError(
+            "We can't take online orders right now. Please try again shortly."
+        )
+
+    # 6. Claim stock for stock-tracked products (fails if any is out of stock)
     await _decrement_stock(db, cart)
 
-    # 6. Persist order rows and clear cart
+    # 7. Persist order rows and clear cart
     order = await _persist_order(
         db,
         data,
@@ -566,20 +602,22 @@ async def create_order(
         vat_amount,
         total_excl_vat,
         fallback_email,
+        branch,
     )
 
-    # 7. Open the delivery record — including for zones no courier API touches,
+    # 8. Open the delivery record — including for zones no courier API touches,
     #    so "what did fulfilment cost" is answerable for the whole country and
     #    not just the automated part of it.
     if data.delivery_method == DeliveryMethodEnum.DELIVERY:
         await lalamove_service.record_order_delivery(db, order, zone=zone, cart=cart)
 
-    # 8. Put it on a register. The zone that priced it names the kitchen that
-    #    bakes it; without this the order exists only in the admin and nobody at
-    #    the counter is told anything.
-    await _attach_to_branch(db, order, zone)
+    # 9. Put it on a register — check number, business day, pending state. The
+    #    branch itself was stamped on the row at insert; this is the POS wiring
+    #    around it, and it is best-effort: a business day that will not open is
+    #    not a reason to lose a sale that is already paid for.
+    await _attach_to_branch(db, order, branch)
 
-    # 9. Tell the kitchen. Best-effort and last, because a push that fails must
+    # 10. Tell the kitchen. Best-effort and last, because a push that fails must
     #    not fail an order that is already written and already visible to
     #    anyone who pulls the pending list.
     if order.branch_id is not None:
@@ -590,7 +628,7 @@ async def create_order(
                 "Could not notify %s about %s", order.branch_id, order.order_number
             )
 
-    # 10. Cash orders confirm themselves. A card order is confirmed by Stripe's
+    # 11. Cash orders confirm themselves. A card order is confirmed by Stripe's
     #    `payment_intent.succeeded` and a failure lands it in `payment_failed`,
     #    but cash has no such event — so without this it would sit in `created`
     #    until an admin noticed, which for an order already printing in a

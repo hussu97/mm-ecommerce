@@ -115,10 +115,15 @@ class Order(Base, UUIDMixin, TimestampMixin):
     is_pos: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false", index=True
     )
-    branch_id: Mapped[uuid.UUID | None] = mapped_column(
+    #: The kitchen that made it. Required, and stamped with the row rather than
+    #: onto it afterwards: an order nobody is making prints nowhere and reaches
+    #: no register, so it is not a state worth being able to represent.
+    #: `order_service.resolve_branch` decides it — the zone's own kitchen, then
+    #: the configured pickup branch, then any active branch at all.
+    branch_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("branches.id", ondelete="RESTRICT"),
-        nullable=True,
+        nullable=False,
         index=True,
     )
     table_id: Mapped[uuid.UUID | None] = mapped_column(

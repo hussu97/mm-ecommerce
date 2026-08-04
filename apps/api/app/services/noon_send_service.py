@@ -218,18 +218,31 @@ async def partner_limits() -> dict[str, Any]:
 
 async def max_distance_m() -> int:
     """
-    The drop-off ceiling, theirs if they will tell us and ours otherwise.
+    The drop-off ceiling: ours, always.
 
-    The stricter of the two wins. Their number is authoritative about what they
-    will accept; ours is a deliberate floor under it, so raising the commercial
-    limit does not silently widen a zone nobody has re-drawn.
+    20 km is the agreed commercial limit and the distance the rate card prices
+    to, and it is what `Sharjah Central` is drawn against. `/configurations`
+    reports whatever the *environment* is set up for — staging answers 50 km,
+    which is a sandbox number and describes nothing about the real fleet — so
+    letting it decide would either widen a zone nobody redrew or narrow one that
+    is correct.
+
+    Their answer is still worth reading, so a genuine disagreement shows up in
+    the log rather than in a customer's fee. It never moves the ceiling.
     """
+    ours = settings.NOON_SEND_MAX_DISTANCE_M
     reported = (await partner_limits()).get("distance_limit")
     try:
         theirs = int(reported)
     except (TypeError, ValueError):
-        return settings.NOON_SEND_MAX_DISTANCE_M
-    return min(theirs, settings.NOON_SEND_MAX_DISTANCE_M)
+        return ours
+    if theirs < ours:
+        logger.info(
+            "noon Send reports a %d m limit against our %d m; keeping ours",
+            theirs,
+            ours,
+        )
+    return ours
 
 
 async def estimate_for_point(

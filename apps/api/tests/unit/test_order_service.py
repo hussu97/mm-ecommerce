@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import uuid
+from types import SimpleNamespace
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -101,7 +102,27 @@ def mock_fulfilment():
     the script off its end. What they are checking is arithmetic and status
     rules; dispatch has its own tests.
     """
+    branch = SimpleNamespace(
+        id=uuid.uuid4(),
+        reference="K001",
+        name="Melting Moments Cakes",
+        is_active=True,
+        deleted_at=None,
+    )
     with (
+        # Every order now names the kitchen making it, and the column is NOT
+        # NULL, so this has to answer even for tests that are only about
+        # arithmetic. Resolving it for real would mean three more queries on a
+        # session whose results are a fixed script.
+        patch(
+            "app.services.order_service.resolve_branch",
+            new_callable=AsyncMock,
+            return_value=branch,
+        ),
+        patch(
+            "app.services.order_service.pos_order_service.attach_online_order",
+            new_callable=AsyncMock,
+        ),
         patch(
             "app.services.order_service.lalamove_service.record_order_delivery",
             new_callable=AsyncMock,
