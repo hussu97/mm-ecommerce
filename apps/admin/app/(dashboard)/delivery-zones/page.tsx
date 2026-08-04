@@ -571,6 +571,18 @@ function RunsTab({
                     {batch.last_error}
                   </div>
                 )}
+                {/* Whether this is being handled or is waiting on a person is
+                    the only thing worth knowing about a failed run, and it is
+                    not something a status badge can say on its own. */}
+                {batch.next_attempt_at ? (
+                  <div className="text-[11px] font-body text-gray-400 mt-0.5">
+                    Attempt {batch.attempt_count} · trying again {formatDate(batch.next_attempt_at)}
+                  </div>
+                ) : batch.status === 'failed' && batch.attempt_count > 1 ? (
+                  <div className="text-[11px] font-body text-gray-400 mt-0.5">
+                    Gave up after {batch.attempt_count} attempts
+                  </div>
+                ) : null}
               </td>
               <td className="px-4 py-2.5 text-xs font-body text-gray-600">
                 {formatDate(batch.dispatch_at)}
@@ -597,15 +609,19 @@ function RunsTab({
                     Track
                   </a>
                 )}
-                {batch.status !== 'dispatched' && batch.status !== 'cancelled' && (
-                  <button
-                    onClick={() => onDispatch(batch.id)}
-                    disabled={busy}
-                    className="text-[11px] font-body text-primary hover:underline"
-                  >
-                    {batch.status === 'failed' ? 'Retry' : 'Send now'}
-                  </button>
-                )}
+                {/* A dispatched run with a retry pending is one whose second
+                    courier order failed — part of it is on the road and part of
+                    it is still in the kitchen, so the button has to stay. */}
+                {batch.status !== 'cancelled' &&
+                  (batch.status !== 'dispatched' || batch.next_attempt_at) && (
+                    <button
+                      onClick={() => onDispatch(batch.id)}
+                      disabled={busy}
+                      className="text-[11px] font-body text-primary hover:underline"
+                    >
+                      {batch.status === 'pending' ? 'Send now' : 'Retry'}
+                    </button>
+                  )}
               </td>
             </tr>
           ))}

@@ -92,6 +92,11 @@ class PickupPoint:
     address: str
     latitude: float
     longitude: float
+    #: The branch's trading hours as "HH:MM", carried because a driver can only
+    #: collect from a kitchen that is open. A retry is not worth scheduling for
+    #: a moment when nobody will be there to hand the boxes over.
+    opens_at: str = "00:00"
+    closes_at: str = "23:59"
 
     def as_stop(self) -> dict[str, Any]:
         return {
@@ -145,6 +150,8 @@ async def resolve_pickup(db: AsyncSession) -> PickupPoint | None:
         address=branch.address or branch.name,
         latitude=float(branch.latitude),
         longitude=float(branch.longitude),
+        opens_at=branch.opening_from,
+        closes_at=branch.opening_to,
     )
 
 

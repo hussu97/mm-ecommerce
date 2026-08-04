@@ -32,6 +32,15 @@ is local, but a van is not. Two zones whose slots close on the same minute share
 one run: the orders waiting in both go out on a single courier order, route-
 optimised across all of them. Sending two vans from the same kitchen at the same
 moment pays the base fare twice for one journey's worth of work.
+
+**A refusal is not the end.** An empty wallet, a courier outage, a reply that
+does not parse — none of those mean the cakes are not going out, and none of
+them should wait for somebody to notice. A run that fails for a reason another
+attempt could fix comes back on a short ladder, 5 then 15 then 45 minutes, and
+then stops. A run that fails for a reason another attempt cannot fix — an
+address the courier will never accept, no courier configured at all — is left
+alone, because retrying identical data gets an identical answer and spends
+courier API calls to learn nothing.
 """
 
 from __future__ import annotations
@@ -43,7 +52,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -68,7 +77,21 @@ logger = logging.getLogger(__name__)
 
 TZ = ZoneInfo(DELIVERY_TIMEZONE)
 
+#: How long to wait after each failed attempt before trying again. The length of
+#: this tuple is the number of retries: four attempts in all, spread over about
+#: an hour, then the run is left for a human.
+#:
+#: Short at first because the common failure is momentary — a courier 5xx, a
+#: reply that did not parse — and long at the end because the failure that
+#: actually needs the time is an empty wallet, which needs somebody to top it up.
+RETRY_BACKOFF = (
+    timedelta(minutes=5),
+    timedelta(minutes=15),
+    timedelta(minutes=45),
+)
+
 __all__ = [
+    "RETRY_BACKOFF",
     "WindowMatch",
     "active_windows",
     "assign_or_dispatch",
@@ -76,6 +99,7 @@ __all__ = [
     "dispatch_batch",
     "dispatch_due_batches",
     "find_window",
+    "kitchen_is_open",
     "next_dispatch_at",
     "overlapping",
     "reschedule_polygon",
@@ -403,12 +427,115 @@ async def reschedule_polygon(db: AsyncSession, polygon_id: uuid.UUID) -> int:
     return moved
 
 
+# ── retry ─────────────────────────────────────────────────────────────────────
+
+
+def _minutes_of(clock: str) -> int | None:
+    """ "HH:MM" as a minute of the day, or None if it is not that."""
+    try:
+        hour, _, minute = clock.partition(":")
+        total = int(hour) * 60 + int(minute)
+    except ValueError:
+        return None
+    return total if 0 <= total <= 1440 else None
+
+
+def kitchen_is_open(moment: datetime, opens_at: str, closes_at: str) -> bool:
+    """
+    Whether the branch is trading at this instant, on its own clock.
+
+    Same half-open reading as a batch window, and the same tolerance for a day
+    that runs past midnight: a kitchen open 09:00–02:00 is open at 01:00.
+    Unparseable hours are treated as always open — a retry that might be too
+    late beats no retry at all because a branch record had a typo in it.
+    """
+    opens, closes = _minutes_of(opens_at), _minutes_of(closes_at)
+    if opens is None or closes is None:
+        return True
+    local = _local(moment)
+    minute = local.hour * 60 + local.minute
+    if closes <= opens:  # trades past midnight
+        return minute >= opens or minute < closes
+    return opens <= minute < closes
+
+
+def _retry_at(
+    batch: DeliveryBatch,
+    now: datetime,
+    *,
+    opens_at: str = "00:00",
+    closes_at: str = "23:59",
+) -> datetime | None:
+    """
+    When this run should be tried again, or None if it should not be.
+
+    Two things end the ladder. Running out of rungs, which is the ordinary case
+    and means the failure has outlived the kind of problem that fixes itself.
+    And landing after the kitchen has shut, which matters more than it sounds:
+    the driver collects from a physical counter, and a booking made at 00:05 for
+    a run that failed at 23:00 sends someone to a dark shop. That one waits for
+    the morning and a human, which is what would have happened anyway.
+    """
+    if batch.attempt_count > len(RETRY_BACKOFF):
+        return None
+    when = now + RETRY_BACKOFF[batch.attempt_count - 1]
+    if not kitchen_is_open(when, opens_at, closes_at):
+        return None
+    return when
+
+
+def _fail(
+    batch: DeliveryBatch,
+    message: str,
+    *,
+    retry_at: datetime | None = None,
+) -> None:
+    """
+    Record a refusal, and whether anything will come of it on its own.
+
+    A run that has been booked at all keeps reading as dispatched, however badly
+    the rest of it went. `courier_order_id` is only ever set by a booking that
+    succeeded, so it is the honest test for "is a driver already carrying part
+    of this" — and marking that run failed would send somebody looking for a van
+    that is out on the road.
+    """
+    on_the_road = batch.courier_order_id is not None
+    batch.status = (
+        BatchStatusEnum.DISPATCHED.value
+        if on_the_road
+        else BatchStatusEnum.FAILED.value
+    )
+    batch.last_error = message
+    batch.next_attempt_at = retry_at
+    if retry_at is not None:
+        logger.info(
+            "Batch %s failed (attempt %s); retrying at %s",
+            batch.id,
+            batch.attempt_count,
+            retry_at.isoformat(),
+        )
+    else:
+        logger.warning(
+            "Batch %s failed after %s attempt(s) and needs a human: %s",
+            batch.id,
+            batch.attempt_count,
+            message,
+        )
+
+
 # ── dispatch ──────────────────────────────────────────────────────────────────
 
 
 async def dispatch_due_batches(db: AsyncSession, *, limit: int = 20) -> list[uuid.UUID]:
     """
-    Send every run whose window has closed.
+    Send every run whose time has come — its window closing, or a retry falling due.
+
+    The two are one query on purpose. A retry is not a different kind of work,
+    it is the same run at a later minute, so `next_attempt_at` is read on its own
+    without asking what status the row is in. That covers the three ways a run
+    can be left with work outstanding — refused outright, half-booked, or stuck
+    mid-flight because the process died between the claim and the courier's
+    reply — without a special case for each.
 
     Claiming is a status flip inside the row lock, so two sweeps running at once
     cannot both book the same batch. The lock is skipped rather than waited on:
@@ -420,8 +547,16 @@ async def dispatch_due_batches(db: AsyncSession, *, limit: int = 20) -> list[uui
             await db.execute(
                 select(DeliveryBatch)
                 .where(
-                    DeliveryBatch.status == BatchStatusEnum.PENDING.value,
-                    DeliveryBatch.dispatch_at <= now,
+                    or_(
+                        and_(
+                            DeliveryBatch.status == BatchStatusEnum.PENDING.value,
+                            DeliveryBatch.dispatch_at <= now,
+                        ),
+                        and_(
+                            DeliveryBatch.next_attempt_at.isnot(None),
+                            DeliveryBatch.next_attempt_at <= now,
+                        ),
+                    )
                 )
                 .order_by(DeliveryBatch.dispatch_at)
                 .limit(limit)
@@ -439,9 +574,17 @@ async def dispatch_due_batches(db: AsyncSession, *, limit: int = 20) -> list[uui
         try:
             await dispatch_batch(db, batch)
         except Exception:  # pragma: no cover — defensive
+            # A bug or a database failure, not a courier refusal. The ladder
+            # still applies — this is the one path that cannot check the
+            # kitchen's hours, because whatever just went wrong may have taken
+            # the session with it and a query here would abort the whole sweep.
+            # The ladder alone bounds it to about an hour.
             logger.exception("Batch %s blew up while dispatching", batch.id)
-            batch.status = BatchStatusEnum.FAILED.value
-            batch.last_error = "Dispatch failed unexpectedly"
+            _fail(
+                batch,
+                "Dispatch failed unexpectedly",
+                retry_at=_retry_at(batch, now),
+            )
         await db.commit()
         dispatched.append(batch.id)
     return dispatched
@@ -457,24 +600,53 @@ async def dispatch_batch(db: AsyncSession, batch: DeliveryBatch) -> DeliveryBatc
     Fifteen drops is the courier's ceiling for one order. A fuller batch is
     split across several, which still beats sending them singly: the second
     courier order carries its own drops at the same marginal rate.
+
+    Every exit either books the run or decides, then and there, whether another
+    attempt could change the answer. Only here is that knowable: the sweep sees
+    a failed row, but this is the code that knows whether the courier said "not
+    now" or "not ever".
     """
+    now = datetime.now(timezone.utc)
+    batch.attempt_count += 1
+    # Cleared on the way in rather than on the way out, so a process that dies
+    # mid-booking leaves a row that is claimed and quiet instead of one every
+    # worker re-picks on every sweep. Each exit below sets it again if it should.
+    batch.next_attempt_at = None
+
+    #: Drops a previous attempt already put on the road. `_ready_deliveries`
+    #: never hands those back, so everything below has to add to them rather
+    #: than speak as if this attempt were the only one.
+    already_booked = batch.stop_count if batch.courier_order_id else 0
+
     deliveries = await _ready_deliveries(db, batch.id)
     if not deliveries:
+        if already_booked:
+            # A retry whose leftovers were cancelled while it waited. The run
+            # itself went out and a driver is carrying the rest of it; calling
+            # that cancelled would be a lie about a van already on the road.
+            batch.status = BatchStatusEnum.DISPATCHED.value
+            logger.info("Batch %s has nothing left to book", batch.id)
+            return batch
         batch.status = BatchStatusEnum.CANCELLED.value
         batch.stop_count = 0
         logger.info("Batch %s had nothing ready to send", batch.id)
         return batch
 
     if not lalamove_service.is_enabled():
-        batch.status = BatchStatusEnum.FAILED.value
-        batch.last_error = "Courier is not configured; dispatch these orders by hand"
+        # Configuration, not weather. Another attempt in five minutes reads the
+        # same settings and fails the same way.
+        _fail(batch, "Courier is not configured; dispatch these orders by hand")
         return batch
 
     pickup = await lalamove_service.resolve_pickup(db)
     if pickup is None:
-        batch.status = BatchStatusEnum.FAILED.value
-        batch.last_error = "No pickup branch is configured"
+        _fail(batch, "No pickup branch is configured")
         return batch
+
+    def retry_at() -> datetime | None:
+        return _retry_at(
+            batch, now, opens_at=pickup.opens_at, closes_at=pickup.closes_at
+        )
 
     drops: list[tuple[OrderDelivery, lalamove_service.Drop]] = []
     for delivery in deliveries:
@@ -488,9 +660,11 @@ async def dispatch_batch(db: AsyncSession, batch: DeliveryBatch) -> DeliveryBatc
         drops.append((delivery, drop))
 
     if not drops:
-        batch.status = BatchStatusEnum.FAILED.value
-        batch.last_error = "No order in this run had a usable address"
-        batch.stop_count = 0
+        # The addresses are what they are. Nothing about waiting makes them
+        # usable, so this one goes to a human to fix or to cancel.
+        _fail(batch, "No order in this run had a usable address")
+        if not already_booked:
+            batch.stop_count = 0
         return batch
 
     chunks = [
@@ -499,25 +673,43 @@ async def dispatch_batch(db: AsyncSession, batch: DeliveryBatch) -> DeliveryBatc
     ]
     booked = 0
     errors: list[str] = []
+    #: Only a refusal that could go the other way next time. An address the
+    #: courier does not serve is not one of those.
+    worth_retrying = False
     for index, chunk in enumerate(chunks):
         try:
             await _book_chunk(db, batch, pickup, chunk, part=index, parts=len(chunks))
             booked += len(chunk)
         except LalamoveError as exc:
             errors.append(str(exc))
+            worth_retrying = worth_retrying or not exc.is_out_of_service_area
             for delivery, _ in chunk:
                 delivery.last_error = str(exc)
             logger.warning("Batch %s part %s failed: %s", batch.id, index + 1, exc)
 
-    batch.stop_count = booked
+    batch.stop_count = already_booked + booked
+    # A refusal with no message at all is the shape of a transient fault, so it
+    # earns the benefit of the doubt; a refusal that named an unserviceable
+    # address does not.
+    retry = retry_at() if worth_retrying or not errors else None
+
     if booked == 0:
-        batch.status = BatchStatusEnum.FAILED.value
-        batch.last_error = errors[0] if errors else "Courier refused the run"
+        # `_fail` keeps a partly-booked run reading as dispatched: the leftovers
+        # of one failing again does not recall the driver who has the rest.
+        _fail(batch, errors[0] if errors else "Courier refused the run", retry_at=retry)
         return batch
 
     batch.status = BatchStatusEnum.DISPATCHED.value
-    batch.dispatched_at = datetime.now(timezone.utc)
+    # Kept from the first booking on a retry: the run left when it left.
+    batch.dispatched_at = batch.dispatched_at or datetime.now(timezone.utc)
     batch.last_error = "; ".join(errors) or None
+    # Some of it went and some of it did not. The run reads as dispatched
+    # because a driver really is coming, but the orders in the failed part are
+    # still sitting in the kitchen unbooked — so it comes back on the ladder,
+    # and `_ready_deliveries` will hand it only the ones without a courier
+    # order. Nothing already on the road can be booked twice.
+    if booked < len(drops):
+        batch.next_attempt_at = retry
     per_delivery = batch.cost_per_delivery
     logger.info(
         "Batch %s dispatched: %s drops, %s %s total%s",
@@ -588,9 +780,13 @@ async def _book_chunk(
     now = datetime.now(timezone.utc)
     status = booking.get("status") or CourierStatusEnum.ASSIGNING_DRIVER.value
 
-    # The first part owns the batch-level fields; later parts add their cost so
-    # the total is what the whole run cost, not what one third of it did.
-    if part == 0:
+    # The first booking owns the batch-level fields; every later one adds its
+    # cost, so the total is what the whole run cost rather than what one third
+    # of it did. Keyed on "has this batch been booked at all" rather than on the
+    # part number, because a retry after a partial failure starts counting parts
+    # again from zero and would otherwise overwrite the first courier order's id
+    # and price with the second's.
+    if batch.courier_order_id is None:
         batch.courier_order_id = courier_order_id
         batch.quotation_id = quotation.get("quotationId")
         batch.share_link = booking.get("shareLink")
