@@ -51,11 +51,11 @@ from app.models.delivery_batch import (
 from app.models.delivery_polygon import DeliveryPolygon, FulfilmentProviderEnum
 from app.models.order import Order, OrderStatusEnum
 from app.models.order_delivery import (
-    FAILED_COURIER_STATUSES,
     CourierStatusEnum,
     OrderDelivery,
+    is_failed,
 )
-from app.services import lalamove_service
+from app.services import courier_service, lalamove_service
 from app.services.providers.lalamove_provider import LalamoveError, provider
 
 logger = logging.getLogger(__name__)
@@ -231,15 +231,19 @@ async def assign_or_dispatch(
     Either it joins a run that has not left yet, or it goes on its own right
     now. Third-party zones fall straight through and keep the manual flow they
     have always had.
+
+    Only Lalamove has runs to share. A multi-drop Lalamove order is one booking
+    with fifteen stops; noon Send's equivalent is a different product with a
+    different endpoint and a cap of three, so a `noon_send` zone dispatches each
+    order on its own and joins no batch.
     """
     delivery = await lalamove_service.get_delivery(db, order.id)
     if delivery is None:
         return None
-    if delivery.provider != FulfilmentProviderEnum.LALAMOVE.value:
+    if not courier_service.books_itself(delivery.provider):
         return delivery
-    if (
-        delivery.courier_order_id
-        and delivery.courier_status not in FAILED_COURIER_STATUSES
+    if delivery.courier_order_id and not is_failed(
+        delivery.provider, delivery.courier_status
     ):
         return delivery
     if delivery.batch_id and delivery.batch is not None and delivery.batch.is_open:
@@ -249,18 +253,21 @@ async def assign_or_dispatch(
     now = moment or datetime.now(timezone.utc)
     delivery.dispatchable_at = now
 
+    if delivery.provider != FulfilmentProviderEnum.LALAMOVE.value:
+        return await courier_service.dispatch(db, order)
+
     if not lalamove_service.is_enabled():
         # No courier configured, so there is no shared run to wait for. Falling
         # through to the single-order path records "dispatch this by hand" on
         # the order immediately, where the person packing it will see it —
         # rather than parking it in a batch that can only fail when its window
         # closes an hour later.
-        return await lalamove_service.dispatch_order(db, order)
+        return await courier_service.dispatch(db, order)
 
     if delivery.polygon_id is None:
         # An order placed before zones carried an id, or against a map that has
         # since been deleted. It still has to go out; it just goes alone.
-        return await lalamove_service.dispatch_order(db, order)
+        return await courier_service.dispatch(db, order)
 
     windows = await _active_windows(db, delivery.polygon_id)
     match = find_window(windows, now)
@@ -270,7 +277,7 @@ async def assign_or_dispatch(
             _local(now).strftime("%H:%M"),
             order.order_number,
         )
-        return await lalamove_service.dispatch_order(db, order)
+        return await courier_service.dispatch(db, order)
 
     batch = await _open_batch(db, delivery.polygon_id, match)
     delivery.batch_id = batch.id
@@ -369,7 +376,7 @@ async def reschedule_polygon(db: AsyncSession, polygon_id: uuid.UUID) -> int:
 
     for delivery in strays:
         if delivery.order is not None:
-            await lalamove_service.dispatch_order(db, delivery.order)
+            await courier_service.dispatch(db, delivery.order)
 
     if moved:
         logger.info("Rescheduled %s waiting orders in zone %s", moved, polygon_id)

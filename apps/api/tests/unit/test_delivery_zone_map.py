@@ -1,11 +1,12 @@
 """
-The Lalamove zone map has to charge the right fee at real addresses.
+The courier zone map has to charge the right fee at real addresses.
 
 Every case below is a place with coordinates anyone can check, run against the
 same GeoJSON the migration seeds and the same fee table it writes. The point of
 the exercise was to stop paying AED 130 to deliver a AED 60 cake, so the tests
 that matter are the boundary ones: the parts of Sharjah and Dubai that look
-local on a map and are not.
+local on a map and are not — and now the line inside Sharjah where one courier
+stops being able to reach and the other takes over.
 """
 
 from __future__ import annotations
@@ -26,15 +27,21 @@ GEOJSON = (
     / "uae_delivery_zones.geojson.json"
 )
 
+#: The migration that publishes the map currently in force. Everything here is
+#: read out of it rather than restated, so the test cannot agree with a fee
+#: table nobody is using.
+LIVE_MIGRATION = "057_noon_send_zone.py"
+
 LALAMOVE = "lalamove"
+NOON_SEND = "noon_send"
 THIRD_PARTY = "third_party"
 
 
-def _seeded_zones() -> dict[str, tuple[str, str, str]]:
+def _seeded_zones() -> dict[str, tuple[str, str]]:
     """The fee table straight out of the migration, so the two cannot drift."""
     namespace: dict[str, object] = {}
-    source = (VERSIONS / "050_delivery_zone_fulfilment.py").read_text()
-    start = source.index("ZONES: dict[str, tuple[str, str, str]] = {")
+    source = (VERSIONS / LIVE_MIGRATION).read_text()
+    start = source.index("ZONES: dict[str, tuple[str, str]] = {")
     end = source.index("}", start) + 1
     exec(source[start:end], namespace)  # noqa: S102 — our own file, no input
     return namespace["ZONES"]  # type: ignore[return-value]
@@ -51,7 +58,7 @@ def zones() -> list[dict]:
             "provider": provider,
             "geometry": shapes[name],
         }
-        for name, (fee, _slug, provider) in _seeded_zones().items()
+        for name, (fee, provider) in _seeded_zones().items()
     ]
 
 
@@ -65,18 +72,44 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
 @pytest.mark.parametrize(
     "label,lat,lng,expected,fee,provider",
     [
-        # ── Served by the courier ────────────────────────────────────────────
+        # ── Inside noon Send's 15 km reach ───────────────────────────────────
+        # Same AED 15 the customer has always paid; the run behind it costs 12
+        # instead of the 19-26 Lalamove wants for the same trip.
         (
             "Melting Moments itself",
             25.3304139,
             55.3736131,
-            "Sharjah City",
+            "Sharjah Central",
             "15.00",
-            LALAMOVE,
+            NOON_SEND,
         ),
-        ("Al Majaz Waterfront", 25.3213, 55.3820, "Sharjah City", "15.00", LALAMOVE),
+        (
+            "Al Majaz Waterfront",
+            25.3213,
+            55.3820,
+            "Sharjah Central",
+            "15.00",
+            NOON_SEND,
+        ),
+        ("Al Khan", 25.3306, 55.3600, "Sharjah Central", "15.00", NOON_SEND),
+        ("Maysaloon", 25.3220, 55.4250, "Sharjah Central", "15.00", NOON_SEND),
+        # 12.8 road km — the furthest area that still clears the 15 km cap.
+        (
+            "Muwaileh Commercial",
+            25.3120,
+            55.4560,
+            "Sharjah Central",
+            "15.00",
+            NOON_SEND,
+        ),
+        # ── Sharjah, but past noon Send's cap ────────────────────────────────
+        # 15.3 and 16.8 road km. noon Send would be cheaper here too — it is not
+        # allowed to be, which is the whole reason this boundary is drawn where
+        # it is rather than where the prices cross at 31 km.
+        ("Al Zahia", 25.3000, 55.4700, "Sharjah City", "15.00", LALAMOVE),
         ("University City", 25.2900, 55.4900, "Sharjah City", "15.00", LALAMOVE),
-        ("Muwaileh Commercial", 25.3120, 55.4560, "Sharjah City", "15.00", LALAMOVE),
+        ("Al Rahmaniya", 25.2760, 55.5200, "Sharjah City", "15.00", LALAMOVE),
+        # ── Another emirate, so never noon Send whatever the distance ────────
         ("Ajman Corniche", 25.4052, 55.4384, "Ajman City", "15.00", LALAMOVE),
         ("Emirates City, Ajman", 25.4180, 55.5140, "Ajman City", "15.00", LALAMOVE),
         ("Deira City Centre", 25.2530, 55.3320, "Dubai City", "25.00", LALAMOVE),
@@ -170,12 +203,13 @@ def test_a_city_is_still_listed_ahead_of_its_own_emirate(zones):
     every local delivery from 15 to 50.
     """
     order = [z["name"] for z in zones]
-    for city, emirate in (
+    for inner, outer in (
+        ("Sharjah Central", "Sharjah City"),
         ("Sharjah City", "Sharjah"),
         ("Ajman City", "Ajman"),
         ("Dubai City", "Dubai"),
     ):
-        assert order.index(city) < order.index(emirate)
+        assert order.index(inner) < order.index(outer)
 
 
 def test_outside_the_country_matches_nothing(zones):
@@ -189,12 +223,55 @@ def test_every_courier_zone_is_cheaper_than_the_third_party_fee(zones):
     left one at 50 it would be doing nothing but adding an integration.
     """
     for zone in zones:
-        if zone["provider"] == LALAMOVE:
+        if zone["provider"] != THIRD_PARTY:
             assert zone["fee"] < Decimal("50.00"), zone["name"]
 
 
 def test_every_zone_names_a_known_courier(zones):
-    assert {z["provider"] for z in zones} <= {LALAMOVE, THIRD_PARTY}
+    assert {z["provider"] for z in zones} <= {LALAMOVE, NOON_SEND, THIRD_PARTY}
+
+
+def test_noon_send_only_ever_claims_sharjah(zones):
+    """
+    noon Send cannot cross an emirate boundary, and the kitchen is in Sharjah.
+    A zone naming them anywhere else is a map that books tasks certain to be
+    refused, so this is checked against the emirate outlines rather than against
+    the zone's name.
+
+    Sampled on a grid rather than at the zone's own vertices: a clipped ring
+    borrows its corners from the emirate outline, and a point sitting exactly on
+    the Sharjah-Ajman line belongs to whichever of the two the ray-casting
+    happens to favour. Grid points do not land on borders.
+    """
+    outlines = json.loads(
+        (
+            Path(__file__).resolve().parents[2]
+            / "app"
+            / "data"
+            / "uae_emirates.geojson.json"
+        ).read_text()
+    )
+    noon_send_zones = [z for z in zones if z["provider"] == NOON_SEND]
+    assert noon_send_zones, "no zone is served by noon Send"
+
+    checked = 0
+    for zone in noon_send_zones:
+        lats = [c[1] for poly in zone["geometry"]["coordinates"] for c in poly[0]]
+        lngs = [c[0] for poly in zone["geometry"]["coordinates"] for c in poly[0]]
+        lat = min(lats)
+        while lat <= max(lats):
+            lng = min(lngs)
+            while lng <= max(lngs):
+                if point_in_geometry(lat, lng, zone["geometry"]):
+                    checked += 1
+                    assert point_in_geometry(lat, lng, outlines["Sharjah"]), (
+                        f"{zone['name']} reaches outside Sharjah at {lat}, {lng}"
+                    )
+                lng += 0.004
+            lat += 0.004
+
+    # A grid that found nothing inside would pass vacuously.
+    assert checked > 100
 
 
 def test_the_map_covers_every_seeded_zone(zones):

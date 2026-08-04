@@ -130,9 +130,11 @@ class Settings(BaseSettings):
     LALAMOVE_LANGUAGE: str = "en_AE"
     #: CAR is the smallest vehicle offered in the UAE (0.5 m³, 80 kg).
     LALAMOVE_SERVICE_TYPE: str = "CAR"
-    #: Curb-to-curb is the default fare; a cake needs carrying to the door.
-    #: Flat +5 AED per order, not per stop.
-    LALAMOVE_SPECIAL_REQUESTS: str = "DOOR_TO_DOOR"
+    #: Comma-separated `specialRequests`. Empty by design: `DOOR_TO_DOOR` was
+    #: sent until Aug 2026 at a flat +5 AED per order, and the AED 5 buys a
+    #: promise the driver already keeps in practice. Dropping it takes 5 AED off
+    #: every Lalamove booking. Set it back here if that turns out to be wrong.
+    LALAMOVE_SPECIAL_REQUESTS: str = ""
     #: Signing covers the path only, and it must match the path Lalamove is
     #: configured to POST to, byte for byte, or every webhook fails validation.
     LALAMOVE_WEBHOOK_PATH: str = "/api/v1/webhooks/lalamove"
@@ -151,6 +153,44 @@ class Settings(BaseSettings):
     #: hand from the admin — useful for a maintenance window, dangerous as a
     #: default, which is why it is on.
     BATCH_DISPATCHER_ENABLED: bool = True
+
+    # ── noon Send / Rider-on-Demand (courier) ────────────────────────────────
+    #: Same contract as Lalamove above: an empty key means a `noon_send` zone
+    #: prices and sells exactly as it does today and simply dispatches through
+    #: Lalamove instead, so a missing credential is a fallback, not an outage.
+    NOON_SEND_API_KEY: str = ""
+    #: "production" or "staging". Staging is a real, working environment — the
+    #: kitchen's own coordinates already come back serviceable there — so
+    #: integration work does not need production credentials.
+    NOON_SEND_ENV: str = "staging"
+    #: Sent on every call. `en-ae` or `en-sa`; only the UAE fleet concerns us.
+    NOON_SEND_LOCALE: str = "en-ae"
+    #: The pickup point the rider collects from, as returned by
+    #: `scripts/register_noon_send_pickup.py`. Without it nothing dispatches.
+    NOON_SEND_OUTLET_CODE: str = ""
+    #: `noon_food` or `nownow` — which side of noon owns the pickup point.
+    NOON_SEND_CLIENT_CODE: str = "noon_food"
+    #: Their hard cap on pickup-to-drop-off distance. The zone map already keeps
+    #: orders well inside it; this is the belt to that pair of braces, so a task
+    #: that would be rejected is never sent. `GET /public/v1/configurations`
+    #: reports the real per-partner limit if commercial ever raise ours.
+    NOON_SEND_MAX_DISTANCE_M: int = 15000
+    #: Straight-line to road-distance multiplier, fitted across the sixteen
+    #: Sharjah areas the Lalamove rate card was measured over. Only used to
+    #: estimate what a run costs us — noon Send has no quotation API, so this is
+    #: the only cost figure that will ever exist for one of their tasks.
+    NOON_SEND_DETOUR_FACTOR: float = 1.49
+    #: Who may be served by noon Send **on production**. Comma-separated, and
+    #: matched against a signed-in customer's own address: a guest checkout
+    #: never qualifies. Everyone else in a noon Send zone books Lalamove. This
+    #: is the live-fire test — widen it as confidence grows, and empty it to
+    #: open noon Send to every customer.
+    NOON_SEND_ALLOWED_EMAILS: str = "h_abbasi97@hotmail.com"
+    #: The key noon Send presents on the status and tracking webhooks. They have
+    #: no request signing, so this shared secret is the only thing separating a
+    #: real status update from anyone who guesses the URL.
+    NOON_SEND_WEBHOOK_API_KEY: str = ""
+    NOON_SEND_TIMEOUT_SECONDS: float = 8.0
 
     # ── Frontend URLs (email templates & CORS) ────────────────────────────────
     WEB_URL: str = "http://localhost:3000"

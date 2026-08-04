@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.cart import Cart
 from app.models.delivery_settings import DeliverySettings
 from app.models.order import DeliveryMethodEnum
-from app.services import delivery_zone_service, lalamove_service
+from app.services import courier_service, delivery_zone_service, lalamove_service
 
 __all__ = [
     "calculate_fee",
@@ -100,8 +100,12 @@ async def quote(
     qualifies = subtotal >= settings.free_delivery_threshold
 
     if cart is not None and latitude is not None and longitude is not None:
-        estimate, error = await lalamove_service.estimate_for_point(
-            db, float(latitude), float(longitude), address
+        estimate, error = await courier_service.estimate_for_point(
+            db,
+            zone.fulfilment_provider if zone else None,
+            float(latitude),
+            float(longitude),
+            address,
         )
         if estimate is not None or error is not None:
             await lalamove_service.record_cart_estimate(

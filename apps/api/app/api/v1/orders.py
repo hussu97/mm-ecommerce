@@ -28,8 +28,8 @@ from fastapi import Request
 from app.core.cache import cache_delete_pattern
 from app.services import (
     audit_service,
+    courier_service,
     email_service,
-    lalamove_service,
     order_service,
 )
 
@@ -310,7 +310,7 @@ async def dispatch_order_delivery(
     if order is None:
         raise HTTPException(404, f"Order '{order_number}' not found")
 
-    delivery = await lalamove_service.dispatch_order(db, order)
+    delivery = await courier_service.dispatch(db, order)
     if delivery is None:
         raise HTTPException(404, f"No delivery recorded for order '{order_number}'")
 

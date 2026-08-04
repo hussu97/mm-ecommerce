@@ -376,7 +376,7 @@ export interface PaginatedEmailLogs {
 }
 
 /** Who carries an order out of the kitchen. */
-export type FulfilmentProvider = 'lalamove' | 'third_party';
+export type FulfilmentProvider = 'lalamove' | 'noon_send' | 'third_party';
 
 /** One zone on a delivery map: a shape, a price, and a courier. */
 export interface DeliveryZone {

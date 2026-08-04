@@ -34,6 +34,12 @@ class FulfilmentProviderEnum(str, enum.Enum):
 
     #: Booked over the Lalamove API — quoted, dispatched and tracked in code.
     LALAMOVE = "lalamove"
+    #: Booked over noon's Rider-on-Demand API, sold as "noon Send". Cheaper than
+    #: Lalamove on anything under 31 road km, but it cannot cross an emirate
+    #: boundary and caps a run at 15 km, so from the Sharjah kitchen it only
+    #: ever serves the inner part of Sharjah. Falls back to Lalamove whenever it
+    #: will not take a job.
+    NOON_SEND = "noon_send"
     #: Whoever we already use. No integration: the same manual flow as today.
     THIRD_PARTY = "third_party"
 

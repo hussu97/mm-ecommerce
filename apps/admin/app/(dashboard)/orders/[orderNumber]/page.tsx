@@ -326,6 +326,8 @@ export default function OrderDetailPage() {
 
 // ── Fulfilment ────────────────────────────────────────────────────────────────
 
+// Each courier's own vocabulary, stored verbatim and translated only here.
+// Lalamove shouts, noon Send does not, so the two cannot collide.
 const COURIER_STATUS_LABEL: Record<string, string> = {
   ASSIGNING_DRIVER: 'Finding a driver',
   ON_GOING: 'Driver on the way to us',
@@ -334,6 +336,23 @@ const COURIER_STATUS_LABEL: Record<string, string> = {
   CANCELED: 'Cancelled',
   REJECTED: 'Rejected by drivers',
   EXPIRED: 'Expired — nobody accepted',
+  created: 'Task created',
+  pending_assignment: 'Finding a rider',
+  assigned: 'Rider on the way to us',
+  arrived_at_pickup_location: 'Rider at the kitchen',
+  picked_up: 'Collected',
+  arrived_at_delivery: 'Rider at the door',
+  delivered: 'Delivered',
+  undelivered: 'Could not be handed over',
+  cancelled: 'Cancelled',
+};
+
+const DELIVERED_STATUSES = new Set(['COMPLETED', 'delivered']);
+
+const PROVIDER_LABEL: Record<string, string> = {
+  lalamove: 'Lalamove',
+  noon_send: 'noon Send',
+  third_party: 'Third party',
 };
 
 /**
@@ -353,7 +372,11 @@ function DeliveryPanel({
   onRedispatch: () => void;
 }) {
   const cost = delivery.cost_total ?? delivery.quoted_cost;
-  const isCourier = delivery.provider === 'lalamove';
+  const isCourier = delivery.provider !== 'third_party';
+  // noon Send publishes a rate card and no quotation API, so their number is
+  // computed here rather than billed. Saying so stops it being read as an
+  // invoice line.
+  const costIsEstimate = delivery.provider === 'noon_send';
 
   return (
     <div
@@ -366,13 +389,21 @@ function DeliveryPanel({
         <p className="text-[11px] font-body uppercase tracking-widest text-gray-400 flex-1">
           Fulfilment
         </p>
-        <Badge variant={isCourier ? 'info' : 'neutral'}>
-          {isCourier ? 'Courier API' : 'Third party'}
+        <Badge
+          variant={
+            delivery.provider === 'noon_send'
+              ? 'success'
+              : isCourier
+                ? 'info'
+                : 'neutral'
+          }
+        >
+          {PROVIDER_LABEL[delivery.provider] ?? delivery.provider}
         </Badge>
         {delivery.courier_status && (
           <Badge
             variant={
-              delivery.courier_status === 'COMPLETED'
+              DELIVERED_STATUSES.has(delivery.courier_status)
                 ? 'success'
                 : delivery.needs_attention
                   ? 'danger'
@@ -406,7 +437,9 @@ function DeliveryPanel({
           </dd>
         </div>
         <div>
-          <dt className="text-gray-500">Courier cost</dt>
+          <dt className="text-gray-500">
+            Courier cost{costIsEstimate && ' (est.)'}
+          </dt>
           <dd className="text-gray-800">
             {cost !== null ? formatCurrency(cost) : '—'}
             {delivery.quoted_distance_m !== null && (

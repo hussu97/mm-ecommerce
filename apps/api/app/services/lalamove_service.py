@@ -60,15 +60,18 @@ __all__ = [
     "cancel_delivery",
     "clear_caches",
     "courier_order_id_of",
+    "decimal_or_none",
     "dispatch_order",
     "estimate_for_point",
     "get_delivery",
     "handle_webhook",
     "is_enabled",
+    "normalise_phone",
     "parse_quotation",
     "parse_time",
     "record_cart_estimate",
     "record_order_delivery",
+    "resolve_pickup",
     "special_requests",
 ]
 
@@ -131,7 +134,7 @@ async def resolve_pickup(db: AsyncSession) -> PickupPoint | None:
     if branch is None:
         return None
 
-    phone = _normalise_phone(settings.LALAMOVE_SENDER_PHONE or branch.phone or "")
+    phone = normalise_phone(settings.LALAMOVE_SENDER_PHONE or branch.phone or "")
     if not phone:
         logger.warning(
             "Branch %s has no phone number; Lalamove needs one for the sender",
@@ -345,7 +348,7 @@ def build_drop(order: Order) -> tuple[Drop | None, str | None]:
     if latitude is None or longitude is None:
         return None, "Order has no delivery coordinates"
 
-    phone = _normalise_phone(str(address.get("phone") or ""))
+    phone = normalise_phone(str(address.get("phone") or ""))
     if not phone:
         return None, "Order has no reachable phone number"
 
@@ -913,7 +916,7 @@ def _remarks(order: Order, address: dict[str, Any]) -> str:
     return " · ".join(bits)[:200]
 
 
-def _normalise_phone(raw: str) -> str:
+def normalise_phone(raw: str) -> str:
     """
     E.164, or nothing.
 

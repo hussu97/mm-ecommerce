@@ -43,6 +43,18 @@ SHARJAH_CITY = Zone(
     rings=(),
 )
 
+SHARJAH_CENTRAL = Zone(
+    id=uuid.uuid4(),
+    name="Sharjah Central",
+    delivery_fee=Decimal("15.00"),
+    fulfilment_provider="noon_send",
+    min_lat=25.2,
+    max_lat=25.5,
+    min_lng=55.2,
+    max_lng=55.5,
+    rings=(),
+)
+
 ESTIMATE = lalamove_service.Estimate(
     cost=Decimal("25.00"), currency="AED", distance_m=4500, quotation_id="q_123"
 )
@@ -91,8 +103,29 @@ async def test_the_quote_says_nothing_about_the_courier(cart):
 
     assert result["delivery_fee"] == 15.0
     blob = repr(result).lower()
-    for leak in ("lalamove", "courier", "provider", "third_party", "quotation"):
+    for leak in (
+        "lalamove",
+        "noon",
+        "rod",
+        "courier",
+        "provider",
+        "third_party",
+        "quotation",
+    ):
         assert leak not in blob, f"the storefront quote mentions {leak!r}"
+
+
+async def test_no_zone_name_names_the_carrier(cart):
+    """
+    `zone_name` is the one field on the response that is free text, and it is
+    the obvious place for "Sharjah — noon Send" to be typed by someone drawing
+    a new map. It reaches the browser, so it may only ever name a place.
+    """
+    for zone in (SHARJAH_CITY, SHARJAH_CENTRAL):
+        result = await _quote(cart, zone=zone)
+        name = (result["zone_name"] or "").lower()
+        for leak in ("lalamove", "noon", "rod", "courier"):
+            assert leak not in name, f"the zone name mentions {leak!r}"
 
 
 def test_the_response_model_has_no_field_that_could_leak_one():
@@ -176,6 +209,41 @@ async def test_a_failed_estimate_is_recorded_rather_than_swallowed(cart):
     assert result["delivery_fee"] == 15.0, "the customer is still priced normally"
     assert cart.delivery_quote_cost is None
     assert cart.delivery_quote_error == "Address is outside the service area"
+
+
+async def test_a_noon_send_zone_is_costed_on_its_own_rate_card(cart, monkeypatch):
+    """
+    Each zone is costed against the courier that actually serves it. Quoting a
+    noon Send zone at Lalamove's prices would make Sharjah Central look like it
+    loses AED 10 an order when it makes AED 3.
+    """
+    from app.core.config import settings as app_settings
+    from app.services import courier_service, noon_send_service
+
+    monkeypatch.setattr(app_settings, "NOON_SEND_API_KEY", "test-key")
+    monkeypatch.setattr(app_settings, "NOON_SEND_OUTLET_CODE", "PCKP_TEST123")
+
+    async def rate_card(db, latitude, longitude, address=None):
+        return (
+            lalamove_service.Estimate(
+                cost=noon_send_service.rate_card_cost(4.4),
+                currency="AED",
+                distance_m=4400,
+                # There is no quotation to reference — nobody issued one.
+                quotation_id=None,
+            ),
+            None,
+        )
+
+    monkeypatch.setattr(
+        courier_service.noon_send_service, "estimate_for_point", rate_card
+    )
+    result = await _quote(cart, zone=SHARJAH_CENTRAL)
+
+    assert result["delivery_fee"] == 15.0
+    assert cart.delivery_quote_provider == "noon_send"
+    assert cart.delivery_quote_cost == Decimal("12.00")
+    assert cart.delivery_quote_reference is None
 
 
 async def test_a_courier_outage_cannot_stop_someone_checking_out(cart):

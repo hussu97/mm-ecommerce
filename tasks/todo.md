@@ -1,5 +1,23 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ⏳ 2026-08-04: Add noon Send as a second courier, and split Sharjah for it
+
+### Plan
+- [x] 1. Price noon Send against Lalamove and decide where each one belongs. noon Send is `12 flat to 10 km, +1/km to 20, +1.5/km beyond`; Lalamove is `17 + 0.70/km` once the AED 5 door-to-door is dropped. They cross at **31.25 road km**, past the far edge of Sharjah City — so price never decides the boundary. The binding constraints are that noon Send cannot cross an emirate boundary and caps a run at 15 km. Road distance runs **1.49x** straight line across the sixteen Sharjah areas the live Lalamove rate card was measured over, so 15 road km is a 10 km circle.
+- [x] 2. Cut Sharjah into three zones and publish them. `Sharjah Central` (10 km, noon Send, 15 AED), `Sharjah City` (10–25 km, Lalamove, 15 AED), `Sharjah` (beyond 25 km, third party, 50 AED). The builder punches the inner circle out of the city ring so the shapes stay disjoint, and no fee changes anywhere. Migration `057_noon_send_zone` publishes it as a new immutable version; 050 and 055 were repointed at a frozen copy of the old geometry so a rollback still covers the kitchen rather than leaving a hole in it.
+- [x] 3. Build the integration: transport, rate card, routing, webhooks, admin. `noon_send_provider` (coordinates ×10⁷, money in fils, `X-API-Key`), `noon_send_service` (rate card, dispatch, cancel, status and rider-tracking webhooks), and a thin `courier_service` that owns the two policies — the production allow-list and the automatic Lalamove fallback. Batching stays Lalamove-only.
+- [x] 4. Gate production to the trial customer. On production a `noon_send` zone only reaches noon Send for a signed-in customer whose own email is in `NOON_SEND_ALLOWED_EMAILS` (`h_abbasi97@hotmail.com`); a guest checkout never qualifies and everybody else is carried by Lalamove without noticing. Staging does not consult the list.
+- [x] 5. Drop the Lalamove door-to-door charge. `LALAMOVE_SPECIAL_REQUESTS` now defaults to empty in config, `.env.example` and both deploy workflows — the workflows previously forced `DOOR_TO_DOOR` and would have overridden the code default. Saves AED 5 per Lalamove booking.
+- [x] 6. Test and verify. 611 tests pass (7 skipped), ruff check and format clean, admin `tsc` clean. Migration chain verified on a throwaway PostgreSQL 16: upgrade → the three-way split is live and no point matches two zones; downgrade → 055's map is active again and Al Qasimia still prices at 15 AED; upgrade again → correct. The full task lifecycle was exercised against the real noon Send staging API through our own client.
+
+### Review
+
+- **The staging pickup point is `PCKP_MLTNGM3W62`** (`is_serviceable: true`). A staging task was created (`HG84NNDB2V43WUS1` → `pending_assignment`) and cancelled (`cancelled`), whole cycle clean.
+- Two things the live run corrected that the spec did not say: `create-task` answers `{"status": "successful"}`, which is an acknowledgement rather than a lifecycle state — the real opening status is `pending_assignment`, and storing their ack would have left a word in `courier_status` that no status map recognises. And the task details put our reference and their task number into one composite `order_id` string, so it is not usable as a lookup key.
+- noon Send has **no quotation API and no price on any response**, so `cost_total` for one of their tasks is always our own rate-card arithmetic. It is labelled "(est.)" in the admin so nobody reads it as an invoice line.
+- The economics: Sharjah Central costs AED 12 against the AED 15 charged where Lalamove cost 19–26. Al Zahia, University City and Al Rahmaniya are all over the 15 km cap and stay Lalamove even though noon Send would be cheaper there too.
+- Zone names stay courier-free on purpose — `zone_name` reaches the browser. A test now asserts no zone name contains "noon", "rod", "lalamove" or "courier".
+
 ## ⏳ 2026-08-03: Enforce hidden website content across catalogue and CMS
 
 ### Plan

@@ -681,16 +681,23 @@ async def create_batch_window(
     """
     Add a slot.
 
-    Only a zone we dispatch ourselves can have one — a third-party zone has no
-    run of ours to share, so a schedule on it would be a setting that does
-    nothing.
+    Only a Lalamove zone can have one. A third-party zone has no run of ours to
+    share at all, and noon Send's shared run is a separate product we do not
+    use — so a schedule on either would be a setting that does nothing, which
+    is worse than an absent one because somebody will come to rely on it.
     """
     polygon = await _load_polygon(db, polygon_id)
     if polygon.fulfilment_provider != FulfilmentProviderEnum.LALAMOVE.value:
+        reason = (
+            "noon Send's shared runs are a different product with their own "
+            "endpoint and a cap of three drops, which we do not use"
+            if polygon.fulfilment_provider == FulfilmentProviderEnum.NOON_SEND.value
+            else "it is delivered by a third party, so there is no run of ours "
+            "for its orders to share"
+        )
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            f"'{polygon.name}' is delivered by a third party, so there is no run "
-            "of ours for its orders to share.",
+            f"'{polygon.name}' cannot be batched: {reason}.",
         )
 
     window = DeliveryBatchWindow(polygon_id=polygon_id, **data.model_dump())

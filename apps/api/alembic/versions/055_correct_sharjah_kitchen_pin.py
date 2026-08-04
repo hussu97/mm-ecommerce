@@ -42,11 +42,17 @@ ZONES: dict[str, tuple[str, str]] = {
     "Umm al-Quwain": ("50.00", "third_party"),
 }
 
+# The map as it stood when this migration was written, frozen. 057 cut Sharjah
+# City open to make room for Sharjah Central, and a migration that seeds itself
+# from whatever the builder last emitted stops reproducing the map it published:
+# on a database built from scratch this one would seed a Sharjah City with a
+# 10 km hole in it and nothing filling the hole, so a downgrade to here would
+# quietly price Al Qasimia at the outside-every-zone fee.
 GEOJSON_PATH = (
     Path(__file__).resolve().parents[2]
     / "app"
     / "data"
-    / "uae_delivery_zones.geojson.json"
+    / "uae_delivery_zones.v1.geojson.json"
 )
 
 

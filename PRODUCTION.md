@@ -686,7 +686,7 @@ gives the intended value rather than an empty one:
 | `LALAMOVE_MARKET` | `AE` | |
 | `LALAMOVE_LANGUAGE` | `en_AE` | Lalamove validates this to exactly this string for the UAE |
 | `LALAMOVE_SERVICE_TYPE` | `CAR` | Smallest UAE vehicle |
-| `LALAMOVE_SPECIAL_REQUESTS` | `DOOR_TO_DOOR` | Flat +5 AED per order, not per stop |
+| `LALAMOVE_SPECIAL_REQUESTS` | *(empty)* | Was `DOOR_TO_DOOR` until Aug 2026, a flat +5 AED per order for a promise drivers keep anyway |
 | `LALAMOVE_WEBHOOK_PATH` | `/api/v1/webhooks/lalamove` | Must match the Partner Portal URL byte for byte — it is part of the signature |
 | `LALAMOVE_TIMEOUT_SECONDS` | `8` | |
 | `LALAMOVE_QUOTE_CACHE_SECONDS` | `120` | |
@@ -716,6 +716,58 @@ Two things have to be done in the Partner Portal, not here:
    wallet fails dispatch with `ERR_INSUFFICIENT_CREDIT`. The failure is recorded
    on the order and surfaced in the admin, and the order can be re-dispatched
    once topped up — but nothing is collected in the meantime.
+
+#### Courier — noon Send (Rider-on-Demand)
+
+Optional, and safe to leave unset: a `noon_send` zone with no credentials simply
+dispatches through Lalamove. Same for anything noon Send refuses — over their
+15 km cap, outside the fleet area, or nobody free — so this can never strand an
+order.
+
+Only the `Sharjah Central` zone uses it. noon Send cannot cross an emirate
+boundary and the kitchen is in Sharjah, so Ajman and Dubai are not candidates
+however the map is redrawn.
+
+| Secret | Production value | Notes |
+|--------|-----------------|-------|
+| `NOON_SEND_API_KEY` | production key | Request it from the noon RoD integrations team (`kasinghal@noon.com`) |
+| `NOON_SEND_OUTLET_CODE` | `PCKP_...` | From `python -m scripts.register_noon_send_pickup --create`, run once against production |
+| `NOON_SEND_WEBHOOK_API_KEY` | a secret you generate | Hand the same value to the integrations team with the webhook URLs |
+| `NOON_SEND_ENV` | `production` | **Defaults to `staging`** — this one has to be set explicitly or nothing reaches the live fleet |
+
+The rest fall back in the deploy workflow:
+
+| Secret | Falls back to | Notes |
+|--------|---------------|-------|
+| `NOON_SEND_LOCALE` | `en-ae` | |
+| `NOON_SEND_CLIENT_CODE` | `noon_food` | `noon_food` or `nownow` |
+| `NOON_SEND_MAX_DISTANCE_M` | `15000` | Their documented cap. `GET /public/v1/configurations` reports the real per-partner limit |
+| `NOON_SEND_DETOUR_FACTOR` | `1.49` | Straight line to road distance. Only used to estimate cost — there is no quotation API |
+| `NOON_SEND_ALLOWED_EMAILS` | `h_abbasi97@hotmail.com` | **The live-fire gate.** On production, only a signed-in customer whose own email is on this list is carried by noon Send; everyone else goes Lalamove without noticing. Set it to an empty string to open noon Send to all customers |
+| `NOON_SEND_TIMEOUT_SECONDS` | `8` | |
+
+```bash
+gh secret set NOON_SEND_API_KEY --repo hussu97/mm-ecommerce
+gh secret set NOON_SEND_OUTLET_CODE --repo hussu97/mm-ecommerce
+gh secret set NOON_SEND_WEBHOOK_API_KEY --repo hussu97/mm-ecommerce
+gh secret set NOON_SEND_ENV --repo hussu97/mm-ecommerce   # "production"
+```
+
+Two things have to be done by the noon RoD integrations team, not here:
+
+1. **Register the webhooks.** Status →
+   `https://api.meltingmomentscakes.com/api/v1/webhooks/noon-send`, rider
+   tracking → `.../api/v1/webhooks/noon-send/tracking`. Give them
+   `NOON_SEND_WEBHOOK_API_KEY` to send as `X-API-Key`; they do not sign
+   requests, so a push without the right key is dropped. Unlike Lalamove the
+   path is not part of any signature, so it can be changed freely.
+2. **Confirm the distance limit.** The standard partner cap is 15 km. Anything
+   wider has to be agreed with the commercial team (`sbhatti@noon.com`), after
+   which `NOON_SEND_MAX_DISTANCE_M` and the 10 km radius in
+   `scripts/build_delivery_zones.py` can both grow.
+
+Orders placed on production are real: a rider is dispatched and a cancellation
+is charged. There is no wallet to fund — billing is on the partner agreement.
 
 #### Frontend URLs (used in email templates & CORS)
 

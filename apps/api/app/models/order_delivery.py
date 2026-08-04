@@ -63,6 +63,71 @@ FAILED_COURIER_STATUSES = frozenset(
 )
 
 
+class NoonSendStatusEnum(str, enum.Enum):
+    """noon Send's task lifecycle, verbatim, for the same reason as above.
+
+    Their words do not line up with Lalamove's and are not translated into
+    them: `undelivered` is a rider who arrived and could not hand the parcel
+    over, which is a different problem from a booking nobody accepted, and
+    flattening the two into one word would lose the difference exactly where it
+    matters.
+    """
+
+    CREATED = "created"
+    PENDING_ASSIGNMENT = "pending_assignment"
+    ASSIGNED = "assigned"
+    ARRIVED_AT_PICKUP_LOCATION = "arrived_at_pickup_location"
+    PICKED_UP = "picked_up"
+    ARRIVED_AT_DELIVERY = "arrived_at_delivery"
+    DELIVERED = "delivered"
+    UNDELIVERED = "undelivered"
+    CANCELLED = "cancelled"
+
+
+NOON_SEND_TERMINAL_STATUSES = frozenset(
+    {
+        NoonSendStatusEnum.DELIVERED.value,
+        NoonSendStatusEnum.UNDELIVERED.value,
+        NoonSendStatusEnum.CANCELLED.value,
+    }
+)
+
+NOON_SEND_FAILED_STATUSES = frozenset(
+    {
+        NoonSendStatusEnum.UNDELIVERED.value,
+        NoonSendStatusEnum.CANCELLED.value,
+    }
+)
+
+#: provider -> (terminal statuses, failed statuses). Third-party deliveries have
+#: no courier status at all, so they match neither and fall through to empty.
+_STATUS_SETS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
+    "lalamove": (TERMINAL_COURIER_STATUSES, FAILED_COURIER_STATUSES),
+    "noon_send": (NOON_SEND_TERMINAL_STATUSES, NOON_SEND_FAILED_STATUSES),
+}
+
+
+def is_terminal(provider: str | None, status: str | None) -> bool:
+    """Nothing more will happen to this booking on the courier's side."""
+    return (
+        bool(status)
+        and status in _STATUS_SETS.get(provider or "", (frozenset(),) * 2)[0]
+    )
+
+
+def is_failed(provider: str | None, status: str | None) -> bool:
+    """Terminal, and the parcel never reached the customer.
+
+    Read by code that does not know or care which courier it is holding — the
+    question "may this order be dispatched again?" has the same answer either
+    way, it is only the vocabulary that differs.
+    """
+    return (
+        bool(status)
+        and status in _STATUS_SETS.get(provider or "", (frozenset(),) * 2)[1]
+    )
+
+
 class OrderDelivery(Base, UUIDMixin, TimestampMixin):
     """
     How one order got to the customer, and what that cost us.
@@ -226,7 +291,7 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
     @property
     def needs_attention(self) -> bool:
         """A paid, packed order with no one coming for it."""
-        return bool(self.last_error) or (self.courier_status in FAILED_COURIER_STATUSES)
+        return bool(self.last_error) or is_failed(self.provider, self.courier_status)
 
     def __repr__(self) -> str:
         return (

@@ -42,6 +42,15 @@ class Zone:
     def is_lalamove(self) -> bool:
         return self.fulfilment_provider == FulfilmentProviderEnum.LALAMOVE.value
 
+    @property
+    def is_noon_send(self) -> bool:
+        return self.fulfilment_provider == FulfilmentProviderEnum.NOON_SEND.value
+
+    @property
+    def books_itself(self) -> bool:
+        """A zone we dispatch over an API rather than by hand."""
+        return self.fulfilment_provider != FulfilmentProviderEnum.THIRD_PARTY.value
+
     def contains(self, lat: float, lng: float) -> bool:
         # Four comparisons reject almost every zone before any real work.
         if not (

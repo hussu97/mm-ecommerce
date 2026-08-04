@@ -16,15 +16,25 @@ import { BatchWindows } from '@/components/delivery/BatchWindows';
 import { ZoneMap } from '@/components/delivery/ZoneMap';
 import { cn, formatCurrency, formatDate } from '@/lib/utils';
 
+// Named rather than called "Courier API": there are two of them now, they cost
+// different amounts, and only one can be batched — so which is which matters.
 const PROVIDER_LABEL: Record<FulfilmentProvider, string> = {
-  lalamove: 'Courier API',
+  lalamove: 'Lalamove',
+  noon_send: 'noon Send',
   third_party: 'Third party',
 };
 
 const PROVIDER_OPTIONS = [
   { value: 'lalamove', label: PROVIDER_LABEL.lalamove },
+  { value: 'noon_send', label: PROVIDER_LABEL.noon_send },
   { value: 'third_party', label: PROVIDER_LABEL.third_party },
 ];
+
+const PROVIDER_BADGE: Record<FulfilmentProvider, 'info' | 'success' | 'neutral'> = {
+  lalamove: 'info',
+  noon_send: 'success',
+  third_party: 'neutral',
+};
 
 export default function DeliveryZonesPage() {
   const [versions, setVersions] = useState<DeliveryMapVersion[]>([]);
@@ -373,8 +383,8 @@ function ZoneRow({
       </td>
       <td className="px-4 py-2.5">
         {readOnly ? (
-          <Badge variant={zone.fulfilment_provider === 'lalamove' ? 'info' : 'neutral'}>
-            {PROVIDER_LABEL[zone.fulfilment_provider]}
+          <Badge variant={PROVIDER_BADGE[zone.fulfilment_provider] ?? 'neutral'}>
+            {PROVIDER_LABEL[zone.fulfilment_provider] ?? zone.fulfilment_provider}
           </Badge>
         ) : (
           <Select
@@ -399,10 +409,11 @@ function ZoneRow({
 /**
  * The schedule, per zone.
  *
- * Only courier zones appear. A third-party zone has no run of ours for its
- * orders to share, so a schedule on it would be a setting that does nothing —
- * and a setting that does nothing is worse than an absent one, because
- * somebody will eventually rely on it.
+ * Only Lalamove zones appear. A third-party zone has no run of ours for its
+ * orders to share, and noon Send's shared run is a different product with its
+ * own endpoint and a cap of three — so a schedule on either would be a setting
+ * that does nothing, which is worse than an absent one because somebody will
+ * eventually rely on it.
  */
 function BatchingTab({ zones }: { zones: DeliveryZoneShape[] }) {
   const courierZones = zones.filter(z => z.fulfilment_provider === 'lalamove');
@@ -411,8 +422,9 @@ function BatchingTab({ zones }: { zones: DeliveryZoneShape[] }) {
   if (!courierZones.length) {
     return (
       <div className="bg-white border border-gray-200 p-4 text-xs font-body text-gray-500">
-        No zone on the live map is delivered over the courier API, so there is
-        nothing to batch. Set a zone to “Courier API” under Fees &amp; couriers first.
+        No zone on the live map is delivered by Lalamove, so there is nothing to
+        batch. Only Lalamove runs can carry several orders at once — set a zone
+        to “Lalamove” under Fees &amp; couriers first.
       </div>
     );
   }

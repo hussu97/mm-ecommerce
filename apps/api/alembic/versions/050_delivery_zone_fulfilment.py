@@ -75,11 +75,15 @@ ZONES: dict[str, tuple[str, str, str]] = {
     "Umm al-Quwain": ("50.00", "umm_al_quwain", "third_party"),
 }
 
+# Frozen at the shape this migration published — see the note in 055. The pin
+# correction in 055 and the Sharjah split in 057 both changed what the builder
+# emits, and a migration that re-reads the current output no longer reproduces
+# the map it is named after.
 GEOJSON_PATH = (
     Path(__file__).resolve().parents[2]
     / "app"
     / "data"
-    / "uae_delivery_zones.geojson.json"
+    / "uae_delivery_zones.v1.geojson.json"
 )
 
 

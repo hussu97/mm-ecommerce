@@ -18,6 +18,7 @@ from app.schemas.order import OrderCreate, OrderListResponse, OrderResponse
 from app.services import (
     batching_service,
     cart_service,
+    courier_service,
     delivery_service,
     delivery_zone_service,
     lalamove_service,
@@ -553,7 +554,7 @@ async def update_status(
             # Off the run first, so a batch that is now empty does not go out
             # to collect nothing.
             await batching_service.cancel_assignment(db, delivery)
-        await lalamove_service.cancel_delivery(db, order)
+        await courier_service.cancel(db, order)
 
     # A cancelled order releases the stock it claimed at creation.
     if new_status == OrderStatusEnum.CANCELLED:

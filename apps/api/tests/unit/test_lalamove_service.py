@@ -342,7 +342,7 @@ async def test_an_order_already_out_with_a_driver_is_not_booked_twice():
     ],
 )
 def test_phone_numbers_reach_e164_or_nothing(raw, expected):
-    assert lalamove_service._normalise_phone(raw) == expected
+    assert lalamove_service.normalise_phone(raw) == expected
 
 
 async def test_nothing_is_batched_when_no_courier_is_configured():

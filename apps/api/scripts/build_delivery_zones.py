@@ -1,5 +1,5 @@
 """
-Cut the emirate outlines into the zones the Lalamove fee strategy actually prices.
+Cut the emirate outlines into the zones the courier fee strategy actually prices.
 
 The strategy is not "per emirate". It is "per what a courier run costs from the
 Sharjah kitchen", and an emirate is a poor proxy for that: Sharjah reaches Al
@@ -18,12 +18,25 @@ area the rate card was actually measured over:
                        the furthest points the POC quoted (48 road km / AED 51),
                        and stops short of Jebel Ali and Hatta.
 
+Sharjah is then cut once more, because a second courier is cheaper inside part
+of it. noon Send charges AED 12 flat to 10 road km against Lalamove's
+`17 + 0.70/km`, and stays cheaper all the way out to 31 road km — past the far
+edge of Sharjah City. Price therefore never decides the boundary; noon Send's
+**15 km cap on pickup-to-drop-off distance** does. Road distance runs about
+1.49x straight line across the sixteen Sharjah areas the rate card was measured
+over, so 15 road km is a 10 km circle:
+
+  * Sharjah Central  10 km — Al Khan through Muwaileh (12.8 road km), on noon
+                             Send. Al Zahia (15.3 road km) and everything
+                             beyond is over the cap and stays on Lalamove.
+
 The remainder of every emirate keeps the 50 AED third-party price, and is a
 genuine remainder: the served circle is punched out of it as a hole, so the two
-zones do not overlap. That could have been left to `display_order` — list the
-city first and take the first match — but a shape whose price depends on the
-row above it is a shape you cannot look at and understand. It also draws wrong:
-two translucent fills stacked over Deira, and no way to tell which one an order
+zones do not overlap. Sharjah City is punched the same way by the Central
+circle. That could have been left to `display_order` — list the smaller zone
+first and take the first match — but a shape whose price depends on the row
+above it is a shape you cannot look at and understand. It also draws wrong: two
+translucent fills stacked over Deira, and no way to tell which one an order
 there is actually paying.
 
 The hole is the whole circle, not the circle clipped to the emirate. Anywhere
@@ -38,9 +51,9 @@ Run from apps/api:
 
     python -m scripts.build_delivery_zones
 
-Writes app/data/uae_delivery_zones.geojson.json, which the
-`050_delivery_zone_fulfilment` migration seeds from. Regenerate and commit the
-output; nothing computes this at runtime.
+Writes app/data/uae_delivery_zones.geojson.json, which the delivery-zone
+migrations seed from. Regenerate and commit the output; nothing computes this
+at runtime.
 """
 
 from __future__ import annotations
@@ -68,6 +81,13 @@ SERVED_RADIUS_KM: dict[str, float] = {
     "Sharjah": 25.0,
     "Ajman": 30.0,
     "Dubai": 40.0,
+}
+
+#: The inner slice of a served emirate that a second courier reaches, as
+#: (zone name, radius km). Only Sharjah has one: noon Send cannot cross an
+#: emirate boundary, so from a Sharjah kitchen it can only ever serve Sharjah.
+INNER_ZONE: dict[str, tuple[str, float]] = {
+    "Sharjah": ("Sharjah Central", 10.0),
 }
 
 
@@ -198,9 +218,13 @@ def punch_out(geometry: dict, radius_km: float) -> dict:
     }
 
 
-def _count(geometry: dict) -> tuple[int, int]:
+def _count(geometry: dict) -> tuple[int, int, int]:
     polys = geometry["coordinates"]
-    return len(polys), sum(len(ring) for poly in polys for ring in poly)
+    return (
+        len(polys),
+        sum(len(poly) - 1 for poly in polys),
+        sum(len(ring) for poly in polys for ring in poly),
+    )
 
 
 def build() -> list[dict]:
@@ -211,6 +235,22 @@ def build() -> list[dict]:
 
     zones: list[dict] = []
     for emirate, radius in SERVED_RADIUS_KM.items():
+        inner = INNER_ZONE.get(emirate)
+        if inner is not None:
+            inner_name, inner_radius = inner
+            inner_shape = clip_geometry(emirates[emirate], inner_radius)
+            if inner_shape is None:
+                raise ValueError(
+                    f"{emirate} has nothing within {inner_radius} km of the kitchen"
+                )
+            zones.append(
+                {
+                    "name": inner_name,
+                    "radius_km": inner_radius,
+                    "geometry": inner_shape,
+                }
+            )
+
         clipped = clip_geometry(emirates[emirate], radius)
         if clipped is None:
             raise ValueError(f"{emirate} has nothing within {radius} km of the kitchen")
@@ -218,7 +258,13 @@ def build() -> list[dict]:
             {
                 "name": f"{emirate} City",
                 "radius_km": radius,
-                "geometry": clipped,
+                # The inner zone is taken out of the city ring for the same
+                # reason the city is taken out of the emirate: which fee a pin
+                # pays should be a property of where it is, not of which row
+                # happened to be checked first.
+                "geometry": (
+                    punch_out(clipped, inner[1]) if inner is not None else clipped
+                ),
             }
         )
     for emirate, geometry in emirates.items():
@@ -240,10 +286,13 @@ def main() -> None:
     zones = build()
     TARGET.write_text(json.dumps(zones, separators=(",", ":")) + "\n")
     for zone in zones:
-        parts, points = _count(zone["geometry"])
+        parts, holes, points = _count(zone["geometry"])
         radius = zone.get("radius_km")
         suffix = f"  (clipped to {radius:.0f} km)" if radius else ""
-        print(f"{zone['name']:<22} parts={parts:<4} points={points}{suffix}")
+        print(
+            f"{zone['name']:<22} parts={parts:<4} holes={holes:<4} "
+            f"points={points}{suffix}"
+        )
     print(f"\nwrote {TARGET.relative_to(Path.cwd())}")
 
 
