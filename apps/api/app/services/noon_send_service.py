@@ -194,6 +194,13 @@ def rate_card_cost(
 #: behind them exist only on staging, so `NOON_SEND_ENV` moving to production
 #: has to stop using it rather than have it overridden — which `trial_pickup`
 #: enforces.
+#:
+#: Do not try to verify it with `GET /public/v1/pickup-points/{code}`. That
+#: endpoint serves only points a *partner* created — `addr::partner_pickup_point`
+#: — and this is a marketplace restaurant outlet, `addr::restaurant_outlet`. It
+#: answers "Pickup point not found" for a code that is perfectly valid, which
+#: reads exactly like a misconfiguration and is not one. `GET
+#: /public/v1/outlets` is where it lives, and `create-task` accepts both kinds.
 TRIAL_OUTLET = PickupPoint(
     name="noon Send staging outlet (Oud Metha)",
     phone="+971500000000",
