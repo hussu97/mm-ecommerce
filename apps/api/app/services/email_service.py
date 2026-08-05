@@ -734,6 +734,7 @@ _EMAIL_FOR_STATUS = {
     "packed": send_order_packed,
     "out_for_delivery": send_order_out_for_delivery,
     "delivered": send_order_delivered,
+    "undelivered": send_order_undelivered,
     "cancelled": send_order_cancelled,
     "payment_failed": send_payment_failed,
     "refunded": send_refund_notification,
@@ -761,14 +762,11 @@ async def notify_status_change(order: OrderResponse) -> str | None:
     if is_counter_sale(order):
         return None
 
-    # A failed handover is not a status — the order stays exactly where it was,
-    # because it is still paid for and still ours to deliver. It is only visible
-    # on the courier record, which is why it is checked before the status map
-    # rather than in it.
-    if order.fulfilment is not None and order.fulfilment.stage == "undelivered":
-        await send_order_undelivered(order)
-        return "undelivered"
-
+    # A failed handover used to be checked here, ahead of the map, because it
+    # was not a status — it lived on the courier record while the order still
+    # read `out_for_delivery`. It is `OrderStatusEnum.UNDELIVERED` now, so it is
+    # in the map with everything else and there is one path again. Two paths was
+    # how the same order could earn two emails, or none.
     status = order.status.value
     handler = _EMAIL_FOR_STATUS.get(status)
     if handler is None:

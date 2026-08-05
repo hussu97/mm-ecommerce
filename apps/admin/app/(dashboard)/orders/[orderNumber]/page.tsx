@@ -22,6 +22,7 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
   packed: 'packed',
   out_for_delivery: 'on the way',
   delivered: 'delivered',
+  undelivered: 'undelivered',
   cancelled: 'cancelled',
 };
 
@@ -31,6 +32,7 @@ const STATUS_VARIANT: Record<OrderStatus, 'warning' | 'info' | 'success' | 'dang
   packed: 'info',
   out_for_delivery: 'info',
   delivered: 'success',
+  undelivered: 'danger',
   cancelled: 'danger',
 };
 
@@ -139,6 +141,7 @@ export default function OrderDetailPage() {
   }
 
   const isCancelled = order.status === 'cancelled';
+  const isUndelivered = order.status === 'undelivered';
   const currentStepIdx = STATUS_STEPS.indexOf(order.status as OrderStatus);
 
   return (
@@ -155,8 +158,21 @@ export default function OrderDetailPage() {
         <Badge variant={STATUS_VARIANT[order.status]}>{order.status}</Badge>
       </div>
 
+      {/* A rider got there and came back with the box. Said before the
+          timeline, because the timeline shows a journey this order has
+          stepped out of. */}
+      {isUndelivered && (
+        <div className="bg-red-50 border border-red-200 p-4 mb-4">
+          <p className="text-[11px] font-body uppercase tracking-widest text-red-500 mb-1">Undelivered</p>
+          <p className="text-sm font-body text-red-800">
+            A rider reached the address and could not hand the order over. It is paid for
+            and still ours to deliver — re-dispatch it below, or cancel and refund.
+          </p>
+        </div>
+      )}
+
       {/* Status timeline */}
-      {!isCancelled && (
+      {!isCancelled && !isUndelivered && (
         <div className="bg-white border border-gray-200 p-4 mb-4">
           <p className="text-[11px] font-body uppercase tracking-widest text-gray-400 mb-3">Status</p>
           <div className="flex items-center gap-0">
@@ -205,13 +221,28 @@ export default function OrderDetailPage() {
             Mark On The Way
           </Button>
         )}
-        {(order.status === 'packed' || order.status === 'out_for_delivery') && (
+        {(order.status === 'packed' || order.status === 'out_for_delivery' || isUndelivered) && (
           <Button size="sm" onClick={() => updateStatus('delivered')} loading={actionLoading}>
             <span className="material-icons text-[14px]">done_all</span>
             Mark Delivered
           </Button>
         )}
-        {(order.status === 'created' || order.status === 'confirmed') && (
+        {/* A courier reports this itself. The button is for the times nobody
+            did — a third-party zone, or a driver who phoned the shop. */}
+        {(order.status === 'packed' || order.status === 'out_for_delivery') && (
+          <Button variant="danger" size="sm" onClick={() => updateStatus('undelivered')} loading={actionLoading}>
+            <span className="material-icons text-[14px]">report_problem</span>
+            Mark Undelivered
+          </Button>
+        )}
+        {/* Back to the shelf, which is where a second attempt starts from. */}
+        {isUndelivered && (
+          <Button size="sm" onClick={() => updateStatus('packed')} loading={actionLoading}>
+            <span className="material-icons text-[14px]">restart_alt</span>
+            Return To Packed
+          </Button>
+        )}
+        {(order.status === 'created' || order.status === 'confirmed' || isUndelivered) && (
           <Button variant="danger" size="sm" onClick={() => updateStatus('cancelled')} loading={actionLoading}>
             <span className="material-icons text-[14px]">cancel</span>
             Cancel Order

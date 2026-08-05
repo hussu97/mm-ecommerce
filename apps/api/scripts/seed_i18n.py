@@ -468,6 +468,9 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     #    account order page and the guest tracking page.
     ("order", "status_out_for_delivery", "Out for Delivery"),
     ("order", "status_delivered", "Delivered"),
+    # A rider reached the door and could not hand it over. Its own status on
+    # the order now, not just a note on the courier record.
+    ("order", "status_undelivered", "Delivery Attempted"),
     ("order", "status_collected", "Collected"),
     ("order", "status_refunded", "Refunded"),
     ("order", "status_disputed", "Disputed"),
@@ -1011,6 +1014,7 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("order", "timeline_ready", "جاهز / تم الإرسال"),
     ("order", "status_out_for_delivery", "في الطريق إليك"),
     ("order", "status_delivered", "تم التوصيل"),
+    ("order", "status_undelivered", "محاولة توصيل"),
     ("order", "status_collected", "تم الاستلام"),
     ("order", "status_refunded", "تم رد المبلغ"),
     ("order", "status_disputed", "قيد النزاع"),

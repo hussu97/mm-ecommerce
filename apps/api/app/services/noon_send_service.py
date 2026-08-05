@@ -704,12 +704,17 @@ async def cancel_delivery(db: AsyncSession, order: Order) -> OrderDelivery | Non
 # ── inbound ───────────────────────────────────────────────────────────────────
 
 #: noon Send status -> the order status it implies. Anything absent leaves the
-#: order alone: a rider being assigned is still "packed and waiting", and an
-#: `undelivered` parcel is a problem for an admin rather than a state the
-#: customer's order should move into on its own.
+#: order alone: a rider being assigned is still "packed and waiting".
+#:
+#: `undelivered` is here rather than left as a note on the delivery row. It used
+#: not to be, and the result was MM-20260805-006: the order read
+#: `out_for_delivery` — the cake is coming — while the courier record said a
+#: rider had stood at the door and taken it away again. Only one of those was
+#: true, and it was not the one on the screen.
 _ORDER_STATUS_FOR: dict[str, OrderStatusEnum] = {
     NoonSendStatusEnum.PICKED_UP.value: OrderStatusEnum.OUT_FOR_DELIVERY,
     NoonSendStatusEnum.DELIVERED.value: OrderStatusEnum.DELIVERED,
+    NoonSendStatusEnum.UNDELIVERED.value: OrderStatusEnum.UNDELIVERED,
 }
 
 
@@ -839,8 +844,6 @@ async def apply_webhook(
     if task_nr := payload.get("order_nr"):
         delivery.courier_order_id = str(task_nr)
 
-    failed_handover = False
-
     if status and status != delivery.courier_status:
         delivery.courier_previous_status = delivery.courier_status
         delivery.courier_status = status
@@ -861,28 +864,22 @@ async def apply_webhook(
         elif status in NOON_SEND_FAILED_STATUSES:
             delivery.cancelled_at = moment
             delivery.cancel_reason = status
-            # Nobody is bringing it. The order stays where it is so an admin can
-            # re-dispatch, rather than the customer being told it is cancelled.
+            # Nobody is bringing it. The order is not cancelled — it is paid for
+            # and boxed — so this is a flag for the admin, not an ending.
             delivery.last_error = (
                 f"noon Send reported the task {status} — re-dispatch required"
             )
-            failed_handover = status == NoonSendStatusEnum.UNDELIVERED.value
 
     if updated_at is not None:
         delivery.status_updated_at = updated_at
     elif status:
         delivery.status_updated_at = datetime.now(timezone.utc)
 
+    # Moves the order and writes to the customer, `undelivered` included.
+    # A failed handover used to be announced separately here, because the order
+    # stayed put and `_advance_order` had nothing to do. It has a status of its
+    # own now, so there is one path again — and only one email.
     await _advance_order(db, delivery)
-
-    # A rider who arrived and could not hand the parcel over leaves the order
-    # exactly where it was, so `_advance_order` has nothing to do and nothing to
-    # announce. It is still the single most important thing to tell a customer
-    # about all day — somebody stood at their door — so it is announced here.
-    if failed_handover:
-        order = await _order_of(db, delivery)
-        if order is not None:
-            await email_service.notify_order(db, order)
 
     return delivery
 
@@ -1018,15 +1015,29 @@ async def _advance_order(db: AsyncSession, delivery: OrderDelivery) -> None:
         target,
     }:
         return
+    # `undelivered` is in the list because a second rider collecting is exactly
+    # how a failed handover is meant to end: the box goes back on the shelf, a
+    # new task is created, and its `picked_up` has to be allowed to move the
+    # order forward again. Without it a re-dispatched order would sit reading
+    # "we couldn't deliver" all the way to the customer's door.
     if target == OrderStatusEnum.OUT_FOR_DELIVERY and order.status not in {
         OrderStatusEnum.CONFIRMED,
         OrderStatusEnum.PACKED,
+        OrderStatusEnum.UNDELIVERED,
+    }:
+        return
+    # A parcel that never left cannot come back undelivered. Only a rider who
+    # actually collected it can fail to hand it over, so this refuses a push
+    # that would mark an order undelivered before anyone picked it up.
+    if target == OrderStatusEnum.UNDELIVERED and order.status not in {
+        OrderStatusEnum.PACKED,
+        OrderStatusEnum.OUT_FOR_DELIVERY,
     }:
         return
 
     order.status = target
     # The customer hears about it from here, not from the admin screen. These
-    # two transitions only ever happen because a courier said so, so this is the
+    # transitions only ever happen because a courier said so, so this is the
     # only place that knows they happened — and "out for delivery" is the email
     # that carries the live tracking link, which is worth nothing an hour late.
     await email_service.notify_order(db, order)

@@ -211,14 +211,16 @@ async def test_packed_says_nothing_when_a_rider_will_be_the_news(sent):
 
 
 @pytest.mark.asyncio
-async def test_a_failed_handover_wins_over_the_status(sent):
+async def test_a_failed_handover_is_its_own_status(sent):
     """
-    `undelivered` leaves the order on `out_for_delivery`, so keying on status
-    alone would send "your order is on its way" to somebody who just watched a
-    driver leave.
+    A rider who could not hand the parcel over used to leave the order reading
+    `out_for_delivery`, so the mailer had to check the courier record ahead of
+    the status map to avoid telling somebody their cake was on its way minutes
+    after they watched a driver leave. It is a status now, so it is in the map
+    with everything else and there is one path rather than two.
     """
     order = _order(
-        status=OrderStatusEnum.OUT_FOR_DELIVERY,
+        status=OrderStatusEnum.UNDELIVERED,
         stage="undelivered",
         estimated_at=None,
         precision=None,
@@ -227,6 +229,7 @@ async def test_a_failed_handover_wins_over_the_status(sent):
     assert await email_service.notify_status_change(order) == "undelivered"
     assert "couldn't deliver" in sent[0]["subject"]
     assert "wasn't able to complete the delivery" in body(sent[0])
+    assert len(sent) == 1, "one status, one email"
 
 
 # ── what is in it ─────────────────────────────────────────────────────────────

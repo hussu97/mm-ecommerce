@@ -84,6 +84,8 @@ VALID_TRANSITIONS: dict[OrderStatusEnum, set[OrderStatusEnum]] = {
         # A third-party zone has no courier reporting back, so the shop marks
         # the order delivered itself and never passes through the middle state.
         OrderStatusEnum.DELIVERED,
+        # A driver can also fail to hand it over on a run we never saw start.
+        OrderStatusEnum.UNDELIVERED,
         OrderStatusEnum.REFUNDED,
         OrderStatusEnum.DISPUTED,
     },
@@ -93,6 +95,20 @@ VALID_TRANSITIONS: dict[OrderStatusEnum, set[OrderStatusEnum]] = {
     # reachable from here.
     OrderStatusEnum.OUT_FOR_DELIVERY: {
         OrderStatusEnum.DELIVERED,
+        OrderStatusEnum.UNDELIVERED,
+        OrderStatusEnum.REFUNDED,
+        OrderStatusEnum.DISPUTED,
+    },
+    # A failed handover is a detour, not an ending. The cake exists, it is paid
+    # for, and the usual answer is a second attempt — which is why this leads
+    # back into the journey rather than only out of it. `packed` is the way
+    # back: a re-dispatch starts from a box on a shelf, exactly as the first
+    # one did, and `OUT_FOR_DELIVERY` follows when the new rider collects.
+    OrderStatusEnum.UNDELIVERED: {
+        OrderStatusEnum.PACKED,
+        OrderStatusEnum.OUT_FOR_DELIVERY,
+        OrderStatusEnum.DELIVERED,
+        OrderStatusEnum.CANCELLED,
         OrderStatusEnum.REFUNDED,
         OrderStatusEnum.DISPUTED,
     },

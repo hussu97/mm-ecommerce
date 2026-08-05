@@ -168,6 +168,9 @@ export type OrderStatus =
   // everywhere else.
   | 'out_for_delivery'
   | 'delivered'
+  // A rider reached the door and could not hand it over. Paid for and still
+  // ours to deliver, so it leads back into the journey rather than ending it.
+  | 'undelivered'
   | 'cancelled';
 
 export interface SelectedOptionSnapshot {

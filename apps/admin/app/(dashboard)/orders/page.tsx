@@ -32,6 +32,7 @@ const STATUS_OPTIONS = [
   { value: 'packed', label: 'Packed' },
   { value: 'out_for_delivery', label: 'On The Way' },
   { value: 'delivered', label: 'Delivered' },
+  { value: 'undelivered', label: 'Undelivered' },
   { value: 'cancelled', label: 'Cancelled' },
 ];
 
@@ -43,6 +44,9 @@ const STATUS_VARIANT: Record<OrderStatus, 'warning' | 'info' | 'success' | 'dang
   packed: 'info',
   out_for_delivery: 'info',
   delivered: 'success',
+  // Red, not amber: a paid order sitting undelivered is somebody's afternoon,
+  // and it should be as loud on the list as a cancellation.
+  undelivered: 'danger',
   cancelled: 'danger',
 };
 

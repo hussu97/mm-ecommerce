@@ -220,20 +220,46 @@ async def test_delivered_closes_the_order():
 
 
 @pytest.mark.asyncio
-async def test_undelivered_flags_a_human_and_leaves_the_order_alone():
+async def test_undelivered_moves_the_order_and_flags_a_human():
     """
     A rider who could not hand the parcel over is a problem for the shop, not a
-    cancellation for the customer: the order stays where it is so somebody can
-    re-dispatch it.
+    cancellation for the customer — but it is not `out_for_delivery` either.
+
+    It used to be. The order stayed where it was and only the delivery row knew,
+    so MM-20260805-006 read "on the way" for hours after noon Send reported that
+    nobody was bringing it. The status moves now; the flag stays, because
+    somebody still has to decide between a second attempt and a refund.
     """
     order = SimpleNamespace(id=uuid.uuid4(), status=OrderStatusEnum.OUT_FOR_DELIVERY)
     delivery = _delivery(courier_status="picked_up")
     await noon_send_service.apply_webhook(
         _FakeDb(order), _push("undelivered", NOW + timedelta(hours=1)), delivery
     )
-    assert order.status == OrderStatusEnum.OUT_FOR_DELIVERY
+    assert order.status == OrderStatusEnum.UNDELIVERED
     assert delivery.needs_attention
     assert "re-dispatch" in delivery.last_error
+
+
+@pytest.mark.asyncio
+async def test_a_parcel_nobody_collected_cannot_come_back_undelivered():
+    """Only a rider who actually took the box can fail to hand it over."""
+    order = SimpleNamespace(id=uuid.uuid4(), status=OrderStatusEnum.CONFIRMED)
+    delivery = _delivery(courier_status="assigned")
+    await noon_send_service.apply_webhook(
+        _FakeDb(order), _push("undelivered", NOW + timedelta(hours=1)), delivery
+    )
+    assert order.status == OrderStatusEnum.CONFIRMED
+
+
+@pytest.mark.asyncio
+async def test_a_second_rider_can_pick_up_an_undelivered_order():
+    """A failed handover is a detour. Re-dispatch has to be able to leave it."""
+    order = SimpleNamespace(id=uuid.uuid4(), status=OrderStatusEnum.UNDELIVERED)
+    delivery = _delivery(courier_status="assigned")
+    await noon_send_service.apply_webhook(
+        _FakeDb(order), _push("picked_up", NOW + timedelta(hours=2)), delivery
+    )
+    assert order.status == OrderStatusEnum.OUT_FOR_DELIVERY
 
 
 @pytest.mark.asyncio

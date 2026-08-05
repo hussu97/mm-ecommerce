@@ -42,6 +42,13 @@ class OrderStatusEnum(str, enum.Enum):
     #: driver is holding the box, not that someone remembered to click.
     OUT_FOR_DELIVERY = "out_for_delivery"
     DELIVERED = "delivered"
+    #: A rider reached the door and could not hand the parcel over. A status of
+    #: its own rather than a note on the delivery row, because until it was one
+    #: the order still read `out_for_delivery` — the screen said the cake was
+    #: coming while the courier record said nobody had taken it, and only the
+    #: second of those was true. Not terminal: the order is paid for and still
+    #: ours to deliver, so it can be re-dispatched out of here.
+    UNDELIVERED = "undelivered"
     CANCELLED = "cancelled"
     PAYMENT_FAILED = "payment_failed"
     REFUNDED = "refunded"

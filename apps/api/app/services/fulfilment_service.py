@@ -151,6 +151,8 @@ def estimate_state_of(order: Order) -> str:
         )
     if order.status == OrderStatusEnum.OUT_FOR_DELIVERY:
         return "on_the_way"
+    if order.status == OrderStatusEnum.UNDELIVERED:
+        return "undelivered"
     if order.status == OrderStatusEnum.PACKED:
         return "ready"
     return "preparing"
@@ -187,6 +189,10 @@ async def for_order(
             .first()
         )
 
+    # The order status is the primary source now, and this is the backstop for
+    # the window between a courier reporting a failed handover and the order
+    # having moved — a Lalamove POD, say, which has no `undelivered` status of
+    # its own to map from.
     if delivery is not None and delivery.courier_status == "undelivered":
         stage = "undelivered"
 

@@ -133,6 +133,9 @@ export type OrderStatus =
   | 'packed'
   | 'out_for_delivery'
   | 'delivered'
+  // A rider reached the door and could not hand it over. Not settled: the
+  // order is paid for and a second attempt is the usual answer.
+  | 'undelivered'
   | 'cancelled'
   | 'payment_failed'
   | 'refunded'
