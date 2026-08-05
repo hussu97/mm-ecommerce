@@ -227,6 +227,15 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
     stop_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # ── the booking ───────────────────────────────────────────────────────────
+    #: A seven-digit number a driver can read back down a phone, unique across
+    #: every delivery we have ever booked. `MM-20260805-007` is a fine key and a
+    #: poor thing to say out loud, and noon Send asked for something shorter so
+    #: their riders can quote it. Assigned at dispatch, kept across a re-dispatch,
+    #: and null on a third-party zone that never meets a courier. See
+    #: `app/services/courier_reference.py`.
+    courier_reference: Mapped[str | None] = mapped_column(
+        String(7), nullable=True, unique=True, index=True
+    )
     courier_order_id: Mapped[str | None] = mapped_column(
         String(64), nullable=True, index=True
     )

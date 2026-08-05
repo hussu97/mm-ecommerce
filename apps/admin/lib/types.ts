@@ -534,6 +534,8 @@ export interface OrderDelivery {
   cost_total: number | null;
   /** Fee charged minus what the courier cost. Negative loses money. */
   margin: number | null;
+  /** The seven digits the driver quotes. Null on a third-party zone. */
+  courier_reference: string | null;
   courier_order_id: string | null;
   courier_status: string | null;
   share_link: string | null;

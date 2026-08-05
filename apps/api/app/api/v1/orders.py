@@ -69,6 +69,9 @@ class OrderDeliveryResponse(BaseModel):
     cost_total: float | None
     #: Fee minus cost. Negative means this delivery lost money.
     margin: float | None
+    #: The seven digits a driver quotes. Null on a third-party zone, and on
+    #: bookings made before the reference existed.
+    courier_reference: str | None
     courier_order_id: str | None
     courier_status: str | None
     share_link: str | None
@@ -102,6 +105,7 @@ class OrderDeliveryResponse(BaseModel):
             quoted_distance_m=d.quoted_distance_m,
             cost_total=float(d.cost_total) if d.cost_total is not None else None,
             margin=margin,
+            courier_reference=d.courier_reference,
             courier_order_id=d.courier_order_id,
             courier_status=d.courier_status,
             share_link=d.share_link,
@@ -401,6 +405,7 @@ async def dispatch_order_delivery(
         entity_label=order_number,
         admin=admin,
         changes={
+            "courier_reference": delivery.courier_reference,
             "courier_order_id": delivery.courier_order_id,
             "error": delivery.last_error,
         },

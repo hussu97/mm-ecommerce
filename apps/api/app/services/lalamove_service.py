@@ -45,7 +45,7 @@ from app.models.order_delivery import (
     OrderDelivery,
 )
 from app.models.webhook_event import WebhookEvent
-from app.services import email_service
+from app.services import courier_reference, email_service
 from app.services.delivery_zone_service import Zone
 from app.services.providers.lalamove_provider import LalamoveError, provider
 
@@ -417,7 +417,9 @@ class Drop:
         }
 
 
-def build_drop(order: Order) -> tuple[Drop | None, str | None]:
+def build_drop(
+    order: Order, reference: str | None = None
+) -> tuple[Drop | None, str | None]:
     """
     Turn an order's shipping snapshot into a stop, or say why it cannot be one.
 
@@ -443,7 +445,7 @@ def build_drop(order: Order) -> tuple[Drop | None, str | None]:
             },
             name=_recipient_name(address) or order.order_number,
             phone=phone,
-            remarks=_remarks(order, address),
+            remarks=_remarks(order, address, reference),
         ),
         None,
     )
@@ -476,7 +478,11 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
         delivery.last_error = "Courier is not configured; dispatch this order by hand"
         return delivery
 
-    drop, reason = build_drop(order)
+    # Seven digits for the driver's notes, instead of `MM-20260805-007`. Falls
+    # back to the order number rather than blocking a dispatch over a label.
+    reference = await courier_reference.assign(db, delivery)
+
+    drop, reason = build_drop(order, reference)
     if drop is None:
         delivery.last_error = reason
         return delivery
@@ -509,6 +515,9 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
             metadata={
                 "order_number": order.order_number,
                 "order_id": str(order.id),
+                # The short one too, so a driver quoting seven digits can be
+                # matched back from their side as well as ours.
+                "courier_reference": reference or "",
             },
         )
     except LalamoveError as exc:
@@ -1113,8 +1122,20 @@ def _drop_address(address: dict[str, Any]) -> str:
     return f"{unit}, {line}" if unit and line else (line or unit)
 
 
-def _remarks(order: Order, address: dict[str, Any]) -> str:
-    bits = [f"Order {order.order_number}"]
+def _remarks(
+    order: Order, address: dict[str, Any], reference: str | None = None
+) -> str:
+    """
+    What the driver reads, led by the number they will be asked to quote.
+
+    The seven-digit reference goes first for the same reason noon Send asked for
+    one: `MM-20260805-007` is a poor thing to read down a phone. Our own number
+    follows it, because the person on the other end of that phone is looking at
+    an admin screen that lists orders by it.
+    """
+    bits = [f"Order {reference or order.order_number}"]
+    if reference:
+        bits.append(f"Ref {order.order_number}")
     unit = str(address.get("unit_number") or "").strip()
     if unit:
         bits.append(f"Unit {unit}")

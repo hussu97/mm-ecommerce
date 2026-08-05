@@ -131,6 +131,10 @@ class _Delivery:
         self.batch_id = None
         self.last_error = None
         self.courier_order_id = None
+        # Already has its driver reference, which is the state anything being
+        # retried is in. Set here so `courier_reference.assign` short-circuits:
+        # drawing a fresh one would query, and `_Session` refuses to.
+        self.courier_reference = "1234567"
 
 
 class _Session:
@@ -178,7 +182,9 @@ def _arrange(
     monkeypatch.setattr(
         batching_service.lalamove_service,
         "build_drop",
-        lambda order: (object(), None) if drop_ok else (None, "No pin on this address"),
+        lambda order, reference=None: (
+            (object(), None) if drop_ok else (None, "No pin on this address")
+        ),
     )
 
 

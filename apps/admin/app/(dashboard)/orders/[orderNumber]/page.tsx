@@ -471,6 +471,17 @@ function DeliveryPanel({
         </p>
       )}
 
+      {/* First in the list because it is what a driver or a courier's support
+          desk will open a call with. */}
+      {delivery.courier_reference && (
+        <p className="mx-4 mb-3 px-3 py-2 text-xs font-body text-gray-600 bg-gray-50 border border-gray-200">
+          Driver reference{' '}
+          <span className="font-mono text-sm text-gray-900 tracking-wider">
+            {delivery.courier_reference}
+          </span>
+        </p>
+      )}
+
       <dl className="grid grid-cols-2 sm:grid-cols-4 gap-4 px-4 pb-4 text-xs font-body">
         <div>
           <dt className="text-gray-500">Zone</dt>

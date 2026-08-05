@@ -28,6 +28,9 @@ from app.services.lalamove_service import PickupPoint
 
 NOW = datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc)
 TASK_NR = "EHG84NNJMVG35BTDE"
+#: The short number that goes out as `order_reference` — seven digits a
+#: rider can read back, in place of `MM-20260804-014`.
+REFERENCE = "4820193"
 
 
 class _FakeResult:
@@ -479,7 +482,7 @@ def test_building_a_task_touches_only_plain_columns():
         },
     )
 
-    task, reason = noon_send_service.build_task(order, Decimal("185.00"))
+    task, reason = noon_send_service.build_task(order, Decimal("185.00"), REFERENCE)
 
     assert reason is None
     assert task.cod_value == 18500
@@ -505,7 +508,7 @@ def test_a_paid_order_is_sent_as_prepaid_even_when_flagged_cod():
         },
     )
 
-    task, _ = noon_send_service.build_task(order, Decimal("0.00"))
+    task, _ = noon_send_service.build_task(order, Decimal("0.00"), REFERENCE)
 
     assert task.cod_value == 0
     assert task.prepaid_value == 18500
@@ -694,7 +697,7 @@ def test_a_prepaid_task_always_carries_a_value(total, subtotal, expected):
         },
     )
 
-    task, reason = noon_send_service.build_task(order, Decimal("0.00"))
+    task, reason = noon_send_service.build_task(order, Decimal("0.00"), REFERENCE)
 
     assert reason is None
     assert task.prepaid_value == expected
@@ -719,7 +722,7 @@ def test_a_cash_order_is_unaffected():
         },
     )
 
-    task, _ = noon_send_service.build_task(order, Decimal("85.00"))
+    task, _ = noon_send_service.build_task(order, Decimal("85.00"), REFERENCE)
 
     assert task.cod_value == 8500
     assert task.prepaid_value == 0

@@ -70,7 +70,7 @@ from app.models.order_delivery import (
     OrderDelivery,
     is_failed,
 )
-from app.services import courier_service, lalamove_service
+from app.services import courier_reference, courier_service, lalamove_service
 from app.services.providers.lalamove_provider import LalamoveError, provider
 
 logger = logging.getLogger(__name__)
@@ -677,7 +677,11 @@ async def dispatch_batch(db: AsyncSession, batch: DeliveryBatch) -> DeliveryBatc
 
     drops: list[tuple[OrderDelivery, lalamove_service.Drop]] = []
     for delivery in deliveries:
-        drop, reason = lalamove_service.build_drop(delivery.order)
+        # Every stop on a shared run gets its own short number. Fifteen cakes in
+        # one van is exactly where a driver needs a per-drop reference they can
+        # read out, rather than fifteen variations on `MM-20260805-0NN`.
+        reference = await courier_reference.assign(db, delivery)
+        drop, reason = lalamove_service.build_drop(delivery.order, reference)
         if drop is None:
             # One bad address must not strand the other fourteen. It comes off
             # the run and shows up as an order needing a human.

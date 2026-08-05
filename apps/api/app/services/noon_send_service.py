@@ -57,7 +57,7 @@ from app.models.order_delivery import (
     OrderDelivery,
 )
 from app.models.webhook_event import WebhookEvent
-from app.services import email_service, trial_customer
+from app.services import courier_reference, email_service, trial_customer
 from app.services.lalamove_service import (
     Estimate,
     PickupPoint,
@@ -478,14 +478,17 @@ def _declared_value(total: Decimal) -> int:
     return value if value > 0 else 100
 
 
-def build_task(order: Order, outstanding: Decimal) -> tuple[Task | None, str | None]:
+def build_task(
+    order: Order, outstanding: Decimal, reference: str
+) -> tuple[Task | None, str | None]:
     """
     Turn an order's shipping snapshot into a task, or say why it cannot be one.
 
     Mirrors `lalamove_service.build_drop`: the reason is written to the delivery
     row so an admin reads "no reachable phone number" rather than a 422 about a
     field they have never heard of. Reads nothing but plain columns, for the
-    same reason — `outstanding` is passed in rather than derived here.
+    same reason — `outstanding` and `reference` are passed in rather than
+    derived here.
     """
     address = order.shipping_address_snapshot or {}
     try:
@@ -515,7 +518,9 @@ def build_task(order: Order, outstanding: Decimal) -> tuple[Task | None, str | N
     total = Decimal(str(order.total or 0))
     is_cod = (order.payment_method or "").lower() == "cod" and outstanding > 0
 
-    notes = [f"Order {order.order_number}"]
+    # The short reference leads, because it is the one a rider will be asked to
+    # read back. Our own number follows it, for the shop.
+    notes = [f"Order {reference}", f"Ref {order.order_number}"]
     if unit:
         notes.append(f"Unit {unit}")
     if order.notes:
@@ -523,7 +528,7 @@ def build_task(order: Order, outstanding: Decimal) -> tuple[Task | None, str | N
 
     return (
         Task(
-            order_reference=order.order_number,
+            order_reference=reference,
             drop_off_address={
                 "lat": round(latitude * 10_000_000),
                 "lng": round(longitude * 10_000_000),
@@ -572,7 +577,12 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
         )
         return delivery
 
-    task, reason = build_task(order, await outstanding_balance(db, order))
+    # Seven digits for the rider to quote, instead of `MM-20260805-007`. Drawn
+    # before the task is built so the notes and the reference agree, and falling
+    # back to the order number rather than blocking a dispatch over a label.
+    reference = await courier_reference.assign(db, delivery) or order.order_number
+
+    task, reason = build_task(order, await outstanding_balance(db, order), reference)
     if task is None:
         delivery.last_error = reason
         return delivery
@@ -754,18 +764,37 @@ async def _delivery_for(
         if found is not None:
             return found
 
-    # The task number can be missing on an early push, and our own order number
-    # went out on the task as `order_reference`, so it is a reliable second key.
-    reference = payload.get("order_reference")
+    # The task number can be missing on an early push, and whatever we sent as
+    # `order_reference` comes back on every one, so it is a reliable second key.
+    reference = str(payload.get("order_reference") or "")
     if not reference:
         return None
+
+    # The short reference is what goes out now. Tasks created before it existed
+    # carry the order number instead, and a dispatch that could not draw a free
+    # number falls back to it too — so both are looked up, short one first.
+    found = (
+        (
+            await db.execute(
+                select(OrderDelivery).where(
+                    OrderDelivery.courier_reference == reference,
+                    OrderDelivery.provider == PROVIDER,
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if found is not None:
+        return found
+
     return (
         (
             await db.execute(
                 select(OrderDelivery)
                 .join(Order, Order.id == OrderDelivery.order_id)
                 .where(
-                    Order.order_number == str(reference),
+                    Order.order_number == reference,
                     OrderDelivery.provider == PROVIDER,
                 )
             )
