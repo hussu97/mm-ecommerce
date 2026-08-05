@@ -202,6 +202,16 @@ class PosOrderResponse(ORMModel):
     order_type: str | None
     source: str | None
     pos_status: str | None
+    #: The e-commerce lifecycle — `confirmed`, `packed`, `out_for_delivery`,
+    #: `delivered`. `pos_status` beside it is the counter's own lifecycle, and
+    #: the two are genuinely different shapes: a website order can be an open
+    #: check on a register (`pos_status = active`) and still be sitting at
+    #: `confirmed` with no courier booked.
+    #:
+    #: Carried because the register is where somebody decides the box is
+    #: finished, and it cannot offer "mark packed" without knowing whether that
+    #: has already happened.
+    status: str | None = None
     delivery_status: str | None
     business_date: str | None
     guests: int

@@ -16,6 +16,7 @@ from app.models import (
     KitchenTicket,
     KitchenTicketStatusEnum,
     Order,
+    OrderStatusEnum,
     PosOrderStatusEnum,
     PosTable,
     Till,
@@ -42,7 +43,13 @@ from app.schemas.pos_order import (
     ScheduleOrderRequest,
     VoidOrderRequest,
 )
-from app.services import address_format, crud_service, pos_order_service
+from app.services import (
+    address_format,
+    crud_service,
+    email_service,
+    order_service,
+    pos_order_service,
+)
 
 router = APIRouter()
 
@@ -53,6 +60,9 @@ def _serialise(order: Order) -> PosOrderResponse:
     payload.amount_paid = order.amount_paid
     payload.balance_due = order.balance_due
     payload.delivery_address = address_format.one_line(order.shipping_address_snapshot)
+    # Written out rather than left to the enum's `str` base, so the register
+    # reads `"packed"` and never `"OrderStatusEnum.PACKED"`.
+    payload.status = order.status.value if order.status is not None else None
     # Voided lines stay in the database for audit but never render on the check.
     payload.items = [
         OrderItemResponse.model_validate(i) for i in order.items if i.status != "void"
@@ -674,3 +684,54 @@ async def accept_order(
     order.creator_id = order.creator_id or user.id
     await db.flush()
     return _serialise(await pos_order_service.get_order(db, order_id))
+
+
+@router.post("/{order_id}/packed", response_model=PosOrderResponse)
+async def mark_packed(
+    order_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """
+    The box is finished. Said by whoever finished it.
+
+    This is the event the whole delivery chain hangs off: `packed` is what
+    assigns the order to a batch, books a courier and sends the customer the
+    email that says their cake is on its way. Until now the only way to say it
+    was `PUT /orders/{order_number}/status`, which is gated on `get_admin_user`
+    — and a cashier signed in with a branch PIN is not an admin. So a website
+    order accepted on the register sat at `confirmed` until somebody opened the
+    admin console on a laptop, and if nobody did, no courier was ever booked.
+
+    Deliberately thin. `order_service.update_status` owns the transition rules,
+    the batch assignment and the stock and register side effects, and
+    `email_service.notify_status_change` owns which email a status earns. A
+    second implementation of any of that here is how the register and the
+    console would come to disagree about what "packed" does.
+
+    Idempotent for the same reason `accept` is: two people will press it.
+    """
+    await _require_permission(user, "pos.register.access")
+    order = await _load(db, order_id)
+
+    if order.status == OrderStatusEnum.PACKED:
+        return _serialise(order)
+    if OrderStatusEnum.PACKED not in order_service.VALID_TRANSITIONS.get(
+        order.status, set()
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"An order that is {order.status.value} cannot be marked packed.",
+        )
+
+    # By order number, because that is what `update_status` takes — it reloads
+    # the row with the load options the mailer needs, which is the difference
+    # between an email that sends and a `MissingGreenlet` nobody sees.
+    await order_service.update_status(db, order.order_number, OrderStatusEnum.PACKED)
+
+    # Inline rather than in a background task, and awaited: this is the email
+    # the customer is waiting for, and a background task can be dropped on a
+    # restart. It never raises.
+    reloaded = await _load(db, order_id)
+    await email_service.notify_order(db, reloaded)
+    return _serialise(reloaded)
