@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-import hmac
+import json
+from typing import Any
+
 import logging
 
 from fastapi import APIRouter, Depends, Header, Request, status
@@ -18,35 +20,66 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _noon_send_key_is_valid(presented: str | None) -> bool:
+def _key_fingerprint(presented: str | None) -> str:
     """
-    Whether this push is one we should act on.
+    Enough of a key to recognise it, never enough to use it.
 
-    noon Send does not sign requests, and their **staging environment sends no
-    header at all** — there is nowhere in it to configure one. Demanding a key
-    meant every status update during the trial was dropped, which is the whole
-    thing we are trying to exercise. So a push that presents no key is accepted.
+    Logged so the mismatch that actually happened is diagnosable: noon Send sent
+    a key we had never seen, every status push was refused, and the log said
+    only that it did not match — which is true and useless. Four characters
+    either end identifies which key is in play across two systems.
+    """
+    if not presented:
+        return "(none)"
+    if len(presented) <= 8:
+        return f"len={len(presented)}"
+    return f"{presented[:4]}…{presented[-4:]} (len={len(presented)})"
 
-    A push that presents the *wrong* key is still refused. That is not
-    theatre: it catches the realistic mistake, which is noon's production side
-    being configured with a stale key, and it costs nothing.
 
-    What is left protecting this endpoint is the task number. `_delivery_for`
-    only matches a push to an order we already dispatched, so acting on one
-    requires knowing a live `mp_task_nr` — sixteen characters we never publish.
-    A push naming a task we do not hold is acknowledged and ignored, and the
-    status rank guard means even a correct guess cannot walk an order backwards.
-    That is thinner than a signature and it is what this courier offers.
+def _log_noon_send_push(
+    kind: str, payload: Any, presented: str | None, request: Request
+) -> None:
+    """
+    Everything that arrived, before anything is decided about it.
 
-    Set `NOON_SEND_WEBHOOK_API_KEY` once noon's production side actually sends
-    one and this tightens back up on its own.
+    These pushes are not ours to replay. noon does not retry, there is nothing
+    on their side to resend from, and a container restart takes `docker logs`
+    with it — so a push we cannot see is a push that never happened as far as
+    anybody can tell afterwards. Three of them were dropped that way before this
+    existed.
     """
     expected = (settings.NOON_SEND_WEBHOOK_API_KEY or "").strip()
-    if not presented:
-        return True
-    if not expected:
-        return True
-    return hmac.compare_digest(presented, expected)
+    logger.info(
+        "noon Send %s webhook from %s · key %s (configured %s) · payload %s",
+        kind,
+        request.client.host if request.client else "?",
+        _key_fingerprint(presented),
+        _key_fingerprint(expected) if expected else "(none)",
+        json.dumps(payload, default=str)[:2000],
+    )
+
+
+def _noon_send_key_is_valid(presented: str | None) -> bool:
+    """
+    Whether this push should be acted on. Currently: always.
+
+    noon Send does not sign requests, and the key they send is not the one we
+    configured — their staging side has a value of its own that no screen of
+    ours produced. Refusing on a mismatch dropped every status update for the
+    trial: `assigned` and `picked_up` both arrived, two seconds after noon's own
+    records show them, and both were thrown away with a warning nobody was
+    watching.
+
+    So the key is recorded and not enforced. What guards the endpoint is the
+    task number: a push only moves an order we already dispatched under that
+    `mp_task_nr` — sixteen characters we never publish — and anything else is
+    acknowledged and ignored, while the status rank guard stops even a correct
+    guess walking an order backwards.
+
+    The fingerprint of whatever they send is in the log next to ours. When those
+    two agree, this can go back to comparing them.
+    """
+    return True
 
 
 @router.post("/stripe", status_code=status.HTTP_200_OK)
@@ -100,19 +133,25 @@ async def noon_send_webhook(
     status at all, which is worse than swallowing one bad event. A push that
     fails the key check is logged and dropped rather than acted on.
     """
-    if not _noon_send_key_is_valid(x_api_key):
-        logger.warning("Rejected noon Send webhook: the API key does not match")
-        return {"received": True, "error": "unauthorised"}
-
     try:
         payload = await request.json()
     except Exception:
+        logger.warning("noon Send status webhook had no readable body")
         return {"received": True}
+    _log_noon_send_push("status", payload, x_api_key, request)
     if not isinstance(payload, dict):
         return {"received": True}
+    if not _noon_send_key_is_valid(x_api_key):
+        return {"received": True, "error": "unauthorised"}
 
     try:
-        return await noon_send_service.handle_webhook(db, payload)
+        result = await noon_send_service.handle_webhook(db, payload)
+        logger.info(
+            "noon Send status webhook for %s → %s",
+            payload.get("order_nr") or payload.get("order_reference") or "?",
+            result,
+        )
+        return result
     except NoonSendError as exc:
         logger.warning("Rejected noon Send webhook: %s", exc)
         return {"received": True, "error": str(exc)}
@@ -135,18 +174,26 @@ async def noon_send_tracking_webhook(
     not journalled in `webhook_events` — a row per ping would bury every real
     status change in the same table.
     """
+    try:
+        payload = await request.json()
+    except Exception:
+        logger.warning("noon Send tracking webhook had no readable body")
+        return {"received": True}
+    _log_noon_send_push("tracking", payload, x_api_key, request)
+    if not isinstance(payload, dict):
+        return {"received": True}
     if not _noon_send_key_is_valid(x_api_key):
         return {"received": True, "error": "unauthorised"}
 
     try:
-        payload = await request.json()
-    except Exception:
-        return {"received": True}
-    if not isinstance(payload, dict):
-        return {"received": True}
-
-    try:
-        return await noon_send_service.handle_tracking_webhook(db, payload)
+        result = await noon_send_service.handle_tracking_webhook(db, payload)
+        logger.info(
+            "noon Send tracking webhook for %s → %s · rider at %s",
+            payload.get("order_nr") or "?",
+            result,
+            ((payload.get("da_details") or {}).get("location") or "no position"),
+        )
+        return result
     except Exception as exc:  # pragma: no cover — defensive
         logger.exception("noon Send tracking webhook processing failed")
         return {"received": True, "error": str(exc)}

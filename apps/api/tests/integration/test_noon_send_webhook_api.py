@@ -39,13 +39,18 @@ def webhook_key(monkeypatch):
 
 class TestAuthentication:
     """
-    noon Send's staging environment sends no `X-API-Key` — there is nowhere in
-    it to configure one — so demanding a key dropped every status update during
-    the trial, which is the thing the trial exists to exercise.
+    The key is recorded and not enforced.
 
-    A keyless push is therefore accepted. A push carrying the *wrong* key is
-    still refused, which catches the realistic mistake: their production side
-    configured with a stale one.
+    noon Send does not sign requests, and the key their staging side sends is
+    not the one we configured — it is a value no screen of ours produced.
+    Refusing on a mismatch dropped every status update for the trial:
+    `assigned` and `picked_up` both arrived, two seconds after noon's own
+    records show them, and both were thrown away with a warning nobody was
+    watching. Two hours were spent concluding they had never been sent.
+
+    So every push is acted on, and every push is logged with a fingerprint of
+    the key it carried next to a fingerprint of ours. When those agree, this can
+    go back to comparing them.
     """
 
     async def test_a_push_without_a_key_is_accepted(self, client):
@@ -53,36 +58,37 @@ class TestAuthentication:
         assert response.status_code == 200
         assert "error" not in response.json()
 
-    async def test_a_push_with_the_wrong_key_changes_nothing(self, client):
+    async def test_a_push_with_an_unrecognised_key_is_still_acted_on(self, client):
+        """The case that cost us the trial's first two status updates."""
         response = await client.post(
-            STATUS_URL, json=PUSH, headers={"X-API-Key": "not-it"}
+            STATUS_URL, json=PUSH, headers={"X-API-Key": "noons-own-key"}
         )
-        assert response.json()["error"] == "unauthorised"
-
-    async def test_the_right_key_is_accepted(self, client):
-        response = await client.post(STATUS_URL, json=PUSH, headers={"X-API-Key": KEY})
-        assert "error" not in response.json()
-
-    async def test_an_unconfigured_deployment_accepts_a_key_it_cannot_check(
-        self, client, monkeypatch
-    ):
-        """With no key configured there is nothing to compare against."""
-        import app.core.config as cfg
-
-        monkeypatch.setattr(cfg.settings, "NOON_SEND_WEBHOOK_API_KEY", "")
-        response = await client.post(
-            STATUS_URL, json=PUSH, headers={"X-API-Key": "anything"}
-        )
+        assert response.status_code == 200
         assert "error" not in response.json()
 
     async def test_the_tracking_endpoint_follows_the_same_rule(self, client):
-        body = {"order_nr": "X", "da_details": {"latitude": 25.3, "longitude": 55.3}}
-        assert "error" not in (await client.post(TRACKING_URL, json=body)).json()
+        body = {"order_nr": "X", "da_details": {"location": {"latitude": "252017557"}}}
+        for headers in ({}, {"X-API-Key": "noons-own-key"}):
+            response = await client.post(TRACKING_URL, json=body, headers=headers)
+            assert response.status_code == 200
+            assert "error" not in response.json()
 
-        wrong = await client.post(
-            TRACKING_URL, json=body, headers={"X-API-Key": "not-it"}
-        )
-        assert wrong.json()["error"] == "unauthorised"
+    async def test_the_key_is_never_logged_in_full(self):
+        """
+        A fingerprint identifies which key is in play across two systems. The
+        key itself in a log is a credential in a log.
+        """
+        from app.api.v1.webhooks import _key_fingerprint
+
+        secret = "SstJi9Ho0EHG2t7kQVSz7nA2hOeL3iiwVxHxb0Njk60Q"
+        printed = _key_fingerprint(secret)
+
+        assert secret not in printed
+        assert printed.startswith("SstJ")
+        assert printed.endswith("(len=44)")
+        assert _key_fingerprint(None) == "(none)"
+        # Too short to fingerprint without giving it away.
+        assert _key_fingerprint("abc123") == "len=6"
 
 
 class TestTheTaskNumberIsTheRemainingGuard:
