@@ -486,12 +486,31 @@ def test_a_paid_order_is_sent_as_prepaid_even_when_flagged_cod():
 
 
 def test_rider_position_overwrites_rather_than_accumulates():
+    """
+    Each ping replaces the last — there is no breadcrumb trail, only where the
+    rider is now.
+
+    Written originally against an invented payload: `da_details.latitude`, in
+    plain degrees. Both halves of that were wrong, and because the test agreed
+    with the code it made the shape look verified. It is noon's real one now —
+    nested under `location`, degrees times 10^7, as strings.
+    """
     delivery = _delivery()
     noon_send_service.apply_tracking(
-        delivery, {"da_details": {"latitude": 25.33, "longitude": 55.37}}
+        delivery,
+        {
+            "da_details": {
+                "location": {"latitude": "253300000", "longitude": "553700000"}
+            }
+        },
     )
     noon_send_service.apply_tracking(
-        delivery, {"da_details": {"latitude": 25.31, "longitude": 55.40}}
+        delivery,
+        {
+            "da_details": {
+                "location": {"latitude": "253100000", "longitude": "554000000"}
+            }
+        },
     )
     assert delivery.driver_latitude == Decimal("25.31")
     assert delivery.driver_longitude == Decimal("55.40")
@@ -678,3 +697,68 @@ def test_a_cash_order_is_unaffected():
 
     assert task.cod_value == 8500
     assert task.prepaid_value == 0
+
+
+# ── where the rider is ────────────────────────────────────────────────────────
+
+#: A real tracking payload, taken verbatim from staging task HG85NNE6X31CRNRQ
+#: while rider Umang Goel was 9.2 km from the drop-off.
+REAL_TRACKING = {
+    "order_nr": "HG85NNE6X31CRNRQ",
+    "order_reference": "MM-20260805-006",
+    "da_details": {
+        "name": "Umang Goel",
+        "phone_number": "+91-9898785897",
+        "mot_code": "motorbike",
+        "location": {"latitude": "252017557", "longitude": "552733762"},
+        "proximity": {"drop_off": {"distance": 9279.6, "duration": 612.6}},
+    },
+}
+
+
+def test_a_tracking_push_moves_the_rider_pin():
+    """
+    The coordinates are nested under `da_details.location`, and encoded the way
+    we encode ours — degrees times 10^7, as strings.
+
+    This used to read `da_details.latitude`, one level too high and
+    unconverted. The lookup missed, the guard never fired, and every push was a
+    silent no-op — nothing written, nothing logged. Two real ones arrived that
+    way before anyone thought to look at the column.
+    """
+    delivery = OrderDelivery(order_id=uuid.uuid4(), provider="noon_send")
+
+    noon_send_service.apply_tracking(delivery, REAL_TRACKING)
+
+    assert delivery.driver_latitude == Decimal("25.2017557")
+    assert delivery.driver_longitude == Decimal("55.2733762")
+
+
+def test_the_pin_fits_the_column_it_is_written_to():
+    """
+    `driver_latitude` is `Numeric(9, 6)`, which stops at 999.999999. The raw
+    252017557 does not fit, so the missing conversion was not merely wrong — it
+    would have raised a numeric field overflow the first time anybody pressed
+    "Check status" on a task with a rider on it.
+    """
+    delivery = OrderDelivery(order_id=uuid.uuid4(), provider="noon_send")
+    noon_send_service.apply_tracking(delivery, REAL_TRACKING)
+
+    for value in (delivery.driver_latitude, delivery.driver_longitude):
+        assert abs(value) < 1000
+        assert -90 <= float(delivery.driver_latitude) <= 90
+        assert -180 <= float(delivery.driver_longitude) <= 180
+
+
+def test_a_push_with_no_rider_yet_leaves_the_pin_alone():
+    """Before assignment `da_details` is null, and that is not an error."""
+    delivery = OrderDelivery(
+        order_id=uuid.uuid4(),
+        provider="noon_send",
+        driver_latitude=Decimal("25.1"),
+        driver_longitude=Decimal("55.2"),
+    )
+
+    noon_send_service.apply_tracking(delivery, {"order_nr": "X", "da_details": None})
+
+    assert delivery.driver_latitude == Decimal("25.1")

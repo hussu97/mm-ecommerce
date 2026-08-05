@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
@@ -36,6 +37,7 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "degrees",
     "NoonSendClient",
     "NoonSendError",
     "coordinate",
@@ -94,6 +96,23 @@ class NoonSendError(RuntimeError):
 def coordinate(value: float) -> int:
     """Decimal degrees as noon Send wants them: the degree times 10^7."""
     return round(float(value) * 10_000_000)
+
+
+def degrees(value: Any) -> Decimal | None:
+    """
+    The inverse: what they send back, as degrees.
+
+    Their rider coordinates arrive in the same ×10^7 encoding we send, and as
+    strings — `{"latitude": "252017557"}` is 25.2017557. Only the outbound half
+    of that existed, so the value went into a `Numeric(9, 6)` column unconverted
+    and overflowed it.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        return Decimal(str(value)) / 10_000_000
+    except (InvalidOperation, ValueError, TypeError):
+        return None
 
 
 def fils(amount: Any) -> int:

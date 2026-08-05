@@ -68,6 +68,7 @@ from app.services.lalamove_service import (
 )
 from app.services.providers.noon_send_provider import (
     NoonSendError,
+    degrees,
     fils,
     provider,
 )
@@ -911,10 +912,10 @@ async def _fill_rider_details(delivery: OrderDelivery) -> None:
     delivery.driver_phone = rider.get("phone_number") or delivery.driver_phone
     location = rider.get("location") or {}
     delivery.driver_latitude = (
-        decimal_or_none(location.get("latitude")) or delivery.driver_latitude
+        degrees(location.get("latitude")) or delivery.driver_latitude
     )
     delivery.driver_longitude = (
-        decimal_or_none(location.get("longitude")) or delivery.driver_longitude
+        degrees(location.get("longitude")) or delivery.driver_longitude
     )
 
 
@@ -955,9 +956,22 @@ async def handle_tracking_webhook(
 
 
 def apply_tracking(delivery: OrderDelivery, payload: dict[str, Any]) -> None:
+    """
+    Move the rider's pin.
+
+    The coordinates are nested under `da_details.location` and encoded the same
+    way we send ours — degrees times 10^7, as strings. This read them one level
+    too high and unconverted, so every tracking push was a silent no-op: the
+    lookup missed, the guard below was never satisfied, and nothing was written
+    or logged. Two real pushes arrived that way before anyone looked.
+    """
     details = payload.get("da_details") or {}
-    latitude = decimal_or_none(details.get("latitude"))
-    longitude = decimal_or_none(details.get("longitude"))
+    # Only the documented shape. Falling back to a flat `da_details.latitude`
+    # would divide a plain degree by ten million and store the result, which is
+    # worse than storing nothing.
+    location = details.get("location") or {}
+    latitude = degrees(location.get("latitude"))
+    longitude = degrees(location.get("longitude"))
     if latitude is not None and longitude is not None:
         delivery.driver_latitude = latitude
         delivery.driver_longitude = longitude
@@ -1032,10 +1046,10 @@ async def refresh(db: AsyncSession, order_id: uuid.UUID) -> OrderDelivery | None
         delivery.driver_phone = rider.get("phone_number") or delivery.driver_phone
         location = rider.get("location") or {}
         delivery.driver_latitude = (
-            decimal_or_none(location.get("latitude")) or delivery.driver_latitude
+            degrees(location.get("latitude")) or delivery.driver_latitude
         )
         delivery.driver_longitude = (
-            decimal_or_none(location.get("longitude")) or delivery.driver_longitude
+            degrees(location.get("longitude")) or delivery.driver_longitude
         )
     if details.get("has_pod"):
         delivery.pod_status = "AVAILABLE"
