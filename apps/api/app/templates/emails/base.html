@@ -22,8 +22,23 @@
     body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
     table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse; }
     img { -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; display: block; }
-    a[x-apple-data-detectors] { color: inherit !important; text-decoration: none !important; font-size: inherit !important; font-family: inherit !important; font-weight: inherit !important; line-height: inherit !important; }
-    u + #body a { color: inherit; text-decoration: none; }
+
+    /* ─── Rules that cannot be inlined ──────────────────────────────────────
+       `email_service` writes this stylesheet onto the elements before sending,
+       because a preview pane throws `<head>` away and an inline style is the
+       only kind it keeps. These two cannot go along: both match on something
+       the *client* adds at render time — Apple stamps `x-apple-data-detectors`
+       onto anything it decides is a date or an address, and the `u + #body`
+       hack fires only inside Gmail. Neither attribute exists in the document
+       we render, so there is nothing to write them onto.
+
+       Wrapped in `@media screen` so they survive as a rule instead: at-rules
+       are kept in a `<style>` tag, and every client that applies either of
+       these hacks is a screen. */
+    @media screen {
+      a[x-apple-data-detectors] { color: inherit !important; text-decoration: none !important; font-size: inherit !important; font-family: inherit !important; font-weight: inherit !important; line-height: inherit !important; }
+      u + #body a { color: inherit; text-decoration: none; }
+    }
 
     /* ─── Brand ────────────────────────────────────────────────────────────
        The storefront's own tokens, copied from `apps/web/app/globals.css`
@@ -143,9 +158,9 @@
     /* ─── Phones ───────────────────────────────────────────────────────────
        One breakpoint, because there is only one layout: everything is a single
        column already and this is about giving it back the margins a 600px
-       design spends on air. `!important` throughout — Gmail's inliner writes
-       the base rules onto the element, and only a flagged media rule outranks
-       an inline style. */
+       design spends on air. `!important` throughout, and it is load-bearing:
+       everything above is written onto the elements before sending, and only a
+       flagged rule outranks an inline style. */
     @media only screen and (max-width: 480px) {
       .masthead { padding: 26px 22px 24px !important; }
       .wordmark { font-size: 20px !important; letter-spacing: 0.26em !important; }
