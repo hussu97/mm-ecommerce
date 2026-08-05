@@ -16,8 +16,26 @@ type QueuedEvent = {
 };
 
 const queuedEvents: QueuedEvent[] = [];
-const retryDelays = [100, 500, 1500, 3000];
-let flushScheduled = false;
+
+/**
+ * How long to keep waiting for the Umami script, and how often to look.
+ *
+ * The script is `afterInteractive`, so anything a page tracks on mount races
+ * it. This used to be four fixed timers — 100ms, 500ms, 1.5s, 3s, all scheduled
+ * from the first queued event — and after the last of them nothing ever looked
+ * again: an event queued on a connection where a third-party script takes more
+ * than three seconds was dropped for good, silently, with no retry and no
+ * error. That window is smallest on exactly the page it matters most on, the
+ * order confirmation, which arrives as a fresh document from the payment
+ * gateway and tracks `order_completed` as soon as its first API call returns.
+ *
+ * A plain poll to a generous ceiling costs a handful of property reads and
+ * cannot fail that way. It stops the moment the script appears.
+ */
+const POLL_INTERVAL_MS = 250;
+const POLL_CEILING_MS = 30_000;
+
+let pollTimer: number | null = null;
 
 function flushQueuedEvents(): boolean {
   if (typeof window === 'undefined' || !window.umami) return false;
@@ -29,30 +47,29 @@ function flushQueuedEvents(): boolean {
   return true;
 }
 
-function scheduleFlush() {
-  if (flushScheduled || typeof window === 'undefined') return;
-  flushScheduled = true;
+function stopPolling() {
+  if (pollTimer !== null) {
+    window.clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
 
-  retryDelays.forEach((delay, index) => {
-    window.setTimeout(() => {
-      const flushed = flushQueuedEvents();
-      if (flushed || index === retryDelays.length - 1) {
-        flushScheduled = false;
-      }
-    }, delay);
-  });
+function scheduleFlush() {
+  if (pollTimer !== null || typeof window === 'undefined') return;
+
+  const deadline = Date.now() + POLL_CEILING_MS;
+  pollTimer = window.setInterval(() => {
+    if (flushQueuedEvents() || Date.now() > deadline) stopPolling();
+  }, POLL_INTERVAL_MS);
 }
 
 function track(event: string, data?: Record<string, unknown>) {
   if (typeof window === 'undefined') return;
 
-  if (window.umami) {
-    window.umami.track(event, data);
-    return;
-  }
-
+  // Queue first, then drain — so an event fired while something older is still
+  // waiting cannot overtake it.
   queuedEvents.push({ event, data });
-  scheduleFlush();
+  if (!flushQueuedEvents()) scheduleFlush();
 }
 
 export const analytics = {

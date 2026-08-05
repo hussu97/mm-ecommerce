@@ -63,4 +63,17 @@ describe('locale routing', () => {
       expect(location(proxy(request(path))), path).toBeNull();
     }
   });
+
+  /**
+   * The analytics endpoint is not a page. It has no dot in it, so it used to
+   * fall through to the locale rule and every tracked event paid for a 307
+   * before it reached Umami — including the ones fired as the page was being
+   * replaced, which are the ones that cannot afford a second trip.
+   */
+  it('leaves the analytics proxy alone in every language', () => {
+    for (const headers of [{}, { 'accept-language': 'en-US,en;q=0.9' }, { 'accept-language': 'fr-FR' }]) {
+      expect(location(proxy(request('/umami/api/send', headers)))).toBeNull();
+      expect(location(proxy(request('/umami/script.js', headers)))).toBeNull();
+    }
+  });
 });

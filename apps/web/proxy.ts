@@ -36,9 +36,20 @@ export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Skip static files, API routes, and Next.js internals
+  //
+  // `/umami` is the analytics proxy, rewritten to Umami Cloud in
+  // `next.config.ts`. It is not a page and has no language, but it also has no
+  // dot in it, so without naming it here it fell through to the locale rule
+  // below: every event the tracker posted to `/umami/api/send` was answered
+  // with a 307 to `/en/umami/api/send` and had to be sent a second time. That
+  // survived on a fast connection and was pure waste on any other — and the
+  // requests most likely to be caught mid-redirect are the ones fired as the
+  // page is being replaced, which is exactly `begin_checkout`,
+  // `checkout_step_complete` and the hop out to the payment gateway.
   if (
     pathname.startsWith("/_next") ||
     pathname.startsWith("/api") ||
+    pathname.startsWith("/umami") ||
     pathname.startsWith("/images") ||
     pathname.startsWith("/favicon") ||
     pathname.includes(".")
@@ -73,5 +84,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next|api|images|favicon|.*\\..*).*)"],
+  matcher: ["/((?!_next|api|umami|images|favicon|.*\\..*).*)"],
 };
