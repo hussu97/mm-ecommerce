@@ -265,6 +265,13 @@ def _estimate(
     When the customer gets it, and how precisely we know that.
 
     Read top to bottom: the further down a case sits, the less the shop knows.
+
+    Two rules decide the whole shape. Anything that has actually *happened* — a
+    delivery, a rider collecting — beats anything scheduled, because it is a
+    record rather than a promise. And below that, what the checkout told the
+    customer beats what this function could work out now, because a promise is
+    a fact about what was said and re-deriving one is how the confirmation email
+    and the checkout page came to disagree.
     """
     # Nothing is coming. Say nothing.
     if stage == "settled":
@@ -297,6 +304,8 @@ def _estimate(
     if stage == "on_the_way":
         # The sharpest answer we ever have: one rider, one route, measured from
         # an event the courier reported rather than from anything we assumed.
+        # This is the one case that is allowed to overrule the promise, because
+        # it is the only one built from a fact rather than from a schedule.
         picked_up = delivery.picked_up_at if delivery is not None else None
         if picked_up is not None and provider in _BOOKED_BY_US:
             return _local(picked_up) + RIDER_TO_DOOR, "time"
@@ -304,7 +313,32 @@ def _estimate(
         # The day is all that is ours to promise.
         return _end_of(now), "day"
 
-    # Still in the kitchen, or packed and waiting for a run.
+    # ── still in the kitchen, or packed and waiting for a run ────────────────
+    #
+    # Everything below is a schedule rather than an event, and the customer has
+    # already been told what that schedule means for them. Repeat what they were
+    # told; do not work it out again.
+    batch = delivery.batch if delivery is not None else None
+
+    if batch is not None and batch.dispatch_at is not None:
+        # On a run, which is the one thing that can move the answer without a
+        # rider touching the box: an order packed after its window closed goes
+        # out on the next one. `dispatch_at` is where it is actually going, so
+        # it wins over what was said at checkout — a customer moved to a later
+        # run needs to be told the later time, not the earlier one.
+        return _local(batch.dispatch_at) + DISPATCH_TO_DOOR, "time"
+
+    promised = _promise(order)
+    if promised is not None:
+        return promised
+
+    # ── no promise on the order ──────────────────────────────────────────────
+    #
+    # An order written before `promised_at` existed, or one placed with no pin
+    # to read a zone off. This is what every order used to get, and it is why
+    # the confirmation for MM-20260805-008 said 17:25 against a checkout that
+    # had said 19:00 — nothing here can know about the window that was open when
+    # the customer was looking at the page.
     if provider not in _BOOKED_BY_US:
         # A third-party zone is collected on a schedule we cannot see, and it is
         # the next day whether the order came in at nine in the morning or five
@@ -312,17 +346,30 @@ def _estimate(
         # else's van.
         return _end_of(now + timedelta(days=1)), "day"
 
-    batch = delivery.batch if delivery is not None else None
-    if batch is not None and batch.dispatch_at is not None:
-        # Sharing a run: it leaves when the window closes, and an hour later the
-        # last box on it is through a door.
-        return _local(batch.dispatch_at) + DISPATCH_TO_DOOR, "time"
-
     if stage == "ready":
         # Packed, ours to dispatch, travelling alone. It goes now.
         return now + DISPATCH_TO_DOOR, "time"
 
     return _local(order.created_at) + KITCHEN_PREP + DISPATCH_TO_DOOR, "time"
+
+
+def _promise(order: Order) -> tuple[datetime, str] | None:
+    """
+    What the checkout told this customer, if anything.
+
+    Read off the order rather than derived, which is the entire point: the
+    window that was open when somebody was looking at the checkout page is not
+    recoverable an hour later, and re-deriving would silently move them onto a
+    later run nobody mentioned.
+
+    A promise in the past is still returned. It has not stopped being what was
+    said, and a late order is a thing the customer can see for themselves on the
+    tracking page — replacing it with a fresh guess would quietly erase the fact
+    that we are late.
+    """
+    if order.promised_at is None or order.promised_precision is None:
+        return None
+    return _local(order.promised_at), order.promised_precision
 
 
 def _local(moment: datetime) -> datetime:

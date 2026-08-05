@@ -125,6 +125,22 @@ class Order(Base, UUIDMixin, TimestampMixin):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     admin_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    #: When the checkout told this customer their order would arrive.
+    #:
+    #: A record of what was said, not a calculation to repeat. Everything else
+    #: about fulfilment gets sharper as the order moves and is derived fresh each
+    #: time it is read; this one is fixed the moment somebody is shown it, which
+    #: is why it is a column rather than a function.
+    #:
+    #: Null for an order placed before this existed, and for one placed with no
+    #: pin to read a zone off. `fulfilment_service` falls back to deriving an
+    #: estimate for those, which is what it used to do for all of them.
+    promised_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: `time` or `day` — see `delivery_service.DeliveryEstimate.precision`.
+    promised_precision: Mapped[str | None] = mapped_column(String(8), nullable=True)
+
     # ─── POS fields ───────────────────────────────────────────────────────────
     # Null for storefront orders. `status` above keeps the e-commerce lifecycle;
     # `pos_status` models the counter lifecycle, which is a different shape.

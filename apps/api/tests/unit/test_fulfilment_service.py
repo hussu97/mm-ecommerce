@@ -31,7 +31,12 @@ def _order(
     created_at: datetime | None = None,
     updated_at: datetime | None = None,
     branch_id: uuid.UUID | None = None,
+    promised_at: datetime | None = None,
+    promised_precision: str | None = None,
 ) -> SimpleNamespace:
+    # `promised_*` default to None, which is an order written before checkout
+    # started recording what it said — the case every test here was originally
+    # written against. Tests that care about the promise pass one.
     return SimpleNamespace(
         id=uuid.uuid4(),
         status=status,
@@ -39,6 +44,8 @@ def _order(
         created_at=created_at or NOW - timedelta(minutes=30),
         updated_at=updated_at or NOW,
         branch_id=branch_id,
+        promised_at=promised_at,
+        promised_precision=promised_precision,
     )
 
 
@@ -445,3 +452,158 @@ async def test_a_third_party_order_is_never_flagged():
         _delivery(provider="third_party"),
     )
     assert fulfilment.tracking_by_sms is False
+
+
+# ── the promise checkout made ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_confirmed_order_repeats_what_the_checkout_said():
+    """
+    The bug this whole column exists for.
+
+    MM-20260805-008 was placed at 13:45 into a batch window closing at 18:00.
+    Checkout promised 19:00. The confirmation email said 17:25, because a batch
+    is only assigned at PACKED and nothing at CONFIRMED could see the window —
+    so it fell through to a generic `created_at + 2h prep + 1h drive`.
+
+    Both numbers were computed correctly. They were answering different
+    questions, and only one of them had been said out loud to a customer.
+    """
+    promised = NOW + timedelta(hours=5, minutes=15)
+
+    result = await _fulfilment(
+        _order(
+            status=OrderStatusEnum.CONFIRMED,
+            created_at=NOW - timedelta(minutes=10),
+            promised_at=promised,
+            promised_precision="time",
+        ),
+        _delivery(),
+    )
+
+    assert result.estimated_at == promised.astimezone(TZ)
+    assert result.precision == "time"
+    # The number it used to give, so a regression is unmistakable rather than
+    # merely a different hour.
+    generic = (
+        (NOW - timedelta(minutes=10)).astimezone(TZ)
+        + fulfilment_service.KITCHEN_PREP
+        + fulfilment_service.DISPATCH_TO_DOOR
+    )
+    assert result.estimated_at != generic
+
+
+@pytest.mark.asyncio
+async def test_a_promise_of_a_day_stays_a_day():
+    """
+    A third-party zone is quoted to the day at checkout, and repeating it as an
+    hour would borrow a precision that belongs to somebody else's van.
+    """
+    promised = NOW + timedelta(days=1)
+
+    result = await _fulfilment(
+        _order(
+            status=OrderStatusEnum.CONFIRMED,
+            promised_at=promised,
+            promised_precision="day",
+        ),
+        _delivery(provider="third_party"),
+    )
+
+    assert result.precision == "day"
+    assert result.estimated_at == promised.astimezone(TZ)
+
+
+@pytest.mark.asyncio
+async def test_a_rider_holding_the_parcel_beats_the_promise():
+    """
+    The one thing allowed to overrule what was said: an event that actually
+    happened. One rider, one route, measured from a stamp the courier reported.
+    """
+    picked_up = NOW - timedelta(minutes=5)
+
+    result = await _fulfilment(
+        _order(
+            status=OrderStatusEnum.OUT_FOR_DELIVERY,
+            promised_at=NOW + timedelta(hours=6),
+            promised_precision="time",
+        ),
+        _delivery(picked_up_at=picked_up),
+    )
+
+    assert (
+        result.estimated_at
+        == picked_up.astimezone(TZ) + fulfilment_service.RIDER_TO_DOOR
+    )
+
+
+@pytest.mark.asyncio
+async def test_missing_a_window_moves_the_customer_to_the_run_they_are_on():
+    """
+    The other thing allowed to overrule it, and the reason the batch is checked
+    first rather than last.
+
+    An order packed after its window closed goes out on the next run. Repeating
+    the original promise there would leave somebody waiting at a door for a van
+    that left without them — the later time is the true one, and the one they
+    need.
+    """
+    promised = NOW + timedelta(hours=1)
+    dispatch_at = NOW + timedelta(hours=4)
+
+    result = await _fulfilment(
+        _order(
+            status=OrderStatusEnum.PACKED,
+            promised_at=promised,
+            promised_precision="time",
+        ),
+        _delivery(batch=SimpleNamespace(dispatch_at=dispatch_at)),
+    )
+
+    assert (
+        result.estimated_at
+        == dispatch_at.astimezone(TZ) + fulfilment_service.DISPATCH_TO_DOOR
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_promise_already_past_is_still_the_promise():
+    """
+    A late order is late, and the tracking page should say so.
+
+    Replacing an overdue promise with a freshly-derived one would quietly move
+    the goalposts every time the page was refreshed, which is the one thing a
+    customer waiting past their time would notice and not forgive.
+    """
+    promised = NOW - timedelta(hours=2)
+
+    result = await _fulfilment(
+        _order(
+            status=OrderStatusEnum.CONFIRMED,
+            promised_at=promised,
+            promised_precision="time",
+        ),
+        _delivery(),
+    )
+
+    assert result.estimated_at == promised.astimezone(TZ)
+
+
+@pytest.mark.asyncio
+async def test_an_order_placed_before_the_column_existed_still_answers():
+    """No promise recorded is not a reason to say nothing — it is a reason to
+    derive one, which is what every order used to get."""
+    result = await _fulfilment(
+        _order(
+            status=OrderStatusEnum.CONFIRMED, created_at=NOW - timedelta(minutes=30)
+        ),
+        _delivery(),
+    )
+
+    assert result.precision == "time"
+    assert result.estimated_at == (
+        (NOW - timedelta(minutes=30)).astimezone(TZ)
+        + fulfilment_service.KITCHEN_PREP
+        + fulfilment_service.DISPATCH_TO_DOOR
+    )
