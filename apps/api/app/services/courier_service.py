@@ -48,6 +48,7 @@ __all__ = [
     "dispatch",
     "estimate_for_point",
     "is_enabled",
+    "is_trial_run",
     "may_use_noon_send",
 ]
 
@@ -91,8 +92,14 @@ def may_use_noon_send(order: Order) -> tuple[bool, str | None]:
     return True, None
 
 
-def _is_trial_run(order: Order) -> bool:
-    """Whether this order should be offered to noon Send regardless of its zone."""
+def is_trial_run(order: Order) -> bool:
+    """
+    Whether this order should be offered to noon Send regardless of its zone.
+
+    Public because batching has to ask it as well: a trial order must not join a
+    Lalamove run, since a run is booked directly against Lalamove and never
+    passes back through `dispatch`.
+    """
     return (
         noon_send_service.is_enabled()
         and noon_send_service.trial_pickup() is not None
@@ -128,7 +135,7 @@ async def dispatch(db: AsyncSession, order: Order) -> OrderDelivery | None:
     #
     # Redrawing the map for a test fleet would be the wrong trade: the polygons
     # describe the business, and this describes one account.
-    if delivery.provider != NOON_SEND and not _is_trial_run(order):
+    if delivery.provider != NOON_SEND and not is_trial_run(order):
         return await lalamove_service.dispatch_order(db, order)
 
     allowed, reason = may_use_noon_send(order)
