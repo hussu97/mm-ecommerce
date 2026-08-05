@@ -460,13 +460,15 @@ def build_task(
     total = Decimal(str(order.total or 0))
     is_cod = (order.payment_method or "").lower() == "cod" and outstanding > 0
 
-    # The short reference leads, because it is the one a rider will be asked to
-    # read back. Our own number follows it, for the shop.
-    notes = [f"Order {reference}", f"Ref {order.order_number}"]
-    if str(address.get("unit_number") or "").strip():
-        notes.append(f"Unit {str(address.get('unit_number')).strip()}")
-    if order.notes:
-        notes.append(str(order.notes).strip())
+    # What the customer asked for, and nothing else.
+    #
+    # This used to lead with `Order {reference} · Ref {order_number} · Unit
+    # {unit}`. Every one of those is already in the payload: the reference *is*
+    # `order_reference`, and the unit is the first thing in the address string
+    # above. A rider opening the task read three fields they already had before
+    # reaching the one thing only the customer could tell them — so a gate code
+    # sat at the end of a line noon truncates at 250 characters.
+    notes = str(order.notes or "").strip()
 
     return (
         Task(
@@ -482,7 +484,7 @@ def build_task(
             },
             prepaid_value=0 if is_cod else _declared_value(total),
             cod_value=fils(outstanding) if is_cod else 0,
-            delivery_notes=" · ".join(notes)[:250],
+            delivery_notes=notes[:250],
             # A cake is handed over, never left at a door — and a COD task may
             # not carry a leave-it tag at all.
             tags=[],

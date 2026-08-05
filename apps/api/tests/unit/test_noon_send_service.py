@@ -791,3 +791,60 @@ def test_both_shapes_of_coordinate_are_understood():
     assert abs(from_webhook.driver_latitude - from_detail.driver_latitude) < Decimal(
         "0.001"
     )
+
+
+def test_delivery_notes_carry_the_customers_note_and_nothing_else():
+    """
+    A rider opening the task should read what the customer asked for first.
+
+    It used to read `Order 1234567 · Ref MM-1003 · Unit 1204 · <the note>`.
+    Every one of those three is already in the payload — the reference *is*
+    `order_reference`, and the unit is the first thing in the address string —
+    so the only new information sat behind sixty characters of duplication, in
+    a field noon truncates at 250.
+    """
+    order = SimpleNamespace(
+        order_number="MM-1003",
+        total=Decimal("120.00"),
+        payment_method="stripe",
+        notes="  Gate code 4412, please call on arrival  ",
+        shipping_address_snapshot={
+            "latitude": 25.3213,
+            "longitude": 55.3820,
+            "phone": "+971501234567",
+            "first_name": "Hussain",
+            "address_line_1": "Al Majaz Waterfront, Al Majaz 3",
+            "unit_number": "1204",
+            "city": "Sharjah",
+        },
+    )
+
+    task, reason = noon_send_service.build_task(order, Decimal("0.00"), REFERENCE)
+
+    assert reason is None
+    assert task.delivery_notes == "Gate code 4412, please call on arrival"
+    # The unit is still reachable — it leads the address the rider navigates to.
+    assert task.drop_off_address["address"].startswith("1204, ")
+
+
+def test_no_note_means_no_notes():
+    """An order without a note sends an empty field rather than an order number
+    dressed up as instructions."""
+    order = SimpleNamespace(
+        order_number="MM-1004",
+        total=Decimal("120.00"),
+        payment_method="stripe",
+        notes=None,
+        shipping_address_snapshot={
+            "latitude": 25.3213,
+            "longitude": 55.3820,
+            "phone": "+971501234567",
+            "first_name": "Hussain",
+            "address_line_1": "Al Majaz Waterfront, Al Majaz 3",
+            "city": "Sharjah",
+        },
+    )
+
+    task, _ = noon_send_service.build_task(order, Decimal("0.00"), REFERENCE)
+
+    assert task.delivery_notes == ""
