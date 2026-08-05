@@ -60,7 +60,6 @@ from app.services import email_service, trial_customer
 from app.services.lalamove_service import (
     Estimate,
     PickupPoint,
-    decimal_or_none,
     get_delivery,
     normalise_phone,
     parse_time,
