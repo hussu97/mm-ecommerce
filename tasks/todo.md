@@ -1,6 +1,6 @@
 # Melting Moments Ecommerce - Build Tracker
 
-## ⏳ 2026-08-05: Email fidelity, the promised time, and the POS gaps
+## ✅ 2026-08-05: Email fidelity, the promised time, and the POS gaps
 
 Seven reports off MM-20260805-008. Four are `mm-ecommerce`, three are `mm-pos`.
 
@@ -16,14 +16,14 @@ Gmail's web client, Outlook desktop and Yahoo, so this is not only the preview.
 The comment in `base.html` about "Gmail's inliner writes the base rules onto the
 element" is wrong and is what let this stand — Gmail has no inliner.
 
-- [ ] 1.1 Add `css-inline` to `apps/api/pyproject.toml` (Rust-backed; no lxml).
-- [ ] 1.2 Inline in `email_service._render()` after `template.render(...)`, so
+- [x] 1.1 Add `css-inline` to `apps/api/pyproject.toml` (Rust-backed; no lxml).
+- [x] 1.2 Inline in `email_service._render()` after `template.render(...)`, so
       every template and both languages are covered without touching one of
       them. `@media` and `prefers-color-scheme` cannot be inlined and stay in
       the retained `<style>` block, which is what `css-inline` does by default.
-- [ ] 1.3 Never let it break a send: inlining failure falls back to the raw HTML.
-- [ ] 1.4 Correct the false comment in `base.html`.
-- [ ] 1.5 Test: rendered `order_confirmation` carries `style="` on the masthead
+- [x] 1.3 Never let it break a send: inlining failure falls back to the raw HTML.
+- [x] 1.4 Correct the false comment in `base.html`.
+- [x] 1.5 Test: rendered `order_confirmation` carries `style="` on the masthead
       and the hero, and still carries the `@media` block.
 
 ### 2. The email promised 17:25; checkout promised 19:00
@@ -43,14 +43,14 @@ Re-deriving the window at send time would not fix it either — by then the
 window that was open at checkout may have closed, and the customer would be
 moved to a later slot they were never told about. The promise has to be stored.
 
-- [ ] 2.1 Migration: `orders.promised_at` (timestamptz, null) and
+- [x] 2.1 Migration: `orders.promised_at` (timestamptz, null) and
       `orders.promised_precision` (varchar(8), null). Null on every existing
       row, which is the pre-change behaviour and needs no backfill.
-- [ ] 2.2 `order_service._persist_order` stamps both from
+- [x] 2.2 `order_service._persist_order` stamps both from
       `delivery_service.estimate_arrival` — server-side, from the zone the pin
       landed in. Not taken from the client: the browser is not the record of
       what we promised.
-- [ ] 2.3 `fulfilment_service._estimate` returns the stored promise for every
+- [x] 2.3 `fulfilment_service._estimate` returns the stored promise for every
       stage before the parcel moves, and overrides it only where something
       sharper and *real* exists:
       - `collected` / `delivered` → the actual stamp (unchanged)
@@ -60,9 +60,9 @@ moved to a later slot they were never told about. The promise has to be stored.
         (the order missed its window) → `dispatch_at + 1h`, because the
         customer is genuinely on a later run
       - no promise stored → today's fallback, unchanged
-- [ ] 2.4 `OrderResponse` carries both, so the track page and the account page
+- [x] 2.4 `OrderResponse` carries both, so the track page and the account page
       read the same number as the email.
-- [ ] 2.5 Tests in `test_fulfilment_service.py`: a confirmed batched order
+- [x] 2.5 Tests in `test_fulfilment_service.py`: a confirmed batched order
       reports the checkout promise, not `created + 3h`; a picked-up order still
       reports `picked_up_at + 45m`.
 
@@ -78,17 +78,17 @@ Three other places already flatten an address and each does it differently:
 `pos_orders._flat_address` (unit, line 1, city — no line 2),
 `lalamove_service` and `noon_send_service` (unit, line 1).
 
-- [ ] 3.1 New `app/services/address_format.py` — `one_line(snapshot)` joining
+- [x] 3.1 New `app/services/address_format.py` — `one_line(snapshot)` joining
       `unit_number, address_line_1, address_line_2, city` on ", ", skipping
       blanks. Unit first: a formatted Google line gets a rider to the building
       and the flat number is the part that finishes it.
-- [ ] 3.2 `email_service._order_context` resolves `address_one_line`; the
+- [x] 3.2 `email_service._order_context` resolves `address_one_line`; the
       `address_card` macro prints name / that line / phone. Reaches
       confirmation, packed, out-for-delivery, undelivered and the owner
       notification at once — all five use the macro.
-- [ ] 3.3 Point `pos_orders._flat_address`, Lalamove and noon Send at the same
+- [x] 3.3 Point `pos_orders._flat_address`, Lalamove and noon Send at the same
       function, so the ticket, the courier and the email agree.
-- [ ] 3.4 Test: a snapshot with a unit renders it; one without renders no stray
+- [x] 3.4 Test: a snapshot with a unit renders it; one without renders no stray
       comma.
 
 ### 4. noon Send is sent notes nobody needs
@@ -99,9 +99,9 @@ reference is already the `order_reference` field, and the unit is already the
 first element of the address string — so two of the three are duplicates and the
 rider reads them instead of the note that matters.
 
-- [ ] 4.1 `delivery_notes` becomes the customer's checkout note alone, trimmed
+- [x] 4.1 `delivery_notes` becomes the customer's checkout note alone, trimmed
       and capped at 250; empty string when there is no note.
-- [ ] 4.2 Update `test_noon_send_service.py` accordingly.
+- [x] 4.2 Update `test_noon_send_service.py` accordingly.
 
 ### 5. The POS asks to pair on every launch
 
@@ -116,11 +116,11 @@ live item, returns `errSecDuplicateItem`, and **that status is discarded**
 (`SecItemAdd(q, nil)`). The token silently fails to persist and the next launch
 reads nothing.
 
-- [ ] 5.1 `kSecAttrAccessible` only on add. Add `kSecAttrService` so the items
+- [x] 5.1 `kSecAttrAccessible` only on add. Add `kSecAttrService` so the items
       are namespaced rather than keyed on account alone.
-- [ ] 5.2 Check `OSStatus` on add and delete; `SecItemUpdate` on duplicate;
+- [x] 5.2 Check `OSStatus` on add and delete; `SecItemUpdate` on duplicate;
       return a `Bool` so a failed write is knowable.
-- [ ] 5.3 `POSSession` surfaces a failed credential write instead of silently
+- [x] 5.3 `POSSession` surfaces a failed credential write instead of silently
       landing on the pairing screen next launch.
 
 **(b) Any 401 unpairs the device.** `bootstrap()` catches
@@ -130,12 +130,12 @@ It cannot: `authenticate_device` raises 401 for a missing token, and
 `get_current_device` raises 401 when `POS_REQUIRE_POS_HOST` is on and the
 request reached the storefront host. Neither means this terminal was unpaired.
 
-- [ ] 5.4 API: give the genuinely-terminal cases a machine-readable code
+- [x] 5.4 API: give the genuinely-terminal cases a machine-readable code
       (`device_revoked` / `device_disabled`) in the error body; everything else
       keeps its message and no code.
-- [ ] 5.5 App: clear the token only on that code. Any other 401 keeps the
+- [x] 5.5 App: clear the token only on that code. Any other 401 keeps the
       pairing, shows the message and goes to the PIN screen.
-- [ ] 5.6 Settings gains a Pairing row — device reference and paired host — so a
+- [x] 5.6 Settings gains a Pairing row — device reference and paired host — so a
       terminal that has lost its pairing says so rather than just reappearing at
       the pairing screen.
 
@@ -160,9 +160,9 @@ counts a drawer.
 So: website orders become a till-independent flow on both apps — accept, print,
 mark packed — available from the moment a terminal is signed in.
 
-- [ ] 6.1 Move push registration into `POSSession` after sign-in, so any signed-
+- [x] 6.1 Move push registration into `POSSession` after sign-in, so any signed-
       in terminal registers regardless of which face it is showing.
-- [ ] 6.2 Attach the queue to the whole signed-in tree on **both** apps —
+- [x] 6.2 Attach the queue to the whole signed-in tree on **both** apps —
       `.tillClosed` and `.ready`, both phone modes. No till gate on accept.
 
 **(b) There is no order history anywhere.** `MMPos/Features/Orders/` is an empty
@@ -171,13 +171,13 @@ directory. Neither app can look at a past order. The permission for it —
 reads it. `GET /pos/orders` already takes `branch_id`, `business_date`,
 `pos_status`, `order_type` and `limit`, so no API work is needed.
 
-- [ ] 6.4 `MMPos/Features/Orders/OrdersHistoryModel.swift` — branch-scoped, by
+- [x] 6.4 `MMPos/Features/Orders/OrdersHistoryModel.swift` — branch-scoped, by
       business date, filterable by channel (website / counter) and status.
-- [ ] 6.5 `OrdersHistoryView` + a detail sheet with reprint. Shared kit, per the
+- [x] 6.5 `OrdersHistoryView` + a detail sheet with reprint. Shared kit, per the
       consistency rule.
-- [ ] 6.6 Surfaced on **both** apps: a tab in the phone companion, an action in
+- [x] 6.6 Surfaced on **both** apps: a tab in the phone companion, an action in
       the iPad's register menu. Same wording, same filters, same empty state.
-- [ ] 6.7 `Tests/OrdersHistoryTests.swift` — decoding and the filter rules.
+- [x] 6.7 `Tests/OrdersHistoryTests.swift` — decoding and the filter rules.
 
 ### 7. Audit — what else a POS taking website orders should do
 
@@ -203,16 +203,67 @@ this pass**; the rest of the table is scoped separately.
 `PUT /orders/{order_number}/status` cannot be the endpoint for it — it is gated
 on `get_admin_user`, and a cashier signed in with a branch PIN is not an admin.
 
-- [ ] 7.1a `POST /pos/orders/{order_id}/packed`, gated on `pos.register.access`.
+- [x] 7.1a `POST /pos/orders/{order_id}/packed`, gated on `pos.register.access`.
       Delegates to `order_service.update_status(..., PACKED)` so the transition
       validation, the batch assignment and the emails stay in the one place that
       already owns them, then `email_service.notify_status_change`.
-- [ ] 7.1b "Mark packed" on an accepted website order, shared kit, both apps.
+- [x] 7.1b "Mark packed" on an accepted website order, shared kit, both apps.
       Disabled once the order is past packed, with the reason shown.
-- [ ] 7.1c Tests: the endpoint books the batch and sends the email; a cashier
+- [x] 7.1c Tests: the endpoint books the batch and sends the email; a cashier
       without the permission gets a 403.
 
 **Order of work:** 1 → 3 → 4 → 2 → 5 → 6 → 7.1. One commit per item.
+
+---
+
+### Review
+
+Eight commits, on `email-fidelity-and-pos-gaps` (mm-ecommerce) and
+`website-orders-and-pairing` (mm-pos). 959 API tests, 174 POS tests, both app
+targets build.
+
+**Where the plan was wrong.**
+
+*2.4 was dropped.* The plan said to put `promised_at` on `OrderResponse` too.
+It should not be there: `FulfilmentResponse` is already the single channel every
+reader uses for "when does this arrive", and it now carries the promise through
+`estimated_at`/`precision`. A second exposure of the same fact is how two
+readers come to disagree — which is the exact bug being fixed.
+
+*6.3 was wrong, and Hussain caught it.* The plan assumed accepting a website
+order needs an open till and designed a flow around switching modes to get one.
+It does not: the order is already paid, `accept_order` never touches `till_id`,
+and the ticket already printed with `openDrawer: false`. The till requirement
+was an artefact of the queue being attached to the register screen. Removing it
+also fixed the iPad, which had the same defect for the same reason — a counter
+terminal on the till-open screen saw no website orders until somebody counted a
+drawer. See `lessons.md`.
+
+*`kSecAttrService` was planned and then deliberately not added.* It would
+namespace the keychain items better, but every already-paired terminal wrote its
+token without one, so requiring it would miss all of them and every till in the
+shop would ask for a pairing code the morning it updated — the exact failure
+being fixed.
+
+**Found while building, not in the plan.**
+
+An accepted order sat under "In the kitchen" reading "Accepting…" forever. Two
+sibling `ForEach`es, one `LazyVStack`, same `order.id`: SwiftUI matched the
+identity across them and kept the view's existing branch. It compiled and 158
+tests passed; only driving the simulator showed it. Fixed by naming the action
+as a value rather than expressing it as view structure.
+
+**Deliberately not done.**
+
+Section 7 beyond 7.1 — reprint of a past receipt is in (it came with the history
+screen), but scheduled orders, the dispatch board, driver assignment, refunds
+against a past order, a reject path on an incoming order, order search and a KDS
+surface are all still gaps, and all have API endpoints already waiting. They
+want their own piece of work.
+
+`pos.orders.view_done` is still read by nothing. The history screen gates on
+`orders.read`, matching the endpoint behind it. That permission now wants either
+a use or a deletion.
 
 ---
 
