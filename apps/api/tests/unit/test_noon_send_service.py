@@ -762,3 +762,41 @@ def test_a_push_with_no_rider_yet_leaves_the_pin_alone():
     noon_send_service.apply_tracking(delivery, {"order_nr": "X", "da_details": None})
 
     assert delivery.driver_latitude == Decimal("25.1")
+
+
+#: A real tracking push, verbatim from the webhook noon sent for order
+#: MM-20260805-007 at 07:57:16 — flat, and already in degrees.
+REAL_TRACKING_WEBHOOK = {
+    "order_nr": "HG85NNJRJYC4A7EI",
+    "order_reference": "MM-20260805-007",
+    "da_details": {"latitude": 25.2017569, "longitude": 55.2733758},
+    "timestamp": "2026-08-05 07:57:16",
+}
+
+
+def test_both_shapes_of_coordinate_are_understood():
+    """
+    noon sends the same number two ways, and we have both from one order.
+
+    `GET /tasks/{nr}` nests and scales — `location.latitude == "252017557"`.
+    The tracking webhook sends flat degrees — `latitude == 25.2017569`. Reading
+    only the first meant thirteen tracking pushes in eight minutes moved
+    nothing, while the log cheerfully said `matched: True` each time.
+
+    Told apart by magnitude, because that is a property of the number: no
+    latitude exceeds 90 and no longitude exceeds 180.
+    """
+    from_webhook = OrderDelivery(order_id=uuid.uuid4(), provider="noon_send")
+    noon_send_service.apply_tracking(from_webhook, REAL_TRACKING_WEBHOOK)
+
+    from_detail = OrderDelivery(order_id=uuid.uuid4(), provider="noon_send")
+    noon_send_service.apply_tracking(from_detail, REAL_TRACKING)
+
+    for delivery in (from_webhook, from_detail):
+        assert 25.0 < float(delivery.driver_latitude) < 25.5, "not a Dubai latitude"
+        assert 55.0 < float(delivery.driver_longitude) < 55.6
+
+    # The same rider, seconds apart, from two different endpoints.
+    assert abs(from_webhook.driver_latitude - from_detail.driver_latitude) < Decimal(
+        "0.001"
+    )

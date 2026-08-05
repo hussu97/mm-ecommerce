@@ -100,19 +100,26 @@ def coordinate(value: float) -> int:
 
 def degrees(value: Any) -> Decimal | None:
     """
-    The inverse: what they send back, as degrees.
+    A coordinate they sent us, as degrees, whichever way they sent it.
 
-    Their rider coordinates arrive in the same ×10^7 encoding we send, and as
-    strings — `{"latitude": "252017557"}` is 25.2017557. Only the outbound half
-    of that existed, so the value went into a `Numeric(9, 6)` column unconverted
-    and overflowed it.
+    noon uses two encodings for the same number and we have seen both on the
+    same order. `GET /tasks/{nr}` nests them and scales them —
+    `da_details.location.latitude == "252017557"` — while the tracking webhook
+    sends them flat and already in degrees: `da_details.latitude == 25.2017569`.
+
+    Told apart by magnitude rather than by which endpoint asked, because that is
+    a property of the number and cannot go stale. No latitude exceeds 90 and no
+    longitude exceeds 180, so anything past that is scaled and anything under it
+    is not. Only the outbound half of this existed, so a scaled value went into
+    a `Numeric(9, 6)` column unconverted and overflowed it.
     """
     if value is None or value == "":
         return None
     try:
-        return Decimal(str(value)) / 10_000_000
+        number = Decimal(str(value))
     except (InvalidOperation, ValueError, TypeError):
         return None
+    return number / 10_000_000 if abs(number) > 180 else number
 
 
 def fils(amount: Any) -> int:

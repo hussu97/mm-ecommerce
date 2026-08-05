@@ -965,10 +965,11 @@ def apply_tracking(delivery: OrderDelivery, payload: dict[str, Any]) -> None:
     or logged. Two real pushes arrived that way before anyone looked.
     """
     details = payload.get("da_details") or {}
-    # Only the documented shape. Falling back to a flat `da_details.latitude`
-    # would divide a plain degree by ten million and store the result, which is
-    # worse than storing nothing.
-    location = details.get("location") or {}
+    # Both shapes, because noon uses both. The task detail nests the pair under
+    # `location`; the tracking webhook puts them straight on `da_details`. This
+    # read only the first, so every tracking push for a live order was a no-op —
+    # thirteen of them arrived in eight minutes and moved nothing.
+    location = details.get("location") or details
     latitude = degrees(location.get("latitude"))
     longitude = degrees(location.get("longitude"))
     if latitude is not None and longitude is not None:
