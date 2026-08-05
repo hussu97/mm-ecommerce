@@ -47,6 +47,7 @@ from app.services import (
     address_format,
     crud_service,
     email_service,
+    option_snapshot,
     order_service,
     pos_order_service,
 )
@@ -67,6 +68,14 @@ def _serialise(order: Order) -> PosOrderResponse:
     payload.items = [
         OrderItemResponse.model_validate(i) for i in order.items if i.status != "void"
     ]
+    # One modifier shape, whichever checkout wrote it. The website and the
+    # counter write different keys into the same column, and the register knows
+    # only the counter's — so a website order with a flavour on it failed to
+    # decode, which takes the entire response with it rather than one line.
+    for item, row in zip(payload.items, [i for i in order.items if i.status != "void"]):
+        item.selected_options_snapshot = option_snapshot.for_register(
+            row.selected_options_snapshot
+        )
     return payload
 
 
