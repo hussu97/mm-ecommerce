@@ -3,15 +3,23 @@ name: Deploy to Production
 on:
   push:
     branches: [main]
+  # For redeploying without a code change — which is what changing a secret
+  # needs. The `.env` on the VM is written by this workflow, and Vercel bakes
+  # its public variables at build time, so a secret set in either place does
+  # nothing until something deploys again.
+  workflow_dispatch:
 
 jobs:
   changes:
     name: Detect -changed paths
     runs-on: ubuntu-latest
     outputs:
-      web: ${{ steps.filter.outputs.web }}
-      admin: ${{ steps.filter.outputs.admin }}
-      api: ${{ steps.filter.outputs.api }}
+      # A manual run has no previous commit to diff against, so the filter
+      # would find nothing changed and deploy nothing at all — which is the
+      # opposite of what someone pressing "Run workflow" is asking for.
+      web: ${{ steps.filter.outputs.web == 'true' || github.event_name == 'workflow_dispatch' }}
+      admin: ${{ steps.filter.outputs.admin == 'true' || github.event_name == 'workflow_dispatch' }}
+      api: ${{ steps.filter.outputs.api == 'true' || github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v4
         with:
