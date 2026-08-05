@@ -67,7 +67,7 @@
 </table>
 
 {{ parts.estimate_card(estimate) }}
-{{ parts.address_card(address) }}
+{{ parts.address_card(address, address_line, recipient_name) }}
 {{ parts.order_summary(items, totals) }}
 {{ parts.notes_card(order.notes) }}
 {{ parts.button(admin_order_url, 'Open in the admin') }}

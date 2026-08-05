@@ -18,6 +18,7 @@ from app.core.database import AsyncSessionFactory
 from app.models.delivery_batch import DELIVERY_TIMEZONE
 from app.models.email_log import EmailLog
 from app.models.pos_order import OrderSourceEnum
+from app.services import address_format
 from app.services.email_copy import DIRECTION, translator
 from app.schemas.order import OrderResponse
 
@@ -452,6 +453,15 @@ def _order_context(
             else (branch.city if branch else None)
         ),
         "address": None if is_pickup else (order.shipping_address_snapshot or None),
+        # Flattened here, by the same function the register's ticket and both
+        # couriers use. The card used to lay the fields out itself and got two
+        # of them wrong: `unit_number` — the flat or floor, and the only part of
+        # an address a map pin cannot supply — was never rendered, and `city` is
+        # not a field the checkout writes, so that line never appeared either.
+        "address_line": address_format.one_line(order.shipping_address_snapshot),
+        "recipient_name": address_format.recipient_name(
+            order.shipping_address_snapshot
+        ),
         "tracking_url": _order_tracking_url(order.order_number, order.email, locale),
         "live_tracking_url": fulfilment.tracking_url if fulfilment else None,
         # noon Send text the customer their own tracking link once a rider has
@@ -650,17 +660,7 @@ async def send_owner_order_notification(order: OrderResponse) -> None:
                 recipient_email=recipient,
                 locale="en",
                 admin_order_url=_admin_order_url(order.order_number),
-                customer_name=(
-                    " ".join(
-                        part
-                        for part in (
-                            snapshot.get("first_name"),
-                            snapshot.get("last_name"),
-                        )
-                        if part
-                    )
-                    or "—"
-                ),
+                customer_name=address_format.recipient_name(snapshot) or "—",
                 customer_phone=snapshot.get("phone"),
                 **context,
             )

@@ -57,7 +57,7 @@ from app.models.order_delivery import (
     OrderDelivery,
 )
 from app.models.webhook_event import WebhookEvent
-from app.services import courier_reference, email_service
+from app.services import address_format, courier_reference, email_service
 from app.services.lalamove_service import (
     Estimate,
     PickupPoint,
@@ -447,19 +447,15 @@ def build_task(
     if not phone:
         return None, "Order has no reachable phone number"
 
-    line = str(address.get("address_line_1") or "").strip()
-    unit = str(address.get("unit_number") or "").strip()
-    # Unit first, for the same reason as Lalamove: a formatted Google address
-    # gets a rider to the building and the flat number finishes the job.
-    text = f"{unit}, {line}" if unit and line else (line or unit)
+    # `address_format.one_line`, which is also what the rider's stop, the
+    # register's ticket and the customer's email are built from. Unit first: a
+    # formatted Google address gets a rider to the building and the flat number
+    # finishes the job.
+    text = address_format.one_line(address) or ""
     if len(text) < 5:
         return None, "Order has no usable street address"
 
-    name = " ".join(
-        str(part).strip()
-        for part in (address.get("first_name"), address.get("last_name"))
-        if part
-    ).strip()
+    name = address_format.recipient_name(address) or ""
 
     total = Decimal(str(order.total or 0))
     is_cod = (order.payment_method or "").lower() == "cod" and outstanding > 0
@@ -467,8 +463,8 @@ def build_task(
     # The short reference leads, because it is the one a rider will be asked to
     # read back. Our own number follows it, for the shop.
     notes = [f"Order {reference}", f"Ref {order.order_number}"]
-    if unit:
-        notes.append(f"Unit {unit}")
+    if str(address.get("unit_number") or "").strip():
+        notes.append(f"Unit {str(address.get('unit_number')).strip()}")
     if order.notes:
         notes.append(str(order.notes).strip())
 

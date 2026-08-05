@@ -37,7 +37,7 @@
 
 {{ parts.alert(t('undelivered.next_label'), t('undelivered.next_body')) }}
 
-{{ parts.address_card(address) }}
+{{ parts.address_card(address, address_line, recipient_name) }}
 {{ parts.order_summary(items, totals) }}
 {{ parts.button(tracking_url, t('undelivered.cta')) }}
 {% endblock %}

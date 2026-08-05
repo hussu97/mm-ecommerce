@@ -45,7 +45,7 @@ from app.models.order_delivery import (
     OrderDelivery,
 )
 from app.models.webhook_event import WebhookEvent
-from app.services import courier_reference, email_service
+from app.services import address_format, courier_reference, email_service
 from app.services.delivery_zone_service import Zone
 from app.services.providers.lalamove_provider import LalamoveError, provider
 
@@ -1106,20 +1106,18 @@ def _coordinates(address: dict[str, Any]) -> tuple[float | None, float | None]:
 
 
 def _recipient_name(address: dict[str, Any]) -> str:
-    parts = [address.get("first_name"), address.get("last_name")]
-    return " ".join(str(p).strip() for p in parts if p).strip()
+    return address_format.recipient_name(address) or ""
 
 
 def _drop_address(address: dict[str, Any]) -> str:
     """
     What the driver reads.
 
-    The unit number leads, because a formatted Google address gets someone to
-    the building and the flat number is the only part that finishes the job.
+    `address_format.one_line`, so the driver's stop, the register's ticket and
+    the customer's confirmation email all say the same thing. It used to drop
+    `address_line_2`, which is where a checkout puts a building name.
     """
-    line = str(address.get("address_line_1") or "").strip()
-    unit = str(address.get("unit_number") or "").strip()
-    return f"{unit}, {line}" if unit and line else (line or unit)
+    return address_format.one_line(address) or ""
 
 
 def _remarks(

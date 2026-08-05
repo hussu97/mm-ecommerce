@@ -42,26 +42,9 @@ from app.schemas.pos_order import (
     ScheduleOrderRequest,
     VoidOrderRequest,
 )
-from app.services import crud_service, pos_order_service
+from app.services import address_format, crud_service, pos_order_service
 
 router = APIRouter()
-
-
-def _flat_address(order: Order) -> str | None:
-    """
-    Where a website order is going, in one line a rider or a ticket can read.
-
-    Unit first, because a formatted Google address gets someone to the building
-    and the flat number is the only part that finishes the job — the same order
-    the courier payloads use.
-    """
-    snapshot = order.shipping_address_snapshot or {}
-    parts = [
-        str(snapshot.get(key) or "").strip()
-        for key in ("unit_number", "address_line_1", "city")
-    ]
-    joined = ", ".join(part for part in parts if part)
-    return joined or None
 
 
 def _serialise(order: Order) -> PosOrderResponse:
@@ -69,7 +52,7 @@ def _serialise(order: Order) -> PosOrderResponse:
     payload.customer_id = order.user_id
     payload.amount_paid = order.amount_paid
     payload.balance_due = order.balance_due
-    payload.delivery_address = _flat_address(order)
+    payload.delivery_address = address_format.one_line(order.shipping_address_snapshot)
     # Voided lines stay in the database for audit but never render on the check.
     payload.items = [
         OrderItemResponse.model_validate(i) for i in order.items if i.status != "void"

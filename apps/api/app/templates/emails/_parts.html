@@ -118,20 +118,28 @@
 {% endmacro %}
 
 
-{# Where the order is going. Delivery only — a pickup order has a branch card. #}
-{% macro address_card(address) %}
+{#
+  Where the order is going. Delivery only — a pickup order has a branch card.
+
+  The address itself arrives as one already-joined string, from
+  `address_format.one_line`, rather than as fields to lay out here. It used to
+  be four conditional lines, and two of them were wrong: `unit_number` — the
+  flat, floor or office, the one part of an address a map pin cannot supply —
+  was never rendered at all, and `city` is not a field the checkout writes, so
+  that line had never appeared either. One line, one function, and the same
+  string the register's ticket and the courier's stop are given.
+#}
+{% macro address_card(address, address_line, recipient) %}
 {% if address %}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="body-copy" style="padding-top: 26px;">
     <h2 class="section">{{ t('section.delivering_to') }}</h2>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="panel">
       <tr><td class="panel-pad">
-        {% if address.first_name or address.last_name %}
-        <div class="kv-value" style="font-weight:500;" dir="auto">{{ address.first_name }} {{ address.last_name }}</div>
+        {% if recipient %}
+        <div class="kv-value" style="font-weight:500;" dir="auto">{{ recipient }}</div>
         {% endif %}
-        {% if address.address_line_1 %}<div class="kv-value" dir="auto">{{ address.address_line_1 }}</div>{% endif %}
-        {% if address.address_line_2 %}<div class="kv-value" dir="auto">{{ address.address_line_2 }}</div>{% endif %}
-        {% if address.city %}<div class="kv-value" dir="auto">{{ address.city }}</div>{% endif %}
+        {% if address_line %}<div class="kv-value" dir="auto">{{ address_line }}</div>{% endif %}
         {% if address.phone %}<div class="kv-value" style="font-size:14px;color:#8a7a7c;padding-top:6px;" dir="ltr">{{ address.phone }}</div>{% endif %}
       </td></tr>
     </table>

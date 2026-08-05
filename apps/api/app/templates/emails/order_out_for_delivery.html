@@ -62,7 +62,7 @@
 </table>
 {% endif %}
 
-{{ parts.address_card(address) }}
+{{ parts.address_card(address, address_line, recipient_name) }}
 {{ parts.timeline(steps) }}
 {{ parts.order_summary(items, totals) }}
 {% endblock %}
