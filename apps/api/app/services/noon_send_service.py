@@ -454,26 +454,27 @@ async def outstanding_balance(db: AsyncSession, order: Order) -> Decimal:
     return Decimal(str(order.total or 0)) - Decimal(str(paid))
 
 
-def _declared_value(order: Order, total: Decimal) -> int:
+def _declared_value(total: Decimal) -> int:
     """
-    What the parcel is worth, in fils, for a prepaid task.
+    The prepaid amount, in fils, with a flat stand-in when it is nothing.
 
     noon Send requires one of `cod_value` and `prepaid_value` and treats zero as
-    absent — `cod_prepaid_missing`, which is a 400 at task creation. A fully
-    discounted order really is worth nothing to collect, so the honest number is
-    the one their API will not accept.
+    absent — `cod_prepaid_missing`, a 400 at task creation. The trial orders are
+    the only ones that reach it, because they carry a 100% promo code and a
+    waived delivery fee, so their total really is AED 0.00.
 
-    So a zero falls back to the goods' own value: the subtotal before the
-    discount, which is what a rider is actually carrying and what matters if it
-    is dropped. Nothing about this can cause money to be collected — only
-    `cod_value` does that, and it stays zero. The floor of one dirham is for the
-    order that is genuinely free of charge end to end, which their API still
-    will not take a zero for.
+    AED 1.00 stands in. It is a hack and it is deliberately a flat one: these
+    are staging tasks that never reach a real rider, and deriving something
+    plausible from the order would put a number in noon's records that nobody
+    paid. Nothing here can cause money to be collected — only `cod_value` does
+    that, and it stays zero.
+
+    A real customer with a 100% promo hits the same line, which is fine: AED 1
+    is as true as anything else for a bag that was given away, and the
+    alternative is a refusal and a fall back to Lalamove.
     """
-    for candidate in (total, getattr(order, "subtotal", None)):
-        if candidate and fils(candidate) > 0:
-            return fils(candidate)
-    return 100
+    value = fils(total)
+    return value if value > 0 else 100
 
 
 def build_task(order: Order, outstanding: Decimal) -> tuple[Task | None, str | None]:
@@ -531,7 +532,7 @@ def build_task(order: Order, outstanding: Decimal) -> tuple[Task | None, str | N
                 "country_code": "ae",
                 "city": str(address.get("city") or "Sharjah")[:100],
             },
-            prepaid_value=0 if is_cod else _declared_value(order, total),
+            prepaid_value=0 if is_cod else _declared_value(total),
             cod_value=fils(outstanding) if is_cod else 0,
             delivery_notes=" · ".join(notes)[:250],
             # A cake is handed over, never left at a door — and a COD task may

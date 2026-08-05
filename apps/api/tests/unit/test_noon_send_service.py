@@ -615,9 +615,8 @@ async def test_a_trial_order_collects_from_the_staging_outlet(monkeypatch):
     [
         # The ordinary case: what they paid.
         (Decimal("185.00"), Decimal("170.00"), 18500),
-        # A 100% promo. Nothing was paid, so the goods' own value is declared.
-        (Decimal("0.00"), Decimal("50.00"), 5000),
-        # Free end to end. Their API still will not take a zero.
+        # A 100% promo. Nothing was paid, so the flat stand-in applies.
+        (Decimal("0.00"), Decimal("50.00"), 100),
         (Decimal("0.00"), Decimal("0.00"), 100),
     ],
 )
@@ -628,8 +627,10 @@ def test_a_prepaid_task_always_carries_a_value(total, subtotal, expected):
 
     Production found it the honest way: a trial order with a 100% promo code had
     a total of AED 0.00, sent `prepaid_value: 0`, was refused, and fell back to
-    Lalamove. Nothing here can cause money to be collected — only `cod_value`
-    does that, and it stays zero throughout.
+    Lalamove. AED 1.00 stands in — flat, because these are staging tasks that
+    never reach a rider and a derived figure would put money in noon's records
+    that nobody paid. Nothing here can cause any to be collected: only
+    `cod_value` does that, and it stays zero throughout.
     """
     order = SimpleNamespace(
         order_number="MM-20260805-003",
