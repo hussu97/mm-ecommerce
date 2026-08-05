@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 from typing import Optional
 
@@ -15,6 +16,8 @@ from app.core.deps import get_admin_user, get_db
 from app.models.order import Order, OrderItem, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
 from app.models.user import User
+
+logger = logging.getLogger(__name__)
 
 _ANALYTICS_TTL = 300
 
@@ -92,6 +95,13 @@ class TopPage(BaseModel):
     views: int
 
 
+class EventCount(BaseModel):
+    """One custom event from `apps/web/lib/analytics.ts`, and how often it fired."""
+
+    name: str
+    count: int
+
+
 class TrafficData(BaseModel):
     visitors: int
     sessions: int
@@ -100,7 +110,14 @@ class TrafficData(BaseModel):
     avg_duration: float
     pageviews_chart: list[PageviewPoint]
     top_pages: list[TopPage]
+    #: Custom events, commonest first. Empty is a real answer — it means the
+    #: storefront tracked nothing in this window, which is worth seeing.
+    events: list[EventCount]
     configured: bool
+    #: Why the numbers above are zero, when the reason is us and not the shop.
+    #: `None` when Umami answered. Anything else is a configuration problem the
+    #: owner can act on, and used to be indistinguishable from a quiet week.
+    error: str | None = None
 
 
 class CustomerBreakdown(BaseModel):
@@ -397,35 +414,58 @@ async def get_traffic(
     end_date: Optional[date] = Query(None),
     _admin: User = Depends(get_admin_user),
 ):
-    """Traffic metrics proxied from Umami Cloud analytics."""
-    _empty = TrafficData(
-        visitors=0,
-        sessions=0,
-        pageviews=0,
-        bounce_rate=0.0,
-        avg_duration=0.0,
-        pageviews_chart=[],
-        top_pages=[],
-        configured=False,
-    )
+    """
+    Traffic and custom events, read back from Umami Cloud.
+
+    Every failure here used to return zeros. A revoked key, a plan whose API
+    access has lapsed, a website ID pointing at a site nobody visits and a genuinely
+    quiet Tuesday all rendered as the same four noughts on the dashboard, and the
+    only way to tell them apart was to read the API's reply by hand from the VM.
+    They are told apart now: `error` carries the reason when the reason is ours.
+    """
+
+    def _empty(*, configured: bool, error: str | None = None) -> TrafficData:
+        return TrafficData(
+            visitors=0,
+            sessions=0,
+            pageviews=0,
+            bounce_rate=0.0,
+            avg_duration=0.0,
+            pageviews_chart=[],
+            top_pages=[],
+            events=[],
+            configured=configured,
+            error=error,
+        )
 
     if not settings.UMAMI_API_KEY or not settings.UMAMI_WEBSITE_ID:
-        return _empty
+        return _empty(configured=False)
 
     start, end = _date_range(start_date, end_date)
     start_ms = _to_ms(start)
     end_ms = _to_ms(end) + 86_399_999  # inclusive end-of-day
 
     base = f"https://api.umami.is/v1/websites/{settings.UMAMI_WEBSITE_ID}"
-    headers = {"Authorization": f"Bearer {settings.UMAMI_API_KEY}"}
+    headers = {"x-umami-api-key": settings.UMAMI_API_KEY}
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            stats_resp, pv_resp, pages_resp = await _umami_fetch_all(
-                client, base, headers, start_ms, end_ms
-            )
-    except Exception:
-        return _empty
+            responses = await _umami_fetch_all(client, base, headers, start_ms, end_ms)
+    except Exception as exc:
+        logger.warning("Umami read failed: %s", exc)
+        return _empty(configured=True, error=f"Could not reach Umami: {exc}")
+
+    failure = _umami_failure(responses)
+    if failure:
+        logger.warning("Umami read rejected: %s", failure)
+        return _empty(configured=True, error=failure)
+
+    stats_resp, pv_resp, pages_resp, events_resp = (
+        _umami_json(responses[0], {}),
+        _umami_json(responses[1], {}),
+        _umami_json(responses[2], []),
+        _umami_json(responses[3], []),
+    )
 
     try:
         # Umami v2 returns flat integers: {"visitors": 1, "pageviews": 5, ...}
@@ -440,8 +480,13 @@ async def get_traffic(
         visitors = int(_stat("visitors"))
         sessions = int(_stat("visits"))  # Umami uses "visits" not "sessions"
         pageviews = int(_stat("pageviews"))
-        bounce_rate = _stat("bounces")
-        avg_duration = _stat("totaltime")
+
+        # Umami reports `bounces` as a count of single-page visits and
+        # `totaltime` as a sum of seconds. The dashboard prints one as a
+        # percentage and the other as an average, so the division belongs here
+        # — without it a good week read as a 300% bounce rate.
+        bounce_rate = (_stat("bounces") / sessions * 100) if sessions else 0.0
+        avg_duration = (_stat("totaltime") / sessions) if sessions else 0.0
 
         chart_items = pv_resp.get("pageviews", [])
         chart = [
@@ -454,6 +499,16 @@ async def get_traffic(
             for item in pages_resp[:10]
         ]
 
+        events = sorted(
+            (
+                EventCount(name=item.get("x", ""), count=int(item.get("y", 0)))
+                for item in events_resp
+                if item.get("x")
+            ),
+            key=lambda e: e.count,
+            reverse=True,
+        )
+
         return TrafficData(
             visitors=visitors,
             sessions=sessions,
@@ -462,15 +517,23 @@ async def get_traffic(
             avg_duration=round(avg_duration, 0),
             pageviews_chart=chart,
             top_pages=top,
+            events=events,
             configured=True,
         )
-    except Exception:
-        return _empty
+    except Exception as exc:
+        logger.warning("Umami reply was not the shape we expected: %s", exc)
+        return _empty(configured=True, error=f"Unreadable reply from Umami: {exc}")
 
 
 async def _umami_fetch_all(
     client: httpx.AsyncClient, base: str, headers: dict, start_ms: int, end_ms: int
-) -> tuple[dict, dict, list]:
+) -> tuple[httpx.Response, httpx.Response, httpx.Response, httpx.Response]:
+    """
+    Stats, the pageview series, top paths, and the custom events.
+
+    The responses come back whole rather than pre-parsed, because whether Umami
+    said yes is as much of the answer as what it said.
+    """
     import asyncio
 
     params = {"startAt": start_ms, "endAt": end_ms}
@@ -479,17 +542,48 @@ async def _umami_fetch_all(
         p = {**params, **(extra or {})}
         return await client.get(url, headers=headers, params=p)
 
-    stats_resp, pv_resp, pages_resp = await asyncio.gather(
+    return await asyncio.gather(  # type: ignore[return-value]
         fetch(f"{base}/stats"),
         fetch(f"{base}/pageviews", {"unit": "day", "timezone": "Asia/Dubai"}),
         fetch(f"{base}/metrics", {"type": "path"}),
+        # Every name `apps/web/lib/analytics.ts` tracks — add_to_cart,
+        # begin_checkout, order_completed and the rest. Nothing read these
+        # before, so the dashboard could not have shown a checkout event
+        # arriving even when one did.
+        fetch(f"{base}/metrics", {"type": "event"}),
     )
 
-    stats_data = stats_resp.json() if stats_resp.is_success else {}
-    pv_data = pv_resp.json() if pv_resp.is_success else {}
-    pages_data = pages_resp.json() if pages_resp.is_success else []
 
-    return stats_data, pv_data, pages_data
+def _umami_failure(responses: tuple[httpx.Response, ...]) -> str | None:
+    """The first refusal in a batch, phrased for somebody who has to fix it."""
+    for resp in responses:
+        if resp.is_success:
+            continue
+        detail = ""
+        try:
+            body = resp.json()
+            if isinstance(body, dict):
+                err = body.get("error")
+                detail = (
+                    err.get("message", "") if isinstance(err, dict) else str(err or "")
+                )
+        except Exception:
+            detail = resp.text[:120]
+        if resp.status_code in (401, 403):
+            return (
+                f"Umami refused the API key ({resp.status_code}"
+                f"{': ' + detail if detail else ''}). Check UMAMI_API_KEY, and that "
+                "the Umami Cloud plan on this account includes API access."
+            )
+        return f"Umami returned {resp.status_code}{': ' + detail if detail else ''}"
+    return None
+
+
+def _umami_json(resp: httpx.Response, fallback):
+    try:
+        return resp.json()
+    except Exception:
+        return fallback
 
 
 @router.get("/customers", response_model=CustomerBreakdown)

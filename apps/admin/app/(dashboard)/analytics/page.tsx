@@ -242,6 +242,19 @@ export default function AnalyticsPage() {
         </div>
       ) : (
         <>
+          {/* Umami said no.
+              Everything below reads zero when that happens, which is also what
+              a quiet week looks like. Say which one it is, in the words Umami
+              used, rather than leaving the owner to guess at four noughts. */}
+          {traffic?.error && (
+            <div className="bg-amber-50 border border-amber-200 p-4 mb-6">
+              <p className="text-[11px] font-body uppercase tracking-widest text-amber-700 mb-1">
+                Traffic data unavailable
+              </p>
+              <p className="text-xs font-body text-amber-800">{traffic.error}</p>
+            </div>
+          )}
+
           {/* Row A — Traffic KPIs */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
             <MetricCard
@@ -601,6 +614,38 @@ export default function AnalyticsPage() {
                 </table>
               )}
             </Section>
+          </div>
+
+          {/* Row G2 — Storefront events.
+              The counts behind the funnel: add_to_cart, begin_checkout,
+              order_completed and the rest of `apps/web/lib/analytics.ts`.
+              Nothing read these before, so a checkout event could arrive in
+              Umami and still be invisible everywhere the shop actually looks. */}
+          <div className="mb-6">
+          <Section title="Storefront Events">
+            {!traffic?.configured ? (
+              <Empty message="Configure Umami to see storefront events." />
+            ) : traffic.events.length === 0 ? (
+              <Empty message="No events recorded in this period." />
+            ) : (
+              <table className="w-full text-xs font-body">
+                <thead>
+                  <tr className="border-b border-gray-100">
+                    <th className="pb-2 text-left text-[10px] uppercase tracking-widest text-gray-400">Event</th>
+                    <th className="pb-2 text-right text-[10px] uppercase tracking-widest text-gray-400">Count</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {traffic.events.map((e) => (
+                    <tr key={e.name}>
+                      <td className="py-2 text-gray-700 truncate max-w-[240px]">{e.name}</td>
+                      <td className="py-2 text-right text-gray-800">{e.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Section>
           </div>
 
           {/* Row H — Promo Performance (full width) */}

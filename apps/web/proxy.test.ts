@@ -71,7 +71,12 @@ describe('locale routing', () => {
    * replaced, which are the ones that cannot afford a second trip.
    */
   it('leaves the analytics proxy alone in every language', () => {
-    for (const headers of [{}, { 'accept-language': 'en-US,en;q=0.9' }, { 'accept-language': 'fr-FR' }]) {
+    const cases: Record<string, string>[] = [
+      {},
+      { 'accept-language': 'en-US,en;q=0.9' },
+      { 'accept-language': 'fr-FR' },
+    ];
+    for (const headers of cases) {
       expect(location(proxy(request('/umami/api/send', headers)))).toBeNull();
       expect(location(proxy(request('/umami/script.js', headers)))).toBeNull();
     }

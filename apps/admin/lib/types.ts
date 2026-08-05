@@ -331,6 +331,8 @@ export interface FunnelData {
 
 export interface PageviewPoint { date: string; views: number; }
 export interface TopPage { path: string; views: number; }
+/** One custom event the storefront tracks, and how often it fired. */
+export interface EventCount { name: string; count: number; }
 export interface TrafficData {
   visitors: number;
   sessions: number;
@@ -339,7 +341,10 @@ export interface TrafficData {
   avg_duration: number;
   pageviews_chart: PageviewPoint[];
   top_pages: TopPage[];
+  events: EventCount[];
   configured: boolean;
+  /** Set when Umami itself refused or could not be reached. */
+  error: string | null;
 }
 
 export interface CustomerBreakdown {
