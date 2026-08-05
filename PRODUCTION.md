@@ -829,9 +829,15 @@ Two things have to be done by the noon RoD integrations team, not here:
 
 1. **Register the webhooks.** Status →
    `https://api.meltingmomentscakes.com/api/v1/webhooks/noon-send`, rider
-   tracking → `.../api/v1/webhooks/noon-send/tracking`. Give them
-   `NOON_SEND_WEBHOOK_API_KEY` to send as `X-API-Key`; they do not sign
-   requests, so a push without the right key is dropped. Unlike Lalamove the
+   tracking → `.../api/v1/webhooks/noon-send/tracking`.
+
+   **Their staging environment sends no `X-API-Key`** — there is nowhere in it
+   to configure one — so a keyless push is accepted. A push carrying the *wrong*
+   key is still refused, which catches the realistic mistake of their production
+   side holding a stale one. What guards the endpoint meanwhile is the task
+   number: a push only moves an order we already dispatched under that
+   `mp_task_nr`, and anything else is acknowledged and ignored. Give them
+   `NOON_SEND_WEBHOOK_API_KEY` for production, where they can send it. Unlike Lalamove the
    path is not part of any signature, so it can be changed freely. These have to
    be registered **on the staging side** for the trial, and again on production
    later.

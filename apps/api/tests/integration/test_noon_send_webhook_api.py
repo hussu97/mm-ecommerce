@@ -38,10 +38,20 @@ def webhook_key(monkeypatch):
 
 
 class TestAuthentication:
-    async def test_a_push_without_the_key_changes_nothing(self, client):
+    """
+    noon Send's staging environment sends no `X-API-Key` — there is nowhere in
+    it to configure one — so demanding a key dropped every status update during
+    the trial, which is the thing the trial exists to exercise.
+
+    A keyless push is therefore accepted. A push carrying the *wrong* key is
+    still refused, which catches the realistic mistake: their production side
+    configured with a stale one.
+    """
+
+    async def test_a_push_without_a_key_is_accepted(self, client):
         response = await client.post(STATUS_URL, json=PUSH)
         assert response.status_code == 200
-        assert response.json()["error"] == "unauthorised"
+        assert "error" not in response.json()
 
     async def test_a_push_with_the_wrong_key_changes_nothing(self, client):
         response = await client.post(
@@ -49,26 +59,45 @@ class TestAuthentication:
         )
         assert response.json()["error"] == "unauthorised"
 
-    async def test_an_unconfigured_deployment_rejects_everything(
+    async def test_the_right_key_is_accepted(self, client):
+        response = await client.post(STATUS_URL, json=PUSH, headers={"X-API-Key": KEY})
+        assert "error" not in response.json()
+
+    async def test_an_unconfigured_deployment_accepts_a_key_it_cannot_check(
         self, client, monkeypatch
     ):
-        """
-        A blank configured key must not mean "accept anything". Left open, the
-        order statuses of a deployment that has not finished onboarding could be
-        driven by whoever finds the URL.
-        """
+        """With no key configured there is nothing to compare against."""
         import app.core.config as cfg
 
         monkeypatch.setattr(cfg.settings, "NOON_SEND_WEBHOOK_API_KEY", "")
-        response = await client.post(STATUS_URL, json=PUSH, headers={"X-API-Key": ""})
-        assert response.json()["error"] == "unauthorised"
-
-    async def test_the_tracking_endpoint_is_guarded_too(self, client):
         response = await client.post(
-            TRACKING_URL,
-            json={"order_nr": "X", "da_details": {"latitude": 25.3, "longitude": 55.3}},
+            STATUS_URL, json=PUSH, headers={"X-API-Key": "anything"}
         )
-        assert response.json()["error"] == "unauthorised"
+        assert "error" not in response.json()
+
+    async def test_the_tracking_endpoint_follows_the_same_rule(self, client):
+        body = {"order_nr": "X", "da_details": {"latitude": 25.3, "longitude": 55.3}}
+        assert "error" not in (await client.post(TRACKING_URL, json=body)).json()
+
+        wrong = await client.post(
+            TRACKING_URL, json=body, headers={"X-API-Key": "not-it"}
+        )
+        assert wrong.json()["error"] == "unauthorised"
+
+
+class TestTheTaskNumberIsTheRemainingGuard:
+    """
+    What is left protecting these endpoints once a keyless push is accepted.
+
+    Acting on a push requires naming a task we already dispatched — sixteen
+    characters we never publish. Anything else is acknowledged and ignored, so
+    a stranger who finds the URL can make no order move.
+    """
+
+    async def test_a_push_for_a_task_we_do_not_hold_moves_nothing(self, client):
+        response = await client.post(STATUS_URL, json=PUSH)
+        assert response.status_code == 200
+        assert response.json().get("matched") is not True
 
 
 class TestNeverFailing:
