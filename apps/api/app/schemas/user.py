@@ -14,6 +14,11 @@ class UserCreate(BaseModel):
     #: order to read one off here, and a `User` records no preference, so the
     #: request is the only thing that knows.
     locale: str | None = Field(None, max_length=5)
+    #: The Turnstile solution from the form. Optional in the schema so a
+    #: deployment with no secret configured keeps working unchanged, and so the
+    #: refusal comes from `turnstile_service` with one message rather than from
+    #: Pydantic with a field-shaped one that tells a bot where to look.
+    turnstile_token: str | None = Field(None, max_length=2048)
 
 
 class UserUpdate(BaseModel):
@@ -53,6 +58,8 @@ class PasswordResetRequest(BaseModel):
     #: The language the request came from, so the reset link and the email
     #: around it are both in it.
     locale: str | None = Field(None, max_length=5)
+    #: See `UserCreate.turnstile_token`.
+    turnstile_token: str | None = Field(None, max_length=2048)
 
 
 class PasswordResetConfirm(BaseModel):

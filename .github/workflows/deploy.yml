@@ -367,6 +367,8 @@ jobs:
           NOON_SEND_WEBHOOK_API_KEY=${{ secrets.NOON_SEND_WEBHOOK_API_KEY }}
           NOON_SEND_TIMEOUT_SECONDS=${{ secrets.NOON_SEND_TIMEOUT_SECONDS || '8' }}
           BATCH_DISPATCHER_ENABLED=${{ secrets.BATCH_DISPATCHER_ENABLED || 'true' }}
+          TURNSTILE_SECRET_KEY=${{ secrets.TURNSTILE_SECRET_KEY }}
+          TURNSTILE_TIMEOUT_SECONDS=${{ secrets.TURNSTILE_TIMEOUT_SECONDS || '5' }}
           WEB_URL=${{ secrets.WEB_URL }}
           ADMIN_URL=${{ secrets.ADMIN_URL }}
           # Not secrets — the register's hostname is public. Kept apart from

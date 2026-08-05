@@ -142,6 +142,12 @@ class Settings(BaseSettings):
     #: Checkout re-quotes on every pin move, so identical points inside this
     #: window reuse the last answer rather than spending the 100/min budget.
     LALAMOVE_QUOTE_CACHE_SECONDS: int = 120
+    #: Cloudflare Turnstile, on signup and password reset. Empty disables the
+    #: check entirely — see `turnstile_service` for why that is the deliberate
+    #: default rather than a locked door.
+    TURNSTILE_SECRET_KEY: str = ""
+    TURNSTILE_TIMEOUT_SECONDS: float = 5.0
+
     #: The in-process loop that sends a batch when its window closes. There is
     #: no queue in this stack, so this is the only thing that fires them.
     #: Turning it off leaves batches sitting until someone dispatches them by

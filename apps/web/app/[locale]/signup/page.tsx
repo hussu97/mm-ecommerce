@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Turnstile, isTurnstileEnabled } from '@/components/ui/Turnstile';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Input } from '@/components/ui/Input';
@@ -26,6 +27,9 @@ export default function SignupPage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState('');
+  // Empty until Cloudflare says this is a person, and empty again the moment
+  // that answer expires — a spent solution is refused by the API.
+  const [turnstileToken, setTurnstileToken] = useState('');
 
   function validate() {
     const e: Record<string, string> = {};
@@ -47,6 +51,7 @@ export default function SignupPage() {
         email: form.email,
         password: form.password,
         phone: form.phone || undefined,
+        turnstile_token: turnstileToken || undefined,
       });
       analytics.userSignup();
       const sessionId = getSessionId();
@@ -107,7 +112,16 @@ export default function SignupPage() {
             error={errors.confirmPassword}
             autoComplete="new-password"
           />
-          <Button type="submit" fullWidth loading={loading} size="lg">
+          <Turnstile onToken={setTurnstileToken} />
+          <Button
+            type="submit"
+            fullWidth
+            loading={loading}
+            size="lg"
+            /* Only where the check is switched on. With no site key there is
+               no widget to solve and the button must not wait for one. */
+            disabled={isTurnstileEnabled() && !turnstileToken}
+          >
             {t('auth.create_account')}
           </Button>
         </form>

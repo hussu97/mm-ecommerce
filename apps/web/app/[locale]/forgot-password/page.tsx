@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { authApi, ApiError } from '@/lib/api';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { Turnstile, isTurnstileEnabled } from '@/components/ui/Turnstile';
 
 export default function ForgotPasswordPage() {
   const { t } = useTranslation();
@@ -13,6 +14,7 @@ export default function ForgotPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
+  const [turnstileToken, setTurnstileToken] = useState('');
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -20,7 +22,7 @@ export default function ForgotPasswordPage() {
     setLoading(true);
     setError('');
     try {
-      await authApi.forgotPassword(email);
+      await authApi.forgotPassword(email, turnstileToken || undefined);
       setSubmitted(true);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.');
@@ -69,7 +71,14 @@ export default function ForgotPasswordPage() {
             onChange={e => setEmail(e.target.value)}
             autoComplete="email"
           />
-          <Button type="submit" fullWidth loading={loading} size="lg">
+          <Turnstile onToken={setTurnstileToken} />
+          <Button
+            type="submit"
+            fullWidth
+            loading={loading}
+            size="lg"
+            disabled={isTurnstileEnabled() && !turnstileToken}
+          >
             {t('auth.send_reset_link')}
           </Button>
         </form>

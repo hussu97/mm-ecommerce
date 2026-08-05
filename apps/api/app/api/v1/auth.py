@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import hashlib
 import json
 import uuid
@@ -26,13 +28,20 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
-from app.core.deps import get_admin_user, get_current_active_user, get_db
+from app.core.deps import (
+    get_admin_user,
+    get_current_active_user,
+    get_db,
+    get_optional_user,
+)
 from app.core.exceptions import (
     BadRequestError,
     ConflictError,
     ForbiddenError,
     UnauthorizedError,
 )
+from slowapi.util import get_remote_address
+
 from app.core.limiter import limiter
 from app.core.security import (
     create_access_token,
@@ -45,7 +54,7 @@ from app.core.security import (
 from app.core.config import settings
 from app.models import AdminPasskey, User, WebAuthnChallenge
 from app.models.refresh_token import RefreshToken
-from app.services import email_service
+from app.services import email_service, turnstile_service
 from app.services.order_service import normalise_locale
 from app.schemas.user import (
     GuestSessionRequest,
@@ -58,6 +67,8 @@ from app.schemas.user import (
     UserUpdate,
 )
 
+
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -266,6 +277,28 @@ class PasskeyLoginVerifyRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+async def _require_human(request: Request, token: str | None) -> None:
+    """
+    Refuse a form nobody filled in.
+
+    Applied to the two endpoints that make us send mail to an address the
+    caller chose, which is what made them worth abusing. The refusal says
+    nothing about which check failed: a bot learns from a specific error and a
+    customer cannot act on one either.
+    """
+    ok, reason = await turnstile_service.verify(
+        token, remote_ip=get_remote_address(request)
+    )
+    if ok:
+        return
+    logger.warning(
+        "Turnstile refused a request from %s: %s", get_remote_address(request), reason
+    )
+    raise BadRequestError(
+        "We couldn't verify that you're human. Please refresh the page and try again."
+    )
+
+
 @router.post(
     "/register",
     response_model=TokenResponse,
@@ -280,6 +313,8 @@ async def register(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
+    await _require_human(request, body.turnstile_token)
+
     result = await db.execute(select(User).where(User.email == body.email.lower()))
     if result.scalar_one_or_none():
         raise ConflictError("An account with this email already exists")
@@ -721,7 +756,20 @@ async def forgot_password(
     body: PasswordResetRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_optional_user),
 ) -> dict:
+    # A signed-in customer asking for a link to their own address has already
+    # proved more than a challenge could: they hold a session for the mailbox
+    # in question. The account settings screen does exactly this, and putting a
+    # widget there would be friction with nothing behind it. Anyone else — a
+    # guest, or a signed-in account naming somebody else's address — is asked.
+    same_person = (
+        current_user is not None
+        and (current_user.email or "").lower() == body.email.lower()
+    )
+    if not same_person:
+        await _require_human(request, body.turnstile_token)
+
     result = await db.execute(select(User).where(User.email == body.email.lower()))
     user = result.scalar_one_or_none()
 

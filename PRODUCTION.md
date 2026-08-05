@@ -721,6 +721,45 @@ Two things have to be done in the Partner Portal, not here:
    on the order and surfaced in the admin, and the order can be re-dispatched
    once topped up — but nothing is collected in the meantime.
 
+#### Cloudflare Turnstile — the bot check on signup
+
+Two endpoints make us send mail to an address the caller typed: `/auth/register`
+and `/auth/forgot-password`. Between April and August a bot used both to send a
+welcome and a reset — seven to eighty seconds apart — to eighteen harvested
+addresses. Rate limiting was already in place and irrelevant: `5/minute` per IP
+stops a burst, and this was one signup every few hours from somewhere new. The
+cost is not to us directly but to the people receiving unsolicited mail from our
+domain, and to the sending reputation that eventually gets throttled for it.
+
+Set it up at **dash.cloudflare.com → Turnstile → Add site**, domain
+`meltingmomentscakes.com`, widget mode **Managed** (invisible to almost
+everyone). It is free and needs no Cloudflare plan.
+
+| Where | Key | Notes |
+|-------|-----|-------|
+| GitHub secret, `mm-ecommerce` | `TURNSTILE_SECRET_KEY` | The private half. `gh secret set TURNSTILE_SECRET_KEY --repo hussu97/mm-ecommerce` |
+| Vercel, **web** project | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | The widget half. Public by design — it identifies the site, it authorises nothing |
+
+**Both halves, or neither.** Empty disables the check at both ends: the
+storefront renders no widget and the API asks for no token. That is deliberate —
+shipping the code before the keys exist must not lock real customers out of
+signing up. It also means setting only the secret would refuse every signup,
+because no page would be producing a token. Set the Vercel variable first, then
+the GitHub secret, then redeploy.
+
+Cloudflare's test keys are worth knowing: site `1x00000000000000000000AA` with
+secret `1x0000000000000000000000000000000AA` always passes, and
+`2x0000000000000000000000000000000AA` always fails. The secrets are answered
+locally without touching the network, so a test suite exercises the wired-up
+path without one.
+
+A signed-in customer asking for a reset link to **their own** address is not
+challenged — they hold a session for that mailbox, which proves more than a
+widget could, and the account settings screen has no widget on it.
+
+If Cloudflare is unreachable the request goes through and the log says so. Their
+outage should not become ours.
+
 #### Courier — noon Send (Rider-on-Demand)
 
 Optional, and safe to leave unset: a `noon_send` zone with no credentials simply

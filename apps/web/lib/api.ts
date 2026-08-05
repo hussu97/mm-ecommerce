@@ -124,8 +124,13 @@ export function currentLocale(): 'en' | 'ar' {
 }
 
 export const authApi = {
-  register: (data: { email: string; password: string; phone?: string }) =>
-    api.post<TokenResponse>('/auth/register', { locale: currentLocale(), ...data }),
+  register: (data: {
+    email: string;
+    password: string;
+    phone?: string;
+    /** Turnstile solution. Omitted where the site key is unset, which the API treats as "check disabled". */
+    turnstile_token?: string;
+  }) => api.post<TokenResponse>('/auth/register', { locale: currentLocale(), ...data }),
   login: (email: string, password: string) =>
     api.post<TokenResponse>('/auth/login', { email, password }),
   guest: (email?: string) =>
@@ -135,10 +140,11 @@ export const authApi = {
   me: () => api.get<User>('/auth/me'),
   updateMe: (data: { phone?: string }) =>
     api.put<User>('/auth/me', data),
-  forgotPassword: (email: string) =>
+  forgotPassword: (email: string, turnstile_token?: string) =>
     api.post<{ message: string }>('/auth/forgot-password', {
       email,
       locale: currentLocale(),
+      turnstile_token,
     }),
   resetPassword: (token: string, new_password: string) =>
     api.post<{ message: string }>('/auth/reset-password', { token, new_password }),
