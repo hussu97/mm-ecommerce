@@ -71,12 +71,26 @@ All paginated tables in `apps/admin` must use the following page size options, i
 6. **Capture Lessons**: Update 'tasks/lessons.md' after corrections
 
 ### 9. Secret/Env Var Checklist
-When adding any new environment variable or secret, update ALL four locations or the secret will be missing in production:
+When adding any new environment variable or secret, update ALL **five** locations or the secret will be missing in production:
 
 1. `apps/api/.env.example` — document it with a comment
 2. `PRODUCTION.md` Step 13c — add to the GitHub Actions secrets table
 3. `.github/workflows/deploy.yml` — add to the `printf` block in "Write .env on VM"
 4. `.github/workflows/rollback.yml` — same `printf` block (must stay in sync with deploy.yml)
+5. **`docker-compose.prod.yml` — add it to the `environment:` block of the `api`
+   service** (and `pos-api` if the register needs it)
+
+Number 5 is the one that gets forgotten, and its absence is silent. That block
+is an **allow-list, not an `env_file`**: a variable written to `.env` on the VM
+and not named there never reaches the container, and the app simply sees its
+default. On 2026-08-05 production was found running with noon Send entirely
+inert, no push notifications to any register and the Turnstile bot check off,
+because every one of those had been added to items 1–4 and not to item 5. The
+secrets were all present on the VM the whole time.
+
+`apps/api/tests/unit/test_compose_env_allowlist.py` now fails if a setting in
+`Settings` cannot be configured on production, so this is enforced rather than
+remembered.
 
 ### 10. Analytics Tracking Rule
 Whenever you add, remove, or rename any event in `apps/web/lib/analytics.ts`, you **must** also update `docs/umami-analytics-setup.md`:

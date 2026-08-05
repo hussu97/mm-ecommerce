@@ -93,15 +93,71 @@ services:
       LALAMOVE_MARKET: ${LALAMOVE_MARKET:-AE}
       LALAMOVE_LANGUAGE: ${LALAMOVE_LANGUAGE:-en_AE}
       LALAMOVE_SERVICE_TYPE: ${LALAMOVE_SERVICE_TYPE:-CAR}
-      LALAMOVE_SPECIAL_REQUESTS: ${LALAMOVE_SPECIAL_REQUESTS:-DOOR_TO_DOOR}
+      # No default. `:-DOOR_TO_DOOR` here would put the AED 5 door-to-door
+      # charge back on every booking the moment the variable was left empty —
+      # which is how it is deliberately set, since dropping that charge was the
+      # point.
+      LALAMOVE_SPECIAL_REQUESTS: ${LALAMOVE_SPECIAL_REQUESTS:-}
       LALAMOVE_WEBHOOK_PATH: ${LALAMOVE_WEBHOOK_PATH:-/api/v1/webhooks/lalamove}
       LALAMOVE_TIMEOUT_SECONDS: ${LALAMOVE_TIMEOUT_SECONDS:-8}
       LALAMOVE_QUOTE_CACHE_SECONDS: ${LALAMOVE_QUOTE_CACHE_SECONDS:-120}
-      LALAMOVE_PICKUP_BRANCH_REF: ${LALAMOVE_PICKUP_BRANCH_REF:-}
-      LALAMOVE_SENDER_PHONE: ${LALAMOVE_SENDER_PHONE:-}
       # Only the storefront API runs the batch sweeper; the register has no
       # web orders to batch and the advisory lock would make a second one
       # pointless anyway.
+      # ── noon Send (second courier) ──────────────────────────────────────
+      # Absent from this list until 2026-08-05, which meant the whole
+      # integration was inert on production: the key never reached the app,
+      # `is_enabled()` was false, and every order in a noon Send zone fell
+      # through to Lalamove with the reason in a log nobody was reading. The
+      # `.env` had all of it. This file is what decides.
+      NOON_SEND_API_KEY: ${NOON_SEND_API_KEY:-}
+      NOON_SEND_WEBHOOK_API_KEY: ${NOON_SEND_WEBHOOK_API_KEY:-}
+      NOON_SEND_ENV: ${NOON_SEND_ENV:-staging}
+      NOON_SEND_LOCALE: ${NOON_SEND_LOCALE:-en-ae}
+      NOON_SEND_CLIENT_CODE: ${NOON_SEND_CLIENT_CODE:-noon_food}
+      NOON_SEND_MAX_DISTANCE_M: ${NOON_SEND_MAX_DISTANCE_M:-20000}
+      NOON_SEND_DETOUR_FACTOR: ${NOON_SEND_DETOUR_FACTOR:-1.49}
+      NOON_SEND_TIMEOUT_SECONDS: ${NOON_SEND_TIMEOUT_SECONDS:-8}
+      # Who noon Send is allowed to carry while it runs against their staging
+      # fleet, and who gets free delivery. The code default is the same address,
+      # so this was working by luck rather than by configuration.
+      TRIAL_CUSTOMER_EMAILS: ${TRIAL_CUSTOMER_EMAILS:-h_abbasi97@hotmail.com}
+      # ── Push to the registers ───────────────────────────────────────────
+      # Empty means no push: orders still arrive and the register still shows
+      # them when it polls, so a missing key is a quieter shop, not a broken one.
+      APNS_KEY_P8: ${APNS_KEY_P8:-}
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_ORDER_SOUND: ${APNS_ORDER_SOUND:-new-order.caf}
+      APNS_TIMEOUT_SECONDS: ${APNS_TIMEOUT_SECONDS:-10}
+      # ── Bot check on signup and password reset ──────────────────────────
+      # Empty disables it. Both halves or neither — the storefront's public
+      # site key lives in Vercel.
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+      TURNSTILE_TIMEOUT_SECONDS: ${TURNSTILE_TIMEOUT_SECONDS:-5}
+      # The rate card. Tunable without a deploy, which is the whole reason
+      # these are settings and not constants.
+      NOON_SEND_BASE: ${NOON_SEND_BASE:-12}
+      NOON_SEND_BULKY_BASE: ${NOON_SEND_BULKY_BASE:-25}
+      NOON_SEND_SURGE_AED: ${NOON_SEND_SURGE_AED:-1}
+      # ── Sessions and the rest ───────────────────────────────────────────
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-30}
+      PASSWORD_RESET_EXPIRE_MINUTES: ${PASSWORD_RESET_EXPIRE_MINUTES:-60}
+      USE_SSL: ${USE_SSL:-false}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+      BACKUP_GCS_BUCKET: ${BACKUP_GCS_BUCKET:-}
+      # The storefront API refuses device tokens, so it reads the same two
+      # settings the register does.
+      POS_ALLOWED_HOSTS: ${POS_ALLOWED_HOSTS:-*}
+      POS_CORS_ORIGINS: ${POS_CORS_ORIGINS:-}
+      # Neither is switched on. Listed so turning one on is a secret rather
+      # than a deploy.
+      TABBY_API_KEY: ${TABBY_API_KEY:-}
+      TABBY_PUBLIC_KEY: ${TABBY_PUBLIC_KEY:-}
+      TABBY_MERCHANT_CODE: ${TABBY_MERCHANT_CODE:-}
+      TAMARA_API_KEY: ${TAMARA_API_KEY:-}
+      TAMARA_API_URL: ${TAMARA_API_URL:-https://api.tamara.co}
       BATCH_DISPATCHER_ENABLED: ${BATCH_DISPATCHER_ENABLED:-true}
       UVICORN_WORKERS: "1"
     # Ship stdout/stderr directly to GCP Cloud Logging.
@@ -157,6 +213,13 @@ services:
       POS_CORS_ORIGINS: ${POS_CORS_ORIGINS:-}
       POS_ALLOWED_HOSTS: ${POS_ALLOWED_HOSTS:-*}
       POS_REQUIRE_POS_HOST: ${POS_REQUIRE_POS_HOST:-false}
+      # The register API answers `/devices/push-token`, so it needs the same
+      # credentials the storefront one uses to send with.
+      APNS_KEY_P8: ${APNS_KEY_P8:-}
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_ORDER_SOUND: ${APNS_ORDER_SOUND:-new-order.caf}
+      APNS_TIMEOUT_SECONDS: ${APNS_TIMEOUT_SECONDS:-10}
       WEB_URL: ${WEB_URL}
       ADMIN_URL: ${ADMIN_URL}
       UMAMI_API_KEY: ${UMAMI_API_KEY:-}
