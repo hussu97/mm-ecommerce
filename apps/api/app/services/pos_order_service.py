@@ -252,8 +252,16 @@ async def attach_online_order(db: AsyncSession, order: Order, branch: Branch) ->
     second thing to reconcile. The check number is allocated alongside it so the
     counter still has its short "order 12".
     """
-    if order.branch_id is not None:
-        # Already attached. Re-running must not burn a second check number.
+    # Guarded on the check number, which is the thing that must not be issued
+    # twice — and which nothing but this function sets.
+    #
+    # It used to guard on `branch_id`, and that stopped working the moment
+    # `orders.branch_id` became NOT NULL and started being stamped at insert:
+    # every storefront order then arrived here already carrying one, returned on
+    # this line, and reached no register at all. Silently, because the order
+    # itself is perfectly fine — right branch, right price, right courier, just
+    # invisible to the kitchen.
+    if order.check_number is not None:
         return order
 
     settings = await _settings(db)

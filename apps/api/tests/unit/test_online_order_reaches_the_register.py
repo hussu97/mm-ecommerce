@@ -15,8 +15,10 @@ sent delivery orders to the counter labelled as pickups) and the check number
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -188,3 +190,88 @@ def test_only_an_open_check_is_voided_by_a_cancellation():
     }
     # A storefront order that never reached a register has no state to close.
     assert None not in open_now
+
+
+# ── the guard that decides whether it runs at all ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_an_order_that_already_has_a_branch_still_reaches_the_register(
+    monkeypatch,
+):
+    """
+    `attach_online_order` used to return early when `branch_id` was set, on the
+    reasoning that a branch meant it had already run.
+
+    That stopped being true the moment `orders.branch_id` became NOT NULL and
+    started being stamped at insert. Every storefront order then arrived here
+    already carrying a branch, returned on the first line, and reached no
+    register — silently, because the order itself was perfectly fine: right
+    branch, right price, right courier, and invisible to the kitchen. Two real
+    orders were placed that way before anyone noticed.
+    """
+    branch = SimpleNamespace(id=uuid.uuid4(), reference="K001", name="Kitchen")
+    day = SimpleNamespace(business_date=date(2026, 8, 5))
+
+    monkeypatch.setattr(
+        pos_order_service,
+        "_settings",
+        AsyncMock(return_value=SimpleNamespace(order_number_reset_daily=True)),
+    )
+    monkeypatch.setattr(
+        pos_order_service.business_day_service,
+        "get_or_open",
+        AsyncMock(return_value=day),
+    )
+    monkeypatch.setattr(
+        pos_order_service, "_next_check_number", AsyncMock(return_value=7)
+    )
+
+    order = Order(
+        order_number="MM-20260805-001",
+        # Set at insert, exactly as `_persist_order` now does.
+        branch_id=branch.id,
+        delivery_method=DeliveryMethodEnum.DELIVERY,
+        shipping_address_snapshot={"first_name": "Hussain", "phone": "+971500000000"},
+        source=OrderSourceEnum.ONLINE.value,
+    )
+
+    await pos_order_service.attach_online_order(AsyncMock(), order, branch)
+
+    assert order.pos_status == PosOrderStatusEnum.PENDING.value
+    assert order.check_number == 7
+    assert order.is_pos is True
+    assert order.business_date == date(2026, 8, 5)
+
+
+@pytest.mark.asyncio
+async def test_running_it_twice_does_not_burn_a_second_check_number(monkeypatch):
+    """Which is what the guard was for, and still is."""
+    branch = SimpleNamespace(id=uuid.uuid4(), reference="K001", name="Kitchen")
+    issued = AsyncMock(side_effect=[7, 8])
+
+    monkeypatch.setattr(
+        pos_order_service,
+        "_settings",
+        AsyncMock(return_value=SimpleNamespace(order_number_reset_daily=True)),
+    )
+    monkeypatch.setattr(
+        pos_order_service.business_day_service,
+        "get_or_open",
+        AsyncMock(return_value=SimpleNamespace(business_date=date(2026, 8, 5))),
+    )
+    monkeypatch.setattr(pos_order_service, "_next_check_number", issued)
+
+    order = Order(
+        order_number="MM-20260805-001",
+        branch_id=branch.id,
+        delivery_method=DeliveryMethodEnum.DELIVERY,
+        shipping_address_snapshot={},
+        source=OrderSourceEnum.ONLINE.value,
+    )
+
+    await pos_order_service.attach_online_order(AsyncMock(), order, branch)
+    await pos_order_service.attach_online_order(AsyncMock(), order, branch)
+
+    assert order.check_number == 7
+    assert issued.await_count == 1
