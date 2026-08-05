@@ -37,7 +37,6 @@ from app.services import (
     pos_order_service,
     promo_code_service,
     push_service,
-    trial_customer,
 )
 from app.services.storefront_visibility import is_website_product_visible
 from app.services.delivery_zone_service import Zone
@@ -383,16 +382,7 @@ async def _compute_order_totals(
         raise delivery_service.UnserviceableAreaError()
 
     zone = priced.zone
-    # The one exception to "the pin, and only the pin": a trial account pays no
-    # delivery fee anywhere. Applied here as well as in the quote because these
-    # are the two places the number is produced, and a waiver in one of them is
-    # a checkout that shows free delivery and an order that charges for it.
-    if trial_customer.is_trial_customer(user_id, email):
-        delivery_fee = Decimal("0.00")
-    else:
-        delivery_fee = (
-            settings.default_delivery_fee if priced.fee is None else priced.fee
-        )
+    delivery_fee = settings.default_delivery_fee if priced.fee is None else priced.fee
     total = discounted_subtotal + delivery_fee
 
     vat_amount, total_excl_vat = _vat_of(subtotal - discount_amount)

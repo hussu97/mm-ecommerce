@@ -100,12 +100,11 @@ jobs:
           LALAMOVE_TIMEOUT_SECONDS=${{ secrets.LALAMOVE_TIMEOUT_SECONDS || '8' }}
           LALAMOVE_QUOTE_CACHE_SECONDS=${{ secrets.LALAMOVE_QUOTE_CACHE_SECONDS || '120' }}
           NOON_SEND_API_KEY=${{ secrets.NOON_SEND_API_KEY }}
-          NOON_SEND_ENV=${{ secrets.NOON_SEND_ENV || 'staging' }}
+          NOON_SEND_ENV=${{ secrets.NOON_SEND_ENV || 'production' }}
           NOON_SEND_LOCALE=${{ secrets.NOON_SEND_LOCALE || 'en-ae' }}
           NOON_SEND_CLIENT_CODE=${{ secrets.NOON_SEND_CLIENT_CODE || 'noon_food' }}
           NOON_SEND_MAX_DISTANCE_M=${{ secrets.NOON_SEND_MAX_DISTANCE_M || '20000' }}
           NOON_SEND_DETOUR_FACTOR=${{ secrets.NOON_SEND_DETOUR_FACTOR || '1.49' }}
-          TRIAL_CUSTOMER_EMAILS=${{ secrets.TRIAL_CUSTOMER_EMAILS || 'h_abbasi97@hotmail.com' }}
           APNS_KEY_P8=${{ secrets.APNS_KEY_P8 }}
           APNS_KEY_ID=${{ secrets.APNS_KEY_ID }}
           APNS_TEAM_ID=${{ secrets.APNS_TEAM_ID }}

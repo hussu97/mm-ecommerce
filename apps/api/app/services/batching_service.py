@@ -303,20 +303,6 @@ async def assign_or_dispatch(
     if delivery.provider != FulfilmentProviderEnum.LALAMOVE.value:
         return await courier_service.dispatch(db, order)
 
-    # A trial order goes out on its own, whatever its zone says.
-    #
-    # `dispatch_batch` books Lalamove directly — it never calls
-    # `courier_service.dispatch` — so an order that joins a run has already
-    # chosen its courier and will never be offered to noon Send. Since every
-    # zone the staging fleet can serve is a Lalamove zone, that made the trial
-    # override unreachable for exactly the orders it was written for.
-    if courier_service.is_trial_run(order):
-        logger.info(
-            "Order %s is a trial run and goes on its own rather than joining a batch",
-            order.order_number,
-        )
-        return await courier_service.dispatch(db, order)
-
     if not lalamove_service.is_enabled():
         # No courier configured, so there is no shared run to wait for. Falling
         # through to the single-order path records "dispatch this by hand" on

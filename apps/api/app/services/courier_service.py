@@ -8,17 +8,14 @@ lives here; the call sites just ask for the order to go out.
 
 **noon Send is the preferred courier where a zone names it**, because on a bike
 it is cheaper than Lalamove at every distance it can reach, surge included: AED
-12 flat to 10 road km against Lalamove's `17 + 0.70/km`. Two things stand
-between a `noon_send` zone and an actual noon Send task.
+12 flat to 10 road km against Lalamove's `17 + 0.70/km`. Every order in such a
+zone is offered to them — which customer placed it, and whether they were signed
+in at all, decides nothing. It briefly did: while the integration was being
+proved on production, a named allow-list was the only thing that let a real
+order reach noon's fleet. That list is gone, and routing is the map's business
+again.
 
-*The trial list.* noon Send only carries orders placed by a signed-in customer
-on `TRIAL_CUSTOMER_EMAILS`. Everybody else in the zone is carried by Lalamove
-and notices nothing. The list applies in every environment and is the only
-thing gating noon Send — deliberately not tied to `APP_ENV` or to
-`NOON_SEND_ENV`, because production currently points at noon's *staging* fleet
-and an environment-shaped gate would have opened the trial to every customer
-the moment it did. Emptying the list is how the trial ends.
-
+One thing still stands between a `noon_send` zone and an actual noon Send task.
 *The fallback.* noon Send caps a run at 15 km, cannot cross an emirate boundary,
 and can simply have nobody free. Any of those is a refusal, and a refusal must
 not strand a paid, packed order — so it books Lalamove instead and records why.
@@ -38,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import Order
 from app.models.order_delivery import OrderDelivery
-from app.services import lalamove_service, noon_send_service, trial_customer
+from app.services import lalamove_service, noon_send_service
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +45,6 @@ __all__ = [
     "dispatch",
     "estimate_for_point",
     "is_enabled",
-    "is_trial_run",
     "may_use_noon_send",
 ]
 
@@ -75,38 +71,15 @@ def may_use_noon_send(order: Order) -> tuple[bool, str | None]:
     """
     Whether this particular order is allowed onto noon Send, and why not.
 
-    The reason is returned rather than logged and dropped, because "this went
+    Only one thing can refuse now — no credentials — but the shape is kept:
+    the reason is returned rather than logged and dropped, because "this went
     Lalamove even though the zone says noon Send" is otherwise invisible and
-    looks like a bug.
+    looks like a bug. It is also where a future rule would go, and one caller
+    already knows how to report whatever this says.
     """
     if not noon_send_service.is_enabled():
         return False, "noon Send is not configured"
-
-    if not trial_customer.emails():
-        # Deliberately open: emptying the list is how the trial ends.
-        return True, None
-    if order.user_id is None:
-        return False, "noon Send is limited to signed-in trial accounts"
-    if not trial_customer.is_trial_customer(order.user_id, order.email):
-        return False, "noon Send is limited to the trial account"
     return True, None
-
-
-def is_trial_run(order: Order) -> bool:
-    """
-    Whether this order should be offered to noon Send regardless of its zone.
-
-    Public because batching has to ask it as well: a trial order must not join a
-    Lalamove run, since a run is booked directly against Lalamove and never
-    passes back through `dispatch`.
-    """
-    return (
-        noon_send_service.is_enabled()
-        and noon_send_service.trial_pickup() is not None
-        and trial_customer.is_trial_customer(
-            getattr(order, "user_id", None), getattr(order, "email", None)
-        )
-    )
 
 
 # ── dispatch ──────────────────────────────────────────────────────────────────
@@ -125,17 +98,9 @@ async def dispatch(db: AsyncSession, order: Order) -> OrderDelivery | None:
     if delivery is None or not books_itself(delivery.provider):
         return delivery
 
-    # A trial order tries noon Send wherever it is going, not only where the map
-    # says so. The map is drawn for the real fleet out of the Sharjah kitchen;
-    # the staging fleet serves three Dubai outlets and cannot cross an emirate
-    # boundary, so a trial run has to leave from Dubai and arrive in Dubai —
-    # which is a `lalamove` zone on every map we have. Without this the trial
-    # account could only ever exercise noon Send by ordering into a zone the
-    # staging fleet cannot serve.
-    #
-    # Redrawing the map for a test fleet would be the wrong trade: the polygons
-    # describe the business, and this describes one account.
-    if delivery.provider != NOON_SEND and not is_trial_run(order):
+    # The zone decides, and nothing else does. A `lalamove` zone is never
+    # offered to noon Send — their fleet probably cannot reach it.
+    if delivery.provider != NOON_SEND:
         return await lalamove_service.dispatch_order(db, order)
 
     allowed, reason = may_use_noon_send(order)

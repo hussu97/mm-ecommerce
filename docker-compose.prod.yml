@@ -112,16 +112,12 @@ services:
       # `.env` had all of it. This file is what decides.
       NOON_SEND_API_KEY: ${NOON_SEND_API_KEY:-}
       NOON_SEND_WEBHOOK_API_KEY: ${NOON_SEND_WEBHOOK_API_KEY:-}
-      NOON_SEND_ENV: ${NOON_SEND_ENV:-staging}
+      NOON_SEND_ENV: ${NOON_SEND_ENV:-production}
       NOON_SEND_LOCALE: ${NOON_SEND_LOCALE:-en-ae}
       NOON_SEND_CLIENT_CODE: ${NOON_SEND_CLIENT_CODE:-noon_food}
       NOON_SEND_MAX_DISTANCE_M: ${NOON_SEND_MAX_DISTANCE_M:-20000}
       NOON_SEND_DETOUR_FACTOR: ${NOON_SEND_DETOUR_FACTOR:-1.49}
       NOON_SEND_TIMEOUT_SECONDS: ${NOON_SEND_TIMEOUT_SECONDS:-8}
-      # Who noon Send is allowed to carry while it runs against their staging
-      # fleet, and who gets free delivery. The code default is the same address,
-      # so this was working by luck rather than by configuration.
-      TRIAL_CUSTOMER_EMAILS: ${TRIAL_CUSTOMER_EMAILS:-h_abbasi97@hotmail.com}
       # ── Push to the registers ───────────────────────────────────────────
       # Empty means no push: orders still arrive and the register still shows
       # them when it polls, so a missing key is a quieter shop, not a broken one.

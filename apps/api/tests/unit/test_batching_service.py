@@ -372,65 +372,13 @@ async def test_a_run_already_on_the_road_is_not_joined():
     assert joined is not gone
 
 
-# ── the trial never joins a run ───────────────────────────────────────────────
+# ── batching still batches ────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_a_trial_order_goes_alone_rather_than_joining_a_batch(monkeypatch):
-    """
-    A run is booked directly against Lalamove — `dispatch_batch` never calls
-    `courier_service.dispatch` — so an order that joins one has already chosen
-    its courier and will never be offered to noon Send.
-
-    Every zone noon Send's staging fleet can reach is a Lalamove zone, and every
-    Lalamove city zone is batched. So the trial override, which lives in
-    `dispatch`, was unreachable for precisely the orders it was written for: a
-    trial order into Dubai City joined the 23:00 run and went out on Lalamove
-    hours later without noon Send ever being asked.
-    """
-    dispatched: list[str] = []
-
-    delivery = OrderDelivery(
-        order_id=uuid.uuid4(),
-        provider="lalamove",
-        zone_name="Dubai City",
-        polygon_id=uuid.uuid4(),
-        fee_charged=Decimal("0.00"),
-    )
-    order = SimpleNamespace(
-        id=delivery.order_id,
-        order_number="MM-20260805-002",
-        user_id=uuid.uuid4(),
-        email="trial@example.com",
-    )
-
-    async def get_delivery(_db, _order_id):
-        return delivery
-
-    async def dispatch(_db, _order):
-        dispatched.append("direct")
-        return delivery
-
-    async def windows(_db, _polygon_id):
-        raise AssertionError("a trial order must not be matched to a batch window")
-
-    monkeypatch.setattr(batching_service.lalamove_service, "get_delivery", get_delivery)
-    monkeypatch.setattr(batching_service.lalamove_service, "is_enabled", lambda: True)
-    monkeypatch.setattr(batching_service.courier_service, "dispatch", dispatch)
-    monkeypatch.setattr(
-        batching_service.courier_service, "is_trial_run", lambda _o: True
-    )
-    monkeypatch.setattr(batching_service, "active_windows", windows)
-
-    result = await batching_service.assign_or_dispatch(object(), order)
-
-    assert dispatched == ["direct"]
-    assert result.batch_id is None
-
-
-@pytest.mark.asyncio
-async def test_an_ordinary_order_still_joins_its_run(monkeypatch):
-    """The saving that batching exists for must survive the exception above."""
+async def test_an_ordinary_order_joins_its_run(monkeypatch):
+    """The saving batching exists for: an order waits for the van rather than
+    booking one of its own."""
     delivery = OrderDelivery(
         order_id=uuid.uuid4(),
         provider="lalamove",
@@ -458,9 +406,6 @@ async def test_an_ordinary_order_still_joins_its_run(monkeypatch):
     monkeypatch.setattr(batching_service.lalamove_service, "get_delivery", get_delivery)
     monkeypatch.setattr(batching_service.lalamove_service, "is_enabled", lambda: True)
     monkeypatch.setattr(batching_service.courier_service, "dispatch", never)
-    monkeypatch.setattr(
-        batching_service.courier_service, "is_trial_run", lambda _o: False
-    )
     monkeypatch.setattr(
         batching_service,
         "active_windows",

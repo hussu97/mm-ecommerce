@@ -160,21 +160,16 @@ class Settings(BaseSettings):
     #: prices and sells exactly as it does today and simply dispatches through
     #: Lalamove instead, so a missing credential is a fallback, not an outage.
     NOON_SEND_API_KEY: str = ""
-    #: "production" or "staging", and **this deliberately stays `staging` on the
-    #: production deployment** while the trial runs. We have no production noon
-    #: Send key yet, and their staging environment is real enough to exercise
-    #: the whole pipeline — the kitchen's own coordinates come back serviceable
-    #: there, tasks are created, tracked and cancelled for real.
+    #: "production" or "staging". Which fleet a task is created against, and so
+    #: whether a real rider is dispatched at all: a staging task is created,
+    #: tracked and cancelled for real, and collected by nobody.
     #:
-    #: The consequence is the important part: a task created against staging is
-    #: **not dispatched to a real rider**. Only the trial accounts in
-    #: `TRIAL_CUSTOMER_EMAILS` are routed here, and somebody has to carry their
-    #: orders by hand. This is why those accounts also get free delivery.
-    #:
-    #: Nothing about the customer gate depends on this value. Which customers
-    #: noon Send may carry is `TRIAL_CUSTOMER_EMAILS` and nothing else, so
-    #: pointing this at production later does not quietly widen the trial.
-    NOON_SEND_ENV: str = "staging"
+    #: This defaulted to `staging` while the integration was proved, with a
+    #: named allow-list deciding who was routed there. Both are gone — every
+    #: order in a `noon_send` zone goes to noon Send, so the value here is now
+    #: the only thing standing between a customer's cake and a real rider.
+    #: `NOON_SEND_API_KEY` must be the matching key for whichever it names.
+    NOON_SEND_ENV: str = "production"
     #: Sent on every call. `en-ae` or `en-sa`; only the UAE fleet concerns us.
     NOON_SEND_LOCALE: str = "en-ae"
     #: `noon_food` or `nownow` — which side of noon owns the pickup point.
@@ -232,20 +227,6 @@ class Settings(BaseSettings):
     #: alarm is the app's own doing — iOS will not loop a notification sound.
     APNS_ORDER_SOUND: str = "new-order.caf"
     APNS_TIMEOUT_SECONDS: float = 10.0
-
-    # ── Trial customers ───────────────────────────────────────────────────────
-    #: The accounts running live tests against production. Comma-separated, and
-    #: matched against a **signed-in** customer's own address — a guest checkout
-    #: never qualifies, because an email is a string anybody may type.
-    #:
-    #: Two things follow from being on this list, and they are two halves of one
-    #: decision: noon Send carries the order, and delivery is free. See
-    #: `app/services/trial_customer.py`. Empty ends the trial — noon Send opens
-    #: to every customer in its zone and nobody gets free delivery.
-    #:
-    #: This list is the *only* thing gating noon Send. It applies in every
-    #: environment, so it cannot be widened by a deployment setting.
-    TRIAL_CUSTOMER_EMAILS: str = "h_abbasi97@hotmail.com"
 
     # ── Frontend URLs (email templates & CORS) ────────────────────────────────
     WEB_URL: str = "http://localhost:3000"

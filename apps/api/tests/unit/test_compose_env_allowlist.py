@@ -75,7 +75,6 @@ def test_the_courier_and_push_credentials_reach_the_app(api_env):
         "LALAMOVE_API_KEY",
         "APNS_KEY_P8",
         "TURNSTILE_SECRET_KEY",
-        "TRIAL_CUSTOMER_EMAILS",
     ):
         assert key in api_env, f"{key} never reaches the container"
 

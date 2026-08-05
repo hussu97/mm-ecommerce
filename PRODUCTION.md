@@ -771,29 +771,23 @@ Only the `Sharjah Central` zone uses it. noon Send cannot cross an emirate
 boundary and the kitchen is in Sharjah, so Ajman and Dubai are not candidates
 however the map is redrawn.
 
-> **Read this before deploying.** Production currently runs noon Send against
-> **their staging fleet** (`NOON_SEND_ENV=staging`), because there is no
-> production key yet. Staging creates, tracks and cancels tasks for real — but
-> **it never sends a rider**. Only the accounts in `TRIAL_CUSTOMER_EMAILS` are
-> routed there, and **somebody has to deliver those orders by hand.** That is
-> also why those accounts get free delivery: they are test orders. Every other
-> customer in `Sharjah Central` is carried by Lalamove exactly as before and is
-> completely unaffected.
+> **Read this before deploying.** **Every** order in a `noon_send` zone now goes
+> to noon Send. There is no allow-list and no trial account — the polygon is the
+> whole decision, and anything noon Send refuses falls back to Lalamove
+> automatically.
 >
-> When the production key arrives, set `NOON_SEND_ENV=production` and the same
-> trial accounts start getting real riders. Widening beyond them is a separate,
-> deliberate change to `TRIAL_CUSTOMER_EMAILS`.
-
-| Secret | Production value | Notes |
-|--------|-----------------|-------|
-| `NOON_SEND_API_KEY` | staging key for now | The staging key is in the ROD integration doc. Request a production key from the noon RoD integrations team (`kasinghal@noon.com`) |
+> That makes `NOON_SEND_ENV` the only thing between a customer's cake and a real
+> rider, so **it and `NOON_SEND_API_KEY` must name the same fleet**. A `staging`
+> task is created, tracked and cancelled for real and is collected by nobody —
+> which was survivable when one known account was routed there and is not
+> survivable now. Both default to production; set them together or not at all.
 | `NOON_SEND_WEBHOOK_API_KEY` | a secret you generate | Hand the same value to the integrations team with the webhook URLs |
 
 The rest fall back in the deploy workflow:
 
 | Secret | Falls back to | Notes |
 |--------|---------------|-------|
-| `NOON_SEND_ENV` | `staging` | Deliberate while the trial runs — see the note above. `production` once the live key exists |
+| `NOON_SEND_ENV` | `production` | The fleet a task is created against. `staging` creates real tasks that no rider collects — see the note above |
 | `NOON_SEND_LOCALE` | `en-ae` | |
 | `NOON_SEND_CLIENT_CODE` | `noon_food` | `noon_food` or `nownow` |
 | `NOON_SEND_MAX_DISTANCE_M` | `20000` | Matches the 20 km the rate card prices to and the radius `Sharjah Central` is drawn at. Never set it tighter than the zone — see the note above. `GET /public/v1/configurations` reports the real per-partner limit |
@@ -838,9 +832,9 @@ Two things have to be done by the noon RoD integrations team, not here:
    number: a push only moves an order we already dispatched under that
    `mp_task_nr`, and anything else is acknowledged and ignored. Give them
    `NOON_SEND_WEBHOOK_API_KEY` for production, where they can send it. Unlike Lalamove the
-   path is not part of any signature, so it can be changed freely. These have to
-   be registered **on the staging side** for the trial, and again on production
-   later.
+   path is not part of any signature, so it can be changed freely. The URLs are
+   registered per environment, so moving to the production fleet means giving
+   them to the integrations team again.
 2. **The distance limit answers itself.** `GET /public/v1/configurations`
    reports the real cap for whichever key is configured, and the code now asks:
    `noon_send_service.max_distance_m()` takes the stricter of their number and
@@ -872,38 +866,6 @@ Two things have to be done by the noon RoD integrations team, not here:
 There is no wallet to fund — billing is on the partner agreement. Once
 `NOON_SEND_ENV=production`, orders are real: a rider is dispatched and a
 cancellation is charged.
-
-#### The trial dispatches from Dubai, not from the kitchen
-
-noon Send's staging fleet serves three outlets and all of them are in Dubai. A
-task may not cross an emirate boundary, so a trial run cannot leave Al Qasimia
-at all — which would make the trial account the one account unable to exercise
-noon Send.
-
-So a trial order collects from a fixed staging outlet, `CMFRTF2DXS` in Oud
-Metha, and is offered to noon Send **whatever zone it is in** rather than only
-in `Sharjah Central`. It is the northernmost of the three, which puts Deira, Bur
-Dubai, Festival City, the airport, Mirdif and Al Nahda inside the 20 km ceiling
-— the Dubai addresses closest to Sharjah, and so the ones most likely to be
-typed into a test order. **Test with a Dubai delivery address**; a Sharjah one
-passes our own distance check and is then refused by noon Send for crossing an
-emirate, and falls back to Lalamove.
-
-The polygons are untouched by any of this. They describe the business and the
-real fleet out of the Sharjah kitchen; this describes one account. `trial_pickup`
-returns nothing once `NOON_SEND_ENV=production`, so the fixture cannot follow
-the trial onto the real fleet.
-
-#### Trial customers
-
-| Secret | Falls back to | Notes |
-|--------|---------------|-------|
-| `TRIAL_CUSTOMER_EMAILS` | `h_abbasi97@hotmail.com` | Comma-separated. A **signed-in** customer on this list is carried by noon Send and pays no delivery fee; a guest typing the same address is not, and gets neither. Empty ends the trial: noon Send opens to every customer in its zone and nobody gets free delivery |
-
-This one list is the only thing gating noon Send, and it is deliberately not
-tied to `APP_ENV` or `NOON_SEND_ENV` — production points `NOON_SEND_ENV` at
-noon's staging fleet, so an environment-shaped gate would have opened the trial
-to every customer the moment that was configured.
 
 #### Apple Push — waking the POS registers
 

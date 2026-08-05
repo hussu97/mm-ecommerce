@@ -1,14 +1,16 @@
 """
 Who actually ends up carrying an order.
 
-Two rules decide it, and both exist to make a new courier safe to switch on
-against real, paid orders.
+**The map decides.** A `noon_send` zone goes to noon Send, a `lalamove` zone to
+Lalamove, a `third_party` zone to nobody. Which customer placed the order, and
+whether they were signed in at all, decides nothing.
 
-**The allow-list.** On production, noon Send only carries orders placed by a
-signed-in customer whose own email is on the list. That is a deliberate
-live-fire trial, and the failure mode it guards against — an unproven courier
-quietly taking every Sharjah order — is exactly the kind of thing that works in
-staging and is discovered on a Friday evening.
+It briefly decided everything. While the integration was being proved on
+production, a named allow-list was the only thing that let a real order reach
+noon's fleet, and one account was routed to a fixed Dubai outlet regardless of
+its zone. Both are gone, and the tests that pinned them are gone with them —
+what is left is the guarantee that replaced them, which is that routing is a
+property of the polygon and of nothing else.
 
 **The fallback.** noon Send caps a run at 15 km and can simply have nobody free.
 A refusal must never strand a paid, packed order, so it goes out on Lalamove
@@ -29,14 +31,12 @@ from app.core.config import settings
 from app.models.order_delivery import OrderDelivery
 from app.services import courier_service
 
-TRIAL_EMAIL = "h_abbasi97@hotmail.com"
-
 
 def _order(**overrides):
     values = {
         "id": uuid.uuid4(),
         "order_number": "MM-1001",
-        "email": TRIAL_EMAIL,
+        "email": "customer@example.com",
         "user_id": uuid.uuid4(),
         "total": Decimal("185.00"),
         "payment_method": "stripe",
@@ -62,83 +62,46 @@ def _delivery(provider="noon_send") -> OrderDelivery:
         provider=provider,
         zone_name="Sharjah Central",
         fee_charged=Decimal("15.00"),
+        courier_reference="4820193",
     )
 
 
 @pytest.fixture
 def configured(monkeypatch):
-    """A working noon Send, so the gate is the only thing under test."""
+    """A working noon Send, so routing is the only thing under test."""
     # The API key alone decides whether noon Send is configured. The outlet is a
     # branch column, so it belongs to whatever pickup the zone resolves to.
     monkeypatch.setattr(settings, "NOON_SEND_API_KEY", "test-key")
-    monkeypatch.setattr(settings, "TRIAL_CUSTOMER_EMAILS", TRIAL_EMAIL)
     return settings
 
 
-# ── the trial list ────────────────────────────────────────────────────────────
+# ── who may use noon Send ─────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize("app_env", ["development", "staging", "production"])
 @pytest.mark.parametrize("noon_env", ["staging", "production"])
-def test_the_list_is_the_only_gate_in_every_environment(
+def test_every_customer_may_use_noon_send_in_every_environment(
     configured, monkeypatch, app_env, noon_env
 ):
     """
-    The gate deliberately does not read either environment setting.
+    Nothing about the customer, and nothing about the environment, narrows this.
 
-    Production currently points `NOON_SEND_ENV` at noon's *staging* fleet, so a
-    gate written as "apply the list only on production" would have opened the
-    trial to every customer the moment that was configured — silently, and on
-    real orders. The list applies everywhere or it is not a gate.
+    Both used to. The environment settings were deliberately kept out of the
+    gate so that pointing `NOON_SEND_ENV` at a different fleet could not widen a
+    trial by accident; now there is no trial to widen, and the same test says so
+    from the other direction.
     """
     monkeypatch.setattr(settings, "APP_ENV", app_env)
     monkeypatch.setattr(settings, "NOON_SEND_ENV", noon_env)
 
     assert courier_service.may_use_noon_send(_order())[0]
-    assert not courier_service.may_use_noon_send(_order(email="other@example.com"))[0]
+    assert courier_service.may_use_noon_send(_order(email="anyone@example.com"))[0]
 
 
-def test_the_trial_account_is_carried(configured):
-    allowed, reason = courier_service.may_use_noon_send(_order())
-    assert allowed and reason is None
-
-
-def test_an_address_is_matched_case_insensitively(configured):
-    """An address typed with a capital is the same address."""
-    assert courier_service.may_use_noon_send(_order(email="H_Abbasi97@Hotmail.com"))[0]
-
-
-def test_a_guest_is_refused_even_at_the_right_address(configured):
-    """
-    "Signed in" is half the rule, and it is the half a guest checkout can forge:
-    anybody may type the trial address into the email box.
-    """
+def test_a_guest_may_use_noon_send_too(configured):
+    """Being signed in was half of the old rule. It is no part of this one."""
     allowed, reason = courier_service.may_use_noon_send(_order(user_id=None))
-    assert not allowed
-    assert "signed-in" in reason
-
-
-def test_a_different_customer_is_refused(configured):
-    allowed, reason = courier_service.may_use_noon_send(
-        _order(email="someone@example.com")
-    )
-    assert not allowed
-    assert "trial account" in reason
-
-
-def test_an_empty_list_opens_noon_send_to_everyone(configured, monkeypatch):
-    """How the trial ends: clear the list rather than edit code."""
-    monkeypatch.setattr(settings, "TRIAL_CUSTOMER_EMAILS", "")
-    allowed, _ = courier_service.may_use_noon_send(_order(email="anyone@example.com"))
-    assert allowed
-
-
-def test_several_addresses_may_be_listed(configured, monkeypatch):
-    monkeypatch.setattr(
-        settings, "TRIAL_CUSTOMER_EMAILS", f"{TRIAL_EMAIL}, second@example.com"
-    )
-    assert courier_service.may_use_noon_send(_order(email="second@example.com"))[0]
-    assert not courier_service.may_use_noon_send(_order(email="third@example.com"))[0]
+    assert allowed and reason is None
 
 
 def test_unconfigured_credentials_are_a_refusal_not_a_crash(monkeypatch):
@@ -218,19 +181,25 @@ async def test_a_noon_send_zone_uses_noon_send(
 
 
 @pytest.mark.asyncio
-async def test_a_customer_off_the_list_is_carried_by_lalamove(
-    configured, spies, in_range
+async def test_any_customer_in_a_noon_send_zone_gets_noon_send(
+    configured, monkeypatch, spies, in_range
 ):
-    delivery = _delivery()
+    """
+    A guest, and an address nobody has ever heard of. This is the assertion the
+    allow-list used to make impossible.
+    """
 
-    result = await courier_service.dispatch(
-        _Db(delivery), _order(email="someone@example.com")
+    async def dispatched(db, order):
+        db.delivery.courier_order_id = "EHG84NNJMVG35BTDE"
+        spies.append("noon_send")
+        return db.delivery
+
+    monkeypatch.setattr(courier_service.noon_send_service, "dispatch_order", dispatched)
+    await courier_service.dispatch(
+        _Db(_delivery()), _order(user_id=None, email="a.stranger@example.com")
     )
 
-    # noon Send is never even called for them.
-    assert spies == ["lalamove"]
-    assert result.provider == "lalamove"
-    assert result.courier_order_id
+    assert spies == ["noon_send"]
 
 
 @pytest.mark.asyncio
@@ -270,46 +239,15 @@ async def test_a_refusal_from_noon_send_falls_through_to_lalamove(
 
 
 @pytest.mark.asyncio
-async def test_a_lalamove_zone_stays_lalamove_for_an_ordinary_customer(
-    configured, spies
-):
+async def test_a_lalamove_zone_is_never_offered_to_noon_send(configured, spies):
     """
-    The zone decides, for everybody who is not the trial account.
-
-    This is the guarantee that keeps the trial invisible: a real customer's
-    order goes exactly where the map sends it, and noon Send is never asked
-    about a zone it probably cannot reach.
+    The map decides, and it decides both ways: noon Send is never asked about a
+    zone it probably cannot reach, whoever placed the order.
     """
-    await courier_service.dispatch(
-        _Db(_delivery("lalamove")), _order(email="someone@else.com")
-    )
-    assert spies == ["lalamove"]
-
-
-@pytest.mark.asyncio
-async def test_the_trial_account_reaches_noon_send_from_a_lalamove_zone(
-    configured, monkeypatch, spies, in_range
-):
-    """
-    The trial is the one exception, and it has to be.
-
-    noon Send's staging fleet serves three outlets, all in Dubai, and a task
-    cannot cross an emirate boundary — so a trial run leaves Dubai and arrives
-    in Dubai, which is a `lalamove` zone on every map we have. Gating on the
-    zone would mean the trial account could only exercise noon Send by ordering
-    somewhere the staging fleet cannot go.
-    """
-
-    async def dispatched(db, order):
-        db.delivery.courier_order_id = "EHG84NNJMVG35BTDE"
-        spies.append("noon_send")
-        return db.delivery
-
-    monkeypatch.setattr(courier_service.noon_send_service, "dispatch_order", dispatched)
-    result = await courier_service.dispatch(_Db(_delivery("lalamove")), _order())
-
-    assert spies == ["noon_send"]
-    assert result.courier_order_id == "EHG84NNJMVG35BTDE"
+    for email in ("someone@else.com", "was-the-trial-account@example.com"):
+        spies.clear()
+        await courier_service.dispatch(_Db(_delivery("lalamove")), _order(email=email))
+        assert spies == ["lalamove"]
 
 
 @pytest.mark.asyncio

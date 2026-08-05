@@ -19,7 +19,6 @@ from app.services import (
     courier_service,
     delivery_zone_service,
     lalamove_service,
-    trial_customer,
 )
 from app.services.delivery_zone_service import Zone
 
@@ -349,13 +348,6 @@ async def calculate_fee(
 
     An order without coordinates cannot be delivered anyway, so the default fee
     is the honest answer for one.
-
-    The trial accounts pay nothing, anywhere. Their orders exist to exercise the
-    courier pipeline on production, and a test that costs the tester money is a
-    test that gets run less often than it should. The identity is passed in
-    rather than looked up here so that the two callers that know it — the
-    checkout quote and the order being written — are the only two that can grant
-    it, and so both grant it identically.
     """
     if settings is None:
         settings = await get_settings(db)
@@ -371,12 +363,8 @@ async def calculate_fee(
         address=address,
         settings=settings,
     )
-    # After `price`, not before: a trial account still may not order somewhere we
-    # cannot deliver to. Free is a discount, not an exemption from geography.
     if not priced.serviceable:
         raise UnserviceableAreaError()
-    if trial_customer.is_trial_customer(user_id, email):
-        return Decimal("0.00")
     fee = priced.fee
     return settings.default_delivery_fee if fee is None else fee
 
@@ -407,11 +395,6 @@ async def quote(
     `delivery_estimate` answers the question every shopper actually has, which
     is not "how much" but "when". It is only present once there is a pin,
     because before then there is no schedule to read it off.
-
-    A trial account sees free delivery, and sees it the same way anyone over the
-    threshold does. Presenting it as its own kind of discount would mean a
-    second state for the checkout to render, and the account exists to walk the
-    ordinary path rather than a special one.
     """
     settings = await get_settings(db)
     priced = await price(
@@ -423,14 +406,8 @@ async def quote(
         settings=settings,
     )
 
-    # A trial account pays nothing anywhere it can be delivered to. Applied here
-    # rather than inside `price` so the waiver stays a property of who is
-    # ordering rather than of the map — and applied at the same point
-    # `calculate_fee` applies it, which is what keeps the price on the checkout
-    # and the price on the order the same number.
-    waived = trial_customer.is_trial_customer(user_id, email) and priced.serviceable
-    fee = Decimal("0.00") if waived else priced.fee
-    free_applied = priced.free_applied or waived
+    fee = priced.fee
+    free_applied = priced.free_applied
 
     if (
         cart is not None
@@ -469,8 +446,9 @@ async def quote(
         # delivery, which is an offer that does not exist there.
         "free_delivery_available": priced.free_available,
         "free_threshold": float(settings.free_delivery_threshold),
-        # Zero once it is free, however it became free. Otherwise a trial
-        # account would be shown "free delivery" and "AED 150 to go" at once.
+        # Zero once it is free, however it became free. Otherwise an order
+        # over the threshold would be shown "free delivery" and "AED 150 to go"
+        # at the same time.
         "remaining_for_free": 0.0
         if free_applied
         else float(max(Decimal("0.00"), settings.free_delivery_threshold - subtotal)),

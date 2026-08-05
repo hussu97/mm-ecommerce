@@ -57,7 +57,7 @@ from app.models.order_delivery import (
     OrderDelivery,
 )
 from app.models.webhook_event import WebhookEvent
-from app.services import courier_reference, email_service, trial_customer
+from app.services import courier_reference, email_service
 from app.services.lalamove_service import (
     Estimate,
     PickupPoint,
@@ -182,69 +182,19 @@ def rate_card_cost(
     return Decimal(f"{total:.2f}")
 
 
-#: The staging pickup point every trial order is dispatched from.
-#:
-#: noon Send's staging fleet only serves three outlets, all of them in Dubai, and
-#: a task may not cross an emirate boundary — so a trial run cannot leave the Al
-#: Qasimia kitchen at all. This is the northernmost of the three, which puts
-#: Deira, Bur Dubai, Festival City, the airport, Mirdif and Al Nahda inside the
-#: 20 km ceiling: the Dubai addresses closest to Sharjah, and so the ones most
-#: likely to be typed into a test order.
-#:
-#: It is a fixture, not configuration. The code, the coordinates and the fleet
-#: behind them exist only on staging, so `NOON_SEND_ENV` moving to production
-#: has to stop using it rather than have it overridden — which `trial_pickup`
-#: enforces.
-#:
-#: Do not try to verify it with `GET /public/v1/pickup-points/{code}`. That
-#: endpoint serves only points a *partner* created — `addr::partner_pickup_point`
-#: — and this is a marketplace restaurant outlet, `addr::restaurant_outlet`. It
-#: answers "Pickup point not found" for a code that is perfectly valid, which
-#: reads exactly like a misconfiguration and is not one. `GET
-#: /public/v1/outlets` is where it lives, and `create-task` accepts both kinds.
-TRIAL_OUTLET = PickupPoint(
-    name="noon Send staging outlet (Oud Metha)",
-    phone="+971500000000",
-    address="Oud Metha, Dubai",
-    latitude=25.2519665,
-    longitude=55.3150403,
-    reference="ROD-STAGING",
-    noon_send_outlet_code="CMFRTF2DXS",
-    noon_send_outlet_address_code="addr::restaurant_outlet::ae::CMFRTF2DXS::2",
-)
-
-
-def trial_pickup() -> PickupPoint | None:
-    """
-    The outlet a trial order leaves from, or `None` if there is not one.
-
-    Only on staging, and only ever for the trial account. On production the
-    kitchen is real, its outlet is registered against the real fleet, and a
-    Dubai fixture would send a rider to a building we do not occupy.
-    """
-    if (settings.NOON_SEND_ENV or "").strip().lower() == "production":
-        return None
-    return TRIAL_OUTLET
-
-
 async def pickup_for(db: AsyncSession, order: Order) -> PickupPoint | None:
     """
-    Where this order's rider collects from.
+    Where this order's rider collects from: the branch that is making it.
 
-    The trial account collects from the staging fixture; everybody else from the
-    branch that is making the order. One function so the serviceability check,
-    the task and the cost estimate cannot disagree about it — a run quoted from
-    Sharjah and booked from Dubai would be wrong by thirty kilometres.
+    A thin wrapper, kept rather than inlined, so the serviceability check, the
+    task and the cost estimate cannot disagree about the answer — a run quoted
+    from Sharjah and booked from Dubai would be wrong by thirty kilometres.
+
+    It used to be more than a wrapper. While the integration was proved against
+    noon's staging fleet, one named account collected from a fixed Dubai outlet
+    instead, because that fleet serves three Dubai outlets and cannot cross an
+    emirate boundary. The real fleet has no such problem and the fixture is gone.
     """
-    # `getattr` because the order stub a dispatch test builds is deliberately
-    # thin — it carries what a task needs and nothing else, which is how the
-    # `MissingGreenlet` from touching a lazy relationship was caught.
-    if trial_customer.is_trial_customer(
-        getattr(order, "user_id", None), getattr(order, "email", None)
-    ):
-        fixture = trial_pickup()
-        if fixture is not None:
-            return fixture
     return await resolve_pickup(db, order.branch_id)
 
 
@@ -460,19 +410,15 @@ def _declared_value(total: Decimal) -> int:
     The prepaid amount, in fils, with a flat stand-in when it is nothing.
 
     noon Send requires one of `cod_value` and `prepaid_value` and treats zero as
-    absent — `cod_prepaid_missing`, a 400 at task creation. The trial orders are
-    the only ones that reach it, because they carry a 100% promo code and a
-    waived delivery fee, so their total really is AED 0.00.
+    absent — `cod_prepaid_missing`, a 400 at task creation. An order can honestly
+    total AED 0.00: a fully discounted basket with the delivery fee waived does,
+    and the integration was proved on exactly those.
 
-    AED 1.00 stands in. It is a hack and it is deliberately a flat one: these
-    are staging tasks that never reach a real rider, and deriving something
+    AED 1.00 stands in, and deliberately a flat one — deriving something
     plausible from the order would put a number in noon's records that nobody
-    paid. Nothing here can cause money to be collected — only `cod_value` does
-    that, and it stays zero.
-
-    A real customer with a 100% promo hits the same line, which is fine: AED 1
-    is as true as anything else for a bag that was given away, and the
-    alternative is a refusal and a fall back to Lalamove.
+    paid. It is as true as anything else for a bag that was given away, and the
+    alternative is a refusal and a fall back to Lalamove. Nothing here can cause
+    money to be collected: only `cod_value` does that, and it stays zero.
     """
     value = fils(total)
     return value if value > 0 else 100
@@ -633,8 +579,8 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
         float(order.shipping_address_snapshot["latitude"]),
         float(order.shipping_address_snapshot["longitude"]),
         branch_id=order.branch_id,
-        # The outlet the task was actually created against, so a trial run is
-        # costed over the distance a rider really travelled.
+        # The outlet the task was actually created against, so the run is costed
+        # over the distance a rider really travels.
         pickup=pickup,
     )
     if estimate is not None:
