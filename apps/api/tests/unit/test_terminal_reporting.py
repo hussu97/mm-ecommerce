@@ -299,3 +299,73 @@ def test_the_tills_report_names_the_machine_a_shift_ran_on():
     body = inspect.getsource(pos_reports_service.tills_report)
     assert '"device_id"' in body
     assert '"device_name"' in body
+
+
+# ─── Which 401 means "no longer paired" ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_only_an_unknown_token_tells_a_terminal_to_forget_its_pairing():
+    """
+    The register discards its device token when it sees `device_revoked`, and
+    only then.
+
+    It used to discard it on *any* 401 from the heartbeat, which is why a
+    terminal asked for a pairing code most mornings: a request that reached the
+    storefront host instead of the register's, or arrived without the header,
+    came back 401 and cost the shop its pairing. Only this case — a token that
+    matches no device at all — is worthless and safe to throw away.
+    """
+    from app.api.v1 import devices as devices_api
+    from app.core.exceptions import UnauthorizedError
+
+    with pytest.raises(UnauthorizedError) as raised:
+        await devices_api.authenticate_device(_StubDB(None), "a-token")
+
+    assert raised.value.code == "device_revoked"
+
+
+@pytest.mark.asyncio
+async def test_a_disabled_device_keeps_its_pairing():
+    """
+    The token is still good and the record still exists — an admin flips the
+    status back and the terminal carries on. Coding this would turn a
+    two-second fix in the console into a trip to the shop with a pairing code.
+    """
+    from app.api.v1 import devices as devices_api
+    from app.core.exceptions import UnauthorizedError
+
+    device = SimpleNamespace(status="disabled", last_seen_at=utcnow(), token_hash="h")
+
+    with pytest.raises(UnauthorizedError) as raised:
+        await devices_api.authenticate_device(_StubDB(device), "a-token")
+
+    assert raised.value.code is None
+    assert "disabled" in str(raised.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_a_missing_header_keeps_its_pairing():
+    """A request that arrived without the header says nothing about whether
+    this device is still registered."""
+    from app.api.v1 import devices as devices_api
+    from app.core.exceptions import UnauthorizedError
+
+    with pytest.raises(UnauthorizedError) as raised:
+        await devices_api.authenticate_device(_StubDB(None), None)
+
+    assert raised.value.code is None
+
+
+def test_a_code_reaches_the_client_and_an_uncoded_error_still_looks_the_same():
+    """
+    The handler adds `code` only when there is one, so every response that had
+    no code keeps the exact body it had.
+    """
+    from app.core.exceptions import BadRequestError, UnauthorizedError
+
+    coded = UnauthorizedError("Unrecognised device token", code="device_revoked")
+    assert coded.code == "device_revoked"
+
+    assert BadRequestError("nope").code is None
+    assert UnauthorizedError("Invalid pairing code").code is None

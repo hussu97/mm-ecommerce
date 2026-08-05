@@ -241,7 +241,12 @@ def configure(
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
-        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+        body: dict[str, str] = {"detail": exc.detail}
+        # Only when the error carries one, so every existing response keeps the
+        # exact shape it had. See `AppError.code`.
+        if exc.code:
+            body["code"] = exc.code
+        return JSONResponse(status_code=exc.status_code, content=body)
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(
