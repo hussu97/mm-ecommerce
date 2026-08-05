@@ -208,9 +208,12 @@ SENTRY_TRACES_SAMPLE_RATE=1.0
 NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
 NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_...
 
-# Umami Cloud — leave empty to disable client-side page tracking
+# Umami Cloud — leave empty to disable client-side page tracking.
+# The URL is the same-origin proxy path, not cloud.umami.is: `next.config.ts`
+# rewrites /umami/* to Umami Cloud, which keeps the tracker off the common
+# privacy blocklists. Pointing this straight at cloud.umami.is loses events.
 NEXT_PUBLIC_UMAMI_WEBSITE_ID=
-NEXT_PUBLIC_UMAMI_URL=https://cloud.umami.is/script.js
+NEXT_PUBLIC_UMAMI_URL=/umami/script.js
 
 # Sentry project: mm-frontend
 NEXT_PUBLIC_SENTRY_DSN=
@@ -365,10 +368,18 @@ UMAMI_WEBSITE_ID=<paste website ID>
 **`apps/web/.env`** — enables client-side page tracking in the storefront:
 ```env
 NEXT_PUBLIC_UMAMI_WEBSITE_ID=<paste website ID>
-NEXT_PUBLIC_UMAMI_URL=https://cloud.umami.is/script.js
+NEXT_PUBLIC_UMAMI_URL=/umami/script.js
 ```
 
-Restart the API after updating its `.env`. Page views will appear in the admin analytics dashboard under **Visitor Trend** and **Top Pages**.
+Restart the API after updating its `.env`. Page views will appear in the admin analytics dashboard under **Visitor Trend** and **Top Pages**, and the storefront's custom events under **Storefront Events**.
+
+> The read API is **not part of the Umami Cloud free tier**. Tracking works
+> regardless — the storefront records events on any plan — but the admin
+> dashboard's traffic panels stay empty until the account has API access. When
+> that is the reason, the analytics page now says so in Umami's own words
+> instead of showing zeros.
+
+See `docs/umami-analytics-setup.md` for the event reference and a troubleshooting run-book.
 
 ---
 
