@@ -605,3 +605,75 @@ async def test_a_trial_order_collects_from_the_staging_outlet(monkeypatch):
     assert (
         await noon_send_service.pickup_for(None, ordinary)
     ).noon_send_outlet_code == "MLTNGM1GBF"
+
+
+# ── a fully discounted order ──────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "total,subtotal,expected",
+    [
+        # The ordinary case: what they paid.
+        (Decimal("185.00"), Decimal("170.00"), 18500),
+        # A 100% promo. Nothing was paid, so the goods' own value is declared.
+        (Decimal("0.00"), Decimal("50.00"), 5000),
+        # Free end to end. Their API still will not take a zero.
+        (Decimal("0.00"), Decimal("0.00"), 100),
+    ],
+)
+def test_a_prepaid_task_always_carries_a_value(total, subtotal, expected):
+    """
+    noon Send requires one of `cod_value` and `prepaid_value` and treats zero as
+    absent — `cod_prepaid_missing`, a 400 at task creation.
+
+    Production found it the honest way: a trial order with a 100% promo code had
+    a total of AED 0.00, sent `prepaid_value: 0`, was refused, and fell back to
+    Lalamove. Nothing here can cause money to be collected — only `cod_value`
+    does that, and it stays zero throughout.
+    """
+    order = SimpleNamespace(
+        order_number="MM-20260805-003",
+        total=total,
+        subtotal=subtotal,
+        payment_method="stripe",
+        notes=None,
+        shipping_address_snapshot={
+            "latitude": 25.1437,
+            "longitude": 55.2857,
+            "phone": "+971501234567",
+            "first_name": "Hussain",
+            "address_line_1": "Boulevard Plaza Tower 2, Downtown Dubai",
+            "unit_number": "1",
+            "city": "Dubai",
+        },
+    )
+
+    task, reason = noon_send_service.build_task(order, Decimal("0.00"))
+
+    assert reason is None
+    assert task.prepaid_value == expected
+    assert task.cod_value == 0, "a prepaid task must never ask a rider to collect"
+
+
+def test_a_cash_order_is_unaffected():
+    """COD already refuses to be zero — `is_cod` requires an outstanding balance."""
+    order = SimpleNamespace(
+        order_number="MM-20260805-009",
+        total=Decimal("85.00"),
+        subtotal=Decimal("70.00"),
+        payment_method="cod",
+        notes=None,
+        shipping_address_snapshot={
+            "latitude": 25.1437,
+            "longitude": 55.2857,
+            "phone": "+971501234567",
+            "first_name": "Hussain",
+            "address_line_1": "Boulevard Plaza Tower 2, Downtown Dubai",
+            "city": "Dubai",
+        },
+    )
+
+    task, _ = noon_send_service.build_task(order, Decimal("85.00"))
+
+    assert task.cod_value == 8500
+    assert task.prepaid_value == 0
