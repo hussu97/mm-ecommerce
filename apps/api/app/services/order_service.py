@@ -5,7 +5,14 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import Integer, cast, func, select, update as sql_update
+from sqlalchemy import (
+    Integer,
+    cast,
+    func,
+    inspect as sa_inspect,
+    select,
+    update as sql_update,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -45,6 +52,7 @@ __all__ = [
     "to_response",
     "get_all_admin",
     "get_by_order_number",
+    "get_for_notification",
     "get_user_orders",
     "update_status",
 ]
@@ -113,12 +121,60 @@ async def to_response(db: AsyncSession, order: Order) -> OrderResponse:
     page and the order returned from checkout all have to agree about when the
     box arrives, and they only do that by construction.
     """
+    await _ensure_items_loaded(db, order)
     response = OrderResponse.model_validate(order)
     response.email_has_account = await _email_has_account(db, order.email)
     response.fulfilment = FulfilmentResponse.of(
         await fulfilment_service.for_order(db, order)
     )
     return response
+
+
+async def _ensure_items_loaded(db: AsyncSession, order: Order) -> None:
+    """
+    Load `order.items` if whoever handed us this row did not.
+
+    `OrderResponse` has an `items` field, so validating an order whose items are
+    still unloaded lazy-loads them — and a lazy load inside async SQLAlchemy is
+    not a slow query, it is a `MissingGreenlet`. Every caller that selects with
+    `_order_load_options()` is already fine; the ones that reach here with a bare
+    `select(Order)` are the courier webhooks, and on 2026-08-05 that cost four
+    customer emails: `out_for_delivery` and `delivered` for MM-20260805-007, and
+    `out_for_delivery` and `undelivered` for -006. `notify_order` catches
+    everything, so the failure wrote no email log and left no trace at all.
+
+    Fixed at the choke point rather than at each call site, because the next
+    caller to select an order without options will not know it had to.
+    """
+    state = sa_inspect(order)
+    # A row that was never persisted — the POS path builds one by hand — has no
+    # identity to refresh against, and its `items` collection is already real.
+    if state.transient or state.pending:
+        return
+    if "items" in state.unloaded:
+        await db.refresh(order, ["items"])
+
+
+async def get_for_notification(db: AsyncSession, order_id: uuid.UUID) -> Order | None:
+    """
+    Re-read an order with everything an email needs already loaded.
+
+    For callers holding an order they selected for a different purpose — both
+    couriers select one to move its status and then want it written about. One
+    extra query, against a mailer that must never fail because a relationship
+    was not asked for.
+    """
+    return (
+        (
+            await db.execute(
+                select(Order)
+                .options(*_order_load_options())
+                .where(Order.id == order_id)
+            )
+        )
+        .scalars()
+        .first()
+    )
 
 
 async def _generate_order_number(db: AsyncSession) -> str:

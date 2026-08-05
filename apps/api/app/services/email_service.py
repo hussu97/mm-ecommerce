@@ -788,6 +788,12 @@ async def notify_order(db, order) -> str | None:
     response model — which is both couriers, since a webhook arrives with a
     delivery record and works back to the order from it.
 
+    The row is re-read with the mailer's own load options rather than used as
+    handed over. A courier selects an order to move its status, not to write
+    about it, and an order selected without `items` used to take the whole email
+    down with a `MissingGreenlet` that nothing but this function's own `except`
+    ever saw. The reload is one query and it removes the class of bug.
+
     The import is deferred because `order_service` imports this module's package
     at load time and a top-level import here would close the cycle. It is the
     only one in this file, and it is here rather than at each courier so there
@@ -796,7 +802,8 @@ async def notify_order(db, order) -> str | None:
     from app.services import order_service
 
     try:
-        return await notify_status_change(await order_service.to_response(db, order))
+        loaded = await order_service.get_for_notification(db, order.id) or order
+        return await notify_status_change(await order_service.to_response(db, loaded))
     except Exception as exc:  # pragma: no cover — defensive
         # A courier push that moved an order must not be rejected because we
         # could not write about it. Lalamove would retry the whole event for a

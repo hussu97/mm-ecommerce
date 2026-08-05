@@ -43,6 +43,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import case, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.models.delivery_batch import DELIVERY_TIMEZONE
@@ -978,9 +979,23 @@ def apply_tracking(delivery: OrderDelivery, payload: dict[str, Any]) -> None:
 
 
 async def _order_of(db: AsyncSession, delivery: OrderDelivery) -> Order | None:
-    """The order this delivery belongs to."""
+    """
+    The order this delivery belongs to, with its lines loaded.
+
+    The lines are loaded because everything this function feeds ends up at the
+    mailer, and `OrderResponse` reads `order.items`. Selected bare, that is a
+    `MissingGreenlet` rather than a query, and it silently cost four customer
+    emails on 2026-08-05. `email_service.notify_order` re-reads defensively as
+    well; this is the same fact stated where the select happens.
+    """
     return (
-        (await db.execute(select(Order).where(Order.id == delivery.order_id)))
+        (
+            await db.execute(
+                select(Order)
+                .options(selectinload(Order.items))
+                .where(Order.id == delivery.order_id)
+            )
+        )
         .scalars()
         .first()
     )

@@ -962,8 +962,18 @@ async def _advance_order(db: AsyncSession, delivery: OrderDelivery) -> None:
     if target is None:
         return
 
+    # The lines are loaded because this order ends up at the mailer, and
+    # `OrderResponse` reads `order.items`. Selected bare that is a
+    # `MissingGreenlet` rather than a query — the failure mode that silently
+    # swallowed four customer emails on 2026-08-05.
     order = (
-        (await db.execute(select(Order).where(Order.id == delivery.order_id)))
+        (
+            await db.execute(
+                select(Order)
+                .options(selectinload(Order.items))
+                .where(Order.id == delivery.order_id)
+            )
+        )
         .scalars()
         .first()
     )
