@@ -1646,3 +1646,81 @@ reproduces on `main`, so it is not from this work, but it cost an hour here and
 would cost the next person the same. Both that file and the new
 `test_delivery_fee_agreement` now pin the key off, so the answer is the same
 everywhere.
+
+---
+
+## [2026-08-05] No-reply email sender, and an audit of the Umami pipeline
+
+Brief: send from a noreply address and take the "contact us" / `orders@` line out
+of the email footers; then audit the site and the Umami events, because none of
+the cart, checkout or post-order ones appeared to be arriving.
+
+### Emails
+
+- [x] `FROM_EMAIL` → `noreply@meltingmomentscakes.com` in all five checklist
+      locations (config default, `.env.example`, both compose services,
+      `PRODUCTION.md`, `README.md`)
+- [x] Footer is the standard unmonitored-sender notice in both languages; the
+      Contact link comes out of the footer link row and `footer.contact` with it
+- [x] Every "reply to this email" reworded — six templates plus the undelivered
+      alert — and a `Get in touch` link added at the foot of each, pointing at
+      the storefront contact page. A no-reply email that still asks for a reply
+      is worse than either choice made properly
+- [x] Both locales render clean: no `orders@`, no reply invitation, no
+      unresolved keys, key parity intact (136 each)
+
+### Umami — what was actually wrong
+
+Checked against production, not inferred:
+
+- [x] **Every event was being sent twice.** `POST /umami/api/send` returned a 307
+      to `/en/umami/api/send`. `/umami` has no dot and no skip rule, so the
+      locale proxy claimed it. Fixed in `proxy.ts` + matcher, with a test
+- [x] **The pre-load queue gave up after three seconds.** Four fixed timers, then
+      silence — an event queued behind a slow third-party script was gone with no
+      retry and no error. Now a 250ms poll to a 30s ceiling; `track` queues
+      before it drains so nothing overtakes
+- [x] **The basket sent the browser to `/checkout`**, which is not a route —
+      another redirect, with `begin_checkout` in flight across it
+- [x] **Nothing ever read the events back.** `/analytics/traffic` asked for
+      stats, pageviews and paths and stopped. Added `metrics?type=event` and a
+      **Storefront Events** panel. This is the finding that best explains the
+      brief: the events could have been arriving all along and no screen we own
+      could have shown one
+- [x] **Every read failure returned zeros** with `configured: true` beside them.
+      A refused key and a quiet week were the same four noughts. The reason now
+      travels in `error` and the page prints it
+- [x] `bounces` was printed as a percentage and `totaltime` as an average,
+      neither divided by the session count
+- [x] `docs/umami-analytics-setup.md`: Fired-from column corrected, a
+      troubleshooting run-book added, changelog row appended
+
+### What was checked and found sound
+
+- The tracker is served same-origin from `/umami/script.js` (200) with the right
+  website ID, so blocklists are not the problem
+- `/en/umami/api/send` reaches Umami Cloud and gets Umami's own reply
+- The current tracker uses `keepalive: true`, so a hard navigation does **not**
+  abort an event in flight. Verified in Chromium, including across the 307 —
+  this was the first hypothesis and it was wrong
+- Both `Authorization: Bearer` and `x-umami-api-key` are accepted by Umami
+  Cloud. The header was not the cause of the 403 recorded in these notes
+  earlier; **API access is not in the free tier** is the likelier cause
+
+### Verification
+
+- `pytest tests/unit`: 840 passed (9 new, covering the events read, the refusal
+  path, and the two arithmetic fixes)
+- `vitest`: 14 passed across `analytics.test.ts` and `proxy.test.ts`
+- `ruff check` clean; `tsc --noEmit` clean for web and admin
+- Every email template rendered in both locales and asserted against
+
+### Still open — for the owner, not for code
+
+The admin traffic panels stay empty until the Umami Cloud account has API
+access. That is a plan, not a bug. The banner now says so.
+
+`docs/first-party-analytics-feasibility.md` answers the other half of the brief:
+about a week to replace Umami with our own `site_events` table, and the argument
+for it is the join against `orders` that is impossible while the behavioural
+half of every question lives in someone else's database.

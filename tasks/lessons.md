@@ -167,3 +167,36 @@
       return bcrypt.checkpw(plain.encode(), hashed.encode())
   ```
 - **pyproject.toml**: Use `"bcrypt>=4.0.0"` — remove `"passlib[bcrypt]"`
+
+### [2026-08-05] Check the read path before concluding the write path is broken
+- **What went wrong**: "None of the cart/checkout events are coming through" was
+  read as a tracking failure, and the first three hypotheses were all about
+  sending — ad blockers, navigation aborting the fetch, a bad auth header. Each
+  was disproved by measurement. The actual finding was that nothing in the
+  codebase ever *read* custom events back: `/analytics/traffic` fetched stats,
+  pageviews and paths and stopped there.
+- **Rule**: For any "the data isn't arriving" report, establish which end the
+  observation was made from before theorising. If the report is "I can't see it
+  in our dashboard", check what our dashboard queries first — it is cheaper than
+  auditing the sender and it is where this one was.
+
+### [2026-08-05] Verify third-party client behaviour against the served file
+- **What went wrong**: Reasoned confidently that a hard `window.location.href`
+  after `umami.track()` would abort the event, because Umami's tracker used a
+  plain `fetch`. Curling the actual script showed `keepalive: true`, and a
+  Chromium reproduction confirmed the request survives navigation — even across
+  a 307.
+- **Rule**: The vendor's script is one `curl` away and the browser is installed.
+  Read the code that is actually being served, and reproduce, before building a
+  fix on top of remembered behaviour.
+
+### [2026-08-05] A swallowed error is a wrong answer with a straight face
+- **What went wrong**: `/analytics/traffic` returned zeros for a refused API
+  key, an unreachable host, an unparseable reply and a genuinely quiet week —
+  and reported `configured: true` next to all four. This repo's own notes record
+  a 403 from that endpoint months earlier; nothing on screen could have said so,
+  so it stayed unfixed and the numbers were read as real.
+- **Rule**: `except Exception: return empty` is only acceptable when empty and
+  broken are the same thing to the reader. When they are not, carry the reason
+  to the surface — a dashboard that says why it is blank costs one field and
+  saves the next investigation entirely.
