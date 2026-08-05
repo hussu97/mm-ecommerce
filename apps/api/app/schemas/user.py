@@ -10,6 +10,10 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8)
     phone: str | None = None
+    #: The language they signed up in, so the welcome lands in it. There is no
+    #: order to read one off here, and a `User` records no preference, so the
+    #: request is the only thing that knows.
+    locale: str | None = Field(None, max_length=5)
 
 
 class UserUpdate(BaseModel):
@@ -46,6 +50,9 @@ class GuestSessionRequest(BaseModel):
 
 class PasswordResetRequest(BaseModel):
     email: EmailStr
+    #: The language the request came from, so the reset link and the email
+    #: around it are both in it.
+    locale: str | None = Field(None, max_length=5)
 
 
 class PasswordResetConfirm(BaseModel):

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" dir="ltr" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<html lang="{{ locale }}" dir="{{ direction }}" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -12,7 +12,7 @@
   <noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript>
   <![endif]-->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500;600&family=Raleway:wght@300;400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500;600&family=Raleway:wght@300;400;500&family=Cairo:wght@300;400;500;600&family=Tajawal:wght@300;400;500&display=swap" rel="stylesheet" />
   <style>
     /* ─── Reset ────────────────────────────────────────────────────────────
        Client defaults, not preferences. Outlook adds table spacing, iOS
@@ -36,7 +36,7 @@
       margin: 0;
       padding: 0;
       background-color: #f4eeea;
-      font-family: 'Jost', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      font-family: {% if locale == 'ar' %}'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif{% else %}'Jost', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif{% endif %};
       color: #333333;
       font-size: 16px;
       line-height: 1.6;
@@ -49,13 +49,35 @@
 
     /* Header */
     .masthead { padding: 34px 40px 30px; text-align: center; background-color: #8a5a64; }
-    .wordmark { margin: 0; font-family: 'Raleway', Helvetica, Arial, sans-serif; font-weight: 300; font-size: 25px; letter-spacing: 0.34em; text-transform: uppercase; color: #ffffff; }
+    .wordmark { margin: 0; font-family: {% if locale == 'ar' %}'Tajawal', Tahoma, Arial, sans-serif{% else %}'Raleway', Helvetica, Arial, sans-serif{% endif %}; font-weight: 300; font-size: 25px; letter-spacing: 0.34em; text-transform: uppercase; color: #ffffff; }
     .tagline { margin: 9px 0 0; font-size: 10px; letter-spacing: 0.24em; text-transform: uppercase; color: #e6cdcc; font-weight: 400; }
+    /* ── Arabic ──────────────────────────────────────────────────────────
+       Arabic has no case, so `text-transform: uppercase` does nothing — and
+       `letter-spacing` actively breaks it: the script is joined, and spacing
+       the letters pulls the joins apart into something that reads as broken
+       rather than as styled. Both come off every Arabic label. */
+    [lang="ar"] .tagline, [lang="ar"] .hero-eyebrow, [lang="ar"] h2.section,
+    [lang="ar"] .kv-label, [lang="ar"] .order-chip,
+    [lang="ar"] .btn a, [lang="ar"] .btn-ghost a {
+      letter-spacing: 0 !important;
+      text-transform: none !important;
+    }
+    [lang="ar"] .wordmark { letter-spacing: 0.06em; }
+    /* Arabic sets taller than Latin at the same size — it needs the room. */
+    [lang="ar"] p, [lang="ar"] .kv-value, [lang="ar"] .item-name { line-height: 1.85; }
+
+    /* ── Right to left ───────────────────────────────────────────────────
+       `dir="rtl"` on the html element flips the flow, which is most of the
+       job. What it cannot do is turn an explicit `text-align: right` around —
+       and those are exactly the rules that pin a price to the far edge, which
+       in RTL is the other side. */
+    [dir="rtl"] .item-price, [dir="rtl"] .totals td.amount, [dir="rtl"] .step-when { text-align: left; }
+    [dir="rtl"] .totals td.label { text-align: right; }
 
     /* Hero — the one line that says what happened */
     .hero { padding: 40px 40px 4px; text-align: center; }
     .hero-eyebrow { margin: 0 0 12px; font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase; color: #a98089; font-weight: 500; }
-    .hero-title { margin: 0; font-family: 'Raleway', Helvetica, Arial, sans-serif; font-weight: 400; font-size: 27px; line-height: 1.25; color: #8a5a64; letter-spacing: 0.01em; }
+    .hero-title { margin: 0; font-family: {% if locale == 'ar' %}'Tajawal', Tahoma, Arial, sans-serif{% else %}'Raleway', Helvetica, Arial, sans-serif{% endif %}; font-weight: 400; font-size: 27px; line-height: 1.25; color: #8a5a64; letter-spacing: 0.01em; }
     .hero-title.is-warning { color: #b4443f; }
 
     .body-copy { padding: 20px 40px 0; }
@@ -79,7 +101,7 @@
 
     .kv-label { font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: #a08c8f; font-weight: 500; padding-bottom: 4px; }
     .kv-value { font-size: 16px; color: #333333; line-height: 1.5; }
-    .kv-value-lg { font-size: 19px; color: #8a5a64; font-weight: 500; line-height: 1.35; font-family: 'Raleway', Helvetica, Arial, sans-serif; }
+    .kv-value-lg { font-size: 19px; color: #8a5a64; font-weight: 500; line-height: 1.35; font-family: {% if locale == 'ar' %}'Tajawal', Tahoma, Arial, sans-serif{% else %}'Raleway', Helvetica, Arial, sans-serif{% endif %}; }
 
     /* Items */
     .items td { padding: 14px 0; border-bottom: 1px solid #f1eae8; vertical-align: top; }
@@ -99,7 +121,7 @@
     /* Button — a bordered table so Outlook renders the fill */
     .btn-wrap { padding: 26px 40px 0; }
     .btn { border-radius: 6px; background-color: #8a5a64; }
-    .btn a { display: block; padding: 15px 30px; font-family: 'Jost', Helvetica, Arial, sans-serif; font-size: 14px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: #ffffff !important; text-decoration: none; }
+    .btn a { display: block; padding: 15px 30px; font-family: inherit; font-size: 14px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: #ffffff !important; text-decoration: none; }
     .btn-ghost { border-radius: 6px; background-color: #ffffff; border: 1px solid #d9c4c6; }
     .btn-ghost a { display: block; padding: 14px 28px; font-size: 14px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: #8a5a64 !important; text-decoration: none; }
 
@@ -113,7 +135,7 @@
     /* Footer */
     .footer { padding: 30px 40px 36px; text-align: center; background-color: #f4eeea; border-top: 1px solid #e7dcd8; }
     .footer p { margin: 0 0 6px; font-size: 13px; color: #8a7a7c; line-height: 1.6; }
-    .footer .signoff { font-family: 'Raleway', Helvetica, Arial, sans-serif; font-size: 15px; color: #8a5a64; margin-bottom: 14px; letter-spacing: 0.04em; }
+    .footer .signoff { font-family: {% if locale == 'ar' %}'Tajawal', Tahoma, Arial, sans-serif{% else %}'Raleway', Helvetica, Arial, sans-serif{% endif %}; font-size: 15px; color: #8a5a64; margin-bottom: 14px; letter-spacing: 0.04em; }
     .footer a { color: #8a5a64; text-decoration: none; }
     .footer .links a { padding: 0 9px; }
     .footer .fine { font-size: 11px; color: #ab9fa0; padding-top: 12px; }
@@ -143,7 +165,7 @@
       .stack-full { display: block !important; width: 100% !important; }
       .items td.stack-full { border-bottom: 0 !important; padding-bottom: 0 !important; }
       .items td.item-price.stack-full {
-        text-align: left !important;
+        text-align: {% if direction == 'rtl' %}right{% else %}left{% endif %} !important;
         padding: 4px 0 14px !important;
         border-bottom: 1px solid #f1eae8 !important;
         font-weight: 500 !important;
@@ -186,7 +208,7 @@
           <tr>
             <td class="masthead" bgcolor="#8a5a64" align="center">
               <h1 class="wordmark">Melting Moments</h1>
-              <p class="tagline">Cakes &amp; Bakes &middot; United Arab Emirates</p>
+              <p class="tagline">{{ t('brand.tagline') }}</p>
             </td>
           </tr>
 
@@ -198,15 +220,12 @@
 
           <tr>
             <td class="footer" bgcolor="#f4eeea" align="center">
-              <p class="signoff">Made with 100% love</p>
+              <p class="signoff">{{ t('footer.signoff') }}</p>
               <p class="links">
-                <a href="{{ web_url }}">Shop</a>&middot;<a href="{{ web_url }}/about">Our story</a>&middot;<a href="{{ web_url }}/contact">Contact</a>
+                <a href="{{ web_url }}/{{ locale }}">{{ t('footer.shop') }}</a>&middot;<a href="{{ web_url }}/{{ locale }}/about">{{ t('footer.about') }}</a>&middot;<a href="{{ web_url }}/{{ locale }}/contact">{{ t('footer.contact') }}</a>
               </p>
-              <p>&copy; {{ now.year }} Melting Moments Cakes &middot; United Arab Emirates</p>
-              <p class="fine">
-                Sent to {{ recipient_email }}. Questions? Reply to this email or write to
-                <a href="mailto:orders@meltingmomentscakes.com">orders@meltingmomentscakes.com</a>.
-              </p>
+              <p>{{ t('footer.rights', year=now.year) }}</p>
+              <p class="fine"><span dir="auto">{{ t('footer.sent_to', email=recipient_email) }}</span></p>
             </td>
           </tr>
 

@@ -777,6 +777,8 @@ function CheckoutContent() {
               }
             : undefined,
           pickup_branch_id: isDelivery ? undefined : form.pickupBranchId || undefined,
+          // Stamped on the order, and every email about it is written in it.
+          locale,
           promo_code: form.promoDiscount > 0 ? form.promoCode : undefined,
           payment_method: paymentMethod,
           notes: form.notes || undefined,

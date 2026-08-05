@@ -66,6 +66,15 @@ class Order(Base, UUIDMixin, TimestampMixin):
         index=True,
     )
     email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    #: The language the customer was reading when they placed it — `en` or `ar`.
+    #:
+    #: A property of the order, not of the customer: a guest has no account to
+    #: hang a preference on, and the useful question is not "what does this
+    #: person prefer" but "what were they reading when they placed this". Every
+    #: email about the order is written in it.
+    locale: Mapped[str] = mapped_column(
+        String(5), nullable=False, server_default="en", default="en"
+    )
     delivery_method: Mapped[DeliveryMethodEnum] = mapped_column(
         Enum(
             DeliveryMethodEnum,

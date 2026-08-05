@@ -5,9 +5,14 @@
   going and how it was paid, above the fold and readable on a phone at the
   counter. It is the one order email allowed to name operational facts, because
   the only people who receive it are the two owners.
+
+  It also stays in English whatever language the customer ordered in: it is an
+  internal notification, and the admin it links to is English-only. The branch
+  card is the customer's own language, because that is the address they were
+  shown.
 #}
 {% extends "base.html" %}
-{% import "_parts.html" as parts %}
+{% import "_parts.html" as parts with context %}
 
 {% block title %}New order — {{ order.order_number }}{% endblock %}
 {% block preheader %}AED {{ totals.total }} &middot; {{ items|length }} line{{ '' if items|length == 1 else 's' }} &middot; {% if is_pickup %}collection{% else %}delivery{% endif %}{% endblock %}
@@ -43,16 +48,16 @@
           </tr>
           <tr>
             <td class="kv-label" style="padding: 5px 0;">Customer</td>
-            <td class="kv-value" style="padding: 5px 0;">{{ customer_name }}</td>
+            <td class="kv-value" style="padding: 5px 0;" dir="auto">{{ customer_name }}</td>
           </tr>
           <tr>
             <td class="kv-label" style="padding: 5px 0;">Email</td>
-            <td class="kv-value" style="padding: 5px 0; word-break: break-all;">{{ order.email }}</td>
+            <td class="kv-value" style="padding: 5px 0; word-break: break-all;" dir="ltr">{{ order.email }}</td>
           </tr>
           {% if customer_phone %}
           <tr>
             <td class="kv-label" style="padding: 5px 0;">Phone</td>
-            <td class="kv-value" style="padding: 5px 0;">{{ customer_phone }}</td>
+            <td class="kv-value" style="padding: 5px 0;" dir="ltr">{{ customer_phone }}</td>
           </tr>
           {% endif %}
         </table>

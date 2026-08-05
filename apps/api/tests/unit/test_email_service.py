@@ -163,3 +163,55 @@ def test_a_real_address_still_sends(monkeypatch):
 
     assert result["status"] == "sent"
     assert result["resend_id"] == "re_123"
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "guest-3f9a1c22@guest.local",
+        "GUEST-3F9A1C22@Guest.Local",
+        "guest-abc@guest.LOCAL",
+    ],
+)
+def test_a_guest_who_gave_no_email_is_never_written_to(address, monkeypatch):
+    """
+    A guest can check out without giving an address at all. `orders.email` is
+    NOT NULL and every lookup keys on it, so checkout falls back to the
+    `…@guest.local` identity the auth layer mints for the session — a value that
+    looks like an address and is not one.
+
+    Nothing may be sent there. It would bounce every time, and a bounce rate
+    built out of addresses we generated ourselves is the kind of thing that gets
+    a sending domain throttled. Matched case-insensitively because the auth
+    layer lower-cases it but nothing downstream promises to.
+    """
+    called = []
+    monkeypatch.setattr(
+        email_service.resend.Emails, "send", lambda *a, **k: called.append(a)
+    )
+
+    result = email_service._send(address, "Order confirmed", "<p>hi</p>")
+
+    assert result["status"] == "skipped"
+    assert result["error"] == "placeholder guest address"
+    assert called == []
+
+
+def test_a_real_address_is_not_mistaken_for_a_guest_one(monkeypatch):
+    """The guard keys on the whole domain, not on the word "guest"."""
+    monkeypatch.setattr(email_service.settings, "RESEND_API_KEY", "re_test")
+    sent = []
+
+    class _Response:
+        id = "re_123"
+
+    monkeypatch.setattr(
+        email_service.resend.Emails,
+        "send",
+        lambda params: (sent.append(params), _Response())[1],
+    )
+
+    for address in ("guest@example.com", "myguest.local@gmail.com"):
+        result = email_service._send(address, "Order confirmed", "<p>hi</p>")
+        assert result["status"] == "sent", address
+    assert len(sent) == 2

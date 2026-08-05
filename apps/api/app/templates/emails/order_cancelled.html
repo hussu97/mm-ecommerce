@@ -1,14 +1,14 @@
 {% extends "base.html" %}
-{% import "_parts.html" as parts %}
+{% import "_parts.html" as parts with context %}
 
-{% block title %}Order cancelled — {{ order.order_number }}{% endblock %}
-{% block preheader %}{{ order.order_number }} has been cancelled. Any payment taken is being returned.{% endblock %}
+{% block title %}{{ t('cancelled.subject') }} — {{ order.order_number }}{% endblock %}
+{% block preheader %}{{ t('cancelled.preheader', order_number=order.order_number) }}{% endblock %}
 
 {% block content %}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="hero" align="center">
-    <p class="hero-eyebrow">Order cancelled</p>
-    <h2 class="hero-title is-warning">Your order has been cancelled.</h2>
+    <p class="hero-eyebrow">{{ t('cancelled.eyebrow') }}</p>
+    <h2 class="hero-title is-warning">{{ t('cancelled.heading') }}</h2>
   </td></tr>
 </table>
 
@@ -17,28 +17,26 @@
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="body-copy" align="center" style="padding-top: 18px;">
     <p class="lead" style="text-align:center;">
-      {{ name }}, order {{ order.order_number }} has been cancelled and nothing more
-      will happen with it.
+      {{ t('cancelled.lead', name=name, order_number=order.order_number) }}
     </p>
   </td></tr>
 </table>
 
 {% if order.admin_notes %}
-{{ parts.alert('Why', order.admin_notes) }}
+{{ parts.alert(t('cancelled.why_label'), order.admin_notes) }}
 {% endif %}
 
 {% if was_paid %}
-{{ parts.alert('Your refund', 'Any payment already taken is being returned to the card you paid with. Banks usually take five to ten working days to show it.') }}
+{{ parts.alert(t('cancelled.refund_label'), t('cancelled.refund_body')) }}
 {% endif %}
 
 {{ parts.order_summary(items, totals) }}
-{{ parts.button(web_url, 'Back to the shop') }}
+{{ parts.button(shop_url, t('cancelled.cta')) }}
 
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="body-copy" style="padding-top: 24px;">
     <p class="muted">
-      If this wasn't expected, reply to this email — we would rather hear about it
-      than have you wonder.
+      {{ t('cancelled.footnote') }}
     </p>
   </td></tr>
 </table>

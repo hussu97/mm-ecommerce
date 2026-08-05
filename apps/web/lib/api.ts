@@ -109,9 +109,23 @@ export const api = {
 
 // ─── Typed endpoints ──────────────────────────────────────────────────────────
 
+/**
+ * The language this page is being read in, off the URL.
+ *
+ * Every storefront route is `/{locale}/…`, so the path is the one source that
+ * is always right and always available — including in a module with no React
+ * context to read from. Defaulted into the two calls that trigger an email, so
+ * a caller cannot forget to pass it and quietly send an Arabic customer an
+ * English password reset.
+ */
+export function currentLocale(): 'en' | 'ar' {
+  if (typeof window === 'undefined') return 'en';
+  return window.location.pathname.split('/')[1] === 'ar' ? 'ar' : 'en';
+}
+
 export const authApi = {
   register: (data: { email: string; password: string; phone?: string }) =>
-    api.post<TokenResponse>('/auth/register', data),
+    api.post<TokenResponse>('/auth/register', { locale: currentLocale(), ...data }),
   login: (email: string, password: string) =>
     api.post<TokenResponse>('/auth/login', { email, password }),
   guest: (email?: string) =>
@@ -122,7 +136,10 @@ export const authApi = {
   updateMe: (data: { phone?: string }) =>
     api.put<User>('/auth/me', data),
   forgotPassword: (email: string) =>
-    api.post<{ message: string }>('/auth/forgot-password', { email }),
+    api.post<{ message: string }>('/auth/forgot-password', {
+      email,
+      locale: currentLocale(),
+    }),
   resetPassword: (token: string, new_password: string) =>
     api.post<{ message: string }>('/auth/reset-password', { token, new_password }),
 };

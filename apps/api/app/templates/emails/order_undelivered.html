@@ -12,16 +12,16 @@
   has made.
 #}
 {% extends "base.html" %}
-{% import "_parts.html" as parts %}
+{% import "_parts.html" as parts with context %}
 
-{% block title %}We couldn't deliver — {{ order.order_number }}{% endblock %}
-{% block preheader %}The driver couldn't complete delivery for {{ order.order_number }}. We'll be in touch.{% endblock %}
+{% block title %}{{ t('undelivered.subject') }} — {{ order.order_number }}{% endblock %}
+{% block preheader %}{{ t('undelivered.preheader', order_number=order.order_number) }}{% endblock %}
 
 {% block content %}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="hero" align="center">
-    <p class="hero-eyebrow">Delivery attempted</p>
-    <h2 class="hero-title is-warning">We couldn't hand it over.</h2>
+    <p class="hero-eyebrow">{{ t('undelivered.eyebrow') }}</p>
+    <h2 class="hero-title is-warning">{{ t('undelivered.heading') }}</h2>
   </td></tr>
 </table>
 
@@ -30,15 +30,14 @@
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="body-copy" align="center" style="padding-top: 18px;">
     <p class="lead" style="text-align:center;">
-      {{ name }}, our driver reached your address but wasn't able to complete the
-      delivery. Nothing is lost — your order is safe with us.
+      {{ t('undelivered.lead', name=name) }}
     </p>
   </td></tr>
 </table>
 
-{{ parts.alert('What happens next', 'Someone from our team will contact you shortly to arrange another attempt. If it is easier, reply to this email with a better time or a different address and we will work around it.') }}
+{{ parts.alert(t('undelivered.next_label'), t('undelivered.next_body')) }}
 
 {{ parts.address_card(address) }}
 {{ parts.order_summary(items, totals) }}
-{{ parts.button(tracking_url, 'View order details') }}
+{{ parts.button(tracking_url, t('undelivered.cta')) }}
 {% endblock %}

@@ -1,37 +1,35 @@
 {% extends "base.html" %}
-{% import "_parts.html" as parts %}
+{% import "_parts.html" as parts with context %}
 
-{% block title %}Welcome to Melting Moments{% endblock %}
-{% block preheader %}Your account is ready. Everything is baked to order.{% endblock %}
+{% block title %}{{ t('welcome.subject') }}{% endblock %}
+{% block preheader %}{{ t('welcome.preheader') }}{% endblock %}
 
 {% block content %}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="hero" align="center">
-    <p class="hero-eyebrow">Welcome</p>
-    <h2 class="hero-title">Lovely to have you here.</h2>
+    <p class="hero-eyebrow">{{ t('welcome.eyebrow') }}</p>
+    <h2 class="hero-title">{{ t('welcome.heading') }}</h2>
   </td></tr>
 </table>
 
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="body-copy" align="center" style="padding-top: 8px;">
     <p class="lead" style="text-align:center;">
-      Your account is ready. Everything we make is baked to order in our own
-      kitchen and delivered across all seven emirates — or boxed up for you to
-      collect.
+      {{ t('welcome.lead') }}
     </p>
   </td></tr>
 </table>
 
-{{ parts.button(web_url, 'Start browsing') }}
+{{ parts.button(shop_url, t('welcome.cta')) }}
 
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="body-copy" style="padding-top: 30px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="panel-tinted" bgcolor="#fbf7f5">
       <tr><td class="panel-pad">
-        <div class="kv-label">With an account you can</div>
-        <div class="kv-value" style="padding-top:6px;">Track every order from the kitchen to your door</div>
-        <div class="kv-value" style="padding-top:4px;">Save addresses so checkout takes seconds</div>
-        <div class="kv-value" style="padding-top:4px;">Reorder anything you've had before</div>
+        <div class="kv-label">{{ t('welcome.perks_label') }}</div>
+        <div class="kv-value" style="padding-top:6px;">{{ t('welcome.perk_track') }}</div>
+        <div class="kv-value" style="padding-top:4px;">{{ t('welcome.perk_addresses') }}</div>
+        <div class="kv-value" style="padding-top:4px;">{{ t('welcome.perk_reorder') }}</div>
       </td></tr>
     </table>
   </td></tr>
@@ -40,7 +38,7 @@
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="body-copy" style="padding-top: 24px;">
     <p class="muted">
-      Didn't sign up? You can ignore this email and nothing further will happen.
+      {{ t('welcome.footnote') }}
     </p>
   </td></tr>
 </table>

@@ -49,6 +49,10 @@ class OrderCreate(BaseModel):
     #: still has to be accepted, and falls back to the branch the shop would have
     #: resolved for it anyway.
     pickup_branch_id: UUID | None = None
+    #: The language the checkout was in. Everything the shop writes about this
+    #: order is written in it. Anything unrecognised is normalised to English by
+    #: `order_service` rather than refused — a bad locale must not lose a sale.
+    locale: str | None = Field(None, max_length=5)
     promo_code: str | None = None
     payment_method: PaymentMethodEnum = Field(
         description="stripe | cod | tabby | tamara"
@@ -108,6 +112,18 @@ class OrderResponse(BaseModel):
     #: separation is what keeps "the customer is not told who carries their
     #: cake" a property of the type rather than a rule someone has to remember.
     fulfilment: FulfilmentResponse | None = None
+    #: Which channel rang this up — `online` for the storefront, `cashier` for
+    #: the counter. Carried so the mailer can tell them apart: a counter sale is
+    #: handed over across the counter with a printed receipt, and has no use for
+    #: "your order is confirmed".
+    #:
+    #: Null only on a response built by hand in a test — the column itself is
+    #: NOT NULL. Nothing customer-facing renders it; it is here because the
+    #: alternative was for each of the mailer's callers to remember the rule.
+    source: str | None = None
+    #: The language this order was placed in, and the one every email about it
+    #: is written in.
+    locale: str = "en"
 
 
 class OrderListResponse(BaseModel):
