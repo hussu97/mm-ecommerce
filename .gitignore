@@ -68,3 +68,4 @@ cloudflared.deb
 
 # Generated menus — rebuild with scripts/menu/generate_menu.py
 scripts/menu/*.html
+.email-preview/

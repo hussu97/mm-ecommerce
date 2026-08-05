@@ -835,6 +835,41 @@ class TestCreateOrderCalculations:
         order_arg = db.add.call_args_list[0][0][0]
         assert order_arg.status == OrderStatusEnum.CREATED
 
+    async def test_a_delivery_records_what_the_checkout_promised(self):
+        """
+        The order carries the promise, so every email about it can repeat the
+        number the customer was actually shown.
+
+        Before this, each reader worked out its own: checkout read the batch
+        window that was open at the time, and the confirmation email — sent
+        before any batch exists — fell back to a generic prep-plus-drive sum.
+        MM-20260805-008 was quoted 19:00 on the page and 17:25 in the inbox.
+        """
+        cart = _cart(items=[_cart_item(_product())])
+        db = _db_for_create(cart, _order_mock())
+
+        await create_order(db, _delivery_data(), user_id=None)
+
+        order_arg = db.add.call_args_list[0][0][0]
+        assert order_arg.promised_at is not None
+        assert order_arg.promised_precision in {"time", "day"}
+
+    async def test_a_collection_order_promises_nothing(self):
+        """
+        There is nothing for a stored copy to protect. A pickup estimate is
+        `created_at + prep`, which is the same answer however often it is
+        derived — unlike a delivery, whose window has closed by the time any
+        email is sent.
+        """
+        cart = _cart(items=[_cart_item(_product())])
+        db = _db_for_create(cart, _order_mock())
+
+        await create_order(db, _pickup_data(), user_id=None)
+
+        order_arg = db.add.call_args_list[0][0][0]
+        assert order_arg.promised_at is None
+        assert order_arg.promised_precision is None
+
 
 # ── Stock-tracked products ────────────────────────────────────────────────────
 

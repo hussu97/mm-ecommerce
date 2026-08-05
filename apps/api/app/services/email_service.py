@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
+import css_inline
 import resend
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -17,6 +18,7 @@ from app.core.database import AsyncSessionFactory
 from app.models.delivery_batch import DELIVERY_TIMEZONE
 from app.models.email_log import EmailLog
 from app.models.pos_order import OrderSourceEnum
+from app.services import address_format
 from app.services.email_copy import DIRECTION, translator
 from app.schemas.order import OrderResponse
 
@@ -55,27 +57,69 @@ _jinja_env = Environment(
     autoescape=select_autoescape(["html"]),
 )
 
+#: Writes `base.html`'s stylesheet onto the elements themselves.
+#:
+#: A `<style>` block in `<head>` only survives in a client that renders the
+#: whole document. A notification preview, an inbox snippet and Gmail's own web
+#: client all render a stripped version that keeps the markup and throws the
+#: head away — which is why the same message looked designed when opened and
+#: naked in a notification. Inlining is the only styling every one of them
+#: honours.
+#:
+#: `keep_at_rules` retains what cannot be inlined: an element has no `@media`,
+#: so the phone breakpoint and the dark-mode block stay in a `<style>` tag and
+#: keep working wherever one is honoured. Every rule in those blocks is already
+#: flagged `!important`, so they still outrank the inline styles written here.
+#:
+#: `load_remote_stylesheets=False` matters more than it looks: `base.html` links
+#: Google Fonts, and without this every send would make an outbound HTTP request
+#: to fetch a stylesheet, on the send path, for no benefit. `keep_link_tags`
+#: leaves the link itself alone so clients that load webfonts still do.
+_inliner = css_inline.CSSInliner(
+    keep_at_rules=True,
+    keep_link_tags=True,
+    load_remote_stylesheets=False,
+)
+
+
+def _inline(html: str) -> str:
+    """
+    The same email, styled in a way a preview pane cannot strip.
+
+    Never raises. A malformed fragment is not a reason to drop an order
+    confirmation — the uninlined HTML is exactly what we sent before this
+    existed, so falling back to it is a cosmetic regression rather than a
+    missing email.
+    """
+    try:
+        return _inliner.inline(html)
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("CSS inlining failed, sending unstyled HTML: %s", exc)
+        return html
+
 
 def _render(
     template_name: str, recipient_email: str, *, locale: str = "en", **context
 ) -> str:
     """
-    Render one template in one language.
+    Render one template in one language, styled for every client.
 
     `t`, `locale` and `direction` are injected here rather than passed by each
     caller, because every template and every macro needs all three and a
     template that renders without them renders in the wrong language silently.
     """
     template = _jinja_env.get_template(template_name)
-    return template.render(
-        web_url=settings.WEB_URL,
-        shop_url=f"{settings.WEB_URL.rstrip('/')}/{locale}",
-        now=datetime.now(timezone.utc),
-        recipient_email=recipient_email,
-        locale=locale,
-        direction=DIRECTION.get(locale, "ltr"),
-        t=translator(locale),
-        **context,
+    return _inline(
+        template.render(
+            web_url=settings.WEB_URL,
+            shop_url=f"{settings.WEB_URL.rstrip('/')}/{locale}",
+            now=datetime.now(timezone.utc),
+            recipient_email=recipient_email,
+            locale=locale,
+            direction=DIRECTION.get(locale, "ltr"),
+            t=translator(locale),
+            **context,
+        )
     )
 
 
@@ -409,6 +453,15 @@ def _order_context(
             else (branch.city if branch else None)
         ),
         "address": None if is_pickup else (order.shipping_address_snapshot or None),
+        # Flattened here, by the same function the register's ticket and both
+        # couriers use. The card used to lay the fields out itself and got two
+        # of them wrong: `unit_number` — the flat or floor, and the only part of
+        # an address a map pin cannot supply — was never rendered, and `city` is
+        # not a field the checkout writes, so that line never appeared either.
+        "address_line": address_format.one_line(order.shipping_address_snapshot),
+        "recipient_name": address_format.recipient_name(
+            order.shipping_address_snapshot
+        ),
         "tracking_url": _order_tracking_url(order.order_number, order.email, locale),
         "live_tracking_url": fulfilment.tracking_url if fulfilment else None,
         # noon Send text the customer their own tracking link once a rider has
@@ -607,17 +660,7 @@ async def send_owner_order_notification(order: OrderResponse) -> None:
                 recipient_email=recipient,
                 locale="en",
                 admin_order_url=_admin_order_url(order.order_number),
-                customer_name=(
-                    " ".join(
-                        part
-                        for part in (
-                            snapshot.get("first_name"),
-                            snapshot.get("last_name"),
-                        )
-                        if part
-                    )
-                    or "—"
-                ),
+                customer_name=address_format.recipient_name(snapshot) or "—",
                 customer_phone=snapshot.get("phone"),
                 **context,
             )

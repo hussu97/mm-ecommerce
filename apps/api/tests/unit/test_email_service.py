@@ -215,3 +215,55 @@ def test_a_real_address_is_not_mistaken_for_a_guest_one(monkeypatch):
         result = email_service._send(address, "Order confirmed", "<p>hi</p>")
         assert result["status"] == "sent", address
     assert len(sent) == 2
+
+
+def test_the_delivery_card_shows_the_whole_address_on_one_line():
+    """
+    MM-20260805-008 reached the customer without the flat number on it.
+
+    The card laid the fields out itself and got two wrong: `unit_number` — the
+    part a map pin cannot supply and a rider needs — was never rendered, and
+    `city` is not a field the checkout writes, so that line never appeared. It
+    is one string now, from the same function the register's ticket and both
+    couriers use.
+    """
+    snapshot = {
+        "first_name": "Hussain",
+        "last_name": "Abbasi",
+        "phone": "+971563526578",
+        "unit_number": "Flat 1204",
+        "address_line_1": "Azizi Riviera 5, Nad Al Sheba 1, Dubai",
+        "address_line_2": "Building 12",
+    }
+
+    html = email_service._render(
+        "order_confirmation.html",
+        recipient_email="a@b.com",
+        order=SimpleNamespace(order_number="MM-1", notes=None),
+        name="Hussain",
+        is_pickup=False,
+        items=[],
+        totals={
+            "subtotal": "0.00",
+            "discount": None,
+            "promo_code": None,
+            "fee_label": "Delivery",
+            "delivery_fee": "Free",
+            "total": "0.00",
+            "vat": "0.00",
+        },
+        estimate=None,
+        steps=[],
+        branch=None,
+        address=snapshot,
+        address_line=email_service.address_format.one_line(snapshot),
+        recipient_name=email_service.address_format.recipient_name(snapshot),
+        tracking_url="https://example.com",
+        retry_url="",
+        live_tracking_url=None,
+        tracking_by_sms=False,
+    )
+
+    assert "Flat 1204, Azizi Riviera 5, Nad Al Sheba 1, Dubai, Building 12" in html
+    assert "Hussain Abbasi" in html
+    assert "+971563526578" in html

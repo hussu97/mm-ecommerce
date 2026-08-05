@@ -57,7 +57,7 @@ from app.models.order_delivery import (
     OrderDelivery,
 )
 from app.models.webhook_event import WebhookEvent
-from app.services import courier_reference, email_service
+from app.services import address_format, courier_reference, email_service
 from app.services.lalamove_service import (
     Estimate,
     PickupPoint,
@@ -447,30 +447,28 @@ def build_task(
     if not phone:
         return None, "Order has no reachable phone number"
 
-    line = str(address.get("address_line_1") or "").strip()
-    unit = str(address.get("unit_number") or "").strip()
-    # Unit first, for the same reason as Lalamove: a formatted Google address
-    # gets a rider to the building and the flat number finishes the job.
-    text = f"{unit}, {line}" if unit and line else (line or unit)
+    # `address_format.one_line`, which is also what the rider's stop, the
+    # register's ticket and the customer's email are built from. Unit first: a
+    # formatted Google address gets a rider to the building and the flat number
+    # finishes the job.
+    text = address_format.one_line(address) or ""
     if len(text) < 5:
         return None, "Order has no usable street address"
 
-    name = " ".join(
-        str(part).strip()
-        for part in (address.get("first_name"), address.get("last_name"))
-        if part
-    ).strip()
+    name = address_format.recipient_name(address) or ""
 
     total = Decimal(str(order.total or 0))
     is_cod = (order.payment_method or "").lower() == "cod" and outstanding > 0
 
-    # The short reference leads, because it is the one a rider will be asked to
-    # read back. Our own number follows it, for the shop.
-    notes = [f"Order {reference}", f"Ref {order.order_number}"]
-    if unit:
-        notes.append(f"Unit {unit}")
-    if order.notes:
-        notes.append(str(order.notes).strip())
+    # What the customer asked for, and nothing else.
+    #
+    # This used to lead with `Order {reference} · Ref {order_number} · Unit
+    # {unit}`. Every one of those is already in the payload: the reference *is*
+    # `order_reference`, and the unit is the first thing in the address string
+    # above. A rider opening the task read three fields they already had before
+    # reaching the one thing only the customer could tell them — so a gate code
+    # sat at the end of a line noon truncates at 250 characters.
+    notes = str(order.notes or "").strip()
 
     return (
         Task(
@@ -486,7 +484,7 @@ def build_task(
             },
             prepaid_value=0 if is_cod else _declared_value(total),
             cod_value=fils(outstanding) if is_cod else 0,
-            delivery_notes=" · ".join(notes)[:250],
+            delivery_notes=notes[:250],
             # A cake is handed over, never left at a door — and a COD task may
             # not carry a leave-it tag at all.
             tags=[],

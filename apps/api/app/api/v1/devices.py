@@ -86,8 +86,21 @@ async def authenticate_device(db: AsyncSession, token: str | None) -> Device:
     )
     device = (await db.execute(stmt)).scalar_one_or_none()
     if device is None:
-        raise UnauthorizedError("Unrecognised device token")
+        # The only 401 here that means "this terminal is no longer paired": the
+        # token matches no device, so it is worthless and the app is right to
+        # throw it away and ask for a new pairing code.
+        #
+        # Coded, because the register cannot tell that from the wording. It used
+        # to treat *every* 401 from the heartbeat as an unpairing — including a
+        # missing header and the wrong-host refusal below — and discard a
+        # working device token over a configuration mistake. That is why a
+        # terminal asked for a pairing code every morning.
+        raise UnauthorizedError("Unrecognised device token", code="device_revoked")
     if device.status == DeviceStatusEnum.DISABLED.value:
+        # Deliberately *not* coded. The token is still good and the device
+        # record still exists — an admin flips the status back and the terminal
+        # carries on. Clearing the pairing here would turn a two-second fix in
+        # the console into a trip to the shop with a pairing code.
         raise UnauthorizedError("This device has been disabled")
 
     now = utcnow()

@@ -1,5 +1,272 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## ✅ 2026-08-05: Email fidelity, the promised time, and the POS gaps
+
+Seven reports off MM-20260805-008. Four are `mm-ecommerce`, three are `mm-pos`.
+
+### 1. A preview and the opened email are two different designs
+
+**Cause.** Every rule lives in one `<style>` block in `<head>`
+(`templates/emails/base.html`). Nothing is inlined. A client that renders a
+stripped preview — a notification quick-look, a list snippet — drops `<head>`
+and gets naked HTML, which is exactly the left screenshot. Open the same message
+and the `<style>` survives, so the design appears. The same strip happens in
+Gmail's web client, Outlook desktop and Yahoo, so this is not only the preview.
+
+The comment in `base.html` about "Gmail's inliner writes the base rules onto the
+element" is wrong and is what let this stand — Gmail has no inliner.
+
+- [x] 1.1 Add `css-inline` to `apps/api/pyproject.toml` (Rust-backed; no lxml).
+- [x] 1.2 Inline in `email_service._render()` after `template.render(...)`, so
+      every template and both languages are covered without touching one of
+      them. `@media` and `prefers-color-scheme` cannot be inlined and stay in
+      the retained `<style>` block, which is what `css-inline` does by default.
+- [x] 1.3 Never let it break a send: inlining failure falls back to the raw HTML.
+- [x] 1.4 Correct the false comment in `base.html`.
+- [x] 1.5 Test: rendered `order_confirmation` carries `style="` on the masthead
+      and the hero, and still carries the `@media` block.
+
+### 2. The email promised 17:25; checkout promised 19:00
+
+**Cause.** Two estimators that do not share an answer.
+
+* Checkout — `delivery_service.estimate_arrival` — finds the batch window open
+  now and promises `dispatch_at + 1h`. For a 13:45 order in an open window that
+  closes at 18:00, that is 19:00.
+* Emails — `fulfilment_service._estimate` — reads `delivery.batch.dispatch_at`.
+  But a batch is only assigned at **PACKED** (`order_service.update_status` →
+  `batching_service.assign_or_dispatch`), and the confirmation email is sent at
+  **CONFIRMED**. There is no batch yet, so it falls to the last line of
+  `_estimate`: `created_at + KITCHEN_PREP(2h) + DISPATCH_TO_DOOR(1h)` = 17:25.
+
+Re-deriving the window at send time would not fix it either — by then the
+window that was open at checkout may have closed, and the customer would be
+moved to a later slot they were never told about. The promise has to be stored.
+
+- [x] 2.1 Migration: `orders.promised_at` (timestamptz, null) and
+      `orders.promised_precision` (varchar(8), null). Null on every existing
+      row, which is the pre-change behaviour and needs no backfill.
+- [x] 2.2 `order_service._persist_order` stamps both from
+      `delivery_service.estimate_arrival` — server-side, from the zone the pin
+      landed in. Not taken from the client: the browser is not the record of
+      what we promised.
+- [x] 2.3 `fulfilment_service._estimate` returns the stored promise for every
+      stage before the parcel moves, and overrides it only where something
+      sharper and *real* exists:
+      - `collected` / `delivered` → the actual stamp (unchanged)
+      - `on_the_way` with `picked_up_at` on a courier we book → `+45m`
+        (unchanged — this is the "driver has it" case)
+      - a batch assigned whose `dispatch_at` no longer matches the promise
+        (the order missed its window) → `dispatch_at + 1h`, because the
+        customer is genuinely on a later run
+      - no promise stored → today's fallback, unchanged
+- [x] 2.4 `OrderResponse` carries both, so the track page and the account page
+      read the same number as the email.
+- [x] 2.5 Tests in `test_fulfilment_service.py`: a confirmed batched order
+      reports the checkout promise, not `created + 3h`; a picked-up order still
+      reports `picked_up_at + 45m`.
+
+### 3. The address in emails drops the flat/floor and is stacked
+
+**Cause.** `_parts.address_card` prints `address_line_1`, `address_line_2` and
+`city` on separate lines and never prints `unit_number` — the one field a rider
+needs. `city` is not even in the snapshot: the snapshot is
+`AddressCreate.model_dump()` and that schema has no `city`, so that line has
+never rendered.
+
+Three other places already flatten an address and each does it differently:
+`pos_orders._flat_address` (unit, line 1, city — no line 2),
+`lalamove_service` and `noon_send_service` (unit, line 1).
+
+- [x] 3.1 New `app/services/address_format.py` — `one_line(snapshot)` joining
+      `unit_number, address_line_1, address_line_2, city` on ", ", skipping
+      blanks. Unit first: a formatted Google line gets a rider to the building
+      and the flat number is the part that finishes it.
+- [x] 3.2 `email_service._order_context` resolves `address_one_line`; the
+      `address_card` macro prints name / that line / phone. Reaches
+      confirmation, packed, out-for-delivery, undelivered and the owner
+      notification at once — all five use the macro.
+- [x] 3.3 Point `pos_orders._flat_address`, Lalamove and noon Send at the same
+      function, so the ticket, the courier and the email agree.
+- [x] 3.4 Test: a snapshot with a unit renders it; one without renders no stray
+      comma.
+
+### 4. noon Send is sent notes nobody needs
+
+**Cause.** `noon_send_service.build_task` composes
+`Order {ref} · Ref {order_number} · Unit {unit} · {customer note}`. The
+reference is already the `order_reference` field, and the unit is already the
+first element of the address string — so two of the three are duplicates and the
+rider reads them instead of the note that matters.
+
+- [x] 4.1 `delivery_notes` becomes the customer's checkout note alone, trimmed
+      and capped at 250; empty string when there is no note.
+- [x] 4.2 Update `test_noon_send_service.py` accordingly.
+
+### 5. The POS asks to pair on every launch
+
+Two independent defects; both need fixing because either alone reproduces it.
+
+**(a) The keychain writes are not checked and the queries are malformed.**
+`POSSession.Keychain.query()` puts `kSecAttrAccessible` into the *search* and
+*delete* queries. It is an attribute set at add time, not a search key. As a
+search constraint it can miss an item written under different accessibility, and
+`delete` then misses it too — so `write`'s delete-then-add becomes an add over a
+live item, returns `errSecDuplicateItem`, and **that status is discarded**
+(`SecItemAdd(q, nil)`). The token silently fails to persist and the next launch
+reads nothing.
+
+- [x] 5.1 `kSecAttrAccessible` only on add. Add `kSecAttrService` so the items
+      are namespaced rather than keyed on account alone.
+- [x] 5.2 Check `OSStatus` on add and delete; `SecItemUpdate` on duplicate;
+      return a `Bool` so a failed write is knowable.
+- [x] 5.3 `POSSession` surfaces a failed credential write instead of silently
+      landing on the pairing screen next launch.
+
+**(b) Any 401 unpairs the device.** `bootstrap()` catches
+`APIError.unauthorized` from `/devices/heartbeat` and calls
+`clearDeviceToken()`. The comment claims only a revoked device can produce that.
+It cannot: `authenticate_device` raises 401 for a missing token, and
+`get_current_device` raises 401 when `POS_REQUIRE_POS_HOST` is on and the
+request reached the storefront host. Neither means this terminal was unpaired.
+
+- [x] 5.4 API: give the genuinely-terminal cases a machine-readable code
+      (`device_revoked` / `device_disabled`) in the error body; everything else
+      keeps its message and no code.
+- [x] 5.5 App: clear the token only on that code. Any other 401 keeps the
+      pairing, shows the message and goes to the PIN screen.
+- [x] 5.6 Settings gains a Pairing row — device reference and paired host — so a
+      terminal that has lost its pairing says so rather than just reappearing at
+      the pairing screen.
+
+### 6. No website orders and no history on the iPhone
+
+**(a) The queue is bolted to the register.** `PhoneRootView` applies
+`.incomingOrders(session:)` only in `.ready` **and** `.register` mode. The
+iPhone defaults to `.companion`, so a manager's phone shows no waiting bar, no
+alarm and no queue. Worse, `PushService.start` is called from
+`IncomingOrdersHost.attach()`, so a phone that never opens a register never
+registers for push at all — no notification either.
+
+**A website order needs no till, and the code already agrees.** `accept_order`
+never sets `till_id`; only `open_order` and `record_payment` do, and a website
+order is already paid so it reaches neither. `IncomingOrdersHost` already prints
+with `openDrawer: false` for the same reason. The till gate is an artefact of
+where the queue was attached, not a rule. The iPad has the same defect for the
+same reason — it attaches the queue at `.ready` only, so a counter iPad sitting
+on the till-open screen at 8am silently misses every website order until someone
+counts a drawer.
+
+So: website orders become a till-independent flow on both apps — accept, print,
+mark packed — available from the moment a terminal is signed in.
+
+- [x] 6.1 Move push registration into `POSSession` after sign-in, so any signed-
+      in terminal registers regardless of which face it is showing.
+- [x] 6.2 Attach the queue to the whole signed-in tree on **both** apps —
+      `.tillClosed` and `.ready`, both phone modes. No till gate on accept.
+
+**(b) There is no order history anywhere.** `MMPos/Features/Orders/` is an empty
+directory. Neither app can look at a past order. The permission for it —
+`pos.orders.view_done`, "View completed orders" — already exists and nothing
+reads it. `GET /pos/orders` already takes `branch_id`, `business_date`,
+`pos_status`, `order_type` and `limit`, so no API work is needed.
+
+- [x] 6.4 `MMPos/Features/Orders/OrdersHistoryModel.swift` — branch-scoped, by
+      business date, filterable by channel (website / counter) and status.
+- [x] 6.5 `OrdersHistoryView` + a detail sheet with reprint. Shared kit, per the
+      consistency rule.
+- [x] 6.6 Surfaced on **both** apps: a tab in the phone companion, an action in
+      the iPad's register menu. Same wording, same filters, same empty state.
+- [x] 6.7 `Tests/OrdersHistoryTests.swift` — decoding and the filter rules.
+
+### 7. Audit — what else a POS taking website orders should do
+
+Confirmed against the code, not guessed. Each is a gap in the app, not the API.
+
+| # | Gap | API today |
+|---|---|---|
+| 7.1 | No way to move a website order forward — no packed / out-for-delivery / delivered / undelivered. The courier hand-off **and every customer email after confirmation** depend on someone opening the admin console. | `PUT /orders/{order_number}/status` exists |
+| 7.2 | No order history (6.4–6.7) | `GET /pos/orders` exists |
+| 7.3 | No reprint of a past receipt — only the check currently open | reprint is client-side |
+| 7.4 | No scheduled / pre-order view | `POST /pos/orders/{id}/schedule` unused |
+| 7.5 | No dispatch board, no driver assignment | `GET /pos/orders/dispatch/board`, `POST /{id}/driver` — both unused |
+| 7.6 | No refund or return against a past order; returns only work on the open check | `POST /{id}/items/{item_id}/return` |
+| 7.7 | No reject / cannot-make path on an incoming order — a branch that is out of stock has to phone someone | `POST /{id}/void` |
+| 7.8 | No search by order number or phone | `GET /pos/orders` |
+| 7.9 | No KDS surface, though tickets and statuses are modelled | `kitchen_router` unused |
+
+7.1 is the one that costs money today: an order accepted on the register never
+reaches `packed`, so the batch is never assigned, no courier is booked and the
+customer's "your order is on its way" email never sends. **Doing `packed` only,
+this pass**; the rest of the table is scoped separately.
+
+`PUT /orders/{order_number}/status` cannot be the endpoint for it — it is gated
+on `get_admin_user`, and a cashier signed in with a branch PIN is not an admin.
+
+- [x] 7.1a `POST /pos/orders/{order_id}/packed`, gated on `pos.register.access`.
+      Delegates to `order_service.update_status(..., PACKED)` so the transition
+      validation, the batch assignment and the emails stay in the one place that
+      already owns them, then `email_service.notify_status_change`.
+- [x] 7.1b "Mark packed" on an accepted website order, shared kit, both apps.
+      Disabled once the order is past packed, with the reason shown.
+- [x] 7.1c Tests: the endpoint books the batch and sends the email; a cashier
+      without the permission gets a 403.
+
+**Order of work:** 1 → 3 → 4 → 2 → 5 → 6 → 7.1. One commit per item.
+
+---
+
+### Review
+
+Eight commits, on `email-fidelity-and-pos-gaps` (mm-ecommerce) and
+`website-orders-and-pairing` (mm-pos). 959 API tests, 174 POS tests, both app
+targets build.
+
+**Where the plan was wrong.**
+
+*2.4 was dropped.* The plan said to put `promised_at` on `OrderResponse` too.
+It should not be there: `FulfilmentResponse` is already the single channel every
+reader uses for "when does this arrive", and it now carries the promise through
+`estimated_at`/`precision`. A second exposure of the same fact is how two
+readers come to disagree — which is the exact bug being fixed.
+
+*6.3 was wrong, and Hussain caught it.* The plan assumed accepting a website
+order needs an open till and designed a flow around switching modes to get one.
+It does not: the order is already paid, `accept_order` never touches `till_id`,
+and the ticket already printed with `openDrawer: false`. The till requirement
+was an artefact of the queue being attached to the register screen. Removing it
+also fixed the iPad, which had the same defect for the same reason — a counter
+terminal on the till-open screen saw no website orders until somebody counted a
+drawer. See `lessons.md`.
+
+*`kSecAttrService` was planned and then deliberately not added.* It would
+namespace the keychain items better, but every already-paired terminal wrote its
+token without one, so requiring it would miss all of them and every till in the
+shop would ask for a pairing code the morning it updated — the exact failure
+being fixed.
+
+**Found while building, not in the plan.**
+
+An accepted order sat under "In the kitchen" reading "Accepting…" forever. Two
+sibling `ForEach`es, one `LazyVStack`, same `order.id`: SwiftUI matched the
+identity across them and kept the view's existing branch. It compiled and 158
+tests passed; only driving the simulator showed it. Fixed by naming the action
+as a value rather than expressing it as view structure.
+
+**Deliberately not done.**
+
+Section 7 beyond 7.1 — reprint of a past receipt is in (it came with the history
+screen), but scheduled orders, the dispatch board, driver assignment, refunds
+against a past order, a reject path on an incoming order, order search and a KDS
+surface are all still gaps, and all have API endpoints already waiting. They
+want their own piece of work.
+
+`pos.orders.view_done` is still read by nothing. The history screen gates on
+`orders.read`, matching the endpoint behind it. That permission now wants either
+a use or a deletion.
+
+---
+
 ## ⏳ 2026-08-04: Emails in the language the order was placed in
 
 Every email was English, including to a customer who browsed, read the checkout

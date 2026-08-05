@@ -10,6 +10,24 @@
 
 ## Lessons
 
+### [2026-08-05] A promise is a fact about what was said, not a calculation to repeat
+- **What went wrong**: the checkout and the confirmation email each derived the delivery estimate independently. Both were correct; they answered different questions. Checkout read the batch window open *at that moment* (`dispatch_at + 1h` = 19:00); the email ran at CONFIRMED, before any batch is assigned, and fell through to a generic `created_at + 2h prep + 1h drive` (17:25). MM-20260805-008 told the customer two different times in the same minute.
+- **Why the obvious fix was wrong**: re-deriving the window at send time. By then the window that was open at checkout may have closed, so the customer would be silently moved onto a later run nobody had mentioned — a *different* wrong answer, and a harder one to notice.
+- **Rule**: when a number is shown to a customer, store it. Anything the shop has said out loud is a record, not a derivation, and the only things allowed to overrule it later are events that actually happened (a rider collecting) or a real change of plan the customer needs to know about (the order missing its window and moving to the next run). If two code paths compute the same customer-facing figure, that is the bug, whichever one is "right".
+
+
+### [2026-08-05] Ask what the gate is actually protecting before building around it
+- **What went wrong**: I planned an elaborate flow for accepting a website order in companion mode — switch to register, prompt to open a till, then accept — and offered it as the recommended option. Hussain asked "why does a website order need a till in the first place?" It does not: it is already paid for, `accept_order` never touches `till_id`, and the ticket had always printed with `openDrawer: false` for exactly that reason. The till requirement was an artefact of *where the queue had been attached* (the register screen, which only exists at `.ready`), not a rule anyone had decided.
+- **What it was costing**: a counter iPad on the till-open screen at 8am saw no website orders until somebody counted a drawer, and a manager's phone — which defaults to companion mode — never saw one at all, nor even registered for the push.
+- **Rule**: when a constraint forces an awkward flow, find the line of code that imposes it before designing around it. A constraint nobody wrote down is usually a side effect of structure, and the fix is to move the structure. Offering the user three ways to live with a phantom rule is worse than spending five minutes proving it is phantom.
+
+
+### [2026-08-05] SwiftUI reuses views by structure, so encoding a choice as `if let` on a closure will strand it
+- **What went wrong**: `IncomingOrderCard` took `onAccept:` and `onMarkPacked:` as optional closures and rendered `if let onAccept { … } else if let onMarkPacked { … }`. When an accepted order moved from the waiting list to the kitchen list — two sibling `ForEach`es in one `LazyVStack`, same `order.id` — SwiftUI matched the identity across them and kept the branch the view was already in. The card sat under "In the kitchen" saying "Accepting…" indefinitely.
+- **How it surfaced**: only by driving the simulator. It compiled, 158 tests were green, and both apps built.
+- **Rule**: express "which of these does this row do" as a value the row's own state decides (an enum), never as view structure. And give each list's rows an id namespaced by the list (`"waiting-\(id)"`), so an item moving between sibling lists cannot be transplanted. Corollary: a POS change that only builds and unit-tests clean is not verified — CLAUDE.md already says look at it on both devices, and this is what that step is for.
+
+
 ### [2026-08-04] A substring search over a whole HTML document is not a test of an attribute
 - **What went wrong**: to assert an email rendered in Arabic I checked `'lang="ar"' in html`. It passed — and it passed for the English email too, because the stylesheet in every email contains the Arabic rules `[lang="ar"] .tagline { … }`. The document always contains that string. The test asserted nothing and would have gone on asserting nothing after the feature broke.
 - **How it surfaced**: only by running two real orders end to end and printing what came out. The English one reported `lang="ar" dir=rtl` while its subject, its branch card and its links were all correctly English — which is what made it obvious the *check* was wrong rather than the code.

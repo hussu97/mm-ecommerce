@@ -38,7 +38,7 @@
 
 {{ parts.estimate_card(estimate) }}
 {{ parts.branch_card(branch) }}
-{{ parts.address_card(address) }}
+{{ parts.address_card(address, address_line, recipient_name) }}
 {{ parts.timeline(steps) }}
 {{ parts.order_summary(items, totals) }}
 {{ parts.button(tracking_url, t('packed.cta')) }}

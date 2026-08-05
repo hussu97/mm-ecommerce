@@ -556,6 +556,7 @@ async def _persist_order(
     total_excl_vat: Decimal,
     fallback_email: str | None = None,
     branch: Branch | None = None,
+    promised: delivery_service.DeliveryEstimate | None = None,
 ) -> Order:
     """
     Write the order, its items, and update promo usage atomically.
@@ -603,6 +604,12 @@ async def _persist_order(
         shipping_address_snapshot=address_snapshot,
         payment_method=data.payment_method,
         notes=data.notes,
+        # What the checkout said, kept verbatim. Every email about this order
+        # repeats this rather than working out its own answer — which is how the
+        # confirmation for MM-20260805-008 promised 17:25 against a checkout
+        # that had said 19:00.
+        promised_at=promised.at if promised else None,
+        promised_precision=promised.precision if promised else None,
     )
     # Two checkouts can read the same max sequence and generate the same
     # number; the unique constraint catches the loser, who regenerates and
@@ -725,6 +732,22 @@ async def create_order(
             "We can't take online orders right now. Please try again shortly."
         )
 
+    # 5b. What the checkout told this customer, captured before the row is
+    #     written so the order carries the promise rather than a later
+    #     re-derivation of it.
+    #
+    #     Delivery only. A collection order's estimate is `created_at + prep`,
+    #     which is deterministic and cannot drift, so there is nothing a stored
+    #     copy would protect. A delivery's estimate reads the batch window open
+    #     *now*, and "now" is different by the time any email is sent.
+    #
+    #     Asked here rather than taken from the request: the browser is not the
+    #     record of what we promised, and a client that sent a flattering number
+    #     would be believed.
+    promised: delivery_service.DeliveryEstimate | None = None
+    if data.delivery_method == DeliveryMethodEnum.DELIVERY:
+        promised = await delivery_service.estimate_arrival(db, zone)
+
     # 6. Claim stock for stock-tracked products (fails if any is out of stock)
     await _decrement_stock(db, cart)
 
@@ -745,6 +768,7 @@ async def create_order(
         total_excl_vat,
         fallback_email,
         branch,
+        promised,
     )
 
     # 8. Open the delivery record — including for zones no courier API touches,
