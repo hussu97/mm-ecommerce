@@ -35,7 +35,13 @@ def _response(status: int, payload) -> httpx.Response:
     )
 
 
-_STATS = {"visitors": 40, "visits": 50, "pageviews": 300, "bounces": 20, "totaltime": 5000}
+_STATS = {
+    "visitors": 40,
+    "visits": 50,
+    "pageviews": 300,
+    "bounces": 20,
+    "totaltime": 5000,
+}
 _PAGEVIEWS = {"pageviews": [{"x": "2026-08-01", "y": 12}]}
 _PATHS = [{"x": "/en", "y": 200}, {"x": "/en/cart", "y": 30}]
 _EVENTS = [
@@ -167,7 +173,9 @@ async def test_a_refused_key_is_reported_rather_than_read_as_no_traffic(
     )
     result = await _traffic(monkeypatch, client)
 
-    assert result.configured is True, "the key is set — the problem is not configuration"
+    assert result.configured is True, (
+        "the key is set — the problem is not configuration"
+    )
     assert result.error is not None
     assert "UMAMI_API_KEY" in result.error
     assert result.visitors == 0
