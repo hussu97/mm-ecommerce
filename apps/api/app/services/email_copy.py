@@ -36,11 +36,14 @@ STRINGS: dict[str, dict[str, str]] = {
         "footer.signoff": "Made with 100% love",
         "footer.shop": "Shop",
         "footer.about": "Our story",
-        "footer.contact": "Contact",
         "footer.rights": "© {year} Melting Moments Cakes · United Arab Emirates",
+        # The standard unmonitored-sender notice. `FROM_EMAIL` is a noreply
+        # address, so nothing here may invite a reply or print a mailbox —
+        # every email that needs an answer sends the customer to the contact
+        # page instead, through `cta.contact_us`.
         "footer.sent_to": (
-            "Sent to {email}. Questions? Reply to this email or write to "
-            "orders@meltingmomentscakes.com."
+            "Sent to {email} from an address that is not monitored. "
+            "Please do not reply to this message."
         ),
         # ── shared section headings ───────────────────────────────────────────
         "section.your_order": "Your order",
@@ -51,6 +54,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "label.open": "Open",
         "label.phone": "Phone",
         "cta.open_in_maps": "Open in Google Maps",
+        "cta.contact_us": "Get in touch",
         # ── totals ────────────────────────────────────────────────────────────
         "totals.subtotal": "Subtotal",
         "totals.discount": "Discount",
@@ -96,11 +100,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "confirmation.cta": "Track your order",
         "confirmation.footnote_pickup": (
             "We'll write again the moment it's ready to collect. If anything "
-            "here looks wrong, reply to this email and we'll sort it out."
+            "here looks wrong, let us know and we'll sort it out."
         ),
         "confirmation.footnote_delivery": (
             "We'll write again the moment it's on its way. If anything here "
-            "looks wrong, reply to this email and we'll sort it out."
+            "looks wrong, let us know and we'll sort it out."
         ),
         # ── packed ────────────────────────────────────────────────────────────
         "packed.subject_pickup": "Ready to collect",
@@ -158,8 +162,8 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
         "delivered.cta": "Order again",
         "delivered.footnote": (
-            "If anything wasn't right, reply to this email and tell us. We read "
-            "every one, and we would much rather hear it from you than not at all."
+            "If anything wasn't right, tell us. We read every message, and we "
+            "would much rather hear it from you than not at all."
         ),
         # ── undelivered ───────────────────────────────────────────────────────
         "undelivered.subject": "We couldn't deliver",
@@ -176,8 +180,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "undelivered.next_label": "What happens next",
         "undelivered.next_body": (
             "Someone from our team will contact you shortly to arrange another "
-            "attempt. If it is easier, reply to this email with a better time or "
-            "a different address and we will work around it."
+            "attempt. If it is easier, send us a better time or a different "
+            "address and we will work around it."
         ),
         "undelivered.cta": "View order details",
         # ── cancelled ─────────────────────────────────────────────────────────
@@ -199,8 +203,8 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
         "cancelled.cta": "Back to the shop",
         "cancelled.footnote": (
-            "If this wasn't expected, reply to this email — we would rather hear "
-            "about it than have you wonder."
+            "If this wasn't expected, tell us — we would rather hear about it "
+            "than have you wonder."
         ),
         # ── refunded ──────────────────────────────────────────────────────────
         "refunded.subject": "Refund processed",
@@ -218,8 +222,8 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
         "refunded.cta": "Back to the shop",
         "refunded.footnote": (
-            "If it hasn't landed after ten working days, reply to this email "
-            "with your order number and we'll chase it with the bank."
+            "If it hasn't landed after ten working days, send us your order "
+            "number and we'll chase it with the bank."
         ),
         # ── payment failed ────────────────────────────────────────────────────
         "failed.subject": "Payment didn't go through",
@@ -240,8 +244,8 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
         "failed.cta": "Try payment again",
         "failed.footnote": (
-            "Still not working? Reply to this email and we'll take it from there "
-            "— we can arrange payment another way."
+            "Still not working? Let us know and we'll take it from there — we "
+            "can arrange payment another way."
         ),
         # ── welcome ───────────────────────────────────────────────────────────
         "welcome.subject": "Welcome to Melting Moments",
@@ -288,11 +292,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "footer.signoff": "صُنع بكل حب",
         "footer.shop": "المتجر",
         "footer.about": "قصتنا",
-        "footer.contact": "تواصل معنا",
         "footer.rights": "© {year} ملتينج مومنتس كيكس · الإمارات العربية المتحدة",
         "footer.sent_to": (
-            "أُرسلت إلى {email}. لديك سؤال؟ ردّ على هذه الرسالة أو راسلنا على "
-            "orders@meltingmomentscakes.com."
+            "أُرسلت إلى {email} من عنوان غير مُراقَب. "
+            "يرجى عدم الرد على هذه الرسالة."
         ),
         # ── shared section headings ───────────────────────────────────────────
         "section.your_order": "طلبك",
@@ -303,6 +306,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "label.open": "أوقات العمل",
         "label.phone": "الهاتف",
         "cta.open_in_maps": "افتح في خرائط جوجل",
+        "cta.contact_us": "تواصل معنا",
         # ── totals ────────────────────────────────────────────────────────────
         "totals.subtotal": "المجموع الفرعي",
         "totals.discount": "الخصم",
@@ -346,11 +350,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "confirmation.cta": "تتبع طلبك",
         "confirmation.footnote_pickup": (
             "سنراسلك فور أن يصبح جاهزاً للاستلام. إن بدا أي شيء هنا غير صحيح، "
-            "ردّ على هذه الرسالة وسنتولى الأمر."
+            "أخبرنا وسنتولى الأمر."
         ),
         "confirmation.footnote_delivery": (
             "سنراسلك فور أن يكون في طريقه إليك. إن بدا أي شيء هنا غير صحيح، "
-            "ردّ على هذه الرسالة وسنتولى الأمر."
+            "أخبرنا وسنتولى الأمر."
         ),
         # ── packed ────────────────────────────────────────────────────────────
         "packed.subject_pickup": "جاهز للاستلام",
@@ -399,8 +403,8 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
         "delivered.cta": "اطلب مرة أخرى",
         "delivered.footnote": (
-            "إن لم يكن شيء على ما يرام، ردّ على هذه الرسالة وأخبرنا. نقرأ كل "
-            "رسالة، ونفضّل أن نسمع منك على ألا نسمع شيئاً."
+            "إن لم يكن شيء على ما يرام، أخبرنا. نقرأ كل رسالة، ونفضّل أن نسمع "
+            "منك على ألا نسمع شيئاً."
         ),
         # ── undelivered ───────────────────────────────────────────────────────
         "undelivered.subject": "تعذّر توصيل طلبك",
@@ -416,7 +420,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "undelivered.next_label": "ما الخطوة التالية",
         "undelivered.next_body": (
             "سيتواصل معك أحد أفراد فريقنا قريباً لترتيب محاولة أخرى. وإن كان "
-            "أسهل لك، ردّ على هذه الرسالة بوقت أنسب أو عنوان مختلف وسنرتب الأمر."
+            "أسهل لك، أرسل لنا وقتاً أنسب أو عنواناً مختلفاً وسنرتب الأمر."
         ),
         "undelivered.cta": "عرض تفاصيل الطلب",
         # ── cancelled ─────────────────────────────────────────────────────────
@@ -437,8 +441,8 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
         "cancelled.cta": "العودة إلى المتجر",
         "cancelled.footnote": (
-            "إن لم يكن هذا متوقعاً، ردّ على هذه الرسالة — نفضّل أن نسمع منك "
-            "على أن تبقى في حيرة."
+            "إن لم يكن هذا متوقعاً، أخبرنا — نفضّل أن نسمع منك على أن تبقى "
+            "في حيرة."
         ),
         # ── refunded ──────────────────────────────────────────────────────────
         "refunded.subject": "تمت معالجة المبلغ المُعاد",
@@ -456,8 +460,8 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
         "refunded.cta": "العودة إلى المتجر",
         "refunded.footnote": (
-            "إن لم يصلك المبلغ بعد عشرة أيام عمل، ردّ على هذه الرسالة برقم طلبك "
-            "وسنتابع الأمر مع البنك."
+            "إن لم يصلك المبلغ بعد عشرة أيام عمل، أرسل لنا رقم طلبك وسنتابع "
+            "الأمر مع البنك."
         ),
         # ── payment failed ────────────────────────────────────────────────────
         "failed.subject": "لم تتم عملية الدفع",
@@ -475,8 +479,8 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
         "failed.cta": "إعادة محاولة الدفع",
         "failed.footnote": (
-            "ما زالت المحاولة لا تنجح؟ ردّ على هذه الرسالة وسنتولى الأمر — "
-            "يمكننا ترتيب الدفع بطريقة أخرى."
+            "ما زالت المحاولة لا تنجح؟ أخبرنا وسنتولى الأمر — يمكننا ترتيب "
+            "الدفع بطريقة أخرى."
         ),
         # ── welcome ───────────────────────────────────────────────────────────
         "welcome.subject": "أهلاً بك في ملتينج مومنتس",
