@@ -859,8 +859,14 @@ Two things have to be done by the noon RoD integrations team, not here:
    `scripts/build_delivery_zones.py` and republish: the guard and the radius
    have to move together or the zone claims addresses it cannot serve.
 
-   The same call reports `cod_limit` and `prepaid_limit` in fils — staging says
-   AED 300 and AED 5,000 — and `may_serve` now refuses an order over either
+   The same call reports `cod_limit` and `prepaid_limit` in fils. **Production
+   answers AED 500 and AED 2,500** (partner 135208, read live on 2026-08-05);
+   staging said AED 300 and AED 5,000, so the prepaid ceiling went *down* by
+   half on the real fleet. An order over AED 2,500 — a large wedding cake is not
+   out of reach — is refused by `may_serve` and carried by Lalamove instead,
+   which is correct but worth knowing before someone reports it as a bug. The
+   numbers are read from the API at runtime, so this note is a record rather
+   than a setting. `may_serve` refuses an order over either
    rather than letting task creation reject it.
 
 There is no wallet to fund — billing is on the partner agreement. Once
