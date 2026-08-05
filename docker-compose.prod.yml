@@ -118,6 +118,12 @@ services:
       NOON_SEND_MAX_DISTANCE_M: ${NOON_SEND_MAX_DISTANCE_M:-20000}
       NOON_SEND_DETOUR_FACTOR: ${NOON_SEND_DETOUR_FACTOR:-1.49}
       NOON_SEND_TIMEOUT_SECONDS: ${NOON_SEND_TIMEOUT_SECONDS:-8}
+      # ── How long the debugging trails live ──────────────────────────────
+      # `webhook_logs` grows by a row every 15-30 seconds per live noon Send
+      # task. The bound is what makes storing every one at full payload
+      # affordable. `audit_logs` is who-changed-what and outlives them all.
+      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-7}
+      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-90}
       # ── Push to the registers ───────────────────────────────────────────
       # Empty means no push: orders still arrive and the register still shows
       # them when it polls, so a missing key is a quieter shop, not a broken one.

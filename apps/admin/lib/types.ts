@@ -381,6 +381,53 @@ export interface EmailLog {
   sent_at: string;
 }
 
+/**
+ * One inbound courier webhook, as it arrived and as it was answered.
+ *
+ * Distinct from the events ledger, which only records what we accepted. This
+ * covers everything that reached the URL — including the pushes that matched no
+ * order, carried an unfamiliar key, or blew up inside the handler, which are
+ * the ones worth looking at.
+ */
+export interface WebhookLog {
+  id: string;
+  provider: string;
+  endpoint: string;
+  received_at: string;
+  remote_ip: string | null;
+  /** Four characters either end of the key they sent. Never the key. */
+  api_key_fingerprint: string | null;
+  signature_valid: boolean | null;
+  event_type: string | null;
+  order_number: string | null;
+  courier_order_id: string | null;
+  /** Whether the push found an order at all. A run of `false` is a real problem. */
+  matched: boolean | null;
+  error: string | null;
+  http_status: number | null;
+  duration_ms: number | null;
+}
+
+/** The same row with its bodies, fetched one at a time. */
+export interface WebhookLogDetail extends WebhookLog {
+  payload: unknown;
+  result: unknown;
+}
+
+export interface PaginatedWebhookLogs {
+  items: WebhookLog[];
+  total: number;
+  page: number;
+  per_page: number;
+  pages: number;
+}
+
+export interface WebhookLogFacets {
+  providers: string[];
+  endpoints: string[];
+  event_types: string[];
+}
+
 export interface PaginatedEmailLogs {
   items: EmailLog[];
   total: number;

@@ -921,6 +921,19 @@ distinguishes them.
 | `GCP_PROJECT_ID` | `melting-moments-cakes` | Used by the `gcplogs` Docker driver to ship API logs to Cloud Logging. On GCE this is auto-detected — set it anyway so the `.env` write step is explicit. |
 | `SENTRY_DSN` | `https://...@sentry.io/...` | DSN from Sentry project `mm-backend`. Used by the ecommerce API container. Frontend DSNs are configured directly in Vercel. |
 
+#### Log retention
+
+Everything here has a working default; a secret is only needed to change one.
+
+| Secret | Falls back to | Notes |
+|--------|---------------|-------|
+| `LOG_RETENTION_DAYS` | `7` | Covers `webhook_logs`, `email_logs` and `webhook_events`. `webhook_logs` is the fastest-growing table in the database — noon Send push a rider position every 15-30 seconds per live task and every one is stored at full payload — so this bound is what makes that completeness affordable |
+| `AUDIT_RETENTION_DAYS` | `90` | Covers `audit_logs` only, and deliberately much longer. That table is not debugging output but the record of who changed what, and it is wanted exactly when somebody disputes a change weeks after it happened |
+
+Swept hourly by a loop inside the API's own lifespan (`app/services/log_retention.py`),
+which holds a Postgres advisory lock so only one worker in the deployment ever runs
+one. There is no cron in this stack, and nothing that survives the container.
+
 #### Analytics (optional — leave empty to disable)
 
 | Secret | Production value | Notes |

@@ -14,6 +14,7 @@ from app.api.v1.payments import stripe_webhook as payments_stripe_webhook
 from app.services import lalamove_service, noon_send_service
 from app.services.providers.lalamove_provider import LalamoveError
 from app.services.providers.noon_send_provider import NoonSendError
+from app.services.webhook_log_service import Recorder
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +43,11 @@ def _log_noon_send_push(
     """
     Everything that arrived, before anything is decided about it.
 
-    These pushes are not ours to replay. noon does not retry, there is nothing
-    on their side to resend from, and a container restart takes `docker logs`
-    with it — so a push we cannot see is a push that never happened as far as
-    anybody can tell afterwards. Three of them were dropped that way before this
-    existed.
+    The durable copy is the `webhook_logs` row; this is the same fact in the
+    application log, where it is greppable next to whatever else the request
+    did. Both exist because they fail differently — a restart takes the log, a
+    migration could take the table — and three pushes were dropped with neither
+    before either existed.
     """
     expected = (settings.NOON_SEND_WEBHOOK_API_KEY or "").strip()
     logger.info(
@@ -76,10 +77,20 @@ def _noon_send_key_is_valid(presented: str | None) -> bool:
     acknowledged and ignored, while the status rank guard stops even a correct
     guess walking an order backwards.
 
-    The fingerprint of whatever they send is in the log next to ours. When those
-    two agree, this can go back to comparing them.
+    The fingerprint of whatever they send is stored on every `webhook_logs` row
+    next to ours. When those two agree, this can go back to comparing them.
     """
     return True
+
+
+def _noon_send_recorder(endpoint: str, request: Request, key: str | None) -> Recorder:
+    """One shape for both noon Send routes, so neither drifts from the other."""
+    return Recorder(
+        "noon_send",
+        endpoint,
+        request=request,
+        key_fingerprint=_key_fingerprint(key),
+    )
 
 
 @router.post("/stripe", status_code=status.HTTP_200_OK)
@@ -105,18 +116,48 @@ async def lalamove_webhook(request: Request, db: AsyncSession = Depends(get_db))
     The signature is checked inside the service; a payload that fails it is
     logged and dropped rather than acted on.
     """
+    recorder = Recorder("lalamove", "status", request=request)
     raw = await request.body()
-    if not raw:
-        return {"received": True}
 
     try:
-        return await lalamove_service.handle_webhook(db, raw)
-    except LalamoveError as exc:
-        logger.warning("Rejected Lalamove webhook: %s", exc)
-        return {"received": True, "error": str(exc)}
-    except Exception as exc:  # pragma: no cover — defensive
-        logger.exception("Lalamove webhook processing failed")
-        return {"received": True, "error": str(exc)}
+        if not raw:
+            # Their connection test. Recorded rather than answered silently —
+            # "did the URL we gave them ever get called" is a real question.
+            recorder.event_type = "connection_test"
+            recorder.finish(result={"received": True})
+            return {"received": True}
+
+        try:
+            recorder.payload = json.loads(raw)
+        except Exception:
+            recorder.payload = raw.decode("utf-8", "replace")
+        if isinstance(recorder.payload, dict):
+            recorder.event_type = (
+                str(recorder.payload.get("eventType") or "").strip() or None
+            )
+
+        try:
+            result = await lalamove_service.handle_webhook(db, raw)
+            recorder.signature_valid = True
+            recorder.finish(result=result)
+            return result
+        except LalamoveError as exc:
+            # The signature check lives inside the service, so this is where a
+            # failed one surfaces.
+            recorder.signature_valid = False
+            logger.warning("Rejected Lalamove webhook: %s", exc)
+            recorder.finish(
+                result={"received": True, "error": str(exc)}, error=str(exc)
+            )
+            return {"received": True, "error": str(exc)}
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.exception("Lalamove webhook processing failed")
+            recorder.finish(
+                result={"received": True, "error": str(exc)}, error=str(exc)
+            )
+            return {"received": True, "error": str(exc)}
+    finally:
+        await recorder.save()
 
 
 @router.post("/noon-send", status_code=status.HTTP_200_OK)
@@ -133,31 +174,53 @@ async def noon_send_webhook(
     status at all, which is worse than swallowing one bad event. A push that
     fails the key check is logged and dropped rather than acted on.
     """
+    recorder = _noon_send_recorder("status", request, x_api_key)
     try:
-        payload = await request.json()
-    except Exception:
-        logger.warning("noon Send status webhook had no readable body")
-        return {"received": True}
-    _log_noon_send_push("status", payload, x_api_key, request)
-    if not isinstance(payload, dict):
-        return {"received": True}
-    if not _noon_send_key_is_valid(x_api_key):
-        return {"received": True, "error": "unauthorised"}
+        try:
+            payload = await request.json()
+        except Exception:
+            logger.warning("noon Send status webhook had no readable body")
+            recorder.finish(result={"received": True}, error="unreadable body")
+            return {"received": True}
 
-    try:
-        result = await noon_send_service.handle_webhook(db, payload)
-        logger.info(
-            "noon Send status webhook for %s → %s",
-            payload.get("order_nr") or payload.get("order_reference") or "?",
-            result,
-        )
-        return result
-    except NoonSendError as exc:
-        logger.warning("Rejected noon Send webhook: %s", exc)
-        return {"received": True, "error": str(exc)}
-    except Exception as exc:  # pragma: no cover — defensive
-        logger.exception("noon Send webhook processing failed")
-        return {"received": True, "error": str(exc)}
+        recorder.payload = payload
+        _log_noon_send_push("status", payload, x_api_key, request)
+        if not isinstance(payload, dict):
+            recorder.finish(result={"received": True}, error="body was not an object")
+            return {"received": True}
+
+        recorder.event_type = str(payload.get("status_code") or "").strip() or None
+        recorder.courier_order_id = str(payload.get("order_nr") or "") or None
+        recorder.order_number = str(payload.get("order_reference") or "") or None
+
+        if not _noon_send_key_is_valid(x_api_key):
+            recorder.signature_valid = False
+            recorder.finish(result={"received": True, "error": "unauthorised"})
+            return {"received": True, "error": "unauthorised"}
+
+        try:
+            result = await noon_send_service.handle_webhook(db, payload)
+            logger.info(
+                "noon Send status webhook for %s → %s",
+                payload.get("order_nr") or payload.get("order_reference") or "?",
+                result,
+            )
+            recorder.finish(result=result)
+            return result
+        except NoonSendError as exc:
+            logger.warning("Rejected noon Send webhook: %s", exc)
+            recorder.finish(
+                result={"received": True, "error": str(exc)}, error=str(exc)
+            )
+            return {"received": True, "error": str(exc)}
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.exception("noon Send webhook processing failed")
+            recorder.finish(
+                result={"received": True, "error": str(exc)}, error=str(exc)
+            )
+            return {"received": True, "error": str(exc)}
+    finally:
+        await recorder.save()
 
 
 @router.post("/noon-send/tracking", status_code=status.HTTP_200_OK)
@@ -172,28 +235,53 @@ async def noon_send_tracking_webhook(
     Kept on its own route rather than folded into the status one: it arrives at
     a completely different rate, it carries no status, and it is deliberately
     not journalled in `webhook_events` — a row per ping would bury every real
-    status change in the same table.
-    """
-    try:
-        payload = await request.json()
-    except Exception:
-        logger.warning("noon Send tracking webhook had no readable body")
-        return {"received": True}
-    _log_noon_send_push("tracking", payload, x_api_key, request)
-    if not isinstance(payload, dict):
-        return {"received": True}
-    if not _noon_send_key_is_valid(x_api_key):
-        return {"received": True, "error": "unauthorised"}
+    status change in that table.
 
+    It *is* recorded in `webhook_logs`, at full payload. That table is purged on
+    a retention window rather than kept forever, which is what makes completeness
+    affordable there and not here: thirteen pings arriving in eight minutes and
+    moving nothing is precisely the shape of the bug this endpoint has already
+    had once, and it was invisible.
+    """
+    recorder = _noon_send_recorder("tracking", request, x_api_key)
     try:
-        result = await noon_send_service.handle_tracking_webhook(db, payload)
-        logger.info(
-            "noon Send tracking webhook for %s → %s · rider at %s",
-            payload.get("order_nr") or "?",
-            result,
-            ((payload.get("da_details") or {}).get("location") or "no position"),
-        )
-        return result
-    except Exception as exc:  # pragma: no cover — defensive
-        logger.exception("noon Send tracking webhook processing failed")
-        return {"received": True, "error": str(exc)}
+        try:
+            payload = await request.json()
+        except Exception:
+            logger.warning("noon Send tracking webhook had no readable body")
+            recorder.finish(result={"received": True}, error="unreadable body")
+            return {"received": True}
+
+        recorder.payload = payload
+        _log_noon_send_push("tracking", payload, x_api_key, request)
+        if not isinstance(payload, dict):
+            recorder.finish(result={"received": True}, error="body was not an object")
+            return {"received": True}
+
+        recorder.event_type = "tracking"
+        recorder.courier_order_id = str(payload.get("order_nr") or "") or None
+        recorder.order_number = str(payload.get("order_reference") or "") or None
+
+        if not _noon_send_key_is_valid(x_api_key):
+            recorder.signature_valid = False
+            recorder.finish(result={"received": True, "error": "unauthorised"})
+            return {"received": True, "error": "unauthorised"}
+
+        try:
+            result = await noon_send_service.handle_tracking_webhook(db, payload)
+            logger.info(
+                "noon Send tracking webhook for %s → %s · rider at %s",
+                payload.get("order_nr") or "?",
+                result,
+                ((payload.get("da_details") or {}).get("location") or "no position"),
+            )
+            recorder.finish(result=result)
+            return result
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.exception("noon Send tracking webhook processing failed")
+            recorder.finish(
+                result={"received": True, "error": str(exc)}, error=str(exc)
+            )
+            return {"received": True, "error": str(exc)}
+    finally:
+        await recorder.save()

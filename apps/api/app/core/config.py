@@ -232,6 +232,24 @@ class Settings(BaseSettings):
     WEB_URL: str = "http://localhost:3000"
     ADMIN_URL: str = "http://localhost:3001"
 
+    # ── Log retention ─────────────────────────────────────────────────────────
+    #: How long `webhook_logs`, `email_logs` and `webhook_events` are kept.
+    #:
+    #: These are debugging output, and the question they answer — "did this
+    #: arrive, did that send" — is asked within hours. `webhook_logs` is also
+    #: the fastest-growing table in the database by an order of magnitude: noon
+    #: Send push a rider position every 15-30 seconds per live task, and every
+    #: one is stored at full payload. The bound is what makes that affordable.
+    #: Swept hourly by `app/services/log_retention.py`.
+    LOG_RETENTION_DAYS: int = 7
+    #: How long `audit_logs` is kept, and deliberately far longer.
+    #:
+    #: Different in kind from the three above: not debugging output but the
+    #: record of who changed what, wanted precisely when somebody disputes a
+    #: change weeks after it happened. Seven days would mean a question raised a
+    #: fortnight later has no answer.
+    AUDIT_RETENTION_DAYS: int = 90
+
     # ── Backups ───────────────────────────────────────────────────────────────
     BACKUP_GCS_BUCKET: str = ""
 

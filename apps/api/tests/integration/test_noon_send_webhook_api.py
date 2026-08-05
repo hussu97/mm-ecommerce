@@ -151,3 +151,88 @@ class TestNeverFailing:
         )
         assert response.status_code == 200
         assert response.json() == {"received": True, "matched": False}
+
+
+class TestTheRequestIsWrittenDown:
+    """
+    Every push lands in `webhook_logs`, whatever became of it.
+
+    This is the table that did not exist on 2026-08-05, when MM-20260805-007
+    received four pushes and -006 received one, and the only evidence either way
+    was container stdout that a restart had already taken. noon Send do not
+    retry and keep nothing to replay from, so a push nobody recorded is a push
+    that never happened.
+    """
+
+    @pytest.fixture
+    def recorded(self, monkeypatch):
+        rows = []
+
+        class _Session:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_):
+                return False
+
+            def add(self, row):
+                rows.append(row)
+
+            async def commit(self):
+                return None
+
+        monkeypatch.setattr(
+            "app.services.webhook_log_service.AsyncSessionFactory",
+            lambda: _Session(),
+        )
+        return rows
+
+    async def test_a_status_push_is_recorded_with_its_payload(self, client, recorded):
+        await client.post(STATUS_URL, json=PUSH, headers={"X-API-Key": KEY})
+
+        (row,) = recorded
+        assert row.provider == "noon_send"
+        assert row.endpoint == "status"
+        assert row.event_type == "picked_up"
+        assert row.courier_order_id == "EHG84NNJMVG35BTDE"
+        assert row.order_number == "MM-1001"
+        assert row.payload == PUSH
+        # The key we were sent, recognisably but not usably.
+        assert row.api_key_fingerprint
+        assert KEY not in row.api_key_fingerprint
+
+    async def test_a_tracking_ping_is_recorded_too(self, client, recorded):
+        """
+        At full payload, and every one of them. They arrive every 15-30 seconds
+        per live task, which is affordable only because the table is purged on a
+        retention window — and worth it because "thirteen pings arrived and moved
+        nothing" is a bug this endpoint has already had once, invisibly.
+        """
+        ping = {
+            "order_nr": "EHG84NNJMVG35BTDE",
+            "da_details": {"latitude": "251999780", "longitude": "552727353"},
+        }
+        await client.post(TRACKING_URL, json=ping, headers={"X-API-Key": KEY})
+
+        (row,) = recorded
+        assert row.endpoint == "tracking"
+        assert row.event_type == "tracking"
+        assert row.payload == ping
+
+    async def test_a_push_with_no_readable_body_is_recorded(self, client, recorded):
+        """The ones that fail are the ones somebody will come looking for."""
+        await client.post(
+            STATUS_URL,
+            content=b"{not json",
+            headers={"Content-Type": "application/json"},
+        )
+
+        (row,) = recorded
+        assert row.error == "unreadable body"
+
+    async def test_a_push_that_matched_no_order_says_so(self, client, recorded):
+        """A run of these is either their bug or ours, and it used to be silent."""
+        await client.post(STATUS_URL, json=PUSH, headers={"X-API-Key": KEY})
+
+        (row,) = recorded
+        assert row.matched is False

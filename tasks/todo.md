@@ -1242,3 +1242,140 @@ copy is what was being replaced.
   under the old semantics survives the deploy.
 - Verified: `pytest` 364 passed / 7 skipped; `ruff check` and `ruff format --check` clean;
   generated SQL inspected for both the storefront and admin paths.
+
+---
+
+## Post-staging audit — 2026-08-05
+
+Six points raised after the first successful staging run, all shipped on
+`fix/post-staging-audit`. Every claim below was measured against the production
+database or a probe run inside the API container — none of it is inference.
+
+### 1. Four customer emails were lost, silently
+
+Both courier webhooks selected the order with a bare `select(Order)` to move its
+status, then handed it to the mailer. `OrderResponse` reads `order.items`, which
+is `lazy="select"`, so validating that order lazy-loaded inside async SQLAlchemy —
+a `MissingGreenlet`, not a query. `notify_order` catches everything, so the email
+vanished and **no `email_logs` row was written to say it had**.
+
+Probe against the production container, `MM-20260805-007`:
+
+```
+FAILED: ValidationError 1 validation error for OrderResponse
+items
+  Error extracting attribute: MissingGreenlet: greenlet_spawn has not been called...
+```
+
+The seven orders placed on 2026-08-05, expected against actual:
+
+| Order | Journey | Expected | Sent | Verdict |
+|---|---|---|---|---|
+| -001 | created → cancelled | cancelled | cancelled | OK — the Stripe session (`cs_live_…`) was never completed and no payment row exists, so no confirmation was owed |
+| -002 | confirmed → cancelled | confirmation, cancelled | both | OK |
+| -003 | confirmed → packed → delivered (Lalamove, admin-marked) | confirmation, delivered | both | OK — packed correctly suppressed as courier-managed; no `out_for_delivery` because Lalamove never reported `PICKED_UP` and the admin jumped straight to delivered |
+| -004 | confirmed → cancelled | confirmation, cancelled | both | OK |
+| -005 | created → cancelled | cancelled | cancelled | OK |
+| **-006** | confirmed → packed → `picked_up` → `undelivered` (noon Send) | confirmation, **out_for_delivery**, **undelivered** | confirmation only | **two lost** |
+| **-007** | confirmed → packed → `picked_up` → `delivered` (noon Send) | confirmation, **out_for_delivery**, **delivered** | confirmation only | **two lost** |
+
+Every order status moved correctly. Only the notifications died, and only on the
+courier path — the admin endpoint was never affected because `update_status`
+re-selects with `_order_load_options()` before building its response.
+
+- [x] `to_response` refreshes an unloaded `items` at the choke point every response funnels through
+- [x] `notify_order` re-reads via `get_for_notification` rather than trusting its caller
+- [x] Both webhook selects ask for the lines
+- [x] Regression test using a **detached** instance — the suite mocks the database, which is exactly why nothing caught this; a mock answers a lazy load happily
+
+Not a bug, worth knowing: `owner_order_notification` logs twice per order. Two
+entries in `OWNER_ORDER_RECIPIENTS`, one row each.
+
+### 2. The full status journey, after the fixes
+
+| Courier | Courier status | Order status | Customer email |
+|---|---|---|---|
+| both | *(booked)* | `packed` | suppressed — a rider is the news |
+| noon Send | `created`, `pending_assignment`, `assigned`, `arrived_at_pickup_location` | unchanged | none — still packed and waiting |
+| noon Send | `picked_up` | `out_for_delivery` | out for delivery |
+| noon Send | `arrived_at_delivery` | unchanged | none |
+| noon Send | `delivered` | `delivered` | delivered |
+| noon Send | **`undelivered`** | **`undelivered`** | **undelivered** |
+| noon Send | `cancelled` | unchanged, `last_error` set | none — an admin decides |
+| Lalamove | `ASSIGNING_DRIVER`, `ON_GOING` | unchanged | none |
+| Lalamove | `PICKED_UP` | `out_for_delivery` | out for delivery |
+| Lalamove | `COMPLETED` | `delivered` | delivered |
+| Lalamove | `CANCELED`, `REJECTED`, `EXPIRED` | unchanged, `needs_attention` | none — the booking died, the parcel never moved |
+| third party | *(none)* | by hand | packed **is** sent — it is the last thing anybody will tell us |
+
+The asymmetry at the bottom is deliberate and documented: Lalamove has no status
+meaning "a rider arrived and could not hand it over", so nothing maps to
+`undelivered` there. An admin can still set it by hand.
+
+- [x] `OrderStatusEnum.UNDELIVERED` + migration `072` (one-way; `ALTER TYPE … ADD VALUE` cannot be undone, so `downgrade` rewrites the rows instead)
+- [x] Transitions lead **back out** — `packed`, `out_for_delivery`, `delivered`, `cancelled`. A failed handover is a detour, not an ending
+- [x] Marking it packed re-books the courier: `assign_or_dispatch` already treats a failed booking as re-bookable
+- [x] The mailer's `fulfilment.stage == "undelivered"` special case folded into the status map — one path, one email
+- [x] Admin banner, action buttons, badges; storefront labels in en + ar
+
+### 3. Short courier reference
+
+Seven digits, random rather than sequential — a counter would also tell every
+driver how many orders the shop has ever taken. Globally unique rather than
+per-courier: one index satisfies both couriers, survives an order falling back
+from noon Send to Lalamove mid-dispatch, and means seven digits identify exactly
+one order without anyone asking which courier carried it.
+
+- [x] `order_deliveries.courier_reference`, unique index, migration `073`
+- [x] Drawn at dispatch (so a third-party zone never spends one), kept across re-dispatch
+- [x] Read-then-write is a courtesy; the unique index is the guarantee — a collision is caught at a flush inside a savepoint and the next candidate tried
+- [x] noon Send `order_reference`, Lalamove driver remarks, both couriers' notes; shown in the admin delivery panel
+- [x] The webhook still resolves an `order_reference` that is an order number, so tasks created before this keep finding their way home
+
+### 4. noon Send tracking arrives by SMS
+
+They text the customer a live link after pickup and publish nothing to us, so the
+out-for-delivery email showed no tracking and gave no reason.
+
+- [x] `tracking_by_sms` on the fulfilment view — a boolean, not a courier name, so the storefront still never learns who carries the cake
+- [x] True only once a rider is holding the parcel; suppressed when there is a live link to show
+- [x] Copy in en + ar
+
+### 5. The trial is gone
+
+- [x] `trial_customer.py`, `TRIAL_OUTLET`, `trial_pickup`, `is_trial_run`, the batching detour, the free-delivery waiver, `TRIAL_CUSTOMER_EMAILS` from all five locations
+- [x] Every order routes on its polygon and nothing else
+- [x] `NOON_SEND_ENV` defaults to `production` — with the customer gate gone it is the only thing between a cake and a real rider, and it must match `NOON_SEND_API_KEY`
+
+**Still to do, and not ours:** the production noon Send key and
+`NOON_SEND_ENV=production` have to be set in the GitHub Actions secrets before
+this ships, or every noon Send zone falls back to Lalamove.
+
+### 6. Webhook audit log
+
+The case for it: `-007` received four noon Send pushes and `-006` received one,
+and the only evidence either way was container stdout that a restart had already
+taken. They do not retry and keep nothing to replay from.
+
+- [x] `webhook_logs` + migration `074` — every request, including the ones that matched nothing, failed the key check, or blew up. Distinct from `webhook_events`, which is a dedup ledger
+- [x] Written from its own session so it survives a handler that rolls back, and never raises — a 500 here makes Lalamove disable the URL and makes noon Send forget it
+- [x] `/webhook-logs` + admin screen with per-row payloads. The column that earns it is `matched`
+- [x] `log_retention` sweeper: 7 days for webhook/email logs, **90 for `audit_logs`** — that one is who-changed-what and is wanted when somebody disputes a change weeks later
+- [x] Both settings through the five-location checklist (CLAUDE.md §9), which `test_compose_env_allowlist` caught me forgetting
+
+### Verification
+
+- `pytest`: 929 passed / 7 skipped, and passing **both** with a noon Send key in the local `.env` and without one
+- Migrations `072`–`074` applied against a throwaway Postgres 16, downgraded, re-applied. Confirmed there: `undelivered` stores, `webhook_logs` has the expected shape, and the same reference on *two different couriers* is refused by the unique index
+- The recorder and the retention sweep exercised end to end against that database — a row written, a 30-day-old row purged, the fresh one left
+- `ruff check` clean; `tsc --noEmit` clean for admin and web
+
+### One thing found on the way
+
+`test_delivery_quote_privacy` passed in CI and failed on any machine with a real
+noon Send key in `.env` — a configured courier sends the `noon_send` zone down an
+estimate path that resolves a real branch and dies on the mocked session. It
+reproduces on `main`, so it is not from this work, but it cost an hour here and
+would cost the next person the same. Both that file and the new
+`test_delivery_fee_agreement` now pin the key off, so the answer is the same
+everywhere.

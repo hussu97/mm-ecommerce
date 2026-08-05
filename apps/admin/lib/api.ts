@@ -7,6 +7,7 @@ import type {
   TrafficData, UploadResponse, User, DeliverySettings, SalesChannel,
   DeliveryMapVersion, DeliveryPricingMode, DeliveryZone, DeliveryZoneSummary, FulfilmentProvider, OrderDelivery,
   BatchWindow, BatchWindowWrite, DeliveryBatch, DeliveryZoneMap,
+  PaginatedWebhookLogs, WebhookLogDetail, WebhookLogFacets,
 } from './types';
 import type {
   PublicKeyCredentialCreationOptionsJSON,
@@ -456,6 +457,30 @@ export const emailLogsApi = {
     page?: number;
     per_page?: number;
   }) => api.get<PaginatedEmailLogs>(`/email-logs/admin/all${buildQs(params)}`),
+};
+
+// ─── Webhook Logs ─────────────────────────────────────────────────────────────
+
+export const webhookLogsApi = {
+  list: (params?: {
+    provider?: string;
+    endpoint?: string;
+    event_type?: string;
+    order_number?: string;
+    courier_order_id?: string;
+    // Strings rather than booleans: `buildQs` serialises string | number, and
+    // FastAPI parses 'true'/'false' into a bool at the other end.
+    matched?: 'true' | 'false';
+    errors_only?: 'true';
+    date_from?: string;
+    date_to?: string;
+    page?: number;
+    per_page?: number;
+  }) => api.get<PaginatedWebhookLogs>(`/webhook-logs${buildQs(params)}`),
+  /** The bodies, which the list deliberately does not carry. */
+  get: (id: string) => api.get<WebhookLogDetail>(`/webhook-logs/${id}`),
+  /** The values actually present, so the filters offer real options. */
+  facets: () => api.get<WebhookLogFacets>('/webhook-logs/providers'),
 };
 
 // ─── Audit Logs ───────────────────────────────────────────────────────────────

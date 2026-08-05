@@ -49,6 +49,7 @@ const NAV: Array<
   { href: '/import',        label: 'Import / Export', icon: 'sync_alt' },
   { href: '/security',      label: 'Security',        icon: 'vpn_key' },
   { href: '/email-logs',    label: 'Email Logs',      icon: 'mail' },
+  { href: '/webhook-logs',  label: 'Webhook Logs',    icon: 'webhook' },
   { href: '/audit-logs',    label: 'Audit Logs',      icon: 'manage_history' },
 ];
 

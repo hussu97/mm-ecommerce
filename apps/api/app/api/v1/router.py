@@ -23,6 +23,7 @@ from .cms import router as cms_router
 from .blog import router as blog_router
 from .email_logs import router as email_logs_router
 from .audit_logs import router as audit_logs_router
+from .webhook_logs import router as webhook_logs_router
 
 # POS domain
 from .branches import router as branches_router
@@ -100,6 +101,9 @@ api_router.include_router(cms_router, prefix="/cms", tags=["CMS"])
 api_router.include_router(blog_router, prefix="/blog", tags=["Blog"])
 api_router.include_router(email_logs_router, prefix="/email-logs", tags=["Email Logs"])
 api_router.include_router(audit_logs_router, prefix="/audit-logs", tags=["Audit Logs"])
+api_router.include_router(
+    webhook_logs_router, prefix="/webhook-logs", tags=["Webhook Logs"]
+)
 
 # ─── POS ──────────────────────────────────────────────────────────────────────
 api_router.include_router(branches_router, prefix="/branches", tags=["Branches"])

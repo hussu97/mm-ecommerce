@@ -157,20 +157,28 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
             except Exception as exc:  # noqa: BLE001 — a seed must not block boot
                 logger.warning("i18n seed failed (non-fatal): %s", exc)
 
-        dispatcher: asyncio.Task | None = None
+        background: list[asyncio.Task] = []
         if dispatch_batches and settings.BATCH_DISPATCHER_ENABLED:
             from app.services import batch_scheduler
 
-            dispatcher = asyncio.create_task(batch_scheduler.run_forever())
+            background.append(asyncio.create_task(batch_scheduler.run_forever()))
+
+            # Rides with the dispatcher rather than getting a flag of its own.
+            # Both are loops in the app because this stack has no cron, both
+            # hold an advisory lock so a second copy would achieve nothing, and
+            # both belong to whichever app already owns the shared work.
+            from app.services import log_retention
+
+            background.append(asyncio.create_task(log_retention.run_forever()))
 
         logger.info("%s starting up [env=%s]", service, settings.APP_ENV)
         yield
-        if dispatcher is not None:
-            dispatcher.cancel()
+        for task in background:
+            task.cancel()
             # Awaited so a batch mid-booking finishes rather than being torn
             # off halfway between a quotation and an order.
             with suppress(asyncio.CancelledError):
-                await dispatcher
+                await task
         logger.info("%s shutting down", service)
 
     return lifespan

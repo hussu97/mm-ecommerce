@@ -27,6 +27,27 @@ from app.models.delivery_settings import DeliverySettings
 from app.services import delivery_service, lalamove_service
 from app.services.delivery_zone_service import Zone
 
+
+@pytest.fixture(autouse=True)
+def noon_send_is_off(monkeypatch):
+    """
+    Pin noon Send to unconfigured, whatever the developer's `.env` says.
+
+    Every quote here goes through a mocked session, and a configured noon Send
+    sends the `noon_send` zone down its own estimate path — which resolves a
+    real pickup branch and dies on the mock with a `'coroutine' object has no
+    attribute 'first'` that says nothing about what these tests are for.
+
+    Left implicit, that made the file pass or fail depending on whether the
+    machine running it happened to have a courier key on disk: green in CI,
+    three red on the laptop of whoever had one. Pinned, so the answer is the
+    same everywhere.
+    """
+    import app.core.config as cfg
+
+    monkeypatch.setattr(cfg.settings, "NOON_SEND_API_KEY", "")
+
+
 SETTINGS = DeliverySettings(
     free_delivery_threshold=Decimal("150.00"),
     pickup_fee=Decimal("0.00"),

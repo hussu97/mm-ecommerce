@@ -16,6 +16,7 @@ from .language import Language, UiTranslation  # noqa: F401
 from .cms import CmsPage  # noqa: F401
 from .blog import BlogPost  # noqa: F401
 from .webhook_event import WebhookEvent  # noqa: F401
+from .webhook_log import WebhookLog  # noqa: F401
 from .email_log import EmailLog  # noqa: F401
 from .delivery_settings import DeliverySettings  # noqa: F401
 from .delivery_polygon import (  # noqa: F401
@@ -193,6 +194,7 @@ __all__ = [
     "CmsPage",
     "BlogPost",
     "WebhookEvent",
+    "WebhookLog",
     "EmailLog",
     "DeliveryPolygon",
     "DeliveryPolygonVersion",
