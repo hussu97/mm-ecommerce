@@ -158,6 +158,7 @@ def mock_fulfilment():
                 estimated_at=None,
                 precision=None,
                 tracking_url=None,
+                tracking_by_sms=False,
                 courier_managed=False,
                 packed_at=None,
                 picked_up_at=None,

@@ -98,6 +98,9 @@ async def _fulfilment(order, delivery=None, branch=None):
         # The same status means a different word for a collection order, because
         # nobody delivered anything — somebody came and got it.
         (OrderStatusEnum.DELIVERED, DeliveryMethodEnum.PICKUP, "collected"),
+        # A failed handover reads off the status now, not only off the courier
+        # record — the two used to disagree, and the status was the wrong one.
+        (OrderStatusEnum.UNDELIVERED, DeliveryMethodEnum.DELIVERY, "undelivered"),
         (OrderStatusEnum.CANCELLED, DeliveryMethodEnum.DELIVERY, "settled"),
         (OrderStatusEnum.REFUNDED, DeliveryMethodEnum.DELIVERY, "settled"),
         (OrderStatusEnum.PAYMENT_FAILED, DeliveryMethodEnum.DELIVERY, "settled"),
@@ -389,3 +392,56 @@ def test_branch_localisation_reads_the_nested_translations_shape():
     assert (
         Branch(name="Only English", reference="B003").name_for("ar") == "Only English"
     )
+
+
+# ── who hands over the tracking link ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_courier_that_texts_the_customer_is_flagged_once_it_moves():
+    """
+    noon Send send the customer their own tracking link by SMS after pickup and
+    publish nothing to us, so there is no share link to show. The flag is what
+    lets a renderer say "check your messages" rather than showing nothing.
+    """
+    fulfilment = await _fulfilment(
+        _order(status=OrderStatusEnum.OUT_FOR_DELIVERY),
+        _delivery(provider="noon_send", courier_status="picked_up", picked_up_at=NOW),
+    )
+    assert fulfilment.tracking_by_sms is True
+    assert fulfilment.tracking_url is None
+
+
+@pytest.mark.asyncio
+async def test_nothing_is_promised_before_a_rider_has_the_parcel():
+    """The message goes out on pickup. Promising it earlier is an empty inbox."""
+    fulfilment = await _fulfilment(
+        _order(status=OrderStatusEnum.PACKED),
+        _delivery(provider="noon_send", courier_status="assigned"),
+    )
+    assert fulfilment.tracking_by_sms is False
+
+
+@pytest.mark.asyncio
+async def test_a_courier_that_gives_us_a_link_is_not_flagged():
+    """Lalamove hand us a share link, so we show it ourselves."""
+    fulfilment = await _fulfilment(
+        _order(status=OrderStatusEnum.OUT_FOR_DELIVERY),
+        _delivery(
+            provider="lalamove",
+            courier_status="PICKED_UP",
+            picked_up_at=NOW,
+            share_link="https://track.example/abc",
+        ),
+    )
+    assert fulfilment.tracking_by_sms is False
+    assert fulfilment.tracking_url == "https://track.example/abc"
+
+
+@pytest.mark.asyncio
+async def test_a_third_party_order_is_never_flagged():
+    fulfilment = await _fulfilment(
+        _order(status=OrderStatusEnum.OUT_FOR_DELIVERY),
+        _delivery(provider="third_party"),
+    )
+    assert fulfilment.tracking_by_sms is False

@@ -86,6 +86,10 @@ class FulfilmentResponse(BaseModel):
     estimated_at: datetime | None = None
     precision: str | None = None
     tracking_url: str | None = None
+    #: Whether the tracking link reaches the customer as a text message rather
+    #: than from us. True only while a rider is carrying the parcel. Lets a
+    #: renderer say "check your messages" instead of showing no link at all.
+    tracking_by_sms: bool = False
     #: Whether a rider we can hear back from carries this order. Decides whether
     #: the storefront may say "we'll share a live link when it is collected".
     courier_managed: bool = False
@@ -102,6 +106,7 @@ class FulfilmentResponse(BaseModel):
             estimated_at=fulfilment.estimated_at,
             precision=fulfilment.precision,
             tracking_url=fulfilment.tracking_url,
+            tracking_by_sms=fulfilment.tracking_by_sms,
             courier_managed=fulfilment.courier_managed,
             packed_at=fulfilment.packed_at,
             picked_up_at=fulfilment.picked_up_at,

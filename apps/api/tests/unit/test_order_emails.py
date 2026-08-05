@@ -50,6 +50,7 @@ def _order(
     estimated_at: datetime | None = None,
     precision: str | None = "time",
     tracking_url: str | None = None,
+    tracking_by_sms: bool = False,
     courier_managed: bool = False,
     branch: PickupBranchResponse | None = None,
     payment_id: str | None = "pi_test",
@@ -107,6 +108,7 @@ def _order(
             estimated_at=estimated_at,
             precision=precision,
             tracking_url=tracking_url,
+            tracking_by_sms=tracking_by_sms,
             courier_managed=courier_managed,
             branch=branch,
             **stamps,
@@ -522,3 +524,65 @@ def test_the_gate_reads_the_channel_and_not_whether_it_reached_a_register():
     # stray email to a counter customer is a small cost, and silencing the
     # storefront is not.
     assert email_service.is_counter_sale(_order(source=None)) is False
+
+
+# ── tracking that arrives somewhere else ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_courier_that_texts_the_link_says_so(sent):
+    """
+    noon Send message the customer their own tracking link once a rider has the
+    box, and give us nothing to link to. Before this the email simply showed no
+    live tracking and offered no explanation, which reads as something broken
+    rather than something arriving by another route.
+    """
+    order = _order(
+        status=OrderStatusEnum.OUT_FOR_DELIVERY,
+        stage="on_the_way",
+        courier_managed=True,
+        tracking_by_sms=True,
+    )
+    assert await email_service.notify_status_change(order) == "out_for_delivery"
+    assert "text you a live tracking link" in body(sent[0])
+    assert "check your messages" in body(sent[0])
+
+
+@pytest.mark.asyncio
+async def test_a_courier_that_gives_us_a_map_does_not_send_them_to_their_texts(sent):
+    """A live link and a "look at your phone" note would be two answers."""
+    order = _order(
+        status=OrderStatusEnum.OUT_FOR_DELIVERY,
+        stage="on_the_way",
+        courier_managed=True,
+        tracking_url="https://track.example/abc",
+        tracking_by_sms=True,
+    )
+    await email_service.notify_status_change(order)
+    assert "Track live" in body(sent[0])
+    assert "check your messages" not in body(sent[0])
+
+
+@pytest.mark.asyncio
+async def test_nothing_is_promised_when_no_message_is_coming(sent):
+    order = _order(
+        status=OrderStatusEnum.OUT_FOR_DELIVERY,
+        stage="on_the_way",
+        courier_managed=True,
+    )
+    await email_service.notify_status_change(order)
+    assert "check your messages" not in body(sent[0])
+
+
+@pytest.mark.asyncio
+async def test_the_note_is_written_in_arabic_for_an_arabic_order(sent):
+    order = _order(
+        status=OrderStatusEnum.OUT_FOR_DELIVERY,
+        stage="on_the_way",
+        courier_managed=True,
+        tracking_by_sms=True,
+    )
+    order.locale = "ar"
+    await email_service.notify_status_change(order)
+    assert "رابط تتبع مباشر" in body(sent[0])
+    assert "text you a live tracking link" not in body(sent[0])

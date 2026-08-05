@@ -133,6 +133,14 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
         "otw.cta_live": "Track live",
         "otw.cta_details": "Order details",
+        # Shown instead of a live-tracking button when the courier sends the
+        # customer their own link by text rather than giving us one to show.
+        # Without it the email simply had no tracking at all and said nothing
+        # about why, which reads as something missing.
+        "otw.sms_note": (
+            "Our delivery partner will text you a live tracking link — "
+            "please check your messages."
+        ),
         # ── delivered / collected ─────────────────────────────────────────────
         "delivered.subject_pickup": "Collected",
         "delivered.subject_delivery": "Delivered",
@@ -373,6 +381,9 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
         "otw.cta_live": "تتبع مباشر",
         "otw.cta_details": "تفاصيل الطلب",
+        "otw.sms_note": (
+            "سيرسل لك شريك التوصيل رابط تتبع مباشر عبر رسالة نصية — يرجى مراجعة رسائلك."
+        ),
         # ── delivered / collected ─────────────────────────────────────────────
         "delivered.subject_pickup": "تم الاستلام",
         "delivered.subject_delivery": "تم التوصيل",

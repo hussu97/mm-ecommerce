@@ -43,6 +43,25 @@
 {{ parts.button(tracking_url, t('packed.cta')) }}
 {% endif %}
 
+{#
+  Some couriers text the customer their own tracking link once a rider has the
+  box, and give us nothing to link to. Saying so turns "this email has no
+  tracking" into "your tracking is arriving by SMS" — and it goes below the
+  button rather than above it, because the order page is still the thing to
+  open right now; the text may be a minute behind this email.
+
+  Still no courier name. `tracking_by_sms` is a boolean for exactly that reason.
+#}
+{% if tracking_by_sms and not live_tracking_url %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" align="center" style="padding-top: 14px;">
+    <p class="muted" style="text-align:center;">
+      {{ t('otw.sms_note') }}
+    </p>
+  </td></tr>
+</table>
+{% endif %}
+
 {{ parts.address_card(address) }}
 {{ parts.timeline(steps) }}
 {{ parts.order_summary(items, totals) }}

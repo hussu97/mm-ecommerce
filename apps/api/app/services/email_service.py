@@ -411,6 +411,10 @@ def _order_context(
         "address": None if is_pickup else (order.shipping_address_snapshot or None),
         "tracking_url": _order_tracking_url(order.order_number, order.email, locale),
         "live_tracking_url": fulfilment.tracking_url if fulfilment else None,
+        # noon Send text the customer their own tracking link once a rider has
+        # the box, and give us nothing to link to. Without this the email simply
+        # showed no live link and said nothing about why.
+        "tracking_by_sms": bool(fulfilment and fulfilment.tracking_by_sms),
         "retry_url": _account_order_url(order.order_number, locale),
     }
 

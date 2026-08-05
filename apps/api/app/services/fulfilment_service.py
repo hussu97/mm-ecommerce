@@ -85,6 +85,14 @@ _BOOKED_BY_US = {
     FulfilmentProviderEnum.NOON_SEND.value,
 }
 
+#: Couriers that text the customer their own tracking link once a rider has the
+#: parcel. Lalamove hands us a share link instead, which we surface ourselves;
+#: noon Send publishes nothing to us and messages the customer directly. Both
+#: end with a live map — they differ only in who delivers the link, and this is
+#: what lets the email say "check your messages" instead of showing a button
+#: that does not exist.
+_TRACKS_BY_SMS = {FulfilmentProviderEnum.NOON_SEND.value}
+
 
 @dataclass(frozen=True)
 class Fulfilment:
@@ -118,6 +126,15 @@ class Fulfilment:
     #: Withheld before pickup — a tracking page for a parcel nobody has
     #: collected shows an empty map and reads as a broken link.
     tracking_url: str | None
+    #: Whether the customer gets their tracking link by text message rather than
+    #: from us. True only once a rider is actually carrying the parcel, because
+    #: that is when the message is sent and promising it earlier would have
+    #: somebody checking an empty inbox.
+    #:
+    #: A boolean, not a courier name, for the same reason as `courier_managed`:
+    #: everything reading it wants the consequence — tell them to look at their
+    #: phone — and nothing that reads it should learn the brand.
+    tracking_by_sms: bool
     #: Whether this order travels with a courier we book and hear back from.
     #:
     #: A boolean rather than the provider's name, on purpose: everything that
@@ -208,6 +225,11 @@ async def for_order(
         estimated_at=estimated_at,
         precision=precision,
         tracking_url=_tracking_url(delivery, stage=stage),
+        tracking_by_sms=(
+            delivery is not None
+            and delivery.provider in _TRACKS_BY_SMS
+            and stage == "on_the_way"
+        ),
         courier_managed=(delivery is not None and delivery.provider in _BOOKED_BY_US),
         packed_at=delivery.dispatchable_at if delivery is not None else None,
         picked_up_at=delivery.picked_up_at if delivery is not None else None,
