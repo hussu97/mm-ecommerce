@@ -417,6 +417,22 @@ jobs:
           echo "Pulling pre-built API image from GHCR..."
           docker pull ghcr.io/hussu97/mm-ecommerce-api:latest
 
+          # A migration can drop a table, and `alembic downgrade` cannot bring
+          # the rows back — only the empty shape. Until 2026-08-06 this job ran
+          # migrations against the live database with nothing taken first, so
+          # the only thing standing between a bad migration and the order
+          # history was the migration being right.
+          #
+          # `scripts/backup-db.sh` already existed and was only ever run by
+          # hand. It is cheap (a gzipped pg_dump), it keeps 7 days locally and
+          # copies to GCS when BACKUP_GCS_BUCKET is set, and it is the
+          # difference between a mistake being an inconvenience and being
+          # unrecoverable. A failure here stops the deploy: migrating without
+          # one is the situation this exists to prevent.
+          echo "Backing up the database before migrating..."
+          timeout 600 bash scripts/backup-db.sh < /dev/null \
+            || { echo "ERROR: Pre-migration backup failed — refusing to migrate"; exit 1; }
+
           echo "Running database migrations..."
           # Use < /dev/null to prevent stdin hijacking
           timeout 300 docker compose -f docker-compose.prod.yml run --rm --no-deps -T api alembic upgrade head < /dev/null \
