@@ -68,7 +68,7 @@ class TestPaymentIdempotency:
         )
 
         assert returned is original
-        db.add.assert_not_called(), "a replay wrote a second payment row"
+        assert db.add.call_count == 0, "a replay wrote a second payment row"
 
     async def test_key_reused_on_a_different_order_is_refused(self):
         """
@@ -111,7 +111,6 @@ class TestPaymentIdempotency:
                 payment_method_id=uuid.uuid4(),
                 amount=Decimal("50.00"),
             )
-        (
-            db.execute.assert_not_called(),
-            ("no key was sent, so no idempotency lookup should have happened"),
+        assert db.execute.call_count == 0, (
+            "no key was sent, so no idempotency lookup should have happened"
         )
