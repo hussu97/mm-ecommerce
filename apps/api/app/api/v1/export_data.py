@@ -12,7 +12,7 @@ from app.core.deps import get_admin_user, get_db
 from app.models.language import Language
 from app.models.order import OrderStatusEnum
 from app.models.user import User
-from app.services import export_service
+from app.services import business_day_service, export_service
 
 router = APIRouter()
 
@@ -43,7 +43,7 @@ async def export_orders(
     _admin: User = Depends(get_admin_user),
 ):
     if start_date is None and end_date is None:
-        end_date = date.today()
+        end_date = business_day_service.shop_today()
         start_date = end_date - timedelta(days=30)
     content = await export_service.export_orders(db, start_date, end_date, status)
     return _csv_response(content, "orders.csv")

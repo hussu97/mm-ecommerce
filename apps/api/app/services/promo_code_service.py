@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import secrets
+import uuid
 
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError
+from app.models.order import Order, OrderStatusEnum
 from app.models.promo_code import DiscountTypeEnum, PromoCode
 from app.schemas.promo_code import (
     PromoCodeCreate,
@@ -34,13 +36,41 @@ def _calc_discount(promo: PromoCode, subtotal: Decimal) -> Decimal:
         )
     else:
         amount = min(promo.discount_value, subtotal)
-    return amount
+    # A discount can take an order to zero and no further. The percentage is
+    # capped at 100 on the way in, but a row that predates that check — or one
+    # written straight to the database — would otherwise produce a discount
+    # larger than the basket, and from there a negative subtotal, negative VAT,
+    # and a total that `create_session` reads as "zero, nothing to charge" and
+    # confirms for free.
+    return max(Decimal("0.00"), min(amount, subtotal))
+
+
+async def _redemptions_by(db: AsyncSession, code: str, user_id: uuid.UUID) -> int:
+    """
+    How many orders this customer has already placed with this code.
+
+    Counted off `orders.promo_code_used` rather than a separate ledger, because
+    that column is written in the same transaction as the order and is
+    therefore exactly as true as the order itself. Cancelled orders are
+    excluded — a code spent on an order that never happened has not been spent.
+    """
+    result = await db.execute(
+        select(func.count())
+        .select_from(Order)
+        .where(
+            Order.user_id == user_id,
+            Order.promo_code_used == code.upper(),
+            Order.status != OrderStatusEnum.CANCELLED,
+        )
+    )
+    return int(result.scalar() or 0)
 
 
 async def validate(
     db: AsyncSession,
     code: str,
     subtotal: Decimal,
+    user_id: uuid.UUID | None = None,
 ) -> PromoCodeValidateResponse:
     """Validate a promo code and return the discount amount (does NOT increment uses)."""
     result = await db.execute(select(PromoCode).where(PromoCode.code == code.upper()))
@@ -67,6 +97,14 @@ async def validate(
         return PromoCodeValidateResponse(
             valid=False, message="Promo code has reached its usage limit"
         )
+
+    if promo.max_uses_per_user is not None and user_id is not None:
+        used = await _redemptions_by(db, promo.code, user_id)
+        if used >= promo.max_uses_per_user:
+            return PromoCodeValidateResponse(
+                valid=False,
+                message="You have already used this promo code",
+            )
 
     if promo.min_order_amount and subtotal < promo.min_order_amount:
         return PromoCodeValidateResponse(

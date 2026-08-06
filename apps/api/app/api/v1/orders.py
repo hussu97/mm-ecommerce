@@ -28,6 +28,7 @@ from app.schemas.order import (
 from fastapi import Request
 
 from app.core.cache import cache_delete_pattern
+from app.core.limiter import limiter
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.services import (
     audit_service,
@@ -260,8 +261,18 @@ class TrackOrderResponse(BaseModel):
 
 
 @router.post("/track", response_model=TrackOrderResponse)
-async def track_order(data: TrackOrderRequest, db: AsyncSession = Depends(get_db)):
-    """Public endpoint to look up order status by order number + email."""
+@limiter.limit("15/minute")
+async def track_order(
+    request: Request,
+    data: TrackOrderRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Public endpoint to look up order status by order number + email.
+
+    Rate limited: order numbers are a date plus a counter, so unbounded
+    attempts here are a way to pair a guessed number with a guessed address.
+    """
     stmt = (
         select(Order)
         .options(selectinload(Order.items))

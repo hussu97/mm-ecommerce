@@ -31,6 +31,7 @@ __all__ = [
     "current_business_date",
     "get_or_open",
     "resolve_timezone",
+    "shop_today",
 ]
 
 
@@ -44,6 +45,22 @@ async def resolve_timezone(db: AsyncSession) -> ZoneInfo:
         return ZoneInfo(name)
     except (ZoneInfoNotFoundError, ValueError):
         return ZoneInfo(DEFAULT_TIMEZONE)
+
+
+def shop_today(tz: ZoneInfo | None = None) -> date:
+    """
+    Today's calendar date where the shop is, not where the server is.
+
+    The containers run on UTC and Dubai is UTC+4, so `date.today()` rolls over
+    at 04:00 local. Every report defaulting to "today" was therefore reading a
+    UTC day: between midnight and 04:00 it showed yesterday's takings and
+    disagreed with the `business_date` figures on the same screen.
+
+    This is the plain calendar date, deliberately — the branch cut-off shift
+    belongs to `business_date_for`, which is about which trading day a *sale*
+    books to, not about what the date is right now.
+    """
+    return datetime.now(tz or ZoneInfo(DEFAULT_TIMEZONE)).date()
 
 
 def _parse_cutoff(value: str) -> timedelta:

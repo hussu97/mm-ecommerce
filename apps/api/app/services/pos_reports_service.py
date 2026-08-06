@@ -10,7 +10,7 @@ separately rather than netted silently into the totals.
 from __future__ import annotations
 
 import uuid
-from datetime import date, timedelta
+from datetime import timedelta
 from decimal import Decimal
 from typing import Any, Sequence
 
@@ -1638,7 +1638,7 @@ async def sales_predictions(
             "avg_daily_orders": int((orders or 0) / day_count),
         }
 
-    today = date.today()
+    today = business_day_service.shop_today()
     predictions = []
     for offset in range(1, days_ahead + 1):
         target = today + timedelta(days=offset)

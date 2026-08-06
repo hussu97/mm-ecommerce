@@ -157,6 +157,9 @@ class StripeProvider(PaymentProvider):
 
         order_number: str | None = None
         payment_intent_id: str | None = None
+        amount_refunded: int | None = None
+        amount_captured: int | None = None
+        fully_refunded: bool | None = None
 
         if event_type.startswith("payment_intent."):
             payment_intent_id = obj.get("id")
@@ -166,6 +169,12 @@ class StripeProvider(PaymentProvider):
         elif event_type.startswith("charge."):
             payment_intent_id = obj.get("payment_intent")
             order_number = metadata.get("order_number")
+            # A refund is not automatically the whole order. `refunded` is
+            # Stripe's own "nothing left on this charge" flag; the amounts are
+            # carried too so a partial can be reported accurately in minor units.
+            amount_refunded = obj.get("amount_refunded")
+            amount_captured = obj.get("amount")
+            fully_refunded = obj.get("refunded")
 
         logger.info(
             "Stripe webhook: type=%s order=%s payment_intent=%s",
@@ -179,6 +188,9 @@ class StripeProvider(PaymentProvider):
             "event_type": event_type,
             "order_number": order_number,
             "payment_intent_id": payment_intent_id,
+            "amount_refunded": amount_refunded,
+            "amount_captured": amount_captured,
+            "fully_refunded": fully_refunded,
         }
 
     def is_confirmed_payment_id(self, payment_id: str | None) -> bool:

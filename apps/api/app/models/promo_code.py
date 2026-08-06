@@ -27,6 +27,12 @@ class PromoCode(Base, UUIDMixin):
     __tablename__ = "promo_codes"
     __table_args__ = (
         CheckConstraint("discount_value > 0", name="ck_promo_discount_positive"),
+        # A percentage over 100 drives the subtotal, and then the VAT, negative.
+        # The API refuses one; this refuses one written straight to the table.
+        CheckConstraint(
+            "discount_type <> 'percentage' OR discount_value <= 100",
+            name="ck_promo_percentage_ceiling",
+        ),
     )
 
     code: Mapped[str] = mapped_column(
@@ -44,6 +50,10 @@ class PromoCode(Base, UUIDMixin):
     discount_value: Mapped[Any] = mapped_column(Numeric(10, 2), nullable=False)
     min_order_amount: Mapped[Any | None] = mapped_column(Numeric(10, 2), nullable=True)
     max_uses: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: How many times one customer may redeem this code. NULL means unlimited,
+    #: which is what every existing code was: `max_uses` is a campaign-wide
+    #: ceiling, so one customer could redeem a 500-use code 500 times.
+    max_uses_per_user: Mapped[int | None] = mapped_column(Integer, nullable=True)
     current_uses: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     valid_from: Mapped[datetime | None] = mapped_column(

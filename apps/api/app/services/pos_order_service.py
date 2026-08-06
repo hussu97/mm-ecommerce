@@ -694,9 +694,21 @@ async def recalculate(db: AsyncSession, order: Order) -> Order:
 
     charge_inputs: list[ChargeInput] = []
     for charge in order.order_charges:
-        rate, tax_name, tax_id, inclusive = tax_cache.get(
-            None, (Decimal("0"), "No tax", None, True)
-        )
+        # A charge carries its own tax group — a service charge and a delivery
+        # fee are not necessarily rated the same, and `Charge.tax_group_id` is
+        # where that is configured. This used to read `tax_cache.get(None, ...)`,
+        # whose only possible value is the "No tax" tuple `_resolve_tax(None)`
+        # returns, so *every* charge was zero-rated unconditionally. The pricing
+        # engine handles charge tax correctly and the unit tests pass it an
+        # explicit rate, so the tests stayed green while production
+        # under-declared VAT on every service and delivery charge it took.
+        charge_tax_group_id = None
+        if charge.charge_id is not None:
+            configured = await db.get(Charge, charge.charge_id)
+            charge_tax_group_id = getattr(configured, "tax_group_id", None)
+        if charge_tax_group_id not in tax_cache:
+            tax_cache[charge_tax_group_id] = await _resolve_tax(db, charge_tax_group_id)
+        rate, tax_name, tax_id, inclusive = tax_cache[charge_tax_group_id]
         charge_inputs.append(
             ChargeInput(
                 name=charge.name,
