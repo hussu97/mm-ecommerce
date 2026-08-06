@@ -111,6 +111,7 @@ jobs:
           APNS_ORDER_SOUND=${{ secrets.APNS_ORDER_SOUND || 'new-order.caf' }}
           APNS_TIMEOUT_SECONDS=${{ secrets.APNS_TIMEOUT_SECONDS || '10' }}
           NOON_SEND_WEBHOOK_API_KEY=${{ secrets.NOON_SEND_WEBHOOK_API_KEY }}
+          NOON_SEND_ENFORCE_WEBHOOK_KEY=${{ secrets.NOON_SEND_ENFORCE_WEBHOOK_KEY || 'false' }}
           NOON_SEND_TIMEOUT_SECONDS=${{ secrets.NOON_SEND_TIMEOUT_SECONDS || '8' }}
           LOG_RETENTION_DAYS=${{ secrets.LOG_RETENTION_DAYS || '7' }}
           AUDIT_RETENTION_DAYS=${{ secrets.AUDIT_RETENTION_DAYS || '90' }}

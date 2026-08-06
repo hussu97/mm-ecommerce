@@ -31,7 +31,55 @@ const nextConfig: NextConfig = {
     return [
       {
         source: '/(.*)',
-        headers: [{ key: 'X-Robots-Tag', value: 'all' }],
+        headers: [
+          { key: 'X-Robots-Tag', value: 'all' },
+          // The API host gets these from nginx; the Vercel-hosted apps got
+          // nothing at all, so the storefront was the one surface with no
+          // security headers on it.
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          {
+            key: 'Permissions-Policy',
+            // Geolocation stays: the checkout map offers "use my location".
+            value: 'camera=(), microphone=(), payment=(), usb=(), geolocation=(self)',
+          },
+          {
+            key: 'Strict-Transport-Security',
+            value: 'max-age=63072000; includeSubDomains; preload',
+          },
+          // Clickjacking cover. `frame-ancestors` is the modern control and
+          // X-Frame-Options the fallback for anything that predates it.
+          { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
+          { key: 'X-Frame-Options', value: 'DENY' },
+          // The full policy, reported and not enforced.
+          //
+          // Deliberately not enforced yet: a wrong directive here is a blank
+          // storefront, and this list is derived from reading the source rather
+          // than from watching a real session. Load the site, check the console
+          // for violations, fix the policy, and only then move this to
+          // `Content-Security-Policy`.
+          //
+          // `unsafe-inline` on scripts is required while Next's hydration
+          // bootstrap is inline and unnonced; moving to a nonce needs the
+          // middleware to generate one per request.
+          {
+            key: 'Content-Security-Policy-Report-Only',
+            value: [
+              "default-src 'self'",
+              "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com https://maps.googleapis.com",
+              "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+              "font-src 'self' https://fonts.gstatic.com data:",
+              "img-src 'self' data: blob: https://*.r2.cloudflarestorage.com https://pub-*.r2.dev https://storage.googleapis.com https://media.meltingmomentscakes.com https://maps.googleapis.com https://maps.gstatic.com https://*.googleusercontent.com",
+              "connect-src 'self' https://api.meltingmomentscakes.com https://cloud.umami.is https://maps.googleapis.com https://*.ingest.sentry.io https://*.ingest.de.sentry.io",
+              "frame-src https://challenges.cloudflare.com",
+              "frame-ancestors 'none'",
+              "base-uri 'self'",
+              "form-action 'self'",
+              "object-src 'none'",
+              'upgrade-insecure-requests',
+            ].join('; '),
+          },
+        ],
       },
     ];
   },

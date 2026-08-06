@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import json
 from typing import Any
 
@@ -62,7 +63,7 @@ def _log_noon_send_push(
 
 def _noon_send_key_is_valid(presented: str | None) -> bool:
     """
-    Whether this push should be acted on. Currently: always.
+    Whether this push should be acted on.
 
     noon Send does not sign requests, and the key they send is not the one we
     configured — their staging side has a value of its own that no screen of
@@ -71,16 +72,29 @@ def _noon_send_key_is_valid(presented: str | None) -> bool:
     records show them, and both were thrown away with a warning nobody was
     watching.
 
-    So the key is recorded and not enforced. What guards the endpoint is the
-    task number: a push only moves an order we already dispatched under that
-    `mp_task_nr` — sixteen characters we never publish — and anything else is
-    acknowledged and ignored, while the status rank guard stops even a correct
-    guess walking an order backwards.
+    So by default the key is recorded and not enforced. What guards the endpoint
+    meanwhile is the task number: a push only moves an order we already
+    dispatched under that `mp_task_nr` — sixteen characters we never publish —
+    and anything else is acknowledged and ignored, while the status rank guard
+    stops even a correct guess walking an order backwards.
 
     The fingerprint of whatever they send is stored on every `webhook_logs` row
-    next to ours. When those two agree, this can go back to comparing them.
+    next to ours. Once those two agree, set `NOON_SEND_ENFORCE_WEBHOOK_KEY=true`
+    and this compares them — in constant time, so a mismatch cannot be found a
+    character at a time.
     """
-    return True
+    if not settings.NOON_SEND_ENFORCE_WEBHOOK_KEY:
+        return True
+    expected = (settings.NOON_SEND_WEBHOOK_API_KEY or "").strip()
+    if not expected:
+        # Enforcement asked for with nothing to enforce against would refuse
+        # every delivery update. Loud, and open, rather than silently dark.
+        logger.error(
+            "NOON_SEND_ENFORCE_WEBHOOK_KEY is set but no key is configured — "
+            "accepting the push rather than dropping live deliveries"
+        )
+        return True
+    return bool(presented) and hmac.compare_digest(presented, expected)
 
 
 def _noon_send_recorder(endpoint: str, request: Request, key: str | None) -> Recorder:

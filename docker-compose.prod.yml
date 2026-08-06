@@ -112,6 +112,7 @@ services:
       # `.env` had all of it. This file is what decides.
       NOON_SEND_API_KEY: ${NOON_SEND_API_KEY:-}
       NOON_SEND_WEBHOOK_API_KEY: ${NOON_SEND_WEBHOOK_API_KEY:-}
+      NOON_SEND_ENFORCE_WEBHOOK_KEY: ${NOON_SEND_ENFORCE_WEBHOOK_KEY:-false}
       NOON_SEND_ENV: ${NOON_SEND_ENV:-production}
       NOON_SEND_LOCALE: ${NOON_SEND_LOCALE:-en-ae}
       NOON_SEND_CLIENT_CODE: ${NOON_SEND_CLIENT_CODE:-noon_food}

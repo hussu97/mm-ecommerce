@@ -16,6 +16,7 @@ from app.core.exceptions import (
     ForbiddenError,
     UnauthorizedError,
 )
+from app.core.limiter import limiter
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models import (
     ALL_PERMISSIONS,
@@ -451,7 +452,9 @@ async def deactivate_staff(
 
 
 @router.post("/pin-login", response_model=PinLoginResponse)
+@limiter.limit("10/minute")
 async def pin_login(
+    request: Request,
     data: PinLoginRequest,
     db: AsyncSession = Depends(get_db),
 ):
@@ -461,6 +464,11 @@ async def pin_login(
     A PIN alone is weak, so it is only ever accepted scoped to one branch, and
     only for staff explicitly assigned to that branch. The candidate set is small
     (one shop's staff), and every stored PIN is bcrypt-hashed.
+
+    Rate limited because branch scoping narrows the search space without closing
+    it: a four-digit PIN against a whole shop's staff is a few thousand guesses,
+    and until now nothing counted them. The limit is generous enough for a
+    cashier fumbling a PIN at a busy counter and useless for a script.
     """
     branch = await crud_service.get_or_404(db, Branch, data.branch_id)
 

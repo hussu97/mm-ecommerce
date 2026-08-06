@@ -186,6 +186,10 @@ async def add_item(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_active_user),
 ):
+    # Every other mutating route on this order gates first; this one only ever
+    # checked the open-price case, so any authenticated active user could add
+    # priced lines to any check they could name the id of.
+    await _require_permission(user, "pos.register.access")
     order = await _load(db, order_id)
     if data.unit_price is not None:
         await _require_permission(user, "pos.products.open_price")
@@ -342,6 +346,8 @@ async def record_payment(
     timeout and the cashier cannot tell a lost response from a lost payment.
     """
     await _require_permission(user, "pos.payment.perform")
+    if data.is_refund:
+        await _require_permission(user, "pos.payment.refund")
     order = await _load(db, order_id)
     till = await _resolve_till(db, data.till_id, order)
     await pos_order_service.record_payment(

@@ -175,6 +175,30 @@ async def add_drawer_operation(
     return operation
 
 
+#: Register states that still owe the till something. `closed`, `void` and
+#: `joined` are finished and do not hold a shift open.
+_UNSETTLED = (
+    PosOrderStatusEnum.DRAFT.value,
+    PosOrderStatusEnum.PENDING.value,
+    PosOrderStatusEnum.ACTIVE.value,
+)
+
+
+async def _open_order_count(db: AsyncSession, till: Till) -> int:
+    """Checks still open against this till."""
+    return int(
+        (
+            await db.execute(
+                select(func.count(Order.id)).where(
+                    Order.till_id == till.id,
+                    Order.pos_status.in_(_UNSETTLED),
+                )
+            )
+        ).scalar()
+        or 0
+    )
+
+
 async def close_till(
     db: AsyncSession,
     *,
@@ -185,6 +209,22 @@ async def close_till(
 ) -> Till:
     if till.status != TillStatusEnum.OPEN.value:
         raise ConflictError("This till is already closed")
+
+    # A till closed over an unpaid check strands that sale: the money was never
+    # taken, the drawer is counted without it, and the check stays open against
+    # a shift that has been reported and signed off. `pos.till.close_with_active_orders`
+    # was declared for exactly this and enforced nowhere, and the register only
+    # ever disabled the button for the one check on screen — so a split check,
+    # which by construction leaves a half the cashier cannot see, was precisely
+    # the case that slipped through.
+    open_orders = await _open_order_count(db, till)
+    if open_orders and not (
+        closed_by.is_admin or closed_by.can("pos.till.close_with_active_orders")
+    ):
+        raise ConflictError(
+            f"{open_orders} check(s) are still open on this till. "
+            "Settle or void them first, or ask a manager to close over them."
+        )
 
     expected = await estimated_cash(db, till)
     counted = _q(closing_amount)

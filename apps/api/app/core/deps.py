@@ -86,11 +86,28 @@ async def get_current_user(
 
 
 async def get_current_active_user(
+    request: Request,
     current_user: User = Depends(get_current_user),
 ) -> User:
     if not current_user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Account is inactive"
+        )
+    # A customer's token and a cashier's token are the same format from the same
+    # `create_access_token`, and this only ever checked `is_active` — so a
+    # storefront customer's JWT satisfied every POS route's authentication and
+    # was stopped only by `user.can(...)` returning False for a role-less
+    # account. That is one missing permission check away from a customer editing
+    # a live check, which is exactly what `add_item` was.
+    #
+    # Staff-only is true of the register API by definition: the terminal is the
+    # only client, and every person holding one is on the payroll.
+    if getattr(request.app.state, "is_pos_app", False) and not (
+        current_user.is_staff or current_user.is_admin
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Staff access required",
         )
     return current_user
 

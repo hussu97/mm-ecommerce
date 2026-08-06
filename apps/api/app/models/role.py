@@ -130,6 +130,11 @@ PERMISSION_GROUPS: dict[str, list[tuple[str, str]]] = {
         ("pos.orders.void", "Void orders and products"),
         ("pos.products.void", "Void a single product"),
         ("pos.payment.perform", "Take payment"),
+        # Giving money back is not the same authority as taking it. Refunds were
+        # gated on `pos.payment.perform` alone, so any cashier who could ring up
+        # a sale could hand cash out of the drawer against any tender, with no
+        # manager approval.
+        ("pos.payment.refund", "Refund a payment"),
         ("pos.orders.edit_others", "Edit orders opened by other users"),
         ("pos.orders.edit_online", "Edit online orders"),
         ("pos.tables.change_owner", "Change the table owner"),

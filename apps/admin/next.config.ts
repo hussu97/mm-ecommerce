@@ -12,6 +12,20 @@ const nextConfig: NextConfig = {
             key: "X-Robots-Tag",
             value: "noindex, nofollow, noarchive, nosnippet, noimageindex",
           },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          // The console is never a referrer to anywhere: its URLs carry order
+          // numbers and customer ids in the path.
+          { key: "Referrer-Policy", value: "no-referrer" },
+          {
+            key: "Permissions-Policy",
+            value: "camera=(), microphone=(), payment=(), usb=(), geolocation=()",
+          },
+          {
+            key: "Strict-Transport-Security",
+            value: "max-age=63072000; includeSubDomains; preload",
+          },
+          { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+          { key: "X-Frame-Options", value: "DENY" },
         ],
       },
     ];
