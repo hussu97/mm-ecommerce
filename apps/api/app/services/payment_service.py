@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -8,7 +9,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.exceptions import BadRequestError, NotFoundError
+from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.models.webhook_event import WebhookEvent
 from app.services import email_service, order_service
@@ -73,12 +74,43 @@ async def _load_order_by_payment_intent(
     return order
 
 
-async def create_session(db: AsyncSession, order_number: str, provider: str) -> dict:
+def _assert_may_act_on(
+    order: Order, user_id: uuid.UUID | None, admin: bool = False
+) -> None:
+    """
+    Refuse to touch an order the caller does not own.
+
+    Order numbers are `MM-YYYYMMDD-NNN` — the day plus a counter — so anyone
+    can write down a valid one. Without this check, guessing a pickup order's
+    number was enough to POST `{"provider": "cod"}` at it and move it to
+    CONFIRMED: the shop bakes a cake, sends the customer a confirmation, and
+    nobody has paid. The same guess also reset a `payment_failed` order back to
+    `created`, reopening a payment window on someone else's order.
+
+    Checkout always mints a user before it creates the order (`ensureCheckoutAuth`
+    on the web side), guest or otherwise, so every legitimate caller arrives
+    holding the token of the order's own `user_id`.
+    """
+    if admin:
+        return
+    if user_id is None or order.user_id != user_id:
+        raise ForbiddenError("Not your order")
+
+
+async def create_session(
+    db: AsyncSession,
+    order_number: str,
+    provider: str,
+    *,
+    user_id: uuid.UUID | None = None,
+    admin: bool = False,
+) -> dict:
     """
     Create a payment checkout session for the given order.
     Stores session_id in order.payment_id. Returns {provider, session_id, checkout_url}.
     """
     order = await _load_order(db, order_number)
+    _assert_may_act_on(order, user_id, admin)
 
     if order.status == OrderStatusEnum.CANCELLED:
         raise BadRequestError("Cannot create payment session for a cancelled order")
@@ -415,9 +447,16 @@ async def handle_tamara_webhook(payload: bytes, signature: str) -> dict:
     return {"received": True}
 
 
-async def get_status(db: AsyncSession, order_number: str) -> dict:
+async def get_status(
+    db: AsyncSession,
+    order_number: str,
+    *,
+    user_id: uuid.UUID | None = None,
+    admin: bool = False,
+) -> dict:
     """Return payment status for an order."""
     order = await _load_order(db, order_number)
+    _assert_may_act_on(order, user_id, admin)
 
     paid = stripe_provider.is_confirmed_payment_id(order.payment_id)
 
