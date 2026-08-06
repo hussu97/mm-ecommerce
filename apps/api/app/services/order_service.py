@@ -16,7 +16,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import noload, selectinload
 
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.models.branch import Branch
@@ -860,6 +860,46 @@ async def _send_confirmation_emails(order: OrderResponse) -> None:
         )
 
 
+def _list_row_load_options():
+    """
+    Turn off the eager loads a list row does not use.
+
+    `Order.payments`, `order_charges`, `order_discounts` and `order_taxes` are
+    all `lazy="selectin"` on the model, which is right for reading one order and
+    wasteful for listing them: each adds a query per page, and `OrderListResponse`
+    reads none of them. On a 2000-row page — which the console offers — that was
+    four extra round trips fetching rows nobody looked at.
+
+    `noload` rather than `raiseload`: these rows are handed to a response model
+    that never touches the collections, and a future field that does should get
+    an empty list rather than an exception in production.
+    """
+    return [
+        noload(Order.payments),
+        noload(Order.order_charges),
+        noload(Order.order_discounts),
+        noload(Order.order_taxes),
+    ]
+
+
+def _item_count_subquery():
+    """
+    How many units are on an order, counted by the database.
+
+    The list rows need this one number off the items and nothing else about
+    them. Both list endpoints used to `selectinload(Order.items)` and sum in
+    Python, so a 2000-row page — which the console offers, and which its
+    pagination standard requires — hydrated tens of thousands of OrderItem
+    objects only to add up a single column and discard them.
+    """
+    return (
+        select(func.coalesce(func.sum(OrderItem.quantity), 0))
+        .where(OrderItem.order_id == Order.id)
+        .correlate(Order)
+        .scalar_subquery()
+    )
+
+
 async def get_user_orders(
     db: AsyncSession,
     user_id: uuid.UUID,
@@ -874,18 +914,18 @@ async def get_user_orders(
     total = count_result.scalar() or 0
 
     stmt = (
-        base_stmt.options(selectinload(Order.items))
+        base_stmt.add_columns(_item_count_subquery().label("item_count"))
+        .options(*_list_row_load_options())
         .order_by(Order.created_at.desc())
         .offset((page - 1) * per_page)
         .limit(per_page)
     )
     result = await db.execute(stmt)
-    orders = result.scalars().all()
 
     items = []
-    for o in orders:
-        resp = OrderListResponse.model_validate(o)
-        resp.item_count = sum(i.quantity for i in o.items)
+    for order, count in result.all():
+        resp = OrderListResponse.model_validate(order)
+        resp.item_count = int(count or 0)
         items.append(resp)
     return items, total
 
@@ -1057,17 +1097,17 @@ async def get_all_admin(
     total = count_result.scalar() or 0
 
     stmt = (
-        base_stmt.options(selectinload(Order.items))
+        base_stmt.add_columns(_item_count_subquery().label("item_count"))
+        .options(*_list_row_load_options())
         .order_by(Order.created_at.desc())
         .offset((page - 1) * per_page)
         .limit(per_page)
     )
     result = await db.execute(stmt)
-    orders = result.scalars().all()
 
     items = []
-    for o in orders:
-        resp = OrderListResponse.model_validate(o)
-        resp.item_count = sum(i.quantity for i in o.items)
+    for order, count in result.all():
+        resp = OrderListResponse.model_validate(order)
+        resp.item_count = int(count or 0)
         items.append(resp)
     return items, total
