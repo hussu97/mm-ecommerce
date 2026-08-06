@@ -97,7 +97,7 @@ class Settings(BaseSettings):
 
     # ── Resend (email) ────────────────────────────────────────────────────────
     RESEND_API_KEY: str = ""
-    FROM_EMAIL: str = "orders@meltingmomentscakes.com"
+    FROM_EMAIL: str = "noreply@meltingmomentscakes.com"
 
     # ── Cloudflare R2 (object storage) ───────────────────────────────────────
     CLOUDFLARE_R2_ACCESS_KEY: str = ""

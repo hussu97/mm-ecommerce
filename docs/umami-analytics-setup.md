@@ -11,10 +11,15 @@ All events are fired via `window.umami.track(name, data)` from `apps/web/lib/ana
 Events fired before the Umami script finishes loading are queued briefly and retried.
 Umami records them automatically — no dashboard config needed for events to appear under the **Events** tab.
 
+The admin dashboard reads them back through `GET /api/v1/analytics/traffic`
+(`apps/api/app/api/v1/analytics.py`) and lists them under **Storefront Events**.
+That read needs `UMAMI_API_KEY` and `UMAMI_WEBSITE_ID` on the API, and an Umami
+Cloud plan that includes API access — see Troubleshooting below.
+
 | Event | Payload fields | Phase | Fired from |
 |---|---|---|---|
-| `add_to_cart` | product_name, variant_name, price, quantity | existing | ProductDetailATC, ProductCard, ModifierModal |
-| `remove_from_cart` | product_name | existing | cart/page.tsx |
+| `add_to_cart` | product_name, variant_name, price, quantity | existing | ProductDetailATC.tsx, AddToCartControl.tsx (every product tile), ModifierModal.tsx |
+| `remove_from_cart` | product_name | existing | cart/page.tsx, AddToCartControl.tsx (stepping a tile to zero) |
 | `begin_checkout` | item_count, subtotal | existing | cart/page.tsx |
 | `promo_applied` | code, discount | existing + checkout | cart/page.tsx, PromoCodeStep.tsx |
 | `order_completed` | order_number, total, payment_provider, delivery_method, item_count | existing | checkout/confirmation/page.tsx |
@@ -23,10 +28,10 @@ Umami records them automatically — no dashboard config needed for events to ap
 | `payment_failed` | order_number, error_message | phase 1 | checkout/page.tsx (handleSubmit catch) |
 | `checkout_error` | step (always 1), field | phase 1 | checkout/page.tsx (handleSubmit validation) |
 | `search` | query, result_count | phase 2 | SearchTracker.tsx (client wrapper in search/page.tsx) |
-| `user_signup` | method: 'email' | phase 2 | signup/page.tsx |
+| `user_signup` | method: 'email' | phase 2 | signup/page.tsx, checkout/confirmation/CreateAccountNudge.tsx |
 | `user_login` | method: 'email' | phase 2 | login/page.tsx |
 | `view_category` | category_name, product_count | phase 2 | CategoryTracker.tsx (client wrapper in [category]/page.tsx) |
-| `select_delivery_method` | method, fee | phase 3 | DeliveryCalculator.tsx |
+| `select_delivery_method` | method, fee | phase 3 | checkout/page.tsx (the delivery/pickup toggle) |
 | `promo_failed` | code, reason | phase 3 | PromoCodeStep.tsx |
 | `contact_click` | channel: whatsapp\|email\|instagram\|map | phase 3 | ContactLink.tsx (contact/page.tsx) |
 | `locale_changed` | from, to | phase 3 | LanguageSwitcher.tsx |
@@ -84,6 +89,74 @@ Navigate to: **Umami dashboard → [Website] → Funnels → Create funnel**
 
 ---
 
+## Troubleshooting — "the events aren't coming through"
+
+Work down this list. Each step separates a different failure, and the ones near
+the top are the ones that have actually happened here.
+
+### 1. Is the tracker on the page at all?
+
+```bash
+curl -s https://meltingmomentscakes.com/en | grep -o 'data-website-id[^,]*'
+```
+
+Expect the website ID. Nothing means `NEXT_PUBLIC_UMAMI_WEBSITE_ID` is missing
+from the storefront's build environment — it is a `NEXT_PUBLIC_` variable, so it
+is inlined at build time and a value added afterwards changes nothing until the
+next deploy.
+
+### 2. Does the proxy still reach Umami?
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://meltingmomentscakes.com/umami/script.js
+curl -s -w '\n%{http_code}\n' -X POST https://meltingmomentscakes.com/umami/api/send \
+  -H 'Content-Type: application/json' \
+  -H 'x-umami-website-id: 00000000-0000-0000-0000-000000000000' \
+  --data '{"type":"event","payload":{"website":"00000000-0000-0000-0000-000000000000","hostname":"meltingmomentscakes.com","url":"/","name":"probe"}}'
+```
+
+Expect `200` for the script and Umami's own `400` for the send — a deliberately
+invalid website ID, so it proves the path without recording anything.
+
+**A `307` on the second command is a fault.** It means `/umami` has fallen back
+under the locale rule in `apps/web/proxy.ts` and every event is being sent
+twice. That was the state of production until 5 August 2026.
+
+### 3. Is anything blocking it in the browser?
+
+Both the script and the send are same-origin (`/umami/...`, rewritten in
+`next.config.ts`), which is what keeps ordinary blocklists off them. If those
+rewrites are ever changed to point straight at `cloud.umami.is`, expect a large
+and uneven share of events to vanish, because that hostname is on the common
+privacy lists and the shop's traffic is overwhelmingly mobile.
+
+### 4. Can the dashboard read back?
+
+Open **Admin → Analytics**. A banner above the traffic cards carries Umami's own
+reason when the read fails. `401`/`403` there means either `UMAMI_API_KEY` is
+wrong or **the Umami Cloud plan on the account does not include API access** —
+the read API is not part of the free tier, and the storefront can be recording
+events perfectly while this panel stays empty.
+
+### 5. Only then suspect the dashboard config
+
+Goals and funnels below are hand-made in Umami and are not needed for events to
+be *recorded*. If **Events** shows the counts but a funnel shows nothing, the
+funnel is what is wrong, not the tracking.
+
+### Known limits, so they are not rediscovered as bugs
+
+- Events fired before the tracker finishes loading are queued and retried for
+  30 seconds (`apps/web/lib/analytics.ts`). Beyond that they are dropped.
+- Every event and pageview is proxied through the storefront, so Umami sees the
+  storefront's server address, not the visitor's. Geography and network in the
+  Umami dashboard are therefore not meaningful. Everything else is.
+- `order_completed` fires whenever the confirmation page is opened, including a
+  refresh or a revisit of the link. Treat it as an upper bound; the order table
+  is the source of truth for how many orders were placed.
+
+---
+
 ## Changelog
 
 | Date | Change |
@@ -93,3 +166,4 @@ Navigate to: **Umami dashboard → [Website] → Funnels → Create funnel**
 | 2026-06-05 | Queue custom events briefly when the Umami script has not loaded yet; no event names or payload fields changed |
 | 2026-08-02 | Checkout collapsed from 3 steps to 2 (delivery method moved into step 1). `checkout_step_complete` and `checkout_error` now emit `step` 1\|2 instead of 1\|2\|3; step 1 now also carries `delivery_method`. No events added or removed. |
 | 2026-08-02 | Checkout collapsed again from 2 steps to a single page. `checkout_step_complete` now fires once, on submit, always with `step: 1` and a `delivery_method`; `checkout_error` likewise always reports `step: 1`. No events added or removed — but the Main Purchase Funnel's step 4→5 is now a single page view, so treat any step-2 history before this date as a different shape. |
+| 2026-08-05 | Audit. No events added, removed or renamed. Fixed the **Fired from** column, which had drifted for `add_to_cart`, `remove_from_cart`, `user_signup` and `select_delivery_method`. Three delivery faults fixed in code: `/umami/api/send` was being locale-redirected so every event was sent twice; the pre-load queue gave up after 3s and now waits 30s; the basket sent the browser to `/checkout` without a locale, discarding `begin_checkout` across the redirect. The admin dashboard now reads `metrics?type=event` and reports Umami's refusals instead of showing zeros. Added the Troubleshooting section above. |

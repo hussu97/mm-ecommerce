@@ -110,7 +110,11 @@ export default function CartPage() {
           }));
         } catch { /* noop */ }
       }
-      window.location.href = '/checkout';
+      // Named with its locale. `/checkout` is not a route — the proxy answers
+      // it with a redirect, which puts a second document load between the
+      // basket and the form and throws away every request still in flight,
+      // `begin_checkout` above among them.
+      window.location.href = `/${locale}/checkout`;
     } catch {
       addToast(t('cart.something_wrong'), 'error');
       setCheckoutLoading(false);

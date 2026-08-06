@@ -637,7 +637,7 @@ outright. The steps below are kept for rebuilding the host from scratch.
 | Secret | Production value | Notes |
 |--------|-----------------|-------|
 | `RESEND_API_KEY` | `re_...` | Resend dashboard → API Keys |
-| `FROM_EMAIL` | `orders@meltingmomentscakes.com` | Must match a verified Resend sending domain |
+| `FROM_EMAIL` | `noreply@meltingmomentscakes.com` | Must match a verified Resend sending domain. Unmonitored — the emails tell customers not to reply. |
 
 #### Cloudflare R2 (media storage)
 
