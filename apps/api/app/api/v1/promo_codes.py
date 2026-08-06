@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_admin_user, get_db
+from app.core.deps import get_admin_user, get_db, get_optional_user
+from app.core.limiter import limiter
 from app.models.user import User
 from app.schemas.promo_code import (
     PromoCodeBulkCreate,
@@ -18,12 +19,27 @@ router = APIRouter()
 
 
 @router.post("/validate", response_model=PromoCodeValidateResponse)
+@limiter.limit("20/minute")
 async def validate_promo_code(
+    request: Request,
     data: PromoCodeValidateRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_optional_user),
 ):
-    """Validate a promo code and return the discount amount."""
-    return await promo_code_service.validate(db, data.code, data.order_subtotal)
+    """
+    Validate a promo code and return the discount amount.
+
+    Deliberately open to guests — a customer types a code before they have an
+    account — but rate limited, because an unauthenticated endpoint that
+    answers "is this a real code?" is otherwise an offline-quality oracle for
+    enumerating the whole code space.
+    """
+    return await promo_code_service.validate(
+        db,
+        data.code,
+        data.order_subtotal,
+        user_id=current_user.id if current_user else None,
+    )
 
 
 @router.get("", response_model=list[PromoCodeResponse])

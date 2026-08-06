@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-from decimal import Decimal
-
-import pytest
 
 from app.models.marketing import (
     Discount,
-    HouseAccount,
     Promotion,
     TimedEvent,
 )
@@ -127,24 +123,3 @@ def test_inactive_discount_never_applies():
     discount = _discount()
     discount.is_active = False
     assert not discount.applies_to(uuid.uuid4(), "pickup")
-
-
-# ─── House account credit ─────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    ("limit", "balance", "available"),
-    [
-        ("1000.00", "0.00", "1000.00"),
-        ("1000.00", "250.00", "750.00"),
-        ("1000.00", "1000.00", "0.00"),
-        # Over-limit accounts report negative headroom rather than clamping,
-        # so the shortfall is visible instead of silently hidden.
-        ("500.00", "600.00", "-100.00"),
-    ],
-)
-def test_available_credit(limit, balance, available):
-    account = HouseAccount()
-    account.credit_limit = Decimal(limit)
-    account.balance = Decimal(balance)
-    assert account.available_credit == Decimal(available)

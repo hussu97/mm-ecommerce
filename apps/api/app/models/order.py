@@ -12,10 +12,12 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
     Text,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -62,6 +64,23 @@ class DeliveryMethodEnum(str, enum.Enum):
 
 class Order(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "orders"
+    __table_args__ = (
+        # Two terminals can read the same `max(check_number)` and both take it.
+        # Partial because the column is NULL for every website order that never
+        # reached a register.
+        Index(
+            "uq_orders_branch_business_date_check_number",
+            "branch_id",
+            "business_date",
+            "check_number",
+            unique=True,
+            postgresql_where=text(
+                "check_number IS NOT NULL "
+                "AND branch_id IS NOT NULL "
+                "AND business_date IS NOT NULL"
+            ),
+        ),
+    )
 
     order_number: Mapped[str] = mapped_column(
         String(30), unique=True, nullable=False, index=True

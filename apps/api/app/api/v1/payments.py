@@ -7,7 +7,8 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestError
-from app.core.deps import get_db, get_optional_user
+from app.core.deps import get_current_active_user, get_db
+from app.core.limiter import limiter
 from app.models.user import User
 from app.services import payment_service
 
@@ -42,16 +43,28 @@ class PaymentStatusResponse(BaseModel):
     response_model=CreateSessionResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@limiter.limit("20/minute")
 async def create_payment_session(
+    request: Request,
     data: CreateSessionRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user),
+    current_user: User = Depends(get_current_active_user),
 ):
     """
     Create a payment checkout session for an order.
     Returns a provider-specific checkout URL for the customer to complete payment.
+
+    Authentication is required and the order must belong to the caller. This
+    used to take an optional user it never read, which left confirming a
+    stranger's pickup order as `cod` a matter of guessing an order number.
     """
-    result = await payment_service.create_session(db, data.order_number, data.provider)
+    result = await payment_service.create_session(
+        db,
+        data.order_number,
+        data.provider,
+        user_id=current_user.id,
+        admin=current_user.is_admin,
+    )
     return CreateSessionResponse(**result)
 
 
@@ -121,11 +134,18 @@ async def tamara_webhook(
 
 
 @router.get("/{order_number}/status", response_model=PaymentStatusResponse)
+@limiter.limit("30/minute")
 async def get_payment_status(
+    request: Request,
     order_number: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user),
+    current_user: User = Depends(get_current_active_user),
 ):
-    """Get payment status for an order."""
-    result = await payment_service.get_status(db, order_number)
+    """Get payment status for an order. Restricted to the order's owner."""
+    result = await payment_service.get_status(
+        db,
+        order_number,
+        user_id=current_user.id,
+        admin=current_user.is_admin,
+    )
     return PaymentStatusResponse(**result)

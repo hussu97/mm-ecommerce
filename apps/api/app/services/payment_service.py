@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -8,7 +9,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.exceptions import BadRequestError, NotFoundError
+from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.models.webhook_event import WebhookEvent
 from app.services import email_service, order_service
@@ -24,6 +25,14 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
+# The statuses a `payment_intent.succeeded` may legitimately move an order out
+# of. Everything else is either already done or deliberately finished, and a
+# webhook must not walk it backwards — see `_handle_payment_succeeded`.
+_CONFIRMABLE_FROM = {
+    OrderStatusEnum.CREATED,
+    OrderStatusEnum.PAYMENT_FAILED,
+}
 
 # Registry: only providers that are fully implemented.
 # Tabby and Tamara are stubs — add them here once integrated.
@@ -73,12 +82,43 @@ async def _load_order_by_payment_intent(
     return order
 
 
-async def create_session(db: AsyncSession, order_number: str, provider: str) -> dict:
+def _assert_may_act_on(
+    order: Order, user_id: uuid.UUID | None, admin: bool = False
+) -> None:
+    """
+    Refuse to touch an order the caller does not own.
+
+    Order numbers are `MM-YYYYMMDD-NNN` — the day plus a counter — so anyone
+    can write down a valid one. Without this check, guessing a pickup order's
+    number was enough to POST `{"provider": "cod"}` at it and move it to
+    CONFIRMED: the shop bakes a cake, sends the customer a confirmation, and
+    nobody has paid. The same guess also reset a `payment_failed` order back to
+    `created`, reopening a payment window on someone else's order.
+
+    Checkout always mints a user before it creates the order (`ensureCheckoutAuth`
+    on the web side), guest or otherwise, so every legitimate caller arrives
+    holding the token of the order's own `user_id`.
+    """
+    if admin:
+        return
+    if user_id is None or order.user_id != user_id:
+        raise ForbiddenError("Not your order")
+
+
+async def create_session(
+    db: AsyncSession,
+    order_number: str,
+    provider: str,
+    *,
+    user_id: uuid.UUID | None = None,
+    admin: bool = False,
+) -> dict:
     """
     Create a payment checkout session for the given order.
     Stores session_id in order.payment_id. Returns {provider, session_id, checkout_url}.
     """
     order = await _load_order(db, order_number)
+    _assert_may_act_on(order, user_id, admin)
 
     if order.status == OrderStatusEnum.CANCELLED:
         raise BadRequestError("Cannot create payment session for a cancelled order")
@@ -123,13 +163,19 @@ async def create_session(db: AsyncSession, order_number: str, provider: str) -> 
             raise BadRequestError(
                 "Cash payment is only available for store pickup orders"
             )
+        # `create_order` already confirms a cash order and sends its
+        # confirmation, so the usual path arrives here with the work done and
+        # must not mail the customer a second time. This branch remains for a
+        # cash order that reached `created` some other way.
+        already_confirmed = order.status == OrderStatusEnum.CONFIRMED
         order.status = OrderStatusEnum.CONFIRMED
         order.payment_provider = "cod"
         order.payment_id = None
         await db.flush()
-        order_response = await order_service.to_response(db, order)
-        await email_service.send_order_confirmation(order_response)
-        await email_service.send_owner_order_notification(order_response)
+        if not already_confirmed:
+            order_response = await order_service.to_response(db, order)
+            await email_service.send_order_confirmation(order_response)
+            await email_service.send_owner_order_notification(order_response)
         logger.info("Cash-on-delivery order confirmed: order=%s", order_number)
         return {
             "provider": "cod",
@@ -214,7 +260,14 @@ async def handle_stripe_webhook(
         await _handle_payment_failed(db, order_number, event_type)
 
     elif event_type == "charge.refunded":
-        await _handle_charge_refunded(db, order_number, payment_intent_id)
+        await _handle_charge_refunded(
+            db,
+            order_number,
+            payment_intent_id,
+            fully_refunded=parsed.get("fully_refunded"),
+            amount_refunded=parsed.get("amount_refunded"),
+            amount_captured=parsed.get("amount_captured"),
+        )
 
     elif event_type == "charge.dispute.created":
         await _handle_dispute_created(db, payment_intent_id)
@@ -255,6 +308,26 @@ async def _handle_payment_succeeded(
         logger.info(
             "Payment succeeded webhook skipped — order %s is already confirmed",
             order_number,
+        )
+        return
+
+    # An order that has already finished cannot be un-finished by a late
+    # payment event. CANCELLED is the dangerous one: cancelling returns every
+    # line's stock (order_service.update_status), so confirming it again would
+    # put the order back into the kitchen holding no claim on ingredients that
+    # may since have been sold twice. Stripe genuinely does deliver these —
+    # a customer pays on a tab left open after the shop cancelled — so it is
+    # recorded loudly for a human to refund rather than silently applied.
+    if order.status not in _CONFIRMABLE_FROM:
+        if payment_intent_id:
+            order.payment_id = payment_intent_id
+        logger.critical(
+            "payment_intent.succeeded arrived for order %s in terminal status %s "
+            "(payment_intent=%s) — money was taken for an order that will not be "
+            "fulfilled. Refund manually.",
+            order_number,
+            order.status,
+            payment_intent_id,
         )
         return
 
@@ -333,10 +406,20 @@ async def _handle_charge_refunded(
     db: AsyncSession,
     order_number: str | None,
     payment_intent_id: str | None,
+    *,
+    fully_refunded: bool | None = None,
+    amount_refunded: int | None = None,
+    amount_captured: int | None = None,
 ) -> None:
     """
     Charge metadata doesn't always carry order_number — fall back to looking
     up the order by payment_intent_id (stored in order.payment_id after confirmation).
+
+    Stripe fires `charge.refunded` for a partial refund too. This used to move
+    the order to REFUNDED either way, so knocking AED 5 off a damaged box
+    marked the whole order refunded, dropped it out of the fulfilment views and
+    told the customer by email that their money was on its way back. A partial
+    is now recorded and reported, and the order keeps the status it had.
     """
     try:
         order = (
@@ -350,6 +433,28 @@ async def _handle_charge_refunded(
             "payment_intent=%s — manual reconciliation required",
             order_number,
             payment_intent_id,
+        )
+        return
+
+    is_full = _is_full_refund(fully_refunded, amount_refunded, amount_captured)
+
+    if not is_full:
+        logger.warning(
+            "Partial refund on order %s (payment_intent=%s): %s of %s minor units "
+            "refunded. Order status left at %s — adjust by hand if the whole "
+            "order is being unwound.",
+            order.order_number,
+            payment_intent_id,
+            amount_refunded,
+            amount_captured,
+            order.status,
+        )
+        return
+
+    if order.status == OrderStatusEnum.REFUNDED:
+        logger.info(
+            "Refund webhook skipped — order %s is already refunded",
+            order.order_number,
         )
         return
 
@@ -370,6 +475,27 @@ async def _handle_charge_refunded(
             order.order_number,
             exc,
         )
+
+
+def _is_full_refund(
+    fully_refunded: bool | None,
+    amount_refunded: int | None,
+    amount_captured: int | None,
+) -> bool:
+    """
+    Whether a `charge.refunded` event unwound the entire charge.
+
+    Stripe's own `refunded` flag is authoritative when present. The amounts are
+    the fallback for an event shape that omits it. When neither is readable the
+    answer is "yes": treating an unknown as full preserves the behaviour every
+    refund had before partials were told apart, so an unrecognised payload
+    cannot quietly leave a fully-refunded order looking unrefunded.
+    """
+    if fully_refunded is not None:
+        return bool(fully_refunded)
+    if amount_refunded is not None and amount_captured:
+        return amount_refunded >= amount_captured
+    return True
 
 
 async def _handle_dispute_created(
@@ -415,9 +541,16 @@ async def handle_tamara_webhook(payload: bytes, signature: str) -> dict:
     return {"received": True}
 
 
-async def get_status(db: AsyncSession, order_number: str) -> dict:
+async def get_status(
+    db: AsyncSession,
+    order_number: str,
+    *,
+    user_id: uuid.UUID | None = None,
+    admin: bool = False,
+) -> dict:
     """Return payment status for an order."""
     order = await _load_order(db, order_number)
+    _assert_may_act_on(order, user_id, admin)
 
     paid = stripe_provider.is_confirmed_payment_id(order.payment_id)
 

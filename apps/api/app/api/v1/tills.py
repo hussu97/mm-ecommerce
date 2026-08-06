@@ -12,21 +12,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_active_user, get_db
-from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
-from app.models import Branch, Shift, Till
-from app.models.base import utcnow
+from app.core.exceptions import ConflictError, ForbiddenError
+from app.models import Branch, Till
 from app.models.user import User
 from app.schemas.pos import (
     DrawerOperationCreate,
     DrawerOperationResponse,
-    ShiftClockInRequest,
-    ShiftResponse,
     TillCloseRequest,
     TillOpenRequest,
     TillReport,
     TillResponse,
 )
-from app.services import audit_service, business_day_service, crud_service, till_service
+from app.services import audit_service, crud_service, till_service
 
 router = APIRouter()
 
@@ -267,90 +264,3 @@ async def create_drawer_operation(
         request=request,
     )
     return operation
-
-
-# ─── Shifts ───────────────────────────────────────────────────────────────────
-
-
-@router.get("/shifts/list", response_model=list[ShiftResponse])
-async def list_shifts(
-    branch_id: uuid.UUID | None = None,
-    business_date: str | None = None,
-    limit: int = Query(50, ge=1, le=500),
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
-):
-    stmt = select(Shift)
-    if not user.is_admin:
-        stmt = stmt.where(Shift.user_id == user.id)
-    if branch_id:
-        stmt = stmt.where(Shift.branch_id == branch_id)
-    if business_date:
-        stmt = stmt.where(Shift.business_date == business_date)
-    stmt = stmt.order_by(Shift.clocked_in_at.desc()).limit(limit)
-    return list((await db.execute(stmt)).scalars().all())
-
-
-@router.post(
-    "/shifts/clock-in",
-    response_model=ShiftResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def clock_in(
-    data: ShiftClockInRequest,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
-):
-    target_id = data.user_id if (data.user_id and user.is_admin) else user.id
-
-    open_shift = (
-        (
-            await db.execute(
-                select(Shift).where(
-                    Shift.user_id == target_id, Shift.clocked_out_at.is_(None)
-                )
-            )
-        )
-        .scalars()
-        .first()
-    )
-    if open_shift is not None:
-        raise ConflictError("This user is already clocked in")
-
-    branch = await crud_service.get_or_404(db, Branch, data.branch_id)
-    business_date = await business_day_service.current_business_date(db, branch)
-
-    shift = Shift(
-        branch_id=branch.id,
-        user_id=target_id,
-        business_date=business_date,
-        clocked_in_at=utcnow(),
-    )
-    db.add(shift)
-    await db.flush()
-    await db.refresh(shift)
-    return shift
-
-
-@router.post("/shifts/{shift_id}/clock-out", response_model=ShiftResponse)
-async def clock_out(
-    shift_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
-):
-    shift = await db.get(Shift, shift_id)
-    if shift is None:
-        raise NotFoundError("Shift not found")
-    if shift.user_id != user.id and not user.is_admin:
-        raise ForbiddenError("This shift belongs to another user")
-    if shift.clocked_out_at is not None:
-        raise ConflictError("This shift is already closed")
-
-    open_till = await till_service.get_open_till(db, user_id=shift.user_id)
-    if open_till is not None:
-        raise ConflictError("Close your till before clocking out")
-
-    shift.clocked_out_at = utcnow()
-    await db.flush()
-    await db.refresh(shift)
-    return shift

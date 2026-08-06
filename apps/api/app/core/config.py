@@ -170,6 +170,18 @@ class Settings(BaseSettings):
     #: the only thing standing between a customer's cake and a real rider.
     #: `NOON_SEND_API_KEY` must be the matching key for whichever it names.
     NOON_SEND_ENV: str = "production"
+    #: Whether an incoming noon Send webhook must present the key we configured.
+    #:
+    #: Off, because turning it on blind is the failure it is meant to prevent.
+    #: noon Send does not sign requests and their staging side sends a key no
+    #: screen of ours produced, so enforcing a match once dropped every status
+    #: update for the trial — `assigned` and `picked_up` both arrived and both
+    #: were discarded. Until the fingerprint they send matches the fingerprint
+    #: we hold (both are recorded on every `webhook_logs` row for exactly this
+    #: comparison), refusing on a mismatch loses live deliveries.
+    #:
+    #: Compare the two in `webhook_logs`, then set this to `true`.
+    NOON_SEND_ENFORCE_WEBHOOK_KEY: bool = False
     #: Sent on every call. `en-ae` or `en-sa`; only the UAE fleet concerns us.
     NOON_SEND_LOCALE: str = "en-ae"
     #: `noon_food` or `nownow` — which side of noon owns the pickup point.

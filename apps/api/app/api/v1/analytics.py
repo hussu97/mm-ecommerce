@@ -16,6 +16,7 @@ from app.core.deps import get_admin_user, get_db
 from app.models.order import Order, OrderItem, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
 from app.models.user import User
+from app.services import business_day_service
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ def _date_range(
     end_date: Optional[date],
 ) -> tuple[date, date]:
     if not end_date:
-        end_date = date.today()
+        end_date = business_day_service.shop_today()
     if not start_date:
         start_date = end_date - timedelta(days=30)
     return start_date, end_date

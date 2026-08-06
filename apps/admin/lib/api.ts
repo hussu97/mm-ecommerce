@@ -506,3 +506,65 @@ export const translationsApi = {
   bulkUpsert: (locale: string, namespace: string, translations: Array<{ key: string; value: string }>) =>
     api.put<{ updated: number }>(`/i18n/translations/${locale}`, { namespace, translations }),
 };
+
+// ─── Custom cake orders ────────────────────────────────────────────────────
+
+export interface CustomOrder {
+  id: string;
+  due_date: string;
+  status: string;
+  source: string;
+  order_id: string | null;
+  customer_name: string;
+  customer_phone: string | null;
+  customer_email: string | null;
+  description: string;
+  cake_message: string | null;
+  flavour: string | null;
+  size_label: string | null;
+  servings: number | null;
+  reference_image_urls: string[];
+  quoted_total: number | null;
+  deposit_amount: number;
+  branch_id: string | null;
+  product_id: string | null;
+  brief: Record<string, unknown>;
+  admin_notes: string | null;
+}
+
+export interface CalendarDay {
+  date: string;
+  capacity: number;
+  booked: number;
+  remaining: number;
+  is_blackout: boolean;
+  blackout_reason: string | null;
+  orders: CustomOrder[];
+}
+
+export interface CustomOrderBlackout {
+  id: string;
+  blackout_date: string;
+  reason: string | null;
+}
+
+export const customOrdersApi = {
+  /** The month view: every date in the window with what is booked on it. */
+  calendar: (start: string, end: string) =>
+    api.get<CalendarDay[]>(`/admin/custom-orders/calendar${buildQs({ start, end })}`),
+  list: (params?: { status?: string; upcoming_only?: string }) =>
+    api.get<CustomOrder[]>(`/admin/custom-orders${buildQs(params)}`),
+  create: (data: object) => api.post<CustomOrder>('/admin/custom-orders', data),
+  update: (id: string, data: object) =>
+    api.put<CustomOrder>(`/admin/custom-orders/${id}`, data),
+  setStatus: (id: string, status: string) =>
+    api.put<CustomOrder>(`/admin/custom-orders/${id}/status`, { status }),
+  blackouts: () => api.get<CustomOrderBlackout[]>('/admin/custom-orders/blackouts'),
+  addBlackout: (blackout_date: string, reason: string | null) =>
+    api.post<CustomOrderBlackout>('/admin/custom-orders/blackouts', {
+      blackout_date,
+      reason,
+    }),
+  removeBlackout: (id: string) =>
+    api.delete<void>(`/admin/custom-orders/blackouts/${id}`),
+};

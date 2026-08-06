@@ -78,8 +78,7 @@ export interface TaxGroup {
   deleted_at: string | null;
 }
 
-export type PaymentMethodType =
-  | 'cash' | 'card' | 'gift_card' | 'house_account' | 'online' | 'other';
+export type PaymentMethodType = 'cash' | 'card' | 'online' | 'other';
 
 export interface PaymentMethod {
   id: string;
@@ -167,7 +166,7 @@ export interface Staff {
 
 // ─── Devices ──────────────────────────────────────────────────────────────────
 
-export type DeviceType = 'cashier' | 'sub_cashier' | 'kds' | 'display' | 'notifier';
+export type DeviceType = 'cashier' | 'sub_cashier' | 'display' | 'notifier';
 
 export interface Device {
   id: string;

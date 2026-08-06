@@ -100,7 +100,6 @@ function DevicesTab({
           options: [
             { value: 'cashier', label: 'Cashier' },
             { value: 'sub_cashier', label: 'Sub-cashier' },
-            { value: 'kds', label: 'Kitchen display' },
             { value: 'display', label: 'Customer display' },
             { value: 'notifier', label: 'Order-ready screen' },
           ],

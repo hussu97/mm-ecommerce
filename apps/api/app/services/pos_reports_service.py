@@ -10,7 +10,7 @@ separately rather than netted silently into the totals.
 from __future__ import annotations
 
 import uuid
-from datetime import date, timedelta
+from datetime import timedelta
 from decimal import Decimal
 from typing import Any, Sequence
 
@@ -149,6 +149,11 @@ async def sales_summary(
                 date_from=date_from,
                 date_to=date_to,
             )
+            # Scoped to closed orders like every other figure above. Without it,
+            # returns booked against still-open checks and voided orders counted
+            # towards a `gross_sales` that excludes them, so the funnel did not
+            # reconcile.
+            .where(Order.pos_status == CLOSED)
         )
     ).scalar_one()
 
@@ -909,6 +914,14 @@ async def speed_of_service(
       * total       — sent until ready, the number a customer feels
 
     Averages alone hide the bad days, so the slowest ticket is reported too.
+
+    **This report has no data source today and returns empty spans.** Both
+    `started_at` and `completed_at` were only ever written by the KDS
+    ticket-status endpoint, and there has never been a kitchen display screen to
+    call it — the tickets are printed, not bumped. The query is left in place
+    because it is correct and becomes useful the moment something acknowledges a
+    ticket; it is documented here so an empty card is not read as "the kitchen
+    took no time".
     """
     started = KitchenTicket.started_at.isnot(None)
     completed = KitchenTicket.completed_at.isnot(None)
@@ -1638,7 +1651,7 @@ async def sales_predictions(
             "avg_daily_orders": int((orders or 0) / day_count),
         }
 
-    today = date.today()
+    today = business_day_service.shop_today()
     predictions = []
     for offset in range(1, days_ahead + 1):
         target = today + timedelta(days=offset)

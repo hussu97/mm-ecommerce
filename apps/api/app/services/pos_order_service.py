@@ -15,6 +15,7 @@ import uuid
 from decimal import Decimal
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -222,8 +223,29 @@ async def open_order(
         due_at=due_at,
         opened_at=utcnow(),
     )
-    db.add(order)
-    await db.flush()
+    # Two terminals at the same counter read the same `max(check_number)` and
+    # both take it. The unique index catches the loser, who re-reads and retries
+    # inside a savepoint so the rest of the transaction survives — the same
+    # shape `order_service` uses for `order_number`. Without it, one of the two
+    # got a 500 from the derived `order_number` collision, and the register
+    # showed a failed sale for an order that was fine.
+    for attempt in range(3):
+        try:
+            async with db.begin_nested():
+                db.add(order)
+                await db.flush()
+            break
+        except IntegrityError:
+            if attempt == 2:
+                raise
+            check_number = await _next_check_number(
+                db, branch.id, day.business_date, settings.order_number_reset_daily
+            )
+            order.check_number = check_number
+            order.order_number = (
+                f"POS-{branch.reference}-{day.business_date}-{check_number:04d}"
+            )
+
     await db.refresh(order)
     return await get_order(db, order.id)
 
@@ -694,9 +716,21 @@ async def recalculate(db: AsyncSession, order: Order) -> Order:
 
     charge_inputs: list[ChargeInput] = []
     for charge in order.order_charges:
-        rate, tax_name, tax_id, inclusive = tax_cache.get(
-            None, (Decimal("0"), "No tax", None, True)
-        )
+        # A charge carries its own tax group — a service charge and a delivery
+        # fee are not necessarily rated the same, and `Charge.tax_group_id` is
+        # where that is configured. This used to read `tax_cache.get(None, ...)`,
+        # whose only possible value is the "No tax" tuple `_resolve_tax(None)`
+        # returns, so *every* charge was zero-rated unconditionally. The pricing
+        # engine handles charge tax correctly and the unit tests pass it an
+        # explicit rate, so the tests stayed green while production
+        # under-declared VAT on every service and delivery charge it took.
+        charge_tax_group_id = None
+        if charge.charge_id is not None:
+            configured = await db.get(Charge, charge.charge_id)
+            charge_tax_group_id = getattr(configured, "tax_group_id", None)
+        if charge_tax_group_id not in tax_cache:
+            tax_cache[charge_tax_group_id] = await _resolve_tax(db, charge_tax_group_id)
+        rate, tax_name, tax_id, inclusive = tax_cache[charge_tax_group_id]
         charge_inputs.append(
             ChargeInput(
                 name=charge.name,
@@ -897,7 +931,39 @@ async def record_payment(
     till: Till | None = None,
     is_refund: bool = False,
     reference: str | None = None,
+    idempotency_key: str | None = None,
 ) -> OrderPayment:
+    # A retry of a payment the server already took is not a second payment.
+    # `RegisterModel.pay` is three calls over a 15-second timeout, so a
+    # successful write can time out on the way back and the cashier — looking at
+    # a check that still reads unpaid — takes the money again. The
+    # `amount > outstanding` guard below stops that for a single tender and does
+    # nothing for a split, where the second half is legitimately smaller against
+    # a legitimately lower balance.
+    if idempotency_key:
+        existing = (
+            (
+                await db.execute(
+                    select(OrderPayment).where(
+                        OrderPayment.idempotency_key == idempotency_key
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if existing is not None:
+            if existing.order_id != order.id:
+                raise ConflictError(
+                    "This idempotency key was already used on a different order"
+                )
+            logger.info(
+                "Replayed payment %s on order %s — returning the original",
+                idempotency_key,
+                order.order_number,
+            )
+            return existing
+
     method = await db.get(PaymentMethod, payment_method_id)
     if method is None or method.deleted_at is not None or not method.is_active:
         raise BadRequestError("Payment method not available")
@@ -933,6 +999,7 @@ async def record_payment(
         business_date=order.business_date or "",
         is_refund=is_refund,
         reference=reference,
+        idempotency_key=idempotency_key,
         recorded_at=utcnow(),
     )
     db.add(payment)

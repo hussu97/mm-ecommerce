@@ -14,8 +14,6 @@ from .base import Base, TimestampMixin, UUIDMixin
 class PaymentMethodTypeEnum(str, enum.Enum):
     CASH = "cash"
     CARD = "card"
-    GIFT_CARD = "gift_card"
-    HOUSE_ACCOUNT = "house_account"
     ONLINE = "online"
     OTHER = "other"
 
@@ -25,10 +23,14 @@ class PaymentMethod(Base, UUIDMixin, TimestampMixin):
     A tender type the cashier can settle an order with.
 
     `type` drives behaviour, not just labelling:
-      * cash          — counts toward the till's expected cash, can open the drawer
-      * gift_card     — draws down a GiftCard balance
-      * house_account — posts to the customer's house account ledger
-      * card/online   — settled by a processor, never affects the cash drawer
+      * cash        — counts toward the till's expected cash, can open the drawer
+      * card/online — settled by a processor, never affects the cash drawer
+
+    `gift_card` and `house_account` used to be offered here and were a hole
+    rather than a feature: `record_payment` never drew down a balance for
+    either, so choosing one settled the whole check against nothing. The ledgers
+    they were supposed to post to were built and never wired up, and have been
+    removed with them.
     """
 
     __tablename__ = "payment_methods"

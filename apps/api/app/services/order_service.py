@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import (
     Integer,
@@ -15,11 +16,12 @@ from sqlalchemy import (
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import noload, selectinload
 
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.models.branch import Branch
 from app.models.cart import Cart, CartItem
+from app.models.delivery_batch import DELIVERY_TIMEZONE
 from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
 from app.models.product import Product
 from app.models.pos_order import OrderSourceEnum, PosOrderStatusEnum
@@ -32,9 +34,11 @@ from app.services import (
     cart_service,
     courier_service,
     delivery_service,
+    email_service,
     fulfilment_service,
     lalamove_service,
     pos_order_service,
+    pos_pricing,
     promo_code_service,
     push_service,
 )
@@ -59,6 +63,12 @@ __all__ = [
 
 def _escape_like(s: str) -> str:
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+#: UAE standard rate, as a fraction. Declared once: it used to be written out
+#: separately in `_vat_of` and in the order-persisting path, so a rate change
+#: would have had to be found twice.
+VAT_RATE = Decimal("0.05")
 
 
 # Valid status transitions
@@ -193,7 +203,12 @@ async def get_for_notification(db: AsyncSession, order_id: uuid.UUID) -> Order |
 
 
 async def _generate_order_number(db: AsyncSession) -> str:
-    today = datetime.now(timezone.utc).strftime("%Y%m%d")
+    # The shop's day, not UTC's. Dubai is UTC+4, so a UTC date rolled the
+    # counter over at 04:00 local: an order taken at 01:00 Tuesday morning was
+    # stamped Monday, and one taken at 05:00 Tuesday was stamped Tuesday, which
+    # made the number disagree with the `business_date` on the same row and with
+    # every report built from it.
+    today = datetime.now(ZoneInfo(DELIVERY_TIMEZONE)).strftime("%Y%m%d")
     prefix = f"MM-{today}-"
 
     # Max of the numeric sequence, not a string sort — once the day passes 999
@@ -390,11 +405,20 @@ async def _compute_order_totals(
 
 
 def _vat_of(taxable: Decimal) -> tuple[Decimal, Decimal]:
-    """VAT back-calculation (goods only; delivery excluded per UAE VAT rules)."""
-    VAT_RATE = Decimal("0.05")
+    """
+    VAT back-calculation (goods only; delivery excluded per UAE VAT rules).
+
+    Delegates to the register's splitter so a website order and a counter order
+    do the same arithmetic. Two things change by doing so: the rounding is
+    ROUND_HALF_UP rather than Python's default banker's rounding — half a fils
+    on a tax figure should go up, the way the printed receipt shows it — and
+    the two halves are guaranteed to add back to `taxable`, because the tax is
+    the remainder after the net rather than a second independent rounding.
+    """
+    net, vat = pos_pricing.split_inclusive_tax(taxable, VAT_RATE)
     return (
-        (taxable * VAT_RATE / (1 + VAT_RATE)).quantize(Decimal("0.01")),
-        (taxable / (1 + VAT_RATE)).quantize(Decimal("0.01")),
+        vat,
+        net,
     )
 
 
@@ -562,8 +586,6 @@ async def _persist_order(
     Write the order, its items, and update promo usage atomically.
     Clears the cart on success and returns the persisted order.
     """
-    VAT_RATE = Decimal("0.05")
-
     # `orders.email` is not nullable and is what every downstream lookup keys
     # on. When the customer declines to give one we fall back to the session's
     # own address, which for a guest is the generated `…@guest.local` the auth
@@ -687,7 +709,9 @@ async def create_order(
     promo_obj: PromoCode | None = None
 
     if data.promo_code:
-        validation = await promo_code_service.validate(db, data.promo_code, subtotal)
+        validation = await promo_code_service.validate(
+            db, data.promo_code, subtotal, user_id=user_id
+        )
         if not validation.valid:
             raise BadRequestError(f"Promo code: {validation.message}")
         discount_amount = validation.discount_amount
@@ -799,12 +823,81 @@ async def create_order(
     #    but cash has no such event — so without this it would sit in `created`
     #    until an admin noticed, which for an order already printing in a
     #    kitchen is a status that means nothing.
-    if _is_cash_on_delivery(data) and order.status == OrderStatusEnum.CREATED:
+    confirmed_as_cash = (
+        _is_cash_on_delivery(data) and order.status == OrderStatusEnum.CREATED
+    )
+    if confirmed_as_cash:
         order.status = OrderStatusEnum.CONFIRMED
 
     stmt = select(Order).options(*_order_load_options()).where(Order.id == order.id)
     result = await db.execute(stmt)
-    return await to_response(db, result.scalar_one())
+    response = await to_response(db, result.scalar_one())
+
+    # 12. And tell the customer, here rather than later. The confirmation used
+    #    to be sent only by `payment_service.create_session`, one HTTP call
+    #    further on — so a browser that closed, timed out or lost signal in
+    #    between left a confirmed order printing in the kitchen while the
+    #    customer had been told nothing at all. Cash is the only method that
+    #    confirms at creation; a card order is still announced by the Stripe
+    #    webhook.
+    if confirmed_as_cash:
+        await _send_confirmation_emails(response)
+
+    return response
+
+
+async def _send_confirmation_emails(order: OrderResponse) -> None:
+    """
+    Best-effort: a confirmed order is not un-confirmed by a mail provider
+    having a bad minute, and the failure is logged rather than raised.
+    """
+    try:
+        await email_service.send_order_confirmation(order)
+        await email_service.send_owner_order_notification(order)
+    except Exception:
+        logger.exception(
+            "Could not send confirmation emails for %s", order.order_number
+        )
+
+
+def _list_row_load_options():
+    """
+    Turn off the eager loads a list row does not use.
+
+    `Order.payments`, `order_charges`, `order_discounts` and `order_taxes` are
+    all `lazy="selectin"` on the model, which is right for reading one order and
+    wasteful for listing them: each adds a query per page, and `OrderListResponse`
+    reads none of them. On a 2000-row page — which the console offers — that was
+    four extra round trips fetching rows nobody looked at.
+
+    `noload` rather than `raiseload`: these rows are handed to a response model
+    that never touches the collections, and a future field that does should get
+    an empty list rather than an exception in production.
+    """
+    return [
+        noload(Order.payments),
+        noload(Order.order_charges),
+        noload(Order.order_discounts),
+        noload(Order.order_taxes),
+    ]
+
+
+def _item_count_subquery():
+    """
+    How many units are on an order, counted by the database.
+
+    The list rows need this one number off the items and nothing else about
+    them. Both list endpoints used to `selectinload(Order.items)` and sum in
+    Python, so a 2000-row page — which the console offers, and which its
+    pagination standard requires — hydrated tens of thousands of OrderItem
+    objects only to add up a single column and discard them.
+    """
+    return (
+        select(func.coalesce(func.sum(OrderItem.quantity), 0))
+        .where(OrderItem.order_id == Order.id)
+        .correlate(Order)
+        .scalar_subquery()
+    )
 
 
 async def get_user_orders(
@@ -821,18 +914,18 @@ async def get_user_orders(
     total = count_result.scalar() or 0
 
     stmt = (
-        base_stmt.options(selectinload(Order.items))
+        base_stmt.add_columns(_item_count_subquery().label("item_count"))
+        .options(*_list_row_load_options())
         .order_by(Order.created_at.desc())
         .offset((page - 1) * per_page)
         .limit(per_page)
     )
     result = await db.execute(stmt)
-    orders = result.scalars().all()
 
     items = []
-    for o in orders:
-        resp = OrderListResponse.model_validate(o)
-        resp.item_count = sum(i.quantity for i in o.items)
+    for order, count in result.all():
+        resp = OrderListResponse.model_validate(order)
+        resp.item_count = int(count or 0)
         items.append(resp)
     return items, total
 
@@ -1004,17 +1097,17 @@ async def get_all_admin(
     total = count_result.scalar() or 0
 
     stmt = (
-        base_stmt.options(selectinload(Order.items))
+        base_stmt.add_columns(_item_count_subquery().label("item_count"))
+        .options(*_list_row_load_options())
         .order_by(Order.created_at.desc())
         .offset((page - 1) * per_page)
         .limit(per_page)
     )
     result = await db.execute(stmt)
-    orders = result.scalars().all()
 
     items = []
-    for o in orders:
-        resp = OrderListResponse.model_validate(o)
-        resp.item_count = sum(i.quantity for i in o.items)
+    for order, count in result.all():
+        resp = OrderListResponse.model_validate(order)
+        resp.item_count = int(count or 0)
         items.append(resp)
     return items, total

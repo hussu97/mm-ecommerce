@@ -663,14 +663,22 @@ function CheckoutContent() {
 
   // Re-price whenever the pin or the basket changes, so what is on screen is
   // what the order will be written with.
+  //
+  // Debounced, because `addressLine1` is in the dependency list and a customer
+  // typing "Villa 12, Al Barsha" fired one quote per keystroke — each of which
+  // can reach the courier's live pricing API. The delay is short enough that
+  // the fee still lands while they are reading the line they just typed, and
+  // the cleanup cancels the pending timer, so only the last edit is priced.
   useEffect(() => {
     if (retryOrder) return;
     let cancelled = false;
-    deliveryApi
-      .quote(effectiveSubtotal, form.locationLat, form.locationLng, form.addressLine1)
-      .then((q) => { if (!cancelled) setQuote(q); })
-      .catch(() => { /* leave the previous quote in place */ });
-    return () => { cancelled = true; };
+    const timer = setTimeout(() => {
+      deliveryApi
+        .quote(effectiveSubtotal, form.locationLat, form.locationLng, form.addressLine1)
+        .then((q) => { if (!cancelled) setQuote(q); })
+        .catch(() => { /* leave the previous quote in place */ });
+    }, 400);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [effectiveSubtotal, form.locationLat, form.locationLng, form.addressLine1, retryOrder]);
 
 

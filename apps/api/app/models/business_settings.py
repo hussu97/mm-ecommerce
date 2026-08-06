@@ -105,6 +105,25 @@ class BusinessSettings(Base, UUIDMixin, TimestampMixin):
         Boolean, nullable=False, server_default="true"
     )
 
+    # ─── Custom cakes ─────────────────────────────────────────────────────────
+    #: How many custom cakes may be booked for one date.
+    #:
+    #: One, because that is what this kitchen can actually make alongside a
+    #: day's normal production. Configurable because the honest answer changes
+    #: with staff, and hard-coding it would mean a deploy to hire someone.
+    custom_orders_per_day: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="1"
+    )
+    #: Days of notice a custom order needs when its product does not say.
+    custom_order_lead_days: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="3"
+    )
+    #: How far ahead the storefront will let someone book. Stops a booking for
+    #: a date nobody can plan staffing for.
+    custom_order_max_days_ahead: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="180"
+    )
+
     # ─── Inventory transactions ───────────────────────────────────────────────
     inventory_logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     inventory_header: Mapped[str | None] = mapped_column(Text, nullable=True)

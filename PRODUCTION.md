@@ -785,6 +785,7 @@ however the map is redrawn.
 > which was survivable when one known account was routed there and is not
 > survivable now. Both default to production; set them together or not at all.
 | `NOON_SEND_WEBHOOK_API_KEY` | a secret you generate | Hand the same value to the integrations team with the webhook URLs |
+| `NOON_SEND_ENFORCE_WEBHOOK_KEY` | `false` | Whether a push missing that key is refused. Leave off until the key noon actually sends matches the one above — compare the two fingerprints on any `webhook_logs` row. Enforcing before they agree discards live delivery updates, which is what happened during the trial. |
 
 The rest fall back in the deploy workflow:
 

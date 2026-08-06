@@ -184,8 +184,6 @@ export const posOrdersApi = {
   }) => api.get<PosOrder[]>(`/pos/orders${qs(params)}`),
   get: (id: string) => api.get<PosOrder>(`/pos/orders/${id}`),
   openChecks: (branchId: string) => api.get<PosOrder[]>(`/pos/kitchen/open-checks${qs({ branch_id: branchId })}`),
-  kitchenTickets: (branchId: string, includeCompleted = false) =>
-    api.get<unknown[]>(`/pos/kitchen/tickets${qs({ branch_id: branchId, include_completed: includeCompleted })}`),
 };
 
 // ─── Inventory ────────────────────────────────────────────────────────────────

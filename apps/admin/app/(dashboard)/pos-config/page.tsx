@@ -87,8 +87,6 @@ function PaymentMethodsTab() {
           options: [
             { value: 'cash', label: 'Cash' },
             { value: 'card', label: 'Card' },
-            { value: 'gift_card', label: 'Gift card' },
-            { value: 'house_account', label: 'House account' },
             { value: 'online', label: 'Online' },
             { value: 'other', label: 'Other' },
           ],

@@ -124,7 +124,6 @@ _Backlog — prioritize as bandwidth allows._
 - [x] **Multi-language support (Arabic)** — Full `[locale]` App Router, SSR `lang`/`dir`, RTL layout, Arabic content, admin Languages + Translations pages, i18n API (`apps/api/app/api/v1/i18n.py`).
 - [ ] **WhatsApp order notifications** — Send order confirmation and status updates via WhatsApp Business API (very popular in UAE).
 - [ ] **Gift wrapping & gift messages** — Add option during checkout for gift packaging with a custom message.
-- [ ] **Loyalty / rewards program** — Points-based system for repeat customers (e.g., 1 AED = 1 point, 100 points = 10 AED discount).
 - [ ] **Scheduled delivery / pre-orders** — Let customers pick a delivery date, especially for event cakes.
 - [ ] **Social login (Google, Apple)** — Reduce registration friction with OAuth providers.
 - [x] **Recently viewed products** — Show recently browsed products for easy re-discovery.

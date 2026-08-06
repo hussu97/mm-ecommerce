@@ -19,7 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_active_user, get_db
-from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError
+from app.core.exceptions import BadRequestError, ForbiddenError
 from app.models import (
     Branch,
     Device,
@@ -29,10 +29,7 @@ from app.models import (
     Order,
     PosOrderStatusEnum,
     PosTable,
-    Reservation,
     Section,
-    SpotCheck,
-    SpotCheckItem,
     TableStatusEnum,
     Till,
     TillStatusEnum,
@@ -45,7 +42,6 @@ from app.models.user import User
 from app.services import (
     business_day_service,
     crud_service,
-    inventory_service,
     transfer_service,
 )
 
@@ -343,237 +339,6 @@ async def produce(
         unit_cost=Decimal(str(line.unit_cost)) if line else Decimal("0"),
         total_cost=Decimal(str(production.total_cost)),
     )
-
-
-# ─── Spot checks ──────────────────────────────────────────────────────────────
-
-spot_checks_router = APIRouter()
-
-
-class SpotCheckLine(BaseModel):
-    item_id: uuid.UUID
-    counted_quantity: Decimal = Field(ge=0)
-    notes: str | None = None
-
-
-class SpotCheckCreate(BaseModel):
-    branch_id: uuid.UUID
-    warehouse_id: uuid.UUID | None = None
-    notes: str | None = None
-    items: list[SpotCheckLine] = Field(min_length=1)
-
-
-class SpotCheckLineResponse(ORMModel):
-    id: uuid.UUID
-    item_id: uuid.UUID
-    counted_quantity: Decimal
-    system_quantity: Decimal
-    variance: Decimal
-    notes: str | None
-    item_name: str | None = None
-
-
-class SpotCheckResponse(ORMModel):
-    id: uuid.UUID
-    reference: str
-    branch_id: uuid.UUID
-    business_date: str
-    status: str
-    notes: str | None
-    created_at: datetime
-    items: list[SpotCheckLineResponse] = []
-
-
-@spot_checks_router.post(
-    "", response_model=SpotCheckResponse, status_code=status.HTTP_201_CREATED
-)
-async def create_spot_check(
-    data: SpotCheckCreate,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
-):
-    """
-    Record an audit count. Deliberately does **not** move stock — it captures
-    the variance against the system for investigation, nothing more.
-    """
-    _require(user, "inventory.spot_check.create")
-    branch = await crud_service.get_or_404(db, Branch, data.branch_id)
-    warehouse_id = (
-        data.warehouse_id
-        or (await inventory_service.default_warehouse(db, branch.id)).id
-    )
-
-    count = int(
-        (await db.execute(select(func.count()).select_from(SpotCheck))).scalar_one()
-    )
-    check = SpotCheck(
-        reference=f"SC-{count + 1:06d}",
-        branch_id=branch.id,
-        warehouse_id=warehouse_id,
-        business_date=await business_day_service.current_business_date(db, branch),
-        status="closed",
-        creator_id=user.id,
-        closed_at=utcnow(),
-        notes=data.notes,
-    )
-    db.add(check)
-    await db.flush()
-
-    for line in data.items:
-        level = await inventory_service.level_for(db, line.item_id, warehouse_id)
-        system = Decimal(str(level.quantity))
-        counted = Decimal(str(line.counted_quantity))
-        db.add(
-            SpotCheckItem(
-                spot_check_id=check.id,
-                item_id=line.item_id,
-                counted_quantity=counted,
-                system_quantity=system,
-                variance=counted - system,
-                notes=line.notes,
-            )
-        )
-    await db.flush()
-    await db.refresh(check)
-
-    payload = SpotCheckResponse.model_validate(check)
-    ids = {line.item_id for line in check.items}
-    if ids:
-        rows = (
-            (await db.execute(select(InventoryItem).where(InventoryItem.id.in_(ids))))
-            .scalars()
-            .all()
-        )
-        lookup = {r.id: r.name for r in rows}
-        for line in payload.items:
-            line.item_name = lookup.get(line.item_id)
-    return payload
-
-
-@spot_checks_router.get("", response_model=list[SpotCheckResponse])
-async def list_spot_checks(
-    branch_id: uuid.UUID | None = None,
-    limit: int = Query(100, ge=1, le=1000),
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
-):
-    _require(user, "inventory.spot_check.create")
-    stmt = select(SpotCheck)
-    if branch_id:
-        stmt = stmt.where(SpotCheck.branch_id == branch_id)
-    stmt = stmt.order_by(SpotCheck.created_at.desc()).limit(limit)
-    return list((await db.execute(stmt)).scalars().unique().all())
-
-
-# ─── Reservations ─────────────────────────────────────────────────────────────
-
-
-class ReservationCreate(BaseModel):
-    branch_id: uuid.UUID
-    customer_name: str = Field(min_length=1, max_length=150)
-    customer_phone: str | None = Field(None, max_length=30)
-    customer_id: uuid.UUID | None = None
-    table_id: uuid.UUID | None = None
-    guests: int = Field(2, ge=1, le=100)
-    starts_at: datetime
-    duration_minutes: int = Field(60, ge=15, le=600)
-    notes: str | None = None
-
-
-class ReservationUpdate(BaseModel):
-    table_id: uuid.UUID | None = None
-    guests: int | None = Field(None, ge=1, le=100)
-    starts_at: datetime | None = None
-    duration_minutes: int | None = Field(None, ge=15, le=600)
-    status: (
-        Literal["pending", "confirmed", "seated", "completed", "cancelled", "no_show"]
-        | None
-    ) = None
-    notes: str | None = None
-
-
-class ReservationResponse(ORMModel):
-    id: uuid.UUID
-    reference: str
-    branch_id: uuid.UUID
-    table_id: uuid.UUID | None
-    customer_id: uuid.UUID | None
-    customer_name: str
-    customer_phone: str | None
-    guests: int
-    starts_at: datetime
-    duration_minutes: int
-    status: str
-    notes: str | None
-    created_at: datetime
-
-
-reservations_router = APIRouter()
-
-
-@reservations_router.get("", response_model=list[ReservationResponse])
-async def list_reservations(
-    branch_id: uuid.UUID | None = None,
-    status_filter: str | None = Query(None, alias="status"),
-    limit: int = Query(100, ge=1, le=1000),
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
-):
-    _require(user, "admin.reservations.manage")
-    stmt = select(Reservation)
-    if branch_id:
-        stmt = stmt.where(Reservation.branch_id == branch_id)
-    if status_filter:
-        stmt = stmt.where(Reservation.status == status_filter)
-    stmt = stmt.order_by(Reservation.starts_at).limit(limit)
-    return list((await db.execute(stmt)).scalars().all())
-
-
-@reservations_router.post(
-    "", response_model=ReservationResponse, status_code=status.HTTP_201_CREATED
-)
-async def create_reservation(
-    data: ReservationCreate,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
-):
-    _require(user, "admin.reservations.manage")
-    branch = await crud_service.get_or_404(db, Branch, data.branch_id)
-    if not branch.accepts_reservations:
-        raise ConflictError(f"{branch.name} does not accept reservations")
-
-    count = int(
-        (await db.execute(select(func.count()).select_from(Reservation))).scalar_one()
-    )
-    reservation = Reservation(
-        reference=f"RES-{count + 1:06d}",
-        created_by_id=user.id,
-        **data.model_dump(),
-    )
-    db.add(reservation)
-    await db.flush()
-    await db.refresh(reservation)
-    return reservation
-
-
-@reservations_router.put("/{reservation_id}", response_model=ReservationResponse)
-async def update_reservation(
-    reservation_id: uuid.UUID,
-    data: ReservationUpdate,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
-):
-    _require(user, "admin.reservations.manage")
-    reservation = await crud_service.get_or_404(db, Reservation, reservation_id)
-    reservation = await crud_service.update(db, reservation, data)
-
-    # Seating a reservation marks its table reserved so the floor plan agrees.
-    if reservation.table_id and reservation.status in ("confirmed", "seated"):
-        table = await db.get(PosTable, reservation.table_id)
-        if table and table.status == TableStatusEnum.FREE.value:
-            table.status = TableStatusEnum.RESERVED.value
-            await db.flush()
-    return reservation
 
 
 # ─── Notification rules ───────────────────────────────────────────────────────
@@ -1001,7 +766,5 @@ __all__ = [
     "dashboard_router",
     "notification_rules_router",
     "production_router",
-    "reservations_router",
-    "spot_checks_router",
     "transfer_orders_router",
 ]

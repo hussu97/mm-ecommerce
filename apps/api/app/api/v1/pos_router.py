@@ -20,15 +20,12 @@ from .categories import router as categories_router
 from .devices import printers_router, router as devices_router
 from .marketing import (
     discounts_router,
-    gift_cards_router,
-    house_accounts_router,
-    loyalty_router,
     promotions_router,
     timed_events_router,
 )
 from .menu_groups import router as menu_groups_router
 from .modifiers import router as modifiers_router
-from .operations import dashboard_router, reservations_router
+from .operations import dashboard_router
 from .pos_config import (
     charges_router,
     courses_router,
@@ -87,21 +84,11 @@ pos_api_router.include_router(
 pos_api_router.include_router(
     timed_events_router, prefix="/timed-events", tags=["Marketing"]
 )
-pos_api_router.include_router(
-    gift_cards_router, prefix="/gift-cards", tags=["Marketing"]
-)
-pos_api_router.include_router(loyalty_router, prefix="/loyalty", tags=["Marketing"])
-pos_api_router.include_router(
-    house_accounts_router, prefix="/house-accounts", tags=["Marketing"]
-)
 
 # ─── Hardware and the floor ───────────────────────────────────────────────────
 pos_api_router.include_router(printers_router, prefix="/printers", tags=["Printers"])
 pos_api_router.include_router(
     kitchen_flows_router, prefix="/kitchen-flows", tags=["Kitchen Flows"]
-)
-pos_api_router.include_router(
-    reservations_router, prefix="/reservations", tags=["Reservations"]
 )
 
 # ─── What a shift lead looks at ───────────────────────────────────────────────

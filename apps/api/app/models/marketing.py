@@ -1,11 +1,12 @@
 """
-Marketing: discounts, promotions, timed events, gift cards, loyalty and house
-accounts.
+Marketing: discounts, promotions and timed events.
 
-Money that customers hold — gift card balances, loyalty points, house account
-credit — is never stored as a single mutable number. Each has an append-only
-transaction ledger and the balance is a projection of it, so a disputed balance
-can always be reconstructed and explained.
+Gift cards, loyalty and house accounts used to live here too. All three were
+fully built — models, ledgers, services, routers — and never wired into a single
+selling path: no order ever earned a point, no payment ever drew down a balance.
+A gift-card tender selected at the counter settled the check against nothing at
+all. They were removed rather than left as a money-shaped hole waiting for
+someone to pick them from a dropdown.
 """
 
 from __future__ import annotations
@@ -13,22 +14,18 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import date, datetime
-from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
     Boolean,
     Date,
     DateTime,
-    ForeignKey,
     Integer,
     Numeric,
     String,
-    Text,
-    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, TimestampMixin, UUIDMixin
 
@@ -266,252 +263,3 @@ class TimedEvent(Base, UUIDMixin, TimestampMixin, ScheduleMixin):
 
     def __repr__(self) -> str:
         return f"<TimedEvent {self.name}>"
-
-
-# ─── Gift cards ───────────────────────────────────────────────────────────────
-
-
-class GiftCardStatusEnum(str, enum.Enum):
-    ACTIVE = "active"
-    REDEEMED = "redeemed"  # balance exhausted
-    EXPIRED = "expired"
-    CANCELLED = "cancelled"
-
-
-class GiftCard(Base, UUIDMixin, TimestampMixin):
-    """
-    A stored-value card. `balance` is a cached projection of
-    `GiftCardTransaction`; the ledger is authoritative.
-    """
-
-    __tablename__ = "gift_cards"
-
-    code: Mapped[str] = mapped_column(
-        String(40), unique=True, nullable=False, index=True
-    )
-    initial_balance: Mapped[Any] = mapped_column(Numeric(12, 2), nullable=False)
-    balance: Mapped[Any] = mapped_column(
-        Numeric(12, 2), nullable=False, server_default="0"
-    )
-    status: Mapped[str] = mapped_column(
-        String(20),
-        nullable=False,
-        server_default=GiftCardStatusEnum.ACTIVE.value,
-        index=True,
-    )
-    customer_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
-    )
-    issued_by_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
-    )
-    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    expires_at: Mapped[date | None] = mapped_column(Date, nullable=True)
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    transactions: Mapped[list[GiftCardTransaction]] = relationship(
-        "GiftCardTransaction",
-        back_populates="gift_card",
-        cascade="all, delete-orphan",
-        lazy="selectin",
-    )
-
-    @property
-    def is_usable(self) -> bool:
-        return (
-            self.status == GiftCardStatusEnum.ACTIVE.value
-            and Decimal(str(self.balance)) > 0
-        )
-
-    def __repr__(self) -> str:
-        return f"<GiftCard {self.code} {self.balance}>"
-
-
-class GiftCardTransactionTypeEnum(str, enum.Enum):
-    ISSUE = "issue"
-    TOP_UP = "top_up"
-    REDEEM = "redeem"
-    REFUND = "refund"
-    ADJUSTMENT = "adjustment"
-    CANCEL = "cancel"
-
-
-class GiftCardTransaction(Base, UUIDMixin, TimestampMixin):
-    __tablename__ = "gift_card_transactions"
-
-    gift_card_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("gift_cards.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    type: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
-    #: Signed: positive adds value, negative spends it.
-    amount: Mapped[Any] = mapped_column(Numeric(12, 2), nullable=False)
-    balance_after: Mapped[Any] = mapped_column(Numeric(12, 2), nullable=False)
-    order_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("orders.id", ondelete="SET NULL"), nullable=True
-    )
-    user_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
-    )
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    gift_card: Mapped[GiftCard] = relationship(
-        "GiftCard", back_populates="transactions"
-    )
-
-    def __repr__(self) -> str:
-        return f"<GiftCardTransaction {self.type} {self.amount}>"
-
-
-# ─── Loyalty ──────────────────────────────────────────────────────────────────
-
-
-class LoyaltyProgram(Base, UUIDMixin, TimestampMixin):
-    """
-    Singleton-ish configuration for the points scheme.
-
-    Points are earned per unit of spend and redeemed at a fixed value, which is
-    the simplest model that customers reliably understand.
-    """
-
-    __tablename__ = "loyalty_programs"
-
-    name: Mapped[str] = mapped_column(
-        String(150), nullable=False, server_default="Melting Moments Rewards"
-    )
-    #: Points granted per 1.00 of qualifying spend.
-    points_per_currency_unit: Mapped[Any] = mapped_column(
-        Numeric(10, 4), nullable=False, server_default="1"
-    )
-    #: Cash value of one point when redeemed.
-    currency_per_point: Mapped[Any] = mapped_column(
-        Numeric(10, 4), nullable=False, server_default="0.01"
-    )
-    minimum_points_to_redeem: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default="100"
-    )
-    points_expire_after_days: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default="0"
-    )
-    #: Excludes discounted lines from earning, if the business wants that.
-    earn_on_discounted_items: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="true"
-    )
-    branch_ids: Mapped[list[uuid.UUID]] = mapped_column(
-        ARRAY(UUID(as_uuid=True)), nullable=False, default=list, server_default="{}"
-    )
-    is_active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="false"
-    )
-
-    def __repr__(self) -> str:
-        return f"<LoyaltyProgram {self.name}>"
-
-
-class LoyaltyTransactionTypeEnum(str, enum.Enum):
-    EARN = "earn"
-    REDEEM = "redeem"
-    ADJUSTMENT = "adjustment"
-    EXPIRY = "expiry"
-    REVERSAL = "reversal"
-
-
-class LoyaltyTransaction(Base, UUIDMixin, TimestampMixin):
-    """Append-only points ledger. A customer's balance is the sum of these."""
-
-    __tablename__ = "loyalty_transactions"
-
-    customer_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    type: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
-    #: Signed: earning is positive, redemption negative.
-    points: Mapped[int] = mapped_column(Integer, nullable=False)
-    balance_after: Mapped[int] = mapped_column(Integer, nullable=False)
-    #: Cash value moved, for redemptions.
-    amount: Mapped[Any] = mapped_column(
-        Numeric(12, 2), nullable=False, server_default="0"
-    )
-    order_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("orders.id", ondelete="SET NULL"), nullable=True
-    )
-    expires_at: Mapped[date | None] = mapped_column(Date, nullable=True)
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    def __repr__(self) -> str:
-        return f"<LoyaltyTransaction {self.type} {self.points}>"
-
-
-# ─── House accounts ───────────────────────────────────────────────────────────
-
-
-class HouseAccount(Base, UUIDMixin, TimestampMixin):
-    """
-    A credit line for a corporate or regular customer: they sign for orders and
-    settle periodically. `balance` is what they currently owe.
-    """
-
-    __tablename__ = "house_accounts"
-    __table_args__ = (
-        UniqueConstraint("customer_id", name="uq_house_account_customer"),
-    )
-
-    customer_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    credit_limit: Mapped[Any] = mapped_column(
-        Numeric(12, 2), nullable=False, server_default="0"
-    )
-    balance: Mapped[Any] = mapped_column(
-        Numeric(12, 2), nullable=False, server_default="0"
-    )
-    is_active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="true"
-    )
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    @property
-    def available_credit(self) -> Decimal:
-        return Decimal(str(self.credit_limit)) - Decimal(str(self.balance))
-
-    def __repr__(self) -> str:
-        return f"<HouseAccount customer={self.customer_id} owes={self.balance}>"
-
-
-class HouseAccountTransactionTypeEnum(str, enum.Enum):
-    CHARGE = "charge"  # an order signed to the account
-    PAYMENT = "payment"  # the customer settles
-    ADJUSTMENT = "adjustment"
-
-
-class HouseAccountTransaction(Base, UUIDMixin, TimestampMixin):
-    __tablename__ = "house_account_transactions"
-
-    house_account_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("house_accounts.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    type: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
-    #: Signed: a charge increases what is owed, a payment reduces it.
-    amount: Mapped[Any] = mapped_column(Numeric(12, 2), nullable=False)
-    balance_after: Mapped[Any] = mapped_column(Numeric(12, 2), nullable=False)
-    order_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("orders.id", ondelete="SET NULL"), nullable=True
-    )
-    user_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
-    )
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    def __repr__(self) -> str:
-        return f"<HouseAccountTransaction {self.type} {self.amount}>"

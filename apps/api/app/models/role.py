@@ -22,13 +22,8 @@ PERMISSION_GROUPS: dict[str, list[tuple[str, str]]] = {
     ],
     "Customers": [
         ("customers.read", "View customer data"),
-        ("customers.insights.read", "View loyalty, house account credit and spend"),
+        ("customers.insights.read", "View customer spend"),
         ("customers.manage", "Edit or delete customers"),
-        (
-            "customers.house_account.manage",
-            "Toggle house accounts and register payments",
-        ),
-        ("customers.loyalty.manage", "Enrol or remove customers from loyalty"),
     ],
     "Inventory": [
         ("inventory.items.read", "View inventory items"),
@@ -85,12 +80,9 @@ PERMISSION_GROUPS: dict[str, list[tuple[str, str]]] = {
         ("admin.notifications.manage", "Manage notifications"),
         ("admin.allergens.manage", "Manage allergens"),
         ("admin.coupons.manage", "Manage coupons"),
-        ("admin.gift_cards.manage", "Manage gift cards"),
         ("admin.promotions.manage", "Manage promotions"),
         ("admin.timed_events.manage", "Manage timed events"),
         ("admin.delivery_zones.manage", "Manage delivery zones"),
-        ("admin.loyalty.manage", "Manage the loyalty programme"),
-        ("admin.price_tags.manage", "Manage price tags"),
         ("admin.kitchen_flows.manage", "Manage kitchen flows"),
         ("admin.drivers.manage", "Manage delivery drivers"),
     ],
@@ -110,7 +102,6 @@ PERMISSION_GROUPS: dict[str, list[tuple[str, str]]] = {
         ("dashboard.general", "Access the general dashboard"),
         ("dashboard.branches", "Access the branches dashboard"),
         ("dashboard.inventory", "Access the inventory dashboard"),
-        ("dashboard.kitchen", "Access the kitchen dashboard"),
     ],
     "Cashier app": [
         ("pos.register.access", "Access the cash register"),
@@ -130,6 +121,11 @@ PERMISSION_GROUPS: dict[str, list[tuple[str, str]]] = {
         ("pos.orders.void", "Void orders and products"),
         ("pos.products.void", "Void a single product"),
         ("pos.payment.perform", "Take payment"),
+        # Giving money back is not the same authority as taking it. Refunds were
+        # gated on `pos.payment.perform` alone, so any cashier who could ring up
+        # a sale could hand cash out of the drawer against any tender, with no
+        # manager approval.
+        ("pos.payment.refund", "Refund a payment"),
         ("pos.orders.edit_others", "Edit orders opened by other users"),
         ("pos.orders.edit_online", "Edit online orders"),
         ("pos.tables.change_owner", "Change the table owner"),
