@@ -100,15 +100,15 @@ export default async function RootLayout({
         <Script id="material-icons" strategy="afterInteractive">{`(function(){var l=document.createElement('link');l.rel='stylesheet';l.href='https://fonts.googleapis.com/icon?family=Material+Icons';document.head.appendChild(l)})()`}</Script>
 
         {/* Umami analytics — no-cookie, GDPR-friendly.
-            Both paths are first-party and say `mm` rather than `umami`, so
+            Both paths are first-party and name neither the tool nor the shop, so
             there is no product name for a blocklist to match; the tracker
             appends `/api/send` to `data-host-url` itself. See
-            `app/mm/api/send/route.ts`. */}
+            `app/vague/api/send/route.ts`. */}
         {process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID && (
           <Script
-            src={process.env.NEXT_PUBLIC_UMAMI_URL ?? '/mm/m.js'}
+            src={process.env.NEXT_PUBLIC_UMAMI_URL ?? '/vague/v.js'}
             data-website-id={process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID}
-            data-host-url="/mm"
+            data-host-url="/vague"
             strategy="afterInteractive"
           />
         )}

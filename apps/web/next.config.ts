@@ -14,15 +14,15 @@ const nextConfig: NextConfig = {
         destination: `${process.env.NEXT_PRIVATE_API_HOST ?? "http://localhost:8000"}/api/v1/:path*`,
       },
       // Analytics, served from this origin so blocklists have nothing to match.
-      // The `mm` prefix and the bland filename are deliberate — see
-      // `app/mm/api/send/route.ts`. Both `/umami/*` paths this replaced were
+      // The nondescript prefix and filename are deliberate — see
+      // `app/vague/api/send/route.ts`. Both `/umami/*` paths this replaced were
       // clear of every list checked; the rename is insurance, not a repair.
       //
-      // The companion `/mm/api/send` is deliberately absent here: it is a route
+      // The companion `/vague/api/send` is deliberately absent here: it is a route
       // handler, because a rewrite opens its own connection to Umami and the
       // visitor's location is lost with it.
       {
-        source: "/mm/m.js",
+        source: "/vague/v.js",
         destination: "https://cloud.umami.is/script.js",
       },
     ];

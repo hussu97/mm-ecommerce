@@ -37,9 +37,9 @@ export function proxy(request: NextRequest) {
 
   // Skip static files, API routes, and Next.js internals
   //
-  // `/mm/` is the analytics proxy — the script rewritten to Umami Cloud in
-  // `next.config.ts`, the events handled by `app/mm/api/send/route.ts`. It is
-  // not a page and has no language, but `/mm/api/send` also has no dot in it,
+  // `/vague/` is the analytics proxy — the script rewritten to Umami Cloud in
+  // `next.config.ts`, the events handled by `app/vague/api/send/route.ts`. It is
+  // not a page and has no language, but `/vague/api/send` also has no dot in it,
   // so without naming it here it fell through to the locale rule below: every
   // event the tracker posted was answered with a 307 to the locale-prefixed
   // path and had to be sent a second time. That survived on a fast connection
@@ -48,12 +48,14 @@ export function proxy(request: NextRequest) {
   // exactly `begin_checkout`, `checkout_step_complete` and the hop out to the
   // payment gateway.
   //
-  // The trailing slash matters: `/mm` alone would also swallow a category or
-  // product slug that happens to start with those two letters.
+  // The trailing slash matters. Every other entry here is a reserved prefix
+  // nothing else can claim, but this one is an ordinary word: without the slash
+  // it would also swallow any category or product slug that merely starts with
+  // it, and strand that page on a 404 instead of sending it to a language.
   if (
     pathname.startsWith("/_next") ||
     pathname.startsWith("/api") ||
-    pathname.startsWith("/mm/") ||
+    pathname.startsWith("/vague/") ||
     pathname.startsWith("/images") ||
     pathname.startsWith("/favicon") ||
     pathname.includes(".")
@@ -88,5 +90,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next|api|mm/|images|favicon|.*\\..*).*)"],
+  matcher: ["/((?!_next|api|vague/|images|favicon|.*\\..*).*)"],
 };

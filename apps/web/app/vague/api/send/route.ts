@@ -6,14 +6,16 @@
  * blocklists and the shop's traffic is overwhelmingly mobile. That part works
  * and is not changing here.
  *
- * The path says `mm` and not `umami` on purpose. Nothing in EasyPrivacy, uBlock
- * or AdGuard matched the old first-party `/umami/...` paths when this was
- * checked on 6 August 2026 — their umami rules are all host rules (`||umami.is`,
- * `||umami.`) or `/umami.js`, none of which touch a path like ours. But a
- * product name in a first-party analytics path is the obvious thing for a list
- * to start matching on, and the rename costs nothing. `mm` matches no rule and
- * cannot be generically pattern-matched. The tracker forces the `/api/send`
- * suffix, so only the prefix was ours to choose.
+ * The path says `vague` and not `umami` on purpose, and says nothing about the
+ * shop either. Nothing in EasyPrivacy, uBlock or AdGuard matched the old
+ * first-party `/umami/...` paths when this was checked on 6 August 2026 — their
+ * umami rules are all host rules (`||umami.is`, `||umami.`) or `/umami.js`,
+ * none of which touch a path on our own origin. But a product name in a
+ * first-party analytics path is the obvious thing for a list to start matching
+ * on, and a rename costs nothing. A word that describes neither the tool nor
+ * the shop is what is left once you rule out both, and there is nothing in it
+ * for a generic pattern to catch. The tracker forces the `/api/send` suffix, so
+ * only the prefix was ours to choose.
  *
  * What it cost us was geography. A platform rewrite opens its own connection to
  * Umami, so the address Umami sees is the Vercel edge that relayed the event,

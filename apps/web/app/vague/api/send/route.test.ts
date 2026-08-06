@@ -17,7 +17,7 @@ const EVENT = {
 };
 
 function request(headers: Record<string, string> = {}, body: unknown = EVENT) {
-  return new Request('https://meltingmomentscakes.com/mm/api/send', {
+  return new Request('https://meltingmomentscakes.com/vague/api/send', {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...headers },
     body: typeof body === 'string' ? body : JSON.stringify(body),

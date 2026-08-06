@@ -77,18 +77,18 @@ describe('locale routing', () => {
       { 'accept-language': 'fr-FR' },
     ];
     for (const headers of cases) {
-      expect(location(proxy(request('/mm/api/send', headers)))).toBeNull();
-      expect(location(proxy(request('/mm/m.js', headers)))).toBeNull();
+      expect(location(proxy(request('/vague/api/send', headers)))).toBeNull();
+      expect(location(proxy(request('/vague/v.js', headers)))).toBeNull();
     }
   });
 
   /**
-   * Analytics lives under `/mm/`, two letters that also open plenty of ordinary
-   * slugs. Skipping on the prefix alone would strand `/mmm-chocolate` at a 404
-   * instead of sending it to a language.
+   * The analytics prefix is an ordinary word, not a reserved one, so a slug can
+   * legitimately begin with it. Skipping on the prefix alone would strand
+   * `/vaguely-chocolate` at a 404 instead of sending it to a language.
    */
-  it('still sends a page whose slug merely starts with those letters to a locale', () => {
-    for (const path of ['/mmm-chocolate', '/mm-cookies', '/mmelt']) {
+  it('still sends a page whose slug merely starts with the analytics prefix to a locale', () => {
+    for (const path of ['/vaguely-chocolate', '/vague-cookies', '/vagueness']) {
       expect(location(proxy(request(path, { 'accept-language': 'en' }))), path).toBe(
         `https://meltingmomentscakes.com/en${path}`,
       );
