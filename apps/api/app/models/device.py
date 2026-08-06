@@ -18,7 +18,6 @@ if TYPE_CHECKING:
 class DeviceTypeEnum(str, enum.Enum):
     CASHIER = "cashier"
     SUB_CASHIER = "sub_cashier"
-    KDS = "kds"
     DISPLAY = "display"  # customer-facing display
     NOTIFIER = "notifier"  # order-ready caller screen
 
@@ -73,7 +72,6 @@ class Device(Base, UUIDMixin, TimestampMixin):
     os_version: Mapped[str | None] = mapped_column(String(30), nullable=True)
     model_identifier: Mapped[str | None] = mapped_column(String(60), nullable=True)
 
-    # KDS/display devices only serve the categories listed here (empty = all).
     #: This terminal is where online orders for the branch land.
     receives_online_orders: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false", default=False

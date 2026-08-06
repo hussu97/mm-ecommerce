@@ -14,7 +14,6 @@ from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.models import (
     Branch,
     KitchenTicket,
-    KitchenTicketStatusEnum,
     Order,
     OrderStatusEnum,
     PosOrderStatusEnum,
@@ -28,7 +27,6 @@ from app.schemas.pos_order import (
     ApplyChargeRequest,
     ApplyDiscountRequest,
     KitchenTicketResponse,
-    KitchenTicketStatusUpdate,
     OpenOrderRequest,
     OrderItemResponse,
     PaymentRequest,
@@ -557,90 +555,6 @@ async def _serialise_ticket(
             table = await db.get(PosTable, order.table_id)
             payload.table_name = table.name if table else None
     return payload
-
-
-@kitchen_router.get("/tickets", response_model=list[KitchenTicketResponse])
-async def list_tickets(
-    branch_id: uuid.UUID,
-    kitchen_flow_id: uuid.UUID | None = None,
-    include_completed: bool = False,
-    limit: int = Query(100, ge=1, le=500),
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
-):
-    """The KDS feed: open tickets for a branch, oldest first so nothing ages out."""
-    await _require_permission(user, "dashboard.kitchen")
-    stmt = (
-        select(KitchenTicket)
-        .where(KitchenTicket.branch_id == branch_id)
-        .options(selectinload(KitchenTicket.items))
-    )
-    if kitchen_flow_id:
-        stmt = stmt.where(KitchenTicket.kitchen_flow_id == kitchen_flow_id)
-    if not include_completed:
-        stmt = stmt.where(
-            KitchenTicket.status.notin_(
-                [
-                    KitchenTicketStatusEnum.COMPLETED.value,
-                    KitchenTicketStatusEnum.CANCELLED.value,
-                ]
-            )
-        )
-    stmt = stmt.order_by(KitchenTicket.sent_at).limit(limit)
-    tickets = list((await db.execute(stmt)).scalars().unique().all())
-    return [await _serialise_ticket(db, t) for t in tickets]
-
-
-@kitchen_router.put("/tickets/{ticket_id}/status", response_model=KitchenTicketResponse)
-async def update_ticket_status(
-    ticket_id: uuid.UUID,
-    data: KitchenTicketStatusUpdate,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
-):
-    await _require_permission(user, "dashboard.kitchen")
-    ticket = await db.get(KitchenTicket, ticket_id)
-    if ticket is None:
-        raise NotFoundError("Kitchen ticket not found")
-
-    ticket.status = data.status
-    now = utcnow()
-    if (
-        data.status == KitchenTicketStatusEnum.IN_PROGRESS.value
-        and not ticket.started_at
-    ):
-        ticket.started_at = now
-    if data.status in (
-        KitchenTicketStatusEnum.COMPLETED.value,
-        KitchenTicketStatusEnum.CANCELLED.value,
-    ):
-        ticket.completed_at = now
-        for item in ticket.items:
-            item.status = data.status
-            item.completed_at = now
-
-    await db.flush()
-    await db.refresh(ticket)
-    return await _serialise_ticket(db, ticket)
-
-
-@kitchen_router.post(
-    "/tickets/{ticket_id}/reprint", response_model=KitchenTicketResponse
-)
-async def reprint_ticket(
-    ticket_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
-):
-    await _require_permission(user, "pos.kitchen.reprint")
-    ticket = await db.get(KitchenTicket, ticket_id)
-    if ticket is None:
-        raise NotFoundError("Kitchen ticket not found")
-    ticket.reprint_count += 1
-    ticket.printed_at = utcnow()
-    await db.flush()
-    await db.refresh(ticket)
-    return await _serialise_ticket(db, ticket)
 
 
 @kitchen_router.get("/open-checks", response_model=list[PosOrderResponse])

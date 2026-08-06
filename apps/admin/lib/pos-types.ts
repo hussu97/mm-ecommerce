@@ -166,7 +166,7 @@ export interface Staff {
 
 // ─── Devices ──────────────────────────────────────────────────────────────────
 
-export type DeviceType = 'cashier' | 'sub_cashier' | 'kds' | 'display' | 'notifier';
+export type DeviceType = 'cashier' | 'sub_cashier' | 'display' | 'notifier';
 
 export interface Device {
   id: string;

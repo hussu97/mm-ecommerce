@@ -278,7 +278,3 @@ class KitchenTicketResponse(ORMModel):
     check_number: int | None = None
     order_type: str | None = None
     table_name: str | None = None
-
-
-class KitchenTicketStatusUpdate(BaseModel):
-    status: Literal["new", "in_progress", "ready", "completed", "cancelled"]

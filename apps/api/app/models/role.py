@@ -103,7 +103,6 @@ PERMISSION_GROUPS: dict[str, list[tuple[str, str]]] = {
         ("dashboard.general", "Access the general dashboard"),
         ("dashboard.branches", "Access the branches dashboard"),
         ("dashboard.inventory", "Access the inventory dashboard"),
-        ("dashboard.kitchen", "Access the kitchen dashboard"),
     ],
     "Cashier app": [
         ("pos.register.access", "Access the cash register"),

@@ -914,6 +914,14 @@ async def speed_of_service(
       * total       — sent until ready, the number a customer feels
 
     Averages alone hide the bad days, so the slowest ticket is reported too.
+
+    **This report has no data source today and returns empty spans.** Both
+    `started_at` and `completed_at` were only ever written by the KDS
+    ticket-status endpoint, and there has never been a kitchen display screen to
+    call it — the tickets are printed, not bumped. The query is left in place
+    because it is correct and becomes useful the moment something acknowledges a
+    ticket; it is documented here so an empty card is not read as "the kitchen
+    took no time".
     """
     started = KitchenTicket.started_at.isnot(None)
     completed = KitchenTicket.completed_at.isnot(None)

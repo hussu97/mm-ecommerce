@@ -523,7 +523,7 @@ class PinLoginResponse(BaseModel):
 
 # ─── Devices & printers ───────────────────────────────────────────────────────
 
-DeviceTypeLiteral = Literal["cashier", "sub_cashier", "kds", "display", "notifier"]
+DeviceTypeLiteral = Literal["cashier", "sub_cashier", "display", "notifier"]
 
 
 class DeviceCreate(BaseModel):
