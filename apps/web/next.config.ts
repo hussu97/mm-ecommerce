@@ -1,12 +1,6 @@
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs";
 
-// Build locale pattern from the same env var the middleware uses (e.g. "en|ar")
-const localePattern = (process.env.NEXT_PUBLIC_SUPPORTED_LOCALES ?? "en,ar")
-  .split(",")
-  .map((l) => l.trim())
-  .join("|");
-
 const nextConfig: NextConfig = {
   // output: "standalone" is for self-hosted Docker only — not needed on Vercel
   async rewrites() {
@@ -19,29 +13,17 @@ const nextConfig: NextConfig = {
         source: "/api/v1/:path*",
         destination: `${process.env.NEXT_PRIVATE_API_HOST ?? "http://localhost:8000"}/api/v1/:path*`,
       },
-      {
-        source: "/umami/script.js",
-        destination: "https://cloud.umami.is/script.js",
-      },
-      // `/umami/api/send` is deliberately absent: it is a route handler now
-      // (`app/umami/api/send/route.ts`), because a rewrite opens its own
-      // connection to Umami and the visitor's location is lost with it.
-      // Everything the browser sees is unchanged.
+      // Analytics, served from this origin so blocklists have nothing to match.
+      // The `mm` prefix and the bland filename are deliberate — see
+      // `app/mm/api/send/route.ts`. Both `/umami/*` paths this replaced were
+      // clear of every list checked; the rename is insurance, not a repair.
       //
-      // Next.js i18n middleware prefixes paths with the active locale
-      // (e.g. /en/umami/api/send). Add explicit locale-prefixed rewrites so
-      // the proxy still works regardless of which locale is active.
+      // The companion `/mm/api/send` is deliberately absent here: it is a route
+      // handler, because a rewrite opens its own connection to Umami and the
+      // visitor's location is lost with it.
       {
-        source: `/:locale(${localePattern})/umami/script.js`,
+        source: "/mm/m.js",
         destination: "https://cloud.umami.is/script.js",
-      },
-      // Unreachable in practice — the tracker's `data-host-url` is the absolute
-      // `/umami`, and the middleware no longer redirects it — but kept so a
-      // stale document that does post here is recorded rather than 404'd. It
-      // carries no location; see the route handler.
-      {
-        source: `/:locale(${localePattern})/umami/api/send`,
-        destination: "https://cloud.umami.is/api/send",
       },
     ];
   },

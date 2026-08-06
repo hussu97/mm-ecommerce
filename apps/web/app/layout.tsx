@@ -99,12 +99,16 @@ export default async function RootLayout({
         {/* Material Icons — loaded async to avoid render-blocking */}
         <Script id="material-icons" strategy="afterInteractive">{`(function(){var l=document.createElement('link');l.rel='stylesheet';l.href='https://fonts.googleapis.com/icon?family=Material+Icons';document.head.appendChild(l)})()`}</Script>
 
-        {/* Umami analytics — no-cookie, GDPR-friendly */}
+        {/* Umami analytics — no-cookie, GDPR-friendly.
+            Both paths are first-party and say `mm` rather than `umami`, so
+            there is no product name for a blocklist to match; the tracker
+            appends `/api/send` to `data-host-url` itself. See
+            `app/mm/api/send/route.ts`. */}
         {process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID && (
           <Script
-            src={process.env.NEXT_PUBLIC_UMAMI_URL ?? '/umami/script.js'}
+            src={process.env.NEXT_PUBLIC_UMAMI_URL ?? '/mm/m.js'}
             data-website-id={process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID}
-            data-host-url="/umami"
+            data-host-url="/mm"
             strategy="afterInteractive"
           />
         )}

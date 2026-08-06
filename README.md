@@ -210,10 +210,13 @@ NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_...
 
 # Umami Cloud — leave empty to disable client-side page tracking.
 # The URL is the same-origin proxy path, not cloud.umami.is: `next.config.ts`
-# rewrites /umami/* to Umami Cloud, which keeps the tracker off the common
-# privacy blocklists. Pointing this straight at cloud.umami.is loses events.
+# rewrites /mm/m.js to Umami Cloud and `app/mm/api/send/route.ts` forwards the
+# events, which keeps the tracker off the common privacy blocklists and is also
+# the only reason Umami can see which country a visitor is in. Pointing this
+# straight at cloud.umami.is loses events. The path deliberately does not say
+# "umami" — see `app/mm/api/send/route.ts`.
 NEXT_PUBLIC_UMAMI_WEBSITE_ID=
-NEXT_PUBLIC_UMAMI_URL=/umami/script.js
+NEXT_PUBLIC_UMAMI_URL=/mm/m.js
 
 # Sentry project: mm-frontend
 NEXT_PUBLIC_SENTRY_DSN=
@@ -368,7 +371,7 @@ UMAMI_WEBSITE_ID=<paste website ID>
 **`apps/web/.env`** — enables client-side page tracking in the storefront:
 ```env
 NEXT_PUBLIC_UMAMI_WEBSITE_ID=<paste website ID>
-NEXT_PUBLIC_UMAMI_URL=/umami/script.js
+NEXT_PUBLIC_UMAMI_URL=/mm/m.js
 ```
 
 Restart the API after updating its `.env`. Page views will appear in the admin analytics dashboard under **Visitor Trend** and **Top Pages**, and the storefront's custom events under **Storefront Events**.

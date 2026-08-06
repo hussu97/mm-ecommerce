@@ -108,8 +108,8 @@ next deploy.
 ### 2. Does the proxy still reach Umami?
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' https://meltingmomentscakes.com/umami/script.js
-curl -s -w '\n%{http_code}\n' -X POST https://meltingmomentscakes.com/umami/api/send \
+curl -s -o /dev/null -w '%{http_code}\n' https://meltingmomentscakes.com/mm/m.js
+curl -s -w '\n%{http_code}\n' -X POST https://meltingmomentscakes.com/mm/api/send \
   -H 'Content-Type: application/json' \
   -H 'x-umami-website-id: 00000000-0000-0000-0000-000000000000' \
   --data '{"type":"event","payload":{"website":"00000000-0000-0000-0000-000000000000","hostname":"meltingmomentscakes.com","url":"/","name":"probe"}}'
@@ -118,18 +118,27 @@ curl -s -w '\n%{http_code}\n' -X POST https://meltingmomentscakes.com/umami/api/
 Expect `200` for the script and Umami's own `400` for the send — a deliberately
 invalid website ID, so it proves the path without recording anything.
 
-**A `307` on the second command is a fault.** It means `/umami` has fallen back
+**A `307` on the second command is a fault.** It means `/mm/` has fallen back
 under the locale rule in `apps/web/proxy.ts` and every event is being sent
 twice. That was the state of production until 5 August 2026.
 
 ### 3. Is anything blocking it in the browser?
 
-Both the script and the send are same-origin (`/umami/...` — the script is
-rewritten in `next.config.ts`, the send is the route handler at
-`apps/web/app/umami/api/send/route.ts`), which is what keeps ordinary blocklists
-off them. If either is ever changed to point straight at `cloud.umami.is`,
-expect a large and uneven share of events to vanish, because that hostname is on
-the common privacy lists and the shop's traffic is overwhelmingly mobile.
+Both the script and the send are same-origin — the script rewritten in
+`next.config.ts`, the send handled by `apps/web/app/mm/api/send/route.ts` — which
+is what keeps ordinary blocklists off them. If either is ever changed to point
+straight at `cloud.umami.is`, expect a large and uneven share of events to
+vanish, because that hostname is on the common privacy lists and the shop's
+traffic is overwhelmingly mobile.
+
+Neither path names the product. When this was checked on 6 August 2026, nothing
+in EasyPrivacy, uBlock Origin's privacy list or AdGuard's tracking list matched
+the first-party `/umami/...` paths these replaced — every umami rule in them is a
+host rule (`||umami.is^$third-party`, `||umami.`) or `/umami.js`. So the naming
+is insurance against a list that starts matching the obvious string, not a
+repair. Keep it that way: the tracker appends `/api/send` to `data-host-url`
+itself, so only the prefix is ours, and it should stay something no generic rule
+can pattern-match.
 
 ### 3b. Is the country wrong?
 
@@ -139,7 +148,7 @@ Cloudflare, the `cf-connecting-ip` / `cf-ipcountry` pair stamped on that
 connection **outranks `X-Forwarded-For`**. Forwarding the standard proxy header
 alone fixes nothing.
 
-`apps/web/app/umami/api/send/route.ts` sends the two things that do outrank it:
+`apps/web/app/mm/api/send/route.ts` sends the two things that do outrank it:
 
 | Channel | Why it works |
 |---|---|
@@ -194,5 +203,6 @@ funnel is what is wrong, not the tracking.
 | 2026-06-05 | Queue custom events briefly when the Umami script has not loaded yet; no event names or payload fields changed |
 | 2026-08-02 | Checkout collapsed from 3 steps to 2 (delivery method moved into step 1). `checkout_step_complete` and `checkout_error` now emit `step` 1\|2 instead of 1\|2\|3; step 1 now also carries `delivery_method`. No events added or removed. |
 | 2026-08-02 | Checkout collapsed again from 2 steps to a single page. `checkout_step_complete` now fires once, on submit, always with `step: 1` and a `delivery_method`; `checkout_error` likewise always reports `step: 1`. No events added or removed — but the Main Purchase Funnel's step 4→5 is now a single page view, so treat any step-2 history before this date as a different shape. |
-| 2026-08-06 | Geography fixed. `/umami/api/send` is a route handler (edge runtime) instead of a `next.config.ts` rewrite, and now forwards the visitor's location to Umami as `payload.ip` plus the `x-umami-client-{ip,country,region,city}` headers — the two channels that outrank the Cloudflare headers Umami Cloud sits behind. No events added, removed or renamed, and nothing about the request changed from the browser's side, so blocklist behaviour is unaffected. Pre-existing geography is the proxy's and is not comparable; see Known limits. |
+| 2026-08-06 | Geography fixed. The send is a route handler (edge runtime) instead of a `next.config.ts` rewrite, and now forwards the visitor's location to Umami as `payload.ip` plus the `x-umami-client-{ip,country,region,city}` headers — the two channels that outrank the Cloudflare headers Umami Cloud sits behind. Pre-existing geography is the proxy's and is not comparable; see Known limits. |
+| 2026-08-06 | Analytics paths renamed: `/umami/script.js` → `/mm/m.js`, `/umami/api/send` → `/mm/api/send` (`data-host-url` is now `/mm`). No event added, removed or renamed, and the website ID is unchanged, so no history is affected. The old paths matched no blocklist rule — this is insurance against one appearing, and the reasoning is in `apps/web/app/mm/api/send/route.ts`. `NEXT_PUBLIC_UMAMI_URL`, if ever set, must be `/mm/m.js`. |
 | 2026-08-05 | Audit. No events added, removed or renamed. Fixed the **Fired from** column, which had drifted for `add_to_cart`, `remove_from_cart`, `user_signup` and `select_delivery_method`. Three delivery faults fixed in code: `/umami/api/send` was being locale-redirected so every event was sent twice; the pre-load queue gave up after 3s and now waits 30s; the basket sent the browser to `/checkout` without a locale, discarding `begin_checkout` across the redirect. The admin dashboard now reads `metrics?type=event` and reports Umami's refusals instead of showing zeros. Added the Troubleshooting section above. |

@@ -37,19 +37,23 @@ export function proxy(request: NextRequest) {
 
   // Skip static files, API routes, and Next.js internals
   //
-  // `/umami` is the analytics proxy, rewritten to Umami Cloud in
-  // `next.config.ts`. It is not a page and has no language, but it also has no
-  // dot in it, so without naming it here it fell through to the locale rule
-  // below: every event the tracker posted to `/umami/api/send` was answered
-  // with a 307 to `/en/umami/api/send` and had to be sent a second time. That
-  // survived on a fast connection and was pure waste on any other — and the
-  // requests most likely to be caught mid-redirect are the ones fired as the
-  // page is being replaced, which is exactly `begin_checkout`,
-  // `checkout_step_complete` and the hop out to the payment gateway.
+  // `/mm/` is the analytics proxy — the script rewritten to Umami Cloud in
+  // `next.config.ts`, the events handled by `app/mm/api/send/route.ts`. It is
+  // not a page and has no language, but `/mm/api/send` also has no dot in it,
+  // so without naming it here it fell through to the locale rule below: every
+  // event the tracker posted was answered with a 307 to the locale-prefixed
+  // path and had to be sent a second time. That survived on a fast connection
+  // and was pure waste on any other — and the requests most likely to be caught
+  // mid-redirect are the ones fired as the page is being replaced, which is
+  // exactly `begin_checkout`, `checkout_step_complete` and the hop out to the
+  // payment gateway.
+  //
+  // The trailing slash matters: `/mm` alone would also swallow a category or
+  // product slug that happens to start with those two letters.
   if (
     pathname.startsWith("/_next") ||
     pathname.startsWith("/api") ||
-    pathname.startsWith("/umami") ||
+    pathname.startsWith("/mm/") ||
     pathname.startsWith("/images") ||
     pathname.startsWith("/favicon") ||
     pathname.includes(".")
@@ -84,5 +88,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next|api|umami|images|favicon|.*\\..*).*)"],
+  matcher: ["/((?!_next|api|mm/|images|favicon|.*\\..*).*)"],
 };
