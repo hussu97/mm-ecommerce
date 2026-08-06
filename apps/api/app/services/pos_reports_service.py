@@ -149,6 +149,11 @@ async def sales_summary(
                 date_from=date_from,
                 date_to=date_to,
             )
+            # Scoped to closed orders like every other figure above. Without it,
+            # returns booked against still-open checks and voided orders counted
+            # towards a `gross_sales` that excludes them, so the funnel did not
+            # reconcile.
+            .where(Order.pos_status == CLOSED)
         )
     ).scalar_one()
 

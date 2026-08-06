@@ -15,6 +15,7 @@ import uuid
 from decimal import Decimal
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -222,8 +223,29 @@ async def open_order(
         due_at=due_at,
         opened_at=utcnow(),
     )
-    db.add(order)
-    await db.flush()
+    # Two terminals at the same counter read the same `max(check_number)` and
+    # both take it. The unique index catches the loser, who re-reads and retries
+    # inside a savepoint so the rest of the transaction survives — the same
+    # shape `order_service` uses for `order_number`. Without it, one of the two
+    # got a 500 from the derived `order_number` collision, and the register
+    # showed a failed sale for an order that was fine.
+    for attempt in range(3):
+        try:
+            async with db.begin_nested():
+                db.add(order)
+                await db.flush()
+            break
+        except IntegrityError:
+            if attempt == 2:
+                raise
+            check_number = await _next_check_number(
+                db, branch.id, day.business_date, settings.order_number_reset_daily
+            )
+            order.check_number = check_number
+            order.order_number = (
+                f"POS-{branch.reference}-{day.business_date}-{check_number:04d}"
+            )
+
     await db.refresh(order)
     return await get_order(db, order.id)
 
