@@ -209,14 +209,12 @@ NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
 NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_...
 
 # Umami Cloud — leave empty to disable client-side page tracking.
-# The URL is the same-origin proxy path, not cloud.umami.is: `next.config.ts`
-# rewrites /vague/v.js to Umami Cloud and `app/vague/api/send/route.ts` forwards the
-# events, which keeps the tracker off the common privacy blocklists and is also
-# the only reason Umami can see which country a visitor is in. Pointing this
-# straight at cloud.umami.is loses events. The path deliberately does not say
-# "umami" — see `app/vague/api/send/route.ts`.
+# The website ID is the only part that belongs here. Both analytics paths are
+# internal to the storefront — `/vague/v.js` is a rewrite in `next.config.ts`,
+# `/vague/api/send` is a route handler — and are hard-coded in `app/layout.tsx`
+# on purpose. `NEXT_PUBLIC_UMAMI_URL` is no longer read; if your environment
+# still sets it, delete it.
 NEXT_PUBLIC_UMAMI_WEBSITE_ID=
-NEXT_PUBLIC_UMAMI_URL=/vague/v.js
 
 # Sentry project: mm-frontend
 NEXT_PUBLIC_SENTRY_DSN=
@@ -371,7 +369,6 @@ UMAMI_WEBSITE_ID=<paste website ID>
 **`apps/web/.env`** — enables client-side page tracking in the storefront:
 ```env
 NEXT_PUBLIC_UMAMI_WEBSITE_ID=<paste website ID>
-NEXT_PUBLIC_UMAMI_URL=/vague/v.js
 ```
 
 Restart the API after updating its `.env`. Page views will appear in the admin analytics dashboard under **Visitor Trend** and **Top Pages**, and the storefront's custom events under **Storefront Events**.

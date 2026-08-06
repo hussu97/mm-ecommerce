@@ -103,10 +103,21 @@ export default async function RootLayout({
             Both paths are first-party and name neither the tool nor the shop, so
             there is no product name for a blocklist to match; the tracker
             appends `/api/send` to `data-host-url` itself. See
-            `app/vague/api/send/route.ts`. */}
+            `app/vague/api/send/route.ts`.
+
+            Neither path is configurable, and `NEXT_PUBLIC_UMAMI_URL` is
+            deliberately not read here any more. Both are internal to this app —
+            the script is a rewrite in `next.config.ts`, the send is a route
+            handler — so an environment that disagrees with the code is not a
+            deployment choice, it is a fault. It was one: renaming the paths on
+            6 August 2026 left a stale `/umami/script.js` in the Vercel
+            environment, the tag pointed at a 404 and the tracker stopped
+            loading entirely, while `data-host-url` moved with the code and
+            nothing looked wrong. Only the website ID belongs in the
+            environment. */}
         {process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID && (
           <Script
-            src={process.env.NEXT_PUBLIC_UMAMI_URL ?? '/vague/v.js'}
+            src="/vague/v.js"
             data-website-id={process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID}
             data-host-url="/vague"
             strategy="afterInteractive"

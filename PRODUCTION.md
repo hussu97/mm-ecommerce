@@ -315,8 +315,11 @@ docker compose -f docker-compose.prod.yml up -d api
    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_CHANGE_ME
    NEXT_PUBLIC_SUPPORTED_LOCALES=en,ar
    NEXT_PUBLIC_UMAMI_WEBSITE_ID=<from Umami Cloud dashboard>
-   NEXT_PUBLIC_UMAMI_URL=/vague/v.js
    ```
+   > Do **not** add `NEXT_PUBLIC_UMAMI_URL`. The analytics paths are internal to
+   > the storefront and hard-coded in `app/layout.tsx`; a stale value here once
+   > pointed the tracker at a 404 and stopped analytics dead. If the project
+   > still has one set, remove it.
    > Sentry env vars (`NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT`) are added separately — see **Step 11c**.
 5. Click **Deploy** and note the preview URL (e.g. `melting-moments-cakes-web.vercel.app`)
 6. Once confirmed working, go to **Settings → Domains** → add `meltingmomentscakes.com`
