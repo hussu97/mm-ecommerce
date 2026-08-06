@@ -844,23 +844,6 @@ class TillReport(BaseModel):
     drawer_totals: dict[str, Decimal]
 
 
-class ShiftClockInRequest(BaseModel):
-    branch_id: UUID
-    user_id: UUID | None = None
-
-
-class ShiftResponse(ORMModel):
-    id: UUID
-    branch_id: UUID
-    user_id: UUID
-    business_date: str
-    clocked_in_at: datetime
-    clocked_out_at: datetime | None
-    duration_minutes: int | None
-    created_at: datetime
-    updated_at: datetime
-
-
 DrawerOperationTypeLiteral = Literal[
     "pay_in", "pay_out", "cash_drop", "open_drawer", "sales", "return"
 ]

@@ -38,65 +38,6 @@ if TYPE_CHECKING:
     pass
 
 
-class PriceTag(Base, UUIDMixin, TimestampMixin):
-    """
-    A named alternative price list. A product can carry one price per tag, and
-    the POS or online channel picks the tag it trades on.
-    """
-
-    __tablename__ = "price_tags"
-
-    name: Mapped[str] = mapped_column(String(120), nullable=False)
-    name_localized: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    translations: Mapped[Any] = mapped_column(
-        JSONB, nullable=False, server_default="{}"
-    )
-    reference: Mapped[str | None] = mapped_column(
-        String(50), unique=True, nullable=True, index=True
-    )
-    is_active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="true"
-    )
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-
-    prices: Mapped[list[ProductPrice]] = relationship(
-        "ProductPrice", back_populates="price_tag", cascade="all, delete-orphan"
-    )
-
-    def __repr__(self) -> str:
-        return f"<PriceTag {self.name}>"
-
-
-class ProductPrice(Base, UUIDMixin, TimestampMixin):
-    """One product's price under one price tag."""
-
-    __tablename__ = "product_prices"
-    __table_args__ = (
-        UniqueConstraint("product_id", "price_tag_id", name="uq_product_price_tag"),
-    )
-
-    product_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("products.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    price_tag_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("price_tags.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    price: Mapped[Any] = mapped_column(Numeric(10, 2), nullable=False)
-
-    price_tag: Mapped[PriceTag] = relationship("PriceTag", back_populates="prices")
-
-    def __repr__(self) -> str:
-        return f"<ProductPrice product={self.product_id} {self.price}>"
-
-
 class MenuGroup(Base, UUIDMixin, TimestampMixin):
     """
     A node in the register's menu tree.

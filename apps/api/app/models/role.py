@@ -83,7 +83,6 @@ PERMISSION_GROUPS: dict[str, list[tuple[str, str]]] = {
         ("admin.promotions.manage", "Manage promotions"),
         ("admin.timed_events.manage", "Manage timed events"),
         ("admin.delivery_zones.manage", "Manage delivery zones"),
-        ("admin.price_tags.manage", "Manage price tags"),
         ("admin.kitchen_flows.manage", "Manage kitchen flows"),
         ("admin.drivers.manage", "Manage delivery drivers"),
     ],

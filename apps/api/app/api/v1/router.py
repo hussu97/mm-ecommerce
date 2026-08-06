@@ -59,8 +59,6 @@ from .operations import (
     dashboard_router,
     notification_rules_router,
     production_router,
-    reservations_router,
-    spot_checks_router,
     transfer_orders_router,
 )
 from .menu_groups import router as menu_groups_router
@@ -179,12 +177,6 @@ api_router.include_router(
 )
 api_router.include_router(
     production_router, prefix="/inventory/production", tags=["Inventory"]
-)
-api_router.include_router(
-    spot_checks_router, prefix="/inventory/spot-checks", tags=["Inventory"]
-)
-api_router.include_router(
-    reservations_router, prefix="/reservations", tags=["Reservations"]
 )
 api_router.include_router(
     notification_rules_router, prefix="/notification-rules", tags=["Notifications"]

@@ -99,46 +99,6 @@ class Till(Base, UUIDMixin, TimestampMixin):
         return f"<Till {self.business_date} {self.status}>"
 
 
-class Shift(Base, UUIDMixin, TimestampMixin):
-    """
-    A staff member's clock-in/clock-out. Independent of the till — a waiter has a
-    shift but no till, and a cashier may open several tills within one shift.
-    """
-
-    __tablename__ = "shifts"
-
-    branch_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("branches.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    business_date: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
-    clocked_in_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    clocked_out_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-
-    user: Mapped[User] = relationship("User")
-
-    @property
-    def duration_minutes(self) -> int | None:
-        if not self.clocked_out_at:
-            return None
-        return int((self.clocked_out_at - self.clocked_in_at).total_seconds() // 60)
-
-    def __repr__(self) -> str:
-        return f"<Shift {self.user_id} {self.business_date}>"
-
-
 class DrawerOperationTypeEnum(str, enum.Enum):
     PAY_IN = "pay_in"
     PAY_OUT = "pay_out"

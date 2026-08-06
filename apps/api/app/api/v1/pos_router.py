@@ -25,7 +25,7 @@ from .marketing import (
 )
 from .menu_groups import router as menu_groups_router
 from .modifiers import router as modifiers_router
-from .operations import dashboard_router, reservations_router
+from .operations import dashboard_router
 from .pos_config import (
     charges_router,
     courses_router,
@@ -89,9 +89,6 @@ pos_api_router.include_router(
 pos_api_router.include_router(printers_router, prefix="/printers", tags=["Printers"])
 pos_api_router.include_router(
     kitchen_flows_router, prefix="/kitchen-flows", tags=["Kitchen Flows"]
-)
-pos_api_router.include_router(
-    reservations_router, prefix="/reservations", tags=["Reservations"]
 )
 
 # ─── What a shift lead looks at ───────────────────────────────────────────────

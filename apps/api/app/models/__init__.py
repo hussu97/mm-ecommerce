@@ -82,7 +82,6 @@ from .till import (  # noqa: F401
     DRAWER_SIGN,
     DrawerOperation,
     DrawerOperationTypeEnum,
-    Shift,
     Till,
     TillStatusEnum,
 )
@@ -120,9 +119,7 @@ from .menu import (  # noqa: F401
     ComboSize,
     MenuGroup,
     MenuGroupProduct,
-    PriceTag,
     ProductAllergen,
-    ProductPrice,
     SellingMethodEnum,
 )
 from .marketing import (  # noqa: F401
@@ -137,10 +134,6 @@ from .marketing import (  # noqa: F401
 )
 from .operations import (  # noqa: F401
     NotificationRule,
-    Reservation,
-    ReservationStatusEnum,
-    SpotCheck,
-    SpotCheckItem,
     TransferOrder,
     TransferOrderItem,
     TransferOrderStatusEnum,
@@ -239,7 +232,6 @@ __all__ = [
     "TableStatusEnum",
     "Till",
     "TillStatusEnum",
-    "Shift",
     "DrawerOperation",
     "DrawerOperationTypeEnum",
     "DRAWER_SIGN",
@@ -279,8 +271,6 @@ __all__ = [
     "ModifierOptionIngredient",
     "InventoryItemIngredient",
     # Menu
-    "PriceTag",
-    "ProductPrice",
     "MenuGroup",
     "MenuGroupProduct",
     "Allergen",
