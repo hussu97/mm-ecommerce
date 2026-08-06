@@ -50,6 +50,22 @@ class Product(Base, UUIDMixin, TimestampMixin):
     barcode: Mapped[str | None] = mapped_column(String(100), nullable=True)
     calories: Mapped[int | None] = mapped_column(Integer, nullable=True)
     preparation_time: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Whether ordering this needs a date and a brief rather than a basket.
+    #:
+    #: A customisable product is a day of somebody's work, so the storefront
+    #: makes the customer choose a date, checks that date still has capacity,
+    #: and collects the design details. Everything else behaves exactly as it
+    #: did — this flag is the only thing that turns the extra flow on.
+    is_customisable: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
+    #: Days of notice this product needs, counted from today. Null falls back to
+    #: the business-wide default.
+    #:
+    #: `preparation_time` is minutes in the kitchen and is a different question
+    #: — a cake can take two hours to make and still need three days' notice
+    #: because the diary is full.
+    lead_time_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     image_urls: Mapped[Any] = mapped_column(
         ARRAY(String), nullable=False, default=list, server_default="{}"
     )

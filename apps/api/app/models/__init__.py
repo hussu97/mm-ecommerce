@@ -138,6 +138,13 @@ from .operations import (  # noqa: F401
     TransferOrderItem,
     TransferOrderStatusEnum,
 )
+from .custom_order import (  # noqa: F401
+    OCCUPIES_SLOT,
+    CustomOrder,
+    CustomOrderBlackout,
+    CustomOrderSourceEnum,
+    CustomOrderStatusEnum,
+)
 from .pos_order import (  # noqa: F401
     DeliveryStatusEnum,
     DiscountSourceEnum,
@@ -251,6 +258,12 @@ __all__ = [
     "OrderItemStatusEnum",
     "DeliveryStatusEnum",
     "DiscountSourceEnum",
+    # Custom cakes
+    "CustomOrder",
+    "CustomOrderBlackout",
+    "CustomOrderSourceEnum",
+    "CustomOrderStatusEnum",
+    "OCCUPIES_SLOT",
     # Inventory
     "InventoryCategory",
     "Warehouse",
