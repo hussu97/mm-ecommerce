@@ -200,3 +200,22 @@
   broken are the same thing to the reader. When they are not, carry the reason
   to the surface — a dashboard that says why it is blank costs one field and
   saves the next investigation entirely.
+
+### [2026-08-06] A live value equal to the default proves nothing about the environment
+- **What went wrong**: Before renaming the analytics paths, checked whether
+  `NEXT_PUBLIC_UMAMI_URL` was set in Vercel by curling production and reading
+  the script `src`. It was `/umami/script.js` — which was *also* the code's
+  fallback, so the observation could not distinguish "unset" from "set to the
+  same string". Concluded it was unset and said so. It was set. The rename
+  shipped, the tag pointed at a path that had just become a 404, and the
+  tracker stopped loading for about ten minutes. `data-host-url` moved with the
+  code, so the markup looked correct and only the `src` was wrong.
+- **Rule**: An observation that both hypotheses predict is not evidence. Before
+  concluding an override is absent, either read it where it is configured, or
+  find a signal the two cases disagree on. And when the check cannot be made,
+  say the value is unknown rather than assuming the default — the deploy will
+  find out either way, and it is the wrong place to find out.
+- **Corollary applied here**: paths internal to the app (the script rewrite, the
+  send route) are no longer environment-configurable at all. An environment that
+  disagrees with the code about them is a fault, not a deployment choice, so
+  there is nothing to get out of sync.
