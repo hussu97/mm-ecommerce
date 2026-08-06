@@ -23,11 +23,13 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -97,6 +99,14 @@ class OrderPayment(Base, UUIDMixin, TimestampMixin):
     """
 
     __tablename__ = "order_payments"
+    __table_args__ = (
+        Index(
+            "uq_order_payments_idempotency_key",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
+    )
 
     order_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -131,6 +141,18 @@ class OrderPayment(Base, UUIDMixin, TimestampMixin):
         Boolean, nullable=False, server_default="false"
     )
     reference: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    #: Client-supplied key that makes a retried payment a no-op.
+    #:
+    #: `RegisterModel.pay` is a three-call sequence over a 15-second timeout: a
+    #: payment the server actually recorded can time out on the way back, and
+    #: the cashier — looking at a check that still says unpaid — takes the money
+    #: again. The `amount > outstanding` guard catches that for a single tender
+    #: and does nothing at all for a split, where the second half is a
+    #: legitimately smaller amount against a balance that is legitimately lower.
+    #:
+    #: NULL for anything that does not send one, and the unique index is partial
+    #: so those rows do not collide with each other.
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     meta: Mapped[Any] = mapped_column(JSONB, nullable=False, server_default="{}")
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

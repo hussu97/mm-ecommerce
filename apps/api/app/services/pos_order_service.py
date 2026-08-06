@@ -931,7 +931,39 @@ async def record_payment(
     till: Till | None = None,
     is_refund: bool = False,
     reference: str | None = None,
+    idempotency_key: str | None = None,
 ) -> OrderPayment:
+    # A retry of a payment the server already took is not a second payment.
+    # `RegisterModel.pay` is three calls over a 15-second timeout, so a
+    # successful write can time out on the way back and the cashier — looking at
+    # a check that still reads unpaid — takes the money again. The
+    # `amount > outstanding` guard below stops that for a single tender and does
+    # nothing for a split, where the second half is legitimately smaller against
+    # a legitimately lower balance.
+    if idempotency_key:
+        existing = (
+            (
+                await db.execute(
+                    select(OrderPayment).where(
+                        OrderPayment.idempotency_key == idempotency_key
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if existing is not None:
+            if existing.order_id != order.id:
+                raise ConflictError(
+                    "This idempotency key was already used on a different order"
+                )
+            logger.info(
+                "Replayed payment %s on order %s — returning the original",
+                idempotency_key,
+                order.order_number,
+            )
+            return existing
+
     method = await db.get(PaymentMethod, payment_method_id)
     if method is None or method.deleted_at is not None or not method.is_active:
         raise BadRequestError("Payment method not available")
@@ -967,6 +999,7 @@ async def record_payment(
         business_date=order.business_date or "",
         is_refund=is_refund,
         reference=reference,
+        idempotency_key=idempotency_key,
         recorded_at=utcnow(),
     )
     db.add(payment)

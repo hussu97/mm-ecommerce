@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -331,7 +331,16 @@ async def record_payment(
     data: PaymentRequest,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_active_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
+    """
+    Record one tender against an order.
+
+    Send an `Idempotency-Key` and a retry of a payment that already landed
+    returns the original rather than taking the money twice — which matters
+    here because the register's pay sequence is three calls over a 15-second
+    timeout and the cashier cannot tell a lost response from a lost payment.
+    """
     await _require_permission(user, "pos.payment.perform")
     order = await _load(db, order_id)
     till = await _resolve_till(db, data.till_id, order)
@@ -346,6 +355,7 @@ async def record_payment(
         till=till,
         is_refund=data.is_refund,
         reference=data.reference,
+        idempotency_key=idempotency_key,
     )
     return _serialise(await _load(db, order_id))
 
