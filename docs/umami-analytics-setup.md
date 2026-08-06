@@ -124,11 +124,34 @@ twice. That was the state of production until 5 August 2026.
 
 ### 3. Is anything blocking it in the browser?
 
-Both the script and the send are same-origin (`/umami/...`, rewritten in
-`next.config.ts`), which is what keeps ordinary blocklists off them. If those
-rewrites are ever changed to point straight at `cloud.umami.is`, expect a large
-and uneven share of events to vanish, because that hostname is on the common
-privacy lists and the shop's traffic is overwhelmingly mobile.
+Both the script and the send are same-origin (`/umami/...` — the script is
+rewritten in `next.config.ts`, the send is the route handler at
+`apps/web/app/umami/api/send/route.ts`), which is what keeps ordinary blocklists
+off them. If either is ever changed to point straight at `cloud.umami.is`,
+expect a large and uneven share of events to vanish, because that hostname is on
+the common privacy lists and the shop's traffic is overwhelmingly mobile.
+
+### 3b. Is the country wrong?
+
+The proxy is why. A proxy opens its own connection to Umami, so without help
+Umami sees the relay, not the visitor — and because Umami Cloud is itself behind
+Cloudflare, the `cf-connecting-ip` / `cf-ipcountry` pair stamped on that
+connection **outranks `X-Forwarded-For`**. Forwarding the standard proxy header
+alone fixes nothing.
+
+`apps/web/app/umami/api/send/route.ts` sends the two things that do outrank it:
+
+| Channel | Why it works |
+|---|---|
+| `payload.ip` in the event body | Umami prefers it over every header, and having it, skips header lookup entirely — Cloudflare's included. Cannot be overwritten upstream. |
+| `x-umami-client-ip`, `x-umami-client-country`, `-region`, `-city` | Read before the Cloudflare headers in Umami Cloud. Copied straight from Vercel's `x-vercel-ip-*`, which already resolved the visitor at the edge. |
+
+If country goes blank or wrong again, check in this order: the route handler is
+still a route handler and not a rewrite (a rewrite loses this silently); the
+request still arrives with `x-vercel-ip-country` set; and the site is still
+served by Vercel — the `x-vercel-ip-*` half of this is platform-specific and a
+move off Vercel leaves only `payload.ip`, which is still correct but relies on
+Umami's own GeoIP database.
 
 ### 4. Can the dashboard read back?
 
@@ -148,9 +171,14 @@ funnel is what is wrong, not the tracking.
 
 - Events fired before the tracker finishes loading are queued and retried for
   30 seconds (`apps/web/lib/analytics.ts`). Beyond that they are dropped.
-- Every event and pageview is proxied through the storefront, so Umami sees the
-  storefront's server address, not the visitor's. Geography and network in the
-  Umami dashboard are therefore not meaningful. Everything else is.
+- **Country, region and city recorded before 6 August 2026 are the proxy's, not
+  the visitor's.** Every event was relayed by the Vercel edge, and Umami read
+  Cloudflare's view of that relay — so the dashboard reported wherever the edge
+  PoP sat (`bom1` reads as India, `sin1` as Singapore) and the UAE never
+  appeared at all. Treat any geography older than that date as a map of Vercel's
+  network, and do not compare it with what the dashboard shows now.
+- Network / ISP is still the proxy's and is not meaningful. Everything else —
+  events, pages, referrers, browser, OS, device — was always correct.
 - `order_completed` fires whenever the confirmation page is opened, including a
   refresh or a revisit of the link. Treat it as an upper bound; the order table
   is the source of truth for how many orders were placed.
@@ -166,4 +194,5 @@ funnel is what is wrong, not the tracking.
 | 2026-06-05 | Queue custom events briefly when the Umami script has not loaded yet; no event names or payload fields changed |
 | 2026-08-02 | Checkout collapsed from 3 steps to 2 (delivery method moved into step 1). `checkout_step_complete` and `checkout_error` now emit `step` 1\|2 instead of 1\|2\|3; step 1 now also carries `delivery_method`. No events added or removed. |
 | 2026-08-02 | Checkout collapsed again from 2 steps to a single page. `checkout_step_complete` now fires once, on submit, always with `step: 1` and a `delivery_method`; `checkout_error` likewise always reports `step: 1`. No events added or removed — but the Main Purchase Funnel's step 4→5 is now a single page view, so treat any step-2 history before this date as a different shape. |
+| 2026-08-06 | Geography fixed. `/umami/api/send` is a route handler (edge runtime) instead of a `next.config.ts` rewrite, and now forwards the visitor's location to Umami as `payload.ip` plus the `x-umami-client-{ip,country,region,city}` headers — the two channels that outrank the Cloudflare headers Umami Cloud sits behind. No events added, removed or renamed, and nothing about the request changed from the browser's side, so blocklist behaviour is unaffected. Pre-existing geography is the proxy's and is not comparable; see Known limits. |
 | 2026-08-05 | Audit. No events added, removed or renamed. Fixed the **Fired from** column, which had drifted for `add_to_cart`, `remove_from_cart`, `user_signup` and `select_delivery_method`. Three delivery faults fixed in code: `/umami/api/send` was being locale-redirected so every event was sent twice; the pre-load queue gave up after 3s and now waits 30s; the basket sent the browser to `/checkout` without a locale, discarding `begin_checkout` across the redirect. The admin dashboard now reads `metrics?type=event` and reports Umami's refusals instead of showing zeros. Added the Troubleshooting section above. |

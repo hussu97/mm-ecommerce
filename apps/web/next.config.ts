@@ -23,10 +23,11 @@ const nextConfig: NextConfig = {
         source: "/umami/script.js",
         destination: "https://cloud.umami.is/script.js",
       },
-      {
-        source: "/umami/api/send",
-        destination: "https://cloud.umami.is/api/send",
-      },
+      // `/umami/api/send` is deliberately absent: it is a route handler now
+      // (`app/umami/api/send/route.ts`), because a rewrite opens its own
+      // connection to Umami and the visitor's location is lost with it.
+      // Everything the browser sees is unchanged.
+      //
       // Next.js i18n middleware prefixes paths with the active locale
       // (e.g. /en/umami/api/send). Add explicit locale-prefixed rewrites so
       // the proxy still works regardless of which locale is active.
@@ -34,6 +35,10 @@ const nextConfig: NextConfig = {
         source: `/:locale(${localePattern})/umami/script.js`,
         destination: "https://cloud.umami.is/script.js",
       },
+      // Unreachable in practice — the tracker's `data-host-url` is the absolute
+      // `/umami`, and the middleware no longer redirects it — but kept so a
+      // stale document that does post here is recorded rather than 404'd. It
+      // carries no location; see the route handler.
       {
         source: `/:locale(${localePattern})/umami/api/send`,
         destination: "https://cloud.umami.is/api/send",
