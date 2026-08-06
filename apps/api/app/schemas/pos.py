@@ -223,7 +223,7 @@ class PaymentMethodCreate(BaseModel):
     name_localized: str | None = Field(None, max_length=100)
     translations: Translations = Field(default_factory=dict)
     code: str = Field(min_length=1, max_length=50, pattern=r"^[a-z0-9_]+$")
-    type: Literal["cash", "card", "gift_card", "house_account", "online", "other"]
+    type: Literal["cash", "card", "online", "other"]
     auto_open_drawer: bool = False
     allows_tendering: bool = False
     allows_tips: bool = False
@@ -238,9 +238,7 @@ class PaymentMethodUpdate(BaseModel):
     name_localized: str | None = Field(None, max_length=100)
     translations: Translations | None = None
     code: str | None = Field(None, min_length=1, max_length=50, pattern=r"^[a-z0-9_]+$")
-    type: (
-        Literal["cash", "card", "gift_card", "house_account", "online", "other"] | None
-    ) = None
+    type: Literal["cash", "card", "online", "other"] | None = None
     auto_open_drawer: bool | None = None
     allows_tendering: bool | None = None
     allows_tips: bool | None = None

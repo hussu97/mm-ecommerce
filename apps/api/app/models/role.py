@@ -22,13 +22,8 @@ PERMISSION_GROUPS: dict[str, list[tuple[str, str]]] = {
     ],
     "Customers": [
         ("customers.read", "View customer data"),
-        ("customers.insights.read", "View loyalty, house account credit and spend"),
+        ("customers.insights.read", "View customer spend"),
         ("customers.manage", "Edit or delete customers"),
-        (
-            "customers.house_account.manage",
-            "Toggle house accounts and register payments",
-        ),
-        ("customers.loyalty.manage", "Enrol or remove customers from loyalty"),
     ],
     "Inventory": [
         ("inventory.items.read", "View inventory items"),
@@ -85,11 +80,9 @@ PERMISSION_GROUPS: dict[str, list[tuple[str, str]]] = {
         ("admin.notifications.manage", "Manage notifications"),
         ("admin.allergens.manage", "Manage allergens"),
         ("admin.coupons.manage", "Manage coupons"),
-        ("admin.gift_cards.manage", "Manage gift cards"),
         ("admin.promotions.manage", "Manage promotions"),
         ("admin.timed_events.manage", "Manage timed events"),
         ("admin.delivery_zones.manage", "Manage delivery zones"),
-        ("admin.loyalty.manage", "Manage the loyalty programme"),
         ("admin.price_tags.manage", "Manage price tags"),
         ("admin.kitchen_flows.manage", "Manage kitchen flows"),
         ("admin.drivers.manage", "Manage delivery drivers"),

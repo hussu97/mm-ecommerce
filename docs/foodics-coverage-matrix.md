@@ -112,9 +112,6 @@ plan.
 | Addresses + delivery zone | ✅ | pre-existing `Address`, `Region` |
 | Customer tags | ✅ | `Tag(type=customer)` |
 | Blacklist | ✅ | `User.is_blacklisted` + reason |
-| House accounts + ledger | ✅ | `HouseAccount` (⛔️ no UI, descoped) |
-| Loyalty | ✅ | `LoyaltyProgram` (⛔️ no UI, descoped) |
-| Gift cards | ✅ | `GiftCard` (⛔️ no UI, descoped) |
 | Customer insights permission split | ✅ | `customers.insights.read` |
 
 ## 6. Marketing
@@ -185,7 +182,7 @@ plan.
 | Aggregator sync (Talabat, Noon, Keeta, Deliveroo, Careem) | Excluded by you at the outset |
 | Foodics Pay / Foodics Capital | Foodics' own payment rails |
 | Marketplace (100+ third-party apps) | Third-party integrations |
-| Gift card / loyalty / house account **UI** | Descoped by you |
+| Gift cards / loyalty / house accounts | Removed 2026-08-06 — all three were built end to end and never wired into a selling path, and a gift-card tender settled the check against nothing |
 | KDS **screen** in the iPad app | Descoped by you (API is built) |
 | ZATCA e-invoicing | Saudi-specific |
 

@@ -52,9 +52,6 @@ from .inventory import (
 )
 from .marketing import (
     discounts_router,
-    gift_cards_router,
-    house_accounts_router,
-    loyalty_router,
     promotions_router,
     timed_events_router,
 )
@@ -174,11 +171,6 @@ api_router.include_router(discounts_router, prefix="/discounts", tags=["Marketin
 api_router.include_router(promotions_router, prefix="/promotions", tags=["Marketing"])
 api_router.include_router(
     timed_events_router, prefix="/timed-events", tags=["Marketing"]
-)
-api_router.include_router(gift_cards_router, prefix="/gift-cards", tags=["Marketing"])
-api_router.include_router(loyalty_router, prefix="/loyalty", tags=["Marketing"])
-api_router.include_router(
-    house_accounts_router, prefix="/house-accounts", tags=["Marketing"]
 )
 
 # ─── Operations ───────────────────────────────────────────────────────────────

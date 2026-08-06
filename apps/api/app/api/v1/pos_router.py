@@ -20,9 +20,6 @@ from .categories import router as categories_router
 from .devices import printers_router, router as devices_router
 from .marketing import (
     discounts_router,
-    gift_cards_router,
-    house_accounts_router,
-    loyalty_router,
     promotions_router,
     timed_events_router,
 )
@@ -86,13 +83,6 @@ pos_api_router.include_router(
 )
 pos_api_router.include_router(
     timed_events_router, prefix="/timed-events", tags=["Marketing"]
-)
-pos_api_router.include_router(
-    gift_cards_router, prefix="/gift-cards", tags=["Marketing"]
-)
-pos_api_router.include_router(loyalty_router, prefix="/loyalty", tags=["Marketing"])
-pos_api_router.include_router(
-    house_accounts_router, prefix="/house-accounts", tags=["Marketing"]
 )
 
 # ─── Hardware and the floor ───────────────────────────────────────────────────

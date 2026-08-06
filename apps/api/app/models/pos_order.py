@@ -85,7 +85,6 @@ class DiscountSourceEnum(str, enum.Enum):
     OPEN = "open"
     PREDEFINED = "predefined"
     COUPON = "coupon"
-    LOYALTY = "loyalty"
     PROMOTION = "promotion"
 
 
@@ -204,8 +203,8 @@ class OrderDiscount(Base, UUIDMixin, TimestampMixin):
     """
     A discount applied to an order or to one of its lines.
 
-    `source` records where it came from (open, predefined, coupon, loyalty,
-    promotion) which is exactly the breakdown the discount report needs.
+    `source` records where it came from (open, predefined, coupon, promotion)
+    which is exactly the breakdown the discount report needs.
     """
 
     __tablename__ = "order_discounts"
