@@ -123,6 +123,17 @@ describe('DeliveryPromiseBanner', () => {
     expect(requestBrowserLocation).toHaveBeenCalledOnce();
   });
 
+  // The affordance is the crosshair icon alone; "Change" survives only as the
+  // button's accessible name, so screen readers still hear it and the strip
+  // stays a single uninterrupted line of copy.
+  it('shows the icon alone, with no visible label beside it', () => {
+    mockArea = area();
+    mockIsKnown = false;
+    render(<DeliveryPromiseBanner />);
+    expect(screen.queryByText('Change')).toBeNull();
+    expect(screen.getByRole('button', { name: /change/i })).toHaveTextContent('my_location');
+  });
+
   it('hides the location affordance once the location is real', () => {
     mockArea = area();
     mockIsKnown = true;
