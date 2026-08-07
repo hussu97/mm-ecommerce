@@ -48,6 +48,16 @@ dev = [
     "ruff>=0.15.13,<0.16",
 ]
 
+#: Only `scripts/build_delivery_zones.py` needs these, and only when the
+#: delivery map is redrawn — which is rare and deliberate. Kept out of `dev` so
+#: CI and a normal setup do not pull a GEOS-backed wheel they will never call:
+#: the generated geometry is committed, and everything downstream reads that.
+#:
+#:     pip install -e ".[geo]"
+geo = [
+    "shapely>=2.0",
+]
+
 [build-system]
 requires = ["setuptools>=75.0"]
 build-backend = "setuptools.build_meta"

@@ -124,28 +124,23 @@ CIRCLE_POINTS = 96
 #: The three Dubai bands all carry the same fee today. They are drawn anyway,
 #: because the whole point of the rebuild is that repricing the far half later
 #: is an admin edit rather than a migration that redraws the map.
-#: Bands that fill gaps in the source outlines, built as "circle minus
-#: neighbours" instead of "emirate ∩ circle".
+#: Bands that close gaps in the source outlines rather than inheriting them.
 #:
-#: Empty, and that is the current answer rather than the intended one.
-#:
-#: The gaps are real: Khalid Lagoon is claimed by no emirate, and Al Taawun sits
-#: in it 1.6 km from the kitchen, belonging to no zone and falling through to a
-#: live courier quote instead of the fee its neighbours pay. Filling them from
-#: the circle side fixes that.
-#:
-#: It also over-reaches, and expensively. The sea off the coast is a gap too, so
-#: a Sharjah circle minus its neighbours claims open water on the Dubai side —
-#: `test_noon_send_only_ever_claims_sharjah` found it at 25.254, 55.272. A pin
-#: there would be offered to noon Send, refused for crossing an emirate
-#: boundary, fall back to Lalamove, and be charged the zone's fee of zero: a car
-#: run given away free. Trading a handful of lagoon addresses onto a live quote
-#: is much the cheaper mistake.
-#:
-#: Doing this properly means filling only gaps *enclosed by* the emirate rather
-#: than every gap the circle reaches — a buffer-and-intersect, not a subtraction.
-#: Left for that change rather than approximated here.
-FILL_GAPS: frozenset[str] = frozenset()
+#: All of them. The construction is `circle ∩ grown-emirate − neighbours`, and
+#: the growth is bounded to `GAP_FILL_KM`, so a band can only pick up ground its
+#: own emirate very nearly claims already. An earlier version subtracted
+#: neighbours from the bare circle with no bound and claimed open sea; that is
+#: what `GAP_FILL_KM` exists to prevent.
+FILL_GAPS: frozenset[str] = frozenset(name for bands in () for name, _ in bands) | {
+    "Sharjah Central",
+    "Sharjah Outer",
+    "Ajman City",
+    "Dubai Near",
+    "Dubai Mid",
+    "Dubai Far",
+    "Umm al-Quwain City",
+    "Ras al-Khaimah City",
+}
 
 BANDS: dict[str, list[tuple[str, float]]] = {
     "Sharjah": [("Sharjah Central", 13.4), ("Sharjah Outer", 25.0)],
@@ -292,9 +287,45 @@ def _count(geometry: dict) -> tuple[int, int, int]:
     )
 
 
-def _clip_ring(ring: Ring, radius_km: float) -> Ring:
-    clip = _ccw(_circle(ORIGIN_LAT, ORIGIN_LNG, radius_km))
-    return clip_to_convex(ring, clip)
+def _shapely():
+    """Imported lazily so the module still loads without the `geo` extra."""
+    try:
+        from shapely import make_valid  # noqa: PLC0415
+        from shapely.geometry import mapping, shape  # noqa: PLC0415
+        from shapely.ops import unary_union  # noqa: PLC0415
+    except ModuleNotFoundError as exc:  # pragma: no cover - developer setup
+        raise SystemExit(
+            "Redrawing the delivery map needs shapely:\n\n"
+            '    pip install -e ".[geo]"\n\n'
+            "It is a build-time dependency only — the generated geometry is "
+            "committed, and nothing at runtime imports it."
+        ) from exc
+    return make_valid, mapping, shape, unary_union
+
+
+def _as_polygon(geometry: dict, shape, make_valid):
+    """A source outline as one valid shapely geometry.
+
+    `make_valid` is not defensive dressing: the raw outlines self-intersect, and
+    a plain `unary_union` over them dies with a side-location conflict at
+    55.5048, 25.5001.
+    """
+    if geometry["type"] == "MultiPolygon":
+        return make_valid(shape(geometry))
+    return make_valid(
+        shape({"type": "Polygon", "coordinates": geometry["coordinates"]})
+    )
+
+
+#: How far past its own outline an emirate may claim unclaimed ground, in km —
+#: and how close a neighbour has to be to claim it instead.
+#:
+#: The gaps being closed are surveying slop, not territory: Al Taawun sits 0.13
+#: km outside the Sharjah outline in Khalid Lagoon. The thing that must stay
+#: out is open sea on the Dubai side, and the nearest such point is 10.8 km
+#: from Sharjah. One kilometre sits an order of magnitude clear of both, so the
+#: figure is not delicately balanced and does not need to be.
+GAP_FILL_KM = 1.0
 
 
 def served_band(
@@ -304,51 +335,93 @@ def served_band(
     inner_radius_km: float | None,
 ) -> dict:
     """
-    The band as a circle with its neighbours cut out, not as the emirate
-    intersected with a circle.
+    The band, with gaps in the source outlines closed in the emirate's favour.
 
-    The distinction is not academic. The source outlines have gaps — Khalid
-    Lagoon is one, and Al Taawun sits in it, 1.6 km from the kitchen. Built the
-    old way, that address belonged to no zone at all: it fell past every polygon
-    to the dynamic path and was quoted live by a courier instead of being served
-    at the fee its neighbours pay. Anything the outlines forgot to draw, the
-    delivery map forgot too.
+    Built as `circle ∩ slightly-grown-emirate − neighbours` rather than
+    `emirate ∩ circle`. The difference is addresses the surveyor left out: gaps
+    between coastline parts belong to no emirate at all, so the old form left
+    them belonging to no *zone* either. Al Taawun is one of them, 1.6 km from
+    the kitchen, and it was falling past every polygon to a live courier quote
+    instead of being delivered on the fee its neighbours pay.
 
-    Built this way the circle is the zone, and only a *neighbouring emirate*
-    removes anything from it. Water, unlabelled land and the surveyor's rounding
-    all stay in, which is right: they are places a rider can reach, and the only
-    question a zone answers is what a run there costs.
+    The growth is what keeps this honest. An earlier attempt subtracted the
+    neighbours from the bare circle, which claims everything nobody else claims
+    — including open water on the Dubai side, where an order would be offered to
+    noon Send, refused for crossing an emirate, fall back to Lalamove and be
+    charged this zone's fee of zero. Bounded to a kilometre, the fill reaches
+    the lagoon and nothing else.
 
-    Neighbour outlines are clipped to the same circle before becoming holes.
-    Dubai's full outline is 1,658 points and `find_zone` walks every ring on
-    every quote — carrying the whole coastline as a hole in a 13 km Sharjah
-    circle would put the Jebel Ali shoreline on the checkout's hot path.
+    Neighbours are subtracted last, so where the grown outline overlaps a real
+    emirate, the real emirate wins.
     """
-    outer = _ccw(_circle(ORIGIN_LAT, ORIGIN_LNG, radius_km))
-    rings: list[Ring] = [[list(pt) for pt in outer]]
+    make_valid, mapping, shape, unary_union = _shapely()
 
-    for other, geometry in emirates.items():
-        if other == emirate:
-            continue
-        for part in _parts(geometry):
-            # Clipped a little wider than the band itself. A neighbour trimmed
-            # exactly at the boundary leaves the hole a fraction short of it,
-            # and a pin in that sliver is claimed by the wrong emirate — Al
-            # Salamah sits 30.4 km out against a 31 km Dubai band and was being
-            # priced as Dubai. A hole may extend past the outer ring; ray
-            # casting only ever asks about points inside it.
-            trimmed = _clip_ring(part[0], radius_km * 1.15)
-            if len(trimmed) >= 3 and _ring_area(trimmed) > 1e-9:
-                hole = [list(pt) for pt in trimmed]
-                hole.append(hole[0])
-                rings.append(hole)
+    circle = _as_polygon(
+        {
+            "type": "Polygon",
+            "coordinates": [
+                [list(pt) for pt in _circle(ORIGIN_LAT, ORIGIN_LNG, radius_km)]
+            ],
+        },
+        shape,
+        make_valid,
+    )
+    home = _as_polygon(emirates[emirate], shape, make_valid)
+    neighbours = unary_union(
+        [_as_polygon(g, shape, make_valid) for k, g in emirates.items() if k != emirate]
+    )
+
+    # Real territory first, and it is never given away: anything genuinely
+    # inside the emirate belongs to this band whatever sits next to it.
+    inside = circle.intersection(home)
+
+    # Then the gaps, which are the ground no outline claims. A gap joins this
+    # band only if home is the *nearest* emirate to it — within `GAP_FILL_KM`
+    # of home and no closer than that to anyone else.
+    #
+    # The second half is what a plain buffer misses. 25.3008, 55.3529 is a gap
+    # on the Sharjah-Dubai line, 0.61 km from Sharjah but 0.19 km from Dubai;
+    # a buffer of home alone swallows it, and since Sharjah's inner band is
+    # noon Send's, an order there would be refused for crossing an emirate and
+    # then carried by a Lalamove car for a fee of zero.
+    margin = GAP_FILL_KM / KM_PER_DEG_LAT
+    gaps = (
+        circle.intersection(home.buffer(margin))
+        .difference(home)
+        .difference(neighbours.buffer(margin))
+    )
+
+    band = inside.union(gaps).difference(neighbours)
 
     if inner_radius_km is not None:
-        inner = [list(pt) for pt in _circle(ORIGIN_LAT, ORIGIN_LNG, inner_radius_km)]
-        inner.append(inner[0])
-        rings.append(inner)
+        inner = _as_polygon(
+            {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        list(pt)
+                        for pt in _circle(ORIGIN_LAT, ORIGIN_LNG, inner_radius_km)
+                    ]
+                ],
+            },
+            shape,
+            make_valid,
+        )
+        band = band.difference(inner)
 
-    return {"type": "MultiPolygon", "coordinates": [rings]}
+    if band.is_empty:
+        raise ValueError(f"{emirate} has nothing within {radius_km} km of the kitchen")
+
+    geometry = mapping(band)
+    if geometry["type"] == "Polygon":
+        geometry = {"type": "MultiPolygon", "coordinates": [geometry["coordinates"]]}
+    return {
+        "type": "MultiPolygon",
+        "coordinates": [
+            [[list(pt) for pt in ring] for ring in poly]
+            for poly in geometry["coordinates"]
+        ],
+    }
 
 
 def build() -> list[dict]:
@@ -365,7 +438,7 @@ def build() -> list[dict]:
 
         for index, (name, radius) in enumerate(bands):
             inner = bands[index - 1][1] if index > 0 else None
-            if name in FILL_GAPS:
+            if FILL_GAPS is None or name in FILL_GAPS:
                 shape = served_band(emirate, emirates, radius, inner)
             else:
                 shape = clip_geometry(emirates[emirate], radius)

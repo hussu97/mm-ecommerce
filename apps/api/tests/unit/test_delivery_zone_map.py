@@ -12,6 +12,7 @@ stops being able to reach and the other takes over.
 from __future__ import annotations
 
 import json
+import re
 from decimal import Decimal
 from pathlib import Path
 
@@ -20,12 +21,7 @@ import pytest
 from app.services.delivery_zone_service import point_in_geometry
 
 VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
-GEOJSON = (
-    Path(__file__).resolve().parents[2]
-    / "app"
-    / "data"
-    / "uae_delivery_zones.geojson.json"
-)
+DATA = Path(__file__).resolve().parents[2] / "app" / "data"
 
 #: The migration that publishes the map currently in force. Everything here is
 #: read out of it rather than restated, so the test cannot agree with a fee
@@ -40,6 +36,22 @@ OUTER_THRESHOLD = "200.00"
 LALAMOVE = "lalamove"
 NOON_SEND = "noon_send"
 THIRD_PARTY = "third_party"
+
+
+def _geojson_path() -> Path:
+    """
+    Whichever snapshot the live migration reads.
+
+    Not the generator's output. The two are different files on purpose — a
+    migration reads a frozen `.vN.` copy so that redrawing the map cannot change
+    what an old migration means — and a test that validated the generator's
+    output while the migration seeded something else would be checking a map
+    nobody runs.
+    """
+    source = (VERSIONS / LIVE_MIGRATION).read_text()
+    match = re.search(r'"(uae_delivery_zones[a-z0-9.]*\.json)"', source)
+    assert match, f"{LIVE_MIGRATION} names no geometry file"
+    return DATA / match.group(1)
 
 
 def _seeded_zones() -> list[tuple[str, str, str, str, bool]]:
@@ -60,7 +72,7 @@ def _seeded_zones() -> list[tuple[str, str, str, str, bool]]:
 @pytest.fixture(scope="module")
 def zones() -> list[dict]:
     """Geometry in the order the migration inserts it, which is match order."""
-    shapes = {z["name"]: z["geometry"] for z in json.loads(GEOJSON.read_text())}
+    shapes = {z["name"]: z["geometry"] for z in json.loads(_geojson_path().read_text())}
     return [
         {
             "name": name,
@@ -339,20 +351,36 @@ def test_a_city_is_still_listed_ahead_of_its_own_emirate(zones):
         assert order.index(inner) < order.index(outer)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Khalid Lagoon is claimed by no emirate outline, so Al Taawun — 1.6 km "
-        "from the kitchen — belongs to no zone and is quoted live instead of "
-        "being delivered free. Filling the gap from the circle side also claims "
-        "open water on the Dubai side and would give a Lalamove run away free, "
-        "so it is left until the fill can be bounded to gaps the emirate "
-        "encloses. Flips to XPASS the day that lands."
-    ),
-    strict=True,
-)
-def test_al_taawun_is_in_a_hole_in_the_source_outlines(zones):
+def test_al_taawun_is_served_even_though_no_emirate_claims_it(zones):
+    """
+    Al Taawun sits in Khalid Lagoon, 0.13 km outside the Sharjah outline and
+    1.6 km from the kitchen. No emirate outline claims the water, so under
+    `emirate ∩ circle` the address belonged to no zone at all and was quoted
+    live by a courier instead of being delivered free like its neighbours.
+
+    The bands now close gaps in their own emirate's favour, bounded to
+    `GAP_FILL_KM`. That bound is the point: an unbounded version claimed open
+    sea on the Dubai side, where noon Send would have been offered an order it
+    cannot legally carry and the fallback would have run a Lalamove car for the
+    zone's fee of zero.
+    """
     zone = resolve(zones, 25.3160, 55.3720)
-    assert zone is not None and zone["name"] == "Sharjah Central"
+    assert zone is not None, "Al Taawun matched no zone"
+    assert zone["name"] == "Sharjah Central"
+    assert zone["fee"] == Decimal("0.00")
+
+
+def test_the_gap_fill_does_not_reach_open_water_on_the_dubai_side(zones):
+    """
+    The regression that killed the first attempt, pinned by coordinate.
+
+    25.254, 55.272 is sea 10.8 km from the Sharjah outline and 0.17 km from
+    Dubai's. It must never be Sharjah's, because Sharjah's inner band is
+    noon Send's and noon Send cannot cross an emirate boundary — an order there
+    would be refused, fall back to Lalamove, and be charged nothing.
+    """
+    zone = resolve(zones, 25.25404020255122, 55.272435077642456)
+    assert zone is None or zone["provider"] != NOON_SEND
 
 
 def test_outside_the_country_matches_nothing(zones):
@@ -408,8 +436,19 @@ def test_noon_send_only_ever_claims_sharjah(zones):
             while lng <= max(lngs):
                 if point_in_geometry(lat, lng, zone["geometry"]):
                     checked += 1
-                    assert point_in_geometry(lat, lng, outlines["Sharjah"]), (
-                        f"{zone['name']} reaches outside Sharjah at {lat}, {lng}"
+                    # Inside Sharjah, or on ground no emirate claims at all.
+                    # The second case is deliberate — the bands close gaps in
+                    # the source outlines, which is how Al Taawun gets served —
+                    # but it must never be ground another emirate *does* claim,
+                    # because noon Send cannot cross a boundary and the fallback
+                    # would run a Lalamove car for this zone's fee of zero.
+                    trespass = [
+                        name
+                        for name, outline in outlines.items()
+                        if name != "Sharjah" and point_in_geometry(lat, lng, outline)
+                    ]
+                    assert not trespass, (
+                        f"{zone['name']} reaches into {trespass} at {lat}, {lng}"
                     )
                 lng += 0.004
             lat += 0.004
@@ -420,5 +459,5 @@ def test_noon_send_only_ever_claims_sharjah(zones):
 
 def test_the_map_covers_every_seeded_zone(zones):
     """A fee with no shape would be a zone that can never match."""
-    shapes = {z["name"] for z in json.loads(GEOJSON.read_text())}
+    shapes = {z["name"] for z in json.loads(_geojson_path().read_text())}
     assert {z["name"] for z in zones} <= shapes

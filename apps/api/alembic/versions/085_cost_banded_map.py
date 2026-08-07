@@ -89,11 +89,21 @@ CITY_WINDOWS: list[tuple[str, tuple[int, int], tuple[int, int]]] = [
     ("Batch 5", (22, 30), (23, 0)),
 ]
 
+#: A frozen snapshot, not the file the generator writes.
+#:
+#: Migrations 057, 059 and 065 all read the generator's live output by name, so
+#: regenerating it for this change broke `alembic upgrade head` on an empty
+#: database — the shape they were written against no longer existed under the
+#: names they ask for. CI builds exactly that way on every merge.
+#:
+#: A migration is a historical record and has to keep meaning what it meant when
+#: it was written, so it reads a `.vN.` copy that nothing regenerates.
+#: `test_migrations_read_frozen_geometry` enforces it.
 GEOJSON_PATH = (
     Path(__file__).resolve().parents[2]
     / "app"
     / "data"
-    / "uae_delivery_zones.geojson.json"
+    / "uae_delivery_zones.v3.geojson.json"
 )
 
 
