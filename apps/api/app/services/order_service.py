@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload, selectinload
 
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
+from app.core.phone import normalise_phone
 from app.models.branch import Branch
 from app.models.cart import Cart, CartItem
 from app.models.delivery_batch import DELIVERY_TIMEZONE
@@ -672,9 +673,16 @@ async def _persist_order(
     # written only there is a phone that is sometimes missing. It is an identity
     # for the new-customer coupon now, and a coupon rule cannot be enforced off a
     # column that is populated most of the time.
+    #
+    # Stored canonical where it can be read as a number at all, because this
+    # column is now matched against on every coupon validation and two spellings
+    # of one handset must not read as two customers. Falls back to whatever was
+    # given when it cannot be parsed — a number nobody can normalise is still a
+    # number the driver has to ring.
     contact_phone = None
     if data.shipping_address is not None:
-        contact_phone = (data.shipping_address.phone or "").strip() or None
+        given = (data.shipping_address.phone or "").strip()
+        contact_phone = normalise_phone(given) or given or None
 
     order = Order(
         order_number=await _generate_order_number(db),

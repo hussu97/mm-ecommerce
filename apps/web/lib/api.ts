@@ -186,8 +186,27 @@ export const cartApi = {
 };
 
 export const promoApi = {
-  validate: (code: string, order_subtotal: number) =>
-    api.post<PromoValidateResponse>('/promo-codes/validate', { code, order_subtotal }),
+  /**
+   * Whether this code applies to this basket, for this customer.
+   *
+   * `identity` is not optional decoration. A new-customer coupon is refused on
+   * an account, an email or a phone that has ordered before, and order creation
+   * checks all three — so validating without them answers a different question
+   * from the one the checkout is about to be judged on. The discount shows as
+   * applied, the customer reaches the pay button, and the order is refused
+   * there. Send whatever the form knows; the server decides.
+   */
+  validate: (
+    code: string,
+    order_subtotal: number,
+    identity?: { email?: string | null; phone?: string | null },
+  ) =>
+    api.post<PromoValidateResponse>('/promo-codes/validate', {
+      code,
+      order_subtotal,
+      email: identity?.email || null,
+      phone: identity?.phone || null,
+    }),
   /**
    * The new-customer coupon currently being advertised, or `null` when none is.
    *

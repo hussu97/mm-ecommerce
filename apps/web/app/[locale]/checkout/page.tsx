@@ -2,7 +2,7 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { Suspense, useState, useEffect, useCallback } from 'react';
+import { Suspense, useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useCart } from '@/lib/cart-context';
 import {
@@ -106,19 +106,6 @@ function paymentOptionsFor(method: 'delivery' | 'pickup'): ('stripe' | 'cod')[] 
  * costs us nothing, so a fee there would have no cost behind it.
  *
  * The threshold is inclusive: a basket of exactly the threshold still pays.
- */
-
-/**
- * What this basket will be charged as a small-order fee.
- *
- * Mirrors `low_order_fee_for` on the server, including the two things about it
- * that are easy to get wrong. It is judged on the basket **before** any
- * discount, so applying a coupon can never conjure the fee into existence — an
- * acquisition offer that hands back a 15-dirham surcharge is an offer fighting
- * itself. And it never applies to collection: handing a box across a counter
- * costs us nothing, so a fee there would have no cost behind it.
- *
- * The threshold is inclusive: a basket of exactly 35 still pays.
  */
 export function lowOrderFeeFor(
   subtotal: number,
@@ -614,6 +601,21 @@ function CheckoutContent() {
   // Where the receipt is already going, when there is an account to read it
   // off. Null for guests — see accountEmailOf.
   const accountEmail = accountEmailOf(user);
+  // Who the server should judge a coupon against, as far as this form knows.
+  //
+  // A new-customer coupon is refused on an account, an email *or* a phone that
+  // has ordered before, and `create_order` checks all three. Validating without
+  // them asks a different question from the one the pay button is judged on —
+  // the discount shows as applied and the order is then refused at the last
+  // step, which is both the worst moment to find out and the point at which
+  // there is nothing left to do about it.
+  const promoIdentity = useMemo(
+    () => ({
+      email: accountEmail ?? (form.email.trim() || null),
+      phone: form.phone.trim() || null,
+    }),
+    [accountEmail, form.email, form.phone],
+  );
   const paymentOptions = paymentOptionsFor(form.deliveryMethod);
   // Keep the selection legal: switching to delivery must not leave cash chosen.
   const paymentMethod = paymentOptions.includes(form.paymentMethod)
@@ -1259,6 +1261,7 @@ function CheckoutContent() {
                   promoDiscount={form.promoDiscount}
                   promoMessage={form.promoMessage}
                   subtotal={subtotal}
+                  identity={promoIdentity}
                   onChange={(patch) => onChange(patch)}
                 />
                 <textarea

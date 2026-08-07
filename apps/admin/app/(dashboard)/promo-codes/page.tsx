@@ -19,6 +19,7 @@ interface FormState {
   min_order_amount: string;
   max_discount_amount: string;
   first_orders_limit: string;
+  requires_phone_verification: boolean;
   max_uses: string;
   max_uses_per_user: string;
   valid_from: string;
@@ -33,6 +34,7 @@ const EMPTY_FORM: FormState = {
   min_order_amount: '',
   max_discount_amount: '',
   first_orders_limit: '',
+  requires_phone_verification: false,
   max_uses: '',
   max_uses_per_user: '',
   valid_from: '',
@@ -95,6 +97,7 @@ export default function PromoCodesPage() {
       min_order_amount: promo.min_order_amount != null ? String(promo.min_order_amount) : '',
       max_discount_amount: promo.max_discount_amount != null ? String(promo.max_discount_amount) : '',
       first_orders_limit: promo.first_orders_limit != null ? String(promo.first_orders_limit) : '',
+      requires_phone_verification: Boolean(promo.requires_phone_verification),
       max_uses: promo.max_uses != null ? String(promo.max_uses) : '',
       max_uses_per_user: promo.max_uses_per_user != null ? String(promo.max_uses_per_user) : '',
       valid_from: promo.valid_from ? promo.valid_from.slice(0, 10) : '',
@@ -131,6 +134,7 @@ export default function PromoCodesPage() {
         ? Number(form.max_discount_amount)
         : null,
       first_orders_limit: form.first_orders_limit ? Number(form.first_orders_limit) : null,
+      requires_phone_verification: form.requires_phone_verification,
       max_uses: form.max_uses ? Number(form.max_uses) : null,
       max_uses_per_user: form.max_uses_per_user ? Number(form.max_uses_per_user) : null,
       valid_from: form.valid_from || null,
@@ -318,6 +322,31 @@ export default function PromoCodesPage() {
               value={form.first_orders_limit}
               onChange={e => setForm(f => ({ ...f, first_orders_limit: e.target.value }))}
             />
+            {/* The setting that makes "first orders only" mean anything.
+                Without it the rule is enforced against an account and an email,
+                both of which cost nothing to mint — a guest checkout creates a
+                fresh account per session. A mobile number is the only identity
+                in the checkout that costs something to fake, so an acquisition
+                code without this is a code anyone can redeem indefinitely. */}
+            <label className="flex items-start gap-2 cursor-pointer sm:col-span-2">
+              <input
+                type="checkbox"
+                className="mt-0.5 accent-primary"
+                checked={form.requires_phone_verification}
+                onChange={e =>
+                  setForm(f => ({ ...f, requires_phone_verification: e.target.checked }))
+                }
+              />
+              <span>
+                <span className="block font-body text-sm text-gray-800">
+                  Require a verified mobile number
+                </span>
+                <span className="block font-body text-xs text-gray-500">
+                  Strongly recommended alongside &ldquo;First Orders Only&rdquo; — without it
+                  the limit is enforced against identities anyone can create for free.
+                </span>
+              </span>
+            </label>
             <div />
             <Input
               label="Valid From"

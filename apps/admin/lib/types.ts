@@ -253,6 +253,14 @@ export interface PromoCode {
   max_discount_amount: number | null;
   /** Restricts the code to a customer's first N orders. */
   first_orders_limit: number | null;
+  /**
+   * Requires a proved mobile number before this code will apply.
+   *
+   * What makes `first_orders_limit` worth having. That rule counts identities —
+   * account, email, phone — and the first two are free to mint; a phone number
+   * is the only one in the checkout that costs anything to fake.
+   */
+  requires_phone_verification: boolean;
   max_uses: number | null;
   /** How many times one customer may redeem this code. */
   max_uses_per_user: number | null;

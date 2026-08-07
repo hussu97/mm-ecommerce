@@ -274,6 +274,13 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("verify", "code_label", "6-digit code"),
     ("verify", "confirm", "Confirm"),
     ("verify", "verified", "Verified"),
+    # Shown when a coupon needs a proved number and the form has none yet — the
+    # refusal has to name the step that fixes it, or it reads as a dead end.
+    (
+        "verify",
+        "enter_phone_first",
+        "Add your mobile number above, then apply the code again.",
+    ),
     ("verify", "failed", "That code didn't match. Try again."),
     ("verify", "too_many", "Too many attempts. Try again in a few minutes."),
     ("verify", "unavailable", "Verification is unavailable right now."),
@@ -890,6 +897,11 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("verify", "code_label", "الرمز المكوّن من 6 أرقام"),
     ("verify", "confirm", "تأكيد"),
     ("verify", "verified", "تم التحقق"),
+    (
+        "verify",
+        "enter_phone_first",
+        "أضف رقم هاتفك أعلاه ثم طبّق الكود مرة أخرى.",
+    ),
     ("verify", "failed", "الرمز غير مطابق. حاول مرة أخرى."),
     ("verify", "too_many", "محاولات كثيرة. حاول بعد بضع دقائق."),
     ("verify", "unavailable", "التحقق غير متاح حالياً."),

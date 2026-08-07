@@ -62,7 +62,7 @@ function persist(location: Location) {
 }
 
 export function LocationProvider({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const [location, setLocationState] = useState<Location>(DEFAULT_LOCATION);
   const [area, setArea] = useState<DeliveryArea | null>(null);
   const [loading, setLoading] = useState(false);
@@ -111,6 +111,14 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
   // prompt, and prompting somebody whose address we already know is a prompt
   // that buys nothing.
   useEffect(() => {
+    // Nothing may be seeded until we know whether there is an account, because
+    // the seed runs once and the answer changes which source wins. `user` is
+    // null on the first render of every page load — the session is restored a
+    // beat later — so seeding on it would mean a signed-in customer's saved
+    // address never won, and every one of them met a geolocation prompt for a
+    // location we already had on file. The ordering below is only real if the
+    // strongest source has actually arrived before the choice is made.
+    if (authLoading) return;
     if (seeded.current) return;
     seeded.current = true;
 
@@ -170,7 +178,7 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [user, setLocation, requestBrowserLocation]);
+  }, [authLoading, user, setLocation, requestBrowserLocation]);
 
   // ── what delivery looks like there ─────────────────────────────────────────
   useEffect(() => {

@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -173,8 +173,13 @@ def _speed_of(zone) -> str:
 @limiter.limit("60/minute")
 async def delivery_area(
     request: Request,
-    latitude: float,
-    longitude: float,
+    # Bounded, so the only things that reach the point-in-polygon lookup are
+    # points. A bare `float` accepts `nan` and `inf` — Python parses both — and
+    # a NaN compares false against every bound in every shape, which is a
+    # coordinate that silently answers "nowhere we deliver" rather than "that is
+    # not a coordinate".
+    latitude: float = Query(ge=-90, le=90),
+    longitude: float = Query(ge=-180, le=180),
     db: AsyncSession = Depends(get_db),
 ):
     """

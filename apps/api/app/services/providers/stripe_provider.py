@@ -18,6 +18,24 @@ logger = logging.getLogger(__name__)
 _PAYMENT_INTENT_PREFIX = "pi_"
 
 
+def _fee_label(delivery_fee: Decimal, low_order_fee: Decimal) -> str:
+    """
+    What to call the combined fee line, given what is actually in it.
+
+    The line is one line for the reasons given at the call site, but it must not
+    lie about what it is. Sharjah delivers free and still charges the
+    small-basket fee, so a fixed "Delivery Fee" would put `Delivery Fee AED
+    15.00` on the payment page of an order whose delivery is free — the one
+    place a customer is looking hardest at what they are about to be charged,
+    and a discrepancy they will read as an error and abandon over.
+    """
+    if delivery_fee > 0 and low_order_fee > 0:
+        return "Delivery & small order fee"
+    if low_order_fee > 0:
+        return "Small order fee"
+    return "Delivery Fee"
+
+
 class StripeProvider(PaymentProvider):
     """Stripe Checkout Sessions + webhook handler."""
 
@@ -65,16 +83,18 @@ class StripeProvider(PaymentProvider):
         # the order says, and nothing notices, because both totals are
         # internally consistent. `test_stripe_line_items_add_up_to_the_order_total`
         # is what holds this to it.
-        fees = (order.delivery_fee or Decimal("0")) + (
-            order.low_order_fee or Decimal("0")
-        )
+        delivery_fee = order.delivery_fee or Decimal("0")
+        low_order_fee = order.low_order_fee or Decimal("0")
+        fees = delivery_fee + low_order_fee
         if fees > 0:
             line_items.append(
                 {
                     "price_data": {
                         "currency": "aed",
                         "unit_amount": int(fees * 100),
-                        "product_data": {"name": "Delivery Fee"},
+                        "product_data": {
+                            "name": _fee_label(delivery_fee, low_order_fee)
+                        },
                     },
                     "quantity": 1,
                 }

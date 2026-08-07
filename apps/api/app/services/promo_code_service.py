@@ -10,6 +10,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError
+from app.core.phone import phone_identities
 from app.models.order import Order, OrderStatusEnum
 from app.models.promo_code import DiscountTypeEnum, PromoCode
 from app.services import firebase_auth_service
@@ -106,14 +107,23 @@ async def orders_placed_by(
     only *delivered* ones would be the more literal reading of "first three
     orders", and it would let somebody place ten in one evening before any of
     them lands.
+
+    The phone is matched on its canonical E.164 form **and** on the string as it
+    arrived. Without the first, `0501234567` and `+971501234567` are two
+    customers and the rule is bypassed by retyping one's own number differently
+    — the storefront's `PhoneInput` always sends E.164, but this API is public
+    and a scripted client is not obliged to be. Without the second, rows written
+    at the counter before this normalisation existed stop being seen, and a
+    customer's history silently resets.
     """
     identities = []
     if user_id is not None:
         identities.append(Order.user_id == user_id)
     if email:
         identities.append(func.lower(Order.email) == email.strip().lower())
-    if phone:
-        identities.append(Order.customer_phone == phone.strip())
+    spellings = phone_identities(phone)
+    if spellings:
+        identities.append(Order.customer_phone.in_(spellings))
     if not identities:
         return 0
 

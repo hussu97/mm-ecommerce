@@ -211,14 +211,17 @@ def test_stripe_line_items_add_up_to_the_order_total():
 
     # One combined fee line, not two. The split lives on the checkout and the
     # confirmation email, where the customer can ask what it is for; Stripe just
-    # takes the money.
+    # takes the money — but it is still named after everything in it.
     fee_lines = [
         item
         for item in line_items
-        if item["price_data"]["product_data"]["name"] == "Delivery Fee"
+        if "fee" in item["price_data"]["product_data"]["name"].lower()
     ]
     assert len(fee_lines) == 1
     assert fee_lines[0]["price_data"]["unit_amount"] == 3500  # 20 + 15
+    assert fee_lines[0]["price_data"]["product_data"]["name"] == (
+        "Delivery & small order fee"
+    )
 
 
 def test_a_fee_only_order_still_gets_a_line():
@@ -261,3 +264,14 @@ def test_a_fee_only_order_still_gets_a_line():
         for item in line_items
     ) / Decimal("100")
     assert charged == order.total
+
+    # And it is not called "Delivery Fee". Delivery on this order is free; a
+    # payment page reading "Delivery Fee AED 15.00" against free delivery is the
+    # discrepancy a customer abandons the checkout over.
+    fee_lines = [
+        item
+        for item in line_items
+        if "fee" in item["price_data"]["product_data"]["name"].lower()
+    ]
+    assert len(fee_lines) == 1
+    assert fee_lines[0]["price_data"]["product_data"]["name"] == "Small order fee"

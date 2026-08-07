@@ -155,6 +155,18 @@ function ConfirmationContent() {
             {Number(order.delivery_fee) === 0 ? t('common.free') : `${Number(order.delivery_fee).toFixed(2)} AED`}
           </span>
         </div>
+        {/* The small-basket fee, on the one screen a customer checks the
+            arithmetic on. Without it the lines above do not add up to the total
+            below, and a fifteen-dirham gap with no label beside it is how a
+            confirmation email becomes a support ticket. Only rendered when it
+            was charged — a surcharge printed at zero is a shop reminding
+            somebody it charges small orders. */}
+        {Number(order.low_order_fee ?? 0) > 0 && (
+          <div className="flex justify-between">
+            <span className="text-gray-500">{t('checkout.low_order_fee')}</span>
+            <span>{Number(order.low_order_fee).toFixed(2)} AED</span>
+          </div>
+        )}
         <div className="h-px bg-gray-200" />
         <div className="flex justify-between font-semibold text-base">
           {/* Nothing has been paid yet on a cash order — the money changes

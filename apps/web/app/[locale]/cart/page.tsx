@@ -6,7 +6,7 @@ import { useState, useCallback } from 'react';
 import { useCart } from '@/lib/cart-context';
 import { promoApi, ensureSessionId } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { ensureCheckoutAuth } from '@/lib/checkout-auth';
+import { accountEmailOf, ensureCheckoutAuth } from '@/lib/checkout-auth';
 import { analytics } from '@/lib/analytics';
 import { Button } from '@/components/ui/Button';
 import { Breadcrumb } from '@/components/ui/Breadcrumb';
@@ -73,7 +73,14 @@ export default function CartPage() {
     setAppliedPromo(null);
 
     try {
-      const result = await promoApi.validate(code, subtotal);
+      // The account's email, where there is one. The basket has no phone and no
+      // typed email, so this is as much identity as this page can offer — and
+      // the coupon is re-validated at the checkout against the full set, which
+      // is where a refusal is still actionable. A signed-in returning customer
+      // therefore finds out here rather than two screens later.
+      const result = await promoApi.validate(code, subtotal, {
+        email: accountEmailOf(user),
+      });
       if (!result.valid) return result.message ?? t('cart.invalid_promo');
 
       const discountAmount = Number(result.discount_amount);
@@ -85,7 +92,7 @@ export default function CartPage() {
     } catch {
       return t('cart.promo_error');
     }
-  }, [subtotal, addToast, t]);
+  }, [subtotal, user, addToast, t]);
 
   const handleApplyPromo = useCallback(async () => {
     if (!promoCode.trim()) return;

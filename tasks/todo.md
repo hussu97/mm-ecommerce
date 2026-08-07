@@ -112,6 +112,57 @@ The tree is correct; the attribution is not. Staged by explicit path from
 - `apps/web` has no `type-check` script despite `turbo.json:21-23` declaring the task.
 - `scrollbar-none` is used in four places but is not a Tailwind v4 utility and is not defined — a no-op. `.mm-rail` is the working equivalent.
 
+### Pre-merge audit — found and fixed (2026-08-08)
+
+A fresh read of the whole branch against `main`, engineering and QA. Ten findings,
+all fixed on the branch. Ordered by what they would have cost in production.
+
+1. **The coupon could not actually be redeemed.** `promoApi.validate` sent only
+   the code and the subtotal. The server judges a new-customer code on account,
+   email *and* phone, and `create_order` re-checks all three — so the discount
+   showed as applied the whole way down the form and the order was refused *at
+   the pay button*, with no way back. Identity now travels with every
+   validation, from the checkout and (as far as it knows one) from the cart.
+2. **No way to verify a phone anywhere a guest could reach.** `PhoneVerify` was
+   only on the account address book, which is behind a sign-in; a guest is who
+   the coupon is for. `requires_phone_verification` came back from `/validate`
+   and nothing read it. The OTP is now offered inline next to the refusal, and
+   confirming it re-applies the code.
+3. **The first-orders rule was bypassable by retyping your own number.**
+   `orders_placed_by` and `is_phone_verified` compared raw strings, so
+   `0501234567` and `+971501234567` were two customers. One canonical
+   `core.phone.normalise_phone` (lifted out of `lalamove_service`) now writes
+   `orders.customer_phone` and both lookups; the lookup also matches the
+   as-typed spelling so pre-existing counter rows keep counting.
+4. **Signed-in customers never got their saved address as a location.**
+   `LocationProvider` seeded once, on a first render where `user` is always
+   null, so the documented "saved address beats a browser reading" ordering
+   never happened — and every signed-in visitor met a geolocation prompt for a
+   location already on file. It now waits for auth to resolve.
+5. **The small-order fee was missing from the confirmation and order-detail
+   pages.** Subtotal − discount + delivery did not equal the total, with an
+   unlabelled fifteen-dirham gap, on the two screens where a customer checks.
+6. **"Resend code" threw.** Firebase refuses to render a second reCAPTCHA into
+   the same node; the verifier is now cleared before each send, on send failure,
+   and on unmount. The broken button was the one pressed when the SMS did not
+   arrive.
+7. **Stripe called a small-order fee "Delivery Fee".** Sharjah delivers free and
+   still charges it, so a free-delivery order showed `Delivery Fee AED 15.00` on
+   the payment page. The line is now named after what is in it.
+8. **The admin could not set `requires_phone_verification`.** The flag that makes
+   `first_orders_limit` enforceable could only be set by hand in the database.
+9. **`/delivery/area` took unbounded floats.** `nan` parses, and compares false
+   against every polygon bound — a non-coordinate that answered "nowhere we
+   deliver". Now bounded, so it answers 422.
+10. **Firebase cert fetches were one per unknown `kid`.** `kid` is attacker-
+    supplied on an unauthenticated endpoint, which made this an amplifier
+    pointed at Google. Floored at one fetch a minute, except while we hold no
+    keys at all.
+
+Plus a duplicated doc block above `lowOrderFeeFor`, and a `verify.enter_phone_first`
+string that the new copy needed. New coverage: `test_phone_identity.py` (17) and
+`PromoCodeStep.test.tsx` (6).
+
 ---
 
 ## ✅ 2026-08-05: Email fidelity, the promised time, and the POS gaps

@@ -41,6 +41,7 @@ from jose import jwt
 from jose.exceptions import JOSEError
 
 from app.core.config import settings
+from app.core.phone import normalise_phone
 
 logger = logging.getLogger(__name__)
 
@@ -106,12 +107,31 @@ _fetched_at: float = 0.0
 #: How long to trust the cached set before refetching, in seconds.
 _CACHE_SECONDS = 3600
 
+#: The floor between two fetches of Google's certificates.
+#:
+#: An unknown `kid` triggers a refetch, because that is what a key rotation
+#: looks like from here — and `kid` is a field of an unauthenticated, attacker-
+#: supplied token. Without a floor, a stream of tokens carrying random `kid`s
+#: turns our verification endpoint into an amplifier pointed at Google, one
+#: outbound HTTPS request per inbound one. The endpoint's own rate limit caps
+#: the rate; this caps the amplification.
+#:
+#: Well under a real rotation's overlap window, so a genuine rotation still
+#: resolves within a minute.
+_MIN_REFETCH_SECONDS = 60
+
+#: When we last *attempted* a fetch, successful or not. Distinct from
+#: `_fetched_at`, which is when we last succeeded: a failing endpoint must not
+#: be retried on every request either.
+_attempted_at: float = 0.0
+
 
 def reset_keys() -> None:
     """Drop the cached certificates. For tests, and for a rotation we got wrong."""
-    global _keys, _fetched_at
+    global _keys, _fetched_at, _attempted_at
     _keys = {}
     _fetched_at = 0.0
+    _attempted_at = 0.0
 
 
 async def _fetch_keys() -> dict[str, dict]:
@@ -122,10 +142,20 @@ async def _fetch_keys() -> dict[str, dict]:
 
 async def _signing_key(kid: str) -> dict:
     """The key this token was signed with, refetching if we have not seen it."""
-    global _keys, _fetched_at
+    global _keys, _fetched_at, _attempted_at
 
-    stale = (time.time() - _fetched_at) > _CACHE_SECONDS
-    if kid not in _keys or stale:
+    now = time.time()
+    stale = (now - _fetched_at) > _CACHE_SECONDS
+    # An unknown `kid` is worth one fetch, not one fetch per request: see
+    # `_MIN_REFETCH_SECONDS`.
+    #
+    # The floor does not apply while we hold no keys at all. That is a cold
+    # start, or a fetch that failed, and in both cases every verification is
+    # failing anyway — throttling the one call that would fix it would turn a
+    # blip in Google's endpoint into a minute of refusals.
+    may_refetch = not _keys or (now - _attempted_at) >= _MIN_REFETCH_SECONDS
+    if (kid not in _keys or stale) and may_refetch:
+        _attempted_at = now
         _keys = await _fetch_keys()
         _fetched_at = time.time()
 
@@ -138,13 +168,19 @@ async def _signing_key(kid: str) -> dict:
 
 def _normalise(phone: str) -> str:
     """
-    E.164, as Firebase issues it.
+    E.164, whichever end the number came from.
 
-    Firebase returns `phone_number` already in E.164, so this is a guard rather
-    than a conversion — but it is the value the coupon rule counts on, and a
-    stray space in it would silently make one customer into two.
+    Firebase issues `phone_number` in E.164 already, so on the write side this
+    is a guard rather than a conversion. The read side is where it earns its
+    keep: `is_phone_verified` is asked about the number typed into a checkout
+    form, and `0501234567` has to find the ledger row Firebase wrote as
+    `+971501234567` or the customer verifies their phone and is told they have
+    not.
+
+    Shared with the coupon rule and the courier booking rather than reimplemented
+    — one definition of "the same number", or the surfaces disagree.
     """
-    return "".join(phone.split())
+    return normalise_phone(phone) or "".join((phone or "").split())
 
 
 async def verify_id_token(token: str | None) -> PhoneVerification:

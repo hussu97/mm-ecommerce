@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import { Turnstile, isTurnstileEnabled } from '@/components/ui/Turnstile';
 import { authApi } from '@/lib/api';
@@ -46,7 +46,25 @@ export function PhoneVerify({
   const confirmationRef = useRef<{ confirm: (code: string) => Promise<unknown> } | null>(
     null,
   );
+
+  // Firebase renders its reCAPTCHA widget *into* a DOM node and refuses to
+  // render a second one into the same node — so constructing a fresh verifier
+  // per send throws on "Resend code", and on any retry after a failed send. The
+  // widget is torn down before a new one is made, and the reference is kept so
+  // it can be. This is the bug that makes the resend button useless, which is
+  // the button somebody presses precisely when the SMS did not arrive.
+  const verifierRef = useRef<{ clear: () => void } | null>(null);
   const recaptchaId = useId().replace(/:/g, '');
+
+  // A component that unmounts mid-flow — the customer collapses the panel, the
+  // promo step re-renders — must not leave a live widget behind on the node.
+  useEffect(() => () => {
+    try {
+      verifierRef.current?.clear();
+    } catch {
+      /* already gone */
+    }
+  }, []);
 
   const label = useCallback(
     (key: string, english: string) => withFallback(t, key, english),
@@ -63,7 +81,14 @@ export function PhoneVerify({
     try {
       const { signInWithPhoneNumber } = await import('firebase/auth');
       const auth = await getFirebaseAuth();
+      // Tear the previous widget down first — see `verifierRef`.
+      try {
+        verifierRef.current?.clear();
+      } catch {
+        /* nothing rendered yet, or already cleared */
+      }
       const verifier = await getRecaptchaVerifier(recaptchaId);
+      verifierRef.current = verifier;
       confirmationRef.current = await signInWithPhoneNumber(auth, phone, verifier);
       setStep('code');
     } catch (err) {
@@ -76,6 +101,15 @@ export function PhoneVerify({
           ? label('verify.too_many', 'Too many attempts. Try again in a few minutes.')
           : label('verify.unavailable', 'Verification is unavailable right now.'),
       );
+      // A verifier that was rendered before the send failed still occupies the
+      // node, and the retry the customer is about to make would collide with
+      // it. Clearing here is what makes "try again" mean try again.
+      try {
+        verifierRef.current?.clear();
+      } catch {
+        /* already gone */
+      }
+      verifierRef.current = null;
       setStep('idle');
     }
   };
