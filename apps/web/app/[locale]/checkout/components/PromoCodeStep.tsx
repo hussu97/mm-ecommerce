@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { PhoneVerify } from '@/components/ui/PhoneVerify';
 import { promoApi } from '@/lib/api';
+import { isFirebaseConfigured } from '@/lib/firebase';
 import { useToast } from '@/components/ui/Toast';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { withFallback } from '@/lib/i18n/fallback';
@@ -177,7 +178,7 @@ export function PromoCodeStep({
           which is behind a sign-in — and a guest is precisely who this coupon
           is for. Retries the code itself on success, so the customer does not
           have to work out that they should press Apply again. */}
-      {needsVerify && identity?.phone && (
+      {needsVerify && identity?.phone && isFirebaseConfigured() && (
         <div className="mt-2 border-s-2 border-secondary/40 ps-3">
           <p className="font-body text-xs text-gray-500 mb-1.5">
             {label('verify.subtitle', "We'll text you a 6-digit code.")}
@@ -188,7 +189,11 @@ export function PromoCodeStep({
           />
         </div>
       )}
-      {needsVerify && !identity?.phone && (
+      {/* No number yet, or a build with no Firebase keys in it — a preview
+          deploy, most often. `PhoneVerify` renders nothing at all in that case,
+          so without this check the heading above would sit over empty space:
+          a customer told a code is coming and no button to ask for one. */}
+      {needsVerify && !(identity?.phone && isFirebaseConfigured()) && (
         <p className="mt-2 font-body text-xs text-gray-500">
           {label('verify.enter_phone_first', 'Add your mobile number above, then apply the code again.')}
         </p>

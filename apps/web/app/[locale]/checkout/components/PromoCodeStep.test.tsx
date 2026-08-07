@@ -36,6 +36,10 @@ vi.mock('@/lib/analytics', () => ({
   analytics: { promoApplied: vi.fn(), promoFailed: vi.fn() },
 }));
 
+// A build with the Firebase vars in it. Without them the component renders
+// nothing, which is the preview-deploy case the step falls back to copy for.
+vi.mock('@/lib/firebase', () => ({ isFirebaseConfigured: () => true }));
+
 // Stood in for, because the real one loads the Firebase SDK. What matters here
 // is that it is rendered with the customer's number and that confirming it
 // re-applies the code — not how the SMS gets sent.
