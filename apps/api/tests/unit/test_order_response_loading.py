@@ -54,6 +54,7 @@ def _order(**overrides) -> Order:
         "subtotal": Decimal("3.50"),
         "total": Decimal("3.50"),
         "delivery_fee": Decimal("0"),
+        "low_order_fee": Decimal("0"),
         "discount_amount": Decimal("0"),
         "vat_rate": Decimal("0.05"),
         "vat_amount": Decimal("0.17"),

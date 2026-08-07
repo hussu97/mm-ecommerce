@@ -193,6 +193,7 @@ async def export_orders(
             "Subtotal",
             "Discount",
             "Delivery Fee",
+            "Small Order Fee",
             "Total",
             "Payment Provider",
             "Delivery Method",
@@ -214,6 +215,11 @@ async def export_orders(
                 str(r.subtotal),
                 str(r.discount_amount),
                 str(r.delivery_fee),
+                # Next to the delivery fee rather than appended at the end,
+                # because the two read together — and the header above moves
+                # with it, which is the only thing that keeps this file's
+                # positional columns honest.
+                str(r.low_order_fee or 0),
                 str(r.total),
                 r.payment_provider or "",
                 r.delivery_method.value,

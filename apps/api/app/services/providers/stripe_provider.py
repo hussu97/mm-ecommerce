@@ -62,6 +62,21 @@ class StripeProvider(PaymentProvider):
                 }
             )
 
+        # Every fee on the order has to appear here or the customer is charged
+        # a different number from the one the order says they owe — and nothing
+        # would notice, because both totals are internally consistent.
+        if order.low_order_fee and order.low_order_fee > 0:
+            line_items.append(
+                {
+                    "price_data": {
+                        "currency": "aed",
+                        "unit_amount": int(order.low_order_fee * 100),
+                        "product_data": {"name": "Small Order Fee"},
+                    },
+                    "quantity": 1,
+                }
+            )
+
         # Apply discount as a Stripe coupon
         discounts = []
         if order.discount_amount and order.discount_amount > 0:

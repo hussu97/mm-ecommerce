@@ -63,6 +63,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "totals.total": "Total",
         "totals.vat": "Includes VAT",
         "totals.free": "Free",
+        "totals.low_order_fee": "Small order fee",
         # ── the estimate panel ────────────────────────────────────────────────
         "estimate.delivery": "Estimated delivery",
         "estimate.ready": "Ready to collect",
@@ -314,6 +315,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "totals.total": "الإجمالي",
         "totals.vat": "شامل ضريبة القيمة المضافة",
         "totals.free": "مجاني",
+        "totals.low_order_fee": "رسوم الطلب الصغير",
         # ── the estimate panel ────────────────────────────────────────────────
         "estimate.delivery": "موعد التوصيل المتوقع",
         "estimate.ready": "جاهز للاستلام",

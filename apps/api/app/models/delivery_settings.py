@@ -37,6 +37,22 @@ class DeliverySettings(Base, UUIDMixin, TimestampMixin):
     default_delivery_fee: Mapped[Decimal] = mapped_column(
         Numeric(10, 2), nullable=False, default=Decimal("50.00"), server_default="50.00"
     )
+    #: Charged on a delivery order whose goods come to no more than
+    #: `low_order_threshold`. Nationwide, including the zones that deliver free —
+    #: free delivery is about the courier, and this is about the fixed cost of
+    #: baking, boxing and handing over an order at all, which a small basket does
+    #: not cover however near the customer lives.
+    #:
+    #: Zero disables it, and so does a null threshold.
+    low_order_fee: Mapped[Decimal] = mapped_column(
+        Numeric(10, 2), nullable=False, default=Decimal("0.00"), server_default="0.00"
+    )
+    #: The basket at or below which `low_order_fee` applies. Inclusive: a basket
+    #: of exactly this much is a small one. Null disables the fee entirely, which
+    #: is what it means everywhere the feature has not been switched on.
+    low_order_threshold: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 2), nullable=True
+    )
 
     def __repr__(self) -> str:
         return f"<DeliverySettings threshold={self.free_delivery_threshold}>"

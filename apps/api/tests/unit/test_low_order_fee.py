@@ -1,0 +1,213 @@
+"""
+The small-basket surcharge.
+
+AED 15 on a delivery order whose goods come to AED 35 or less. Three things
+about it are easy to get wrong and are pinned here:
+
+  * it is judged on the basket *before* any discount, so a coupon can never
+    conjure a fee into existence;
+  * it is outside the VAT base, exactly as delivery is;
+  * it reaches Stripe. A fee on the order that is missing from the payment
+    session charges the customer a different number from the one the order says
+    they owe, and nothing notices, because both totals are internally
+    consistent.
+"""
+
+from __future__ import annotations
+
+from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from app.models.delivery_settings import DeliverySettings
+from app.models.order import DeliveryMethodEnum
+from app.services import order_service
+from app.services.order_service import low_order_fee_for
+
+SETTINGS = DeliverySettings(
+    free_delivery_threshold=Decimal("150.00"),
+    pickup_fee=Decimal("0.00"),
+    default_delivery_fee=Decimal("50.00"),
+    low_order_fee=Decimal("15.00"),
+    low_order_threshold=Decimal("35.00"),
+)
+
+DELIVERY = DeliveryMethodEnum.DELIVERY
+PICKUP = DeliveryMethodEnum.PICKUP
+
+
+# ── the threshold ─────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "subtotal,expected",
+    [
+        ("10.00", "15.00"),
+        ("34.99", "15.00"),
+        # "under and including 35" — 35 is a small basket.
+        ("35.00", "15.00"),
+        ("35.01", "0.00"),
+        ("100.00", "0.00"),
+    ],
+)
+def test_the_threshold_is_inclusive(subtotal, expected):
+    assert low_order_fee_for(Decimal(subtotal), DELIVERY, SETTINGS) == Decimal(expected)
+
+
+def test_pickup_never_pays_it():
+    """Handing a box over the counter costs us nothing extra, so there is no
+    cost for the fee to cover."""
+    assert low_order_fee_for(Decimal("10.00"), PICKUP, SETTINGS) == Decimal("0.00")
+
+
+def test_a_null_threshold_disables_the_fee():
+    """Which is what it means on any deploy that has not switched it on."""
+    off = DeliverySettings(
+        free_delivery_threshold=Decimal("150.00"),
+        pickup_fee=Decimal("0.00"),
+        default_delivery_fee=Decimal("50.00"),
+        low_order_fee=Decimal("15.00"),
+        low_order_threshold=None,
+    )
+    assert low_order_fee_for(Decimal("10.00"), DELIVERY, off) == Decimal("0.00")
+
+
+# ── the discount interaction, which is the whole design decision ──────────────
+
+
+async def test_a_coupon_cannot_create_the_fee():
+    """
+    A 40-dirham basket with a 15% new-customer code is still a 40-dirham basket.
+
+    On the discounted figure it would fall to 34, trip the 35 threshold, and hand
+    back a 15-dirham fee against a 6-dirham discount — the acquisition offer
+    fighting itself, and the customer watching a fee appear *because* they
+    applied a coupon. The fee is judged on the gross basket for exactly this
+    reason, and this is the case that would catch anyone switching it.
+    """
+    subtotal = Decimal("40.00")
+    discount = Decimal("6.00")
+
+    data = SimpleNamespace(
+        delivery_method=DELIVERY,
+        shipping_address=SimpleNamespace(
+            latitude=25.33, longitude=55.37, address_line_1="somewhere"
+        ),
+    )
+    priced = SimpleNamespace(
+        serviceable=True, fee=Decimal("0.00"), zone=None, estimate=None
+    )
+
+    with (
+        patch.object(
+            order_service.delivery_service,
+            "get_settings",
+            new=AsyncMock(return_value=SETTINGS),
+        ),
+        patch.object(
+            order_service.delivery_service, "price", new=AsyncMock(return_value=priced)
+        ),
+    ):
+        totals = await order_service._compute_order_totals(
+            data, subtotal, discount, AsyncMock()
+        )
+
+    assert totals.low_order_fee == Decimal("0.00")
+    # 40 - 6 + 0 delivery + 0 fee
+    assert totals.total == Decimal("34.00")
+
+
+# ── VAT ───────────────────────────────────────────────────────────────────────
+
+
+async def test_the_fee_sits_outside_vat_exactly_as_delivery_does():
+    """
+    VAT is on goods. A 30-dirham basket pays VAT on 30, not on 30 + 15 + delivery.
+    """
+    subtotal = Decimal("30.00")
+    data = SimpleNamespace(
+        delivery_method=DELIVERY,
+        shipping_address=SimpleNamespace(
+            latitude=25.33, longitude=55.37, address_line_1="somewhere"
+        ),
+    )
+    priced = SimpleNamespace(
+        serviceable=True, fee=Decimal("20.00"), zone=None, estimate=None
+    )
+
+    with (
+        patch.object(
+            order_service.delivery_service,
+            "get_settings",
+            new=AsyncMock(return_value=SETTINGS),
+        ),
+        patch.object(
+            order_service.delivery_service, "price", new=AsyncMock(return_value=priced)
+        ),
+    ):
+        totals = await order_service._compute_order_totals(
+            data, subtotal, Decimal("0.00"), AsyncMock()
+        )
+
+    assert totals.low_order_fee == Decimal("15.00")
+    assert totals.total == Decimal("65.00")  # 30 goods + 20 delivery + 15 fee
+    # VAT back-calculated from the goods alone: 30 / 1.05 * 0.05
+    assert totals.vat_amount == Decimal("1.43")
+    assert totals.total_excl_vat == Decimal("28.57")
+    assert totals.vat_amount + totals.total_excl_vat == subtotal
+
+
+# ── it must reach the payment session ─────────────────────────────────────────
+
+
+def test_stripe_line_items_add_up_to_the_order_total():
+    """
+    The guard that matters. A fee on the order but not in the session means the
+    card is charged less than the order says, the books disagree, and both
+    numbers look right in isolation.
+    """
+    from app.services.providers.stripe_provider import StripeProvider
+
+    order = SimpleNamespace(
+        items=[
+            SimpleNamespace(
+                unit_price=Decimal("30.00"),
+                quantity=1,
+                product_name="Brookie Cookie Melt",
+                product_sku="BCM-1",
+            )
+        ],
+        delivery_fee=Decimal("20.00"),
+        low_order_fee=Decimal("15.00"),
+        discount_amount=Decimal("0.00"),
+        total=Decimal("65.00"),
+        order_number="MM-TEST-1",
+        email="x@example.com",
+        id="00000000-0000-0000-0000-000000000001",
+    )
+
+    provider = StripeProvider()
+    with (
+        patch.object(provider, "_configure"),
+        patch("app.services.providers.stripe_provider.stripe") as stripe_mock,
+    ):
+        stripe_mock.checkout.Session.create.return_value = SimpleNamespace(
+            id="cs_test", url="https://stripe.test/pay"
+        )
+        provider.create_session(order)
+
+    kwargs = stripe_mock.checkout.Session.create.call_args.kwargs
+    line_items = kwargs["line_items"]
+
+    charged = sum(
+        Decimal(item["price_data"]["unit_amount"]) * item["quantity"]
+        for item in line_items
+    ) / Decimal("100")
+    assert charged == order.total, (
+        f"Stripe would charge {charged} against an order total of {order.total}"
+    )
+
+    names = {item["price_data"]["product_data"]["name"] for item in line_items}
+    assert "Small Order Fee" in names

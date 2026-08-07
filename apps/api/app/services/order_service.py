@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -22,6 +23,7 @@ from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.models.branch import Branch
 from app.models.cart import Cart, CartItem
 from app.models.delivery_batch import DELIVERY_TIMEZONE
+from app.models.delivery_settings import DeliverySettings
 from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
 from app.models.product import Product
 from app.models.pos_order import OrderSourceEnum, PosOrderStatusEnum
@@ -352,6 +354,61 @@ async def _decrement_stock(db: AsyncSession, cart: Cart) -> None:
             raise BadRequestError(f"Product '{name}' is out of stock")
 
 
+@dataclass(frozen=True)
+class OrderTotals:
+    """
+    Every figure the order row needs, named.
+
+    This used to be a five-tuple unpacked positionally at its one call site,
+    which was survivable while it held one fee. It now holds two, both `Decimal`,
+    both money, and adjacent — and a tuple whose second and third elements can be
+    swapped without a type error is how a small-basket fee ends up charged to the
+    customer as delivery, reconciled against the courier's bill, and quietly
+    wrecking the freight margin report. Naming them costs nothing and removes the
+    whole class of mistake.
+    """
+
+    delivery_fee: Decimal
+    #: The small-basket surcharge, zero on everything above the threshold and on
+    #: every pickup order.
+    low_order_fee: Decimal
+    total: Decimal
+    vat_amount: Decimal
+    total_excl_vat: Decimal
+    #: Comes back because it also decides who carries the order, and resolving it
+    #: twice risks the two answers disagreeing if the map is published in between.
+    zone: Zone | None
+
+
+def low_order_fee_for(
+    subtotal: Decimal,
+    delivery_method: DeliveryMethodEnum,
+    settings: DeliverySettings,
+) -> Decimal:
+    """
+    The small-basket surcharge, if this order attracts one.
+
+    Delivery only. A pickup order costs us nothing to hand over, so charging for
+    a small one would be a fee with no cost behind it.
+
+    **Judged on the basket before any discount.** Free delivery is judged on the
+    discounted figure, and the asymmetry is deliberate rather than an oversight:
+    free delivery is a reward, and rewarding someone for what they actually paid
+    is right; this is a surcharge, and a surcharge that appears *because* the
+    customer applied a coupon is indefensible. On the gross figure a 40-dirham
+    basket with a 15% new-customer code stays a 40-dirham basket and attracts
+    nothing. On the discounted figure it would fall to 34, trip the threshold,
+    and hand back a 15-dirham fee against a 6-dirham discount — the acquisition
+    offer fighting itself.
+    """
+    if delivery_method == DeliveryMethodEnum.PICKUP:
+        return Decimal("0.00")
+    threshold = settings.low_order_threshold
+    if threshold is None or subtotal > threshold:
+        return Decimal("0.00")
+    return settings.low_order_fee or Decimal("0.00")
+
+
 async def _compute_order_totals(
     data: OrderCreate,
     subtotal: Decimal,
@@ -359,13 +416,9 @@ async def _compute_order_totals(
     db: AsyncSession,
     user_id: uuid.UUID | None = None,
     email: str | None = None,
-) -> tuple[Decimal, Decimal, Decimal, Decimal, Zone | None]:
+) -> OrderTotals:
     """
-    Compute delivery fee, order total, and VAT figures.
-
-    Returns (delivery_fee, total, vat_amount, total_excl_vat, zone). The zone
-    comes back because it also decides who carries the order, and resolving it
-    twice risks the two answers disagreeing if the map is published in between.
+    Compute delivery fee, small-basket fee, order total, and VAT figures.
 
     Raises `UnserviceableAreaError` when the pin lands somewhere nothing can be
     priced to. That is a refusal to take the money, deliberately, at the last
@@ -374,13 +427,17 @@ async def _compute_order_totals(
     discounted_subtotal = subtotal - discount_amount
     address = data.shipping_address
     settings = await delivery_service.get_settings(db)
+    low_order_fee = low_order_fee_for(subtotal, data.delivery_method, settings)
 
     if data.delivery_method == DeliveryMethodEnum.PICKUP:
-        return (
-            settings.pickup_fee,
-            discounted_subtotal + settings.pickup_fee,
-            *_vat_of(subtotal - discount_amount),
-            None,
+        vat_amount, total_excl_vat = _vat_of(discounted_subtotal)
+        return OrderTotals(
+            delivery_fee=settings.pickup_fee,
+            low_order_fee=low_order_fee,
+            total=discounted_subtotal + settings.pickup_fee,
+            vat_amount=vat_amount,
+            total_excl_vat=total_excl_vat,
+            zone=None,
         )
 
     # The fee is priced off the pin, and only the pin. One call, so the zone the
@@ -396,17 +453,27 @@ async def _compute_order_totals(
     if not priced.serviceable:
         raise delivery_service.UnserviceableAreaError()
 
-    zone = priced.zone
     delivery_fee = settings.default_delivery_fee if priced.fee is None else priced.fee
-    total = discounted_subtotal + delivery_fee
 
-    vat_amount, total_excl_vat = _vat_of(subtotal - discount_amount)
-    return delivery_fee, total, vat_amount, total_excl_vat, zone
+    # VAT is on goods only. Both fees sit outside it, for the same reason
+    # delivery always has — see `_vat_of`.
+    vat_amount, total_excl_vat = _vat_of(discounted_subtotal)
+    return OrderTotals(
+        delivery_fee=delivery_fee,
+        low_order_fee=low_order_fee,
+        total=discounted_subtotal + delivery_fee + low_order_fee,
+        vat_amount=vat_amount,
+        total_excl_vat=total_excl_vat,
+        zone=priced.zone,
+    )
 
 
 def _vat_of(taxable: Decimal) -> tuple[Decimal, Decimal]:
     """
-    VAT back-calculation (goods only; delivery excluded per UAE VAT rules).
+    VAT back-calculation (goods only; both fees excluded per UAE VAT rules).
+
+    The small-basket fee is treated exactly as delivery is — outside the VAT
+    base — so the two service charges on an order are handled the same way.
 
     Delegates to the register's splitter so a website order and a counter order
     do the same arithmetic. Two things change by doing so: the rounding is
@@ -581,6 +648,7 @@ async def _persist_order(
     fallback_email: str | None = None,
     branch: Branch | None = None,
     promised: delivery_service.DeliveryEstimate | None = None,
+    low_order_fee: Decimal = Decimal("0.00"),
 ) -> Order:
     """
     Write the order, its items, and update promo usage atomically.
@@ -605,6 +673,7 @@ async def _persist_order(
         locale=normalise_locale(data.locale),
         delivery_method=data.delivery_method,
         delivery_fee=delivery_fee,
+        low_order_fee=low_order_fee,
         subtotal=subtotal,
         discount_amount=discount_amount,
         total=total,
@@ -718,14 +787,8 @@ async def create_order(
         promo_code_used = data.promo_code.upper()
         promo_obj = await promo_code_service.get_promo(db, data.promo_code)
 
-    # 4. Compute delivery fee, total, VAT
-    (
-        delivery_fee,
-        total,
-        vat_amount,
-        total_excl_vat,
-        zone,
-    ) = await _compute_order_totals(
+    # 4. Compute delivery fee, small-basket fee, total, VAT
+    totals = await _compute_order_totals(
         data,
         subtotal,
         discount_amount,
@@ -743,7 +806,7 @@ async def create_order(
     #    is a shop that cannot take this one.
     branch = await resolve_branch(
         db,
-        zone,
+        totals.zone,
         pickup_branch_id=(
             data.pickup_branch_id
             if data.delivery_method == DeliveryMethodEnum.PICKUP
@@ -770,7 +833,7 @@ async def create_order(
     #     would be believed.
     promised: delivery_service.DeliveryEstimate | None = None
     if data.delivery_method == DeliveryMethodEnum.DELIVERY:
-        promised = await delivery_service.estimate_arrival(db, zone)
+        promised = await delivery_service.estimate_arrival(db, totals.zone)
 
     # 6. Claim stock for stock-tracked products (fails if any is out of stock)
     await _decrement_stock(db, cart)
@@ -786,20 +849,26 @@ async def create_order(
         discount_amount,
         promo_code_used,
         promo_obj,
-        delivery_fee,
-        total,
-        vat_amount,
-        total_excl_vat,
+        totals.delivery_fee,
+        totals.total,
+        totals.vat_amount,
+        totals.total_excl_vat,
         fallback_email,
         branch,
         promised,
+        # Keyword, not positional. It is a `Decimal` sitting next to three other
+        # `Decimal`s and the argument list is already thirteen long — the one
+        # place a silent swap could still happen is the call, so it is named.
+        low_order_fee=totals.low_order_fee,
     )
 
     # 8. Open the delivery record — including for zones no courier API touches,
     #    so "what did fulfilment cost" is answerable for the whole country and
     #    not just the automated part of it.
     if data.delivery_method == DeliveryMethodEnum.DELIVERY:
-        await lalamove_service.record_order_delivery(db, order, zone=zone, cart=cart)
+        await lalamove_service.record_order_delivery(
+            db, order, zone=totals.zone, cart=cart
+        )
 
     # 9. Put it on a register — check number, business day, pending state. The
     #    branch itself was stamped on the row at insert; this is the POS wiring

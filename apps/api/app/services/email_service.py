@@ -202,6 +202,7 @@ def _item_rows(order: OrderResponse) -> list[dict[str, Any]]:
 
 def _totals(order: OrderResponse, *, is_pickup: bool, t) -> dict[str, Any]:
     fee = Decimal(str(order.delivery_fee or 0))
+    low_order = Decimal(str(getattr(order, "low_order_fee", 0) or 0))
     return {
         "subtotal": _money(order.subtotal),
         "discount": _money(order.discount_amount) if order.discount_amount else None,
@@ -210,6 +211,11 @@ def _totals(order: OrderResponse, *, is_pickup: bool, t) -> dict[str, Any]:
         # Zero reads better as the word than as 0.00 — it is the difference
         # between "we charged you nothing" and "there is a line here".
         "delivery_fee": t("totals.free") if fee == 0 else f"AED {_money(fee)}",
+        # Null rather than "AED 0.00" when it does not apply, so the template can
+        # drop the row entirely. A zero line invites the question it exists to
+        # answer.
+        "low_order_fee": (f"AED {_money(low_order)}" if low_order > 0 else None),
+        "low_order_label": t("totals.low_order_fee"),
         "total": _money(order.total),
         "vat": _money(order.vat_amount),
     }

@@ -12,7 +12,7 @@ behaviour on its own; the new map that follows it sets real values. Zero is a
 distinct, legitimate value meaning "free at any basket" — which is why the
 service tests `IS NULL` rather than falsiness.
 
-Revision ID: 083_polygon_free_delivery_threshold
+Revision ID: 083_polygon_free_threshold
 Revises: 082_search_trigram_indexes
 Create Date: 2026-08-07
 """
@@ -22,7 +22,7 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "083_polygon_free_delivery_threshold"
+revision: str = "083_polygon_free_threshold"
 down_revision: Union[str, None] = "082_search_trigram_indexes"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

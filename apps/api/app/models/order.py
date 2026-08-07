@@ -111,6 +111,17 @@ class Order(Base, UUIDMixin, TimestampMixin):
         nullable=False,
     )
     delivery_fee: Mapped[Any] = mapped_column(Numeric(10, 2), nullable=False, default=0)
+    #: The small-basket surcharge, charged on delivery orders whose goods come to
+    #: no more than `delivery_settings.low_order_threshold`.
+    #:
+    #: Its own column rather than folded into `delivery_fee`, because the two are
+    #: reconciled against different things: the delivery fee is set against what
+    #: a courier charges us for that run, and mixing a service charge into it
+    #: would make every freight-margin report wrong by fifteen dirhams on exactly
+    #: the orders where the margin is tightest.
+    low_order_fee: Mapped[Any] = mapped_column(
+        Numeric(10, 2), nullable=False, default=0, server_default="0"
+    )
     subtotal: Mapped[Any] = mapped_column(Numeric(10, 2), nullable=False)
     discount_amount: Mapped[Any] = mapped_column(
         Numeric(10, 2), nullable=False, default=0
