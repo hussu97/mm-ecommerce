@@ -4,7 +4,6 @@ import { getTranslations, getLanguages, createT } from "@/lib/i18n/server";
 import { Header } from "@/components/layout/Header";
 import { CategoryNavLinks } from "@/components/layout/CategoryNav";
 import { Footer } from "@/components/layout/Footer";
-import { PromoBanner } from "@/components/layout/PromoBanner";
 import type { Category, Language } from "@/lib/types";
 
 import { RSC_API_BASE } from "@/lib/api";
@@ -51,7 +50,6 @@ export default async function LocaleLayout({
 
   return (
     <TranslationProvider locale={locale} direction={direction} translations={translations}>
-      <PromoBanner />
       <Header languages={languages} categories={categories} locale={locale} />
       <CategoryNavLinks
         categories={categories}

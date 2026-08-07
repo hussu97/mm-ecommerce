@@ -95,22 +95,23 @@ describe('DeliveryPromiseBanner', () => {
     expect(screen.getByText('Delivering to Ras al-Khaimah')).toBeInTheDocument();
   });
 
-  it('says nothing specific while the lookup has not landed', () => {
+  // The generic line these two used to fall back to — "free delivery over 150
+  // AED in selected areas" — was a national average that is true in no zone:
+  // Sharjah is free at any basket and the far emirates want 200. A bar that
+  // renders nothing is better than a bar that quotes a threshold applying
+  // nowhere, and better than an empty strip with a lone "Change" button in it.
+  it('renders nothing at all while the lookup has not landed', () => {
     mockArea = null;
     mockIsKnown = true;
-    render(<DeliveryPromiseBanner />);
-    expect(
-      screen.getByText('Free delivery over 150 AED in selected areas'),
-    ).toBeInTheDocument();
+    const { container } = render(<DeliveryPromiseBanner />);
+    expect(container).toBeEmptyDOMElement();
   });
 
-  it('makes no promise about an address it cannot reach', () => {
+  it('renders nothing rather than a promise about an address it cannot reach', () => {
     mockArea = area({ serviceable: false, zone_name: null, free_delivery_available: false });
     mockIsKnown = true;
-    render(<DeliveryPromiseBanner />);
-    expect(
-      screen.getByText('Free delivery over 150 AED in selected areas'),
-    ).toBeInTheDocument();
+    const { container } = render(<DeliveryPromiseBanner />);
+    expect(container).toBeEmptyDOMElement();
   });
 
   it('offers to use the browser location while the location is a stand-in', () => {

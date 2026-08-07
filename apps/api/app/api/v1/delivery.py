@@ -212,7 +212,8 @@ async def delivery_area(
     )
     return DeliveryAreaResponse(
         serviceable=True,
-        zone_name=zone.name,
+        # The emirate, not the cost band — see `public_zone_name`.
+        zone_name=delivery_service.public_zone_name(zone.name),
         delivery_fee=None if zone.is_dynamic else float(zone.delivery_fee),
         free_threshold=float(threshold),
         free_delivery_available=zone.free_delivery_eligible,

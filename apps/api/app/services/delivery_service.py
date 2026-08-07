@@ -29,6 +29,7 @@ __all__ = [
     "calculate_fee",
     "estimate_arrival",
     "price",
+    "public_zone_name",
     "quote",
     "get_delivery_rates",
     "get_settings",
@@ -201,6 +202,48 @@ class DeliveryPrice:
         if self.free_applied:
             return Decimal("0.00")
         return self.base_fee
+
+
+#: The emirates, longest first so "Ras al-Khaimah" is not matched as nothing and
+#: "Umm al-Quwain City" does not fall through. Matched case-insensitively
+#: against the operational zone name, which is always "<emirate><qualifier>".
+_EMIRATES = (
+    "Ras al-Khaimah",
+    "Umm al-Quwain",
+    "Abu Dhabi",
+    "Sharjah",
+    "Fujairah",
+    "Ajman",
+    "Dubai",
+)
+
+
+def public_zone_name(name: str | None) -> str | None:
+    """
+    The emirate, which is all a customer is owed.
+
+    Zone names are operational. "Dubai Near", "Dubai Mid", "Dubai Far" and
+    "Sharjah Outer" are cost bands — they exist because a run to Jebel Ali costs
+    more than double one to Al Barsha, and the courier-margin report groups by
+    them. None of that is the customer's business, and "Sharjah Central" read
+    from a product card is a piece of our internal geography that means nothing
+    to the person reading it and invites the question "am I in Central?".
+
+    So the band stays on the row and only the emirate reaches the browser.
+    Vaguer, deliberately: somebody on the edge of two bands sees "Dubai" either
+    way, which is true either way, instead of a label that changes when they
+    move a street.
+
+    Unrecognised names pass through unchanged rather than becoming null — a zone
+    somebody adds by hand should show its own name, not disappear.
+    """
+    if not name:
+        return None
+    lowered = name.lower()
+    for emirate in _EMIRATES:
+        if lowered.startswith(emirate.lower()):
+            return emirate
+    return name
 
 
 async def get_settings(db: AsyncSession) -> DeliverySettings:
@@ -499,7 +542,11 @@ async def quote(
         "remaining_for_free": 0.0
         if free_applied
         else float(max(Decimal("0.00"), priced.free_threshold - subtotal)),
-        "zone_name": priced.zone.name if priced.zone else None,
+        # The emirate, not the cost band. "Dubai Near" / "Dubai Mid" /
+        # "Dubai Far" are our own freight geography — the courier-margin report
+        # groups by them — and a customer reading "Sharjah Central" on a
+        # checkout learns nothing except to wonder whether they are in Central.
+        "zone_name": public_zone_name(priced.zone.name if priced.zone else None),
         "in_known_zone": priced.zone is not None,
         "serviceable": priced.serviceable,
         # Sent as an instant plus how precisely we mean it, and formatted by the

@@ -359,5 +359,9 @@ async def test_a_courier_outage_cannot_stop_someone_checking_out(cart):
     result = await _quote(cart, estimate=None, error=None)
 
     assert result["delivery_fee"] == 15.0
-    assert result["zone_name"] == "Sharjah City"
+    # The emirate, not the operational band. "Sharjah City" is freight geography
+    # — the cost bands exist so the courier-margin report can tell a bike run
+    # inside the city from a car to the outskirts — and a customer reading it on
+    # a checkout learns nothing except to wonder which part they are in.
+    assert result["zone_name"] == "Sharjah"
     assert cart.delivery_quote_at is None, "nothing to record, so nothing written"

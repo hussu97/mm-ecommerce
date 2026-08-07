@@ -138,7 +138,7 @@ export function PhoneVerify({
   if (step === 'done') {
     return (
       <p className={`flex items-center gap-1.5 text-sm text-green-700 ${className}`}>
-        <span aria-hidden="true" className="material-symbols-outlined text-[18px]">
+        <span aria-hidden="true" className="material-icons text-[18px]">
           check_circle
         </span>
         {label('verify.verified', 'Verified')}
