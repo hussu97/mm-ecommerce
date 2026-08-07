@@ -149,7 +149,7 @@ class PolygonUpdate(BaseModel):
 
 class BatchWindowResponse(BaseModel):
     id: str
-    polygon_id: str
+    group_id: str
     label: str
     start_hour: int
     start_minute: int
@@ -184,6 +184,46 @@ class BatchWindowWrite(BaseModel):
     end_hour: int = Field(ge=0, le=24)
     end_minute: int = Field(default=0, ge=0, le=59)
     is_active: bool = True
+
+
+class BatchGroupResponse(BaseModel):
+    """
+    A set of zones whose orders ride together, and the schedule they share.
+
+    Everything the batching screen needs in one row, because the question it
+    answers — "which zones leave together, on whose van, and how long after"
+    — used to require reading five zones' schedules side by side and noticing
+    that their end times matched.
+    """
+
+    id: str
+    name: str
+    courier_code: str
+    #: How long after the run leaves that the last drop is through a door. Per
+    #: group, because it is a property of the route: 90 for Dubai, 120 for the
+    #: northern zones on the same rate card.
+    delivery_minutes_after_dispatch: int
+    is_active: bool
+    #: The zones on this schedule, in map order.
+    zone_names: list[str]
+    windows: list[BatchWindowResponse]
+
+    @classmethod
+    def of(
+        cls,
+        g: DeliveryBatchGroup,
+        zone_names: list[str],
+        windows: list[DeliveryBatchWindow],
+    ) -> "BatchGroupResponse":
+        return cls(
+            id=str(g.id),
+            name=g.name,
+            courier_code=g.courier_code,
+            delivery_minutes_after_dispatch=g.delivery_minutes_after_dispatch,
+            is_active=g.is_active,
+            zone_names=zone_names,
+            windows=[BatchWindowResponse.of(w) for w in windows],
+        )
 
 
 class BatchResponse(BaseModel):
@@ -776,6 +816,41 @@ def _reject_overlaps(windows: list[DeliveryBatchWindow]) -> None:
         "Two batches claiming one minute makes it a coin toss which run an "
         "order joins.",
     )
+
+
+@router.get("/batch-groups", response_model=list[BatchGroupResponse])
+async def list_batch_groups(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    """
+    Every schedule, with the zones on it.
+
+    Declared beside `/{polygon_id}` routes, so the literal path has to be
+    matched before anything that would read "batch-groups" as an id.
+    """
+    groups = (
+        (await db.execute(select(DeliveryBatchGroup).order_by(DeliveryBatchGroup.name)))
+        .scalars()
+        .all()
+    )
+    out: list[BatchGroupResponse] = []
+    for group in groups:
+        zones = (
+            (
+                await db.execute(
+                    select(DeliveryPolygon.name)
+                    .where(DeliveryPolygon.batch_group_id == group.id)
+                    .order_by(DeliveryPolygon.display_order)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        out.append(
+            BatchGroupResponse.of(group, list(zones), await _windows_of(db, group.id))
+        )
+    return out
 
 
 @router.get(

@@ -530,7 +530,8 @@ export interface DeliveryZoneMap {
  */
 export interface BatchWindow {
   id: string;
-  polygon_id: string;
+  /** Windows belong to a group, not a zone — see `BatchGroup`. */
+  group_id: string;
   label: string;
   start_hour: number;
   start_minute: number;
@@ -540,7 +541,25 @@ export interface BatchWindow {
   wraps_midnight: boolean;
 }
 
-export type BatchWindowWrite = Omit<BatchWindow, 'id' | 'polygon_id' | 'wraps_midnight'>;
+export type BatchWindowWrite = Omit<BatchWindow, 'id' | 'group_id' | 'wraps_midnight'>;
+
+/**
+ * A set of zones whose orders ride together, and the schedule they share.
+ *
+ * Which zones share a courier booking used to fall out of two schedules
+ * coincidentally ending on the same minute — nobody declared it and nothing
+ * displayed it. It is a row now, so this screen can show it.
+ */
+export interface BatchGroup {
+  id: string;
+  name: string;
+  courier_code: string;
+  /** Minutes from the van leaving to the last drop. Dubai 90, northern 120. */
+  delivery_minutes_after_dispatch: number;
+  is_active: boolean;
+  zone_names: string[];
+  windows: BatchWindow[];
+}
 
 /** One courier order carrying several of ours. */
 export interface DeliveryBatch {
