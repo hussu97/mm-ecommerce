@@ -55,7 +55,7 @@ including Sharjah. Shown as its own checkout line; disappears above the threshol
 
 ### Phase 2 — coupon + phone verification backend
 
-- [ ] **T4. Promo codes: Arabic code + first-N-orders + real identity**
+- [x] **T4. Promo codes: Arabic code + first-N-orders + real identity** — backend done, commit `bf8965c`. Admin UI + `types.ts` still to do (T4b).
   - `promo_codes`: add `code_ar` (nullable, unique), `max_uses_per_identity`, `identity_scope`. Match on either code; both resolve to one row.
   - Add `.strip()` to the four `.upper()` lookups (`promo_code_service.py:76,121,156,170`).
   - Redemption identity = **user OR phone OR email**; invalid if any of the three has ≥3 **delivered** orders. Needs a redemption ledger or an indexed query — `orders` has no `(user_id, status)` composite index, and guest phone lives in `shipping_address_snapshot` JSONB.
@@ -92,6 +92,13 @@ including Sharjah. Shown as its own checkout line; disappears above the threshol
 - **SMS region policy: allowlist `AE` only** — without this, SMS-pumping fraud is unbounded.
 - Authorized domains: `meltingmomentscakes.com`, `www.`, `localhost`, the two firebase defaults.
 - Still to do: register a Firebase web app (client API key), create the backend service account.
+
+### Fixed along the way
+- Migrations reading a mutable data file — frozen `.vN.` snapshots, enforced by `test_migration_frozen_geometry` (`fb5dfab`).
+- Al Taawun / outline gaps — bands now close gaps in their own emirate's favour under a nearest-emirate rule (`fb5dfab`).
+- `create_bulk` silently dropping `max_uses_per_user` (`bf8965c`).
+- Promo lookups missing `.strip()` (`bf8965c`).
+- `orders.customer_phone` only written best-effort by the register attach (`bf8965c`).
 
 ### Known pre-existing issues found while mapping (decide whether to fix in scope)
 - `delivery_zone_service.invalidate_cache()` is a process-local `dict.clear()` — publishing a map only clears the worker that served the request. Real staleness bug today, worse with more polygons.
