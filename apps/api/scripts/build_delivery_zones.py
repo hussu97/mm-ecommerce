@@ -83,21 +83,69 @@ ORIGIN_LNG = 55.3736131
 KM_PER_DEG_LAT = 111.32
 CIRCLE_POINTS = 96
 
-# emirate -> radius in km of the served city zone
-SERVED_RADIUS_KM: dict[str, float] = {
-    "Sharjah": 25.0,
-    "Ajman": 30.0,
-    "Dubai": 40.0,
-}
-
-#: The inner slice of a served emirate that a second courier reaches, as
-#: (zone name, radius km). Only Sharjah has one: noon Send cannot cross an
-#: emirate boundary, so from a Sharjah kitchen it can only ever serve Sharjah.
+#: Concentric bands per emirate, inner to outer, as (zone name, radius km from
+#: the kitchen). Each band is clipped to its own radius and has the band inside
+#: it punched out, so the set is disjoint and a pin's price is a property of
+#: where it is rather than of which row was checked first.
 #:
-#: 13.4 km is noon Send's 20 km road ceiling divided by the 1.49x road-to-crow
-#: ratio measured across the Sharjah rate card.
-INNER_ZONE: dict[str, tuple[str, float]] = {
-    "Sharjah": ("Sharjah Central", 13.4),
+#: Radii are crow-flies. Road distance runs about **1.42x** straight line across
+#: the 88 areas the Lalamove rate card was measured over, so a road figure
+#: divided by 1.42 gives the circle that contains it.
+#:
+#: Why each boundary is where it is. Every figure below is the **measured**
+#: crow distance of the furthest area that band should contain, taken from the
+#: 88 areas quoted live against the Lalamove API — not a road figure divided by
+#: a detour factor. The factor varies enough per route that estimating from it
+#: put three bands in the wrong place, Jebel Ali among them.
+#:
+#:  Sharjah Central 13.4 km — noon Send's 20 km road ceiling. Reach decides this
+#:                            one, not price. University City (12.4) is in;
+#:                            Al Rahmaniya (15.9) is out, correctly — noon Send
+#:                            will not carry it.
+#:  Sharjah Outer     25 km — Al Rahmaniya and the rest of the city. The east
+#:                            coast starts at 80 km and stays third-party.
+#:  Ajman City        22 km — the whole coastal emirate; the furthest measured
+#:                            area is Emirates City at 16.7. Masfout (89.5) is out.
+#:  Dubai Near        20 km — Al Nahda (4.9) through Business Bay (19.6).
+#:                            Courier cost 24-37.
+#:  Dubai Mid         31 km — Silicon Oasis (23.2) through Al Barsha (30.2).
+#:                            Cost 41-44.
+#:  Dubai Far         48 km — Palm Jumeirah (33.9) through Jebel Ali (47.0).
+#:                            Cost 47-59. The 40 km first cut dropped Investment
+#:                            Park and Jebel Ali onto the third party at 80,
+#:                            when a Lalamove car reaches both for 56-59.
+#:  Umm al-Quwain     36 km — all five measured areas (30.4-35.1), where a car
+#:                            costs 43-47 against the flat 80. Falaj Al Mualla
+#:                            (55) is out; Lalamove refuses it anyway.
+#:  Ras al-Khaimah    78 km — Al Jazirah Al Hamra (55.6) through RAK City
+#:                            (76.7), where a car costs 63-80. Al Rams (91) is
+#:                            out, correctly: a car costs 94 there.
+#:
+#: The three Dubai bands all carry the same fee today. They are drawn anyway,
+#: because the whole point of the rebuild is that repricing the far half later
+#: is an admin edit rather than a migration that redraws the map.
+#: Bands built as "circle minus neighbours" rather than "emirate ∩ circle".
+#:
+#: Only the innermost Sharjah band, and deliberately only it. The construction
+#: fills gaps in the source outlines — Khalid Lagoon is claimed by no emirate,
+#: and Al Taawun sits in it 1.6 km from the kitchen, belonging to no zone and
+#: falling through to a live courier quote instead of the fee its neighbours pay.
+#:
+#: Applied more widely it does more harm than good. Every band is a circle around
+#: the same kitchen, so gap ownership would fall to whichever circle is smallest
+#: — and a circle cannot tell Al Barsha (30.2 km south-west) from Al Salamah
+#: (30.4 km north-east). Dubai's band would take a gap in Umm al-Quwain purely
+#: because its radius is 31 km against Umm al-Quwain's 36. Outside Sharjah the
+#: emirate outline stays the authority, and a gap resolves to no zone and is
+#: quoted live, which is what it did before and is safe that far out.
+FILL_GAPS: frozenset[str] = frozenset({"Sharjah Central"})
+
+BANDS: dict[str, list[tuple[str, float]]] = {
+    "Sharjah": [("Sharjah Central", 13.4), ("Sharjah Outer", 25.0)],
+    "Ajman": [("Ajman City", 22.0)],
+    "Dubai": [("Dubai Near", 20.0), ("Dubai Mid", 31.0), ("Dubai Far", 48.0)],
+    "Umm al-Quwain": [("Umm al-Quwain City", 36.0)],
+    "Ras al-Khaimah": [("Ras al-Khaimah City", 78.0)],
 }
 
 
@@ -237,54 +285,121 @@ def _count(geometry: dict) -> tuple[int, int, int]:
     )
 
 
+def _clip_ring(ring: Ring, radius_km: float) -> Ring:
+    clip = _ccw(_circle(ORIGIN_LAT, ORIGIN_LNG, radius_km))
+    return clip_to_convex(ring, clip)
+
+
+def served_band(
+    emirate: str,
+    emirates: dict,
+    radius_km: float,
+    inner_radius_km: float | None,
+) -> dict:
+    """
+    The band as a circle with its neighbours cut out, not as the emirate
+    intersected with a circle.
+
+    The distinction is not academic. The source outlines have gaps — Khalid
+    Lagoon is one, and Al Taawun sits in it, 1.6 km from the kitchen. Built the
+    old way, that address belonged to no zone at all: it fell past every polygon
+    to the dynamic path and was quoted live by a courier instead of being served
+    at the fee its neighbours pay. Anything the outlines forgot to draw, the
+    delivery map forgot too.
+
+    Built this way the circle is the zone, and only a *neighbouring emirate*
+    removes anything from it. Water, unlabelled land and the surveyor's rounding
+    all stay in, which is right: they are places a rider can reach, and the only
+    question a zone answers is what a run there costs.
+
+    Neighbour outlines are clipped to the same circle before becoming holes.
+    Dubai's full outline is 1,658 points and `find_zone` walks every ring on
+    every quote — carrying the whole coastline as a hole in a 13 km Sharjah
+    circle would put the Jebel Ali shoreline on the checkout's hot path.
+    """
+    outer = _ccw(_circle(ORIGIN_LAT, ORIGIN_LNG, radius_km))
+    rings: list[Ring] = [[list(pt) for pt in outer]]
+
+    for other, geometry in emirates.items():
+        if other == emirate:
+            continue
+        for part in _parts(geometry):
+            # Clipped a little wider than the band itself. A neighbour trimmed
+            # exactly at the boundary leaves the hole a fraction short of it,
+            # and a pin in that sliver is claimed by the wrong emirate — Al
+            # Salamah sits 30.4 km out against a 31 km Dubai band and was being
+            # priced as Dubai. A hole may extend past the outer ring; ray
+            # casting only ever asks about points inside it.
+            trimmed = _clip_ring(part[0], radius_km * 1.15)
+            if len(trimmed) >= 3 and _ring_area(trimmed) > 1e-9:
+                hole = [list(pt) for pt in trimmed]
+                hole.append(hole[0])
+                rings.append(hole)
+
+    if inner_radius_km is not None:
+        inner = [list(pt) for pt in _circle(ORIGIN_LAT, ORIGIN_LNG, inner_radius_km)]
+        inner.append(inner[0])
+        rings.append(inner)
+
+    return {"type": "MultiPolygon", "coordinates": [rings]}
+
+
 def build() -> list[dict]:
     emirates = json.loads(SOURCE.read_text())
-    missing = set(SERVED_RADIUS_KM) - set(emirates)
+    missing = set(BANDS) - set(emirates)
     if missing:
         raise ValueError(f"no outline for {sorted(missing)}")
 
     zones: list[dict] = []
-    for emirate, radius in SERVED_RADIUS_KM.items():
-        inner = INNER_ZONE.get(emirate)
-        if inner is not None:
-            inner_name, inner_radius = inner
-            inner_shape = clip_geometry(emirates[emirate], inner_radius)
-            if inner_shape is None:
-                raise ValueError(
-                    f"{emirate} has nothing within {inner_radius} km of the kitchen"
-                )
-            zones.append(
-                {
-                    "name": inner_name,
-                    "radius_km": inner_radius,
-                    "geometry": inner_shape,
-                }
-            )
+    for emirate, bands in BANDS.items():
+        radii = [r for _, r in bands]
+        if radii != sorted(radii):
+            raise ValueError(f"{emirate} bands must run inner to outer: {radii}")
 
-        clipped = clip_geometry(emirates[emirate], radius)
-        if clipped is None:
-            raise ValueError(f"{emirate} has nothing within {radius} km of the kitchen")
-        zones.append(
-            {
-                "name": f"{emirate} City",
-                "radius_km": radius,
-                # The inner zone is taken out of the city ring for the same
-                # reason the city is taken out of the emirate: which fee a pin
-                # pays should be a property of where it is, not of which row
-                # happened to be checked first.
-                "geometry": (
-                    punch_out(clipped, inner[1]) if inner is not None else clipped
-                ),
-            }
-        )
+        for index, (name, radius) in enumerate(bands):
+            inner = bands[index - 1][1] if index > 0 else None
+            if name in FILL_GAPS:
+                shape = served_band(emirate, emirates, radius, inner)
+            else:
+                shape = clip_geometry(emirates[emirate], radius)
+                if shape is None:
+                    raise ValueError(
+                        f"{emirate} has nothing within {radius} km of the kitchen"
+                    )
+                if inner is not None:
+                    shape = punch_out(shape, inner)
+            zones.append({"name": name, "radius_km": radius, "geometry": shape})
+
+    # Sorted by radius, and the order is load-bearing.
+    #
+    # Every band is a circle around the same kitchen, so the bands of different
+    # emirates are concentric and nest inside one another. What keeps them apart
+    # is each carrying its neighbours as holes — which works everywhere the
+    # outlines actually claim the ground, and not in the gaps between them.
+    # Khalid Lagoon is claimed by nobody, so every circle wide enough to reach it
+    # contains it.
+    #
+    # Smallest first, and `find_zone` takes the first match, so a gap belongs to
+    # the nearest band that reaches it. The lagoon goes to Sharjah Central at
+    # 13.4 km rather than to Ras al-Khaimah at 70, which is both the right answer
+    # and the only one anybody would guess.
+    #
+    # This is a deliberate reversal. The zones used to be disjoint by
+    # construction and the note here said precedence was worth avoiding, because
+    # a shape whose price depends on the row above it is hard to reason about.
+    # That held while a gap in an outline merely meant a hole in the map; it
+    # stopped holding once one of those holes turned out to be 1.6 km from the
+    # kitchen with customers in it.
+    zones.sort(key=lambda z: z["radius_km"])
+
     for emirate, geometry in emirates.items():
-        radius = SERVED_RADIUS_KM.get(emirate)
+        bands = BANDS.get(emirate)
         zones.append(
             {
                 "name": emirate,
                 "geometry": (
-                    punch_out(geometry, radius)
-                    if radius is not None
+                    punch_out(geometry, bands[-1][1])
+                    if bands is not None
                     else _flat(geometry)
                 ),
             }
