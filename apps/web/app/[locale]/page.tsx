@@ -2,6 +2,7 @@ import { Fragment } from 'react';
 import type { Metadata } from 'next';
 import { cmsApi, RSC_API_BASE } from '@/lib/api';
 import type { Product, Category } from '@/lib/types';
+import { DeliveryPromiseBanner } from '@/components/home/DeliveryPromiseBanner';
 import { HeroCarousel, type HeroContent } from '@/components/home/HeroCarousel';
 import { UspMarquee, type UspContent } from '@/components/home/UspMarquee';
 import { FeaturedProducts, type FeaturedContent } from '@/components/home/FeaturedProducts';
@@ -209,6 +210,11 @@ export default async function HomePage({
       <noscript>
         <style>{'.mm-reveal{opacity:1!important;animation:none!important}'}</style>
       </noscript>
+
+      {/* Above the hero, and outside the CMS section order on purpose: it is
+          the answer to "do you deliver to me", which is the first question the
+          page is asked and the one nobody should have to scroll for. */}
+      <DeliveryPromiseBanner />
 
       {orderedSections(c.layout).map(key => (
         <Fragment key={key}>{sections[key]}</Fragment>

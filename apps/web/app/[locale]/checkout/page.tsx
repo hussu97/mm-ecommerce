@@ -12,6 +12,7 @@ import {
 import { useAuth } from '@/lib/auth-context';
 import { accountEmailOf, ensureCheckoutAuth } from '@/lib/checkout-auth';
 import { Button } from '@/components/ui/Button';
+import { InfoTip } from '@/components/ui/InfoTip';
 import { Input } from '@/components/ui/Input';
 import { PhoneInput, isValidPhone } from '@/components/ui/PhoneInput';
 import { Spinner } from '@/components/ui/Spinner';
@@ -80,6 +81,55 @@ const INITIAL_FORM: CheckoutForm = {
  */
 function paymentOptionsFor(method: 'delivery' | 'pickup'): ('stripe' | 'cod')[] {
   return method === 'pickup' ? ['cod', 'stripe'] : ['stripe'];
+}
+
+// ─── The small-basket fee ─────────────────────────────────────────────────────
+
+/**
+ * The basket at or below which a delivery attracts the small-order fee, and
+ * what that fee is. Both in AED, both VAT-exclusive, exactly as delivery is.
+ *
+ * These mirror `delivery_settings.low_order_threshold` and `.low_order_fee`,
+ * which is where the order is actually priced — `order_service.low_order_fee_for`
+ * is the only figure a customer is ever charged, and this page never decides
+ * anything, it only shows what that will come to. They are written here because
+ * `/delivery/rates` publishes both, so this is a fallback for the render before
+ * that call lands rather than a second definition of the numbers. They were
+ * briefly hardcoded here with no endpoint behind them, which is the same
+ * coupling the coupon tray was explicitly built to avoid: a commercial figure
+ * in two places is a figure that will eventually disagree with what is charged.
+ */
+export const LOW_ORDER_THRESHOLD = 35;
+export const LOW_ORDER_FEE = 15;
+
+/**
+ * What this basket will be charged as a small-order fee.
+ *
+ * Mirrors `low_order_fee_for` on the server, including the two things about it
+ * that are easy to get wrong. It is judged on the basket **before** any
+ * discount, so applying a coupon can never conjure the fee into existence — an
+ * acquisition offer that hands back a 15-dirham surcharge is an offer fighting
+ * itself. And it never applies to collection: handing a box across a counter
+ * costs us nothing, so a fee there would have no cost behind it.
+ *
+ * The threshold is inclusive: a basket of exactly 35 still pays.
+ */
+export function lowOrderFeeFor(
+  subtotal: number,
+  method: 'delivery' | 'pickup',
+  rates?: { low_order_fee: number; low_order_threshold: number | null } | null,
+): number {
+  if (method === 'pickup') return 0;
+  // An empty basket is not a small order, it is a basket that cannot be
+  // ordered. Charging it would put a fee on a page that is about to redirect.
+  if (subtotal <= 0) return 0;
+
+  const threshold = rates ? rates.low_order_threshold : LOW_ORDER_THRESHOLD;
+  const fee = rates ? rates.low_order_fee : LOW_ORDER_FEE;
+  // Null threshold means the fee is switched off — which is not the same as a
+  // threshold of zero, and treating it as one would charge every basket.
+  if (threshold === null) return 0;
+  return subtotal <= threshold ? fee : 0;
 }
 
 // ─── Validation ───────────────────────────────────────────────────────────────
@@ -341,8 +391,9 @@ function PickupBranchPicker({
 
 // ─── Order summary ────────────────────────────────────────────────────────────
 
-function OrderSummary({
-  cart, retryOrder, discount, promoCode, deliveryFee, baseFee, freeApplied,
+export function OrderSummary({
+  cart, retryOrder, discount, promoCode, deliveryFee, lowOrderFee, baseFee, freeApplied,
+  lowOrderThreshold, lowOrderFeeAmount,
   freeAvailable, hasPin, remainingForFree, deliveryMethod, unserviceable, locale, t,
 }: {
   cart: Cart | null;
@@ -351,6 +402,15 @@ function OrderSummary({
   promoCode: string;
   /** Null while the fee is unknown — no pin yet, or nowhere we can deliver. */
   deliveryFee: number | null;
+  /** The small-basket surcharge, zero on anything that does not attract one. */
+  lowOrderFee: number;
+  /**
+   * The live threshold and amount, so the explanation quotes the numbers the
+   * server actually charges on. Passed in rather than imported: a constant read
+   * here would be a second definition, and the one that drifts.
+   */
+  lowOrderThreshold: number;
+  lowOrderFeeAmount: number;
   /** What delivery would have cost — struck through once it is waived. */
   baseFee: number;
   freeApplied: boolean;
@@ -367,7 +427,14 @@ function OrderSummary({
 }) {
   const subtotal = retryOrder ? Number(retryOrder.subtotal) : (cart?.subtotal ?? 0);
   const knownFee = deliveryFee ?? 0;
-  const total = retryOrder ? Number(retryOrder.total) : Math.max(0, subtotal + knownFee - discount);
+  const total = retryOrder
+    ? Number(retryOrder.total)
+    : Math.max(0, subtotal + knownFee + lowOrderFee - discount);
+  // What it takes to get *past* the threshold, not up to it: the threshold is
+  // inclusive, so a basket sitting exactly on it still pays. Spending the round
+  // number this line would otherwise print and finding the fee still there is
+  // the one way this sentence can lie, so it costs a fils to make it true.
+  const remainingToClearFee = Math.max(0, lowOrderThreshold - subtotal + 0.01);
 
   const rows = retryOrder
     ? retryOrder.items.map((i) => ({
@@ -466,6 +533,40 @@ function OrderSummary({
             </p>
           )}
         </div>
+
+        {/* The small-basket fee — and only when there is one.
+            Deliberately unlike the delivery line above, which stays put and
+            reads "Free" once it is waived. Delivery is a thing the customer
+            expects to be charged for, so showing it at zero is worth something:
+            it is a saving they can see. This is a surcharge, and a surcharge
+            printed at 0.00 AED is not reassurance, it is the shop reminding
+            somebody who spent enough that it charges small orders for the
+            privilege. Once it does not apply, it is not a line at all. */}
+        {lowOrderFee > 0 && (
+          <div>
+            <div className="flex justify-between text-gray-500">
+              <span className="flex items-center gap-1">
+                {t('checkout.low_order_fee')}
+                <InfoTip label={t('checkout.low_order_fee_what_is_this')}>
+                  {t('checkout.low_order_fee_info', {
+                    threshold: lowOrderThreshold,
+                    fee: lowOrderFeeAmount,
+                    remaining: remainingToClearFee.toFixed(2),
+                  })}
+                </InfoTip>
+              </span>
+              <span className="text-gray-700">{lowOrderFee.toFixed(2)} AED</span>
+            </div>
+            {/* The way out, next to the charge. Not offered on an order that is
+                already written — there is nothing left to add to it. */}
+            {!retryOrder && (
+              <p className="mt-1 font-body text-xs text-secondary">
+                {t('checkout.low_order_fee_remaining', { amount: remainingToClearFee.toFixed(2) })}
+              </p>
+            )}
+          </div>
+        )}
+
         <div className="flex justify-between pt-2 mt-1 border-t border-gray-100 font-medium text-base">
           <span className="text-gray-800">{t('common.total')}</span>
           {/* No deliverable address means no total. Printing the basket on its
@@ -657,9 +758,15 @@ function CheckoutContent() {
     : form.deliveryMethod === 'pickup'
       ? (deliveryRates?.pickup_fee ?? 0)
       : homeDeliveryFee;
+  // Read off an order that already exists, worked out for one that does not.
+  // A customer returning to pay owes what their order was priced at, not what
+  // today's settings would charge for the same basket.
+  const lowOrderFee = retryOrder
+    ? Number(retryOrder.low_order_fee ?? 0)
+    : lowOrderFeeFor(subtotal, form.deliveryMethod, deliveryRates);
   const total = retryOrder
     ? Number(retryOrder.total)
-    : Math.max(0, subtotal + (deliveryFee ?? 0) - form.promoDiscount);
+    : Math.max(0, subtotal + (deliveryFee ?? 0) + lowOrderFee - form.promoDiscount);
 
   // Re-price whenever the pin or the basket changes, so what is on screen is
   // what the order will be written with.
@@ -1124,6 +1231,9 @@ function CheckoutContent() {
           discount={retryOrder ? Number(retryOrder.discount_amount) : form.promoDiscount}
           promoCode={retryOrder?.promo_code_used ?? form.promoCode}
           deliveryFee={deliveryFee}
+          lowOrderFee={lowOrderFee}
+          lowOrderThreshold={deliveryRates?.low_order_threshold ?? LOW_ORDER_THRESHOLD}
+          lowOrderFeeAmount={deliveryRates?.low_order_fee ?? LOW_ORDER_FEE}
           baseFee={baseFee ?? 0}
           freeApplied={freeApplied}
           freeAvailable={freeAvailable}

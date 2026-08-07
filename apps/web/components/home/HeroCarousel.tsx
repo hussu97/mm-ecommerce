@@ -135,7 +135,17 @@ export function HeroCarousel({
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
     >
-      <div className="relative w-full aspect-[4/5] sm:aspect-[16/7] lg:aspect-[12/5] max-h-[86vh] sm:max-h-[80vh]">
+      {/* Height, on mobile, is a fold decision rather than a taste one. A 4:5
+          portrait at 375px is 469px tall, and under the promo strip, the header
+          and the delivery banner that lands to ~607px — past the bottom of a
+          667px phone, so the marquee under it was only ever reachable by
+          scrolling and the page looked like it ended at the hero. Square is the
+          same crop 20% shorter (375px), which leaves the whole strip in view.
+          `svh` rather than `vh` for the cap because the number that matters is
+          the viewport with the browser chrome showing, which is the state the
+          first paint is seen in. It only binds on short or unusually wide
+          phones; everywhere else the aspect governs. */}
+      <div className="relative w-full aspect-square sm:aspect-[16/7] lg:aspect-[12/5] max-h-[68svh] sm:max-h-[80vh]">
         {/* Photographs cross-fade. The scrim and the copy do not — they are
             rendered once, below, for whichever slide is current. Fading whole
             slides on top of each other meant two headlines legible at the same
@@ -185,7 +195,7 @@ export function HeroCarousel({
         <div className="absolute inset-0 pointer-events-none bg-gradient-to-b from-[#f6efe7]/92 via-[#f6efe7]/25 to-transparent sm:bg-gradient-to-r sm:from-[#f6efe7]/92 sm:via-[#f6efe7]/45 sm:to-transparent" />
 
         <div className="absolute inset-0 flex items-start sm:items-center pointer-events-none">
-          <div className="w-full max-w-7xl mx-auto px-5 sm:px-6 lg:px-8 pt-8 sm:pt-0">
+          <div className="w-full max-w-7xl mx-auto px-5 sm:px-6 lg:px-8 pt-6 sm:pt-0">
             {/* Physically left in both scripts: the artwork puts the product on
                 the right and leaves this side clear, so the copy block cannot
                 follow the reading direction. The text inside it still aligns to
@@ -203,7 +213,7 @@ export function HeroCarousel({
               {(current.headline || current.highlight) && (
                 <h1
                   key={`h${active}`}
-                  className="mm-slide-in font-display text-[2rem] leading-[1.08] sm:text-5xl lg:text-6xl text-gray-800"
+                  className="mm-slide-in font-display text-[1.75rem] leading-[1.08] sm:text-5xl lg:text-6xl text-gray-800"
                   style={{ ['--mm-delay' as string]: '90ms' }}
                 >
                   {current.headline}
@@ -228,7 +238,7 @@ export function HeroCarousel({
 
               <div
                 key={`c${active}`}
-                className="mm-slide-in flex flex-wrap gap-2.5 mt-5 sm:mt-7"
+                className="mm-slide-in flex flex-wrap gap-2.5 mt-4 sm:mt-7"
                 style={{ ['--mm-delay' as string]: '220ms' }}
               >
                 {current.cta_text && (

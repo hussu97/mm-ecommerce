@@ -14,6 +14,7 @@ from app.models.order import Order, OrderStatusEnum
 from app.models.promo_code import DiscountTypeEnum, PromoCode
 from app.services import firebase_auth_service
 from app.schemas.promo_code import (
+    PromoCodeAdvertResponse,
     PromoCodeCreate,
     PromoCodeResponse,
     PromoCodeUpdate,
@@ -21,6 +22,7 @@ from app.schemas.promo_code import (
 )
 
 __all__ = [
+    "advertisable",
     "create",
     "delete",
     "get_all",
@@ -218,6 +220,47 @@ async def validate(
 
     discount = _calc_discount(promo, subtotal)
     return PromoCodeValidateResponse(valid=True, discount_amount=discount)
+
+
+async def advertisable(db: AsyncSession) -> PromoCodeAdvertResponse | None:
+    """
+    The acquisition coupon the storefront may put in front of a shopper, if there
+    is one running.
+
+    "Acquisition" is `first_orders_limit IS NOT NULL`, which is the column that
+    makes a code a new-customer offer rather than a private one. A bulk-issued
+    single-use coupon, a partner code, a customer-service goodwill code — none
+    of them carry it, and none of them are safe to print on a public page.
+
+    Filtered here rather than in the caller so there is exactly one definition of
+    "currently advertisable", and so a code whose window has closed or whose
+    campaign ceiling is spent stops being advertised the moment it does. Showing
+    a tray for a coupon that `validate` will refuse is worse than showing no tray
+    at all: the customer reads an offer, taps it, and is told no.
+
+    Newest first, so publishing a replacement campaign is enough to retire the
+    one before it — an admin should not have to remember to deactivate the old
+    row for the storefront to move on. `None` when nothing qualifies, which the
+    storefront renders as no tray rather than as an error.
+    """
+    now = datetime.now(timezone.utc)
+    stmt = (
+        select(PromoCode)
+        .where(
+            PromoCode.is_active.is_(True),
+            PromoCode.first_orders_limit.is_not(None),
+            or_(PromoCode.valid_from.is_(None), PromoCode.valid_from <= now),
+            or_(PromoCode.valid_until.is_(None), PromoCode.valid_until >= now),
+            or_(
+                PromoCode.max_uses.is_(None),
+                PromoCode.current_uses < PromoCode.max_uses,
+            ),
+        )
+        .order_by(PromoCode.created_at.desc())
+        .limit(1)
+    )
+    promo = (await db.execute(stmt)).scalars().first()
+    return PromoCodeAdvertResponse.model_validate(promo) if promo else None
 
 
 async def get_promo(db: AsyncSession, code: str) -> PromoCode:

@@ -18,7 +18,15 @@ class TestDeliveryRates:
         """
         data = (await client.get("/api/v1/delivery/rates")).json()
         assert "regions" not in data
-        assert set(data) == {"free_threshold", "pickup_fee", "default_delivery_fee"}
+        assert set(data) == {
+            "free_threshold",
+            "pickup_fee",
+            "default_delivery_fee",
+            # National scalars the checkout needs to explain the small-basket
+            # fee. Not a price list: nothing here is keyed by a place.
+            "low_order_fee",
+            "low_order_threshold",
+        }
 
 
 class TestDeliveryCalculate:

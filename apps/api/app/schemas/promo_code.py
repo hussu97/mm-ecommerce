@@ -131,6 +131,41 @@ class PromoCodeResponse(BaseModel):
     created_at: datetime
 
 
+class PromoCodeAdvertResponse(BaseModel):
+    """
+    The one coupon the storefront is allowed to put on a page.
+
+    Deliberately a different shape from `PromoCodeResponse` rather than a reuse
+    of it. That one is an admin's view of a campaign and carries how it is
+    doing; this one is public, and answers only what a shopper needs in order to
+    decide: what to type, what it takes off, the ceiling on that, and how many
+    orders it covers.
+
+    `current_uses` and `max_uses` are the fields most obviously missing, and
+    their absence is the point. A public counter tells anyone watching how close
+    a code is to exhaustion, which is an invitation to burn the rest of it — and
+    it is a number the customer can do nothing with either way.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    code: str
+    #: The same coupon spelled in Arabic, where it has one. A second name for
+    #: one row: applying either resolves to the same coupon and the same limits.
+    code_ar: str | None = None
+    #: Carried so the storefront can tell "15% off" from "15 AED off" rather
+    #: than assuming, and say nothing at all about a shape it has no copy for.
+    discount_type: DiscountTypeEnum
+    discount_value: float
+    max_discount_amount: float | None = None
+    first_orders_limit: int | None = None
+    #: Whether redeeming this needs a proved phone number. Advertised because it
+    #: is a condition the customer has to meet, and finding out at checkout that
+    #: the offer needs something they have not done is the worst moment to learn
+    #: it.
+    requires_phone_verification: bool = False
+
+
 class PromoCodeValidateRequest(BaseModel):
     code: str
     order_subtotal: Decimal = Field(ge=0)

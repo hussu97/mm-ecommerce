@@ -527,4 +527,18 @@ async def get_delivery_rates(db: AsyncSession) -> dict:
         "free_threshold": float(settings.free_delivery_threshold),
         "pickup_fee": float(settings.pickup_fee),
         "default_delivery_fee": float(settings.default_delivery_fee),
+        # The small-basket fee, so the checkout can explain it without holding
+        # its own copy of the numbers. Both are commercial figures that will be
+        # argued with, and a storefront constant is a second place to change
+        # them — which means a place that will eventually disagree with what is
+        # actually charged.
+        #
+        # Null threshold means the fee is switched off, which the storefront
+        # must render as "no fee" rather than as "free above zero".
+        "low_order_fee": float(settings.low_order_fee or 0),
+        "low_order_threshold": (
+            None
+            if settings.low_order_threshold is None
+            else float(settings.low_order_threshold)
+        ),
     }
