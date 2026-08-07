@@ -506,10 +506,16 @@ async def test_a_confirmed_order_repeats_what_the_checkout_said():
 
 
 @pytest.mark.asyncio
-async def test_a_promise_of_a_day_stays_a_day():
+async def test_a_third_party_day_promise_gains_a_bound_but_not_a_date():
     """
     A third-party zone is quoted to the day at checkout, and repeating it as an
     hour would borrow a precision that belongs to somebody else's van.
+
+    It does gain a *bound*. "Tuesday" is a date; "Tuesday before 10 PM" is
+    something a customer can plan around, and it commits us to nothing the
+    partner has not already agreed to — they finish at ten. The **date never
+    moves**, which is the part that matters: this sharpens what the customer was
+    told, it does not replace it.
     """
     promised = NOW + timedelta(days=1)
 
@@ -522,10 +528,11 @@ async def test_a_promise_of_a_day_stays_a_day():
         _delivery(provider="third_party"),
     )
 
-    # The stored promise passes through as it was made — `day`, not the
-    # `day_by` shape this function computes when it has to derive one itself.
-    assert result.precision == "day"
-    assert result.estimated_at == promised.astimezone(TZ)
+    assert result.precision == "day_by"
+    # Same day they were promised at checkout, now bounded at the partner's
+    # closing hour.
+    assert result.estimated_at.date() == promised.astimezone(TZ).date()
+    assert result.estimated_at.hour == fulfilment_service.THIRD_PARTY_BY_HOUR
 
 
 @pytest.mark.asyncio

@@ -347,6 +347,10 @@ def _estimate_block(
         # An area a third party covers. Their van, their schedule; naming an
         # hour would be borrowing a precision that is not ours.
         note = t("estimate.note_day")
+    elif fulfilment.precision == "day_by":
+        # Same van, but the promise now carries the hour they finish. Saying
+        # "we'll confirm a time" here would promise a message that never comes.
+        note = t("estimate.note_day_by")
     return {
         "label": t("estimate.ready") if is_pickup else t("estimate.delivery"),
         "value": value,

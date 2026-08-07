@@ -78,6 +78,13 @@ STRINGS: dict[str, dict[str, str]] = {
             "Now that a driver is carrying it, this is our best estimate."
         ),
         "estimate.note_day": "We'll confirm a time once it's collected.",
+        #: For a `day_by` promise. Distinct from `note_day`, which promises a
+        #: time we will never send for a partner delivery — they do not tell us
+        #: their route, so the closing hour is the whole of what we can commit
+        #: to and saying otherwise sets up a message that never arrives.
+        "estimate.note_day_by": (
+            "It's with our delivery partner, who finish their rounds by then."
+        ),
         # ── timeline steps ────────────────────────────────────────────────────
         "step.preparing": "Baking your order",
         "step.ready": "Packed",
@@ -329,6 +336,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "estimate.note_counter": "بانتظارك عند الكاشير.",
         "estimate.note_rider": "بعد استلام السائق للطلب، هذا هو أدق تقدير لدينا.",
         "estimate.note_day": "سنؤكد الوقت بمجرد استلام الطلب.",
+        "estimate.note_day_by": "الطلب مع شريك التوصيل، وينهون جولاتهم قبل ذلك.",
         # ── timeline steps ────────────────────────────────────────────────────
         "step.preparing": "جارٍ تحضير طلبك",
         "step.ready": "تم التعبئة",

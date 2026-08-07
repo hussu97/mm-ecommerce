@@ -392,10 +392,25 @@ def _estimate(
         # out on the next one. `dispatch_at` is where it is actually going, so
         # it wins over what was said at checkout — a customer moved to a later
         # run needs to be told the later time, not the earlier one.
-        return _local(batch.dispatch_at) + DISPATCH_TO_DOOR, "time"
+        #
+        # The group's own minutes, not a flat hour. A flat hour here against the
+        # 90 the Dubai group promises at checkout is the same order carrying two
+        # different arrival times — the disagreement `delivery_promise` exists
+        # to remove, reintroduced one layer down.
+        return (
+            _local(batch.dispatch_at) + (promise_minutes or DISPATCH_TO_DOOR),
+            "time",
+        )
 
     promised = _promise(order)
     if promised is not None:
+        at, precision = promised
+        if precision == "day" and provider not in _BOOKED_BY_US:
+            # The date the customer was promised, bounded by the hour the
+            # partner finishes. Same day they were told at checkout — this only
+            # sharpens "some time on Tuesday" into "Tuesday before 10 PM", which
+            # is the difference between a date and something to plan around.
+            return _by_hour(at, THIRD_PARTY_BY_HOUR), "day_by"
         return promised
 
     # ── no promise on the order ──────────────────────────────────────────────
@@ -413,10 +428,14 @@ def _estimate(
         return _by_hour(now + timedelta(days=1), THIRD_PARTY_BY_HOUR), "day_by"
 
     if stage == "ready":
-        # Packed, ours to dispatch, travelling alone. It goes now.
-        return now + DISPATCH_TO_DOOR, "time"
+        # Packed, ours to dispatch, travelling alone. It goes now, and takes
+        # this courier's own time rather than a flat hour.
+        return now + (promise_minutes or DISPATCH_TO_DOOR), "time"
 
-    return _local(order.created_at) + KITCHEN_PREP + DISPATCH_TO_DOOR, "time"
+    return (
+        _local(order.created_at) + KITCHEN_PREP + (promise_minutes or DISPATCH_TO_DOOR),
+        "time",
+    )
 
 
 def _promise(order: Order) -> tuple[datetime, str] | None:
