@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
+import { analytics } from './analytics';
 import { formatPrice } from './utils';
 import {
   ensureSessionId,
@@ -225,6 +226,74 @@ describe('api', () => {
     const result = await api.get('/protected');
     expect(result).toEqual({ data: 'success' });
     expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+});
+
+// ─── api_error reporting ─────────────────────────────────────────────────────
+
+describe('api_error reporting', () => {
+  beforeEach(() => {
+    clearSessionId();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * This is the regression that matters most on this event.
+   *
+   * `/auth/me` runs on every page load to find out whether anybody is signed
+   * in, and 401 is the correct answer for a shopper who is not — which is most
+   * of this site's traffic. When `api_error` reported it, the event fired once
+   * per anonymous page view: the loudest thing on the dashboard, saying only
+   * "somebody visited while logged out", burying the 500s it exists to surface.
+   */
+  it('never reports a 401 — not being signed in is a state, not a failure', async () => {
+    const spy = vi.spyOn(analytics, 'apiError');
+    const mockFetch = makeMockFetch(401, { detail: 'Unauthorized' }, false);
+    vi.stubGlobal('fetch', mockFetch);
+
+    await expect(api.get('/auth/me')).rejects.toThrow('Session expired');
+
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('reports the statuses that are real failures', async () => {
+    const spy = vi.spyOn(analytics, 'apiError');
+    const mockFetch = makeMockFetch(500, { detail: 'Boom' }, false);
+    vi.stubGlobal('fetch', mockFetch);
+
+    await expect(api.get('/delivery/quote')).rejects.toThrow('Boom');
+
+    expect(spy).toHaveBeenCalledWith({
+      status: 500,
+      endpoint: '/delivery/quote',
+      method: 'GET',
+    });
+  });
+
+  it('reports a request that never arrived as status 0', async () => {
+    const spy = vi.spyOn(analytics, 'apiError');
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+
+    await expect(api.get('/cart')).rejects.toThrow('Failed to fetch');
+
+    expect(spy).toHaveBeenCalledWith({ status: 0, endpoint: '/cart', method: 'GET' });
+  });
+
+  it('collapses identifiers so the endpoint stays groupable', async () => {
+    const spy = vi.spyOn(analytics, 'apiError');
+    const mockFetch = makeMockFetch(404, { detail: 'Not found' }, false);
+    vi.stubGlobal('fetch', mockFetch);
+
+    await expect(api.get('/orders/MM-20260808-0042')).rejects.toThrow('Not found');
+
+    expect(spy).toHaveBeenCalledWith({
+      status: 404,
+      endpoint: '/orders/:orderNumber',
+      method: 'GET',
+    });
   });
 });
 

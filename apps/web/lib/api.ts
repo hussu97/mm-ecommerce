@@ -81,9 +81,23 @@ async function request<T>(path: string, options: RequestInit = {}, _retry = true
    * none of them told us anything — so a 500 on the delivery quote and a 429 on
    * the promo check both looked, from the dashboard, exactly like a quiet day.
    * The one place every one of them passes through is this function.
+   *
+   * **401 is not a failure and is never recorded.** `/auth/me` runs on every
+   * page load to find out whether anybody is signed in, and for a shopper who
+   * is not — which is the overwhelming majority of this site's traffic — the
+   * honest answer to that question is 401. Reporting it made `api_error` fire
+   * once per anonymous page view: the loudest event on the site, saying only
+   * "somebody visited while logged out", drowning the 500s this exists to
+   * surface and spending the event quota on it. That is exactly what happened
+   * for the twenty minutes after this shipped.
+   *
+   * A session that dies mid-journey is still visible, because whatever the
+   * customer was doing when it died fails its own way and has its own event.
    */
-  const report = (status: number) =>
+  const report = (status: number) => {
+    if (status === 401) return;
     analytics.apiError({ status, endpoint: normalisePath(path), method });
+  };
 
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include' }).catch(
     (err) => {
@@ -100,9 +114,6 @@ async function request<T>(path: string, options: RequestInit = {}, _retry = true
     if (refreshed) {
       return request<T>(path, options, false);
     }
-    // Only once the refresh has also failed. A 401 that a refresh repairs is
-    // the session doing its job, not an error worth a row in the dashboard.
-    report(401);
     throw new ApiError(401, 'Session expired. Please log in again.');
   }
 
