@@ -8,7 +8,15 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from jose import JWTError
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
@@ -52,6 +60,7 @@ from app.core.security import (
     verify_password,
 )
 from app.core.config import settings
+from app.core.phone import normalise_phone
 from app.models import AdminPasskey, User, WebAuthnChallenge
 from app.models.refresh_token import RefreshToken
 from app.services import email_service, firebase_auth_service, turnstile_service
@@ -750,6 +759,45 @@ async def verify_phone(
         db, proof, user_id=current_user.id if current_user else None
     )
     return PhoneVerifyResponse(phone=proof.phone)
+
+
+class PhoneVerifiedResponse(BaseModel):
+    phone: str
+    verified: bool
+
+
+@router.get(
+    "/phone-verified",
+    response_model=PhoneVerifiedResponse,
+    summary="Whether this number has already been proved",
+)
+@limiter.limit("60/minute")
+async def phone_already_verified(
+    request: Request,
+    phone: str = Query(max_length=30),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Has this number been proved recently enough to still count?
+
+    A proof belongs to the **number**, not to the address it was first entered
+    on. Somebody who verified their mobile saving a home address and then adds a
+    work one is the same person with the same handset, and asking them to sit
+    through a second SMS is a step that proves nothing new. The ledger has always
+    known this — `is_phone_verified` looks the number up and never looked at an
+    address — but nothing asked it, so the form re-offered the button every time.
+
+    Public, because the guest saving an address is exactly who it is for, and
+    because it discloses nothing: you have to already know the number to ask,
+    and the answer is one bit about a number you typed.
+
+    Normalised on the way in, so `0501234567` finds the row Firebase wrote as
+    `+971501234567`.
+    """
+    return PhoneVerifiedResponse(
+        phone=normalise_phone(phone) or phone,
+        verified=await firebase_auth_service.is_phone_verified(db, phone),
+    )
 
 
 @router.post(

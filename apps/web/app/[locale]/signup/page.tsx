@@ -22,7 +22,6 @@ export default function SignupPage() {
     email: '',
     password: '',
     confirmPassword: '',
-    phone: '',
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -50,7 +49,6 @@ export default function SignupPage() {
       await register({
         email: form.email,
         password: form.password,
-        phone: form.phone || undefined,
         turnstile_token: turnstileToken || undefined,
       });
       analytics.userSignup();
@@ -86,15 +84,11 @@ export default function SignupPage() {
             error={errors.email}
             autoComplete="email"
           />
-          <Input
-            label={t('settings.phone_optional')}
-            type="tel"
-            value={form.phone}
-            onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
-            error={errors.phone}
-            placeholder={t('common.phone_placeholder')}
-            autoComplete="tel"
-          />
+          {/* No phone here. A number belongs to an address — it is who the
+              driver rings when they cannot find that door — and asking for one
+              at signup collected a second number that no order ever used, then
+              left the customer wondering which of the two we would call. It is
+              asked for once, on the address, where it is actually needed. */}
           <Input
             label={t('common.password')}
             type="password"

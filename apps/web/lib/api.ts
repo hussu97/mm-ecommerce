@@ -131,6 +131,18 @@ export const authApi = {
    * and returns the number *it* read, which is the one to keep. Trusting the
    * number the browser typed would make the whole exchange decorative.
    */
+  /**
+   * Whether this number has already been proved recently enough to count.
+   *
+   * A proof belongs to the number, not to the address it was first entered on —
+   * so somebody who verified saving a home address and then adds a work one is
+   * not asked again. The server has always known this; nothing asked it.
+   */
+  phoneVerified: (phone: string) =>
+    api.get<{ phone: string; verified: boolean }>(
+      `/auth/phone-verified?phone=${encodeURIComponent(phone)}`,
+    ),
+
   verifyPhone: (firebaseIdToken: string, turnstileToken?: string | null) =>
     api.post<{ phone: string; verified: boolean }>('/auth/verify-phone', {
       firebase_id_token: firebaseIdToken,
