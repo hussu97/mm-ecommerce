@@ -1,4 +1,4 @@
-import { Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, DeliveryRates, DeliveryQuote, PickupBranch, TrackResult } from './types';
+import { Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, DeliveryRates, DeliveryQuote, DeliveryArea, PickupBranch, TrackResult } from './types';
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -227,6 +227,18 @@ export const trackApi = {
 
 export const deliveryApi = {
   getRates: () => api.get<DeliveryRates>('/delivery/rates'),
+  /**
+   * What delivery looks like at a point, before there is a basket.
+   *
+   * Distinct from `quote` and much cheaper: a point-in-polygon lookup with no
+   * courier call behind it, so it is safe on a homepage. Use it for anything
+   * that describes delivery; use `quote` only when there is a real cart to
+   * price.
+   */
+  area: (latitude: number, longitude: number) =>
+    api.get<DeliveryArea>(
+      `/delivery/area?latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}`,
+    ),
   /**
    * What delivery costs to a specific point. Priced against the active zone
    * map, so the figure on screen is the one the order gets written with.

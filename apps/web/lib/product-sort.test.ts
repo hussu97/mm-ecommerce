@@ -29,16 +29,16 @@ describe('parseProductSort', () => {
 
 describe('productSortOptions', () => {
   it('uses the translation when the key is seeded', () => {
-    const t = (key: string) => ({ 'sort.price_asc': 'السعر: من الأقل' })[key] ?? key;
+    const t = (key: string) => ({ 'plp.sort_price_asc': 'السعر: من الأقل للأعلى' })[key] ?? key;
     const labels = Object.fromEntries(productSortOptions(t).map((o) => [o.value, o.label]));
-    expect(labels.price_asc).toBe('السعر: من الأقل');
+    expect(labels.price_asc).toBe('السعر: من الأقل للأعلى');
   });
 
   it('shows English rather than the raw key while a translation is missing', () => {
     const t = (key: string) => key;
     const options = productSortOptions(t);
     expect(options.map((o) => o.value)).toEqual(['newest', 'price_asc', 'price_desc']);
-    expect(options.every((o) => !o.label.startsWith('sort.'))).toBe(true);
+    expect(options.every((o) => !o.label.startsWith('plp.'))).toBe(true);
     expect(productSortLabel(t)).toBe('Sort');
   });
 });

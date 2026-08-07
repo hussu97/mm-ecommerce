@@ -29,12 +29,12 @@ type TFunction = (key: string, params?: Record<string, string | number>) => stri
 
 export function productSortOptions(t: TFunction): SortOption[] {
   return [
-    { value: 'newest', label: withFallback(t, 'sort.newest', 'Newest') },
-    { value: 'price_asc', label: withFallback(t, 'sort.price_asc', 'Price: low to high') },
-    { value: 'price_desc', label: withFallback(t, 'sort.price_desc', 'Price: high to low') },
+    { value: 'newest', label: withFallback(t, 'plp.sort_default', 'Featured') },
+    { value: 'price_asc', label: withFallback(t, 'plp.sort_price_asc', 'Price: low to high') },
+    { value: 'price_desc', label: withFallback(t, 'plp.sort_price_desc', 'Price: high to low') },
   ];
 }
 
 export function productSortLabel(t: TFunction): string {
-  return withFallback(t, 'sort.label', 'Sort');
+  return withFallback(t, 'plp.sort_label', 'Sort');
 }

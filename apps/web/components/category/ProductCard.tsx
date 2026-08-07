@@ -36,7 +36,7 @@ export function ProductCard({ product, badge }: { product: Product; badge?: stri
   // already flies its "Bestseller" corner on those same products — so the
   // listing reads it rather than inventing a second notion of a bestseller.
   const badgeText = product.is_featured
-    ? badge ?? withFallback(t, 'product.bestseller', 'Bestseller')
+    ? badge ?? withFallback(t, 'plp.bestseller', 'Bestseller')
     : undefined;
 
   return (

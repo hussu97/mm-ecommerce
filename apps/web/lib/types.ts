@@ -426,3 +426,20 @@ export interface DeliveryQuote {
    */
   serviceable: boolean;
 }
+
+/**
+ * What delivery looks like at a point, before there is a basket.
+ *
+ * From `GET /delivery/area`. Names a place and a speed, never a carrier.
+ */
+export interface DeliveryArea {
+  serviceable: boolean;
+  zone_name: string | null;
+  /** Null where the fee is a live courier quote and needs a basket to exist. */
+  delivery_fee: number | null;
+  /** The basket that earns free delivery *here*. Zero is real, not "unset". */
+  free_threshold: number | null;
+  free_delivery_available: boolean;
+  /** `express` is inside the hour, `same_day` today, `next_day` tomorrow. */
+  speed: 'express' | 'same_day' | 'next_day';
+}
