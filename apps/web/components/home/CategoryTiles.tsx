@@ -1,5 +1,5 @@
 import Image from 'next/image';
-import Link from 'next/link';
+import { PromotionLink } from '@/components/analytics/PromotionLink';
 import { localizedField } from '@/lib/i18n/entity';
 import { Reveal } from './Reveal';
 import type { Category } from '@/lib/types';
@@ -123,8 +123,11 @@ export function CategoryTiles({
               delay={Math.min(i, 6) * 60}
               className={i === 0 ? 'lg:col-span-2 lg:row-span-2' : ''}
             >
-              <Link
+              <PromotionLink
                 href={tile.href}
+                creative="category_tile"
+                slot={i}
+                title={tile.label}
                 className="group relative block h-full overflow-hidden bg-[#f4ece4]"
               >
                 <div className="relative aspect-square">
@@ -152,7 +155,7 @@ export function CategoryTiles({
                     </span>
                   </div>
                 </div>
-              </Link>
+              </PromotionLink>
             </Reveal>
           ))}
         </div>

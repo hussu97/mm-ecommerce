@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { authApi, ApiError } from '@/lib/api';
+import { analytics, failureReason } from '@/lib/analytics';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 
 function ResetPasswordForm() {
@@ -52,8 +53,12 @@ function ResetPasswordForm() {
     setApiError('');
     try {
       await authApi.resetPassword(token, form.password);
+      analytics.passwordResetCompleted();
       setDone(true);
     } catch (err) {
+      // Almost always an expired or already-used link. A rate worth watching:
+      // it is the shape of a reset email that took too long to arrive.
+      analytics.passwordResetFailed({ stage: 'reset', reason: failureReason(err) });
       setApiError(err instanceof ApiError ? err.message : t('auth.reset_failed'));
     } finally {
       setLoading(false);

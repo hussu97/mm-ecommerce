@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import { PromotionLink } from '@/components/analytics/PromotionLink';
 import { Reveal } from './Reveal';
 import { BannerPicture } from './BannerPicture';
 import { isLiveLink, liveSlugSet } from '@/lib/category-links';
@@ -86,13 +86,16 @@ export function PromoBanners({
                       </p>
                     )}
                     {promo.cta_text && (
-                      <Link
+                      <PromotionLink
                         href={`/${locale}${promo.cta_href ?? '/all-products'}`}
+                        creative="promo_banner"
+                        slot={i}
+                        title={promo.title ?? promo.cta_text}
                         className="mm-sheen inline-flex items-center gap-2 mt-5 sm:mt-6 px-6 py-3 bg-primary text-white text-[11px] sm:text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity"
                       >
                         {promo.cta_text}
                         <span className="material-icons text-[15px] rtl:rotate-180">arrow_forward</span>
-                      </Link>
+                      </PromotionLink>
                     )}
                   </div>
                 </div>

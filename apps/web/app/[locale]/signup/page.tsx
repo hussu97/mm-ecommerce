@@ -10,7 +10,7 @@ import { useAuth } from '@/lib/auth-context';
 import { useCart } from '@/lib/cart-context';
 import { ApiError, getSessionId } from '@/lib/api';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
-import { analytics } from '@/lib/analytics';
+import { analytics, failureReason } from '@/lib/analytics';
 
 export default function SignupPage() {
   const router = useRouter();
@@ -51,11 +51,15 @@ export default function SignupPage() {
         password: form.password,
         turnstile_token: turnstileToken || undefined,
       });
-      analytics.userSignup();
+      analytics.userSignup({ surface: 'signup' });
       const sessionId = getSessionId();
       if (sessionId) await mergeCart(sessionId).catch(() => {});
       router.push('/account');
     } catch (err) {
+      analytics.signupFailed({
+        reason: failureReason(err),
+        status: (err as { status?: number }).status,
+      });
       setApiError(err instanceof ApiError ? err.message : t('auth.registration_failed'));
     } finally {
       setLoading(false);

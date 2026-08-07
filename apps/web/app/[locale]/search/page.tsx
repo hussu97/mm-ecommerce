@@ -101,11 +101,11 @@ export default async function SearchPage({
         </div>
       )}
 
-      {q && <SearchTracker query={q} resultCount={data?.total ?? 0} />}
+      {q && <SearchTracker query={q} resultCount={data?.total ?? 0} category={sp.category} />}
 
       {q && data && data.items.length > 0 && (
         <>
-          <ProductGrid products={data.items} />
+          <ProductGrid products={data.items} list="search" />
 
           {/* Pagination */}
           {data.pages > 1 && (

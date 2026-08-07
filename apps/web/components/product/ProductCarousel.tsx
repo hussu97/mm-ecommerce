@@ -2,14 +2,18 @@
 
 import { useRef, useState, useEffect } from 'react';
 import { ProductCard } from '@/components/category/ProductCard';
+import type { ProductList } from '@/lib/analytics';
 import type { Product } from '@/lib/types';
 
 export function ProductCarousel({
   title,
   products,
+  list = 'carousel',
 }: {
   title: string;
   products: Product[];
+  /** Which rail this is, so `select_item` can tell them apart. */
+  list?: ProductList;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
@@ -57,9 +61,9 @@ export function ProductCarousel({
           ref={scrollRef}
           className="flex gap-5 overflow-x-auto scrollbar-none scroll-smooth snap-x snap-mandatory pb-2"
         >
-          {products.map(product => (
+          {products.map((product, i) => (
             <div key={product.id} className="w-56 shrink-0 snap-start">
-              <ProductCard product={product} />
+              <ProductCard product={product} list={list} position={i} />
             </div>
           ))}
         </div>

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import { Turnstile, isTurnstileEnabled } from '@/components/ui/Turnstile';
+import { analytics, type Surface } from '@/lib/analytics';
 import { authApi } from '@/lib/api';
 import { getFirebaseAuth, getRecaptchaVerifier, isFirebaseConfigured } from '@/lib/firebase';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
@@ -28,12 +29,15 @@ export function PhoneVerify({
   phone,
   onVerified,
   className = '',
+  surface = 'checkout',
 }: {
   /** E.164, as `PhoneInput` produces it. */
   phone: string;
   /** Called with the number the *server* confirmed, not the one passed in. */
   onVerified: (verifiedPhone: string) => void;
   className?: string;
+  /** Where this panel is embedded, so the funnel can be read per context. */
+  surface?: Surface;
 }) {
   const { t } = useTranslation();
   const [step, setStep] = useState<Step>('idle');
@@ -76,6 +80,12 @@ export function PhoneVerify({
   if (!isFirebaseConfigured()) return null;
 
   const send = async () => {
+    // Six events for one short flow, because it gates a discount and each step
+    // fails for its own reason. An SMS that never arrives, a code typed wrong
+    // and a Firebase quota are three different problems and the customer sees
+    // one panel — this is the only place the difference is visible.
+    if (step === 'code') analytics.phoneVerifyResent({ surface });
+    else analytics.phoneVerifyStarted({ surface });
     setError(null);
     setStep('sending');
     try {
@@ -90,14 +100,20 @@ export function PhoneVerify({
       const verifier = await getRecaptchaVerifier(recaptchaId);
       verifierRef.current = verifier;
       confirmationRef.current = await signInWithPhoneNumber(auth, phone, verifier);
+      analytics.phoneVerifySent({ surface });
       setStep('code');
     } catch (err) {
       // Firebase's own messages name quotas and reCAPTCHA and are not for
       // customers. The distinction worth surfacing is "slow down" versus
       // "something went wrong".
       const raw = err instanceof Error ? err.message : '';
+      const rateLimited = /too-many|quota/i.test(raw);
+      analytics.phoneVerifySendFailed({
+        surface,
+        reason: rateLimited ? 'rate_limited' : 'unavailable',
+      });
       setError(
-        /too-many|quota/i.test(raw)
+        rateLimited
           ? label('verify.too_many', 'Too many attempts. Try again in a few minutes.')
           : label('verify.unavailable', 'Verification is unavailable right now.'),
       );
@@ -127,9 +143,11 @@ export function PhoneVerify({
       // signature and the audience, and returns the number *it* read out of the
       // token — which is what we hand back, rather than what was typed.
       const result = await authApi.verifyPhone(idToken, turnstileToken);
+      analytics.phoneVerifySucceeded({ surface });
       setStep('done');
       onVerified(result.phone);
     } catch {
+      analytics.phoneVerifyFailed({ surface });
       setError(label('verify.failed', "That code didn't match. Try again."));
       setStep('code');
     }

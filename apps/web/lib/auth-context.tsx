@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { analytics } from './analytics';
 import { authApi } from './api';
 import { User } from './types';
 
@@ -45,6 +46,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
    */
   const logout = useCallback(async () => {
     await authApi.logout();
+    // Here rather than at the two buttons that call it, so the sidebar and the
+    // mobile menu cannot drift apart on whether they count.
+    analytics.logout();
     setUser(null);
   }, []);
 

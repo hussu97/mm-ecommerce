@@ -63,6 +63,17 @@ function ConfirmationContent() {
           payment_provider: order.payment_provider ?? 'unknown',
           delivery_method: order.delivery_method,
           item_count: order.items.length,
+          // The total broken into the parts that are actually decisions: what
+          // the food cost, what delivery added, what the small-basket surcharge
+          // added and what a coupon took away. One `total` could not tell a
+          // 200-dirham basket with free delivery apart from a 180-dirham basket
+          // with a 20-dirham fee, which are opposite outcomes for the shop.
+          subtotal: Number(order.subtotal),
+          delivery_fee: Number(order.delivery_fee),
+          low_order_fee: Number(order.low_order_fee ?? 0),
+          discount: Number(order.discount_amount ?? 0),
+          promo_code: order.promo_code_used ?? undefined,
+          is_guest: !user || Boolean(user.is_guest),
         });
       })
       .catch(() => setError(true))

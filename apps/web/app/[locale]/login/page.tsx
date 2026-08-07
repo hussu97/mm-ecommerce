@@ -9,7 +9,7 @@ import { useAuth } from '@/lib/auth-context';
 import { useCart } from '@/lib/cart-context';
 import { ApiError, getSessionId } from '@/lib/api';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
-import { analytics } from '@/lib/analytics';
+import { analytics, failureReason } from '@/lib/analytics';
 
 function LoginForm() {
   const router = useRouter();
@@ -44,6 +44,13 @@ function LoginForm() {
       const redirect = searchParams.get('redirect') || '/account';
       router.push(redirect);
     } catch (err) {
+      // Wrong password, locked account and a 500 all showed the customer one
+      // red box and told us nothing. They are three different problems and only
+      // one of them is theirs.
+      analytics.loginFailed({
+        reason: failureReason(err),
+        status: (err as { status?: number }).status,
+      });
       setApiError(err instanceof ApiError ? err.message : t('auth.login_failed'));
     } finally {
       setLoading(false);

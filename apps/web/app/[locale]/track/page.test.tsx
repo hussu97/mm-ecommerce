@@ -87,6 +87,7 @@ describe('TrackPage', () => {
     expect(mocks.orderTracked).toHaveBeenCalledWith({
       order_number: 'MM-20260605-001',
       status: 'confirmed',
+      delivery_method: 'pickup',
     });
     // The status is translated now rather than title-cased from the raw enum,
     // which is what stopped an Arabic reader seeing the word "Confirmed".

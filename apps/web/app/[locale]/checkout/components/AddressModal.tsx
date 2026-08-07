@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/Input';
 import { Spinner } from '@/components/ui/Spinner';
 import { PhoneInput, isValidPhone } from '@/components/ui/PhoneInput';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { analytics, failureReason } from '@/lib/analytics';
 import { addressesApi } from '@/lib/api';
 import { guestAddresses } from '@/lib/guest-addresses';
 import { reverseGeocode } from '@/lib/geocode';
@@ -196,10 +197,21 @@ export function AddressModal({
         onSavedAddressesChange(guestAddresses.list());
         onSave(toDraft(saved ?? guestAddresses.create(payload)));
       }
+      analytics.addressSaved({
+        surface: 'checkout',
+        // Whether the driver gets a map pin or a line of prose. The share
+        // without one is the number that decides whether the picker is worth
+        // redesigning.
+        has_pin: draft.latitude !== null && draft.longitude !== null,
+        is_new: !draft.id,
+      });
       onClose();
-    } catch {
+    } catch (err) {
       // Saving to the address book is a convenience; never let it block the
-      // order. Use the details as typed and move on.
+      // order. Use the details as typed and move on — but say so, because this
+      // is the path where a customer's address silently stops being remembered
+      // and every future checkout starts from a blank form.
+      analytics.addressSaveFailed({ surface: 'checkout', reason: failureReason(err) });
       onSave({ ...draft, id: draft.id || 'unsaved' });
       onClose();
     } finally {
@@ -212,10 +224,12 @@ export function AddressModal({
       try {
         await addressesApi.delete(id);
         onSavedAddressesChange(await addressesApi.list());
+        analytics.addressDeleted({ surface: 'checkout' });
       } catch { /* leave the list as-is; the row simply stays */ }
     } else {
       guestAddresses.remove(id);
       onSavedAddressesChange(guestAddresses.list());
+      analytics.addressDeleted({ surface: 'checkout' });
     }
   };
 
@@ -271,7 +285,11 @@ export function AddressModal({
                     }`}
                   >
                     <button
-                      onClick={() => { onSave(d); onClose(); }}
+                      onClick={() => {
+                        analytics.savedAddressSelected({ surface: 'checkout' });
+                        onSave(d);
+                        onClose();
+                      }}
                       className="w-full text-start"
                     >
                       <p className="font-body text-sm font-medium text-gray-800">

@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { ApiError, trackApi } from '@/lib/api';
 import type { OrderStatus, TrackResult } from '@/lib/types';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
-import { analytics } from '@/lib/analytics';
+import { analytics, failureReason } from '@/lib/analytics';
 import { FulfilmentPanel } from '@/components/order/FulfilmentPanel';
 
 const STATUS_VARIANT: Record<OrderStatus, string> = {
@@ -65,9 +65,17 @@ export default function TrackPage() {
     setResult(null);
     try {
       const data = await trackApi.lookup(trimmedOrderNumber, trimmedEmail);
-      analytics.orderTracked({ order_number: data.order_number, status: data.status });
+      analytics.orderTracked({
+        order_number: data.order_number,
+        status: data.status,
+        delivery_method: data.delivery_method,
+      });
       setResult(data);
     } catch (err) {
+      // Nearly always a wrong order number or the wrong email against a real
+      // one — which is a customer who cannot see their order and whose next
+      // step is WhatsApp. Worth knowing how often that happens.
+      analytics.orderTrackFailed({ reason: failureReason(err) });
       setError(err instanceof ApiError ? err.message : t('track.generic_error'));
     } finally {
       setLoading(false);
