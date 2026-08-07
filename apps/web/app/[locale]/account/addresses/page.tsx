@@ -5,6 +5,7 @@ import { addressesApi, ApiError } from '@/lib/api';
 import { Address, AddressCreate } from '@/lib/types';
 import { Input } from '@/components/ui/Input';
 import { PhoneInput, isValidPhone } from '@/components/ui/PhoneInput';
+import { PhoneVerify } from '@/components/ui/PhoneVerify';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
@@ -42,6 +43,9 @@ export default function AddressesPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState<AddressCreate>(BLANK_FORM);
   const [errors, setErrors] = useState<Partial<Record<keyof AddressCreate, string>>>({});
+  // The number most recently proved, so the tick disappears the moment the
+  // field is edited to something else.
+  const [verifiedPhone, setVerifiedPhone] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -239,9 +243,33 @@ export default function AddressesPage() {
               <PhoneInput
                 label={t('common.phone')}
                 value={form.phone}
-                onChange={v => setForm(f => ({ ...f, phone: v }))}
+                onChange={v => {
+                  // Editing the number invalidates any proof already held for
+                  // it. Keeping the tick beside a changed number would show a
+                  // verification of something else.
+                  setVerifiedPhone(p => (p === v ? p : null));
+                  setForm(f => ({ ...f, phone: v }));
+                }}
                 error={errors.phone}
               />
+              {/* Optional here, and deliberately so: saving an address should
+                  not require an SMS. It is what unlocks the new-customer
+                  offer, and the offer is the reason to bother. */}
+              {isValidPhone(form.phone) && verifiedPhone !== form.phone && (
+                <PhoneVerify
+                  phone={form.phone}
+                  onVerified={setVerifiedPhone}
+                  className="mt-2"
+                />
+              )}
+              {verifiedPhone === form.phone && form.phone && (
+                <p className="mt-2 flex items-center gap-1.5 text-sm text-green-700">
+                  <span aria-hidden="true" className="material-symbols-outlined text-[18px]">
+                    check_circle
+                  </span>
+                  {t('verify.verified')}
+                </p>
+              )}
             </div>
 
             <label className="flex items-center gap-2 cursor-pointer">

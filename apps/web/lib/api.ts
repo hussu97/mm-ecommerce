@@ -1,4 +1,4 @@
-import { Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, DeliveryRates, DeliveryQuote, DeliveryArea, PickupBranch, TrackResult } from './types';
+import { AdvertisedPromo, Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, DeliveryRates, DeliveryQuote, DeliveryArea, PickupBranch, TrackResult } from './types';
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -124,6 +124,19 @@ export function currentLocale(): 'en' | 'ar' {
 }
 
 export const authApi = {
+  /**
+   * Record a completed phone verification.
+   *
+   * The token comes from Firebase; the server checks its signature and audience
+   * and returns the number *it* read, which is the one to keep. Trusting the
+   * number the browser typed would make the whole exchange decorative.
+   */
+  verifyPhone: (firebaseIdToken: string, turnstileToken?: string | null) =>
+    api.post<{ phone: string; verified: boolean }>('/auth/verify-phone', {
+      firebase_id_token: firebaseIdToken,
+      turnstile_token: turnstileToken ?? null,
+    }),
+
   register: (data: {
     email: string;
     password: string;
@@ -175,6 +188,15 @@ export const cartApi = {
 export const promoApi = {
   validate: (code: string, order_subtotal: number) =>
     api.post<PromoValidateResponse>('/promo-codes/validate', { code, order_subtotal }),
+  /**
+   * The new-customer coupon currently being advertised, or `null` when none is.
+   *
+   * Every figure the storefront prints about the offer comes from here rather
+   * than from a constant, so changing the coupon in the admin changes the tray,
+   * its terms and the code it applies together. Null is an ordinary answer —
+   * "no campaign running" — and renders as no tray, not as an error.
+   */
+  featured: () => api.get<AdvertisedPromo | null>('/promo-codes/featured'),
 };
 
 export const addressesApi = {
