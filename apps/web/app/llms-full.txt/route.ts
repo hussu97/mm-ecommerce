@@ -49,10 +49,17 @@ export async function GET() {
 
 ### Delivery
 - Delivers to all seven emirates: Dubai, Sharjah, Ajman, Abu Dhabi, Al Ain, Fujairah, Ras Al Khaimah, Umm Al Quwain
-- Usually next day; same-day slots open up for orders placed early
-- The delivery fee is quoted at checkout from the delivery address
-- Free delivery on orders over AED 150, in the Dubai, Sharjah and Ajman city areas only
+- The fee depends on how far the address is from the Sharjah kitchen, and the checkout prices it from the pin:
+  - Sharjah city: free, at any basket size, delivered in about an hour
+  - Dubai and Ajman: AED 20, free over AED 75, same day
+  - Umm Al Quwain: AED 30, free over AED 75
+  - Ras Al Khaimah: AED 50, free over AED 100
+  - Abu Dhabi, Al Ain, Fujairah and the far areas: AED 80, free over AED 200, next day
+- Orders of AED 35 or less carry a AED 15 small-order fee. It disappears above AED 35 and never applies to pickup.
 - Store pickup from Sharjah is free
+
+### Offers
+- New customers: 15% off the first 3 orders, capped at AED 30 off per order. Requires a verified mobile number. Limited-time promotion.
 
 ### Payment Methods
 - Card online: Visa, Mastercard, Apple Pay (via Stripe)

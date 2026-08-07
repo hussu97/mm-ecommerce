@@ -65,6 +65,10 @@ class PolygonResponse(BaseModel):
     #: and of the courier: a fixed-fee third-party zone is not automatically an
     #: offer, and reading it off either of those was how it last went wrong.
     free_delivery_eligible: bool
+    #: The basket that earns free delivery here. Null means "use the national
+    #: threshold" — which is what every zone meant before thresholds could vary.
+    #: Zero is different from null: it means free at any basket.
+    free_delivery_threshold: float | None
     fulfilment_provider: str
     #: The kitchen that bakes this zone's orders and hands them to the courier.
     #: Null falls back to the single configured pickup branch.
@@ -82,6 +86,11 @@ class PolygonResponse(BaseModel):
             delivery_fee=float(p.delivery_fee),
             pricing_mode=p.pricing_mode,
             free_delivery_eligible=p.free_delivery_eligible,
+            free_delivery_threshold=(
+                None
+                if p.free_delivery_threshold is None
+                else float(p.free_delivery_threshold)
+            ),
             fulfilment_provider=p.fulfilment_provider,
             branch_id=str(p.branch_id) if p.branch_id else None,
             display_order=p.display_order,
@@ -126,6 +135,11 @@ class PolygonUpdate(BaseModel):
     delivery_fee: Decimal | None = Field(None, ge=0)
     pricing_mode: str | None = None
     free_delivery_eligible: bool | None = None
+    #: Null is a real instruction here — "clear this zone's own threshold and go
+    #: back to the national one" — so unlike every other field on this model,
+    #: omitted and null are not the same. The handler reads `model_fields_set`
+    #: to tell them apart rather than testing `is not None`.
+    free_delivery_threshold: Decimal | None = Field(None, ge=0)
     fulfilment_provider: str | None = None
     branch_id: uuid.UUID | None = None
     display_order: int | None = None
@@ -357,6 +371,11 @@ async def zone_map(
                 "delivery_fee": float(polygon.delivery_fee),
                 "pricing_mode": polygon.pricing_mode,
                 "free_delivery_eligible": polygon.free_delivery_eligible,
+                "free_delivery_threshold": (
+                    None
+                    if polygon.free_delivery_threshold is None
+                    else float(polygon.free_delivery_threshold)
+                ),
                 "fulfilment_provider": polygon.fulfilment_provider,
                 "display_order": polygon.display_order,
                 "geometry": _simplify(polygon.geometry, tolerance),
@@ -443,6 +462,12 @@ async def create_version(
             delivery_fee=polygon.delivery_fee,
             pricing_mode=polygon.pricing_mode,
             free_delivery_eligible=polygon.free_delivery_eligible,
+            # And so does the threshold, for the third time in this list and the
+            # same reason: a draft that loses it does not fail, it quietly
+            # reverts every zone to the national number — giving delivery away
+            # in the far zones and withholding it in the near ones, with nothing
+            # on screen to say the map changed.
+            free_delivery_threshold=polygon.free_delivery_threshold,
             fulfilment_provider=polygon.fulfilment_provider,
             # The kitchen travels with the zone for the same reason the schedule
             # does: a draft published without it points every zone at nothing,
@@ -522,6 +547,11 @@ async def update_polygon(
         "delivery_fee": float(polygon.delivery_fee),
         "pricing_mode": polygon.pricing_mode,
         "free_delivery_eligible": polygon.free_delivery_eligible,
+        "free_delivery_threshold": (
+            None
+            if polygon.free_delivery_threshold is None
+            else float(polygon.free_delivery_threshold)
+        ),
         "fulfilment_provider": polygon.fulfilment_provider,
         "branch_id": str(polygon.branch_id) if polygon.branch_id else None,
         "display_order": polygon.display_order,
@@ -545,6 +575,9 @@ async def update_polygon(
             polygon.delivery_fee = Decimal("0.00")
     if data.free_delivery_eligible is not None:
         polygon.free_delivery_eligible = data.free_delivery_eligible
+    if "free_delivery_threshold" in data.model_fields_set:
+        # Null clears the override; the zone goes back to the national number.
+        polygon.free_delivery_threshold = data.free_delivery_threshold
     if data.fulfilment_provider is not None:
         allowed = {p.value for p in FulfilmentProviderEnum}
         if data.fulfilment_provider not in allowed:
@@ -579,6 +612,11 @@ async def update_polygon(
                 "delivery_fee": float(polygon.delivery_fee),
                 "pricing_mode": polygon.pricing_mode,
                 "free_delivery_eligible": polygon.free_delivery_eligible,
+                "free_delivery_threshold": (
+                    None
+                    if polygon.free_delivery_threshold is None
+                    else float(polygon.free_delivery_threshold)
+                ),
                 "fulfilment_provider": polygon.fulfilment_provider,
                 "branch_id": str(polygon.branch_id) if polygon.branch_id else None,
                 "display_order": polygon.display_order,
@@ -681,6 +719,11 @@ async def zone_summary(
                 "delivery_fee": float(z.delivery_fee),
                 "pricing_mode": z.pricing_mode,
                 "free_delivery_eligible": z.free_delivery_eligible,
+                "free_delivery_threshold": (
+                    None
+                    if z.free_delivery_threshold is None
+                    else float(z.free_delivery_threshold)
+                ),
                 "fulfilment_provider": z.fulfilment_provider,
             }
             for z in zones
@@ -975,6 +1018,14 @@ class DeliverySettingsResponse(BaseModel):
     free_delivery_threshold: float
     pickup_fee: float
     default_delivery_fee: float
+    #: The small-basket surcharge, and the basket at or below which it applies.
+    #: Both live here rather than in code because they are commercial numbers
+    #: that get argued with, and the storefront reads them from
+    #: `/delivery/rates` so there is exactly one place to change them.
+    low_order_fee: float
+    #: Null switches the fee off entirely — which is not the same as a
+    #: threshold of zero, and the admin form has to keep them distinguishable.
+    low_order_threshold: float | None
 
     @classmethod
     def of(cls, s: DeliverySettings) -> "DeliverySettingsResponse":
@@ -983,6 +1034,10 @@ class DeliverySettingsResponse(BaseModel):
             free_delivery_threshold=float(s.free_delivery_threshold),
             pickup_fee=float(s.pickup_fee),
             default_delivery_fee=float(s.default_delivery_fee),
+            low_order_fee=float(s.low_order_fee or 0),
+            low_order_threshold=(
+                None if s.low_order_threshold is None else float(s.low_order_threshold)
+            ),
         )
 
 
@@ -990,6 +1045,11 @@ class DeliverySettingsUpdate(BaseModel):
     free_delivery_threshold: Decimal | None = Field(None, ge=0)
     pickup_fee: Decimal | None = Field(None, ge=0)
     default_delivery_fee: Decimal | None = Field(None, ge=0)
+    low_order_fee: Decimal | None = Field(None, ge=0)
+    #: Null is a real instruction here — "switch the fee off" — so unlike the
+    #: fields above, omitted and null are not the same. The handler reads
+    #: `model_fields_set` to tell them apart.
+    low_order_threshold: Decimal | None = Field(None, ge=0)
 
 
 @router.get("/settings", response_model=DeliverySettingsResponse)
@@ -1021,6 +1081,11 @@ async def update_delivery_settings(
 
     for field, value in data.model_dump(exclude_none=True).items():
         setattr(settings, field, value)
+    # `exclude_none` above is right for every field except this one, where null
+    # is a real instruction: it switches the small-basket fee off. Without this,
+    # an admin could turn the fee on and never turn it back off.
+    if "low_order_threshold" in data.model_fields_set:
+        settings.low_order_threshold = data.low_order_threshold
     # `get_settings` invents a row when the table is empty, so this has to be an
     # add rather than an assumption that the object is already tracked.
     db.add(settings)

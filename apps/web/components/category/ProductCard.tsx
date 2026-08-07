@@ -2,9 +2,12 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
+import { DeliveryEstimate } from '@/components/product/DeliveryEstimate';
 import { AddToCartControl } from '@/components/product/AddToCartControl';
+import { ProductBadge } from '@/components/product/ProductBadge';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
+import { withFallback } from '@/lib/i18n/fallback';
 import { computeFromPrice } from '@/lib/pricing';
 import type { Product } from '@/lib/types';
 
@@ -21,7 +24,7 @@ function ConditionalLink({
   return <Link href={href} className={className}>{children}</Link>;
 }
 
-export function ProductCard({ product }: { product: Product }) {
+export function ProductCard({ product, badge }: { product: Product; badge?: string }) {
   const { t, locale } = useTranslation();
   const hasModifiers = product.product_modifiers && product.product_modifiers.length > 0;
 
@@ -30,6 +33,12 @@ export function ProductCard({ product }: { product: Product }) {
   const categorySlug = product.category?.slug;
   const pdpHref = categorySlug ? `/${locale}/${categorySlug}/${product.slug}` : null;
   const productName = localizedField(product, 'name', product.name, locale);
+  // `is_featured` is the flag the admin already sets, and the homepage rail
+  // already flies its "Bestseller" corner on those same products — so the
+  // listing reads it rather than inventing a second notion of a bestseller.
+  const badgeText = product.is_featured
+    ? badge ?? withFallback(t, 'plp.bestseller', 'Bestseller')
+    : undefined;
 
   return (
     <>
@@ -42,29 +51,35 @@ export function ProductCard({ product }: { product: Product }) {
               src={image}
               alt={productName}
               fill
-              sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+              sizes="(max-width: 640px) 50vw, (max-width: 1024px) 50vw, 33vw"
               className="object-cover group-hover:scale-105 transition-transform duration-500"
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center">
-              <span className="material-icons text-6xl text-secondary">cake</span>
+              <span className="material-icons text-5xl sm:text-6xl text-secondary">cake</span>
             </div>
           )}
+          {badgeText && <ProductBadge>{badgeText}</ProductBadge>}
         </ConditionalLink>
 
         {/* Details */}
-        <div className="pt-4 flex flex-col flex-1 gap-3">
+        <div className="pt-3 sm:pt-4 flex flex-col flex-1 gap-2 sm:gap-3">
           <ConditionalLink href={pdpHref}>
-            <h3 className="font-display text-base text-gray-800 leading-snug hover:text-primary transition-colors line-clamp-2 min-h-[2.75rem]">
+            <h3 className="font-display text-sm sm:text-base text-gray-800 leading-snug hover:text-primary transition-colors line-clamp-2 min-h-[2.5rem] sm:min-h-[2.75rem]">
               {productName}
             </h3>
           </ConditionalLink>
           <div className="h-px bg-secondary/40" />
 
           {/* Price */}
-          <span className="font-body text-base font-medium text-primary">
+          <span className="font-body text-sm sm:text-base font-medium text-primary">
             {hasModifiers ? `${t('product.from')} ` : ''}{fromPrice.toFixed(2)} AED
           </span>
+
+          {/* Where it lands and how fast, read from the shared location
+              context so the card, the product page and the cart cannot show
+              three different promises on one journey. */}
+          <DeliveryEstimate />
 
           <AddToCartControl product={product} />
         </div>

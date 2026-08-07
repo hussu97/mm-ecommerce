@@ -8,7 +8,14 @@ import type { Product, ProductModifier } from '@/lib/types';
 import { localizedField } from '@/lib/i18n/entity';
 import { getTranslations, createT } from '@/lib/i18n/server';
 import { RSC_API_BASE } from '@/lib/api';
-import { BRAND, PRODUCT_BRAND, buildShippingDetails, RETURN_POLICY } from '@/lib/schema';
+import {
+  BRAND,
+  PRODUCT_BRAND,
+  buildShippingDetails,
+  LOW_ORDER_FEE_SPEC,
+  RETURN_POLICY,
+  SHIPPING_BY_REGION,
+} from '@/lib/schema';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 
 async function getProduct(slug: string): Promise<Product | null> {
@@ -148,7 +155,17 @@ export default async function ProductDetailPage({
     // updated_at would — which would re-date the markup for a typo fix.
     validFrom: product.created_at.slice(0, 10),
     priceValidUntil: '2100-01-01',
-    shippingDetails: buildShippingDetails(defaultDeliveryFee),
+    // Every band, plus the fallback rate for an address outside all of them.
+    // One `shippingRate` cannot describe a shop that is free in Sharjah and 80
+    // in Abu Dhabi; listing the regions lets a shopping surface tell somebody
+    // in Ajman something true rather than something averaged.
+    shippingDetails: [
+      ...SHIPPING_BY_REGION,
+      buildShippingDetails(defaultDeliveryFee),
+    ],
+    // Declared separately because it is not a delivery charge: it does not vary
+    // with distance and free delivery does not waive it.
+    priceSpecification: LOW_ORDER_FEE_SPEC,
     hasMerchantReturnPolicy: RETURN_POLICY,
   };
 

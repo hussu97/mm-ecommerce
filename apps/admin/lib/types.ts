@@ -244,10 +244,26 @@ export interface PaginatedOrders {
 export interface PromoCode {
   id: string;
   code: string;
+  /** The same coupon in Arabic — a second name for one row, not a second coupon. */
+  code_ar: string | null;
   discount_type: 'percentage' | 'fixed';
   discount_value: number;
   min_order_amount: number | null;
+  /** Ceiling on what a percentage can take off, in AED. Meaningless on a fixed amount. */
+  max_discount_amount: number | null;
+  /** Restricts the code to a customer's first N orders. */
+  first_orders_limit: number | null;
+  /**
+   * Requires a proved mobile number before this code will apply.
+   *
+   * What makes `first_orders_limit` worth having. That rule counts identities —
+   * account, email, phone — and the first two are free to mint; a phone number
+   * is the only one in the checkout that costs anything to fake.
+   */
+  requires_phone_verification: boolean;
   max_uses: number | null;
+  /** How many times one customer may redeem this code. */
+  max_uses_per_user: number | null;
   current_uses: number;
   is_active: boolean;
   valid_from: string | null;
@@ -612,6 +628,14 @@ export interface DeliverySettings {
   pickup_fee: number;
   /** Charged when a pin falls outside every zone we have drawn. */
   default_delivery_fee: number;
+  /** The small-basket surcharge. Delivery only, never pickup. */
+  low_order_fee: number;
+  /**
+   * The basket at or below which the surcharge applies, inclusive.
+   * Null switches the fee off — distinct from zero, which would charge it on
+   * everything.
+   */
+  low_order_threshold: number | null;
 }
 
 // ─── Audit Logs ───────────────────────────────────────────────────────────────

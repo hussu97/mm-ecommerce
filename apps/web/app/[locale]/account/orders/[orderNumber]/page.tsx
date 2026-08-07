@@ -163,6 +163,16 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
           <span>{isPickup ? t('order.store_pickup') : t('common.delivery')}</span>
           <span>{Number(order.delivery_fee) === 0 ? t('common.free') : `AED ${Number(order.delivery_fee).toFixed(2)}`}</span>
         </div>
+        {/* Named on the order history too, not just at the moment of paying.
+            This is the page somebody opens when they are querying a charge
+            months later, and an unexplained gap between the lines and the total
+            is exactly what they came to query. */}
+        {Number(order.low_order_fee ?? 0) > 0 && (
+          <div className="flex justify-between text-sm font-body text-gray-600">
+            <span>{t('checkout.low_order_fee')}</span>
+            <span>AED {Number(order.low_order_fee).toFixed(2)}</span>
+          </div>
+        )}
         <div className="flex justify-between text-sm font-semibold font-body text-gray-900 pt-2 border-t border-gray-100">
           <span>{t('common.total')}</span>
           <span>AED {Number(order.total).toFixed(2)}</span>

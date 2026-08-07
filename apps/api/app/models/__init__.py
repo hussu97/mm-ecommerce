@@ -31,6 +31,7 @@ from .delivery_batch import (  # noqa: F401
     DeliveryBatch,
     DeliveryBatchWindow,
 )
+from .phone_verification import PhoneVerification  # noqa: F401
 from .order_delivery import (  # noqa: F401
     FAILED_COURIER_STATUSES,
     NOON_SEND_FAILED_STATUSES,
@@ -194,6 +195,7 @@ __all__ = [
     "DeliveryBatchWindow",
     "BatchStatusEnum",
     "OrderDelivery",
+    "PhoneVerification",
     "CourierStatusEnum",
     "DevicePushToken",
     "PushPlatformEnum",

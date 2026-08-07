@@ -6,7 +6,7 @@ import { useState, useCallback } from 'react';
 import { useCart } from '@/lib/cart-context';
 import { promoApi, ensureSessionId } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { ensureCheckoutAuth } from '@/lib/checkout-auth';
+import { accountEmailOf, ensureCheckoutAuth } from '@/lib/checkout-auth';
 import { analytics } from '@/lib/analytics';
 import { Button } from '@/components/ui/Button';
 import { Breadcrumb } from '@/components/ui/Breadcrumb';
@@ -17,6 +17,7 @@ import { useToast } from '@/components/ui/Toast';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
 import { FeaturedProductsCarousel } from '@/components/product/FeaturedProductsCarousel';
+import { NewCustomerCouponTray } from '@/components/promo/NewCustomerCouponTray';
 
 const PLACEHOLDER_IMAGE = '/images/logos/main_logo.png';
 
@@ -55,30 +56,50 @@ export default function CartPage() {
     }
   }, [removeItem, addToast, t]);
 
-  const handleApplyPromo = useCallback(async () => {
-    const code = promoCode.trim().toUpperCase();
-    if (!code) return;
+  /**
+   * Put a code on the basket, whichever control asked for it.
+   *
+   * One path for the typed field and the coupon tray, so the two cannot end up
+   * validating against different subtotals or recording the discount
+   * differently. Returns the reason it did not go on rather than setting an
+   * error itself — the tray shows its own failure next to its own button, and
+   * the input shows it under the input.
+   */
+  const applyCode = useCallback(async (raw: string): Promise<string | null> => {
+    const code = raw.trim().toUpperCase();
+    if (!code) return null;
 
-    setPromoLoading(true);
     setPromoError(null);
     setAppliedPromo(null);
 
     try {
-      const result = await promoApi.validate(code, subtotal);
-      if (result.valid) {
-        const discountAmount = Number(result.discount_amount);
-        setAppliedPromo({ code, discount: discountAmount, message: result.message ?? '' });
-        analytics.promoApplied({ code, discount: discountAmount });
-        addToast(t('cart.promo_applied', { code }), 'success');
-      } else {
-        setPromoError(result.message ?? t('cart.invalid_promo'));
-      }
+      // The account's email, where there is one. The basket has no phone and no
+      // typed email, so this is as much identity as this page can offer — and
+      // the coupon is re-validated at the checkout against the full set, which
+      // is where a refusal is still actionable. A signed-in returning customer
+      // therefore finds out here rather than two screens later.
+      const result = await promoApi.validate(code, subtotal, {
+        email: accountEmailOf(user),
+      });
+      if (!result.valid) return result.message ?? t('cart.invalid_promo');
+
+      const discountAmount = Number(result.discount_amount);
+      setPromoCode(code);
+      setAppliedPromo({ code, discount: discountAmount, message: result.message ?? '' });
+      analytics.promoApplied({ code, discount: discountAmount });
+      addToast(t('cart.promo_applied', { code }), 'success');
+      return null;
     } catch {
-      setPromoError(t('cart.promo_error'));
-    } finally {
-      setPromoLoading(false);
+      return t('cart.promo_error');
     }
-  }, [promoCode, subtotal, addToast, t]);
+  }, [subtotal, user, addToast, t]);
+
+  const handleApplyPromo = useCallback(async () => {
+    if (!promoCode.trim()) return;
+    setPromoLoading(true);
+    setPromoError(await applyCode(promoCode));
+    setPromoLoading(false);
+  }, [promoCode, applyCode]);
 
   const handleRemovePromo = useCallback(() => {
     setAppliedPromo(null);
@@ -119,7 +140,9 @@ export default function CartPage() {
       addToast(t('cart.something_wrong'), 'error');
       setCheckoutLoading(false);
     }
-  }, [items.length, subtotal, appliedPromo, user, mergeCart, addToast, t]);
+  // `locale` belongs here: it is read to build the URL this navigates to, and
+  // a stale one sends an Arabic basket to the English checkout.
+  }, [items.length, subtotal, appliedPromo, user, mergeCart, addToast, t, locale]);
 
   // Empty cart
   if (!isLoading && items.length === 0) {
@@ -271,6 +294,14 @@ export default function CartPage() {
                 <span className="text-gray-700">{t('cart.total')}</span>
                 <span className="text-primary">{total.toFixed(2)} AED</span>
               </div>
+
+              {/* The offer, before the box that assumes you already know a code.
+                  A coupon a customer has to have been told about is claimed by
+                  the people who were buying anyway. */}
+              <NewCustomerCouponTray
+                appliedCode={appliedPromo?.code ?? null}
+                onApply={applyCode}
+              />
 
               {/* Promo code */}
               <div className="space-y-2">

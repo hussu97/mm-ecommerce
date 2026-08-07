@@ -1,4 +1,9 @@
+'use client';
+
 import type { CSSProperties } from 'react';
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { useLocation } from '@/lib/location/LocationProvider';
+import type { DeliverySpeed } from '@/lib/location/types';
 
 export interface UspItem {
   /** A Material Icons ligature (`local_shipping`) or any emoji / short glyph. */
@@ -23,6 +28,19 @@ const THEMES = {
   cream: 'bg-[#f4ece4] text-primary border-y border-secondary/40',
 } as const;
 
+/** How fast, as three promises rather than one hedged average. */
+const SPEED_KEY: Record<DeliverySpeed, string> = {
+  express: 'usp.speed_express',
+  same_day: 'usp.speed_same_day',
+  next_day: 'usp.speed_next_day',
+};
+
+const SPEED_ICON: Record<DeliverySpeed, string> = {
+  express: 'bolt',
+  same_day: 'schedule',
+  next_day: 'local_shipping',
+};
+
 function Item({ icon, label }: UspItem) {
   return (
     // The track is pinned to LTR (see globals.css); `dir="auto"` lets each label
@@ -45,9 +63,27 @@ function Item({ icon, label }: UspItem) {
  * The always-scrolling reassurance strip under the hero — delivery promise,
  * where it is baked, what it is made of. It replaces a paragraph of body copy
  * with something the eye picks up in half a second.
+ *
+ * The first item is the one the CMS cannot write: how fast we reach *this*
+ * customer. It only appears once there is a real location behind it — a bare
+ * "delivered in about an hour", read by somebody in Abu Dhabi whose location we
+ * are guessing at from the shop's own coordinates, is exactly the promise this
+ * codebase is careful not to make. See `lib/location/types.ts`.
  */
 export function UspMarquee({ c }: { c: UspContent }) {
-  const items = (c.items ?? []).filter(i => i.label);
+  const { t } = useTranslation();
+  const { area } = useLocation();
+
+  // Shown whether or not the customer has told us where they are. With nobody
+  // located the lookup runs against the Sharjah kitchen, so the answer is the
+  // shop's own zone — which is the right default for a Sharjah bakery whose
+  // nearest customers are its biggest group. The banner beside it names the
+  // area and offers to change it, so the claim is never unqualified.
+  const speedKey = area ? SPEED_KEY[area.speed] : undefined;
+  const items: UspItem[] = [
+    ...(speedKey && area ? [{ icon: SPEED_ICON[area.speed], label: t(speedKey) }] : []),
+    ...(c.items ?? []).filter(i => i.label),
+  ];
   if (items.length === 0) return null;
 
   const style = { '--mm-marquee-duration': `${c.speed_s ?? 38}s` } as CSSProperties;

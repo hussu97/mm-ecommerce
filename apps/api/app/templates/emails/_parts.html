@@ -179,6 +179,9 @@
       <tr class="discount"><td>{{ t('totals.discount') }}{% if totals.promo_code %} ({{ totals.promo_code }}){% endif %}</td><td class="amount" dir="ltr">&minus; AED {{ totals.discount }}</td></tr>
       {% endif %}
       <tr><td>{{ totals.fee_label }}</td><td class="amount" dir="auto">{{ totals.delivery_fee }}</td></tr>
+      {% if totals.low_order_fee %}
+      <tr><td>{{ totals.low_order_label }}</td><td class="amount" dir="ltr">{{ totals.low_order_fee }}</td></tr>
+      {% endif %}
       <tr class="grand"><td>{{ t('totals.total') }}</td><td class="amount" dir="ltr">AED {{ totals.total }}</td></tr>
       <tr class="vat"><td>{{ t('totals.vat') }}</td><td class="amount" dir="ltr">AED {{ totals.vat }}</td></tr>
     </table>

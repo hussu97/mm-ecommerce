@@ -176,7 +176,14 @@ def test_the_response_model_has_no_field_that_could_leak_one():
         # "free delivery does not reach here" — a fact about the offer, with no
         # hint as to why, and in particular none about who would have carried it.
         "free_delivery_available",
+        # The threshold that applied to this pin. Zones set their own, so this
+        # varies by address — but it is a number about a basket, and knowing
+        # that Sharjah goes free at 40 and Abu Dhabi at 200 says nothing about
+        # who carries either one.
         "free_threshold",
+        # Whether the number above is still the national default because no pin
+        # has been dropped yet. A statement about our own certainty.
+        "free_threshold_provisional",
         "remaining_for_free",
         "zone_name",
         "in_known_zone",

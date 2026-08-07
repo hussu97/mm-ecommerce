@@ -1,5 +1,170 @@
 # Melting Moments Ecommerce - Build Tracker
 
+## 🚧 2026-08-07: Delivery fees, location personalisation, phone OTP, new-customer coupon
+
+Branch `feat/delivery-fees-otp-coupons`. Twelve tasks in four phases. Phase 1 is
+foundational — everything downstream reads the fee/zone contract it establishes.
+
+### Agreed decisions
+- Polygon granularity: **by courier + cost band, ~25 polygons**.
+- Al Rahmaniya (Sharjah, 21.1 km, past noon Send's ceiling): **priced as Dubai** — fee 20, free above 75.
+- New-customer coupon: **15% off, capped AED 30, first 3 orders, all locations**.
+  Value is configured in one place and every surface reads it live.
+- All fee/threshold analysis on the **37% aggregator basis**.
+
+### The fee ladder (measured courier cost in brackets)
+| Zone | Courier | Fee | Free above | Cost |
+|---|---|---:|---:|---:|
+| Sharjah (noon Send, ≤20 km) | noon Send | 0 | always free | 13.6 |
+| Al Rahmaniya | Lalamove | 20 | 75 | 32 |
+| Dubai (near / mid / far bands) | Lalamove | 20 | 75 | 24–59 |
+| Ajman | Lalamove | 10 | 75 | 28.4 |
+| Umm Al Quwain | Lalamove | 30 | 75 | 44.2 |
+| Ras al-Khaimah | Lalamove | 50 | 100 | 73.3 |
+| 3rd-party zones | 3rd party | 80 | 200 | 80 |
+
+Low-order fee: **AED 15 on baskets ≤ 35**, delivery only (never pickup), nationwide
+including Sharjah. Shown as its own checkout line; disappears above the threshold.
+
+---
+
+### Phase 1 — delivery pricing backend  (sequential, everything depends on it)
+
+- [x] **T1. Per-polygon free-delivery threshold** — done, commit `e484399`
+  - Add `free_delivery_threshold Numeric(10,2) NULL` to `delivery_polygons`; NULL = fall back to the global `delivery_settings.free_delivery_threshold`.
+  - Move the `qualifies` comparison in `delivery_service.price` from `:241` (before zone lookup) to after `find_zone` at `:258`; thread the zone's threshold through both the static branch `:287` and dynamic branch `:300`.
+  - Decide + implement what `free_threshold` / `remaining_for_free` mean on the no-pin path `:249-256` (proposal: return the global default and mark it provisional).
+  - Carry the column through: `Zone` dataclass, `_to_zone`, `create_version` clone loop (`delivery_zones.py:440-458` — the documented bug class), `PolygonUpdate`, `PolygonResponse.of`, audit before/after dicts, `/map`, `/summary`, admin `ZoneRow` + `types.ts`.
+  - Tests: extend `test_delivery_fee_agreement.py`, `test_dynamic_delivery_pricing.py`.
+
+- [x] **T2. Rebuild the polygon map** — done, commits `c837edd` (geometry) + `5667c85` (migration). 15 zones, not 25: bands drawn where courier cost actually changes rather than to hit a count.
+  - Extend `scripts/build_delivery_zones.py` to emit the new banded geometry (Sharjah noon-Send core; Al Rahmaniya; Dubai near/mid/far; Ajman; UAQ; RAK; 3rd-party remainder per emirate).
+  - New alembic migration inserting the version + polygons with per-zone fee, threshold, provider, branch, `display_order`, batch windows.
+  - Give `display_order` deterministic unique values; smaller zones first.
+  - Fix `ZoneMap.tsx:21-24` — it has no `noon_send` entry, so Sharjah Central currently renders grey and labelled "Third party".
+  - Verify: point-in-polygon spot checks for a pin in each zone against expected fee/threshold/courier.
+
+- [x] **T3. Low-order fee** — done, commit `d1bff60`. VAT-exclusive per decision; judged on the pre-discount basket so a coupon cannot create the fee.
+  - `delivery_settings`: add `low_order_fee` + `low_order_threshold`.
+  - `orders`: add `low_order_fee Numeric(10,2) NOT NULL DEFAULT 0`.
+  - `_compute_order_totals` (`order_service.py:355-404`) — returns a 5-tuple unpacked positionally at `:717-723`; widen carefully. `_persist_order` takes 15 positional args at `:775-792`.
+  - **Stripe**: add the fee to the line items (`stripe_provider.py:53-58`) or the charge disagrees with the order total.
+  - Decide VAT treatment (`_vat_of`, `order_service.py:407`) — delivery is currently excluded per UAE rules; the low-order fee is a service fee and is likely **taxable**. Confirm before shipping.
+  - Downstream: email `email_service.py:204-212`, CSV export `export_service.py:216` (positional columns), POS reports `:1576`, order schemas, confirmation + account order pages, POS default `pos_order_service.py:202`.
+  - Exclude from the admin courier-margin view (`api/v1/orders.py:96-103`) so it does not distort freight margin.
+
+### Phase 2 — coupon + phone verification backend
+
+- [x] **T4. Promo codes: Arabic code + first-N-orders + real identity** — backend done, commit `bf8965c`. Admin UI + `types.ts` still to do (T4b).
+  - `promo_codes`: add `code_ar` (nullable, unique), `max_uses_per_identity`, `identity_scope`. Match on either code; both resolve to one row.
+  - Add `.strip()` to the four `.upper()` lookups (`promo_code_service.py:76,121,156,170`).
+  - Redemption identity = **user OR phone OR email**; invalid if any of the three has ≥3 **delivered** orders. Needs a redemption ledger or an indexed query — `orders` has no `(user_id, status)` composite index, and guest phone lives in `shipping_address_snapshot` JSONB.
+  - Fix `create_bulk` dropping `max_uses_per_user` (`promo_code_service.py:211-223`).
+  - Expose everything in the admin UI + `types.ts` (currently `max_uses_per_user` is invisible there).
+
+- [x] **T5. Firebase phone OTP** — done, `56fb913`. No server secret: ID tokens verify against Google's public certs.
+  - Backend: verify the Firebase ID token against Google's public keys; new `phone_verifications` table; endpoints to start/confirm; rate limits.
+  - `users`: add `phone_verified_at`; index `phone`.
+  - Reuse the Turnstile pattern exactly (`turnstile_service.py` + `_require_human` at `auth.py:280-299`).
+  - Register a Firebase web app to get the client API key; create a service account for backend verification.
+  - Env vars must hit **all five** locations (CLAUDE.md §9) — enforced by `test_compose_env_allowlist.py`.
+
+- [x] **T6. Phone verification in the UI** — account address form done, `e6f8f65`. Checkout wiring pending (owned by the fee/coupon change).
+
+### Phase 3 — storefront
+
+- [x] **T7. Location provider** — done, `68ba86a`. — one-time native permission prompt on the homepage; persist to localStorage; seed from default address (logged in) or last order address; fall back to the Sharjah branch.
+- [x] **T8. Hero + USPs** — done, `d28fe0e`. — cut hero height (`HeroCarousel.tsx:138`) so the USP marquee reaches the first mobile fold; location-personalised free-delivery banner; location-personalised delivery-speed USP (noon Send → 1 hour, Lalamove → same day, 3rd party → next day).
+- [x] **T9. PLP** — 2-up mobile grid, price sort, frosted bestseller badge. Landed in `68ba86a`. — 2-up mobile grid (`ProductGrid.tsx:17`), trim the header so 1.5 rows show; translucent bestseller tag (currently `bg-primary`, identical to the add-to-cart button); sort by price (API already supports `sort`, `products.py:65-68`).
+- [x] **T10. Delivery estimate CTA** — card, PDP and checkout, `7f083ab` + `d28fe0e`. — product card, PDP, cart, carousels, checkout (with a loading state on address change). Reuse `formatEstimate` from `checkout/page.tsx:190-224`.
+- [x] **T11. Fee + coupon UI** — done, `d28fe0e`. Values come from the API, not constants. — low-order fee line with info tooltip and "add X more"; cart coupon tray with T&Cs; homepage coupon USP. All read the coupon config from one source.
+
+### Phase 4
+
+- [x] **T12. SEO/GEO** — done, `8d4025f`. Per-region shipping, DeliveryChargeSpecification, llms.txt refreshed. — `DeliveryChargeSpecification` + per-zone shipping in `lib/schema.ts`; refresh `llms.txt`, `llms-full.txt`, `ai-plugin.json` (they hardcode "free over AED 150"); FAQ delivery table.
+
+---
+
+### GCP / Firebase — already provisioned (verified 2026-08-07)
+- Billing live on `melting-moments-cakes` (Blaze equivalent).
+- Enabled `identitytoolkit.googleapis.com`, `firebase.googleapis.com`.
+- Identity Platform initialised; **phone provider enabled**.
+- **SMS region policy: allowlist `AE` only** — without this, SMS-pumping fraud is unbounded.
+- Authorized domains: `meltingmomentscakes.com`, `www.`, `localhost`, the two firebase defaults.
+- Still to do: register a Firebase web app (client API key), create the backend service account.
+
+### Process note
+`git add -A` while background agents were mid-edit swept their in-flight files
+into unrelated commits — the PLP work is inside `68ba86a` ("location context").
+The tree is correct; the attribution is not. Staged by explicit path from
+`8d4025f` onwards.
+
+### Fixed along the way
+- Migrations reading a mutable data file — frozen `.vN.` snapshots, enforced by `test_migration_frozen_geometry` (`fb5dfab`).
+- Al Taawun / outline gaps — bands now close gaps in their own emirate's favour under a nearest-emirate rule (`fb5dfab`).
+- `create_bulk` silently dropping `max_uses_per_user` (`bf8965c`).
+- Promo lookups missing `.strip()` (`bf8965c`).
+- `orders.customer_phone` only written best-effort by the register attach (`bf8965c`).
+
+### Known pre-existing issues found while mapping (decide whether to fix in scope)
+- `delivery_zone_service.invalidate_cache()` is a process-local `dict.clear()` — publishing a map only clears the worker that served the request. Real staleness bug today, worse with more polygons.
+- `calculate_fee` / `quote` accept `user_id` and `email` and never use them; their docstrings describe a "trial account pays nothing" rule the code does not implement.
+- `apps/web` has no `type-check` script despite `turbo.json:21-23` declaring the task.
+- `scrollbar-none` is used in four places but is not a Tailwind v4 utility and is not defined — a no-op. `.mm-rail` is the working equivalent.
+
+### Pre-merge audit — found and fixed (2026-08-08)
+
+A fresh read of the whole branch against `main`, engineering and QA. Ten findings,
+all fixed on the branch. Ordered by what they would have cost in production.
+
+1. **The coupon could not actually be redeemed.** `promoApi.validate` sent only
+   the code and the subtotal. The server judges a new-customer code on account,
+   email *and* phone, and `create_order` re-checks all three — so the discount
+   showed as applied the whole way down the form and the order was refused *at
+   the pay button*, with no way back. Identity now travels with every
+   validation, from the checkout and (as far as it knows one) from the cart.
+2. **No way to verify a phone anywhere a guest could reach.** `PhoneVerify` was
+   only on the account address book, which is behind a sign-in; a guest is who
+   the coupon is for. `requires_phone_verification` came back from `/validate`
+   and nothing read it. The OTP is now offered inline next to the refusal, and
+   confirming it re-applies the code.
+3. **The first-orders rule was bypassable by retyping your own number.**
+   `orders_placed_by` and `is_phone_verified` compared raw strings, so
+   `0501234567` and `+971501234567` were two customers. One canonical
+   `core.phone.normalise_phone` (lifted out of `lalamove_service`) now writes
+   `orders.customer_phone` and both lookups; the lookup also matches the
+   as-typed spelling so pre-existing counter rows keep counting.
+4. **Signed-in customers never got their saved address as a location.**
+   `LocationProvider` seeded once, on a first render where `user` is always
+   null, so the documented "saved address beats a browser reading" ordering
+   never happened — and every signed-in visitor met a geolocation prompt for a
+   location already on file. It now waits for auth to resolve.
+5. **The small-order fee was missing from the confirmation and order-detail
+   pages.** Subtotal − discount + delivery did not equal the total, with an
+   unlabelled fifteen-dirham gap, on the two screens where a customer checks.
+6. **"Resend code" threw.** Firebase refuses to render a second reCAPTCHA into
+   the same node; the verifier is now cleared before each send, on send failure,
+   and on unmount. The broken button was the one pressed when the SMS did not
+   arrive.
+7. **Stripe called a small-order fee "Delivery Fee".** Sharjah delivers free and
+   still charges it, so a free-delivery order showed `Delivery Fee AED 15.00` on
+   the payment page. The line is now named after what is in it.
+8. **The admin could not set `requires_phone_verification`.** The flag that makes
+   `first_orders_limit` enforceable could only be set by hand in the database.
+9. **`/delivery/area` took unbounded floats.** `nan` parses, and compares false
+   against every polygon bound — a non-coordinate that answered "nowhere we
+   deliver". Now bounded, so it answers 422.
+10. **Firebase cert fetches were one per unknown `kid`.** `kid` is attacker-
+    supplied on an unauthenticated endpoint, which made this an amplifier
+    pointed at Google. Floored at one fetch a minute, except while we hold no
+    keys at all.
+
+Plus a duplicated doc block above `lowOrderFeeFor`, and a `verify.enter_phone_first`
+string that the new copy needed. New coverage: `test_phone_identity.py` (17) and
+`PromoCodeStep.test.tsx` (6).
+
+---
+
 ## ✅ 2026-08-05: Email fidelity, the promised time, and the POS gaps
 
 Seven reports off MM-20260805-008. Four are `mm-ecommerce`, three are `mm-pos`.

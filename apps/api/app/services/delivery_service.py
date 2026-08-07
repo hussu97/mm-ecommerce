@@ -173,6 +173,20 @@ class DeliveryPrice:
     is_dynamic: bool
     estimate: lalamove_service.Estimate | None = None
     error: str | None = None
+    #: The basket that earns free delivery *for this pin* — the zone's own
+    #: threshold where it sets one, the national default otherwise.
+    #:
+    #: It has to travel on the result rather than be re-derived by the caller,
+    #: because the caller does not know which of the two applied and guessing
+    #: wrong puts a number on screen that the fee was not calculated from. Before
+    #: a pin exists there is no zone to ask, so this is the national default and
+    #: `threshold_is_provisional` says so.
+    free_threshold: Decimal = Decimal("0.00")
+    #: True when `free_threshold` is the national default standing in for a zone
+    #: we have not resolved yet. The storefront may still show it — "free over
+    #: AED 150 in selected areas" — but must not present it as this address's
+    #: answer.
+    threshold_is_provisional: bool = False
 
     @property
     def fee(self) -> Decimal | None:
@@ -235,10 +249,18 @@ async def price(
     ourselves" described the same three zones. They no longer do — the outer
     zones are fixed-fee and third-party — and a proxy that has stopped being
     true gives delivery away in exactly the places that cost most to reach.
+
+    *Which* basket earns it is the zone's business too. The comparison used to
+    happen here, at the top, against one national number — which meant it was
+    decided before we knew where the order was going. It cannot be: a bike run
+    inside Sharjah costs AED 13 and a car to Jebel Ali costs AED 59, so one
+    threshold is simultaneously too high for the near zones and too low for the
+    far ones. The test now happens once the pin has resolved to a zone, against
+    that zone's own number, falling back to the national one where a zone does
+    not set its own.
     """
     if settings is None:
         settings = await get_settings(db)
-    qualifies = subtotal >= settings.free_delivery_threshold
 
     if latitude is None or longitude is None:
         # Nothing to price yet, and nothing to promise: whether free delivery
@@ -253,6 +275,8 @@ async def price(
             free_available=True,
             serviceable=True,
             is_dynamic=False,
+            free_threshold=settings.free_delivery_threshold,
+            threshold_is_provisional=True,
         )
 
     zone = await delivery_zone_service.find_zone(db, float(latitude), float(longitude))
@@ -280,6 +304,17 @@ async def price(
 
     eligible = zone is not None and zone.free_delivery_eligible
 
+    # The zone's own threshold, or the national one where it does not set one.
+    # `is None` rather than falsiness on purpose: a zone may legitimately set
+    # zero, meaning free delivery at any basket, and `or` would silently turn
+    # that into 150.
+    threshold = (
+        settings.free_delivery_threshold
+        if zone is None or zone.free_delivery_threshold is None
+        else zone.free_delivery_threshold
+    )
+    qualifies = subtotal >= threshold
+
     if not is_dynamic:
         return DeliveryPrice(
             zone=zone,
@@ -290,6 +325,7 @@ async def price(
             is_dynamic=False,
             estimate=estimate,
             error=error,
+            free_threshold=threshold,
         )
 
     if estimate is not None:
@@ -302,6 +338,7 @@ async def price(
             is_dynamic=True,
             estimate=estimate,
             error=error,
+            free_threshold=threshold,
         )
 
     if not lalamove_service.is_enabled():
@@ -318,6 +355,7 @@ async def price(
             is_dynamic=True,
             estimate=None,
             error=error,
+            free_threshold=threshold,
         )
 
     return DeliveryPrice(
@@ -329,6 +367,7 @@ async def price(
         is_dynamic=True,
         estimate=None,
         error=error,
+        free_threshold=threshold,
     )
 
 
@@ -445,13 +484,21 @@ async def quote(
         # would keep telling someone in Abu Dhabi they are 40 dirhams from free
         # delivery, which is an offer that does not exist there.
         "free_delivery_available": priced.free_available,
-        "free_threshold": float(settings.free_delivery_threshold),
+        # This zone's threshold, not the national one. They differ by design —
+        # AED 75 in Dubai against AED 200 out at the third-party edge — so
+        # reporting the global number here would have the storefront counting
+        # down to a figure the fee was never calculated against.
+        "free_threshold": float(priced.free_threshold),
+        # True before a pin exists, when the number above is the national
+        # default standing in for a zone we cannot resolve yet. Copy driven by
+        # it has to stay hedged ("in selected areas") until a pin lands.
+        "free_threshold_provisional": priced.threshold_is_provisional,
         # Zero once it is free, however it became free. Otherwise an order
         # over the threshold would be shown "free delivery" and "AED 150 to go"
         # at the same time.
         "remaining_for_free": 0.0
         if free_applied
-        else float(max(Decimal("0.00"), settings.free_delivery_threshold - subtotal)),
+        else float(max(Decimal("0.00"), priced.free_threshold - subtotal)),
         "zone_name": priced.zone.name if priced.zone else None,
         "in_known_zone": priced.zone is not None,
         "serviceable": priced.serviceable,
@@ -480,4 +527,18 @@ async def get_delivery_rates(db: AsyncSession) -> dict:
         "free_threshold": float(settings.free_delivery_threshold),
         "pickup_fee": float(settings.pickup_fee),
         "default_delivery_fee": float(settings.default_delivery_fee),
+        # The small-basket fee, so the checkout can explain it without holding
+        # its own copy of the numbers. Both are commercial figures that will be
+        # argued with, and a storefront constant is a second place to change
+        # them — which means a place that will eventually disagree with what is
+        # actually charged.
+        #
+        # Null threshold means the fee is switched off, which the storefront
+        # must render as "no fee" rather than as "free above zero".
+        "low_order_fee": float(settings.low_order_fee or 0),
+        "low_order_threshold": (
+            None
+            if settings.low_order_threshold is None
+            else float(settings.low_order_threshold)
+        ),
     }

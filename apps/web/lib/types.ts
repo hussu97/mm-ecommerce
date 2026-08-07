@@ -223,6 +223,15 @@ export interface Order {
   email: string;
   delivery_method: DeliveryMethod;
   delivery_fee: number;
+  /**
+   * The small-basket surcharge this order was written with. Zero on pickup and
+   * on anything above the threshold.
+   *
+   * Read rather than recomputed wherever an existing order is being shown — a
+   * customer coming back to pay for one owes what it was priced at, not what
+   * today's settings would charge.
+   */
+  low_order_fee?: number;
   subtotal: number;
   discount_amount: number;
   total: number;
@@ -276,6 +285,34 @@ export interface PromoValidateResponse {
   valid: boolean;
   discount_amount: number;
   message: string | null;
+  /**
+   * True when an unverified phone is the only thing between this customer and
+   * the discount — i.e. there is a button that fixes it, rather than a refusal
+   * they can do nothing about.
+   */
+  requires_phone_verification?: boolean;
+}
+
+/**
+ * The new-customer coupon the shop is currently advertising, as the storefront
+ * is allowed to see it.
+ *
+ * Every number here is the coupon row's own. Nothing about the offer is written
+ * into the browser, so changing the percentage, the cap or the number of orders
+ * in the admin changes every surface that quotes them at once — which is the
+ * only way a tray, a checkout line and an email can be trusted to agree.
+ */
+export interface AdvertisedPromo {
+  code: string;
+  /** The same coupon spelled in Arabic, where it has one. */
+  code_ar: string | null;
+  discount_type: 'percentage' | 'fixed';
+  discount_value: number;
+  /** The ceiling on one order's discount, in AED. Null means uncapped. */
+  max_discount_amount: number | null;
+  /** How many of a customer's first orders it covers. */
+  first_orders_limit: number | null;
+  requires_phone_verification: boolean;
 }
 
 // ─── Address ──────────────────────────────────────────────────────────────────
@@ -379,6 +416,14 @@ export interface DeliveryRates {
   pickup_fee: number;
   /** Charged when a pin falls outside every zone we have drawn. */
   default_delivery_fee: number;
+  /** The small-basket surcharge. Zero switches it off. */
+  low_order_fee: number;
+  /**
+   * The basket at or below which the surcharge applies, inclusive.
+   * Null also switches it off — distinct from zero, which would mean
+   * "free above nothing".
+   */
+  low_order_threshold: number | null;
 }
 
 // ─── Payment ──────────────────────────────────────────────────────────────────
@@ -410,6 +455,12 @@ export interface DeliveryQuote {
    */
   free_delivery_available: boolean;
   free_threshold: number;
+  /**
+   * True while the threshold above is the national default standing in for a
+   * zone we have not resolved yet — no pin dropped. Copy driven by it has to
+   * stay hedged until it turns false.
+   */
+  free_threshold_provisional?: boolean;
   remaining_for_free: number;
   zone_name: string | null;
   in_known_zone: boolean;
@@ -425,4 +476,21 @@ export interface DeliveryQuote {
    * it too, so blocking the button here is a courtesy rather than the guard.
    */
   serviceable: boolean;
+}
+
+/**
+ * What delivery looks like at a point, before there is a basket.
+ *
+ * From `GET /delivery/area`. Names a place and a speed, never a carrier.
+ */
+export interface DeliveryArea {
+  serviceable: boolean;
+  zone_name: string | null;
+  /** Null where the fee is a live courier quote and needs a basket to exist. */
+  delivery_fee: number | null;
+  /** The basket that earns free delivery *here*. Zero is real, not "unset". */
+  free_threshold: number | null;
+  free_delivery_available: boolean;
+  /** `express` is inside the hour, `same_day` today, `next_day` tomorrow. */
+  speed: 'express' | 'same_day' | 'next_day';
 }

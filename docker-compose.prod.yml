@@ -136,6 +136,10 @@ services:
       # ── Bot check on signup and password reset ──────────────────────────
       # Empty disables it. Both halves or neither — the storefront's public
       # site key lives in Vercel.
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+      FIREBASE_MAX_AUTH_AGE_SECONDS: ${FIREBASE_MAX_AUTH_AGE_SECONDS:-3600}
+      FIREBASE_TIMEOUT_SECONDS: ${FIREBASE_TIMEOUT_SECONDS:-5.0}
+      PHONE_VERIFICATION_TTL_SECONDS: ${PHONE_VERIFICATION_TTL_SECONDS:-2592000}
       TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
       TURNSTILE_TIMEOUT_SECONDS: ${TURNSTILE_TIMEOUT_SECONDS:-5}
       # The rate card. Tunable without a deploy, which is the whole reason

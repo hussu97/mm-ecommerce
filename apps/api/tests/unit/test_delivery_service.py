@@ -177,8 +177,26 @@ async def test_the_public_rates_no_longer_publish_a_price_list():
     ):
         rates = await delivery_service.get_delivery_rates(_db())
 
-    assert set(rates) == {"free_threshold", "pickup_fee", "default_delivery_fee"}
+    assert set(rates) == {
+        "free_threshold",
+        "pickup_fee",
+        "default_delivery_fee",
+        # National scalars, not a price list. The checkout has to explain the
+        # small-basket fee and the alternative was a pair of constants in the
+        # browser — a second place to change a commercial number, and therefore
+        # a place that eventually disagrees with what is actually charged.
+        "low_order_fee",
+        "low_order_threshold",
+    }
     assert rates["free_threshold"] == 150.0
+
+    # The thing actually being guarded against: anything keyed by *where*. A
+    # zone, an area or an emirate appearing here is the storefront being invited
+    # to guess a fee from an address string again.
+    for key in rates:
+        assert not any(
+            word in key for word in ("zone", "area", "region", "emirate", "city")
+        ), f"{key!r} prices a place; the pin does that, not this endpoint"
 
 
 @pytest.mark.parametrize("gone", ["get_active_regions", "get_all_regions"])

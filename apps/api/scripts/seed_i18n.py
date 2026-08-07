@@ -243,6 +243,61 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     # are formatted by the browser, which knows the customer's locale far better
     # than a translation table does.
     ("checkout", "estimated_delivery", "Estimated delivery"),
+    # ── the small-basket fee ──────────────────────────────────────────────
+    ("checkout", "low_order_fee", "Small order fee"),
+    (
+        "checkout",
+        "low_order_fee_info",
+        "Orders of {threshold} AED or less carry a {fee} AED fee. It covers the "
+        "cost of baking, boxing and getting a small order to you — add {remaining} "
+        "AED more and it comes off.",
+    ),
+    ("checkout", "low_order_fee_remaining", "Add {amount} AED more to remove this fee"),
+    ("checkout", "low_order_fee_what_is_this", "What is this?"),
+    # ── the new-customer coupon ───────────────────────────────────────────
+    ("promo", "new_customer_title", "{percent}% off your first {orders} orders"),
+    ("promo", "new_customer_cta", "Use code {code}"),
+    ("promo", "new_customer_apply", "Apply"),
+    ("promo", "new_customer_applied", "Applied"),
+    ("promo", "terms_title", "Terms"),
+    ("promo", "terms_max", "Up to {max} AED off per order."),
+    ("promo", "terms_first_orders", "Valid on your first {orders} orders."),
+    ("promo", "terms_verify", "Requires a verified mobile number."),
+    ("promo", "terms_one_account", "One offer per customer."),
+    ("promo", "terms_limited", "Limited time promotion."),
+    ("promo", "terms_combine", "Cannot be combined with other offers."),
+    # ── phone verification ────────────────────────────────────────────────
+    ("verify", "title", "Verify your mobile number"),
+    ("verify", "subtitle", "We'll text you a 6-digit code."),
+    ("verify", "send_code", "Send code"),
+    ("verify", "resend", "Resend code"),
+    ("verify", "code_label", "6-digit code"),
+    ("verify", "confirm", "Confirm"),
+    ("verify", "verified", "Verified"),
+    # Shown when a coupon needs a proved number and the form has none yet — the
+    # refusal has to name the step that fixes it, or it reads as a dead end.
+    (
+        "verify",
+        "enter_phone_first",
+        "Add your mobile number above, then apply the code again.",
+    ),
+    ("verify", "failed", "That code didn't match. Try again."),
+    ("verify", "too_many", "Too many attempts. Try again in a few minutes."),
+    ("verify", "unavailable", "Verification is unavailable right now."),
+    # ── delivery speed, by zone ───────────────────────────────────────────
+    ("usp", "speed_express", "Delivered in about an hour"),
+    ("usp", "speed_same_day", "Same-day delivery"),
+    ("usp", "speed_next_day", "Next-day delivery"),
+    ("usp", "free_delivery_here", "Free delivery in {area}"),
+    ("usp", "free_delivery_over", "Free delivery over {amount} AED in {area}"),
+    ("usp", "delivering_to", "Delivering to {area}"),
+    ("usp", "change_area", "Change"),
+    # ── product sort ──────────────────────────────────────────────────────
+    ("plp", "sort_label", "Sort"),
+    ("plp", "sort_default", "Featured"),
+    ("plp", "sort_price_asc", "Price: low to high"),
+    ("plp", "sort_price_desc", "Price: high to low"),
+    ("plp", "bestseller", "Bestseller"),
     ("checkout", "delivery_today", "Today"),
     ("checkout", "delivery_tomorrow", "Tomorrow"),
     # A day with no hour on it. Used where the van is a partner's and naming an
@@ -811,6 +866,59 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "unserviceable_pickup", "الاستلام من المتجر بدلاً من ذلك"),
     ("checkout", "unserviceable_short", "التوصيل غير متاح هنا"),
     ("checkout", "estimated_delivery", "موعد التوصيل المتوقع"),
+    # ── the small-basket fee ──────────────────────────────────────────────
+    ("checkout", "low_order_fee", "رسوم الطلب الصغير"),
+    (
+        "checkout",
+        "low_order_fee_info",
+        "الطلبات بقيمة {threshold} درهم أو أقل تُضاف إليها رسوم {fee} درهم. تغطي "
+        "تكلفة التحضير والتغليف وتوصيل الطلب الصغير — أضف {remaining} درهم أكثر "
+        "وتُلغى الرسوم.",
+    ),
+    ("checkout", "low_order_fee_remaining", "أضف {amount} درهم أكثر لإلغاء هذه الرسوم"),
+    ("checkout", "low_order_fee_what_is_this", "ما هذا؟"),
+    # ── the new-customer coupon ───────────────────────────────────────────
+    ("promo", "new_customer_title", "خصم {percent}% على أول {orders} طلبات"),
+    ("promo", "new_customer_cta", "استخدم كود {code}"),
+    ("promo", "new_customer_apply", "تطبيق"),
+    ("promo", "new_customer_applied", "تم التطبيق"),
+    ("promo", "terms_title", "الشروط"),
+    ("promo", "terms_max", "خصم يصل إلى {max} درهم لكل طلب."),
+    ("promo", "terms_first_orders", "صالح على أول {orders} طلبات لك."),
+    ("promo", "terms_verify", "يتطلب رقم هاتف متحقق منه."),
+    ("promo", "terms_one_account", "عرض واحد لكل عميل."),
+    ("promo", "terms_limited", "عرض لفترة محدودة."),
+    ("promo", "terms_combine", "لا يمكن دمجه مع العروض الأخرى."),
+    # ── phone verification ────────────────────────────────────────────────
+    ("verify", "title", "تحقق من رقم هاتفك"),
+    ("verify", "subtitle", "سنرسل لك رمزاً من 6 أرقام."),
+    ("verify", "send_code", "إرسال الرمز"),
+    ("verify", "resend", "إعادة إرسال الرمز"),
+    ("verify", "code_label", "الرمز المكوّن من 6 أرقام"),
+    ("verify", "confirm", "تأكيد"),
+    ("verify", "verified", "تم التحقق"),
+    (
+        "verify",
+        "enter_phone_first",
+        "أضف رقم هاتفك أعلاه ثم طبّق الكود مرة أخرى.",
+    ),
+    ("verify", "failed", "الرمز غير مطابق. حاول مرة أخرى."),
+    ("verify", "too_many", "محاولات كثيرة. حاول بعد بضع دقائق."),
+    ("verify", "unavailable", "التحقق غير متاح حالياً."),
+    # ── delivery speed, by zone ───────────────────────────────────────────
+    ("usp", "speed_express", "التوصيل خلال ساعة تقريباً"),
+    ("usp", "speed_same_day", "التوصيل في نفس اليوم"),
+    ("usp", "speed_next_day", "التوصيل في اليوم التالي"),
+    ("usp", "free_delivery_here", "توصيل مجاني في {area}"),
+    ("usp", "free_delivery_over", "توصيل مجاني فوق {amount} درهم في {area}"),
+    ("usp", "delivering_to", "التوصيل إلى {area}"),
+    ("usp", "change_area", "تغيير"),
+    # ── product sort ──────────────────────────────────────────────────────
+    ("plp", "sort_label", "ترتيب"),
+    ("plp", "sort_default", "المميزة"),
+    ("plp", "sort_price_asc", "السعر: من الأقل للأعلى"),
+    ("plp", "sort_price_desc", "السعر: من الأعلى للأقل"),
+    ("plp", "bestseller", "الأكثر مبيعاً"),
     ("checkout", "delivery_today", "اليوم"),
     ("checkout", "delivery_tomorrow", "غداً"),
     ("checkout", "delivery_by_day", "{day}"),

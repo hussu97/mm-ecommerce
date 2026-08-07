@@ -69,3 +69,20 @@ cloudflared.deb
 # Generated menus — rebuild with scripts/menu/generate_menu.py
 scripts/menu/*.html
 .email-preview/
+
+# Written by `vercel link`.
+.vercel
+
+# Every local env file, including the ones the rules further up miss
+# (`.env.production`, `.env.staging`).
+.env*
+# …except the checked-in templates. This exception has to come *after* the
+# pattern above, because the last matching rule wins — and `.env*` on its own
+# silently overrode the `!.env.example` at the top of this file. Nothing broke
+# today, since the two existing templates are already tracked, but a *new*
+# `.env.example` would have refused to stage. CLAUDE.md §9 makes that file the
+# first of the five places every new secret has to be written down, and the
+# whole point of that checklist is that a missing entry is invisible until
+# production is quietly running without the variable.
+!.env.example
+!*.env.example

@@ -76,6 +76,10 @@ class OrderResponse(BaseModel):
     email: str
     delivery_method: DeliveryMethodEnum
     delivery_fee: float
+    #: The small-basket surcharge. Zero on most orders; its own field rather
+    #: than folded into `delivery_fee` so the storefront can label it honestly
+    #: and explain why it is there.
+    low_order_fee: float = 0.0
     subtotal: float
     discount_amount: float
     total: float
@@ -161,3 +165,4 @@ class OrderListResponse(BaseModel):
     check_number: int | None = None
     customer_name: str | None = None
     delivery_fee: float | None = None
+    low_order_fee: float | None = None

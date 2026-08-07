@@ -183,6 +183,116 @@ export const SHIPPING_DETAILS = {
 };
 
 /**
+ * What each part of the country actually pays, as structured data.
+ *
+ * One `shippingRate` cannot describe this shop. Sharjah is free at any basket,
+ * Dubai is AED 20 and free over 75, and the far emirates are 80 and free over
+ * 200 — a single figure is wrong for five of the seven emirates whichever one
+ * you pick. `shippingDestination` accepts a list of regions, so each band gets
+ * its own entry and a shopping surface reading this can tell a customer in
+ * Ajman something true.
+ *
+ * The numbers here are the published zone fees, not courier costs, and they
+ * have to move when the map does — `085_cost_banded_map` is where they come
+ * from.
+ */
+export const SHIPPING_BY_REGION = [
+  {
+    '@type': 'OfferShippingDetails' as const,
+    name: 'Sharjah city',
+    shippingDestination: {
+      '@type': 'DefinedRegion' as const,
+      addressCountry: 'AE',
+      addressRegion: 'Sharjah',
+    },
+    shippingRate: {
+      '@type': 'MonetaryAmount' as const,
+      value: '0.00',
+      currency: 'AED',
+    },
+    deliveryTime: {
+      '@type': 'ShippingDeliveryTime' as const,
+      handlingTime: { '@type': 'QuantitativeValue' as const, minValue: 0, maxValue: 0, unitCode: 'DAY' },
+      // An hour, expressed in the only unit the vocabulary has for it.
+      transitTime: { '@type': 'QuantitativeValue' as const, minValue: 0, maxValue: 0, unitCode: 'DAY' },
+    },
+  },
+  {
+    '@type': 'OfferShippingDetails' as const,
+    name: 'Dubai and Ajman',
+    shippingDestination: [
+      { '@type': 'DefinedRegion' as const, addressCountry: 'AE', addressRegion: 'Dubai' },
+      { '@type': 'DefinedRegion' as const, addressCountry: 'AE', addressRegion: 'Ajman' },
+    ],
+    shippingRate: {
+      '@type': 'MonetaryAmount' as const,
+      value: '20.00',
+      currency: 'AED',
+      // Free above this, which is the part a shopper actually acts on.
+      eligibleTransactionVolume: {
+        '@type': 'PriceSpecification' as const,
+        minPrice: '75.00',
+        priceCurrency: 'AED',
+      },
+    },
+    deliveryTime: {
+      '@type': 'ShippingDeliveryTime' as const,
+      handlingTime: { '@type': 'QuantitativeValue' as const, minValue: 0, maxValue: 0, unitCode: 'DAY' },
+      transitTime: { '@type': 'QuantitativeValue' as const, minValue: 0, maxValue: 1, unitCode: 'DAY' },
+    },
+  },
+  {
+    '@type': 'OfferShippingDetails' as const,
+    name: 'Rest of the UAE',
+    shippingDestination: [
+      { '@type': 'DefinedRegion' as const, addressCountry: 'AE', addressRegion: 'Abu Dhabi' },
+      { '@type': 'DefinedRegion' as const, addressCountry: 'AE', addressRegion: 'Ras al-Khaimah' },
+      { '@type': 'DefinedRegion' as const, addressCountry: 'AE', addressRegion: 'Umm al-Quwain' },
+      { '@type': 'DefinedRegion' as const, addressCountry: 'AE', addressRegion: 'Fujairah' },
+    ],
+    shippingRate: {
+      '@type': 'MonetaryAmount' as const,
+      value: '80.00',
+      currency: 'AED',
+      eligibleTransactionVolume: {
+        '@type': 'PriceSpecification' as const,
+        minPrice: '200.00',
+        priceCurrency: 'AED',
+      },
+    },
+    deliveryTime: {
+      '@type': 'ShippingDeliveryTime' as const,
+      handlingTime: { '@type': 'QuantitativeValue' as const, minValue: 0, maxValue: 1, unitCode: 'DAY' },
+      transitTime: { '@type': 'QuantitativeValue' as const, minValue: 1, maxValue: 2, unitCode: 'DAY' },
+    },
+  },
+];
+
+/**
+ * The small-basket fee, as its own charge rather than folded into shipping.
+ *
+ * It is not a delivery charge — it does not vary with distance and it is not
+ * waived by free delivery — so describing it as one would misstate both. A
+ * separate `DeliveryChargeSpecification` with its own `eligibleTransactionVolume`
+ * says exactly what is true: this applies below AED 35 and not above it.
+ */
+export const LOW_ORDER_FEE_SPEC = {
+  '@type': 'DeliveryChargeSpecification' as const,
+  name: 'Small order fee',
+  price: '15.00',
+  priceCurrency: 'AED',
+  eligibleTransactionVolume: {
+    '@type': 'PriceSpecification' as const,
+    maxPrice: '35.00',
+    priceCurrency: 'AED',
+  },
+  eligibleRegion: {
+    '@type': 'DefinedRegion' as const,
+    addressCountry: 'AE',
+  },
+};
+
+/**
  * Search Console flags `shippingRate` as a missing recommended field on every
  * merchant listing, so the fee has to be in the markup. It is zone-based at
  * checkout, so the honest single number to publish is the default fee — what

@@ -34,6 +34,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
+
+# E.164 or nothing. Re-exported below, because it stopped being a courier
+# concern: the same normalisation now decides whether two orders belong to one
+# customer for the new-customer coupon.
+from app.core.phone import normalise_phone
 from app.models.branch import Branch
 from app.models.cart import Cart
 from app.models.delivery_batch import DeliveryBatch
@@ -1142,24 +1147,8 @@ def _remarks(
     return " · ".join(bits)[:200]
 
 
-def normalise_phone(raw: str) -> str:
-    """
-    E.164, or nothing.
-
-    The storefront already sends E.164; this is for numbers typed at the
-    counter or imported from elsewhere. A number we cannot make sense of is
-    returned empty rather than guessed at, because a wrong number on a booking
-    strands a driver outside a building.
-    """
-    digits = "".join(ch for ch in raw if ch.isdigit() or ch == "+")
-    if digits.startswith("+"):
-        return digits if len(digits) >= 8 else ""
-    if digits.startswith("00"):
-        digits = digits[2:]
-    if digits.startswith("971"):
-        return f"+{digits}"
-    if digits.startswith("0"):
-        digits = digits[1:]
-    if 8 <= len(digits) <= 10:
-        return f"+971{digits}"
-    return f"+{digits}" if len(digits) >= 10 else ""
+# `normalise_phone` used to be defined here and now lives in `core.phone`. It is
+# imported at the top of this module and re-exported through `__all__`, so this
+# module's callers and its tests still name it where they always have — one copy
+# of the rules, because two copies are two answers to "is this the same number",
+# which is exactly the disagreement that lets one coupon be claimed twice.

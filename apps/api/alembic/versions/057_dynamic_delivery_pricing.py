@@ -104,7 +104,7 @@ GEOJSON_PATH = (
     Path(__file__).resolve().parents[2]
     / "app"
     / "data"
-    / "uae_delivery_zones.geojson.json"
+    / "uae_delivery_zones.v2.geojson.json"
 )
 
 

@@ -50,6 +50,11 @@ class Zone:
     #: about branches at all — so it defaults, and a map drawn before the column
     #: existed behaves exactly as it did.
     branch_id: uuid.UUID | None = None
+    #: The basket that earns free delivery here, or None to use the national one.
+    #: Defaulted to None so a zone built by hand keeps the behaviour every zone
+    #: had before thresholds could vary — and so `threshold_for` has exactly one
+    #: fallback to express rather than a second plausible default.
+    free_delivery_threshold: Decimal | None = None
 
     @property
     def is_lalamove(self) -> bool:
@@ -195,6 +200,11 @@ def _to_zone(p: DeliveryPolygon) -> Zone:
         ),
         pricing_mode=(p.pricing_mode or DeliveryPricingEnum.STATIC.value),
         free_delivery_eligible=bool(p.free_delivery_eligible),
+        free_delivery_threshold=(
+            None
+            if p.free_delivery_threshold is None
+            else Decimal(str(p.free_delivery_threshold))
+        ),
         branch_id=p.branch_id,
         min_lat=float(p.min_lat),
         max_lat=float(p.max_lat),

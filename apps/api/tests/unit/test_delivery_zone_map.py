@@ -12,6 +12,7 @@ stops being able to reach and the other takes over.
 from __future__ import annotations
 
 import json
+import re
 from decimal import Decimal
 from pathlib import Path
 
@@ -20,32 +21,47 @@ import pytest
 from app.services.delivery_zone_service import point_in_geometry
 
 VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
-GEOJSON = (
-    Path(__file__).resolve().parents[2]
-    / "app"
-    / "data"
-    / "uae_delivery_zones.geojson.json"
-)
+DATA = Path(__file__).resolve().parents[2] / "app" / "data"
 
 #: The migration that publishes the map currently in force. Everything here is
 #: read out of it rather than restated, so the test cannot agree with a fee
 #: table nobody is using.
-LIVE_MIGRATION = "065_sharjah_central_noon_send.py"
+LIVE_MIGRATION = "085_cost_banded_map.py"
 
 #: The flat price of everywhere we do not dispatch ourselves. Read by the
 #: fixture as well, so the migration's own constant is the only definition.
 OUTER_FEE = "80.00"
+OUTER_THRESHOLD = "200.00"
 
 LALAMOVE = "lalamove"
 NOON_SEND = "noon_send"
 THIRD_PARTY = "third_party"
 
 
-def _seeded_zones() -> list[tuple[str, str, str, bool]]:
-    """The fee table straight out of the migration, so the two cannot drift."""
-    namespace: dict[str, object] = {"OUTER_FEE": OUTER_FEE}
+def _geojson_path() -> Path:
+    """
+    Whichever snapshot the live migration reads.
+
+    Not the generator's output. The two are different files on purpose — a
+    migration reads a frozen `.vN.` copy so that redrawing the map cannot change
+    what an old migration means — and a test that validated the generator's
+    output while the migration seeded something else would be checking a map
+    nobody runs.
+    """
     source = (VERSIONS / LIVE_MIGRATION).read_text()
-    start = source.index("ZONES: list[tuple[str, str, str, bool]] = [")
+    match = re.search(r'"(uae_delivery_zones[a-z0-9.]*\.json)"', source)
+    assert match, f"{LIVE_MIGRATION} names no geometry file"
+    return DATA / match.group(1)
+
+
+def _seeded_zones() -> list[tuple[str, str, str, str, bool]]:
+    """The fee table straight out of the migration, so the two cannot drift."""
+    namespace: dict[str, object] = {
+        "OUTER_FEE": OUTER_FEE,
+        "OUTER_THRESHOLD": OUTER_THRESHOLD,
+    }
+    source = (VERSIONS / LIVE_MIGRATION).read_text()
+    start = source.index("ZONES: list[tuple[str, str, str, str, bool]] = [")
     # From the opening bracket of the literal, not from the annotation — which
     # has brackets of its own and would close the slice three characters in.
     end = source.index("\n]", source.index("= [", start)) + 2
@@ -56,15 +72,16 @@ def _seeded_zones() -> list[tuple[str, str, str, bool]]:
 @pytest.fixture(scope="module")
 def zones() -> list[dict]:
     """Geometry in the order the migration inserts it, which is match order."""
-    shapes = {z["name"]: z["geometry"] for z in json.loads(GEOJSON.read_text())}
+    shapes = {z["name"]: z["geometry"] for z in json.loads(_geojson_path().read_text())}
     return [
         {
             "name": name,
             "fee": Decimal(fee),
+            "threshold": Decimal(threshold),
             "provider": provider,
             "geometry": shapes[name],
         }
-        for name, fee, provider, _free in _seeded_zones()
+        for name, fee, threshold, provider, _free in _seeded_zones()
     ]
 
 
@@ -76,17 +93,20 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
 
 
 @pytest.mark.parametrize(
-    "label,lat,lng,expected,fee,provider",
+    "label,lat,lng,expected,fee,threshold,provider",
     [
-        # ── Inside noon Send's 20 km reach ───────────────────────────────────
-        # Same AED 15 the customer has always paid; the run behind it costs 12
-        # instead of the 19-26 Lalamove wants for the same trip.
+        # ── Sharjah, inside noon Send's 20 km reach: free, at any basket ─────
+        # The fee is zero rather than waived, so the threshold is 0.00 and not
+        # NULL. NULL would mean "use the national number"; zero means there is
+        # no bar to clear, and confusing the two starts charging the one zone
+        # that is meant to be free.
         (
             "Melting Moments itself",
             25.3304139,
             55.3736131,
             "Sharjah Central",
-            "15.00",
+            "0.00",
+            "0.00",
             NOON_SEND,
         ),
         (
@@ -94,48 +114,99 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             25.3213,
             55.3820,
             "Sharjah Central",
-            "15.00",
+            "0.00",
+            "0.00",
             NOON_SEND,
         ),
-        ("Al Khan", 25.3306, 55.3600, "Sharjah Central", "15.00", NOON_SEND),
-        ("Maysaloon", 25.3220, 55.4250, "Sharjah Central", "15.00", NOON_SEND),
-        # 12.8 road km, comfortably inside.
+        ("Al Khan", 25.3306, 55.3600, "Sharjah Central", "0.00", "0.00", NOON_SEND),
+        ("Maysaloon", 25.3220, 55.4250, "Sharjah Central", "0.00", "0.00", NOON_SEND),
         (
             "Muwaileh Commercial",
             25.3120,
             55.4560,
             "Sharjah Central",
-            "15.00",
+            "0.00",
+            "0.00",
             NOON_SEND,
         ),
-        # 15.3 and 18.7 road km — inside the 20 km ceiling, and the two areas
-        # the corrected rate card moved across the line.
-        ("Al Zahia", 25.3000, 55.4700, "Sharjah Central", "15.00", NOON_SEND),
+        ("Al Zahia", 25.3000, 55.4700, "Sharjah Central", "0.00", "0.00", NOON_SEND),
         (
             "University City",
             25.2900,
             55.4900,
             "Sharjah Central",
-            "15.00",
+            "0.00",
+            "0.00",
             NOON_SEND,
         ),
-        # ── Sharjah, but past noon Send's ceiling ────────────────────────────
-        # 23.7 road km. noon Send would be cheaper here too — it is not allowed
-        # to be, which is why this boundary sits at the ceiling rather than
-        # where the prices cross.
-        ("Al Rahmaniya", 25.2760, 55.5200, "Sharjah City", "15.00", LALAMOVE),
+        # Al Taawun belongs here too and does not resolve — see
+        # `test_al_taawun_is_in_a_hole_in_the_source_outlines` below.
+        # ── Sharjah, past noon Send's ceiling ────────────────────────────────
+        # 21.1 road km. noon Send would be cheaper here too; it is not allowed
+        # to be, so the boundary sits at the ceiling and not where prices cross.
+        # Priced as Dubai: a car run at AED 32 of cost.
+        ("Al Rahmaniya", 25.2760, 55.5200, "Sharjah Outer", "20.00", "75.00", LALAMOVE),
         # ── Another emirate, so never noon Send whatever the distance ────────
-        ("Ajman Corniche", 25.4052, 55.4384, "Ajman City", "15.00", LALAMOVE),
-        ("Emirates City, Ajman", 25.4180, 55.5140, "Ajman City", "15.00", LALAMOVE),
-        ("Deira City Centre", 25.2530, 55.3320, "Dubai City", "25.00", LALAMOVE),
-        ("Burj Khalifa", 25.1972, 55.2744, "Dubai City", "25.00", LALAMOVE),
-        ("Dubai Silicon Oasis", 25.1200, 55.3800, "Dubai City", "25.00", LALAMOVE),
-        ("Dubai Marina", 25.0805, 55.1403, "Dubai City", "25.00", LALAMOVE),
-        # The furthest point the rate card was measured at: 48 road km, AED 51
-        # of courier cost against a AED 25 fee. Inside on purpose — Dubai is a
-        # third of expected demand and the loss is carried by the near half.
-        ("Palm Jumeirah", 25.1304, 55.1170, "Dubai City", "25.00", LALAMOVE),
-        # ── Ours to deliver, but not on the courier's price ──────────────────
+        ("Ajman Corniche", 25.4052, 55.4384, "Ajman City", "10.00", "75.00", LALAMOVE),
+        (
+            "Emirates City, Ajman",
+            25.4180,
+            55.5140,
+            "Ajman City",
+            "10.00",
+            "75.00",
+            LALAMOVE,
+        ),
+        # ── Dubai: three bands, one fee, so the far half can be repriced later
+        #    without redrawing anything ─────────────────────────────────────
+        (
+            "Deira City Centre",
+            25.2530,
+            55.3320,
+            "Dubai Near",
+            "20.00",
+            "75.00",
+            LALAMOVE,
+        ),
+        ("Burj Khalifa", 25.1972, 55.2744, "Dubai Near", "20.00", "75.00", LALAMOVE),
+        (
+            "Dubai Silicon Oasis",
+            25.1200,
+            55.3800,
+            "Dubai Mid",
+            "20.00",
+            "75.00",
+            LALAMOVE,
+        ),
+        ("Dubai Marina", 25.0805, 55.1403, "Dubai Far", "20.00", "75.00", LALAMOVE),
+        ("Palm Jumeirah", 25.1304, 55.1170, "Dubai Far", "20.00", "75.00", LALAMOVE),
+        # Jebel Ali used to fall outside the served circle and pay the
+        # third-party 80. A Lalamove car reaches it for 56, so it is inside now.
+        ("Jebel Ali", 24.9500, 55.1500, "Dubai Far", "20.00", "75.00", LALAMOVE),
+        # ── Emirates that now have a served band of their own ────────────────
+        # A car costs 44 here against the third-party 80, so it is worth serving.
+        (
+            "Umm Al Quwain city",
+            25.5647,
+            55.5532,
+            "Umm al-Quwain City",
+            "30.00",
+            "75.00",
+            LALAMOVE,
+        ),
+        # 89 road km. A car costs 80 — level with the third party — and the
+        # threshold is 100 rather than 75 because the run is three times a
+        # Dubai one.
+        (
+            "Ras Al Khaimah city",
+            25.7895,
+            55.9432,
+            "Ras al-Khaimah City",
+            "50.00",
+            "100.00",
+            LALAMOVE,
+        ),
+        # ── Ours to deliver, but not on a courier's price ────────────────────
         # All of these look like "Sharjah" or "Dubai" on an address form and
         # cost three to six times a city run. This is the whole reason the
         # emirate outlines were cut up.
@@ -145,6 +216,7 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             55.8810,
             "Sharjah",
             OUTER_FEE,
+            OUTER_THRESHOLD,
             THIRD_PARTY,
         ),
         (
@@ -153,49 +225,83 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             56.3560,
             "Sharjah",
             OUTER_FEE,
+            OUTER_THRESHOLD,
             THIRD_PARTY,
         ),
-        ("Kalba (east coast)", 25.0400, 56.3500, "Sharjah", OUTER_FEE, THIRD_PARTY),
-        ("Masfout (Ajman exclave)", 24.8200, 56.0500, "Ajman", OUTER_FEE, THIRD_PARTY),
-        ("Manama (Ajman exclave)", 25.3100, 55.9800, "Ajman", OUTER_FEE, THIRD_PARTY),
-        ("Jebel Ali", 24.9500, 55.1500, "Dubai", OUTER_FEE, THIRD_PARTY),
+        (
+            "Kalba (east coast)",
+            25.0400,
+            56.3500,
+            "Sharjah",
+            OUTER_FEE,
+            OUTER_THRESHOLD,
+            THIRD_PARTY,
+        ),
+        (
+            "Masfout (Ajman exclave)",
+            24.8200,
+            56.0500,
+            "Ajman",
+            OUTER_FEE,
+            OUTER_THRESHOLD,
+            THIRD_PARTY,
+        ),
+        (
+            "Manama (Ajman exclave)",
+            25.3100,
+            55.9800,
+            "Ajman",
+            OUTER_FEE,
+            OUTER_THRESHOLD,
+            THIRD_PARTY,
+        ),
         # Lalamove refuses Hatta outright — ERR_OUT_OF_SERVICE_AREA.
-        ("Hatta (Dubai exclave)", 24.7967, 56.1180, "Dubai", OUTER_FEE, THIRD_PARTY),
+        (
+            "Hatta (Dubai exclave)",
+            24.7967,
+            56.1180,
+            "Dubai",
+            OUTER_FEE,
+            OUTER_THRESHOLD,
+            THIRD_PARTY,
+        ),
         (
             "Sheikh Zayed Grand Mosque",
             24.4128,
             54.4750,
             "Abu Dhabi",
             OUTER_FEE,
+            OUTER_THRESHOLD,
             THIRD_PARTY,
         ),
-        ("Al Ain Oasis", 24.2154, 55.7614, "Abu Dhabi", OUTER_FEE, THIRD_PARTY),
         (
-            "Ras Al Khaimah city",
-            25.7895,
-            55.9432,
-            "Ras al-Khaimah",
+            "Al Ain Oasis",
+            24.2154,
+            55.7614,
+            "Abu Dhabi",
             OUTER_FEE,
+            OUTER_THRESHOLD,
             THIRD_PARTY,
         ),
-        ("Fujairah city", 25.1288, 56.3265, "Fujairah", OUTER_FEE, THIRD_PARTY),
         (
-            "Umm Al Quwain city",
-            25.5647,
-            55.5532,
-            "Umm al-Quwain",
+            "Fujairah city",
+            25.1288,
+            56.3265,
+            "Fujairah",
             OUTER_FEE,
+            OUTER_THRESHOLD,
             THIRD_PARTY,
         ),
     ],
 )
 def test_real_addresses_get_the_right_zone(
-    zones, label, lat, lng, expected, fee, provider
+    zones, label, lat, lng, expected, fee, threshold, provider
 ):
     zone = resolve(zones, lat, lng)
     assert zone is not None, f"{label} matched no zone at all"
     assert zone["name"] == expected, label
     assert zone["fee"] == Decimal(fee), label
+    assert zone["threshold"] == Decimal(threshold), label
     assert zone["provider"] == provider, label
 
 
@@ -233,12 +339,48 @@ def test_a_city_is_still_listed_ahead_of_its_own_emirate(zones):
     """
     order = [z["name"] for z in zones]
     for inner, outer in (
-        ("Sharjah Central", "Sharjah City"),
-        ("Sharjah City", "Sharjah"),
+        ("Sharjah Central", "Sharjah Outer"),
+        ("Sharjah Outer", "Sharjah"),
         ("Ajman City", "Ajman"),
-        ("Dubai City", "Dubai"),
+        ("Dubai Near", "Dubai Mid"),
+        ("Dubai Mid", "Dubai Far"),
+        ("Dubai Far", "Dubai"),
+        ("Umm al-Quwain City", "Umm al-Quwain"),
+        ("Ras al-Khaimah City", "Ras al-Khaimah"),
     ):
         assert order.index(inner) < order.index(outer)
+
+
+def test_al_taawun_is_served_even_though_no_emirate_claims_it(zones):
+    """
+    Al Taawun sits in Khalid Lagoon, 0.13 km outside the Sharjah outline and
+    1.6 km from the kitchen. No emirate outline claims the water, so under
+    `emirate ∩ circle` the address belonged to no zone at all and was quoted
+    live by a courier instead of being delivered free like its neighbours.
+
+    The bands now close gaps in their own emirate's favour, bounded to
+    `GAP_FILL_KM`. That bound is the point: an unbounded version claimed open
+    sea on the Dubai side, where noon Send would have been offered an order it
+    cannot legally carry and the fallback would have run a Lalamove car for the
+    zone's fee of zero.
+    """
+    zone = resolve(zones, 25.3160, 55.3720)
+    assert zone is not None, "Al Taawun matched no zone"
+    assert zone["name"] == "Sharjah Central"
+    assert zone["fee"] == Decimal("0.00")
+
+
+def test_the_gap_fill_does_not_reach_open_water_on_the_dubai_side(zones):
+    """
+    The regression that killed the first attempt, pinned by coordinate.
+
+    25.254, 55.272 is sea 10.8 km from the Sharjah outline and 0.17 km from
+    Dubai's. It must never be Sharjah's, because Sharjah's inner band is
+    noon Send's and noon Send cannot cross an emirate boundary — an order there
+    would be refused, fall back to Lalamove, and be charged nothing.
+    """
+    zone = resolve(zones, 25.25404020255122, 55.272435077642456)
+    assert zone is None or zone["provider"] != NOON_SEND
 
 
 def test_outside_the_country_matches_nothing(zones):
@@ -294,8 +436,19 @@ def test_noon_send_only_ever_claims_sharjah(zones):
             while lng <= max(lngs):
                 if point_in_geometry(lat, lng, zone["geometry"]):
                     checked += 1
-                    assert point_in_geometry(lat, lng, outlines["Sharjah"]), (
-                        f"{zone['name']} reaches outside Sharjah at {lat}, {lng}"
+                    # Inside Sharjah, or on ground no emirate claims at all.
+                    # The second case is deliberate — the bands close gaps in
+                    # the source outlines, which is how Al Taawun gets served —
+                    # but it must never be ground another emirate *does* claim,
+                    # because noon Send cannot cross a boundary and the fallback
+                    # would run a Lalamove car for this zone's fee of zero.
+                    trespass = [
+                        name
+                        for name, outline in outlines.items()
+                        if name != "Sharjah" and point_in_geometry(lat, lng, outline)
+                    ]
+                    assert not trespass, (
+                        f"{zone['name']} reaches into {trespass} at {lat}, {lng}"
                     )
                 lng += 0.004
             lat += 0.004
@@ -306,5 +459,5 @@ def test_noon_send_only_ever_claims_sharjah(zones):
 
 def test_the_map_covers_every_seeded_zone(zones):
     """A fee with no shape would be a zone that can never match."""
-    shapes = {z["name"] for z in json.loads(GEOJSON.read_text())}
+    shapes = {z["name"] for z in json.loads(_geojson_path().read_text())}
     assert {z["name"] for z in zones} <= shapes
