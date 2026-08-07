@@ -7,6 +7,16 @@ import type { Category } from '@/lib/types';
 import { localizedField } from '@/lib/i18n/entity';
 
 // ─── Client wrapper — knows which category is active ──────────────────────────
+//
+// Deliberately no `prefetch` prop on the links below. This bar renders inside
+// the locale layout, so it is on every page of the site, and `prefetch={true}`
+// asks for the *full* RSC payload of every category rather than Next's default
+// partial prefetch. Every one of those is a complete server render with its own
+// API calls, because these routes are dynamic — one homepage view was measured
+// firing 29 prefetches across 15 routes and 11.8s of cumulative origin time.
+//
+// The default is the right behaviour: the shared layout is already in the
+// client router cache, so a category hop only needs the page below it.
 
 export function CategoryNavLinks({
   categories,
@@ -40,7 +50,6 @@ export function CategoryNavLinks({
           <li className="shrink-0">
             <Link
               href={allHref}
-              prefetch={true}
               className={[
                 'font-body text-[11px] uppercase tracking-widest transition-colors whitespace-nowrap',
                 pathname.startsWith(`/${locale}/all-products`)
@@ -60,7 +69,6 @@ export function CategoryNavLinks({
             <li key={slug} className="shrink-0">
               <Link
                 href={`/${locale}/${slug}`}
-                prefetch={true}
                 className={[
                   'font-body text-[11px] uppercase tracking-widest transition-colors whitespace-nowrap',
                   active ? 'text-primary font-semibold' : 'text-gray-500 hover:text-primary',

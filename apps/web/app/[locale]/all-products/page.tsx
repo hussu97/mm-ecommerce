@@ -6,6 +6,7 @@ import { Breadcrumb } from '@/components/ui';
 import { getTranslations, createT } from '@/lib/i18n/server';
 import { localizedField } from '@/lib/i18n/entity';
 import { RSC_API_BASE } from '@/lib/api';
+import { getActiveCategories } from '@/lib/catalogue';
 import { OG_IMAGE } from '@/lib/schema';
 import { SortSelect } from '@/components/category/SortSelect';
 import {
@@ -171,16 +172,14 @@ export default async function AllProductsPage({
 
   const productUrl = `${RSC_API_BASE}/products?per_page=${PER_PAGE}&page=${page}&sort=${sort}${category ? `&category=${category}` : ''}`;
 
-  const [categoriesRes, productsRes, translations] = await Promise.all([
-    fetch(`${RSC_API_BASE}/categories`, { cache: 'no-store', signal: AbortSignal.timeout(8000) }),
+  const [categories, productsRes, translations] = await Promise.all([
+    // Shared with the locale layout's nav bar, so this render asks once.
+    getActiveCategories(),
     fetch(productUrl, { cache: 'no-store', signal: AbortSignal.timeout(8000) }),
     getTranslations(locale),
   ]);
 
   const t = createT(translations);
-
-  const allCategories: Category[] = categoriesRes.ok ? await categoriesRes.json() : [];
-  const categories = allCategories.filter((c) => c.is_active).sort((a, b) => a.display_order - b.display_order);
 
   const productData: ProductListResponse | null = productsRes.ok ? await productsRes.json() : null;
   const products: Product[] = productData?.items ?? [];

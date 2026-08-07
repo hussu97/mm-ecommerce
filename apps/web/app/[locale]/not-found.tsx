@@ -1,15 +1,21 @@
+'use client';
+
 import Link from 'next/link';
-import type { Metadata } from 'next';
-import { cookies } from 'next/headers';
-import { getTranslations, createT } from '@/lib/i18n/server';
 
-export const metadata: Metadata = { title: '404 — Page Not Found' };
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
 
-export default async function NotFound() {
-  const cookieStore = await cookies();
-  const locale = cookieStore.get('mm_locale')?.value ?? 'en';
-  const translations = await getTranslations(locale);
-  const t = createT(translations);
+/**
+ * The 404, rendered inside the locale shell.
+ *
+ * It used to sit at `app/not-found.tsx` and read `cookies()` to work out which
+ * language to apologise in, then fetch the whole translation map itself. Both
+ * are unnecessary here: it renders under `[locale]/layout.tsx`, so the locale is
+ * settled and the strings are already in context. A client component rather
+ * than a server one for exactly that reason — `not-found.tsx` is not handed
+ * `params`, and the context is the only thing that knows.
+ */
+export default function NotFound() {
+  const { t, locale } = useTranslation();
 
   return (
     <div className="min-h-[70vh] flex flex-col items-center justify-center px-4 text-center">
@@ -24,13 +30,13 @@ export default async function NotFound() {
       </p>
       <div className="flex flex-col sm:flex-row gap-3">
         <Link
-          href="/"
+          href={`/${locale}`}
           className="px-6 py-3 bg-primary text-white text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity"
         >
           {t('error.back_to_home')}
         </Link>
         <Link
-          href="/contact"
+          href={`/${locale}/contact`}
           className="px-6 py-3 border border-gray-300 text-gray-600 text-xs font-body uppercase tracking-widest hover:bg-gray-50 transition-colors"
         >
           {t('error.contact_us')}

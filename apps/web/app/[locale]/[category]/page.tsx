@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
@@ -18,6 +19,31 @@ import {
 } from '@/lib/product-sort';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 const PER_PAGE = 12;
+
+/**
+ * Just the category, for `generateMetadata`.
+ *
+ * Metadata needs a name and a description; it has no use for a page of
+ * products. It used to call `getCategoryData` for them anyway and drop
+ * everything but `data.category` — and because metadata resolution is its own
+ * render pass, with its own `React.cache` scope and its own default arguments,
+ * that discarded fetch did not even collapse into the one the page makes. On
+ * any page but the first, or any sort but the default, it was a second full
+ * catalogue query per render, thrown away on arrival.
+ */
+const getCategoryMeta = cache(async (slug: string): Promise<Category | null> => {
+  try {
+    const res = await fetch(`${RSC_API_BASE}/categories/${slug}`, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return null;
+    const category: Category = await res.json();
+    return category.is_active ? category : null;
+  } catch {
+    return null;
+  }
+});
 
 async function getCategoryData(
   slug: string,
@@ -55,10 +81,9 @@ export async function generateMetadata({
   params: Promise<{ locale: string; category: string }>;
 }): Promise<Metadata> {
   const { locale, category: slug } = await params;
-  const data = await getCategoryData(slug);
-  if (!data) return {};
+  const category = await getCategoryMeta(slug);
+  if (!category) return {};
 
-  const { category } = data;
   const localizedName = localizedField(category, 'name', category.name, locale);
   const localizedDesc = localizedField(category, 'description', category.description ?? '', locale);
   const description =

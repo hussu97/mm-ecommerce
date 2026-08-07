@@ -1,6 +1,9 @@
 import { Fragment } from 'react';
 import type { Metadata } from 'next';
 import { cmsApi, RSC_API_BASE } from '@/lib/api';
+// The same request-scoped fetch the locale layout uses for the nav bar, so one
+// homepage render asks the API for the category list once rather than twice.
+import { getCategories } from '@/lib/catalogue';
 import type { Product, Category } from '@/lib/types';
 import { DeliveryPromiseBanner } from '@/components/home/DeliveryPromiseBanner';
 import { HeroCarousel, type HeroContent } from '@/components/home/HeroCarousel';
@@ -25,19 +28,6 @@ interface HomeContent {
   cater?: CaterContent;
   layout?: HomeLayout;
   seo?: { title?: string; description?: string };
-}
-
-async function getCategories(): Promise<Category[]> {
-  try {
-    const res = await fetch(`${RSC_API_BASE}/categories`, {
-      cache: 'no-store',
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return [];
-    return res.json();
-  } catch {
-    return [];
-  }
 }
 
 function buildJsonLd(categories: Category[], featuredProducts: Product[]) {

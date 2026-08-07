@@ -1,3 +1,5 @@
+import { cache } from "react";
+
 import type { Language } from "@/lib/types";
 import { RSC_API_BASE } from "@/lib/api";
 
@@ -15,22 +17,30 @@ import { RSC_API_BASE } from "@/lib/api";
  * checkout rendered `checkout.estimated_delivery` at customers, verbatim, until
  * it expired.
  *
- * The cost is one intra-request call to an endpoint that answers from memory.
+ * `React.cache` is a different thing from that cache and does not reintroduce
+ * it: the memo lives and dies with a single request, so a render still reads
+ * whatever the API says *now*, it just stops asking three times. It was asking
+ * three times — the metadata pass, the layout and the page each called this,
+ * and `no-store` opts out of Next's request memoisation along with everything
+ * else. Measured on one category render: 3 identical calls, and on a page
+ * rendered a continent away from the API that was most of its TTFB.
  */
-export async function getTranslations(locale: string): Promise<Record<string, string>> {
-  try {
-    const res = await fetch(`${RSC_API_BASE}/i18n/translations/${locale}`, {
-      cache: 'no-store',
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return {};
-    return await res.json();
-  } catch {
-    return {};
-  }
-}
+export const getTranslations = cache(
+  async (locale: string): Promise<Record<string, string>> => {
+    try {
+      const res = await fetch(`${RSC_API_BASE}/i18n/translations/${locale}`, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) return {};
+      return await res.json();
+    } catch {
+      return {};
+    }
+  },
+);
 
-export async function getLanguages(): Promise<Language[]> {
+export const getLanguages = cache(async (): Promise<Language[]> => {
   try {
     const res = await fetch(`${RSC_API_BASE}/i18n/languages`, {
       next: { revalidate: 300 },
@@ -41,7 +51,7 @@ export async function getLanguages(): Promise<Language[]> {
   } catch {
     return [];
   }
-}
+});
 
 export function createT(translations: Record<string, string>) {
   return function t(key: string, params?: Record<string, string | number>): string {
