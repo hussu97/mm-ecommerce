@@ -124,21 +124,28 @@ CIRCLE_POINTS = 96
 #: The three Dubai bands all carry the same fee today. They are drawn anyway,
 #: because the whole point of the rebuild is that repricing the far half later
 #: is an admin edit rather than a migration that redraws the map.
-#: Bands built as "circle minus neighbours" rather than "emirate ∩ circle".
+#: Bands that fill gaps in the source outlines, built as "circle minus
+#: neighbours" instead of "emirate ∩ circle".
 #:
-#: Only the innermost Sharjah band, and deliberately only it. The construction
-#: fills gaps in the source outlines — Khalid Lagoon is claimed by no emirate,
-#: and Al Taawun sits in it 1.6 km from the kitchen, belonging to no zone and
-#: falling through to a live courier quote instead of the fee its neighbours pay.
+#: Empty, and that is the current answer rather than the intended one.
 #:
-#: Applied more widely it does more harm than good. Every band is a circle around
-#: the same kitchen, so gap ownership would fall to whichever circle is smallest
-#: — and a circle cannot tell Al Barsha (30.2 km south-west) from Al Salamah
-#: (30.4 km north-east). Dubai's band would take a gap in Umm al-Quwain purely
-#: because its radius is 31 km against Umm al-Quwain's 36. Outside Sharjah the
-#: emirate outline stays the authority, and a gap resolves to no zone and is
-#: quoted live, which is what it did before and is safe that far out.
-FILL_GAPS: frozenset[str] = frozenset({"Sharjah Central"})
+#: The gaps are real: Khalid Lagoon is claimed by no emirate, and Al Taawun sits
+#: in it 1.6 km from the kitchen, belonging to no zone and falling through to a
+#: live courier quote instead of the fee its neighbours pay. Filling them from
+#: the circle side fixes that.
+#:
+#: It also over-reaches, and expensively. The sea off the coast is a gap too, so
+#: a Sharjah circle minus its neighbours claims open water on the Dubai side —
+#: `test_noon_send_only_ever_claims_sharjah` found it at 25.254, 55.272. A pin
+#: there would be offered to noon Send, refused for crossing an emirate
+#: boundary, fall back to Lalamove, and be charged the zone's fee of zero: a car
+#: run given away free. Trading a handful of lagoon addresses onto a live quote
+#: is much the cheaper mistake.
+#:
+#: Doing this properly means filling only gaps *enclosed by* the emirate rather
+#: than every gap the circle reaches — a buffer-and-intersect, not a subtraction.
+#: Left for that change rather than approximated here.
+FILL_GAPS: frozenset[str] = frozenset()
 
 BANDS: dict[str, list[tuple[str, float]]] = {
     "Sharjah": [("Sharjah Central", 13.4), ("Sharjah Outer", 25.0)],
