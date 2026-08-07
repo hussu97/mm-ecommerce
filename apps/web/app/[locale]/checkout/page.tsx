@@ -12,6 +12,7 @@ import {
 import { useAuth } from '@/lib/auth-context';
 import { accountEmailOf, ensureCheckoutAuth } from '@/lib/checkout-auth';
 import { Button } from '@/components/ui/Button';
+import { SpeedBadge } from '@/components/product/DeliveryEstimate';
 import { InfoTip } from '@/components/ui/InfoTip';
 import { Input } from '@/components/ui/Input';
 import { PhoneInput, isValidPhone } from '@/components/ui/PhoneInput';
@@ -726,7 +727,11 @@ function CheckoutContent() {
 
   const subtotal = cart?.subtotal ?? 0;
   const effectiveSubtotal = Math.max(0, subtotal - form.promoDiscount);
-  const freeThreshold = quote?.free_threshold ?? deliveryRates?.free_threshold ?? 150;
+  // The zone's own number, or nothing. There is no national threshold to fall
+  // back on any more — one number was simultaneously too high for a bike run
+  // inside Sharjah and too low for a car to Jebel Ali — so before a pin
+  // resolves, the countdown simply does not appear.
+  const freeThreshold = quote?.free_threshold ?? null;
   // The server decides this, not the basket. Free delivery only reaches the
   // zones we price ourselves, so "big enough order" is a necessary condition
   // and not a sufficient one — working it out here from the subtotal alone
@@ -756,7 +761,8 @@ function CheckoutContent() {
   const baseFee = quote?.base_fee ?? null;
   const homeDeliveryFee = unserviceable ? null : (quote?.delivery_fee ?? null);
   const knowsFee = homeDeliveryFee !== null;
-  const remainingForFree = Math.max(0, freeThreshold - effectiveSubtotal);
+  const remainingForFree =
+    freeThreshold === null ? 0 : Math.max(0, freeThreshold - effectiveSubtotal);
 
   const deliveryFee = retryOrder
     ? Number(retryOrder.delivery_fee)
@@ -1102,13 +1108,13 @@ function CheckoutContent() {
             {/* The one line that answers "when", placed where the pin that
                 decides it was just chosen. */}
             {arrival && !unserviceable && (
-              <p className="mt-2.5 flex items-center gap-1.5 font-body text-xs text-gray-500">
-                <span className="material-icons text-sm text-primary">schedule</span>
-                <span>
-                  {t('checkout.estimated_delivery')}:{' '}
-                  <span className="text-gray-800">{arrival}</span>
-                </span>
-              </p>
+              // The same badge the product card and the PDP wear, so the answer
+              // to "when" looks like one answer across the journey. It says more
+              // here — a date and a time rather than a speed — because by this
+              // point there is a pin and a real schedule behind it.
+              <SpeedBadge className="mt-2.5">
+                {t('checkout.estimated_delivery')}: {arrival}
+              </SpeedBadge>
             )}
             {/* Directly under the thing that caused it, and above everything it
                 makes pointless to fill in. */}

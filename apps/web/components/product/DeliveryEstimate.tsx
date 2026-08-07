@@ -65,6 +65,43 @@ function SpeedIcon({ className = '' }: { className?: string }) {
   );
 }
 
+/**
+ * The pill itself, so every surface that shows a delivery time looks the same.
+ *
+ * Exported because four screens need it and they do not all say the same thing:
+ * a product card names a speed ("Get it in 60 minutes") because it has no
+ * address, while the checkout names a date and time because it has a pin and a
+ * real schedule behind it. Same badge, different sentence — which is the point.
+ * A shared component rather than a copied class list, or the four drift apart
+ * one tweak at a time.
+ */
+export function SpeedBadge({
+  children,
+  size = 'card',
+  className = '',
+}: {
+  children: React.ReactNode;
+  size?: 'card' | 'detail';
+  className?: string;
+}) {
+  const detail = size === 'detail';
+  return (
+    <p
+      className={[
+        'inline-flex items-center gap-1.5 rounded-full font-body font-semibold',
+        // Translucent rather than solid: it has to read as a badge on a white
+        // card and on a photograph, and a flat fill only works on one of them.
+        'bg-primary/10 text-primary ring-1 ring-inset ring-primary/15',
+        detail ? 'text-sm px-3 py-1.5' : 'text-[12px] px-2.5 py-1',
+        className,
+      ].join(' ')}
+    >
+      <SpeedIcon className={detail ? 'h-[18px] w-[18px]' : 'h-[15px] w-[15px]'} />
+      {children}
+    </p>
+  );
+}
+
 export function DeliveryEstimate({
   /** `card` is the compact badge; `detail` is the larger PDP treatment. */
   variant = 'card',
@@ -82,22 +119,9 @@ export function DeliveryEstimate({
   if (loading || !area) return null;
 
   const [key, english] = SPEED_KEYS[area.speed] ?? SPEED_KEYS.next_day;
-  const speed = withFallback(t, key, english);
-  const detail = variant === 'detail';
-
   return (
-    <p
-      className={[
-        'inline-flex items-center gap-1.5 rounded-full font-body font-semibold',
-        // Translucent rather than solid: it has to read as a badge on a white
-        // card and on a photograph, and a flat fill only works on one of them.
-        'bg-primary/10 text-primary ring-1 ring-inset ring-primary/15',
-        detail ? 'text-sm px-3 py-1.5' : 'text-[12px] px-2.5 py-1',
-        className,
-      ].join(' ')}
-    >
-      <SpeedIcon className={detail ? 'h-[18px] w-[18px]' : 'h-[15px] w-[15px]'} />
-      {speed}
-    </p>
+    <SpeedBadge size={variant} className={className}>
+      {withFallback(t, key, english)}
+    </SpeedBadge>
   );
 }
