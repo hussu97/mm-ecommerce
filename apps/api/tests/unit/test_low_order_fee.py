@@ -209,5 +209,55 @@ def test_stripe_line_items_add_up_to_the_order_total():
         f"Stripe would charge {charged} against an order total of {order.total}"
     )
 
-    names = {item["price_data"]["product_data"]["name"] for item in line_items}
-    assert "Small Order Fee" in names
+    # One combined fee line, not two. The split lives on the checkout and the
+    # confirmation email, where the customer can ask what it is for; Stripe just
+    # takes the money.
+    fee_lines = [
+        item
+        for item in line_items
+        if item["price_data"]["product_data"]["name"] == "Delivery Fee"
+    ]
+    assert len(fee_lines) == 1
+    assert fee_lines[0]["price_data"]["unit_amount"] == 3500  # 20 + 15
+
+
+def test_a_fee_only_order_still_gets_a_line():
+    """Delivery can be free while the small-basket fee is not — Sharjah is
+    exactly that case. Keying the line on `delivery_fee > 0` would drop the
+    charge entirely."""
+    from app.services.providers.stripe_provider import StripeProvider
+
+    order = SimpleNamespace(
+        items=[
+            SimpleNamespace(
+                unit_price=Decimal("30.00"),
+                quantity=1,
+                product_name="Brookie Cookie Melt",
+                product_sku="BCM-1",
+            )
+        ],
+        delivery_fee=Decimal("0.00"),
+        low_order_fee=Decimal("15.00"),
+        discount_amount=Decimal("0.00"),
+        total=Decimal("45.00"),
+        order_number="MM-TEST-2",
+        email="x@example.com",
+        id="00000000-0000-0000-0000-000000000002",
+    )
+
+    provider = StripeProvider()
+    with (
+        patch.object(provider, "_configure"),
+        patch("app.services.providers.stripe_provider.stripe") as stripe_mock,
+    ):
+        stripe_mock.checkout.Session.create.return_value = SimpleNamespace(
+            id="cs_test", url="https://stripe.test/pay"
+        )
+        provider.create_session(order)
+
+    line_items = stripe_mock.checkout.Session.create.call_args.kwargs["line_items"]
+    charged = sum(
+        Decimal(item["price_data"]["unit_amount"]) * item["quantity"]
+        for item in line_items
+    ) / Decimal("100")
+    assert charged == order.total

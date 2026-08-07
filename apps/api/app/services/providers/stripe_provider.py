@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from decimal import Decimal
 from urllib.parse import quote
 
 import stripe
@@ -50,28 +51,30 @@ class StripeProvider(PaymentProvider):
             for item in order.items
         ]
 
-        if order.delivery_fee and order.delivery_fee > 0:
+        # Every fee on the order, as one line.
+        #
+        # They are separate columns and separate lines on the checkout and the
+        # confirmation email, because a customer asking "why is there an extra
+        # fifteen dirhams" deserves an answer. Stripe is not that surface — it is
+        # a payment page the customer passes through, and splitting the charge
+        # there buys nothing while adding a second place the total can drift
+        # from `order.total`.
+        #
+        # Summed rather than listed, and the sum is what must equal the order:
+        # a fee that exists on the order and not here charges the card less than
+        # the order says, and nothing notices, because both totals are
+        # internally consistent. `test_stripe_line_items_add_up_to_the_order_total`
+        # is what holds this to it.
+        fees = (order.delivery_fee or Decimal("0")) + (
+            order.low_order_fee or Decimal("0")
+        )
+        if fees > 0:
             line_items.append(
                 {
                     "price_data": {
                         "currency": "aed",
-                        "unit_amount": int(order.delivery_fee * 100),
+                        "unit_amount": int(fees * 100),
                         "product_data": {"name": "Delivery Fee"},
-                    },
-                    "quantity": 1,
-                }
-            )
-
-        # Every fee on the order has to appear here or the customer is charged
-        # a different number from the one the order says they owe — and nothing
-        # would notice, because both totals are internally consistent.
-        if order.low_order_fee and order.low_order_fee > 0:
-            line_items.append(
-                {
-                    "price_data": {
-                        "currency": "aed",
-                        "unit_amount": int(order.low_order_fee * 100),
-                        "product_data": {"name": "Small Order Fee"},
                     },
                     "quantity": 1,
                 }

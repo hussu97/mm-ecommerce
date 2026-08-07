@@ -30,7 +30,7 @@ including Sharjah. Shown as its own checkout line; disappears above the threshol
 
 ### Phase 1 — delivery pricing backend  (sequential, everything depends on it)
 
-- [ ] **T1. Per-polygon free-delivery threshold**
+- [x] **T1. Per-polygon free-delivery threshold** — done, commit `e484399`
   - Add `free_delivery_threshold Numeric(10,2) NULL` to `delivery_polygons`; NULL = fall back to the global `delivery_settings.free_delivery_threshold`.
   - Move the `qualifies` comparison in `delivery_service.price` from `:241` (before zone lookup) to after `find_zone` at `:258`; thread the zone's threshold through both the static branch `:287` and dynamic branch `:300`.
   - Decide + implement what `free_threshold` / `remaining_for_free` mean on the no-pin path `:249-256` (proposal: return the global default and mark it provisional).
@@ -44,7 +44,7 @@ including Sharjah. Shown as its own checkout line; disappears above the threshol
   - Fix `ZoneMap.tsx:21-24` — it has no `noon_send` entry, so Sharjah Central currently renders grey and labelled "Third party".
   - Verify: point-in-polygon spot checks for a pin in each zone against expected fee/threshold/courier.
 
-- [ ] **T3. Low-order fee**
+- [x] **T3. Low-order fee** — done, commit `d1bff60`. VAT-exclusive per decision; judged on the pre-discount basket so a coupon cannot create the fee.
   - `delivery_settings`: add `low_order_fee` + `low_order_threshold`.
   - `orders`: add `low_order_fee Numeric(10,2) NOT NULL DEFAULT 0`.
   - `_compute_order_totals` (`order_service.py:355-404`) — returns a 5-tuple unpacked positionally at `:717-723`; widen carefully. `_persist_order` takes 15 positional args at `:775-792`.
