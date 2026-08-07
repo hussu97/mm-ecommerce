@@ -141,6 +141,22 @@ class DeliveryPolygon(Base, UUIDMixin):
     free_delivery_eligible: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+    #: The basket that earns free delivery *here*, when that is not the same
+    #: number as everywhere else.
+    #:
+    #: One national threshold only works while every zone costs about the same to
+    #: reach, and ours do not: a bike run inside Sharjah costs AED 13 and a car to
+    #: Jebel Ali costs AED 59. A single number is therefore either withholding an
+    #: offer that is cheap to honour, or funding one that is not — and it was
+    #: doing both at once.
+    #:
+    #: NULL means "use `delivery_settings.free_delivery_threshold`", which is what
+    #: every zone meant before this column existed and what a zone drawn without
+    #: thinking about it should keep meaning. Zero is a real value and means free
+    #: delivery at any basket — it is not the same as NULL.
+    free_delivery_threshold: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 2), nullable=True
+    )
     #: The branch that serves this zone — bakes the order, hands it to the
     #: courier, and sees it on its register. Exactly one per zone: the shapes are
     #: disjoint, so a pin resolves to one zone and therefore one kitchen, with

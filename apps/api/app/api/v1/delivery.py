@@ -48,7 +48,14 @@ class DeliveryQuoteResponse(BaseModel):
     #: from a live courier quote — there is no fee of ours to waive there, only
     #: a bill that arrives whatever the basket is worth.
     free_delivery_available: bool = True
+    #: The basket that earns free delivery *at this pin*. Thresholds vary by
+    #: zone, so this is the zone's own number wherever one has resolved.
     free_threshold: float
+    #: True when the threshold above is the national default standing in for a
+    #: zone we cannot resolve yet — i.e. no pin has been dropped. Copy driven by
+    #: it must stay hedged until it turns false. Defaulted so an older client
+    #: that does not read it behaves exactly as before.
+    free_threshold_provisional: bool = False
     remaining_for_free: float
     zone_name: str | None = None
     in_known_zone: bool

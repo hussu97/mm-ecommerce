@@ -65,6 +65,10 @@ class PolygonResponse(BaseModel):
     #: and of the courier: a fixed-fee third-party zone is not automatically an
     #: offer, and reading it off either of those was how it last went wrong.
     free_delivery_eligible: bool
+    #: The basket that earns free delivery here. Null means "use the national
+    #: threshold" — which is what every zone meant before thresholds could vary.
+    #: Zero is different from null: it means free at any basket.
+    free_delivery_threshold: float | None
     fulfilment_provider: str
     #: The kitchen that bakes this zone's orders and hands them to the courier.
     #: Null falls back to the single configured pickup branch.
@@ -82,6 +86,11 @@ class PolygonResponse(BaseModel):
             delivery_fee=float(p.delivery_fee),
             pricing_mode=p.pricing_mode,
             free_delivery_eligible=p.free_delivery_eligible,
+            free_delivery_threshold=(
+                None
+                if p.free_delivery_threshold is None
+                else float(p.free_delivery_threshold)
+            ),
             fulfilment_provider=p.fulfilment_provider,
             branch_id=str(p.branch_id) if p.branch_id else None,
             display_order=p.display_order,
@@ -126,6 +135,11 @@ class PolygonUpdate(BaseModel):
     delivery_fee: Decimal | None = Field(None, ge=0)
     pricing_mode: str | None = None
     free_delivery_eligible: bool | None = None
+    #: Null is a real instruction here — "clear this zone's own threshold and go
+    #: back to the national one" — so unlike every other field on this model,
+    #: omitted and null are not the same. The handler reads `model_fields_set`
+    #: to tell them apart rather than testing `is not None`.
+    free_delivery_threshold: Decimal | None = Field(None, ge=0)
     fulfilment_provider: str | None = None
     branch_id: uuid.UUID | None = None
     display_order: int | None = None
@@ -357,6 +371,11 @@ async def zone_map(
                 "delivery_fee": float(polygon.delivery_fee),
                 "pricing_mode": polygon.pricing_mode,
                 "free_delivery_eligible": polygon.free_delivery_eligible,
+                "free_delivery_threshold": (
+                    None
+                    if polygon.free_delivery_threshold is None
+                    else float(polygon.free_delivery_threshold)
+                ),
                 "fulfilment_provider": polygon.fulfilment_provider,
                 "display_order": polygon.display_order,
                 "geometry": _simplify(polygon.geometry, tolerance),
@@ -443,6 +462,12 @@ async def create_version(
             delivery_fee=polygon.delivery_fee,
             pricing_mode=polygon.pricing_mode,
             free_delivery_eligible=polygon.free_delivery_eligible,
+            # And so does the threshold, for the third time in this list and the
+            # same reason: a draft that loses it does not fail, it quietly
+            # reverts every zone to the national number — giving delivery away
+            # in the far zones and withholding it in the near ones, with nothing
+            # on screen to say the map changed.
+            free_delivery_threshold=polygon.free_delivery_threshold,
             fulfilment_provider=polygon.fulfilment_provider,
             # The kitchen travels with the zone for the same reason the schedule
             # does: a draft published without it points every zone at nothing,
@@ -522,6 +547,11 @@ async def update_polygon(
         "delivery_fee": float(polygon.delivery_fee),
         "pricing_mode": polygon.pricing_mode,
         "free_delivery_eligible": polygon.free_delivery_eligible,
+        "free_delivery_threshold": (
+            None
+            if polygon.free_delivery_threshold is None
+            else float(polygon.free_delivery_threshold)
+        ),
         "fulfilment_provider": polygon.fulfilment_provider,
         "branch_id": str(polygon.branch_id) if polygon.branch_id else None,
         "display_order": polygon.display_order,
@@ -545,6 +575,9 @@ async def update_polygon(
             polygon.delivery_fee = Decimal("0.00")
     if data.free_delivery_eligible is not None:
         polygon.free_delivery_eligible = data.free_delivery_eligible
+    if "free_delivery_threshold" in data.model_fields_set:
+        # Null clears the override; the zone goes back to the national number.
+        polygon.free_delivery_threshold = data.free_delivery_threshold
     if data.fulfilment_provider is not None:
         allowed = {p.value for p in FulfilmentProviderEnum}
         if data.fulfilment_provider not in allowed:
@@ -579,6 +612,11 @@ async def update_polygon(
                 "delivery_fee": float(polygon.delivery_fee),
                 "pricing_mode": polygon.pricing_mode,
                 "free_delivery_eligible": polygon.free_delivery_eligible,
+                "free_delivery_threshold": (
+                    None
+                    if polygon.free_delivery_threshold is None
+                    else float(polygon.free_delivery_threshold)
+                ),
                 "fulfilment_provider": polygon.fulfilment_provider,
                 "branch_id": str(polygon.branch_id) if polygon.branch_id else None,
                 "display_order": polygon.display_order,
@@ -681,6 +719,11 @@ async def zone_summary(
                 "delivery_fee": float(z.delivery_fee),
                 "pricing_mode": z.pricing_mode,
                 "free_delivery_eligible": z.free_delivery_eligible,
+                "free_delivery_threshold": (
+                    None
+                    if z.free_delivery_threshold is None
+                    else float(z.free_delivery_threshold)
+                ),
                 "fulfilment_provider": z.fulfilment_provider,
             }
             for z in zones
