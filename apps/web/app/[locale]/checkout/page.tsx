@@ -86,21 +86,27 @@ function paymentOptionsFor(method: 'delivery' | 'pickup'): ('stripe' | 'cod')[] 
 // ─── The small-basket fee ─────────────────────────────────────────────────────
 
 /**
- * The basket at or below which a delivery attracts the small-order fee, and
- * what that fee is. Both in AED, both VAT-exclusive, exactly as delivery is.
+ * What this basket will be charged as a small-order fee.
  *
- * These mirror `delivery_settings.low_order_threshold` and `.low_order_fee`,
- * which is where the order is actually priced — `order_service.low_order_fee_for`
- * is the only figure a customer is ever charged, and this page never decides
- * anything, it only shows what that will come to. They are written here because
- * `/delivery/rates` publishes both, so this is a fallback for the render before
- * that call lands rather than a second definition of the numbers. They were
- * briefly hardcoded here with no endpoint behind them, which is the same
- * coupling the coupon tray was explicitly built to avoid: a commercial figure
- * in two places is a figure that will eventually disagree with what is charged.
+ * The amount and the threshold are **not** in this file. They live in
+ * `delivery_settings`, are editable in the admin, and arrive over
+ * `/delivery/rates`. They were briefly constants here, and that is a commercial
+ * number in two places — which is a number that eventually disagrees with what
+ * the server actually charges, on the one screen where that disagreement is
+ * visible to the customer.
+ *
+ * With no rates yet there is no fee, because there is no honest amount to name.
+ * The line simply does not render until the numbers arrive.
+ *
+ * Mirrors `low_order_fee_for` on the server, including the two things about it
+ * that are easy to get wrong. It is judged on the basket **before** any
+ * discount, so applying a coupon can never conjure the fee into existence — an
+ * acquisition offer that hands back a 15-dirham surcharge is an offer fighting
+ * itself. And it never applies to collection: handing a box across a counter
+ * costs us nothing, so a fee there would have no cost behind it.
+ *
+ * The threshold is inclusive: a basket of exactly the threshold still pays.
  */
-export const LOW_ORDER_THRESHOLD = 35;
-export const LOW_ORDER_FEE = 15;
 
 /**
  * What this basket will be charged as a small-order fee.
@@ -117,19 +123,16 @@ export const LOW_ORDER_FEE = 15;
 export function lowOrderFeeFor(
   subtotal: number,
   method: 'delivery' | 'pickup',
-  rates?: { low_order_fee: number; low_order_threshold: number | null } | null,
+  rates: { low_order_fee: number; low_order_threshold: number | null } | null,
 ): number {
   if (method === 'pickup') return 0;
   // An empty basket is not a small order, it is a basket that cannot be
   // ordered. Charging it would put a fee on a page that is about to redirect.
   if (subtotal <= 0) return 0;
-
-  const threshold = rates ? rates.low_order_threshold : LOW_ORDER_THRESHOLD;
-  const fee = rates ? rates.low_order_fee : LOW_ORDER_FEE;
-  // Null threshold means the fee is switched off — which is not the same as a
-  // threshold of zero, and treating it as one would charge every basket.
-  if (threshold === null) return 0;
-  return subtotal <= threshold ? fee : 0;
+  // No rates yet, or the fee switched off. A null threshold is not a threshold
+  // of zero — treating it as one would charge every basket in the shop.
+  if (!rates || rates.low_order_threshold === null) return 0;
+  return subtotal <= rates.low_order_threshold ? rates.low_order_fee : 0;
 }
 
 // ─── Validation ───────────────────────────────────────────────────────────────
@@ -1232,8 +1235,8 @@ function CheckoutContent() {
           promoCode={retryOrder?.promo_code_used ?? form.promoCode}
           deliveryFee={deliveryFee}
           lowOrderFee={lowOrderFee}
-          lowOrderThreshold={deliveryRates?.low_order_threshold ?? LOW_ORDER_THRESHOLD}
-          lowOrderFeeAmount={deliveryRates?.low_order_fee ?? LOW_ORDER_FEE}
+          lowOrderThreshold={deliveryRates?.low_order_threshold ?? 0}
+          lowOrderFeeAmount={deliveryRates?.low_order_fee ?? 0}
           baseFee={baseFee ?? 0}
           freeApplied={freeApplied}
           freeAvailable={freeAvailable}

@@ -30,7 +30,7 @@ export function DeliveryEstimate({
   variant?: 'card' | 'detail';
   className?: string;
 }) {
-  const { area, loading, isKnown } = useLocation();
+  const { area, loading } = useLocation();
   const { t } = useTranslation();
 
   // Nothing honest to say yet. Rendering a placeholder that later changes into
@@ -66,9 +66,11 @@ export function DeliveryEstimate({
         local_shipping
       </span>
       <span className="font-semibold text-gray-900">{speed}</span>
-      {/* Only named when we actually know it. An assumed area printed as fact
-          is the failure this whole context exists to avoid. */}
-      {isKnown && area.zone_name ? (
+      {/* Named whether or not the customer told us where they are: with nobody
+          located this is the Sharjah kitchen's own zone, which is a sensible
+          default for a Sharjah bakery and is stated as a place rather than as
+          an assumption about the reader. Changing the address changes it. */}
+      {area.zone_name ? (
         <span className="text-gray-500">· {area.zone_name}</span>
       ) : null}
     </p>

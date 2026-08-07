@@ -620,6 +620,14 @@ export interface DeliverySettings {
   pickup_fee: number;
   /** Charged when a pin falls outside every zone we have drawn. */
   default_delivery_fee: number;
+  /** The small-basket surcharge. Delivery only, never pickup. */
+  low_order_fee: number;
+  /**
+   * The basket at or below which the surcharge applies, inclusive.
+   * Null switches the fee off — distinct from zero, which would charge it on
+   * everything.
+   */
+  low_order_threshold: number | null;
 }
 
 // ─── Audit Logs ───────────────────────────────────────────────────────────────

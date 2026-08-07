@@ -1018,6 +1018,14 @@ class DeliverySettingsResponse(BaseModel):
     free_delivery_threshold: float
     pickup_fee: float
     default_delivery_fee: float
+    #: The small-basket surcharge, and the basket at or below which it applies.
+    #: Both live here rather than in code because they are commercial numbers
+    #: that get argued with, and the storefront reads them from
+    #: `/delivery/rates` so there is exactly one place to change them.
+    low_order_fee: float
+    #: Null switches the fee off entirely — which is not the same as a
+    #: threshold of zero, and the admin form has to keep them distinguishable.
+    low_order_threshold: float | None
 
     @classmethod
     def of(cls, s: DeliverySettings) -> "DeliverySettingsResponse":
@@ -1026,6 +1034,10 @@ class DeliverySettingsResponse(BaseModel):
             free_delivery_threshold=float(s.free_delivery_threshold),
             pickup_fee=float(s.pickup_fee),
             default_delivery_fee=float(s.default_delivery_fee),
+            low_order_fee=float(s.low_order_fee or 0),
+            low_order_threshold=(
+                None if s.low_order_threshold is None else float(s.low_order_threshold)
+            ),
         )
 
 
@@ -1033,6 +1045,11 @@ class DeliverySettingsUpdate(BaseModel):
     free_delivery_threshold: Decimal | None = Field(None, ge=0)
     pickup_fee: Decimal | None = Field(None, ge=0)
     default_delivery_fee: Decimal | None = Field(None, ge=0)
+    low_order_fee: Decimal | None = Field(None, ge=0)
+    #: Null is a real instruction here — "switch the fee off" — so unlike the
+    #: fields above, omitted and null are not the same. The handler reads
+    #: `model_fields_set` to tell them apart.
+    low_order_threshold: Decimal | None = Field(None, ge=0)
 
 
 @router.get("/settings", response_model=DeliverySettingsResponse)
@@ -1064,6 +1081,11 @@ async def update_delivery_settings(
 
     for field, value in data.model_dump(exclude_none=True).items():
         setattr(settings, field, value)
+    # `exclude_none` above is right for every field except this one, where null
+    # is a real instruction: it switches the small-basket fee off. Without this,
+    # an admin could turn the fee on and never turn it back off.
+    if "low_order_threshold" in data.model_fields_set:
+        settings.low_order_threshold = data.low_order_threshold
     # `get_settings` invents a row when the table is empty, so this has to be an
     # add rather than an assumption that the object is already tracked.
     db.add(settings)

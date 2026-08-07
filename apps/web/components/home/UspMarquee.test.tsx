@@ -87,8 +87,23 @@ describe('UspMarquee', () => {
     expect(screen.getAllByText('Baked to order').length).toBeGreaterThan(0);
   });
 
-  it('omits the speed item while the location is only the shop standing in', () => {
+  it('still shows the speed item when the location is the shop standing in', () => {
+    // With nobody located the area lookup runs against the Sharjah kitchen, so
+    // the answer is the shop's own zone. Shown rather than withheld: this is a
+    // Sharjah bakery whose nearest customers are its largest group, and the
+    // banner beside the strip names the area and offers to change it, so the
+    // claim never stands unqualified.
     mockArea = area('express');
+    mockIsKnown = false;
+    const { container } = render(<UspMarquee c={CMS} />);
+    expect(firstRun(container).textContent).toMatch(/hour/i);
+  });
+
+  it('still omits it when the lookup itself failed', () => {
+    // The distinction that survives: an unlocated customer gets the shop's
+    // default, but a lookup that returned nothing has no speed to report and
+    // must not invent one.
+    mockArea = null;
     mockIsKnown = false;
     const { container } = render(<UspMarquee c={CMS} />);
     expect(firstRun(container).textContent).not.toMatch(/hour/i);

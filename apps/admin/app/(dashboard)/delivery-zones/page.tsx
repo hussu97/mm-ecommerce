@@ -701,10 +701,16 @@ function SettingsCard({
   }) => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<Record<string, string>>({
     free_delivery_threshold: String(settings.free_delivery_threshold),
     pickup_fee: String(settings.pickup_fee),
     default_delivery_fee: String(settings.default_delivery_fee),
+    low_order_fee: String(settings.low_order_fee ?? 0),
+    // Null renders as blank, which is what the field means: fee switched off.
+    low_order_threshold:
+      settings.low_order_threshold === null
+        ? ''
+        : String(settings.low_order_threshold),
   });
 
   const FIELDS = [
@@ -719,17 +725,40 @@ function SettingsCard({
       hint: 'A real address we have not drawn a shape around yet.',
     },
     { key: 'pickup_fee' as const, label: 'Pickup', hint: 'Usually nothing.' },
+    {
+      key: 'low_order_fee' as const,
+      label: 'Small order fee',
+      hint: 'Charged on delivery orders at or below the basket size beside it. Never on pickup.',
+    },
+    {
+      key: 'low_order_threshold' as const,
+      label: 'Small order below',
+      hint: 'Inclusive — a basket of exactly this much still pays. Leave blank to switch the fee off.',
+      // The only field here that may be empty, and empty means something: no
+      // threshold is how the fee is turned off. Zero would charge every basket.
+      nullable: true,
+    },
   ];
 
   function save() {
-    const parsed = Object.fromEntries(
-      FIELDS.map(f => [f.key, Number(form[f.key])]),
-    ) as Record<(typeof FIELDS)[number]['key'], number>;
-    if (Object.values(parsed).some(v => !Number.isFinite(v) || v < 0)) {
-      alert('Every amount has to be a number, and none of them can be negative.');
-      return;
+    const parsed: Record<string, number | null> = {};
+    for (const field of FIELDS) {
+      const raw = String(form[field.key] ?? '').trim();
+      // A blank nullable field is an instruction, not a missing value: it
+      // switches the small-order fee off. Coercing it to 0 would instead charge
+      // the fee on every basket, which is the opposite.
+      if (!raw && 'nullable' in field && field.nullable) {
+        parsed[field.key] = null;
+        continue;
+      }
+      const value = Number(raw);
+      if (!Number.isFinite(value) || value < 0) {
+        alert('Every amount has to be a number, and none of them can be negative.');
+        return;
+      }
+      parsed[field.key] = value;
     }
-    onSave(parsed);
+    onSave(parsed as Parameters<typeof onSave>[0]);
     setEditing(false);
   }
 

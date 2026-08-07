@@ -1,7 +1,16 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { LOW_ORDER_FEE, LOW_ORDER_THRESHOLD, OrderSummary, lowOrderFeeFor } from './page';
+import { OrderSummary, lowOrderFeeFor } from './page';
+
+// The real numbers live in `delivery_settings` and reach the page over
+// `/delivery/rates`. These stand in for that response — deliberately not
+// imported from the page, which no longer holds a copy of them, so a change to
+// the settings row cannot silently make these tests describe a fee nobody is
+// charged.
+const RATES = { low_order_fee: 15, low_order_threshold: 35 };
+const LOW_ORDER_FEE = RATES.low_order_fee;
+const LOW_ORDER_THRESHOLD = RATES.low_order_threshold as number;
 import type { Cart } from '@/lib/types';
 
 // The real strings, so what these assertions read is what a customer reads.
@@ -54,7 +63,7 @@ function renderSummary(subtotal: number, overrides: Record<string, unknown> = {}
       discount={0}
       promoCode=""
       deliveryFee={20}
-      lowOrderFee={lowOrderFeeFor(subtotal, deliveryMethod)}
+      lowOrderFee={lowOrderFeeFor(subtotal, deliveryMethod, RATES)}
       lowOrderThreshold={LOW_ORDER_THRESHOLD}
       lowOrderFeeAmount={LOW_ORDER_FEE}
       baseFee={20}
@@ -73,21 +82,21 @@ function renderSummary(subtotal: number, overrides: Record<string, unknown> = {}
 
 describe('lowOrderFeeFor', () => {
   it('charges a delivery at or below the threshold', () => {
-    expect(lowOrderFeeFor(20, 'delivery')).toBe(LOW_ORDER_FEE);
-    expect(lowOrderFeeFor(LOW_ORDER_THRESHOLD, 'delivery')).toBe(LOW_ORDER_FEE);
+    expect(lowOrderFeeFor(20, 'delivery', RATES)).toBe(LOW_ORDER_FEE);
+    expect(lowOrderFeeFor(LOW_ORDER_THRESHOLD, 'delivery', RATES)).toBe(LOW_ORDER_FEE);
   });
 
   it('charges nothing once the basket is past it', () => {
-    expect(lowOrderFeeFor(LOW_ORDER_THRESHOLD + 0.01, 'delivery')).toBe(0);
-    expect(lowOrderFeeFor(200, 'delivery')).toBe(0);
+    expect(lowOrderFeeFor(LOW_ORDER_THRESHOLD + 0.01, 'delivery', RATES)).toBe(0);
+    expect(lowOrderFeeFor(200, 'delivery', RATES)).toBe(0);
   });
 
   it('never charges a collection, however small', () => {
-    expect(lowOrderFeeFor(5, 'pickup')).toBe(0);
+    expect(lowOrderFeeFor(5, 'pickup', RATES)).toBe(0);
   });
 
   it('does not price an empty basket', () => {
-    expect(lowOrderFeeFor(0, 'delivery')).toBe(0);
+    expect(lowOrderFeeFor(0, 'delivery', RATES)).toBe(0);
   });
 });
 
@@ -143,9 +152,9 @@ describe('OrderSummary — the small-basket fee', () => {
   it('is judged before the discount, so a coupon cannot conjure it', () => {
     // A 40-dirham basket is above the threshold. A coupon taking it to 34 must
     // not drag a 15-dirham surcharge in behind a 6-dirham saving.
-    expect(lowOrderFeeFor(40, 'delivery')).toBe(0);
+    expect(lowOrderFeeFor(40, 'delivery', RATES)).toBe(0);
 
-    renderSummary(40, { discount: 6, promoCode: 'FIRST15', lowOrderFee: lowOrderFeeFor(40, 'delivery') });
+    renderSummary(40, { discount: 6, promoCode: 'FIRST15', lowOrderFee: lowOrderFeeFor(40, 'delivery', RATES) });
 
     expect(screen.queryByText('Small order fee')).toBeNull();
   });

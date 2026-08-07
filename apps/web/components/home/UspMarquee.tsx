@@ -72,9 +72,14 @@ function Item({ icon, label }: UspItem) {
  */
 export function UspMarquee({ c }: { c: UspContent }) {
   const { t } = useTranslation();
-  const { area, isKnown } = useLocation();
+  const { area } = useLocation();
 
-  const speedKey = area && isKnown ? SPEED_KEY[area.speed] : undefined;
+  // Shown whether or not the customer has told us where they are. With nobody
+  // located the lookup runs against the Sharjah kitchen, so the answer is the
+  // shop's own zone — which is the right default for a Sharjah bakery whose
+  // nearest customers are its biggest group. The banner beside it names the
+  // area and offers to change it, so the claim is never unqualified.
+  const speedKey = area ? SPEED_KEY[area.speed] : undefined;
   const items: UspItem[] = [
     ...(speedKey && area ? [{ icon: SPEED_ICON[area.speed], label: t(speedKey) }] : []),
     ...(c.items ?? []).filter(i => i.label),
