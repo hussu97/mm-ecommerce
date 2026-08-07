@@ -26,9 +26,11 @@ from sqlalchemy.orm import selectinload
 
 from app.core.deps import get_admin_user, get_db
 from app.models.branch import Branch
+from app.models.courier import Courier
 from app.models.delivery_batch import (
     BatchStatusEnum,
     DeliveryBatch,
+    DeliveryBatchGroup,
     DeliveryBatchWindow,
 )
 from app.models.delivery_settings import DeliverySettings
@@ -162,7 +164,7 @@ class BatchWindowResponse(BaseModel):
     def of(cls, w: DeliveryBatchWindow) -> "BatchWindowResponse":
         return cls(
             id=str(w.id),
-            polygon_id=str(w.polygon_id),
+            group_id=str(w.group_id),
             label=w.label,
             start_hour=w.start_hour,
             start_minute=w.start_minute,
@@ -222,7 +224,7 @@ class BatchResponse(BaseModel):
         per = b.cost_per_delivery
         return cls(
             id=str(b.id),
-            polygon_id=str(b.polygon_id),
+            group_id=str(b.group_id),
             zone_name=zone_name,
             window_label=b.window_label,
             dispatch_at=b.dispatch_at,
@@ -731,8 +733,6 @@ async def zone_summary(
         # Unchanged by the zone map: the threshold is the same everywhere, so a
         # customer in Fujairah earns free delivery on the same basket as one in
         # Sharjah.
-        "free_threshold": float(settings.free_delivery_threshold),
-        "default_delivery_fee": float(settings.default_delivery_fee),
         "pickup_fee": float(settings.pickup_fee),
     }
 
@@ -747,12 +747,19 @@ async def _load_polygon(db: AsyncSession, polygon_id: uuid.UUID) -> DeliveryPoly
     return polygon
 
 
+async def _load_group(db: AsyncSession, group_id: uuid.UUID) -> DeliveryBatchGroup:
+    group = await db.get(DeliveryBatchGroup, group_id)
+    if group is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Batch group not found")
+    return group
+
+
 async def _windows_of(
-    db: AsyncSession, polygon_id: uuid.UUID
+    db: AsyncSession, group_id: uuid.UUID
 ) -> list[DeliveryBatchWindow]:
     result = await db.execute(
         select(DeliveryBatchWindow)
-        .where(DeliveryBatchWindow.polygon_id == polygon_id)
+        .where(DeliveryBatchWindow.group_id == group_id)
         .order_by(DeliveryBatchWindow.start_hour, DeliveryBatchWindow.start_minute)
     )
     return list(result.scalars().all())
@@ -772,66 +779,63 @@ def _reject_overlaps(windows: list[DeliveryBatchWindow]) -> None:
 
 
 @router.get(
-    "/polygons/{polygon_id}/batch-windows", response_model=list[BatchWindowResponse]
+    "/batch-groups/{group_id}/batch-windows", response_model=list[BatchWindowResponse]
 )
 async def list_batch_windows(
-    polygon_id: uuid.UUID,
+    group_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_admin_user),
 ):
-    """When orders in this zone travel together. All times are Dubai time."""
-    await _load_polygon(db, polygon_id)
-    return [BatchWindowResponse.of(w) for w in await _windows_of(db, polygon_id)]
+    """When orders in this group travel together. All times are Dubai time."""
+    await _load_group(db, group_id)
+    return [BatchWindowResponse.of(w) for w in await _windows_of(db, group_id)]
 
 
 @router.post(
-    "/polygons/{polygon_id}/batch-windows",
+    "/batch-groups/{group_id}/batch-windows",
     response_model=BatchWindowResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_batch_window(
-    polygon_id: uuid.UUID,
+    group_id: uuid.UUID,
     data: BatchWindowWrite,
     request: Request,
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(get_admin_user),
 ):
     """
-    Add a slot.
+    Add a slot to a group's schedule.
 
-    Only a Lalamove zone can have one. A third-party zone has no run of ours to
-    share at all, and noon Send's shared run is a separate product we do not
-    use — so a schedule on either would be a setting that does nothing, which
-    is worse than an absent one because somebody will come to rely on it.
+    Only a courier that can carry several of our orders in one booking may have
+    one — `supports_batching` on the courier row. A schedule on anything else is
+    a setting that does nothing, which is worse than an absent one because
+    somebody will come to rely on it.
     """
-    polygon = await _load_polygon(db, polygon_id)
-    if polygon.fulfilment_provider != FulfilmentProviderEnum.LALAMOVE.value:
-        reason = (
-            "noon Send's shared runs are a different product with their own "
-            "endpoint and a cap of three drops, which we do not use"
-            if polygon.fulfilment_provider == FulfilmentProviderEnum.NOON_SEND.value
-            else "it is delivered by a third party, so there is no run of ours "
-            "for its orders to share"
-        )
+    group = await _load_group(db, group_id)
+    courier = (
+        await db.execute(select(Courier).where(Courier.code == group.courier_code))
+    ).scalar_one_or_none()
+    if courier is None or not courier.supports_batching:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            f"'{polygon.name}' cannot be batched: {reason}.",
+            f"'{group.name}' books {group.courier_code}, which cannot carry "
+            "several of our orders in one booking — so it has no run to share.",
         )
 
-    window = DeliveryBatchWindow(polygon_id=polygon_id, **data.model_dump())
-    _reject_overlaps([*await _windows_of(db, polygon_id), window])
+    window = DeliveryBatchWindow(group_id=group_id, **data.model_dump())
+    _reject_overlaps([*await _windows_of(db, group_id), window])
     db.add(window)
     await db.flush()
 
     # Anything already waiting is re-derived, so adding a slot picks up the
     # orders that fell into the gap it just filled.
-    await batching_service.reschedule_polygon(db, polygon_id)
+    await batching_service.reschedule_group(db, group_id)
     await audit_service.log_action(
         db,
         action="CREATE",
         entity_type="delivery_batch_window",
         entity_id=str(window.id),
-        entity_label=f"{polygon.name} · {window.label}",
+        entity_label=f"{group.name} · {window.label}",
         admin=admin,
         changes=data.model_dump(),
         request=request,
@@ -860,10 +864,10 @@ async def update_batch_window(
     before = BatchWindowResponse.of(window).model_dump()
     for field, value in data.model_dump().items():
         setattr(window, field, value)
-    _reject_overlaps(await _windows_of(db, window.polygon_id))
+    _reject_overlaps(await _windows_of(db, window.group_id))
     await db.flush()
 
-    moved = await batching_service.reschedule_polygon(db, window.polygon_id)
+    moved = await batching_service.reschedule_group(db, window.group_id)
     await audit_service.log_action(
         db,
         action="UPDATE",
@@ -892,7 +896,7 @@ async def delete_batch_window(
     if window is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Batch window not found")
 
-    polygon_id = window.polygon_id
+    group_id = window.group_id
     label = window.label
     await audit_service.log_action(
         db,
@@ -905,7 +909,7 @@ async def delete_batch_window(
     )
     await db.delete(window)
     await db.flush()
-    await batching_service.reschedule_polygon(db, polygon_id)
+    await batching_service.reschedule_group(db, group_id)
 
 
 @router.get("/batches", response_model=list[BatchResponse])
@@ -1014,10 +1018,18 @@ async def dispatch_batch_now(
 
 
 class DeliverySettingsResponse(BaseModel):
+    """
+    The delivery numbers with no zone to belong to.
+
+    `free_delivery_threshold` and `default_delivery_fee` used to be here and are
+    gone. Every polygon carries its own threshold, so a national one was a second
+    answer to a question the map already settles — and the admin was printing it
+    under "applies to every zone" while no zone read it. A pin outside every
+    polygon is now unserviceable rather than charged a default.
+    """
+
     id: str
-    free_delivery_threshold: float
     pickup_fee: float
-    default_delivery_fee: float
     #: The small-basket surcharge, and the basket at or below which it applies.
     #: Both live here rather than in code because they are commercial numbers
     #: that get argued with, and the storefront reads them from
@@ -1031,9 +1043,7 @@ class DeliverySettingsResponse(BaseModel):
     def of(cls, s: DeliverySettings) -> "DeliverySettingsResponse":
         return cls(
             id=str(s.id),
-            free_delivery_threshold=float(s.free_delivery_threshold),
             pickup_fee=float(s.pickup_fee),
-            default_delivery_fee=float(s.default_delivery_fee),
             low_order_fee=float(s.low_order_fee or 0),
             low_order_threshold=(
                 None if s.low_order_threshold is None else float(s.low_order_threshold)
@@ -1042,9 +1052,7 @@ class DeliverySettingsResponse(BaseModel):
 
 
 class DeliverySettingsUpdate(BaseModel):
-    free_delivery_threshold: Decimal | None = Field(None, ge=0)
     pickup_fee: Decimal | None = Field(None, ge=0)
-    default_delivery_fee: Decimal | None = Field(None, ge=0)
     low_order_fee: Decimal | None = Field(None, ge=0)
     #: Null is a real instruction here — "switch the fee off" — so unlike the
     #: fields above, omitted and null are not the same. The handler reads

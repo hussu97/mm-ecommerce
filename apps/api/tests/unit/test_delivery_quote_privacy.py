@@ -14,7 +14,7 @@ added to a response model, by someone who had no idea it mattered.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
@@ -24,7 +24,7 @@ import pytest
 from app.api.v1.delivery import DeliveryQuoteResponse
 from app.models.cart import Cart
 from app.models.delivery_settings import DeliverySettings
-from app.services import delivery_service, lalamove_service
+from app.services import delivery_promise, delivery_service, lalamove_service
 from app.services.delivery_zone_service import Zone
 
 
@@ -49,9 +49,7 @@ def noon_send_is_off(monkeypatch):
 
 
 SETTINGS = DeliverySettings(
-    free_delivery_threshold=Decimal("150.00"),
     pickup_fee=Decimal("0.00"),
-    default_delivery_fee=Decimal("50.00"),
 )
 
 SHARJAH_CITY = Zone(
@@ -65,6 +63,7 @@ SHARJAH_CITY = Zone(
     max_lng=55.7,
     rings=(),
     free_delivery_eligible=True,
+    free_delivery_threshold=Decimal("150.00"),
 )
 
 SHARJAH_CENTRAL = Zone(
@@ -77,6 +76,14 @@ SHARJAH_CENTRAL = Zone(
     min_lng=55.2,
     max_lng=55.5,
     rings=(),
+)
+
+#: A fixed arrival, so a test asserting the quote's *shape* does not also depend
+#: on the resolver's four rules — those have their own module.
+PROMISED = delivery_promise.DeliveryPromise(
+    at=datetime(2026, 8, 8, 15, 0, tzinfo=timezone.utc),
+    precision="time",
+    reason="stubbed for this module",
 )
 
 ESTIMATE = lalamove_service.Estimate(
@@ -107,12 +114,15 @@ def _patches(estimate, error, zone=SHARJAH_CITY):
             "estimate_for_point",
             new=AsyncMock(return_value=(estimate, error)),
         ),
-        # The arrival estimate walks the zone's schedule. Nothing here is about
-        # the clock, and an empty schedule is a legal state anyway.
+        # The arrival estimate is its own resolver now, and it reads a courier
+        # row, a group, a schedule and the branch's trading hours. None of that
+        # is what this module is about — these tests are about what the quote
+        # says and does not say about the carrier — so the whole resolver is
+        # stubbed rather than each of its four lookups.
         patch.object(
-            delivery_service.batching_service,
-            "active_windows",
-            new=AsyncMock(return_value=[]),
+            delivery_service.delivery_promise,
+            "promise_for_zone",
+            new=AsyncMock(return_value=PROMISED),
         ),
     )
 
@@ -195,27 +205,28 @@ def test_the_response_model_has_no_field_that_could_leak_one():
     }
 
 
-async def test_a_noon_send_zone_promises_an_hour_without_reading_a_schedule(cart):
+async def test_the_quote_asks_the_resolver_rather_than_deciding_itself(cart):
     """
-    A noon Send order is handed to a rider the moment it is packed, so an hour
-    is a promise that can be kept — and nothing about it depends on the batch
-    schedule, which is why the schedule is made to explode if it is consulted.
+    Every delivery time in the app comes from `delivery_promise`, so that the
+    card, the checkout, the confirmation and the email cannot disagree. The
+    quote's job is to pass the zone in and render what comes back.
 
-    Asserted because the code path is one `if` on `is_batched` sitting between
-    two branches that would both look plausible if it went missing.
+    Asserted by making the resolver the only way to get an answer: if `quote`
+    ever grows its own arithmetic again, this stops raising and starts lying.
     """
     settings_p, zone_p, est_p, _ = _patches(ESTIMATE, None, SHARJAH_CENTRAL)
 
     async def never(*_args, **_kwargs):
-        raise AssertionError("a noon Send zone must not wait for a batch window")
+        raise AssertionError("the quote computed a delivery time of its own")
 
     with (
         settings_p,
         zone_p,
         est_p,
-        patch.object(delivery_service.batching_service, "active_windows", new=never),
+        patch.object(delivery_service.delivery_promise, "promise_for_zone", new=never),
+        pytest.raises(AssertionError, match="computed a delivery time"),
     ):
-        result = await delivery_service.quote(
+        await delivery_service.quote(
             AsyncMock(),
             Decimal("100.00"),
             latitude=25.3304,
@@ -224,18 +235,17 @@ async def test_a_noon_send_zone_promises_an_hour_without_reading_a_schedule(cart
             address="Al Qasimia, Sharjah",
         )
 
-    assert result["delivery_estimate"]["precision"] == "time"
 
-
-async def test_an_area_we_do_not_dispatch_promises_only_a_day(cart):
+async def test_a_pin_outside_every_zone_is_refused_rather_than_quoted(cart):
     """
-    Outside every drawn zone the order is collected on somebody else's
-    schedule. Naming an hour there would be inventing a precision that belongs
-    to a third party.
+    It used to be priced at a national default and promised "some day". The map
+    tiles the country, so matching nothing means outside it — and a quote for an
+    address we cannot serve is worse than a refusal the checkout can act on.
     """
     result = await _quote(cart, zone=None)
 
-    assert result["delivery_estimate"]["precision"] == "day"
+    assert result["serviceable"] is False
+    assert result["delivery_fee"] is None
 
 
 async def test_the_promised_time_still_names_nobody(cart):
@@ -272,12 +282,13 @@ async def test_free_delivery_records_the_revenue_as_zero(cart):
     assert cart.delivery_quote_cost == Decimal("25.00")
 
 
-async def test_the_threshold_does_not_move_with_the_zone(cart):
+async def test_the_threshold_moves_with_the_zone(cart):
     """
-    One threshold for the whole country. Whether free delivery *applies* does
-    depend on the zone — it reaches the fixed-fee ones and no further — but the
-    number itself never moves, because a threshold that varied by address would
-    be the one place the map became visible to the customer.
+    The inversion. There used to be one national threshold on the grounds that a
+    number varying by address would make the map visible to the customer — but
+    one number is simultaneously too high for a bike run inside Sharjah at AED 13
+    and too low for a car to Jebel Ali at AED 59, so it was withholding a cheap
+    offer and funding an expensive one at the same time.
     """
     far = Zone(
         id=uuid.uuid4(),
@@ -289,12 +300,17 @@ async def test_the_threshold_does_not_move_with_the_zone(cart):
         min_lng=55.9,
         max_lng=56.4,
         rings=(),
+        free_delivery_threshold=Decimal("200.00"),
     )
     near = await _quote(cart, subtotal="149.00")
     far_quote = await _quote(cart, subtotal="149.00", zone=far)
 
-    assert near["free_threshold"] == far_quote["free_threshold"] == 150.0
-    assert near["remaining_for_free"] == far_quote["remaining_for_free"] == 1.0
+    assert near["free_threshold"] == 150.0
+    assert far_quote["free_threshold"] == 200.0
+    # And the countdown follows it: one dirham to go in Sharjah, fifty-one out
+    # at the third-party edge, off the same basket.
+    assert near["remaining_for_free"] == 1.0
+    assert far_quote["remaining_for_free"] == 51.0
 
 
 async def test_a_failed_estimate_is_recorded_rather_than_swallowed(cart):

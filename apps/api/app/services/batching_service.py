@@ -61,8 +61,12 @@ from app.models.delivery_batch import (
     MAX_DROPS_PER_ORDER,
     BatchStatusEnum,
     DeliveryBatch,
+    DeliveryBatchGroup,
     DeliveryBatchWindow,
 )
+from app.core import trading_hours
+from app.core.exceptions import BadRequestError
+from app.models.courier import Courier
 from app.models.delivery_polygon import DeliveryPolygon, FulfilmentProviderEnum
 from app.models.order import Order, OrderStatusEnum
 from app.models.order_delivery import (
@@ -99,10 +103,12 @@ __all__ = [
     "dispatch_batch",
     "dispatch_due_batches",
     "find_window",
+    "assert_group_fits_polygon",
+    "group_for_polygon",
     "kitchen_is_open",
     "next_dispatch_at",
     "overlapping",
-    "reschedule_polygon",
+    "reschedule_group",
 ]
 
 
@@ -210,13 +216,13 @@ def _segments_overlap(a: DeliveryBatchWindow, b: DeliveryBatchWindow) -> bool:
 
 
 async def active_windows(
-    db: AsyncSession, polygon_id: uuid.UUID
+    db: AsyncSession, group_id: uuid.UUID
 ) -> list[DeliveryBatchWindow]:
-    """This zone's live schedule, earliest first."""
+    """This group's live schedule, earliest first."""
     result = await db.execute(
         select(DeliveryBatchWindow)
         .where(
-            DeliveryBatchWindow.polygon_id == polygon_id,
+            DeliveryBatchWindow.group_id == group_id,
             DeliveryBatchWindow.is_active.is_(True),
         )
         .order_by(DeliveryBatchWindow.start_hour, DeliveryBatchWindow.start_minute)
@@ -226,31 +232,33 @@ async def active_windows(
 
 async def _open_batch(
     db: AsyncSession,
-    polygon_id: uuid.UUID,
+    group_id: uuid.UUID,
     match: WindowMatch,
 ) -> DeliveryBatch:
     """
     The run this order joins, created if it is the first one leaving then.
 
-    Matched on the departure time alone, not on the zone. Zones have their own
-    schedules — the city slots close at 12:00, 18:00, 21:00, 22:30 and midnight,
-    the outer ones at 17:00 and midnight — and wherever two of them close on the
-    same minute, the orders waiting in both leave together on one courier order.
-    Two vans setting off from the same kitchen at the same moment is two lots of
-    the base fare for one journey's worth of work; the courier optimises the
-    combined route and everything on it gets cheaper.
+    Keyed on `(group, dispatch_at)`. It used to be keyed on `dispatch_at`
+    **alone**, which meant any two zones whose slots happened to close on the
+    same minute were merged onto one courier booking — a decision nobody made,
+    nothing displayed, and that silently changed whenever somebody edited an
+    unrelated zone's schedule.
 
-    `polygon_id` and `window_id` record which zone's slot opened the run. They
-    describe where it came from, not what is on it.
+    Sharing a run is still the point: one route carrying five drops costs about
+    a third per delivery of five separate ones. But which zones share it is now
+    the group, which somebody declared, so the Dubai bands ride together because
+    they were put together — and the northern zones closing at the same instant
+    get their own van rather than being folded into Dubai's.
     """
     result = await db.execute(
         select(DeliveryBatch)
         .where(
+            DeliveryBatch.group_id == group_id,
             DeliveryBatch.dispatch_at == match.dispatch_at,
             DeliveryBatch.status == BatchStatusEnum.PENDING.value,
         )
-        # Oldest first, so every zone closing on this minute converges on the
-        # same run instead of two of them each creating one.
+        # Oldest first, so every zone in this group converges on the same run
+        # instead of each creating one.
         .order_by(DeliveryBatch.created_at)
     )
     batch = result.scalars().first()
@@ -258,7 +266,7 @@ async def _open_batch(
         return batch
 
     batch = DeliveryBatch(
-        polygon_id=polygon_id,
+        group_id=group_id,
         window_id=match.window.id,
         window_label=match.window.label,
         dispatch_at=match.dispatch_at,
@@ -316,7 +324,19 @@ async def assign_or_dispatch(
         # since been deleted. It still has to go out; it just goes alone.
         return await courier_service.dispatch(db, order)
 
-    windows = await active_windows(db, delivery.polygon_id)
+    group_id = await group_for_polygon(db, delivery.polygon_id)
+    if group_id is None:
+        # A zone in no group. That is not a gap — it is the declared answer for
+        # every noon Send zone and every Lalamove zone nobody put on a schedule:
+        # nothing to wait for, so it leaves now.
+        logger.info(
+            "Zone %s is in no batch group; order %s dispatches on its own",
+            delivery.polygon_id,
+            order.order_number,
+        )
+        return await courier_service.dispatch(db, order)
+
+    windows = await active_windows(db, group_id)
     match = find_window(windows, now)
     if match is None:
         logger.info(
@@ -326,7 +346,7 @@ async def assign_or_dispatch(
         )
         return await courier_service.dispatch(db, order)
 
-    batch = await _open_batch(db, delivery.polygon_id, match)
+    batch = await _open_batch(db, group_id, match)
     delivery.batch_id = batch.id
     delivery.last_error = None
     batch.stop_count = await _count_deliveries(db, batch.id)
@@ -363,31 +383,34 @@ async def _count_deliveries(db: AsyncSession, batch_id: uuid.UUID) -> int:
 # ── rescheduling ──────────────────────────────────────────────────────────────
 
 
-async def reschedule_polygon(db: AsyncSession, polygon_id: uuid.UUID) -> int:
+async def reschedule_group(db: AsyncSession, group_id: uuid.UUID) -> int:
     """
-    Re-derive every waiting assignment in this zone against the current windows.
+    Re-derive every waiting assignment in this group against the current windows.
 
     Called after the schedule is edited. An order whose window moved lands on
     the new one; an order whose window disappeared, or whose new window has
     already closed, goes out on its own instead of waiting for a slot that will
     not come round until tomorrow.
 
+    Scoped to the group rather than one zone, which is now the same set the
+    schedule actually governs. It used to be per-polygon and carried a careful
+    note about not dragging other zones' orders around — a hazard that existed
+    only because unrelated zones could end up sharing a run by accident. They
+    cannot any more, so the scope and the schedule finally describe the same
+    thing.
+
     Returns how many assignments changed.
     """
-    windows = await active_windows(db, polygon_id)
+    windows = await active_windows(db, group_id)
     now = datetime.now(timezone.utc)
 
-    # Selected by the *order's* zone rather than the batch's. A run is shared
-    # across every zone closing on the same minute, so the batch it sits in may
-    # well have been opened by a different zone's schedule — and editing this
-    # zone's windows must not drag those other orders around with it.
     waiting = (
         (
             await db.execute(
                 select(OrderDelivery)
                 .join(DeliveryBatch, DeliveryBatch.id == OrderDelivery.batch_id)
                 .where(
-                    OrderDelivery.polygon_id == polygon_id,
+                    DeliveryBatch.group_id == group_id,
                     DeliveryBatch.status == BatchStatusEnum.PENDING.value,
                     OrderDelivery.courier_order_id.is_(None),
                 )
@@ -412,7 +435,7 @@ async def reschedule_polygon(db: AsyncSession, polygon_id: uuid.UUID) -> int:
             moved += 1
             continue
 
-        batch = await _open_batch(db, polygon_id, match)
+        batch = await _open_batch(db, group_id, match)
         if batch.id == delivery.batch_id:
             continue
         await cancel_assignment(db, delivery)
@@ -430,40 +453,21 @@ async def reschedule_polygon(db: AsyncSession, polygon_id: uuid.UUID) -> int:
             await courier_service.dispatch(db, delivery.order)
 
     if moved:
-        logger.info("Rescheduled %s waiting orders in zone %s", moved, polygon_id)
+        logger.info("Rescheduled %s waiting orders in group %s", moved, group_id)
     return moved
 
 
 # ── retry ─────────────────────────────────────────────────────────────────────
 
 
-def _minutes_of(clock: str) -> int | None:
-    """ "HH:MM" as a minute of the day, or None if it is not that."""
-    try:
-        hour, _, minute = clock.partition(":")
-        total = int(hour) * 60 + int(minute)
-    except ValueError:
-        return None
-    return total if 0 <= total <= 1440 else None
-
-
-def kitchen_is_open(moment: datetime, opens_at: str, closes_at: str) -> bool:
-    """
-    Whether the branch is trading at this instant, on its own clock.
-
-    Same half-open reading as a batch window, and the same tolerance for a day
-    that runs past midnight: a kitchen open 09:00–02:00 is open at 01:00.
-    Unparseable hours are treated as always open — a retry that might be too
-    late beats no retry at all because a branch record had a typo in it.
-    """
-    opens, closes = _minutes_of(opens_at), _minutes_of(closes_at)
-    if opens is None or closes is None:
-        return True
-    local = _local(moment)
-    minute = local.hour * 60 + local.minute
-    if closes <= opens:  # trades past midnight
-        return minute >= opens or minute < closes
-    return opens <= minute < closes
+#: Whether the branch is trading, from `core.trading_hours`.
+#:
+#: It was defined here and the delivery promise needed the same question
+#: answered. Two implementations of "is the kitchen open" is how a customer gets
+#: told "tomorrow" for an order the dispatcher already knows cannot be started
+#: until the day after. Re-exported under its old name so this module's callers
+#: and tests do not move.
+kitchen_is_open = trading_hours.is_open
 
 
 def _retry_at(
@@ -645,10 +649,19 @@ async def dispatch_batch(db: AsyncSession, batch: DeliveryBatch) -> DeliveryBatc
         _fail(batch, "Courier is not configured; dispatch these orders by hand")
         return batch
 
-    # Every order on a run shares a zone, and a zone names one kitchen — so the
-    # run has one collection point by construction. Read off the polygon rather
-    # than the batch: the batch is a schedule, the polygon is the geography.
-    polygon = await db.get(DeliveryPolygon, batch.polygon_id)
+    # A run collects from one kitchen. Every zone in a group is served by the
+    # same branch — the group exists to share a van out of one door — so any of
+    # its polygons answers, and the first is as good as any. Read off a polygon
+    # rather than the batch because the batch is a schedule and the polygon is
+    # the geography.
+    polygon = (
+        await db.execute(
+            select(DeliveryPolygon)
+            .where(DeliveryPolygon.batch_group_id == batch.group_id)
+            .order_by(DeliveryPolygon.display_order)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
     pickup = await lalamove_service.resolve_pickup(
         db, polygon.branch_id if polygon else None
     )
@@ -911,3 +924,56 @@ async def polygon_for(
     db: AsyncSession, polygon_id: uuid.UUID
 ) -> DeliveryPolygon | None:
     return await db.get(DeliveryPolygon, polygon_id)
+
+
+async def group_for_polygon(
+    db: AsyncSession, polygon_id: uuid.UUID
+) -> uuid.UUID | None:
+    """
+    The active group this zone rides with, or None for one that leaves alone.
+
+    None is an answer, not a gap: it is what every noon Send zone and every
+    third-party zone says, and what a Lalamove zone nobody has put on a schedule
+    says too. An inactive group reads as None for the same reason — switching a
+    schedule off should send its zones out immediately, not park them against
+    slots that will never fire.
+    """
+    result = await db.execute(
+        select(DeliveryBatchGroup.id)
+        .join(DeliveryPolygon, DeliveryPolygon.batch_group_id == DeliveryBatchGroup.id)
+        .where(
+            DeliveryPolygon.id == polygon_id,
+            DeliveryBatchGroup.is_active.is_(True),
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def assert_group_fits_polygon(
+    db: AsyncSession, polygon: DeliveryPolygon, group: DeliveryBatchGroup
+) -> None:
+    """
+    Refuse a pairing that could never dispatch, with a message an admin can act on.
+
+    Two ways it can be wrong, and both are silent otherwise — the orders simply
+    accumulate in a batch that fails at its window, an hour after anyone could
+    have done something about it.
+
+    In the service rather than a database constraint deliberately: a zone's
+    courier can change, and the useful outcome then is a readable refusal at the
+    moment somebody tries it, not an integrity error surfacing as a 500.
+    """
+    courier = (
+        await db.execute(select(Courier).where(Courier.code == group.courier_code))
+    ).scalar_one_or_none()
+    if courier is None or not courier.supports_batching:
+        raise BadRequestError(
+            f"{group.courier_code} orders cannot be batched, so "
+            f"'{group.name}' cannot carry a schedule."
+        )
+    if polygon.fulfilment_provider != group.courier_code:
+        raise BadRequestError(
+            f"'{polygon.name}' is delivered by {polygon.fulfilment_provider}, "
+            f"but '{group.name}' books {group.courier_code}. "
+            "A run is one booking with one courier."
+        )

@@ -37,7 +37,7 @@ def dubai(hour: int, minute: int = 0, *, day: int = 2) -> datetime:
 def batch(**kwargs) -> DeliveryBatch:
     defaults = dict(
         id=uuid.uuid4(),
-        polygon_id=uuid.uuid4(),
+        group_id=uuid.uuid4(),
         dispatch_at=dubai(21, 0),
         status=BatchStatusEnum.PENDING.value,
         window_label="Batch 3",
@@ -138,13 +138,18 @@ class _Delivery:
 
 
 class _Session:
-    async def execute(self, stmt):  # pragma: no cover — never reached
-        raise AssertionError("dispatch should not be querying in these tests")
+    async def execute(self, _stmt):
+        # The run reads one of its group's zones to find the kitchen it collects
+        # from. Nothing in this module is about geography, and no zone resolves
+        # to the configured pickup — which is what `resolve_pickup` is stubbed
+        # to return.
+        class _Empty:
+            def scalar_one_or_none(self):
+                return None
+
+        return _Empty()
 
     async def get(self, _model, _pk):
-        # The run reads its zone to find the kitchen it collects from. Nothing
-        # here is about geography, and a zone with no branch resolves to the
-        # configured pickup — which is what `resolve_pickup` is stubbed to be.
         return None
 
     async def flush(self):

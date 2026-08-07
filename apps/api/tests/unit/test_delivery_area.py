@@ -25,9 +25,7 @@ from app.models.delivery_settings import DeliverySettings
 from app.services.delivery_zone_service import Zone
 
 SETTINGS = DeliverySettings(
-    free_delivery_threshold=Decimal("150.00"),
     pickup_fee=Decimal("0.00"),
-    default_delivery_fee=Decimal("80.00"),
 )
 
 
@@ -105,9 +103,12 @@ async def test_it_reports_the_zones_own_threshold():
     assert result.free_threshold == 75.0
 
 
-async def test_a_zone_without_one_falls_back_to_the_national_number():
+async def test_a_zone_without_one_names_no_threshold():
     result = await _area(_zone(threshold=None))
-    assert result.free_threshold == 150.0
+    # No national number to stand in with any more. A zone that names no
+    # threshold makes no offer, and the storefront shows no countdown rather
+    # than a figure that applies nowhere.
+    assert result.free_threshold is None
 
 
 async def test_a_free_zone_reports_zero_rather_than_nothing():
@@ -122,11 +123,16 @@ async def test_a_free_zone_reports_zero_rather_than_nothing():
 # ── outside the map ───────────────────────────────────────────────────────────
 
 
-async def test_a_pin_in_no_zone_is_still_serviceable_but_unpriced():
-    """A real address we have not drawn. The fee is a courier's to give and this
-    endpoint does not call one, so it says so rather than guessing."""
+async def test_a_pin_in_no_zone_is_not_serviceable():
+    """
+    The active map tiles the whole country, so a pin matching nothing is outside
+    it rather than an address we have not drawn. `/area`, `/quote` and order
+    creation all say the same thing about the same pin, which is the point —
+    a card promising delivery somewhere the checkout will refuse is worse than
+    either answer alone.
+    """
     result = await _area(None)
-    assert result.serviceable is True
+    assert result.serviceable is False
     assert result.zone_name is None
     assert result.delivery_fee is None
     assert result.free_delivery_available is False

@@ -14,16 +14,14 @@ from app.models.order import DeliveryMethodEnum, OrderStatusEnum
 from app.schemas.address import AddressCreate
 from app.schemas.order import OrderCreate
 from app.schemas.promo_code import PromoCodeValidateResponse
-from app.services import lalamove_service
+from app.services import delivery_promise, lalamove_service, order_service
 from app.services.delivery_zone_service import Zone
 from app.services.fulfilment_service import Fulfilment
 from app.services.order_service import VALID_TRANSITIONS, create_order, update_status
 
 
 DELIVERY_SETTINGS = DeliverySettings(
-    free_delivery_threshold=Decimal("150.00"),
     pickup_fee=Decimal("0.00"),
-    default_delivery_fee=Decimal("50.00"),
 )
 
 
@@ -40,6 +38,9 @@ def _zone(fee: str, pricing_mode: str = "static", *, free: bool = True) -> Zone:
         rings=(),
         pricing_mode=pricing_mode,
         free_delivery_eligible=free,
+        # Explicit: the national fallback these leaned on is gone, and a zone
+        # naming no threshold now makes no offer at all.
+        free_delivery_threshold=Decimal("150.00"),
     )
 
 
@@ -56,10 +57,31 @@ def delivery_pricing():
     Yields `(find_zone, estimate_for_point)` so a test can put a zone under the
     pin, or take the courier's answer away.
     """
-    find_zone = AsyncMock(return_value=None)
-    # A quotable pin by default: outside every drawn zone the fee *is* the
-    # courier's number, so a courier that answers nothing is an unserviceable
-    # address rather than a neutral starting point.
+    # A dynamically-priced zone by default, so the fee still comes from the
+    # courier's number and these tests keep testing what they were written to
+    # test. It used to be `None` — "outside every drawn zone" — which was
+    # priced dynamically back when an unmatched pin fell through to the courier.
+    # An unmatched pin is now simply unserviceable, so a zone has to be present
+    # for there to be an order at all.
+    find_zone = AsyncMock(
+        return_value=Zone(
+            id=uuid.uuid4(),
+            name="Dubai Mid",
+            delivery_fee=Decimal("0.00"),
+            fulfilment_provider="lalamove",
+            min_lat=24.0,
+            max_lat=26.0,
+            min_lng=54.0,
+            max_lng=57.0,
+            rings=(),
+            pricing_mode="dynamic",
+            free_delivery_eligible=True,
+            free_delivery_threshold=Decimal("150.00"),
+        )
+    )
+    # A quotable pin by default: in a dynamic zone the fee *is* the courier's
+    # number, so a courier that answers nothing is an unserviceable address
+    # rather than a neutral starting point.
     estimate_for_point = AsyncMock(
         return_value=(
             lalamove_service.Estimate(
@@ -87,6 +109,13 @@ def delivery_pricing():
         patch(
             "app.services.delivery_service.lalamove_service.is_enabled",
             return_value=True,
+        ),
+        # The arrival promise reads a courier row, a group, a schedule and the
+        # branch's hours. None of that is what this module is about, and it has
+        # its own tests.
+        patch(
+            "app.services.order_service.delivery_promise.promise_for_zone",
+            new=AsyncMock(return_value=None),
         ),
     ):
         yield find_zone, estimate_for_point
@@ -835,7 +864,7 @@ class TestCreateOrderCalculations:
         order_arg = db.add.call_args_list[0][0][0]
         assert order_arg.status == OrderStatusEnum.CREATED
 
-    async def test_a_delivery_records_what_the_checkout_promised(self):
+    async def test_a_delivery_records_what_the_checkout_promised(self, monkeypatch):
         """
         The order carries the promise, so every email about it can repeat the
         number the customer was actually shown.
@@ -845,6 +874,22 @@ class TestCreateOrderCalculations:
         before any batch exists — fell back to a generic prep-plus-drive sum.
         MM-20260805-008 was quoted 19:00 on the page and 17:25 in the inbox.
         """
+        # The fixture stubs the resolver to `None` because these tests are not
+        # about the four promise rules — but this one is about the promise being
+        # *written down*, so it needs a real answer to come back.
+        monkeypatch.setattr(
+            order_service.delivery_promise,
+            "promise_for_zone",
+            AsyncMock(
+                return_value=delivery_promise.DeliveryPromise(
+                    at=datetime.datetime(
+                        2026, 8, 8, 19, 0, tzinfo=datetime.timezone.utc
+                    ),
+                    precision="time",
+                    reason="batch:Dubai/Batch 3 closes 2026-08-08 18:00 +90m",
+                )
+            ),
+        )
         cart = _cart(items=[_cart_item(_product())])
         db = _db_for_create(cart, _order_mock())
 
@@ -852,6 +897,7 @@ class TestCreateOrderCalculations:
 
         order_arg = db.add.call_args_list[0][0][0]
         assert order_arg.promised_at is not None
+        assert order_arg.promised_precision == "time"
         assert order_arg.promised_precision in {"time", "day"}
 
     async def test_a_collection_order_promises_nothing(self):

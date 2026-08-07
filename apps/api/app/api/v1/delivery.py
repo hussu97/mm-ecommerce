@@ -140,8 +140,6 @@ async def calculate_delivery(
 
     if data.delivery_method == DeliveryMethodEnum.PICKUP:
         reason = "Free pickup"
-    elif data.subtotal >= settings.free_delivery_threshold:
-        reason = f"Free delivery on orders over {settings.free_delivery_threshold} AED"
     elif fee == Decimal("0.00"):
         # Free for a reason the customer does not need explained.
         reason = "Free delivery"
@@ -191,31 +189,28 @@ async def delivery_area(
     country would need.
     """
     zone = await delivery_zone_service.find_zone(db, latitude, longitude)
-    settings = await delivery_service.get_settings(db)
 
     if zone is None:
-        # Outside every drawn shape. Deliverable, most likely, but at a price
-        # only a courier can give — and this endpoint does not ask one.
+        # Outside every shape on the active map, which tiles the whole country —
+        # so this is outside the UAE, not an address we have not drawn yet.
+        # `serviceable=False` here matches what `/quote` and order creation now
+        # do, so the three cannot disagree about the same pin.
         return DeliveryAreaResponse(
-            serviceable=True,
+            serviceable=False,
             zone_name=None,
             delivery_fee=None,
-            free_threshold=float(settings.free_delivery_threshold),
+            free_threshold=None,
             free_delivery_available=False,
             speed="next_day",
         )
 
-    threshold = (
-        settings.free_delivery_threshold
-        if zone.free_delivery_threshold is None
-        else zone.free_delivery_threshold
-    )
+    threshold = zone.free_delivery_threshold
     return DeliveryAreaResponse(
         serviceable=True,
         # The emirate, not the cost band — see `public_zone_name`.
         zone_name=delivery_service.public_zone_name(zone.name),
         delivery_fee=None if zone.is_dynamic else float(zone.delivery_fee),
-        free_threshold=float(threshold),
+        free_threshold=None if threshold is None else float(threshold),
         free_delivery_available=zone.free_delivery_eligible,
         speed=_speed_of(zone),
     )

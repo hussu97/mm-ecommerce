@@ -50,11 +50,14 @@ class Zone:
     #: about branches at all — so it defaults, and a map drawn before the column
     #: existed behaves exactly as it did.
     branch_id: uuid.UUID | None = None
-    #: The basket that earns free delivery here, or None to use the national one.
-    #: Defaulted to None so a zone built by hand keeps the behaviour every zone
-    #: had before thresholds could vary — and so `threshold_for` has exactly one
-    #: fallback to express rather than a second plausible default.
+    #: The basket that earns free delivery here. Required on the row; defaulted
+    #: here only so a zone built by hand in a test does not have to name one.
     free_delivery_threshold: Decimal | None = None
+    #: The run schedule this zone follows, or None for a zone that dispatches the
+    #: moment an order is ready. Read by `delivery_promise` — a zone in a group
+    #: is promised its group's next window close, a zone without one is promised
+    #: its courier's own answer.
+    batch_group_id: uuid.UUID | None = None
 
     @property
     def is_lalamove(self) -> bool:
@@ -80,12 +83,13 @@ class Zone:
     def is_batched(self) -> bool:
         """Whether orders here wait for a shared run rather than going alone.
 
-        Only Lalamove. A third-party zone is collected on somebody else's
-        schedule, which we cannot see; noon Send's shared run is a different
-        product with a cap of three that we do not use, so its orders always go
-        out on their own — which is exactly why it can promise an hour.
+        A property of the zone's **group membership**, not of its courier. It
+        used to return `is_lalamove`, which was true of the courier and only
+        accidentally true of the zones: a Lalamove zone with no schedule went
+        out immediately and still answered "batched" here. Now a zone is batched
+        exactly when somebody put it in a group.
         """
-        return self.is_lalamove
+        return self.batch_group_id is not None
 
     @property
     def is_dynamic(self) -> bool:
@@ -200,6 +204,7 @@ def _to_zone(p: DeliveryPolygon) -> Zone:
         ),
         pricing_mode=(p.pricing_mode or DeliveryPricingEnum.STATIC.value),
         free_delivery_eligible=bool(p.free_delivery_eligible),
+        batch_group_id=p.batch_group_id,
         free_delivery_threshold=(
             None
             if p.free_delivery_threshold is None

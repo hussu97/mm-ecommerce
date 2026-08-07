@@ -24,9 +24,7 @@ from app.services.delivery_zone_service import Zone
 from app.services.providers.lalamove_provider import LalamoveError
 
 SETTINGS = DeliverySettings(
-    free_delivery_threshold=Decimal("150.00"),
     pickup_fee=Decimal("0.00"),
-    default_delivery_fee=Decimal("50.00"),
 )
 
 
@@ -43,6 +41,8 @@ def _zone(fee: str, pricing_mode: str, *, free: bool = True) -> Zone:
         rings=(),
         pricing_mode=pricing_mode,
         free_delivery_eligible=free,
+        # Explicit, because the national fallback this used to lean on is gone.
+        free_delivery_threshold=Decimal("150.00"),
     )
 
 
@@ -145,15 +145,17 @@ async def test_a_dynamic_zone_charges_the_courier_price():
     assert priced.serviceable is True
 
 
-async def test_a_pin_outside_every_zone_is_priced_dynamically():
+async def test_a_pin_outside_every_zone_is_refused():
     """
-    A gap in the map is the case we know least about. Asking the courier beats
-    a flat number picked before anyone had seen the address.
+    It used to be treated as the case we know least about and handed to the
+    courier to price. The map now tiles the whole country, so a pin matching
+    nothing is outside it — there is no address there to quote.
     """
-    priced = await _price(zone=None, estimate=_estimate("88.30"))
+    priced = await _price(zone=None, estimate=None)
 
-    assert priced.base_fee == Decimal("89.00")
-    assert priced.is_dynamic is True
+    assert priced.serviceable is False
+    assert priced.base_fee is None
+    assert priced.free_available is False
 
 
 # ── no price at all ───────────────────────────────────────────────────────────
@@ -201,16 +203,26 @@ async def test_a_fixed_fee_zone_is_never_unserviceable():
     assert priced.fee == Decimal("15.00")
 
 
-async def test_no_courier_configured_falls_back_rather_than_closing_the_country():
+async def test_a_dynamic_zone_with_no_courier_is_refused_not_given_away():
     """
-    A missing credential is a fact about us, not about the customer's address.
-    Refusing every dynamic order because of one would take the whole country
-    offline the moment a secret expired.
+    A dynamic zone's price *is* the courier's quote, and this is the case where
+    there is nobody to ask.
+
+    It used to fall back to a national default fee, on the reasoning that a
+    missing credential is a fact about us rather than about the address. That
+    default is gone, and the only other number on the row is `delivery_fee` —
+    which a dynamic zone deliberately holds at zero so nobody misreads it as a
+    price. Falling back to it would hand out free delivery in the areas that
+    cost the most to reach, every time a secret expired.
+
+    Unserviceable is the same answer the courier being asked and refusing
+    already produced, and the checkout turns both into "choose another address
+    or collect from the store".
     """
     priced = await _price(zone=_zone("0.00", "dynamic"), estimate=None, enabled=False)
 
-    assert priced.serviceable is True
-    assert priced.base_fee == SETTINGS.default_delivery_fee
+    assert priced.serviceable is False
+    assert priced.base_fee is None
 
 
 # ── before there is a pin ─────────────────────────────────────────────────────
@@ -431,11 +443,13 @@ async def test_free_delivery_never_applies_in_a_courier_priced_zone():
     assert priced.fee == Decimal("137.00")
 
 
-async def test_a_zone_outside_the_map_gets_no_free_delivery_either():
-    priced = await _price(zone=None, estimate=_estimate("88.30"), subtotal="500.00")
+async def test_a_pin_outside_the_map_offers_nothing_at_all():
+    """No zone, no fee, no offer, no service. One answer rather than four."""
+    priced = await _price(zone=None, estimate=None, subtotal="500.00")
 
+    assert priced.serviceable is False
+    assert priced.free_applied is False
     assert priced.free_available is False
-    assert priced.fee == Decimal("89.00")
 
 
 async def test_an_unpriceable_courier_falls_back_without_promising_free():
@@ -451,7 +465,7 @@ async def test_an_unpriceable_courier_falls_back_without_promising_free():
     )
 
     assert priced.free_available is False
-    assert priced.fee == SETTINGS.default_delivery_fee
+    assert priced.fee is None, "a zone nobody can price must not be priced at zero"
 
 
 async def test_the_quote_tells_the_storefront_where_the_offer_reaches():
@@ -480,9 +494,9 @@ async def test_the_quote_tells_the_storefront_where_the_offer_reaches():
         # The arrival estimate walks the zone's schedule; this test is about the
         # offer, not the clock.
         patch.object(
-            delivery_service.batching_service,
-            "active_windows",
-            new=AsyncMock(return_value=[]),
+            delivery_service.delivery_promise,
+            "promise_for_zone",
+            new=AsyncMock(return_value=None),
         ),
     ):
         result = await delivery_service.quote(

@@ -24,7 +24,12 @@ from .delivery_polygon import (  # noqa: F401
     DeliveryPolygonVersion,
     FulfilmentProviderEnum,
 )
+from .courier import (  # noqa: F401
+    Courier,
+    UnbatchedPromiseEnum,
+)
 from .delivery_batch import (  # noqa: F401
+    DeliveryBatchGroup,
     DELIVERY_TIMEZONE,
     MAX_DROPS_PER_ORDER,
     BatchStatusEnum,
@@ -191,7 +196,10 @@ __all__ = [
     "DeliveryPolygonVersion",
     "DeliverySettings",
     "FulfilmentProviderEnum",
+    "Courier",
+    "UnbatchedPromiseEnum",
     "DeliveryBatch",
+    "DeliveryBatchGroup",
     "DeliveryBatchWindow",
     "BatchStatusEnum",
     "OrderDelivery",

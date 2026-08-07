@@ -1,38 +1,52 @@
 """
-"When will it arrive?" — the question every shopper actually has.
+"When will it arrive?" — one resolver, four rules, in a fixed order.
 
-There are two honest answers and they come from very different places. In a zone
-we dispatch ourselves, every term is a number we control: the order joins the
-open window, that window closes at a time we set, and an hour later it is
-through the door. In a third-party zone the van belongs to somebody whose
-schedule we cannot see, and the only thing we can commit to is the next day.
+The ordering *is* the contract, so this file tests it as one: each case names
+the rule it expects to fire and asserts on the `reason` as well as the time. A
+rule producing the right answer for the wrong reason is the failure that matters
+here, because it means the next change to a polygon or a schedule will move a
+promise nobody can account for.
 
-The failure worth guarding against is the second case being rendered with the
-precision of the first. "Tomorrow at 14:00" for an order we hand to a partner is
-a promise made with someone else's van.
+    1. no zone   -> nothing. The address cannot be served.
+    2. group     -> that group's next window close + its minutes-to-door.
+    3. next_day  -> tomorrow, or the day after if today's trading is over.
+    4. minutes   -> now + the courier's minutes, or the next opening + them.
+
+The failure this has always guarded against is the third-party case rendered
+with the precision of the second: "tomorrow at 14:00" for an order handed to a
+partner is a promise made with somebody else's van. `precision` is what keeps
+them apart, and every case below pins it.
 """
 
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
-from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.models.delivery_batch import DeliveryBatchWindow
-from app.services import delivery_service
+from app.models.courier import Courier
+from app.models.delivery_batch import DeliveryBatchGroup, DeliveryBatchWindow
+from app.services.delivery_promise import _Context, resolve
 from app.services.delivery_zone_service import Zone
 
 DUBAI = ZoneInfo("Asia/Dubai")
 
+#: The Sharjah kitchen's real trading day.
+OPENS, CLOSES = "09:00", "23:00"
 
-def _window(label: str, start: str, end: str) -> DeliveryBatchWindow:
+
+def at(hour: int, minute: int = 0, day: int = 8) -> datetime:
+    return datetime(2026, 8, day, hour, minute, tzinfo=DUBAI)
+
+
+def window(label: str, start: str, end: str) -> DeliveryBatchWindow:
     sh, sm = (int(p) for p in start.split(":"))
     eh, em = (int(p) for p in end.split(":"))
     return DeliveryBatchWindow(
+        id=uuid.uuid4(),
         label=label,
         start_hour=sh,
         start_minute=sm,
@@ -42,185 +56,224 @@ def _window(label: str, start: str, end: str) -> DeliveryBatchWindow:
     )
 
 
-#: The shop's schedule as published by 059: opens at 23:00 the night before,
-#: closes at 23:00, and tiles the whole day in between.
-CITY_SCHEDULE = [
-    _window("Batch 1", "23:00", "12:00"),
-    _window("Batch 2", "12:00", "18:00"),
-    _window("Batch 3", "18:00", "21:00"),
-    _window("Batch 4", "21:00", "22:30"),
-    _window("Batch 5", "22:30", "23:00"),
+def courier(code: str, *, kind: str, minutes: int | None) -> Courier:
+    return Courier(
+        code=code,
+        name=code,
+        supports_batching=code == "lalamove",
+        unbatched_promise_kind=kind,
+        unbatched_promise_minutes=minutes,
+    )
+
+
+LALAMOVE = courier("lalamove", kind="minutes", minutes=60)
+NOON_SEND = courier("noon_send", kind="minutes", minutes=60)
+THIRD_PARTY = courier("third_party", kind="next_day", minutes=None)
+
+
+def zone(provider: str, *, group_id: uuid.UUID | None = None) -> Zone:
+    return Zone(
+        id=uuid.uuid4(),
+        name="Test Zone",
+        delivery_fee=Decimal("20.00"),
+        fulfilment_provider=provider,
+        min_lat=0,
+        max_lat=1,
+        min_lng=0,
+        max_lng=1,
+        rings=(),
+        batch_group_id=group_id,
+    )
+
+
+def context(
+    *,
+    provider: str = "lalamove",
+    group: DeliveryBatchGroup | None = None,
+    windows: list[DeliveryBatchWindow] | None = None,
+    courier_row: Courier | None = None,
+    no_courier: bool = False,
+    opens: str | None = OPENS,
+    closes: str | None = CLOSES,
+) -> _Context:
+    return _Context(
+        zone=zone(provider, group_id=group.id if group else None),
+        courier=None
+        if no_courier
+        else (
+            courier_row
+            or {"lalamove": LALAMOVE, "noon_send": NOON_SEND}.get(provider, THIRD_PARTY)
+        ),
+        group=group,
+        windows=windows or [],
+        opens_at=opens,
+        closes_at=closes,
+    )
+
+
+def group(name: str, minutes: int) -> DeliveryBatchGroup:
+    return DeliveryBatchGroup(
+        id=uuid.uuid4(),
+        name=name,
+        courier_code="lalamove",
+        delivery_minutes_after_dispatch=minutes,
+        is_active=True,
+    )
+
+
+# ── rule 1: nowhere ──────────────────────────────────────────────────────────
+
+
+def test_no_zone_is_no_promise():
+    """An address off the map cannot be served, so there is nothing to say."""
+    empty = _Context(
+        zone=None, courier=None, group=None, windows=[], opens_at=None, closes_at=None
+    )
+    assert resolve(empty, at(14)) is None
+
+
+# ── rule 2: a declared batch group ───────────────────────────────────────────
+
+DUBAI_WINDOWS = [
+    window("Batch 1", "23:00", "12:00"),
+    window("Batch 2", "12:00", "18:00"),
+    window("Batch 3", "18:00", "21:00"),
+    window("Batch 4", "21:00", "22:30"),
+    window("Batch 5", "22:30", "23:00"),
 ]
 
 
-def _zone(*, lalamove: bool) -> Zone:
-    return Zone(
-        id=uuid.uuid4(),
-        name="Sharjah City" if lalamove else "Fujairah",
-        delivery_fee=Decimal("15.00" if lalamove else "80.00"),
-        fulfilment_provider="lalamove" if lalamove else "third_party",
-        min_lat=24.0,
-        max_lat=26.0,
-        min_lng=54.0,
-        max_lng=57.0,
-        rings=(),
-        free_delivery_eligible=lalamove,
-    )
-
-
-def dubai(hour: int, minute: int = 0, day: int = 4) -> datetime:
-    return datetime(2026, 8, day, hour, minute, tzinfo=DUBAI)
-
-
-async def _estimate(zone: Zone | None, now: datetime, windows=CITY_SCHEDULE):
-    with patch.object(
-        delivery_service.batching_service,
-        "active_windows",
-        new=AsyncMock(return_value=windows),
-    ):
-        return await delivery_service.estimate_arrival(AsyncMock(), zone, now=now)
-
-
-# ── zones we dispatch ourselves ───────────────────────────────────────────────
-
-
 @pytest.mark.parametrize(
-    "ordered_at,arrives",
+    "now,expected,slot",
     [
-        # Inside Batch 1, which closes at noon: delivered by 13:00 the same day.
-        ((0, 30), (13, 0, 4)),
-        ((9, 0), (13, 0, 4)),
-        ((11, 59), (13, 0, 4)),
-        # A boundary belongs to the window opening, so 12:00 waits for 18:00.
-        ((12, 0), (19, 0, 4)),
-        ((17, 30), (19, 0, 4)),
-        ((18, 0), (22, 0, 4)),
-        # Batch 4 closes at 22:30, not 23:00 — the half hour matters.
-        ((21, 0), (23, 30, 4)),
-        # Batch 5 closes at 23:00, the last dispatch before the shop shuts, so
-        # its drops land just after midnight.
-        ((22, 45), (0, 0, 5)),
+        # Inside Batch 3 (18:00–21:00): leaves 21:00, lands 90 minutes later.
+        (at(20), at(22, 30), "Batch 3"),
+        # Inside Batch 2: leaves 18:00, lands 19:30.
+        (at(13), at(19, 30), "Batch 2"),
+        # Exactly on a boundary belongs to the slot starting, not the one
+        # closing — otherwise an order lands on a van already pulling away.
+        # Batch 3 runs 18:00–21:00, so this leaves at 21:00 and lands at 22:30.
+        (at(18), at(22, 30), "Batch 3"),
     ],
 )
-async def test_a_city_pin_is_promised_its_batch_close_plus_an_hour(ordered_at, arrives):
-    estimate = await _estimate(_zone(lalamove=True), dubai(*ordered_at))
+def test_a_grouped_zone_waits_for_its_next_run(now, expected, slot):
+    dubai = group("Dubai", 90)
+    promise = resolve(context(group=dubai, windows=DUBAI_WINDOWS), now)
+    assert promise is not None
+    assert promise.at == expected
+    assert promise.precision == "time"
+    assert "batch:Dubai/" in promise.reason and "+90m" in promise.reason
 
-    hour, minute, day = arrives
-    assert estimate.precision == "time"
-    assert estimate.at == dubai(hour, minute, day=day)
 
-
-async def test_an_order_after_closing_joins_the_next_mornings_run():
+def test_the_northern_group_carries_its_own_minutes():
     """
-    23:00 is when the shop shuts and when Batch 1 opens. An order placed at
-    23:30 has nobody to pack it tonight, so it rides the run that leaves at noon
-    — which is exactly what the schedule was reshaped to express.
+    Same rate card, same slots, different promise. The northern run crosses
+    three emirates, so its number is 120 — which is the whole reason the figure
+    lives on the group and not in one shared constant.
     """
-    estimate = await _estimate(_zone(lalamove=True), dubai(23, 30))
-
-    assert estimate.precision == "time"
-    assert estimate.at == dubai(13, 0, day=5), "did not roll to the next day"
-
-
-async def test_the_city_schedule_leaves_no_hour_unanswered():
-    """A gap would mean an order with no promised time at all."""
-    zone = _zone(lalamove=True)
-    for hour in range(24):
-        for minute in (0, 30):
-            estimate = await _estimate(zone, dubai(hour, minute))
-            assert estimate.precision == "time", f"{hour:02d}:{minute:02d} fell through"
+    northern = group("Northern Emirates", 120)
+    promise = resolve(context(group=northern, windows=DUBAI_WINDOWS), at(20))
+    assert promise is not None
+    assert promise.at == at(23, 0)
+    assert "+120m" in promise.reason
 
 
-async def test_a_city_zone_with_no_schedule_still_answers():
+def test_a_batched_zone_ignores_trading_hours():
     """
-    Dispatch does not wait when there is no window — the order goes out on its
-    own immediately — so the estimate must not wait either.
+    Deliberate. The 23:00–12:00 slot exists *because* nothing leaves overnight,
+    so applying the kitchen's close on top of it would subtract the same
+    closure twice and promise a day later than the van actually arrives.
     """
-    estimate = await _estimate(_zone(lalamove=True), dubai(14, 0), windows=[])
+    dubai = group("Dubai", 90)
+    promise = resolve(context(group=dubai, windows=DUBAI_WINDOWS), at(23, 30))
+    assert promise is not None
+    # Batch 1 closes at noon tomorrow; 90 minutes after that.
+    assert promise.at == at(13, 30, day=9)
+    assert "batch:" in promise.reason
 
-    assert estimate.precision == "time"
-    assert estimate.at == dubai(15, 0)
 
-
-# ── third-party zones ─────────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize("hour", [0, 8, 12, 17, 22, 23])
-async def test_a_third_party_pin_is_next_day_whatever_the_clock_says(hour):
+def test_an_inactive_group_falls_through_to_the_courier():
     """
-    Their van, their schedule. An order at nine in the morning is not more
-    likely to go out today than one at eleven at night, because neither of them
-    is ours to send.
+    Switching a schedule off sends its zones out immediately rather than parking
+    them against slots that will never fire. `_load` resolves an inactive group
+    to None, so the resolver sees a zone with no group.
     """
-    estimate = await _estimate(_zone(lalamove=False), dubai(hour, 15))
+    promise = resolve(context(group=None, windows=[]), at(14))
+    assert promise is not None
+    assert promise.at == at(15)
+    assert "courier:lalamove +60m" in promise.reason
 
-    assert estimate.precision == "day"
-    assert estimate.at.date() == dubai(hour).date() + timedelta(days=1)
+
+# ── rule 3: somebody else's van ──────────────────────────────────────────────
 
 
-async def test_a_third_party_estimate_names_no_hour():
+def test_third_party_promises_a_day_and_only_a_day():
+    promise = resolve(context(provider="third_party"), at(14))
+    assert promise is not None
+    assert promise.precision == "day", "an hour was invented for a partner's van"
+    assert promise.at.date() == at(0, day=9).date()
+    assert promise.reason == "courier:third_party next_day"
+
+
+def test_third_party_after_closing_is_the_day_after_tomorrow():
     """
-    A date with a time on it is a promise about a van we do not control. The
-    precision flag is what stops the storefront rendering one.
+    The store-hours rule. An order at 23:30 against a 23:00 close cannot even be
+    baked today, so promising tomorrow would be promising a day early.
     """
-    estimate = await _estimate(_zone(lalamove=False), dubai(9, 42))
-
-    assert estimate.precision == "day"
-    assert (estimate.at.hour, estimate.at.minute) == (0, 0)
-
-
-async def test_a_pin_outside_every_zone_is_treated_as_third_party():
-    estimate = await _estimate(None, dubai(9, 0))
-
-    assert estimate.precision == "day"
+    promise = resolve(context(provider="third_party"), at(23, 30))
+    assert promise is not None
+    assert promise.at.date() == at(0, day=10).date()
+    assert "+1" in promise.reason and "after 23:00 close" in promise.reason
 
 
-# ── it reaches the storefront ─────────────────────────────────────────────────
+def test_third_party_before_opening_is_still_tomorrow():
+    """
+    07:00 is shut but is *not* after the close — today's trading has not
+    happened yet, so the order still makes today's handover. This is why
+    `is_after_close` exists rather than `not is_open`.
+    """
+    promise = resolve(context(provider="third_party"), at(7))
+    assert promise is not None
+    assert promise.at.date() == at(0, day=9).date()
+    assert "+1" not in promise.reason
 
 
-async def test_the_quote_carries_the_estimate():
-    from app.models.delivery_settings import DeliverySettings
-
-    settings = DeliverySettings(
-        free_delivery_threshold=Decimal("150.00"),
-        pickup_fee=Decimal("0.00"),
-        default_delivery_fee=Decimal("80.00"),
-    )
-    with (
-        patch.object(
-            delivery_service, "get_settings", new=AsyncMock(return_value=settings)
-        ),
-        patch.object(
-            delivery_service.delivery_zone_service,
-            "find_zone",
-            new=AsyncMock(return_value=_zone(lalamove=False)),
-        ),
-        patch.object(
-            delivery_service.lalamove_service,
-            "estimate_for_point",
-            new=AsyncMock(return_value=(None, None)),
-        ),
-    ):
-        result = await delivery_service.quote(
-            AsyncMock(), Decimal("100.00"), latitude=25.1, longitude=56.3
-        )
-
-    assert result["delivery_estimate"]["precision"] == "day"
-    assert result["delivery_estimate"]["at"]
+# ── rule 4: ours to dispatch ─────────────────────────────────────────────────
 
 
-async def test_there_is_no_estimate_before_there_is_a_pin():
-    """Nothing to read a schedule off, so nothing is promised."""
-    from app.models.delivery_settings import DeliverySettings
+def test_noon_send_is_an_hour_from_now():
+    promise = resolve(context(provider="noon_send"), at(14))
+    assert promise is not None
+    assert promise.at == at(15)
+    assert promise.precision == "time"
+    assert promise.reason == "courier:noon_send +60m from now"
 
-    settings = DeliverySettings(
-        free_delivery_threshold=Decimal("150.00"),
-        pickup_fee=Decimal("0.00"),
-        default_delivery_fee=Decimal("80.00"),
-    )
-    with patch.object(
-        delivery_service, "get_settings", new=AsyncMock(return_value=settings)
-    ):
-        result = await delivery_service.quote(AsyncMock(), Decimal("100.00"))
 
-    assert result["delivery_estimate"] is None
+def test_noon_send_after_closing_starts_the_clock_at_tomorrow_s_opening():
+    """An order at 23:30 is not an hour away; nobody is there to bake it."""
+    promise = resolve(context(provider="noon_send"), at(23, 30))
+    assert promise is not None
+    assert promise.at == at(10, day=9), "09:00 opening plus the hour"
+    assert "from 2026-08-09 09:00 opening" in promise.reason
+
+
+def test_a_courier_with_no_row_is_treated_as_somebody_else_s_van():
+    """
+    The safe reading. An unconfigured courier promising an hour would be the
+    shop guessing on behalf of a carrier nobody has set up.
+    """
+    ctx = context(provider="lalamove", no_courier=True)
+    promise = resolve(ctx, at(14))
+    assert promise is not None
+    assert promise.precision == "day"
+
+
+def test_unreadable_trading_hours_do_not_stop_the_shop_quoting():
+    """
+    A branch record with a typo in it must not silently push every promise to an
+    invented opening time. Always-open is the tolerant reading, and it matches
+    `trading_hours.is_open`.
+    """
+    promise = resolve(context(provider="noon_send", opens=None, closes=None), at(3))
+    assert promise is not None
+    assert promise.at == at(4)

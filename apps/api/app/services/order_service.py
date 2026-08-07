@@ -36,6 +36,7 @@ from app.services import (
     batching_service,
     cart_service,
     courier_service,
+    delivery_promise,
     delivery_service,
     email_service,
     fulfilment_service,
@@ -648,7 +649,7 @@ async def _persist_order(
     total_excl_vat: Decimal,
     fallback_email: str | None = None,
     branch: Branch | None = None,
-    promised: delivery_service.DeliveryEstimate | None = None,
+    promised: delivery_promise.DeliveryPromise | None = None,
     low_order_fee: Decimal = Decimal("0.00"),
 ) -> Order:
     """
@@ -864,9 +865,9 @@ async def create_order(
     #     Asked here rather than taken from the request: the browser is not the
     #     record of what we promised, and a client that sent a flattering number
     #     would be believed.
-    promised: delivery_service.DeliveryEstimate | None = None
+    promised: delivery_promise.DeliveryPromise | None = None
     if data.delivery_method == DeliveryMethodEnum.DELIVERY:
-        promised = await delivery_service.estimate_arrival(db, totals.zone)
+        promised = await delivery_promise.promise_for_zone(db, totals.zone)
 
     # 6. Claim stock for stock-tracked products (fails if any is out of stock)
     await _decrement_stock(db, cart)

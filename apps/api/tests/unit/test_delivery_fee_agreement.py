@@ -49,9 +49,7 @@ def noon_send_is_off(monkeypatch):
 USER_ID = uuid.uuid4()
 
 SETTINGS = DeliverySettings(
-    free_delivery_threshold=Decimal("200.00"),
     pickup_fee=Decimal("0.00"),
-    default_delivery_fee=Decimal("50.00"),
 )
 
 SHARJAH_CENTRAL = Zone(
@@ -67,6 +65,7 @@ SHARJAH_CENTRAL = Zone(
     # The offer has to reach this zone, or the threshold cases below prove
     # nothing about the two functions agreeing.
     free_delivery_eligible=True,
+    free_delivery_threshold=Decimal("150.00"),
 )
 
 
@@ -80,12 +79,20 @@ def _pinned():
             "find_zone",
             new=AsyncMock(return_value=SHARJAH_CENTRAL),
         ),
+        # The quote asks the promise resolver, which reads a courier row, a
+        # group, a schedule and the branch's hours. This module is about the fee
+        # the quote and the order agree on, not about the arrival time.
+        patch.object(
+            delivery_service.delivery_promise,
+            "promise_for_zone",
+            new=AsyncMock(return_value=None),
+        ),
     )
 
 
 async def _fee(user_id, email, subtotal="100.00"):
-    settings_patch, zone_patch = _pinned()
-    with settings_patch, zone_patch:
+    settings_patch, zone_patch, promise_patch = _pinned()
+    with settings_patch, zone_patch, promise_patch:
         return await delivery_service.calculate_fee(
             DeliveryMethodEnum.DELIVERY,
             Decimal(subtotal),
@@ -98,8 +105,8 @@ async def _fee(user_id, email, subtotal="100.00"):
 
 
 async def _quote(user_id, email, subtotal="100.00"):
-    settings_patch, zone_patch = _pinned()
-    with settings_patch, zone_patch:
+    settings_patch, zone_patch, promise_patch = _pinned()
+    with settings_patch, zone_patch, promise_patch:
         return await delivery_service.quote(
             AsyncMock(),
             Decimal(subtotal),
@@ -126,8 +133,8 @@ async def test_an_anonymous_call_still_prices_normally():
     prices without a customer in hand. They must get the ordinary fee rather
     than tripping over a missing argument.
     """
-    settings_patch, zone_patch = _pinned()
-    with settings_patch, zone_patch:
+    settings_patch, zone_patch, promise_patch = _pinned()
+    with settings_patch, zone_patch, promise_patch:
         fee = await delivery_service.calculate_fee(
             DeliveryMethodEnum.DELIVERY,
             Decimal("100.00"),

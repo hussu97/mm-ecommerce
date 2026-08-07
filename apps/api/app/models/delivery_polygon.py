@@ -21,7 +21,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base, UUIDMixin, utcnow
 
 if TYPE_CHECKING:
-    from .delivery_batch import DeliveryBatchWindow
+    from .delivery_batch import DeliveryBatchGroup  # noqa: F401
 
 
 class FulfilmentProviderEnum(str, enum.Enum):
@@ -150,12 +150,12 @@ class DeliveryPolygon(Base, UUIDMixin):
     #: offer that is cheap to honour, or funding one that is not — and it was
     #: doing both at once.
     #:
-    #: NULL means "use `delivery_settings.free_delivery_threshold`", which is what
-    #: every zone meant before this column existed and what a zone drawn without
-    #: thinking about it should keep meaning. Zero is a real value and means free
-    #: delivery at any basket — it is not the same as NULL.
-    free_delivery_threshold: Mapped[Decimal | None] = mapped_column(
-        Numeric(10, 2), nullable=True
+    #: Required. It was nullable, meaning "fall back to the national number",
+    #: and the national number no longer exists — every zone answers for itself
+    #: or the question has no answer at all. Zero is a real value and means free
+    #: delivery at any basket, which is what Sharjah does.
+    free_delivery_threshold: Mapped[Decimal] = mapped_column(
+        Numeric(10, 2), nullable=False, server_default="150.00"
     )
     #: The branch that serves this zone — bakes the order, hands it to the
     #: courier, and sees it on its register. Exactly one per zone: the shapes are
@@ -200,13 +200,32 @@ class DeliveryPolygon(Base, UUIDMixin):
     version: Mapped[DeliveryPolygonVersion] = relationship(
         "DeliveryPolygonVersion", back_populates="polygons"
     )
-    #: When orders in this zone travel together. Only meaningful for a zone we
-    #: dispatch ourselves; a third-party zone has no run to share.
-    batch_windows: Mapped[list[DeliveryBatchWindow]] = relationship(
-        "DeliveryBatchWindow",
-        back_populates="polygon",
-        cascade="all, delete-orphan",
-        order_by="DeliveryBatchWindow.start_hour, DeliveryBatchWindow.start_minute",
+    #: The run schedule this zone follows, or null for a zone that dispatches
+    #: the moment an order is ready.
+    #:
+    #: A group rather than a schedule of its own, because "which orders share a
+    #: courier booking" is a decision somebody makes, not something that should
+    #: fall out of two zones happening to close a slot on the same minute — which
+    #: is what it used to be. The three Dubai bands ride together because we said
+    #: so; if one of their windows moves, the other two move with it, and no
+    #: other zone is dragged along.
+    #:
+    #: `SET NULL`: deleting a group leaves its zones dispatching immediately,
+    #: which is the safe reading. An order going out early costs a courier fare;
+    #: an order pointed at a schedule that no longer exists never goes out.
+    #:
+    #: Only ever set to a group whose courier matches `fulfilment_provider` —
+    #: enforced in `batching_service`, so the failure is a readable error rather
+    #: than a constraint violation when a zone changes courier.
+    batch_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("delivery_batch_groups.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    batch_group: Mapped[DeliveryBatchGroup | None] = relationship(
+        "DeliveryBatchGroup", back_populates="polygons"
     )
 
     def __repr__(self) -> str:

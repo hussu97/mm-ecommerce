@@ -23,9 +23,7 @@ from app.services.delivery_service import calculate_fee
 from app.services.delivery_zone_service import Zone
 
 SETTINGS = DeliverySettings(
-    free_delivery_threshold=Decimal("150.00"),
     pickup_fee=Decimal("0.00"),
-    default_delivery_fee=Decimal("50.00"),
 )
 
 SHARJAH_CITY = Zone(
@@ -39,6 +37,7 @@ SHARJAH_CITY = Zone(
     max_lng=55.7,
     rings=(),
     free_delivery_eligible=True,
+    free_delivery_threshold=Decimal("150.00"),
 )
 
 #: Somewhere inside Sharjah City. The zone lookup is patched, so the exact
@@ -123,6 +122,7 @@ async def test_the_threshold_is_one_number_but_not_one_promise():
         max_lng=55.7,
         rings=(),
         free_delivery_eligible=True,
+        free_delivery_threshold=Decimal("150.00"),
     )
     far = Zone(
         id=None,  # type: ignore[arg-type]
@@ -150,18 +150,25 @@ async def test_the_zone_under_the_pin_sets_the_fee():
     assert await fee("100.00") == Decimal("15.00")
 
 
-async def test_a_pin_outside_every_zone_pays_the_default():
-    """A real address we have simply not drawn yet. Quoting nothing is worse."""
-    assert await fee("100.00", zone=None) == Decimal("50.00")
+async def test_a_pin_outside_every_zone_is_refused():
+    """
+    The active map tiles the whole country, so matching nothing means outside
+    it. This used to be charged a national default — a price quoted for a
+    delivery nobody had worked out how to make. Refusing is the honest answer,
+    and the checkout already offers pickup instead.
+    """
+    with pytest.raises(delivery_service.UnserviceableAreaError):
+        await fee("100.00", zone=None)
 
 
-async def test_an_order_with_no_coordinates_pays_the_default():
+async def test_an_order_with_no_coordinates_is_refused():
     """
-    There is no emirate to fall back on any more, and there should not be: an
-    order without a pin cannot be delivered, so the default is the honest
-    answer rather than a guess dressed up as a lookup.
+    Same refusal, one step earlier. There is no emirate to fall back on and
+    there should not be: an order with no pin cannot be delivered, so a fee for
+    it would be a guess dressed up as a lookup.
     """
-    assert await fee("100.00", pin=False) == Decimal("50.00")
+    with pytest.raises(delivery_service.UnserviceableAreaError):
+        await fee("100.00", pin=False)
 
 
 # ── the shape of the public rates ─────────────────────────────────────────────
@@ -178,9 +185,7 @@ async def test_the_public_rates_no_longer_publish_a_price_list():
         rates = await delivery_service.get_delivery_rates(_db())
 
     assert set(rates) == {
-        "free_threshold",
         "pickup_fee",
-        "default_delivery_fee",
         # National scalars, not a price list. The checkout has to explain the
         # small-basket fee and the alternative was a pair of constants in the
         # browser — a second place to change a commercial number, and therefore
@@ -188,7 +193,13 @@ async def test_the_public_rates_no_longer_publish_a_price_list():
         "low_order_fee",
         "low_order_threshold",
     }
-    assert rates["free_threshold"] == 150.0
+    # No `free_threshold` and no `default_delivery_fee`. Both were national
+    # numbers answering a question every polygon now answers per zone, so
+    # quoting them before there is a pin was quoting a figure true in none of
+    # the fifteen zones. The threshold arrives with the quote instead, once
+    # there is an address to attach it to.
+    assert "free_threshold" not in rates
+    assert "default_delivery_fee" not in rates
 
     # The thing actually being guarded against: anything keyed by *where*. A
     # zone, an area or an emirate appearing here is the storefront being invited

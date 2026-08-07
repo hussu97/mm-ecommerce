@@ -49,6 +49,70 @@ class BatchStatusEnum(str, enum.Enum):
     CANCELLED = "cancelled"
 
 
+class DeliveryBatchGroup(Base, UUIDMixin, TimestampMixin):
+    """
+    A set of zones whose orders ride together, and the schedule they share.
+
+    This is the thing that used to be missing. Windows hung off a single polygon
+    and `_open_batch` then merged any batches leaving on the same minute — so
+    which zones shared a courier booking was decided by two schedules
+    coincidentally ending together. Nobody declared it, nothing displayed it, and
+    moving one zone's slot silently re-partitioned another zone's runs.
+
+    Now it is a row. The three Dubai bands are one group because somebody said
+    so; the northern city zones are another. A zone in no group dispatches the
+    moment it is ready.
+
+    **One courier per group.** A booking is placed with one carrier, so a group
+    spanning two of them could never be dispatched as a single order. The
+    courier must also have `supports_batching` — a schedule attached to a third
+    party is a promise about a van we do not control.
+    """
+
+    __tablename__ = "delivery_batch_groups"
+
+    #: What the shop calls it — "Dubai", "Northern Emirates".
+    name: Mapped[str] = mapped_column(String(80), nullable=False, unique=True)
+    #: `couriers.code`. Not a foreign key to `couriers.id` because every other
+    #: reference to a carrier in this schema is by code, and one join key beats
+    #: two.
+    courier_code: Mapped[str] = mapped_column(
+        String(20),
+        ForeignKey("couriers.code", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+
+    #: How long after the run leaves that the last box on it is through a door.
+    #:
+    #: Per group rather than one constant, because it is a property of the route
+    #: and not of the courier: the Dubai run is 90 minutes and the northern one
+    #: is 120, on the same rate card, because one crosses three emirates. One
+    #: number for every drop on the route — which stop is last is not knowable
+    #: when the promise is made, since the courier optimises the order after we
+    #: hand it over.
+    delivery_minutes_after_dispatch: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=90, server_default="90"
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+
+    polygons: Mapped[list[DeliveryPolygon]] = relationship(
+        "DeliveryPolygon", back_populates="batch_group"
+    )
+    windows: Mapped[list[DeliveryBatchWindow]] = relationship(
+        "DeliveryBatchWindow",
+        back_populates="group",
+        cascade="all, delete-orphan",
+        order_by="DeliveryBatchWindow.start_hour, DeliveryBatchWindow.start_minute",
+    )
+
+    def __repr__(self) -> str:
+        return f"<DeliveryBatchGroup {self.name} via {self.courier_code}>"
+
+
 class DeliveryBatchWindow(Base, UUIDMixin, TimestampMixin):
     """
     A slot of the day whose orders travel together.
@@ -59,9 +123,11 @@ class DeliveryBatchWindow(Base, UUIDMixin, TimestampMixin):
     per delivery of five separate ones, and that difference is what makes the
     website beat the aggregators.
 
-    Windows hang off a polygon because density is local. Sharjah fills a van in
-    an hour; Abu Dhabi would never fill one at all, which is why only courier
-    zones get windows.
+    Windows hang off a **group**, not a zone. Density is local — Sharjah fills a
+    van in an hour, Abu Dhabi would never fill one at all — but it is local to a
+    set of zones that share a run, not to one shape on a map. Three Dubai bands
+    fill one van between them; giving each its own schedule and hoping the end
+    times matched is how they used to end up on the same booking.
 
     Unlike fees, windows are edited in place rather than through a draft. A
     wrong fee overcharges a customer and cannot be taken back; a wrong window
@@ -81,9 +147,9 @@ class DeliveryBatchWindow(Base, UUIDMixin, TimestampMixin):
         ),
     )
 
-    polygon_id: Mapped[uuid.UUID] = mapped_column(
+    group_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("delivery_polygons.id", ondelete="CASCADE"),
+        ForeignKey("delivery_batch_groups.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -101,8 +167,8 @@ class DeliveryBatchWindow(Base, UUIDMixin, TimestampMixin):
         Boolean, nullable=False, default=True, server_default="true"
     )
 
-    polygon: Mapped[DeliveryPolygon] = relationship(
-        "DeliveryPolygon", back_populates="batch_windows"
+    group: Mapped[DeliveryBatchGroup] = relationship(
+        "DeliveryBatchGroup", back_populates="windows"
     )
     batches: Mapped[list[DeliveryBatch]] = relationship(
         "DeliveryBatch", back_populates="window"
@@ -149,9 +215,12 @@ class DeliveryBatch(Base, UUIDMixin, TimestampMixin):
 
     __tablename__ = "delivery_batches"
 
-    polygon_id: Mapped[uuid.UUID] = mapped_column(
+    #: Which group's schedule opened this run. Together with `dispatch_at` it
+    #: *is* the run's identity — two groups closing a slot on the same minute now
+    #: get two bookings, which is the whole point of the group existing.
+    group_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("delivery_polygons.id", ondelete="CASCADE"),
+        ForeignKey("delivery_batch_groups.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
