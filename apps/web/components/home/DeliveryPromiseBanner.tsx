@@ -62,7 +62,24 @@ export function DeliveryPromiseBanner() {
   if (!text) return null;
 
   return (
-    <section aria-label="Delivery" className="bg-[#f4ece4] text-primary">
+    /**
+     * The hairline is load-bearing, not decoration.
+     *
+     * This strip is `#f4ece4`, and the hero directly beneath it is a photograph
+     * shot on a cream backdrop — near enough the same colour that with no edge
+     * between them the band simply dissolves into the picture. On a wide screen
+     * that is survivable, because the landscape crop puts the tin hard against
+     * the top of the frame and gives the eye something to stop at. The portrait
+     * crop used under `sm` does the opposite: its top third is flat backdrop
+     * across the full width, so the strip and the hero read as one continuous
+     * wash and the delivery promise stops looking like a statement at all.
+     *
+     * `secondary` is the divider the site already draws elsewhere, at full
+     * strength rather than the 40% used between rows on a white card: the two
+     * surfaces being separated here are within a few percent of each other, and
+     * at 40% the line was measurably present and still not visible.
+     */
+    <section aria-label="Delivery" className="bg-[#f4ece4] text-primary border-b border-secondary">
       <div className="max-w-7xl mx-auto px-5 sm:px-6 lg:px-8 py-2 flex items-center justify-center gap-2">
         {/* `dir="auto"` because the zone names arrive from the API in English
             and have to keep reading left to right inside Arabic copy. */}
