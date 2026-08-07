@@ -31,10 +31,14 @@ export function DeliveryPromiseBanner() {
 
   const zone = area?.zone_name ?? null;
 
-  function message(): string {
+  function message(): string | null {
     // No lookup yet, a failed one, or a pin nothing reaches. Nothing here is
-    // known well enough to name, so say the generic thing.
-    if (!area || !area.serviceable) return t('promo_banner.text');
+    // known well enough to name — and the generic line this used to fall back
+    // to ("free delivery over 150 AED in selected areas") was a national
+    // average that is wrong in every zone: Sharjah is free at any basket and
+    // the far emirates want 200. Saying nothing beats saying a number that
+    // applies nowhere.
+    if (!area || !area.serviceable) return null;
 
     // Free delivery, but only ever attached to the zone it belongs to. Without
     // a zone name there is no way to bound the claim, so we do not make it.
@@ -49,16 +53,17 @@ export function DeliveryPromiseBanner() {
     // saying — but only when the place is theirs and not the shop's.
     if (isKnown && zone) return t('usp.delivering_to', { area: zone });
 
-    return t('promo_banner.text');
+    return null;
   }
+
+  // Nothing worth saying, so no strip at all. An empty bar with a lone
+  // "Change" button in it is furniture, not a promise.
+  const text = message();
+  if (!text) return null;
 
   return (
     <section aria-label="Delivery" className="bg-[#f4ece4] text-primary">
       <div className="max-w-7xl mx-auto px-5 sm:px-6 lg:px-8 py-2 flex items-center justify-center gap-2">
-        <span className="material-icons text-[15px] opacity-70 shrink-0" aria-hidden="true">
-          local_shipping
-        </span>
-
         {/* `dir="auto"` because the zone names arrive from the API in English
             and have to keep reading left to right inside Arabic copy. */}
         <p
@@ -66,7 +71,7 @@ export function DeliveryPromiseBanner() {
           aria-live="polite"
           className="font-body text-[10px] sm:text-[11px] uppercase tracking-[0.22em] text-center"
         >
-          {message()}
+          {text}
         </p>
 
         {/* Offered only while we are standing in for a location we do not have.

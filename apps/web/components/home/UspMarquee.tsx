@@ -35,6 +35,9 @@ const SPEED_KEY: Record<DeliverySpeed, string> = {
   next_day: 'usp.speed_next_day',
 };
 
+//: Ligatures, not `material-symbols-outlined` — that class matches no font here
+//: and prints its own name. These three are all in the classic Material Icons
+//: the site loads; measured on the live page, each lays out one glyph wide.
 const SPEED_ICON: Record<DeliverySpeed, string> = {
   express: 'bolt',
   same_day: 'schedule',

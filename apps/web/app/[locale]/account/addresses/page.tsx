@@ -264,7 +264,7 @@ export default function AddressesPage() {
               )}
               {verifiedPhone === form.phone && form.phone && (
                 <p className="mt-2 flex items-center gap-1.5 text-sm text-green-700">
-                  <span aria-hidden="true" className="material-symbols-outlined text-[18px]">
+                  <span aria-hidden="true" className="material-icons text-[18px]">
                     check_circle
                   </span>
                   {t('verify.verified')}
