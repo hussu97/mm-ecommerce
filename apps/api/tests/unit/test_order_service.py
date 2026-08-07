@@ -995,12 +995,42 @@ class TestCreateOrderWithPromo:
         mock_validate.return_value = PromoCodeValidateResponse(
             valid=True, discount_amount=Decimal("10.00")
         )
-        mock_get_promo.return_value = MagicMock(max_uses=None, id=uuid.uuid4())
+        mock_get_promo.return_value = MagicMock(
+            max_uses=None, id=uuid.uuid4(), code="SAVE10"
+        )
 
         cart = _cart(items=[_cart_item(_product("100.00"))])
         db = self._promo_db(cart, _order_mock())
 
         await create_order(db, _pickup_data(promo_code="SAVE10"), user_id=None)
+
+        order_arg = db.add.call_args_list[0][0][0]
+        assert order_arg.promo_code_used == "SAVE10"
+
+    @patch("app.services.order_service.promo_code_service.validate")
+    @patch("app.services.order_service.promo_code_service.get_promo")
+    async def test_the_arabic_spelling_is_stored_as_the_english_one(
+        self, mock_get_promo, mock_validate
+    ):
+        """
+        One coupon, one value on the order.
+
+        The two codes are names for the same row, so storing whichever was typed
+        would leave `promo_code_used` holding either — and every count that
+        reads it, including the per-customer ceiling, would have to know about
+        both spellings to get the right answer.
+        """
+        mock_validate.return_value = PromoCodeValidateResponse(
+            valid=True, discount_amount=Decimal("10.00")
+        )
+        mock_get_promo.return_value = MagicMock(
+            max_uses=None, id=uuid.uuid4(), code="SAVE10"
+        )
+
+        cart = _cart(items=[_cart_item(_product("100.00"))])
+        db = self._promo_db(cart, _order_mock())
+
+        await create_order(db, _pickup_data(promo_code="خصم10"), user_id=None)
 
         order_arg = db.add.call_args_list[0][0][0]
         assert order_arg.promo_code_used == "SAVE10"

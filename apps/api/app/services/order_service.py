@@ -666,10 +666,21 @@ async def _persist_order(
         data.shipping_address.model_dump(mode="json") if data.shipping_address else None
     )
 
+    # The number the customer gave, written here rather than left to the
+    # register attach below. That attach is deliberately best-effort — a till
+    # that cannot open a business day must not lose a paid sale — so a phone
+    # written only there is a phone that is sometimes missing. It is an identity
+    # for the new-customer coupon now, and a coupon rule cannot be enforced off a
+    # column that is populated most of the time.
+    contact_phone = None
+    if data.shipping_address is not None:
+        contact_phone = (data.shipping_address.phone or "").strip() or None
+
     order = Order(
         order_number=await _generate_order_number(db),
         user_id=user_id,
         email=order_email,
+        customer_phone=contact_phone,
         locale=normalise_locale(data.locale),
         delivery_method=data.delivery_method,
         delivery_fee=delivery_fee,
@@ -778,14 +789,28 @@ async def create_order(
     promo_obj: PromoCode | None = None
 
     if data.promo_code:
+        # The same identity the order is about to be written under, so the
+        # server-side check cannot disagree with the one the checkout showed.
         validation = await promo_code_service.validate(
-            db, data.promo_code, subtotal, user_id=user_id
+            db,
+            data.promo_code,
+            subtotal,
+            user_id=user_id,
+            email=data.email or fallback_email,
+            phone=(
+                (data.shipping_address.phone or "").strip() or None
+                if data.shipping_address is not None
+                else None
+            ),
         )
         if not validation.valid:
             raise BadRequestError(f"Promo code: {validation.message}")
         discount_amount = validation.discount_amount
-        promo_code_used = data.promo_code.upper()
         promo_obj = await promo_code_service.get_promo(db, data.promo_code)
+        # The English spelling, whichever one was typed. Two codes naming one
+        # coupon must leave one value on the order, or every count that reads
+        # this column has to know about both.
+        promo_code_used = promo_obj.code
 
     # 4. Compute delivery fee, small-basket fee, total, VAT
     totals = await _compute_order_totals(

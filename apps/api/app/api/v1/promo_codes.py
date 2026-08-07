@@ -39,6 +39,10 @@ async def validate_promo_code(
         data.code,
         data.order_subtotal,
         user_id=current_user.id if current_user else None,
+        # The account's own email wins over anything typed: a signed-in customer
+        # entering somebody else's address must not thereby become a new one.
+        email=(current_user.email if current_user else None) or data.email,
+        phone=data.phone,
     )
 
 

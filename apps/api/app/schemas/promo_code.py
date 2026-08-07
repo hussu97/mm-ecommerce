@@ -28,9 +28,24 @@ def _check_percentage_ceiling(
 
 class PromoCodeCreate(BaseModel):
     code: str = Field(min_length=3, max_length=50, pattern=r"^[A-Z0-9]+$")
+    #: The same coupon in Arabic, optional. A second name for one row, not a
+    #: second coupon: every ceiling and every count is shared.
+    #:
+    #: The pattern allows Arabic letters and digits. `code`'s `^[A-Z0-9]+$`
+    #: would reject every Arabic string there is.
+    code_ar: str | None = Field(
+        None, min_length=3, max_length=50, pattern=r"^[\u0600-\u06FF0-9\-]+$"
+    )
     discount_type: DiscountTypeEnum
     discount_value: Decimal = Field(gt=0, decimal_places=2)
     min_order_amount: Decimal | None = Field(None, ge=0)
+    #: The most this code can take off, in AED. Only meaningful on a percentage:
+    #: 15% of a 60-dirham order is 9, and of a 600-dirham catering order is 90.
+    max_discount_amount: Decimal | None = Field(None, gt=0)
+    #: Restricts the code to a customer's first N orders — an acquisition offer
+    #: rather than a loyalty one. Counted across account, email and phone
+    #: together, because guest checkout mints a fresh account per session.
+    first_orders_limit: int | None = Field(None, ge=1)
     max_uses: int | None = Field(None, ge=1)
     #: How many times one customer may redeem this code. Without it a single
     #: person could burn an entire campaign's `max_uses` alone.
@@ -77,8 +92,13 @@ class PromoCodeBulkResponse(BaseModel):
 
 
 class PromoCodeUpdate(BaseModel):
+    code_ar: str | None = Field(
+        None, min_length=3, max_length=50, pattern=r"^[\u0600-\u06FF0-9\-]+$"
+    )
     discount_value: Decimal | None = Field(None, gt=0)
     min_order_amount: Decimal | None = None
+    max_discount_amount: Decimal | None = Field(None, gt=0)
+    first_orders_limit: int | None = Field(None, ge=1)
     max_uses: int | None = None
     max_uses_per_user: int | None = Field(None, ge=1)
     is_active: bool | None = None
@@ -91,9 +111,12 @@ class PromoCodeResponse(BaseModel):
 
     id: UUID
     code: str
+    code_ar: str | None = None
     discount_type: DiscountTypeEnum
     discount_value: float
     min_order_amount: float | None
+    max_discount_amount: float | None = None
+    first_orders_limit: int | None = None
     max_uses: int | None
     max_uses_per_user: int | None
     current_uses: int
@@ -106,6 +129,16 @@ class PromoCodeResponse(BaseModel):
 class PromoCodeValidateRequest(BaseModel):
     code: str
     order_subtotal: Decimal = Field(ge=0)
+    #: Who is asking, as far as the checkout knows so far. Both optional: the
+    #: code is typed before the order exists and sometimes before either is
+    #: filled in.
+    #:
+    #: Sent so the "new customers only" answer arrives while the customer can
+    #: still act on it. Without them the check would first bite at submit, after
+    #: the discount had already been shown as applied — and the signed-in case
+    #: would be caught while the guest case, the one that matters, would not.
+    email: str | None = Field(None, max_length=255)
+    phone: str | None = Field(None, max_length=30)
 
 
 class PromoCodeValidateResponse(BaseModel):
