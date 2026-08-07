@@ -70,7 +70,7 @@ class PolygonResponse(BaseModel):
     #: The basket that earns free delivery here. Null means "use the national
     #: threshold" — which is what every zone meant before thresholds could vary.
     #: Zero is different from null: it means free at any basket.
-    free_delivery_threshold: float | None
+    free_delivery_threshold: float
     fulfilment_provider: str
     #: The kitchen that bakes this zone's orders and hands them to the courier.
     #: Null falls back to the single configured pickup branch.
@@ -88,11 +88,7 @@ class PolygonResponse(BaseModel):
             delivery_fee=float(p.delivery_fee),
             pricing_mode=p.pricing_mode,
             free_delivery_eligible=p.free_delivery_eligible,
-            free_delivery_threshold=(
-                None
-                if p.free_delivery_threshold is None
-                else float(p.free_delivery_threshold)
-            ),
+            free_delivery_threshold=float(p.free_delivery_threshold),
             fulfilment_provider=p.fulfilment_provider,
             branch_id=str(p.branch_id) if p.branch_id else None,
             display_order=p.display_order,
@@ -413,11 +409,9 @@ async def zone_map(
                 "delivery_fee": float(polygon.delivery_fee),
                 "pricing_mode": polygon.pricing_mode,
                 "free_delivery_eligible": polygon.free_delivery_eligible,
-                "free_delivery_threshold": (
-                    None
-                    if polygon.free_delivery_threshold is None
-                    else float(polygon.free_delivery_threshold)
-                ),
+                # NOT NULL since 088 — every zone answers for itself, because
+                # the national number it used to fall back to is gone.
+                "free_delivery_threshold": float(polygon.free_delivery_threshold),
                 "fulfilment_provider": polygon.fulfilment_provider,
                 "display_order": polygon.display_order,
                 "geometry": _simplify(polygon.geometry, tolerance),
@@ -654,11 +648,9 @@ async def update_polygon(
                 "delivery_fee": float(polygon.delivery_fee),
                 "pricing_mode": polygon.pricing_mode,
                 "free_delivery_eligible": polygon.free_delivery_eligible,
-                "free_delivery_threshold": (
-                    None
-                    if polygon.free_delivery_threshold is None
-                    else float(polygon.free_delivery_threshold)
-                ),
+                # NOT NULL since 088 — every zone answers for itself, because
+                # the national number it used to fall back to is gone.
+                "free_delivery_threshold": float(polygon.free_delivery_threshold),
                 "fulfilment_provider": polygon.fulfilment_provider,
                 "branch_id": str(polygon.branch_id) if polygon.branch_id else None,
                 "display_order": polygon.display_order,

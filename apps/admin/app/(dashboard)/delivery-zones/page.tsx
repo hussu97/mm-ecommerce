@@ -236,6 +236,7 @@ interface VersionCardProps {
       delivery_fee?: number;
       pricing_mode?: DeliveryPricingMode;
       free_delivery_eligible?: boolean;
+      free_delivery_threshold?: number;
       fulfilment_provider?: FulfilmentProvider;
       branch_id?: string;
     },
@@ -325,7 +326,7 @@ function VersionCard({
                   // The saved values are part of the key so a reload after a
                   // save remounts the row with them, rather than leaving the
                   // input showing what was typed before the server answered.
-                  key={`${zone.id}:${zone.delivery_fee}:${zone.pricing_mode}:${zone.fulfilment_provider}:${zone.free_delivery_eligible}:${zone.branch_id}`}
+                  key={`${zone.id}:${zone.delivery_fee}:${zone.pricing_mode}:${zone.fulfilment_provider}:${zone.free_delivery_eligible}:${zone.free_delivery_threshold}:${zone.branch_id}`}
                   zone={zone}
                   branches={branches}
                   readOnly={version.is_active || busy}
@@ -387,12 +388,29 @@ function ZoneRow({
     delivery_fee?: number;
     pricing_mode?: DeliveryPricingMode;
     free_delivery_eligible?: boolean;
+    free_delivery_threshold?: number;
     fulfilment_provider?: FulfilmentProvider;
     branch_id?: string;
   }) => void;
 }) {
   const [fee, setFee] = useState(String(zone.delivery_fee));
+  const [threshold, setThreshold] = useState(String(zone.free_delivery_threshold));
   const dynamic = zone.pricing_mode === 'dynamic';
+
+  function commitThreshold() {
+    const parsed = Number(threshold);
+    // Zero is a real value here — Sharjah delivers free at any basket — so the
+    // guard is on "not a number" and "negative", never on falsiness.
+    if (
+      !Number.isFinite(parsed) ||
+      parsed < 0 ||
+      parsed === zone.free_delivery_threshold
+    ) {
+      setThreshold(String(zone.free_delivery_threshold));
+      return;
+    }
+    onChange({ free_delivery_threshold: parsed });
+  }
 
   function commitFee() {
     const parsed = Number(fee);
@@ -481,18 +499,41 @@ function ZoneRow({
         )}
       </td>
       <td className="px-4 py-2.5 text-center">
+        {/* Two settings, deliberately together: whether this zone makes the
+            offer at all, and the basket that earns it. They were one badge
+            reading "Free", which said neither — and the threshold, which is now
+            per zone, could not be seen or changed here at all. */}
         {readOnly ? (
           <Badge variant={zone.free_delivery_eligible ? 'success' : 'neutral'}>
-            {zone.free_delivery_eligible ? 'Free' : 'Always charged'}
+            {!zone.free_delivery_eligible
+              ? 'Always charged'
+              : zone.free_delivery_threshold > 0
+                ? `Free over ${formatCurrency(zone.free_delivery_threshold)}`
+                : 'Always free'}
           </Badge>
         ) : (
-          <input
-            type="checkbox"
-            aria-label={`Free delivery over the threshold in ${zone.name}`}
-            checked={zone.free_delivery_eligible}
-            onChange={e => onChange({ free_delivery_eligible: e.target.checked })}
-            className="w-4 h-4 accent-primary cursor-pointer"
-          />
+          <div className="flex items-center justify-center gap-2">
+            <input
+              type="checkbox"
+              aria-label={`Free delivery over the threshold in ${zone.name}`}
+              checked={zone.free_delivery_eligible}
+              onChange={e => onChange({ free_delivery_eligible: e.target.checked })}
+              className="w-4 h-4 accent-primary cursor-pointer"
+            />
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              aria-label={`Free delivery threshold for ${zone.name}`}
+              title="The basket that earns free delivery here. 0 means free at any basket."
+              value={threshold}
+              disabled={!zone.free_delivery_eligible}
+              onChange={e => setThreshold(e.target.value)}
+              onBlur={commitThreshold}
+              onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()}
+              className="w-20 border border-gray-300 px-2 py-1 text-xs font-body text-right disabled:bg-gray-50 disabled:text-gray-400"
+            />
+          </div>
         )}
       </td>
       <td className="px-4 py-2.5 text-right text-xs font-body text-gray-400">
@@ -733,17 +774,11 @@ function SettingsCard({
 }: {
   settings: DeliverySettings;
   busy: boolean;
-  onSave: (data: {
-    free_delivery_threshold?: number;
-    pickup_fee?: number;
-    default_delivery_fee?: number;
-  }) => void;
+  onSave: (data: { pickup_fee?: number }) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<Record<string, string>>({
-    free_delivery_threshold: String(settings.free_delivery_threshold),
     pickup_fee: String(settings.pickup_fee),
-    default_delivery_fee: String(settings.default_delivery_fee),
     low_order_fee: String(settings.low_order_fee ?? 0),
     // Null renders as blank, which is what the field means: fee switched off.
     low_order_threshold:
@@ -752,17 +787,13 @@ function SettingsCard({
         : String(settings.low_order_threshold),
   });
 
+  // "Free delivery above" and "Outside every zone" used to live here and are
+  // gone. The first is per zone now — a bike run inside Sharjah and a car to
+  // Jebel Ali cannot share one threshold — and it is edited in the zone table
+  // below. The second described a fee for a pin outside every shape, and the
+  // map tiles the whole country, so such a pin is outside the UAE and is
+  // refused rather than priced.
   const FIELDS = [
-    {
-      key: 'free_delivery_threshold' as const,
-      label: 'Free delivery above',
-      hint: 'The same in every zone — the one delivery number a customer sees.',
-    },
-    {
-      key: 'default_delivery_fee' as const,
-      label: 'Outside every zone',
-      hint: 'A real address we have not drawn a shape around yet.',
-    },
     { key: 'pickup_fee' as const, label: 'Pickup', hint: 'Usually nothing.' },
     {
       key: 'low_order_fee' as const,

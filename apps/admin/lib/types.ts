@@ -504,6 +504,16 @@ export interface DeliveryZone {
    * offer, and inferring it from either of those is how it last went wrong.
    */
   free_delivery_eligible: boolean;
+  /**
+   * The basket that earns free delivery *here*.
+   *
+   * Per zone, because one national number was simultaneously too high for a
+   * bike run inside Sharjah at AED 13 and too low for a car to Jebel Ali at
+   * AED 59. Zero is a real value and means free at any basket — Sharjah — and
+   * is not the same as the zone making no offer, which is what
+   * `free_delivery_eligible` says.
+   */
+  free_delivery_threshold: number;
   fulfilment_provider: FulfilmentProvider;
   display_order: number;
   point_count: number;
@@ -535,6 +545,16 @@ export interface DeliveryZoneShape {
   delivery_fee: number;
   pricing_mode: DeliveryPricingMode;
   free_delivery_eligible: boolean;
+  /**
+   * The basket that earns free delivery *here*.
+   *
+   * Per zone, because one national number was simultaneously too high for a
+   * bike run inside Sharjah at AED 13 and too low for a car to Jebel Ali at
+   * AED 59. Zero is a real value and means free at any basket — Sharjah — and
+   * is not the same as the zone making no offer, which is what
+   * `free_delivery_eligible` says.
+   */
+  free_delivery_threshold: number;
   fulfilment_provider: FulfilmentProvider;
   display_order: number;
   geometry: ZoneGeometry;
