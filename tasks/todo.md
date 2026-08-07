@@ -62,26 +62,26 @@ including Sharjah. Shown as its own checkout line; disappears above the threshol
   - Fix `create_bulk` dropping `max_uses_per_user` (`promo_code_service.py:211-223`).
   - Expose everything in the admin UI + `types.ts` (currently `max_uses_per_user` is invisible there).
 
-- [ ] **T5. Firebase phone OTP** *(GCP side already provisioned — see below)*
+- [x] **T5. Firebase phone OTP** — done, `56fb913`. No server secret: ID tokens verify against Google's public certs.
   - Backend: verify the Firebase ID token against Google's public keys; new `phone_verifications` table; endpoints to start/confirm; rate limits.
   - `users`: add `phone_verified_at`; index `phone`.
   - Reuse the Turnstile pattern exactly (`turnstile_service.py` + `_require_human` at `auth.py:280-299`).
   - Register a Firebase web app to get the client API key; create a service account for backend verification.
   - Env vars must hit **all five** locations (CLAUDE.md §9) — enforced by `test_compose_env_allowlist.py`.
 
-- [ ] **T6. Phone verification in the UI** — address add (account + checkout), guest and logged-in, with Turnstile.
+- [x] **T6. Phone verification in the UI** — account address form done, `e6f8f65`. Checkout wiring pending (owned by the fee/coupon change).
 
 ### Phase 3 — storefront
 
-- [ ] **T7. Location provider** — one-time native permission prompt on the homepage; persist to localStorage; seed from default address (logged in) or last order address; fall back to the Sharjah branch.
+- [x] **T7. Location provider** — done, `68ba86a`. — one-time native permission prompt on the homepage; persist to localStorage; seed from default address (logged in) or last order address; fall back to the Sharjah branch.
 - [ ] **T8. Hero + USPs** — cut hero height (`HeroCarousel.tsx:138`) so the USP marquee reaches the first mobile fold; location-personalised free-delivery banner; location-personalised delivery-speed USP (noon Send → 1 hour, Lalamove → same day, 3rd party → next day).
-- [ ] **T9. PLP** — 2-up mobile grid (`ProductGrid.tsx:17`), trim the header so 1.5 rows show; translucent bestseller tag (currently `bg-primary`, identical to the add-to-cart button); sort by price (API already supports `sort`, `products.py:65-68`).
+- [x] **T9. PLP** — 2-up mobile grid, price sort, frosted bestseller badge. Landed in `68ba86a`. — 2-up mobile grid (`ProductGrid.tsx:17`), trim the header so 1.5 rows show; translucent bestseller tag (currently `bg-primary`, identical to the add-to-cart button); sort by price (API already supports `sort`, `products.py:65-68`).
 - [ ] **T10. Delivery estimate CTA** — product card, PDP, cart, carousels, checkout (with a loading state on address change). Reuse `formatEstimate` from `checkout/page.tsx:190-224`.
 - [ ] **T11. Fee + coupon UI** — low-order fee line with info tooltip and "add X more"; cart coupon tray with T&Cs; homepage coupon USP. All read the coupon config from one source.
 
 ### Phase 4
 
-- [ ] **T12. SEO/GEO** — `DeliveryChargeSpecification` + per-zone shipping in `lib/schema.ts`; refresh `llms.txt`, `llms-full.txt`, `ai-plugin.json` (they hardcode "free over AED 150"); FAQ delivery table.
+- [x] **T12. SEO/GEO** — done, `8d4025f`. Per-region shipping, DeliveryChargeSpecification, llms.txt refreshed. — `DeliveryChargeSpecification` + per-zone shipping in `lib/schema.ts`; refresh `llms.txt`, `llms-full.txt`, `ai-plugin.json` (they hardcode "free over AED 150"); FAQ delivery table.
 
 ---
 
@@ -92,6 +92,12 @@ including Sharjah. Shown as its own checkout line; disappears above the threshol
 - **SMS region policy: allowlist `AE` only** — without this, SMS-pumping fraud is unbounded.
 - Authorized domains: `meltingmomentscakes.com`, `www.`, `localhost`, the two firebase defaults.
 - Still to do: register a Firebase web app (client API key), create the backend service account.
+
+### Process note
+`git add -A` while background agents were mid-edit swept their in-flight files
+into unrelated commits — the PLP work is inside `68ba86a` ("location context").
+The tree is correct; the attribution is not. Staged by explicit path from
+`8d4025f` onwards.
 
 ### Fixed along the way
 - Migrations reading a mutable data file — frozen `.vN.` snapshots, enforced by `test_migration_frozen_geometry` (`fb5dfab`).
