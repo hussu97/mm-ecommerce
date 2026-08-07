@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.core.exceptions import ConflictError, NotFoundError
 from app.services import menu_group_service
 from app.models.category import Category
-from app.models.modifier import Modifier, ProductModifier
+from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.product import WEB_CHANNEL, Product, sells_on
 from app.schemas.product import (
     ProductCreate,
@@ -38,14 +38,86 @@ def _escape_like(s: str) -> str:
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def _from_price():
+    """
+    The number the card actually prints, as something the database can sort on.
+
+    Sorting on `base_price` is sorting on a column that is **zero for half the
+    catalogue**. Every brownie and every cookie is priced entirely through its
+    size modifier — 9 of 9 and 7 of 7 — so on those pages "Price: low to high"
+    ordered nine identical zeroes and rendered them in whatever order the
+    planner felt like, under a heading promising otherwise. The storefront had
+    always shown a sensible "From 55.00 AED" there, because `computeFromPrice`
+    walks the modifiers; the sort never did, and nothing noticed until this
+    release put a sort control in front of a customer.
+
+    Mirrors `apps/web/lib/pricing.ts::computeFromPrice`, which is the definition
+    of the price being displayed:
+
+      1. `base_price`, plus the cheapest active option of every **required**
+         group (`minimum_options > 0`) — those are choices the customer cannot
+         decline, so their cost is part of the floor.
+      2. If that is still zero, the cheapest non-zero active option on **any**
+         group. This is the modifier-priced case, where the options are not a
+         surcharge on a price but are the price.
+
+    Two correlated subqueries rather than a join, so the ordering cannot
+    multiply the rows it is ordering — a product with three modifier groups must
+    not appear three times in a catalogue listing.
+    """
+    cheapest_active = (
+        select(func.min(ModifierOption.price))
+        .where(
+            ModifierOption.modifier_id == ProductModifier.modifier_id,
+            ModifierOption.is_active.is_(True),
+        )
+        .scalar_subquery()
+    )
+
+    required_floor = (
+        select(func.coalesce(func.sum(cheapest_active), 0))
+        .where(
+            ProductModifier.product_id == Product.id,
+            ProductModifier.minimum_options > 0,
+        )
+        .scalar_subquery()
+    )
+
+    any_priced_option = (
+        select(func.min(ModifierOption.price))
+        .select_from(ProductModifier)
+        .join(ModifierOption, ModifierOption.modifier_id == ProductModifier.modifier_id)
+        .where(
+            ProductModifier.product_id == Product.id,
+            ModifierOption.is_active.is_(True),
+            ModifierOption.price > 0,
+        )
+        .scalar_subquery()
+    )
+
+    floor = func.coalesce(Product.base_price, 0) + func.coalesce(required_floor, 0)
+    return case((floor > 0, floor), else_=func.coalesce(any_priced_option, 0))
+
+
+#: `price_asc`/`price_desc` are built per call because `_from_price()` composes
+#: correlated subqueries; the rest are plain columns and can be module-level.
 _SORT_MAP = {
     "newest": Product.created_at.desc(),
     "oldest": Product.created_at.asc(),
-    "price_asc": Product.base_price.asc(),
-    "price_desc": Product.base_price.desc(),
     "name": Product.name.asc(),
     "category": None,  # handled specially — needs outerjoin
 }
+
+
+def _order_for(sort: str):
+    if sort == "price_asc":
+        # `name` as the tie-break, so two products at the same price hold a
+        # stable order across pages instead of the planner reshuffling them and
+        # showing the customer one item twice while hiding another.
+        return (_from_price().asc(), Product.name.asc())
+    if sort == "price_desc":
+        return (_from_price().desc(), Product.name.asc())
+    return (_SORT_MAP.get(sort, Product.created_at.desc()),)
 
 
 def _product_load_options():
@@ -85,7 +157,7 @@ async def get_all(
             Category.name.asc(), Product.name.asc()
         )
     else:
-        stmt = stmt.order_by(_SORT_MAP.get(sort, Product.created_at.desc()))
+        stmt = stmt.order_by(*_order_for(sort))
 
     if is_active is not None:
         stmt = stmt.where(Product.is_active == is_active)  # noqa: E712
