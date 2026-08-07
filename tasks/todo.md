@@ -37,7 +37,7 @@ including Sharjah. Shown as its own checkout line; disappears above the threshol
   - Carry the column through: `Zone` dataclass, `_to_zone`, `create_version` clone loop (`delivery_zones.py:440-458` — the documented bug class), `PolygonUpdate`, `PolygonResponse.of`, audit before/after dicts, `/map`, `/summary`, admin `ZoneRow` + `types.ts`.
   - Tests: extend `test_delivery_fee_agreement.py`, `test_dynamic_delivery_pricing.py`.
 
-- [ ] **T2. Rebuild the polygon map (~25 zones)**
+- [x] **T2. Rebuild the polygon map** — done, commits `c837edd` (geometry) + `5667c85` (migration). 15 zones, not 25: bands drawn where courier cost actually changes rather than to hit a count.
   - Extend `scripts/build_delivery_zones.py` to emit the new banded geometry (Sharjah noon-Send core; Al Rahmaniya; Dubai near/mid/far; Ajman; UAQ; RAK; 3rd-party remainder per emirate).
   - New alembic migration inserting the version + polygons with per-zone fee, threshold, provider, branch, `display_order`, batch windows.
   - Give `display_order` deterministic unique values; smaller zones first.
