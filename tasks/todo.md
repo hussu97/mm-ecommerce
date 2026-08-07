@@ -74,10 +74,10 @@ including Sharjah. Shown as its own checkout line; disappears above the threshol
 ### Phase 3 — storefront
 
 - [x] **T7. Location provider** — done, `68ba86a`. — one-time native permission prompt on the homepage; persist to localStorage; seed from default address (logged in) or last order address; fall back to the Sharjah branch.
-- [ ] **T8. Hero + USPs** — cut hero height (`HeroCarousel.tsx:138`) so the USP marquee reaches the first mobile fold; location-personalised free-delivery banner; location-personalised delivery-speed USP (noon Send → 1 hour, Lalamove → same day, 3rd party → next day).
+- [x] **T8. Hero + USPs** — done, `d28fe0e`. — cut hero height (`HeroCarousel.tsx:138`) so the USP marquee reaches the first mobile fold; location-personalised free-delivery banner; location-personalised delivery-speed USP (noon Send → 1 hour, Lalamove → same day, 3rd party → next day).
 - [x] **T9. PLP** — 2-up mobile grid, price sort, frosted bestseller badge. Landed in `68ba86a`. — 2-up mobile grid (`ProductGrid.tsx:17`), trim the header so 1.5 rows show; translucent bestseller tag (currently `bg-primary`, identical to the add-to-cart button); sort by price (API already supports `sort`, `products.py:65-68`).
-- [ ] **T10. Delivery estimate CTA** — product card, PDP, cart, carousels, checkout (with a loading state on address change). Reuse `formatEstimate` from `checkout/page.tsx:190-224`.
-- [ ] **T11. Fee + coupon UI** — low-order fee line with info tooltip and "add X more"; cart coupon tray with T&Cs; homepage coupon USP. All read the coupon config from one source.
+- [x] **T10. Delivery estimate CTA** — card, PDP and checkout, `7f083ab` + `d28fe0e`. — product card, PDP, cart, carousels, checkout (with a loading state on address change). Reuse `formatEstimate` from `checkout/page.tsx:190-224`.
+- [x] **T11. Fee + coupon UI** — done, `d28fe0e`. Values come from the API, not constants. — low-order fee line with info tooltip and "add X more"; cart coupon tray with T&Cs; homepage coupon USP. All read the coupon config from one source.
 
 ### Phase 4
 
