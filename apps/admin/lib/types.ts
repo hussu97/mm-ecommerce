@@ -211,6 +211,12 @@ export interface Order {
   status: OrderStatus;
   promo_code_used: string | null;
   shipping_address_snapshot: Record<string, string> | null;
+  /**
+   * The stamps and the promise, as the customer-facing order page already sees
+   * them. Built by `fulfilment_service`, so the admin and the customer are
+   * looking at one answer rather than two derivations of it.
+   */
+  fulfilment: OrderFulfilment | null;
   payment_method: string | null;
   payment_provider: string | null;
   payment_id: string | null;
@@ -239,6 +245,22 @@ export interface PaginatedOrders {
   page: number;
   per_page: number;
   pages: number;
+}
+
+/** What `fulfilment_service` knows about where an order has got to. */
+export interface OrderFulfilment {
+  stage: string;
+  /** When it should arrive. Null once there is nothing left to promise. */
+  estimated_at: string | null;
+  /**
+   * `time` when an hour can be named, `day`/`day_by` when only the date is
+   * ours — a third party's van is not on our schedule. `exact` is a stamp of
+   * something that already happened.
+   */
+  precision: string | null;
+  packed_at: string | null;
+  picked_up_at: string | null;
+  delivered_at: string | null;
 }
 
 export interface PromoCode {

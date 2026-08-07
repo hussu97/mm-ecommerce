@@ -277,7 +277,9 @@ async def test_the_out_for_delivery_email_leads_with_the_live_link(sent):
     html = body(sent[0])
     assert "https://share.lalamove.com/?SG100250001" in html
     assert "Track live" in html
-    assert "Arriving" in html
+    # "Arriving" became "Estimated delivery" — the same panel, worded as an
+    # estimate rather than as an appointment.
+    assert "Estimated delivery" in html
 
 
 @pytest.mark.asyncio

@@ -64,14 +64,23 @@ def _delivery(**overrides) -> SimpleNamespace:
 
 
 class _Db:
-    """A session that answers exactly two questions: the delivery, and a branch."""
+    """
+    A session answering the three questions `for_order` asks: the delivery, the
+    branch, and the courier row behind the promise.
 
-    def __init__(self, delivery=None, branch=None):
+    The courier answers `None` by default, which the estimate reads as "no
+    configured promise" and falls back to the flat rider figure — so these tests
+    stay about the stage machine rather than about the minutes.
+    """
+
+    def __init__(self, delivery=None, branch=None, courier=None):
         self._delivery = delivery
         self._branch = branch
+        self._courier = courier
 
     async def execute(self, _stmt):
         delivery = self._delivery
+        courier = self._courier
 
         class _Scalars:
             def first(self_inner):
@@ -80,6 +89,9 @@ class _Db:
         class _Result:
             def scalars(self_inner):
                 return _Scalars()
+
+            def scalar_one_or_none(self_inner):
+                return courier
 
         return _Result()
 
@@ -179,7 +191,7 @@ async def test_a_third_party_zone_promises_a_day_and_never_an_hour():
     result = await _fulfilment(
         _order(status=OrderStatusEnum.CONFIRMED), _delivery(provider="third_party")
     )
-    assert result.precision == "day"
+    assert result.precision == "day_by"
     assert result.estimated_at.date() == (NOW + timedelta(days=1)).astimezone(TZ).date()
 
 
@@ -187,7 +199,7 @@ async def test_a_third_party_zone_promises_a_day_and_never_an_hour():
 async def test_an_order_with_no_delivery_record_at_all_is_treated_as_third_party():
     """A delivery placed before the row existed still has to answer the question."""
     result = await _fulfilment(_order(status=OrderStatusEnum.CONFIRMED), None)
-    assert result.precision == "day"
+    assert result.precision == "day_by"
     assert result.courier_managed is False
 
 
@@ -230,9 +242,8 @@ async def test_the_estimate_sharpens_the_moment_a_rider_is_holding_it():
         _delivery(courier_status="picked_up", picked_up_at=picked_up),
     )
     assert result.precision == "time"
-    assert (
-        result.estimated_at
-        == picked_up.astimezone(TZ) + fulfilment_service.RIDER_TO_DOOR
+    assert result.estimated_at == picked_up.astimezone(TZ) + (
+        fulfilment_service.RIDER_TO_DOOR - fulfilment_service.COLLECTION_ALLOWANCE
     )
 
 
@@ -247,7 +258,7 @@ async def test_out_for_delivery_by_hand_still_only_promises_the_day():
         _order(status=OrderStatusEnum.OUT_FOR_DELIVERY),
         _delivery(provider="third_party"),
     )
-    assert result.precision == "day"
+    assert result.precision == "day_by"
 
 
 @pytest.mark.asyncio
@@ -511,6 +522,8 @@ async def test_a_promise_of_a_day_stays_a_day():
         _delivery(provider="third_party"),
     )
 
+    # The stored promise passes through as it was made — `day`, not the
+    # `day_by` shape this function computes when it has to derive one itself.
     assert result.precision == "day"
     assert result.estimated_at == promised.astimezone(TZ)
 
@@ -532,9 +545,8 @@ async def test_a_rider_holding_the_parcel_beats_the_promise():
         _delivery(picked_up_at=picked_up),
     )
 
-    assert (
-        result.estimated_at
-        == picked_up.astimezone(TZ) + fulfilment_service.RIDER_TO_DOOR
+    assert result.estimated_at == picked_up.astimezone(TZ) + (
+        fulfilment_service.RIDER_TO_DOOR - fulfilment_service.COLLECTION_ALLOWANCE
     )
 
 

@@ -34,6 +34,8 @@ from sqlalchemy.orm import selectinload
 
 from app.models.branch import Branch
 from app.models.delivery_batch import DELIVERY_TIMEZONE
+from app.models.courier import Courier
+from app.models.delivery_batch import DeliveryBatchGroup
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
@@ -56,13 +58,25 @@ TZ = ZoneInfo(DELIVERY_TIMEZONE)
 #: event has happened and there is no longer anything to estimate.
 KITCHEN_PREP = timedelta(hours=2)
 
-#: How long a rider takes from the counter to the door once they are holding the
-#: parcel. Only ever applied to a courier we dispatch ourselves and only once
-#: `picked_up_at` exists, which is the point of it: before pickup the wait is
-#: dominated by the kitchen and the run schedule, and after pickup it is one
-#: person driving one route. This is the "more accurate estimate once the rider
-#: has the order" — measured from a real event rather than from checkout.
+#: What the courier's promise already spent before the rider had the parcel.
+#:
+#: A promise like noon Send's hour is measured from the order being placed and
+#: covers packing the box and the rider getting to the counter as well as the
+#: drive. Once `picked_up_at` exists, those minutes have happened — so the
+#: remaining time is the promise **minus** this, measured from the collection.
+#:
+#: One number rather than per courier: it is how long our own kitchen takes to
+#: hand a bag over, which does not change with who is collecting it.
+COLLECTION_ALLOWANCE = timedelta(minutes=10)
+
+#: What a rider takes from counter to door when nothing better is known — a
+#: courier with no configured promise at all. The real figure comes from the
+#: batch group or the courier row; this is only the floor under a missing one.
 RIDER_TO_DOOR = timedelta(minutes=45)
+
+#: The hour a third-party day-promise is bounded by. Their van and their
+#: schedule, so the honest shape is a date and a "by" — not an hour we picked.
+THIRD_PARTY_BY_HOUR = 22
 
 #: How long after a run leaves the kitchen the last box on it is through a door.
 #: The same hour `delivery_service.DISPATCH_TO_DOOR` promises at checkout, and
@@ -213,11 +227,15 @@ async def for_order(
     if delivery is not None and delivery.courier_status == "undelivered":
         stage = "undelivered"
 
+    promise_minutes = await _promise_minutes(db, delivery)
+
     branch = None
     if is_pickup and order.branch_id is not None:
         branch = await db.get(Branch, order.branch_id)
 
-    estimated_at, precision = _estimate(order, delivery, stage=stage, now=now)
+    estimated_at, precision = _estimate(
+        order, delivery, stage=stage, now=now, promise_minutes=promise_minutes
+    )
 
     return Fulfilment(
         method=order.delivery_method.value,
@@ -254,12 +272,49 @@ def _tracking_url(delivery: OrderDelivery | None, *, stage: str) -> str | None:
     return delivery.share_link or None
 
 
+async def _promise_minutes(
+    db: AsyncSession, delivery: OrderDelivery | None
+) -> timedelta | None:
+    """
+    How long this order's courier promises from ready to door.
+
+    The batch group first — a run's minutes are a property of the route, and
+    Dubai's 90 differs from the northern 120 on the same rate card. Then the
+    courier's own figure for anything not waiting for a run. Both are the same
+    numbers `delivery_promise` quotes at checkout, read from the same rows, so
+    the "arriving" email cannot promise a different duration from the one the
+    customer was originally shown.
+
+    `None` when neither is configured, which the caller reads as "fall back to
+    the flat rider estimate" rather than as zero.
+    """
+    if delivery is None:
+        return None
+
+    batch = delivery.batch
+    # `getattr`, because a run predating groups has no `group_id` to read and
+    # should fall through to the courier rather than raise.
+    if batch is not None and getattr(batch, "group_id", None) is not None:
+        group = await db.get(DeliveryBatchGroup, batch.group_id)
+        if group is not None:
+            return timedelta(minutes=group.delivery_minutes_after_dispatch)
+
+    if delivery.provider:
+        courier = (
+            await db.execute(select(Courier).where(Courier.code == delivery.provider))
+        ).scalar_one_or_none()
+        if courier is not None and courier.unbatched_promise_minutes:
+            return timedelta(minutes=courier.unbatched_promise_minutes)
+    return None
+
+
 def _estimate(
     order: Order,
     delivery: OrderDelivery | None,
     *,
     stage: str,
     now: datetime,
+    promise_minutes: timedelta | None = None,
 ) -> tuple[datetime | None, str | None]:
     """
     When the customer gets it, and how precisely we know that.
@@ -308,10 +363,21 @@ def _estimate(
         # it is the only one built from a fact rather than from a schedule.
         picked_up = delivery.picked_up_at if delivery is not None else None
         if picked_up is not None and provider in _BOOKED_BY_US:
-            return _local(picked_up) + RIDER_TO_DOOR, "time"
+            # The promise minus what it had already spent by the time the rider
+            # was holding the box. A flat 45 minutes here was the same number
+            # for a Dubai run and a northern one, which differ by half an hour.
+            remaining = (promise_minutes or RIDER_TO_DOOR) - COLLECTION_ALLOWANCE
+            arriving = _local(picked_up) + max(remaining, timedelta(minutes=5))
+            # Never behind the customer reading it. A rider who is running late
+            # turns an estimate into a time that has already passed, and an
+            # email saying the parcel arrived twenty minutes ago is worse than
+            # one saying "any moment".
+            return max(arriving, _local(now) + timedelta(minutes=5)), "time"
         # Out for delivery on somebody else's van — the shop marked it by hand.
-        # The day is all that is ours to promise.
-        return _end_of(now), "day"
+        # The day is all that is ours to promise, bounded by the hour they
+        # finish rather than left open: "before 10 PM" is a commitment a
+        # customer can plan around, and "some time on Tuesday" is not.
+        return _by_hour(now, THIRD_PARTY_BY_HOUR), "day_by"
 
     # ── still in the kitchen, or packed and waiting for a run ────────────────
     #
@@ -344,7 +410,7 @@ def _estimate(
         # the next day whether the order came in at nine in the morning or five
         # past eleven at night. Saying "today" would be guessing with somebody
         # else's van.
-        return _end_of(now + timedelta(days=1)), "day"
+        return _by_hour(now + timedelta(days=1), THIRD_PARTY_BY_HOUR), "day_by"
 
     if stage == "ready":
         # Packed, ours to dispatch, travelling alone. It goes now.
@@ -382,6 +448,18 @@ def _local(moment: datetime) -> datetime:
 def _end_of(moment: datetime) -> datetime:
     """The end of that day, local. Carries a date without implying an hour."""
     return moment.astimezone(TZ).replace(hour=23, minute=59, second=0, microsecond=0)
+
+
+def _by_hour(moment: datetime, hour: int) -> datetime:
+    """
+    That day, bounded at an hour.
+
+    Rendered as "before 10 PM" rather than as an appointment — see the
+    `day_by` precision. The bound is what makes a third-party promise something
+    a customer can plan around while still being honest that the van is not
+    ours to schedule.
+    """
+    return moment.astimezone(TZ).replace(hour=hour, minute=0, second=0, microsecond=0)
 
 
 async def pickup_branches(db: AsyncSession) -> list[Branch]:

@@ -66,9 +66,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "totals.low_order_fee": "Small order fee",
         # ── the estimate panel ────────────────────────────────────────────────
         "estimate.delivery": "Estimated delivery",
+        #: A date bounded by an hour, for a van that is not ours to schedule.
+        "date.by_time": "{day} before {time}",
         "estimate.ready": "Ready to collect",
         "estimate.ready_since": "Ready since",
-        "estimate.arriving": "Arriving",
+        "estimate.arriving": "Estimated delivery",
         "estimate.delivered": "Delivered",
         "estimate.collected": "Collected",
         "estimate.note_counter": "Waiting for you at the counter.",
@@ -318,9 +320,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "totals.low_order_fee": "رسوم الطلب الصغير",
         # ── the estimate panel ────────────────────────────────────────────────
         "estimate.delivery": "موعد التوصيل المتوقع",
+        "date.by_time": "{day} قبل {time}",
         "estimate.ready": "جاهز للاستلام",
         "estimate.ready_since": "جاهز منذ",
-        "estimate.arriving": "الوصول المتوقع",
+        "estimate.arriving": "موعد التوصيل المتوقع",
         "estimate.delivered": "تم التوصيل",
         "estimate.collected": "تم الاستلام",
         "estimate.note_counter": "بانتظارك عند الكاشير.",
