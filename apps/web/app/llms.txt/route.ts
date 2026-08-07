@@ -38,9 +38,16 @@ export async function GET() {
 - Order online at ${SITE_URL}/en, or by WhatsApp on +971 50 368 7757
 - 24–48 hours' notice is best; 5–7 days for large, custom or event orders
 - Same-day slots are sometimes available for orders placed early — the checkout shows what is open
-- Delivery fee is quoted at checkout from the delivery address; free over AED 150 in the Dubai, Sharjah and Ajman city areas
-- Store pickup from Sharjah is free
+- Delivery is free in Sharjah city at any basket size
+- Dubai and Ajman: AED 20, free over AED 75. Umm Al Quwain AED 30, free over 75. Ras Al Khaimah AED 50, free over 100
+- Everywhere else in the UAE: AED 80, free over AED 200
+- Sharjah city arrives in about an hour; Dubai and Ajman the same day; everywhere else next day
+- Orders of AED 35 or less carry a AED 15 small-order fee, which comes off above that
+- Store pickup from Sharjah is free, and has no small-order fee
 - Price range: AED 15 – AED 200
+
+## Offers
+- New customers get 15% off their first 3 orders, up to AED 30 off per order, with a verified mobile number. Limited time.
 
 ## Payment
 - Card online: Visa, Mastercard and Apple Pay, via Stripe
