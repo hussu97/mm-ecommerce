@@ -174,51 +174,77 @@ These are the ones to watch. A rise in any of them is money leaving.
 
 Navigate to: **Umami dashboard → [Website] → Funnels → Create funnel**
 
-### 1. Main Purchase Funnel — events, not URLs
+All nine use a **60-minute window**.
+
+### The rule this site's funnels kept getting wrong
+
+**`view_product` is not a step in this shop's journey.** Every listing tile
+carries its own add-to-cart control (`AddToCartControl.tsx`), so a customer can
+fill a basket and buy without ever opening a product page. Any funnel that
+*requires* `view_product` therefore discards most of the traffic that converts.
+
+This was not theoretical. Measured over the 30 days to 8 August 2026, the Main
+Purchase Funnel read:
+
+| With `view_product` required | Without it |
+|---|---|
+| `/*` 686 → view_product 114 → add_to_cart **7** → begin_checkout **3** → order_completed **0** | `/*` 686 → add_to_cart **24** → begin_checkout **11** → order_completed **3** |
+
+The funnel had been reporting **zero conversions for a month** while three
+orders went through it. Widening the window to a full day did not help — it was
+never a timing problem, it was the wrong step. Put `view_product` in a funnel
+only when the question really is about the product page.
+
+The second rule: **a step that can fire out of order will silently drop
+conversions.** `promo_applied` fires from the basket *and* from the checkout, so
+the Promo Code Funnel's old `… → promo_applied → begin_checkout → …` ordering
+lost anyone who typed their code on the checkout page. Measured, that was one
+purchase in three.
+
+### 1. Main Purchase Funnel
 
 | Step | Match type | Value |
 |---|---|---|
-| 1. Product viewed | Event | `view_product` |
+| 1. Any landing | URL | `/*` |
 | 2. Add to cart | Event | `add_to_cart` |
-| 3. Cart viewed | Event | `view_cart` |
-| 4. Checkout reached | Event | `view_checkout` |
-| 5. Purchase | Event | `order_completed` |
+| 3. Checkout started | Event | `begin_checkout` |
+| 4. Purchase | Event | `order_completed` |
 
-**This replaces the URL-based funnel that ran from April 2026 to August 2026.**
-That one stepped through `/*`, `/*/*`, `/*/cart`, `/*/checkout` and
-`/*/checkout/confirmation`, and every step of it counted the wrong thing: `/*/*`
-matches any two-segment path rather than a product page, a refresh of the basket
-counted as a second visit to it, an empty basket looked identical to a full one,
-and a cancelled payment returning from the gateway counted as a fresh arrival at
-the checkout. The events above carry the basket, so drop-off can be read against
-basket size instead of guessed at.
+Fixed 8 August 2026 — `view_product` removed as step 2. See above.
 
-The old URL funnel can be kept alongside under a different name if the history
-matters, but do not compare its numbers with this one — they were never counting
-the same thing.
+### 2. Purchase Funnel (full)
 
-### 2. Search-to-Purchase Funnel
+The same journey with the two stages that were unmeasurable before phase 4.
+Reads zero until phase 4 is deployed, then supersedes funnel 1.
 
 | Step | Match type | Value |
 |---|---|---|
-| 1. Search | Event | `search` |
-| 2. Product viewed | Event | `view_product` |
-| 3. Add to cart | Event | `add_to_cart` |
+| 1. Add to cart | Event | `add_to_cart` |
+| 2. Cart viewed | Event | `view_cart` |
+| 3. Checkout reached | Event | `view_checkout` |
 | 4. Purchase | Event | `order_completed` |
 
 ### 3. Promo Code Funnel
 
 | Step | Match type | Value |
 |---|---|---|
-| 1. Cart viewed | Event | `view_cart` |
+| 1. Add to cart | Event | `add_to_cart` |
 | 2. Promo applied | Event | `promo_applied` |
-| 3. Checkout reached | Event | `view_checkout` |
-| 4. Purchase | Event | `order_completed` |
+| 3. Purchase | Event | `order_completed` |
 
-Step 1 was a URL (`/*/cart`) until August 2026 and is now the event, for the same
-reason as funnel 1.
+Fixed 8 August 2026 — `begin_checkout` removed from between steps 2 and 3.
 
-### 4. Coupon Tray Funnel
+### 4. Search-to-Purchase Funnel
+
+| Step | Match type | Value |
+|---|---|---|
+| 1. Search | Event | `search` |
+| 2. Add to cart | Event | `add_to_cart` |
+| 3. Purchase | Event | `order_completed` |
+
+Fixed 8 August 2026 — `view_product` removed.
+
+### 5. Coupon Tray Funnel
 
 Does the new-customer tray earn its space? The impression is step one, so the
 apply rate finally has a denominator.
@@ -229,7 +255,7 @@ apply rate finally has a denominator.
 | 2. Code applied | Event | `promo_applied` |
 | 3. Purchase | Event | `order_completed` |
 
-### 5. Delivery Address Funnel
+### 6. Delivery Address Funnel
 
 Where a delivery order dies between "I want this" and a priced address.
 
@@ -240,7 +266,7 @@ Where a delivery order dies between "I want this" and a priced address.
 | 3. Quote returned | Event | `delivery_quote` |
 | 4. Purchase | Event | `order_completed` |
 
-### 6. Payment Recovery Funnel
+### 7. Payment Recovery Funnel
 
 How many of the orders that come back unpaid are ever rescued.
 
@@ -250,24 +276,58 @@ How many of the orders that come back unpaid are ever rescued.
 | 2. Retried | Event | `payment_retry` |
 | 3. Purchase | Event | `order_completed` |
 
-### 7. Merchandising Funnel
+### 8. Merchandising Funnel
 
 Whether the homepage's most expensive space sells anything.
 
 | Step | Match type | Value |
 |---|---|---|
 | 1. Promotion clicked | Event | `select_promotion` |
-| 2. Product viewed | Event | `view_product` |
-| 3. Add to cart | Event | `add_to_cart` |
-| 4. Purchase | Event | `order_completed` |
+| 2. Add to cart | Event | `add_to_cart` |
+| 3. Purchase | Event | `order_completed` |
 
-### 8. Phone Verification Funnel
+### 9. Phone Verification Funnel
 
 | Step | Match type | Value |
 |---|---|---|
 | 1. Started | Event | `phone_verify_started` |
 | 2. Code sent | Event | `phone_verify_sent` |
 | 3. Verified | Event | `phone_verify_succeeded` |
+
+---
+
+## Journeys
+
+Umami generates these itself from views and events — there is nothing to
+configure and nothing to keep in sync. Audited 8 August 2026: working, left
+alone.
+
+---
+
+## Editing goals and funnels without the UI
+
+The dashboard's own API, which is quicker and less error-prone than the dialogs
+when changing several at once. **The same-origin `cloud.umami.is/api/reports`
+is not it** — Next serves the app shell for a POST there, which looks like a
+`200` and silently does nothing. The real host is the regional gateway:
+
+| | |
+|---|---|
+| List | `GET https://cloud.umami.is/api/websites/{websiteId}/reports?pageSize=200` (cookie auth) |
+| Create | `POST https://gateway-us.umami.is/api/reports` |
+| Update | `POST https://gateway-us.umami.is/api/reports/{reportId}` (send the whole record back) |
+| Run a funnel | `POST https://gateway-us.umami.is/api/reports/funnel` |
+
+The gateway calls need `authorization: Bearer …`, which the dashboard holds in
+memory rather than a cookie. Read it off a live request from the browser console
+rather than storing it anywhere.
+
+Goal body: `{name, type: 'goal', websiteId, parameters: {type: 'event', value: '<event_name>'}}`.
+Funnel body: `{name, type: 'funnel', websiteId, parameters: {steps: [{type: 'event'|'path', value, filters: []}], window: 60}}`.
+
+Before changing a funnel's steps, **run both shapes and compare** — that is how
+the `view_product` fault above was found, and a funnel that looks reasonable can
+still be reporting zero.
 
 ---
 
@@ -406,4 +466,5 @@ funnel is what is wrong, not the tracking.
 | 2026-08-06 | Analytics paths renamed: `/umami/script.js` → `/vague/v.js`, `/umami/api/send` → `/vague/api/send` (`data-host-url` is now `/vague`). No event added, removed or renamed, and the website ID is unchanged, so no history is affected. The old paths matched no blocklist rule — this is insurance against one appearing, and the reasoning is in `apps/web/app/vague/api/send/route.ts`. |
 | 2026-08-06 | `NEXT_PUBLIC_UMAMI_URL` is no longer read — the script path is hard-coded in `app/layout.tsx` alongside `data-host-url`. The rename above shipped while Vercel still held `/umami/script.js` in that variable, so the tag pointed at a 404 and the tracker stopped loading for roughly ten minutes; `data-host-url` had moved with the code, so nothing in the markup looked wrong. Only the website ID belongs in the environment. Delete the variable from any project that still sets it. |
 | 2026-08-05 | Audit. No events added, removed or renamed. Fixed the **Fired from** column, which had drifted for `add_to_cart`, `remove_from_cart`, `user_signup` and `select_delivery_method`. Three delivery faults fixed in code: `/umami/api/send` was being locale-redirected so every event was sent twice; the pre-load queue gave up after 3s and now waits 30s; the basket sent the browser to `/checkout` without a locale, discarding `begin_checkout` across the redirect. The admin dashboard now reads `metrics?type=event` and reports Umami's refusals instead of showing zeros. Added the Troubleshooting section above. |
-| 2026-08-08 | **Phase 4 — 47 events added, 9 enriched, 19 → 66 total.** The whole unhappy path is now recorded: `api_error` (one hook in `lib/api.ts` covering every endpoint), `order_create_failed`, `payment_cancelled`, `delivery_unserviceable`, `search_no_results`, `add_to_cart_failed`, `login_failed`, `signup_failed`, `phone_verify_*`, `app_error`, `page_not_found` and the rest. New happy-path coverage: `view_cart`, `view_checkout`, `delivery_quote`, `select_promotion`, `select_item`, `modifier_selected`, `coupon_tray_shown`, `location_pin_set`, `sort_products`, `faq_opened`. Enriched: `order_completed` now carries the total broken into subtotal / delivery fee / low-order fee / discount / promo code / is_guest; `add_to_cart` carries `value` and `surface`; `promo_applied` and `promo_failed` carry `surface` and `subtotal`; `checkout_error` carries every failing field; `payment_failed` carries `stage` and `provider`; `search` carries `has_results`. Conventions introduced: `currency: 'AED'` on money, a stable `reason` slug on failures, `surface` everywhere, and empty properties dropped before send. Goals rebuilt (12 happy + 12 unhappy) and funnels rebuilt — the Main Purchase Funnel and the Promo Code Funnel are now event-based rather than URL-based, and five new funnels added (coupon tray, delivery address, payment recovery, merchandising, phone verification). Also fixed in passing: the footer and FAQ WhatsApp buttons were plain anchors and had never been tracked. |
+| 2026-08-08 | **Phase 4 — 47 events added, 9 enriched, 19 → 66 total.** The whole unhappy path is now recorded: `api_error` (one hook in `lib/api.ts` covering every endpoint), `order_create_failed`, `payment_cancelled`, `delivery_unserviceable`, `search_no_results`, `add_to_cart_failed`, `login_failed`, `signup_failed`, `phone_verify_*`, `app_error`, `page_not_found` and the rest. New happy-path coverage: `view_cart`, `view_checkout`, `delivery_quote`, `select_promotion`, `select_item`, `modifier_selected`, `coupon_tray_shown`, `location_pin_set`, `sort_products`, `faq_opened`. Enriched: `order_completed` now carries the total broken into subtotal / delivery fee / low-order fee / discount / promo code / is_guest; `add_to_cart` carries `value` and `surface`; `promo_applied` and `promo_failed` carry `surface` and `subtotal`; `checkout_error` carries every failing field; `payment_failed` carries `stage` and `provider`; `search` carries `has_results`. Conventions introduced: `currency: 'AED'` on money, a stable `reason` slug on failures, `surface` everywhere, and empty properties dropped before send. Goals rebuilt: 24 in the dashboard (12 happy + 12 unhappy), up from 7. Also fixed in passing: the footer and FAQ WhatsApp buttons were plain anchors and had never been tracked. |
+| 2026-08-08 | **Funnel audit — two of the three existing funnels were quietly wrong.** The **Main Purchase Funnel** required `view_product` as step 2, but every listing tile can add to the basket without opening a product page, so the funnel discarded 71% of add-to-carts and **every purchase**: it had reported `order_completed = 0` for thirty days while three orders went through it. Removing that step gives `/* 686 → add_to_cart 24 → begin_checkout 11 → order_completed 3`. The **Promo Code Funnel** had `begin_checkout` between `promo_applied` and `order_completed`, but `promo_applied` fires from the checkout page too — so anyone who typed their code there broke the ordering and fell out despite converting; measured, one purchase in three. `begin_checkout` removed. **Search-to-Purchase** had the same `view_product` fault and was fixed the same way. Six new funnels added (purchase full, coupon tray, delivery address, payment recovery, merchandising, phone verification) — nine in total. This file's previous description of the funnels did not match the dashboard at all (it described five URL steps that were not there), which is how the `view_product` fault survived; the tables above are now transcribed from the live configuration. Journeys audited — Umami generates those itself, nothing to configure. Pipeline verified live end-to-end: `search` and `view_product` fired from meltingmomentscakes.com and arrived in Umami within seconds, geo-attributed to AE/Sharjah. |
