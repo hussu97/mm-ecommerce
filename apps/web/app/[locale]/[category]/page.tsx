@@ -213,10 +213,10 @@ export default async function CategoryPage({
         <CategoryTracker categoryName={categoryName} productCount={data.total} />
         <Breadcrumb items={[{ label: t('breadcrumb.home'), href: `/${locale}` }, { label: categoryName }]} />
 
-        {/* Category header — the title and the sort share a row on phones so the
-            grid still starts inside the first screen. */}
+        {/* Category header — trimmed on phones so the grid starts inside the
+            first screen rather than a scroll below it. */}
         <header className="mb-4 sm:mb-10">
-          <div className="flex items-end justify-between gap-3">
+          <div className="sm:flex sm:items-end sm:justify-between sm:gap-4">
             <div className="min-w-0">
               <h1 className="font-display text-xl sm:text-4xl text-primary uppercase tracking-widest mb-1 sm:mb-3">
                 {categoryName}
@@ -227,12 +227,16 @@ export default async function CategoryPage({
                 </p>
               )}
             </div>
-            <SortSelect
-              action={`/${locale}/${slug}`}
-              value={sort}
-              options={productSortOptions(t)}
-              label={productSortLabel(t)}
-            />
+            {/* Its own line on phones: the control is forced to 16px there (the
+                anti-zoom rule in globals.css) and will not share a row. */}
+            <div className="flex justify-end mt-2 sm:mt-0">
+              <SortSelect
+                action={`/${locale}/${slug}`}
+                value={sort}
+                options={productSortOptions(t)}
+                label={productSortLabel(t)}
+              />
+            </div>
           </div>
           <div className="h-px bg-secondary/40 mt-2 sm:mt-4" />
         </header>

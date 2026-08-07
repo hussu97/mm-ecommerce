@@ -58,7 +58,7 @@ export function SortSelect({
         name="sort"
         defaultValue={value ?? ''}
         onChange={(e) => e.currentTarget.form?.requestSubmit()}
-        className="font-body text-[11px] uppercase tracking-widest text-primary bg-white border border-gray-200 px-2 py-1 cursor-pointer outline-none focus:border-primary/60"
+        className="max-w-full font-body text-[11px] uppercase tracking-wider text-primary bg-white border border-gray-200 px-2 py-1 cursor-pointer outline-none focus:border-primary/60"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>

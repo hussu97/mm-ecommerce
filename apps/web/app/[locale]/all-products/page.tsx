@@ -243,17 +243,21 @@ export default async function AllProductsPage({
       <div className="max-w-7xl mx-auto px-4 py-5 sm:py-12">
         <Breadcrumb items={[{ label: t('breadcrumb.home'), href: `/${locale}` }, { label: t('nav.all') }]} />
         <header className="mb-3 sm:mb-8">
-          <div className="flex items-end justify-between gap-3">
+          <div className="sm:flex sm:items-end sm:justify-between sm:gap-4">
             <h1 className="font-display text-xl sm:text-4xl text-primary uppercase tracking-widest">
               {locale === 'ar' ? 'جميع المنتجات' : 'All Products'}
             </h1>
-            <SortSelect
-              action={`/${locale}/all-products`}
-              preserved={category ? { category } : undefined}
-              value={sort}
-              options={productSortOptions(t)}
-              label={productSortLabel(t)}
-            />
+            {/* Its own line on phones: the control is forced to 16px there (the
+                anti-zoom rule in globals.css) and will not share a row. */}
+            <div className="flex justify-end mt-2 sm:mt-0">
+              <SortSelect
+                action={`/${locale}/all-products`}
+                preserved={category ? { category } : undefined}
+                value={sort}
+                options={productSortOptions(t)}
+                label={productSortLabel(t)}
+              />
+            </div>
           </div>
           <div className="h-px bg-secondary/40 mt-2 sm:mt-4" />
         </header>

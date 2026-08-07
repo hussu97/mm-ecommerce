@@ -3,14 +3,15 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, get_optional_user
+from app.core.limiter import limiter
 from app.models.order import DeliveryMethodEnum
 from app.models.user import User
-from app.services import cart_service, delivery_service
+from app.services import cart_service, delivery_service, delivery_zone_service
 
 router = APIRouter()
 
@@ -36,6 +37,39 @@ class DeliveryEstimateResponse(BaseModel):
     #: ISO 8601, on the shop's clock.
     at: str
     precision: str
+
+
+class DeliveryAreaResponse(BaseModel):
+    """
+    What delivery looks like at a pin, before there is a basket.
+
+    Separate from `/quote` because the questions are different. A quote needs a
+    cart, a subtotal and a live courier estimate, and it exists to put a number
+    on one order. This answers "what is delivery like where I live" for a banner
+    on the homepage and a line on a product card — pages a customer reaches long
+    before a cart exists.
+
+    Cheap on purpose: a point-in-polygon lookup against the cached map and
+    nothing else. No courier is called, so it costs no money and adds no latency
+    to a page that is mostly images.
+    """
+
+    serviceable: bool = True
+    #: The place, never the carrier. Same rule as the quote: `zone_name` reaches
+    #: the browser, so it may only ever name somewhere.
+    zone_name: str | None = None
+    #: What this zone charges, before any basket. Null where the fee is a live
+    #: courier quote and cannot be known without one.
+    delivery_fee: float | None = None
+    #: The basket that earns free delivery *here*.
+    free_threshold: float | None = None
+    free_delivery_available: bool = False
+    #: How fast, as a promise rather than a mechanism: `express` is inside the
+    #: hour, `same_day` means it goes out on one of today's runs, `next_day` is
+    #: everywhere we hand to someone else. Three values because the answer
+    #: genuinely is three, and collapsing them would make the near zones wear
+    #: the far zones' promise.
+    speed: str = "next_day"
 
 
 class DeliveryQuoteResponse(BaseModel):
@@ -116,6 +150,68 @@ async def calculate_delivery(
 
     return DeliveryCalculateResponse(
         delivery_fee=fee, is_free=(fee == Decimal("0.00")), reason=reason
+    )
+
+
+#: Zone shape -> the promise we make about it. Keyed on what the zone *is*
+#: rather than on its name, so redrawing the map cannot silently change what a
+#: customer was told.
+def _speed_of(zone) -> str:
+    if zone is None:
+        return "next_day"
+    if zone.is_noon_send:
+        # A bike, dispatched on its own, inside noon Send's 20 km reach.
+        return "express"
+    if zone.books_itself:
+        # Ours to dispatch, but batched onto a shared run — so it lands today
+        # if it makes a window, and tomorrow if it misses the last one.
+        return "same_day"
+    return "next_day"
+
+
+@router.get("/area", response_model=DeliveryAreaResponse)
+@limiter.limit("60/minute")
+async def delivery_area(
+    request: Request,
+    latitude: float,
+    longitude: float,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    What delivery looks like at this pin. No cart, no courier call, no cost.
+
+    Rate limited because it is public and unauthenticated, and because a pin
+    plus a zone name is a slow way to trace the delivery map. Sixty a minute is
+    far above what a browsing customer generates and far below what mapping the
+    country would need.
+    """
+    zone = await delivery_zone_service.find_zone(db, latitude, longitude)
+    settings = await delivery_service.get_settings(db)
+
+    if zone is None:
+        # Outside every drawn shape. Deliverable, most likely, but at a price
+        # only a courier can give — and this endpoint does not ask one.
+        return DeliveryAreaResponse(
+            serviceable=True,
+            zone_name=None,
+            delivery_fee=None,
+            free_threshold=float(settings.free_delivery_threshold),
+            free_delivery_available=False,
+            speed="next_day",
+        )
+
+    threshold = (
+        settings.free_delivery_threshold
+        if zone.free_delivery_threshold is None
+        else zone.free_delivery_threshold
+    )
+    return DeliveryAreaResponse(
+        serviceable=True,
+        zone_name=zone.name,
+        delivery_fee=None if zone.is_dynamic else float(zone.delivery_fee),
+        free_threshold=float(threshold),
+        free_delivery_available=zone.free_delivery_eligible,
+        speed=_speed_of(zone),
     )
 
 
