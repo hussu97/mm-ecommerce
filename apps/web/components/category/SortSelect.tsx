@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { analytics, type Surface } from '@/lib/analytics';
 import type { SortOption } from '@/lib/product-sort';
 
 /**
@@ -20,12 +21,15 @@ export function SortSelect({
   value,
   options,
   label,
+  surface = 'category',
 }: {
   action: string;
   preserved?: Record<string, string>;
   value?: string;
   options: SortOption[];
   label: string;
+  /** Which listing the control is sitting above. */
+  surface?: Surface;
 }) {
   const router = useRouter();
   const hidden = Object.entries(preserved ?? {});
@@ -40,6 +44,14 @@ export function SortSelect({
         const params = new URLSearchParams(preserved ?? {});
         const sort = String(new FormData(e.currentTarget).get('sort') ?? '');
         if (sort) params.set('sort', sort);
+        // Which orderings people actually reach for. "Price, low to high" being
+        // the overwhelming pick is a different shop from "Newest" being it, and
+        // it is the default ordering of every listing that should follow.
+        analytics.sortProducts({
+          sort: sort || 'default',
+          surface,
+          category: preserved?.category,
+        });
         const qs = params.toString();
         router.push(qs ? `${action}?${qs}` : action);
       }}

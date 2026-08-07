@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { analytics } from '@/lib/analytics';
 import { cn } from '@/lib/utils';
 
 interface FaqItem {
@@ -14,7 +15,15 @@ function AccordionItem({ question, answer, index }: { question: string; answer: 
   return (
     <div className="border-b border-gray-200 last:border-0">
       <button
-        onClick={() => setOpen(o => !o)}
+        onClick={() => {
+          // Opening only. A close is the same question asked once, and counting
+          // both would make a question that was read carefully look twice as
+          // popular as one that was glanced at. What the list is for is finding
+          // the questions the site should have answered before it was asked —
+          // the delivery ones on the product page, the allergen ones on the PDP.
+          if (!open) analytics.faqOpened({ question, position: index });
+          setOpen(o => !o);
+        }}
         className="w-full flex items-center justify-between gap-4 py-5 text-left"
         aria-expanded={open}
       >

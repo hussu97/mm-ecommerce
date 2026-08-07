@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { analytics } from '@/lib/analytics';
 import { localizedField } from '@/lib/i18n/entity';
 import { computeFromPrice } from '@/lib/pricing';
 import { AddToCartControl } from '@/components/product/AddToCartControl';
@@ -21,7 +22,16 @@ export interface FeaturedContent {
   badge_text?: string;
 }
 
-function ProductCard({ product, badge }: { product: Product; badge?: string }) {
+function ProductCard({
+  product,
+  badge,
+  position,
+}: {
+  product: Product;
+  badge?: string;
+  /** Place in the rail, so `select_item` can show whether the tail is read. */
+  position: number;
+}) {
   const { t, locale } = useTranslation();
 
   const hasModifiers = product.product_modifiers && product.product_modifiers.length > 0;
@@ -31,10 +41,22 @@ function ProductCard({ product, badge }: { product: Product; badge?: string }) {
   const productName = localizedField(product, 'name', product.name, locale);
   const pdpHref = `/${locale}/${categorySlug}/${product.slug}`;
 
+  // This rail has its own card rather than reusing the listing one, so the
+  // click tracking has to be repeated here — the alternative is the homepage
+  // being the one surface whose product clicks are invisible.
+  const recordClick = () =>
+    analytics.selectItem({
+      product_name: product.name,
+      list: 'home_featured',
+      position,
+      price,
+    });
+
   return (
     <article className="group flex flex-col flex-shrink-0 w-56 sm:w-auto">
       <Link
         href={pdpHref}
+        onClick={recordClick}
         className="block relative aspect-square overflow-hidden bg-[#f4ece4]"
       >
         {image ? (
@@ -61,6 +83,7 @@ function ProductCard({ product, badge }: { product: Product; badge?: string }) {
       <div className="pt-3 flex flex-col gap-2">
         <Link
           href={pdpHref}
+          onClick={recordClick}
           className="font-body text-sm text-gray-800 hover:text-primary transition-colors leading-snug line-clamp-2"
         >
           {productName}
@@ -154,9 +177,9 @@ export function FeaturedProducts({
             onScroll={updateArrows}
             className="mm-rail flex gap-4 overflow-x-auto pb-4 -mx-4 px-4 snap-x snap-mandatory"
           >
-            {products.map((product) => (
+            {products.map((product, i) => (
               <div key={product.id} className="snap-start">
-                <ProductCard product={product} badge={c.badge_text} />
+                <ProductCard product={product} badge={c.badge_text} position={i} />
               </div>
             ))}
           </div>
@@ -175,7 +198,7 @@ export function FeaturedProducts({
         <div className="hidden sm:grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
           {products.map((product, i) => (
             <Reveal key={product.id} delay={Math.min(i, 7) * 70}>
-              <ProductCard product={product} badge={c.badge_text} />
+              <ProductCard product={product} badge={c.badge_text} position={i} />
             </Reveal>
           ))}
         </div>

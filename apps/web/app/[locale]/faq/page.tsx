@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { cmsApi } from '@/lib/api';
+import { ContactLink } from '@/components/analytics/ContactLink';
 import { FaqAccordion } from './FaqAccordion';
 import { Breadcrumb } from '@/components/ui';
 import { OG_IMAGE } from '@/lib/schema';
@@ -126,15 +127,17 @@ export default async function FaqPage({
             {c.cta?.subtitle ?? ''}
           </p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
-            <a
+            <ContactLink
               href="https://wa.me/971503687757"
+              channel="whatsapp"
+              surface="faq"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-primary text-white text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity"
             >
               <span className="material-icons text-[16px]">chat</span>
               {c.cta?.whatsapp_text ?? 'WhatsApp Us'}
-            </a>
+            </ContactLink>
             <Link
               href="/contact"
               className="inline-flex items-center justify-center gap-2 px-6 py-3 border border-primary text-primary text-xs font-body uppercase tracking-widest hover:bg-primary hover:text-white transition-all duration-200"

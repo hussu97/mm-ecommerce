@@ -34,5 +34,5 @@ export function FeaturedProductsCarousel({
 
   if (!products.length) return null;
 
-  return <ProductCarousel title={t('product.you_may_also_like')} products={products} />;
+  return <ProductCarousel title={t('product.you_may_also_like')} products={products} list="cart_upsell" />;
 }

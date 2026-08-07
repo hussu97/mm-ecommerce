@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { useCart } from '@/lib/cart-context';
 import { useToast } from '@/components/ui/Toast';
 import { ApiError } from '@/lib/api';
-import { analytics } from '@/lib/analytics';
+import { analytics, failureReason } from '@/lib/analytics';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
 import { computeFromPrice } from '@/lib/pricing';
@@ -64,9 +64,15 @@ export function AddToCartControl({
         variant_name: '',
         price: computeFromPrice(product),
         quantity: 1,
+        surface: 'tile',
       });
       addToast(t('product.added_to_cart', { name: productName }), 'success');
     } catch (err) {
+      analytics.addToCartFailed({
+        product_name: product.name,
+        surface: 'tile',
+        reason: failureReason(err),
+      });
       addToast(err instanceof ApiError ? err.message : t('product.failed_to_add'), 'error');
     } finally {
       setBusy(false);
@@ -75,15 +81,27 @@ export function AddToCartControl({
 
   const step = async (next: number) => {
     if (!simpleLine) return;
+    const from = simpleLine.quantity;
     setBusy(true);
     try {
       if (next <= 0) {
         await removeItem(simpleLine.id);
-        analytics.removeFromCart({ product_name: product.name });
+        analytics.removeFromCart({ product_name: product.name, surface: 'tile' });
       } else {
         await updateItem(simpleLine.id, next);
+        analytics.updateCartQuantity({
+          product_name: product.name,
+          from,
+          to: next,
+          surface: 'tile',
+        });
       }
     } catch (err) {
+      analytics.cartActionFailed({
+        action: next <= 0 ? 'remove' : 'update',
+        reason: failureReason(err),
+        surface: 'tile',
+      });
       addToast(err instanceof ApiError ? err.message : t('cart.failed_update'), 'error');
     } finally {
       setBusy(false);
@@ -116,7 +134,13 @@ export function AddToCartControl({
             </span>
           )}
           <button
-            onClick={() => setShowModal(true)}
+            onClick={() => {
+              analytics.optionsModalOpened({
+                product_name: product.name,
+                entry: inCart > 0 ? 'add_more' : 'select_options',
+              });
+              setShowModal(true);
+            }}
             className={`flex-1 bg-primary text-white font-body uppercase hover:opacity-90 transition-opacity ${btn}`}
           >
             {inCart > 0 ? t('product.add_more') : t('product.select_options')}

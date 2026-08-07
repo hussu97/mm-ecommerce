@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
+import { NotFoundTracker } from '@/components/analytics/NotFoundTracker';
 import { getTranslations, createT } from '@/lib/i18n/server';
 
 export const metadata: Metadata = { title: '404 — Page Not Found' };
@@ -13,6 +14,7 @@ export default async function NotFound() {
 
   return (
     <div className="min-h-[70vh] flex flex-col items-center justify-center px-4 text-center">
+      <NotFoundTracker />
       <p className="font-display text-8xl sm:text-[10rem] text-secondary/60 leading-none select-none">
         404
       </p>

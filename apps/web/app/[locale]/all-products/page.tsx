@@ -252,6 +252,7 @@ export default async function AllProductsPage({
             <div className="flex justify-end mt-2 sm:mt-0">
               <SortSelect
                 action={`/${locale}/all-products`}
+                surface="category"
                 preserved={category ? { category } : undefined}
                 value={sort}
                 options={productSortOptions(t)}
@@ -266,7 +267,7 @@ export default async function AllProductsPage({
           <CategoryFilterBar categories={categories} locale={locale} activeCategory={category} sort={sort} />
         </div>
 
-        <ProductGrid products={products} />
+        <ProductGrid products={products} list="all_products" />
 
         <Pagination page={page} pages={pages} basePath={basePath} t={t} />
       </div>

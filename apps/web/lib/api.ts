@@ -1,3 +1,4 @@
+import { analytics, normalisePath } from './analytics';
 import { AdvertisedPromo, Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, DeliveryRates, DeliveryQuote, DeliveryArea, PickupBranch, TrackResult } from './types';
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -71,17 +72,42 @@ async function request<T>(path: string, options: RequestInit = {}, _retry = true
 
   if (sessionId) headers['X-Session-Id'] = sessionId;
 
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include' });
+  const method = (options.method ?? 'GET').toUpperCase();
+
+  /**
+   * Record the failure once, here, for every endpoint the storefront has.
+   *
+   * Thirty call sites each catch their own errors and show their own toast, and
+   * none of them told us anything — so a 500 on the delivery quote and a 429 on
+   * the promo check both looked, from the dashboard, exactly like a quiet day.
+   * The one place every one of them passes through is this function.
+   */
+  const report = (status: number) =>
+    analytics.apiError({ status, endpoint: normalisePath(path), method });
+
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include' }).catch(
+    (err) => {
+      // A request that never arrived. Status 0 is the convention for it, and
+      // distinguishing it matters: it is the shape a blocked or dropped mobile
+      // connection takes, not a server that answered badly.
+      report(0);
+      throw err;
+    },
+  );
 
   if (res.status === 401 && _retry) {
     const refreshed = await refreshAccessToken();
     if (refreshed) {
       return request<T>(path, options, false);
     }
+    // Only once the refresh has also failed. A 401 that a refresh repairs is
+    // the session doing its job, not an error worth a row in the dashboard.
+    report(401);
     throw new ApiError(401, 'Session expired. Please log in again.');
   }
 
   if (!res.ok) {
+    report(res.status);
     const body = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
     // Pydantic 422 returns detail as an array of {loc, msg, type}
     let message: string;
