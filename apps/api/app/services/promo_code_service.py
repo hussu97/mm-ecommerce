@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import ConflictError, NotFoundError
 from app.models.order import Order, OrderStatusEnum
 from app.models.promo_code import DiscountTypeEnum, PromoCode
+from app.services import firebase_auth_service
 from app.schemas.promo_code import (
     PromoCodeCreate,
     PromoCodeResponse,
@@ -178,6 +179,17 @@ async def validate(
         return PromoCodeValidateResponse(
             valid=False, message="Promo code has reached its usage limit"
         )
+
+    if getattr(promo, "requires_phone_verification", False):
+        verified = await firebase_auth_service.is_phone_verified(db, phone)
+        if not verified:
+            return PromoCodeValidateResponse(
+                valid=False,
+                # Named plainly, because unlike the new-customer refusal this
+                # one is actionable: there is a button that fixes it.
+                message="Verify your phone number to use this code",
+                requires_phone_verification=True,
+            )
 
     if promo.first_orders_limit is not None:
         placed = await orders_placed_by(db, user_id=user_id, email=email, phone=phone)

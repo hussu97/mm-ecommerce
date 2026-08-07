@@ -13,20 +13,28 @@ const DISCOUNT_TYPE_OPTIONS = [
 
 interface FormState {
   code: string;
+  code_ar: string;
   discount_type: 'percentage' | 'fixed';
   discount_value: string;
   min_order_amount: string;
+  max_discount_amount: string;
+  first_orders_limit: string;
   max_uses: string;
+  max_uses_per_user: string;
   valid_from: string;
   valid_until: string;
 }
 
 const EMPTY_FORM: FormState = {
   code: '',
+  code_ar: '',
   discount_type: 'percentage',
   discount_value: '',
   min_order_amount: '',
+  max_discount_amount: '',
+  first_orders_limit: '',
   max_uses: '',
+  max_uses_per_user: '',
   valid_from: '',
   valid_until: '',
 };
@@ -81,10 +89,14 @@ export default function PromoCodesPage() {
     setEditingCode(promo);
     setForm({
       code: promo.code,
+      code_ar: promo.code_ar ?? '',
       discount_type: promo.discount_type,
       discount_value: String(promo.discount_value),
       min_order_amount: promo.min_order_amount != null ? String(promo.min_order_amount) : '',
+      max_discount_amount: promo.max_discount_amount != null ? String(promo.max_discount_amount) : '',
+      first_orders_limit: promo.first_orders_limit != null ? String(promo.first_orders_limit) : '',
       max_uses: promo.max_uses != null ? String(promo.max_uses) : '',
+      max_uses_per_user: promo.max_uses_per_user != null ? String(promo.max_uses_per_user) : '',
       valid_from: promo.valid_from ? promo.valid_from.slice(0, 10) : '',
       valid_until: promo.valid_until ? promo.valid_until.slice(0, 10) : '',
     });
@@ -109,10 +121,18 @@ export default function PromoCodesPage() {
     setFormError('');
     const payload = {
       code: form.code.trim().toUpperCase(),
+      code_ar: form.code_ar.trim() || null,
       discount_type: form.discount_type,
       discount_value: Number(form.discount_value),
       min_order_amount: form.min_order_amount ? Number(form.min_order_amount) : null,
+      // A cap on a fixed amount is meaningless — never send one, even if the
+      // field was filled in before the type was switched.
+      max_discount_amount: form.discount_type === 'percentage' && form.max_discount_amount
+        ? Number(form.max_discount_amount)
+        : null,
+      first_orders_limit: form.first_orders_limit ? Number(form.first_orders_limit) : null,
       max_uses: form.max_uses ? Number(form.max_uses) : null,
+      max_uses_per_user: form.max_uses_per_user ? Number(form.max_uses_per_user) : null,
       valid_from: form.valid_from || null,
       valid_until: form.valid_until || null,
     };
@@ -227,6 +247,14 @@ export default function PromoCodesPage() {
               disabled={!!editingCode}
               required
             />
+            <Input
+              label="Code (Arabic)"
+              placeholder="Optional — e.g. صيف٢٠"
+              helper="Optional. The same coupon typed in Arabic, sharing every limit and count with the code above."
+              dir="rtl"
+              value={form.code_ar}
+              onChange={e => setForm(f => ({ ...f, code_ar: e.target.value }))}
+            />
             <Select
               label="Discount Type"
               value={form.discount_type}
@@ -252,12 +280,43 @@ export default function PromoCodesPage() {
               onChange={e => setForm(f => ({ ...f, min_order_amount: e.target.value }))}
             />
             <Input
+              label="Max Discount (AED)"
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder={form.discount_type === 'percentage' ? 'No cap' : 'Percentage only'}
+              helper={form.discount_type === 'percentage'
+                ? 'Optional. Caps what the percentage can take off — 15% of a large catering order.'
+                : 'Only applies to percentage discounts.'}
+              disabled={form.discount_type !== 'percentage'}
+              value={form.discount_type === 'percentage' ? form.max_discount_amount : ''}
+              onChange={e => setForm(f => ({ ...f, max_discount_amount: e.target.value }))}
+            />
+            <Input
               label="Max Uses"
               type="number"
               min="1"
               placeholder="Unlimited"
               value={form.max_uses}
               onChange={e => setForm(f => ({ ...f, max_uses: e.target.value }))}
+            />
+            <Input
+              label="Max Uses Per Customer"
+              type="number"
+              min="1"
+              placeholder="Unlimited"
+              helper="Optional. Stops one customer burning the whole campaign."
+              value={form.max_uses_per_user}
+              onChange={e => setForm(f => ({ ...f, max_uses_per_user: e.target.value }))}
+            />
+            <Input
+              label="First Orders Only"
+              type="number"
+              min="1"
+              placeholder="No restriction"
+              helper="Optional. Redeemable only on a customer's first N orders."
+              value={form.first_orders_limit}
+              onChange={e => setForm(f => ({ ...f, first_orders_limit: e.target.value }))}
             />
             <div />
             <Input
@@ -322,6 +381,7 @@ export default function PromoCodesPage() {
               <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden sm:table-cell">Discount</th>
               <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden md:table-cell">Min Order</th>
               <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500 hidden md:table-cell">Uses</th>
+              <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500 hidden lg:table-cell">First Orders</th>
               <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden lg:table-cell">Valid</th>
               <th className="px-4 py-3 text-right text-[11px] font-body uppercase tracking-widest text-gray-500">Actions</th>
             </tr>
@@ -330,7 +390,7 @@ export default function PromoCodesPage() {
             {loading ? (
               Array.from({ length: 4 }).map((_, i) => (
                 <tr key={i}>
-                  {Array.from({ length: 7 }).map((_, j) => (
+                  {Array.from({ length: 8 }).map((_, j) => (
                     <td key={j} className="px-4 py-3">
                       <div className="h-4 bg-gray-100 animate-pulse rounded-sm" />
                     </td>
@@ -339,7 +399,7 @@ export default function PromoCodesPage() {
               ))
             ) : filteredCodes.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-400 font-body">
+                <td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-400 font-body">
                   No promo codes yet.
                 </td>
               </tr>
@@ -356,6 +416,9 @@ export default function PromoCodesPage() {
                   </td>
                   <td className="px-4 py-3">
                     <span className="font-body font-medium text-gray-800 text-xs tracking-wider">{promo.code}</span>
+                    {promo.code_ar && (
+                      <span dir="rtl" className="block text-[11px] font-body text-gray-400 mt-0.5">{promo.code_ar}</span>
+                    )}
                   </td>
                   <td className="px-4 py-3 hidden sm:table-cell">
                     <span className="text-xs font-body text-gray-700">
@@ -365,6 +428,11 @@ export default function PromoCodesPage() {
                       }
                     </span>
                     <span className="text-[11px] font-body text-gray-400 ml-1 capitalize">({promo.discount_type})</span>
+                    {promo.max_discount_amount != null && (
+                      <span className="block text-[11px] font-body text-gray-400 mt-0.5">
+                        max {formatCurrency(promo.max_discount_amount)}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 hidden md:table-cell">
                     <span className="text-xs font-body text-gray-500">
@@ -374,6 +442,16 @@ export default function PromoCodesPage() {
                   <td className="px-4 py-3 text-center hidden md:table-cell">
                     <span className="text-xs font-body text-gray-500">
                       {promo.current_uses}{promo.max_uses != null ? ` / ${promo.max_uses}` : ''}
+                    </span>
+                    {promo.max_uses_per_user != null && (
+                      <span className="block text-[11px] font-body text-gray-400 mt-0.5">
+                        {promo.max_uses_per_user} per customer
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-center hidden lg:table-cell">
+                    <span className="text-xs font-body text-gray-500">
+                      {promo.first_orders_limit != null ? `First ${promo.first_orders_limit}` : '—'}
                     </span>
                   </td>
                   <td className="px-4 py-3 hidden lg:table-cell">

@@ -244,10 +244,18 @@ export interface PaginatedOrders {
 export interface PromoCode {
   id: string;
   code: string;
+  /** The same coupon in Arabic — a second name for one row, not a second coupon. */
+  code_ar: string | null;
   discount_type: 'percentage' | 'fixed';
   discount_value: number;
   min_order_amount: number | null;
+  /** Ceiling on what a percentage can take off, in AED. Meaningless on a fixed amount. */
+  max_discount_amount: number | null;
+  /** Restricts the code to a customer's first N orders. */
+  first_orders_limit: number | null;
   max_uses: number | null;
+  /** How many times one customer may redeem this code. */
+  max_uses_per_user: number | null;
   current_uses: number;
   is_active: boolean;
   valid_from: string | null;

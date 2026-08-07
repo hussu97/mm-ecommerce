@@ -8,17 +8,26 @@ import { Breadcrumb } from '@/components/ui';
 import { localizedField } from '@/lib/i18n/entity';
 import { getTranslations, createT } from '@/lib/i18n/server';
 import { RSC_API_BASE } from '@/lib/api';
+import { SortSelect } from '@/components/category/SortSelect';
+import {
+  DEFAULT_PRODUCT_SORT,
+  parseProductSort,
+  productSortLabel,
+  productSortOptions,
+  type ProductSort,
+} from '@/lib/product-sort';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 const PER_PAGE = 12;
 
 async function getCategoryData(
   slug: string,
   page: number = 1,
+  sort: ProductSort = DEFAULT_PRODUCT_SORT,
 ): Promise<{ category: Category; products: Product[]; total: number; pages: number } | null> {
   try {
     const [catRes, prodRes] = await Promise.all([
       fetch(`${RSC_API_BASE}/categories/${slug}`, { cache: 'no-store', signal: AbortSignal.timeout(8000) }),
-      fetch(`${RSC_API_BASE}/products?category=${slug}&per_page=${PER_PAGE}&page=${page}`, {
+      fetch(`${RSC_API_BASE}/products?category=${slug}&per_page=${PER_PAGE}&page=${page}&sort=${sort}`, {
         cache: 'no-store',
         signal: AbortSignal.timeout(8000),
       }),
@@ -91,6 +100,8 @@ function Pagination({
 }) {
   if (pages <= 1) return null;
 
+  const sep = basePath.includes('?') ? '&' : '?';
+
   return (
     <nav
       className="mt-12 flex items-center justify-center gap-6"
@@ -98,7 +109,7 @@ function Pagination({
     >
       {page > 1 ? (
         <Link
-          href={page === 2 ? basePath : `${basePath}?page=${page - 1}`}
+          href={page === 2 ? basePath : `${basePath}${sep}page=${page - 1}`}
           className="font-body text-sm text-primary uppercase tracking-widest hover:underline flex items-center gap-1"
         >
           ← {t('common.previous')}
@@ -113,7 +124,7 @@ function Pagination({
 
       {page < pages ? (
         <Link
-          href={`${basePath}?page=${page + 1}`}
+          href={`${basePath}${sep}page=${page + 1}`}
           className="font-body text-sm text-primary uppercase tracking-widest hover:underline flex items-center gap-1"
         >
           {t('common.next')} →
@@ -130,14 +141,15 @@ export default async function CategoryPage({
   searchParams,
 }: {
   params: Promise<{ locale: string; category: string }>;
-  searchParams: Promise<{ page?: string }>;
+  searchParams: Promise<{ page?: string; sort?: string }>;
 }) {
   const { locale, category: slug } = await params;
-  const { page: pageStr } = await searchParams;
+  const { page: pageStr, sort: sortStr } = await searchParams;
   const page = Math.max(1, parseInt(pageStr ?? '1', 10) || 1);
+  const sort = parseProductSort(sortStr);
 
   const [data, translations] = await Promise.all([
-    getCategoryData(slug, page),
+    getCategoryData(slug, page, sort),
     getTranslations(locale),
   ]);
 
@@ -180,8 +192,12 @@ export default async function CategoryPage({
     ],
   };
 
-  const prevUrl = page === 2 ? `${SITE_URL}/${locale}/${slug}` : `${SITE_URL}/${locale}/${slug}?page=${page - 1}`;
-  const nextUrl = `${SITE_URL}/${locale}/${slug}?page=${page + 1}`;
+  // The sort rides on every listing URL so paging does not silently drop it.
+  const basePath = `/${locale}/${slug}${sort === DEFAULT_PRODUCT_SORT ? '' : `?sort=${sort}`}`;
+  const baseAbsPath = `${SITE_URL}${basePath}`;
+  const sep = basePath.includes('?') ? '&' : '?';
+  const prevUrl = page === 2 ? baseAbsPath : `${baseAbsPath}${sep}page=${page - 1}`;
+  const nextUrl = `${baseAbsPath}${sep}page=${page + 1}`;
 
   return (
     <>
@@ -192,29 +208,40 @@ export default async function CategoryPage({
       {page > 1 && <link rel="prev" href={prevUrl} />}
       {page < pages && <link rel="next" href={nextUrl} />}
 
-      <div className="max-w-7xl mx-auto px-4 py-12">
+      <div className="max-w-7xl mx-auto px-4 py-5 sm:py-12">
 
         <CategoryTracker categoryName={categoryName} productCount={data.total} />
         <Breadcrumb items={[{ label: t('breadcrumb.home'), href: `/${locale}` }, { label: categoryName }]} />
 
-        {/* Category header */}
-        <header className="mb-10">
-          <h1 className="font-display text-3xl sm:text-4xl text-primary uppercase tracking-widest mb-3">
-            {categoryName}
-          </h1>
-          {category.description && (
-            <p className="font-body text-sm text-gray-500 max-w-xl">
-              {category.description}
-            </p>
-          )}
-          <div className="h-px bg-secondary/40 mt-4" />
+        {/* Category header — the title and the sort share a row on phones so the
+            grid still starts inside the first screen. */}
+        <header className="mb-4 sm:mb-10">
+          <div className="flex items-end justify-between gap-3">
+            <div className="min-w-0">
+              <h1 className="font-display text-xl sm:text-4xl text-primary uppercase tracking-widest mb-1 sm:mb-3">
+                {categoryName}
+              </h1>
+              {category.description && (
+                <p className="font-body text-xs sm:text-sm text-gray-500 max-w-xl line-clamp-1 sm:line-clamp-none">
+                  {category.description}
+                </p>
+              )}
+            </div>
+            <SortSelect
+              action={`/${locale}/${slug}`}
+              value={sort}
+              options={productSortOptions(t)}
+              label={productSortLabel(t)}
+            />
+          </div>
+          <div className="h-px bg-secondary/40 mt-2 sm:mt-4" />
         </header>
 
         {/* Product grid */}
         <ProductGrid products={products} />
 
         {/* Pagination */}
-        <Pagination page={page} pages={pages} basePath={`/${locale}/${slug}`} t={t} />
+        <Pagination page={page} pages={pages} basePath={basePath} t={t} />
 
       </div>
     </>

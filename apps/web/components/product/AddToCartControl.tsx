@@ -49,9 +49,11 @@ export function AddToCartControl({
   const simpleLine = !hasModifiers ? lines[0] : undefined;
 
   const compact = size === 'compact';
+  // The default size sits in the listing grid, which is two-up on phones: the
+  // label has roughly half a screen to live in there, so it steps down until sm.
   const btn = compact
     ? 'text-[10px] px-3 py-1.5 tracking-widest'
-    : 'text-xs py-2.5 tracking-widest';
+    : 'text-[10px] sm:text-xs px-2 py-2 sm:py-2.5 tracking-wider sm:tracking-widest';
 
   const add = async () => {
     setBusy(true);
@@ -106,7 +108,7 @@ export function AddToCartControl({
         <div className="flex items-center gap-2">
           {inCart > 0 && (
             <span
-              className="shrink-0 inline-flex items-center gap-1 px-2 py-1 bg-primary/10 text-primary font-body text-[11px] rounded-sm"
+              className="shrink-0 inline-flex items-center gap-1 px-1.5 sm:px-2 py-1 bg-primary/10 text-primary font-body text-[11px] rounded-sm"
               aria-label={t('product.in_basket', { n: inCart })}
             >
               <span className="material-icons text-sm">shopping_basket</span>
@@ -133,7 +135,7 @@ export function AddToCartControl({
           onClick={() => step(inCart - 1)}
           disabled={busy}
           aria-label={inCart === 1 ? t('cart.remove_item') : t('product.decrease')}
-          className="w-9 h-9 flex items-center justify-center text-primary hover:bg-primary/10 transition-colors disabled:opacity-40"
+          className="w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center text-primary hover:bg-primary/10 transition-colors disabled:opacity-40"
         >
           <span className="material-icons text-base">{inCart === 1 ? 'delete_outline' : 'remove'}</span>
         </button>
@@ -144,7 +146,7 @@ export function AddToCartControl({
           onClick={() => step(inCart + 1)}
           disabled={busy}
           aria-label={t('product.increase')}
-          className="w-9 h-9 flex items-center justify-center text-primary hover:bg-primary/10 transition-colors disabled:opacity-40"
+          className="w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center text-primary hover:bg-primary/10 transition-colors disabled:opacity-40"
         >
           <span className="material-icons text-base">add</span>
         </button>

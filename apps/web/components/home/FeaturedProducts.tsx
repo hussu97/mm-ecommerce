@@ -7,6 +7,7 @@ import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
 import { computeFromPrice } from '@/lib/pricing';
 import { AddToCartControl } from '@/components/product/AddToCartControl';
+import { ProductBadge } from '@/components/product/ProductBadge';
 import { Reveal } from './Reveal';
 import type { Product } from '@/lib/types';
 
@@ -49,11 +50,7 @@ function ProductCard({ product, badge }: { product: Product; badge?: string }) {
           </div>
         )}
 
-        {badge && (
-          <span className="absolute top-0 start-0 bg-primary text-white font-body text-[9px] uppercase tracking-[0.18em] px-2.5 py-1.5">
-            {badge}
-          </span>
-        )}
+        {badge && <ProductBadge>{badge}</ProductBadge>}
 
         {/* A wash that lifts on hover — the card feels live without moving the
             layout a single pixel. */}

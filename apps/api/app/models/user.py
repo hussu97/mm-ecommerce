@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, ForeignKey, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -25,6 +26,16 @@ class User(Base, UUIDMixin, TimestampMixin):
     )
     hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    #: When this number was last proved to belong to whoever typed it, via a
+    #: Firebase OTP. NULL means never — which is every account that predates
+    #: verification, and every one that has only ever typed a number in.
+    #:
+    #: A timestamp rather than a flag because the proof ages: the question a
+    #: coupon asks is not "was this ever verified" but "was it verified
+    #: recently enough to still mean something".
+    phone_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_guest: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

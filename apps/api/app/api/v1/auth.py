@@ -54,7 +54,7 @@ from app.core.security import (
 from app.core.config import settings
 from app.models import AdminPasskey, User, WebAuthnChallenge
 from app.models.refresh_token import RefreshToken
-from app.services import email_service, turnstile_service
+from app.services import email_service, firebase_auth_service, turnstile_service
 from app.services.order_service import normalise_locale
 from app.schemas.user import (
     GuestSessionRequest,
@@ -684,6 +684,72 @@ async def passkey_login_verify(
     token_resp = await _make_token_response(user, db)
     _set_auth_cookies(response, token_resp.access_token, token_resp.refresh_token)
     return token_resp
+
+
+class PhoneVerifyRequest(BaseModel):
+    #: The Firebase ID token the browser holds after the OTP — a signed JWT
+    #: with a phone claim, hence the generous ceiling.
+    firebase_id_token: str = Field(min_length=1, max_length=4096)
+    #: Optional so an unconfigured deploy still works, exactly as the signup
+    #: form's is.
+    turnstile_token: str | None = Field(None, max_length=2048)
+
+
+class PhoneVerifyResponse(BaseModel):
+    #: The number Firebase says was proved, E.164. Echoed back so the checkout
+    #: stores the string the order and the coupon check will compare on, rather
+    #: than whatever was typed into the field.
+    phone: str
+    verified: bool = True
+
+
+@router.post(
+    "/verify-phone",
+    response_model=PhoneVerifyResponse,
+    summary="Record a completed phone verification",
+)
+@limiter.limit("10/minute")
+async def verify_phone(
+    request: Request,
+    data: PhoneVerifyRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_optional_user),
+):
+    """
+    Record that somebody proved they hold a phone number.
+
+    Firebase sent the code and checked it; what is verified here is the receipt.
+    See `firebase_auth_service` for why that needs no secret of ours.
+
+    Open to guests, because a guest is who it is for. Rate limited and behind
+    Turnstile because it is otherwise a free oracle — every call is a signature
+    check against a cached key, cheap for us and cheap for anyone grinding
+    tokens at it.
+
+    This is the *second* bot check in the flow. Firebase's web SDK runs its own
+    reCAPTCHA before it will send an SMS and that cannot be switched off, so
+    Turnstile here guards our ledger rather than Google's SMS bill.
+    """
+    await _require_human(request, data.turnstile_token)
+
+    if not firebase_auth_service.is_enabled():
+        # Configuration, not the caller's fault — but it must not read as
+        # success, or the caller ends up holding an unverified number it
+        # believes is verified.
+        raise BadRequestError("Phone verification is unavailable right now")
+
+    try:
+        proof = await firebase_auth_service.verify_id_token(data.firebase_id_token)
+    except firebase_auth_service.VerificationError as exc:
+        # The reason goes to the log. Telling a caller which check failed tells
+        # them which part of a forged token to fix next.
+        logger.warning("Phone verification refused: %s", exc)
+        raise BadRequestError("That verification could not be confirmed")
+
+    await firebase_auth_service.record_verification(
+        db, proof, user_id=current_user.id if current_user else None
+    )
+    return PhoneVerifyResponse(phone=proof.phone)
 
 
 @router.post(

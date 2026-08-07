@@ -42,6 +42,9 @@ class PromoCodeCreate(BaseModel):
     #: The most this code can take off, in AED. Only meaningful on a percentage:
     #: 15% of a 60-dirham order is 9, and of a 600-dirham catering order is 90.
     max_discount_amount: Decimal | None = Field(None, gt=0)
+    #: Require a proved phone number. Without it, a first-orders limit is
+    #: enforced against identities anyone can mint for free.
+    requires_phone_verification: bool = False
     #: Restricts the code to a customer's first N orders — an acquisition offer
     #: rather than a loyalty one. Counted across account, email and phone
     #: together, because guest checkout mints a fresh account per session.
@@ -98,6 +101,7 @@ class PromoCodeUpdate(BaseModel):
     discount_value: Decimal | None = Field(None, gt=0)
     min_order_amount: Decimal | None = None
     max_discount_amount: Decimal | None = Field(None, gt=0)
+    requires_phone_verification: bool | None = None
     first_orders_limit: int | None = Field(None, ge=1)
     max_uses: int | None = None
     max_uses_per_user: int | None = Field(None, ge=1)
@@ -116,6 +120,7 @@ class PromoCodeResponse(BaseModel):
     discount_value: float
     min_order_amount: float | None
     max_discount_amount: float | None = None
+    requires_phone_verification: bool = False
     first_orders_limit: int | None = None
     max_uses: int | None
     max_uses_per_user: int | None
@@ -145,6 +150,10 @@ class PromoCodeValidateResponse(BaseModel):
     valid: bool
     discount_amount: Decimal = Decimal("0.00")
     message: str | None = None
+    #: True when the only thing standing between this customer and the discount
+    #: is an unverified phone. Lets the checkout put the OTP button next to the
+    #: message instead of leaving them to work it out from the wording.
+    requires_phone_verification: bool = False
 
     @field_serializer("discount_amount")
     def _serialize_discount_amount(self, v: Decimal) -> float:

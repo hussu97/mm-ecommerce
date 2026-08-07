@@ -86,6 +86,19 @@ class PromoCode(Base, UUIDMixin):
     #: make the limit meaningless, because guest checkout mints a fresh user row
     #: for every session.
     first_orders_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Whether the customer must have proved their phone number to redeem this.
+    #:
+    #: The point of a new-customer offer is that it is claimed once, and the
+    #: only identity in the whole checkout that costs anything to fake is a
+    #: phone number — an email is free and infinite, an account more so. Without
+    #: this, `first_orders_limit` is enforced against identities a determined
+    #: person can mint at will.
+    #:
+    #: False by default: an ordinary coupon should not start demanding an OTP
+    #: because this column arrived.
+    requires_phone_verification: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     current_uses: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     valid_from: Mapped[datetime | None] = mapped_column(

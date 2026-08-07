@@ -145,6 +145,24 @@ class Settings(BaseSettings):
     #: Cloudflare Turnstile, on signup and password reset. Empty disables the
     #: check entirely — see `turnstile_service` for why that is the deliberate
     #: default rather than a locked door.
+    # ── Firebase phone verification ───────────────────────────────────────
+    #: The Firebase/GCP project whose ID tokens we accept. **Not a secret** —
+    #: it is in the browser bundle already — but it is the entire audience
+    #: check, so a wrong value accepts tokens minted by somebody else's project.
+    #: Empty disables phone verification rather than opening it.
+    FIREBASE_PROJECT_ID: str = ""
+    #: How long a phone proof stays reusable, in seconds. Firebase ID tokens
+    #: refresh hourly and carry `auth_time` from the original sign-in, so
+    #: without this a months-old session still presents as freshly verified.
+    #: Zero disables the age check.
+    FIREBASE_MAX_AUTH_AGE_SECONDS: int = 3600
+    FIREBASE_TIMEOUT_SECONDS: float = 5.0
+    #: How long a completed phone proof stays good for, in seconds. Separate
+    #: from the token's own freshness: that is about replay, this is about not
+    #: making a customer re-verify between saving an address and paying.
+    #: 30 days by default.
+    PHONE_VERIFICATION_TTL_SECONDS: int = 2592000
+
     TURNSTILE_SECRET_KEY: str = ""
     TURNSTILE_TIMEOUT_SECONDS: float = 5.0
 

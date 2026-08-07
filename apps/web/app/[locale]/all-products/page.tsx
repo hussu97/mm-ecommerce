@@ -7,6 +7,13 @@ import { getTranslations, createT } from '@/lib/i18n/server';
 import { localizedField } from '@/lib/i18n/entity';
 import { RSC_API_BASE } from '@/lib/api';
 import { OG_IMAGE } from '@/lib/schema';
+import { SortSelect } from '@/components/category/SortSelect';
+import {
+  DEFAULT_PRODUCT_SORT,
+  parseProductSort,
+  productSortLabel,
+  productSortOptions,
+} from '@/lib/product-sort';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 const PER_PAGE = 12;
@@ -45,12 +52,20 @@ function CategoryFilterBar({
   categories,
   locale,
   activeCategory,
+  sort,
 }: {
   categories: Category[];
   locale: string;
   activeCategory?: string;
+  sort?: string;
 }) {
-  const allHref = `/${locale}/all-products`;
+  // Picking a category must not silently throw away the chosen order.
+  const sortParam = sort && sort !== DEFAULT_PRODUCT_SORT ? `sort=${sort}` : '';
+  const hrefFor = (slug?: string) => {
+    const qs = [slug ? `category=${slug}` : '', sortParam].filter(Boolean).join('&');
+    return `/${locale}/all-products${qs ? `?${qs}` : ''}`;
+  };
+  const allHref = hrefFor();
   const allActive = !activeCategory;
 
   return (
@@ -73,7 +88,7 @@ function CategoryFilterBar({
           return (
             <Link
               key={cat.slug}
-              href={`/${locale}/all-products?category=${cat.slug}`}
+              href={hrefFor(cat.slug)}
               className={[
                 'font-body text-[11px] uppercase tracking-widest border px-3 py-1 whitespace-nowrap transition-colors',
                 isActive
@@ -147,13 +162,14 @@ export default async function AllProductsPage({
   searchParams,
 }: {
   params: Promise<{ locale: string }>;
-  searchParams: Promise<{ category?: string; page?: string }>;
+  searchParams: Promise<{ category?: string; page?: string; sort?: string }>;
 }) {
   const { locale } = await params;
-  const { category, page: pageStr } = await searchParams;
+  const { category, page: pageStr, sort: sortStr } = await searchParams;
   const page = Math.max(1, parseInt(pageStr ?? '1', 10) || 1);
+  const sort = parseProductSort(sortStr);
 
-  const productUrl = `${RSC_API_BASE}/products?per_page=${PER_PAGE}&page=${page}${category ? `&category=${category}` : ''}`;
+  const productUrl = `${RSC_API_BASE}/products?per_page=${PER_PAGE}&page=${page}&sort=${sort}${category ? `&category=${category}` : ''}`;
 
   const [categoriesRes, productsRes, translations] = await Promise.all([
     fetch(`${RSC_API_BASE}/categories`, { cache: 'no-store', signal: AbortSignal.timeout(8000) }),
@@ -170,7 +186,12 @@ export default async function AllProductsPage({
   const products: Product[] = productData?.items ?? [];
   const pages = productData?.pages ?? 1;
 
-  const basePath = `/${locale}/all-products${category ? `?category=${category}` : ''}`;
+  // Both the category chip and the sort survive paging.
+  const listParams = new URLSearchParams({
+    ...(category ? { category } : {}),
+    ...(sort === DEFAULT_PRODUCT_SORT ? {} : { sort }),
+  }).toString();
+  const basePath = `/${locale}/all-products${listParams ? `?${listParams}` : ''}`;
   const baseAbsPath = `${SITE_URL}${basePath}`;
   const sep = basePath.includes('?') ? '&' : '?';
   const prevUrl = page === 2 ? baseAbsPath : `${baseAbsPath}${sep}page=${page - 1}`;
@@ -219,17 +240,26 @@ export default async function AllProductsPage({
       {page > 1 && <link rel="prev" href={prevUrl} />}
       {page < pages && <link rel="next" href={nextUrl} />}
 
-      <div className="max-w-7xl mx-auto px-4 py-12">
+      <div className="max-w-7xl mx-auto px-4 py-5 sm:py-12">
         <Breadcrumb items={[{ label: t('breadcrumb.home'), href: `/${locale}` }, { label: t('nav.all') }]} />
-        <header className="mb-8">
-          <h1 className="font-display text-3xl sm:text-4xl text-primary uppercase tracking-widest mb-3">
-            {locale === 'ar' ? 'جميع المنتجات' : 'All Products'}
-          </h1>
-          <div className="h-px bg-secondary/40 mt-4" />
+        <header className="mb-3 sm:mb-8">
+          <div className="flex items-end justify-between gap-3">
+            <h1 className="font-display text-xl sm:text-4xl text-primary uppercase tracking-widest">
+              {locale === 'ar' ? 'جميع المنتجات' : 'All Products'}
+            </h1>
+            <SortSelect
+              action={`/${locale}/all-products`}
+              preserved={category ? { category } : undefined}
+              value={sort}
+              options={productSortOptions(t)}
+              label={productSortLabel(t)}
+            />
+          </div>
+          <div className="h-px bg-secondary/40 mt-2 sm:mt-4" />
         </header>
 
-        <div className="mb-8">
-          <CategoryFilterBar categories={categories} locale={locale} activeCategory={category} />
+        <div className="mb-4 sm:mb-8">
+          <CategoryFilterBar categories={categories} locale={locale} activeCategory={category} sort={sort} />
         </div>
 
         <ProductGrid products={products} />
