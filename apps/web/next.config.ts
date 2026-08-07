@@ -4,6 +4,11 @@ import { withSentryConfig } from "@sentry/nextjs";
 const nextConfig: NextConfig = {
   // output: "standalone" is for self-hosted Docker only — not needed on Vercel
   experimental: {
+    // Enables `app/global-not-found.tsx`, which is the 404 for URLs that never
+    // reach a locale. Needed because the root layout now lives under `[locale]`
+    // — see the comment in `app/[locale]/layout.tsx`. Without it those URLs get
+    // Next's unstyled `__next_error__` document.
+    globalNotFound: true,
     // How long the client router may reuse a prefetched entry before asking for
     // it again. The default for a dynamic route is 0, which means a prefetch is
     // stale the moment it lands: a link scrolling back into view, or a re-render
