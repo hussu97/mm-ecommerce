@@ -35,9 +35,14 @@ const SPEED_KEY: Record<DeliverySpeed, string> = {
   next_day: 'usp.speed_next_day',
 };
 
-// No icon on the speed item. `bolt` is not in the classic Material Icons font
-// this site loads, so it rendered as the literal word "bolt" — and the label is
-// the strongest line in the strip, which does not need decorating to be read.
+//: Ligatures, not `material-symbols-outlined` — that class matches no font here
+//: and prints its own name. These three are all in the classic Material Icons
+//: the site loads; measured on the live page, each lays out one glyph wide.
+const SPEED_ICON: Record<DeliverySpeed, string> = {
+  express: 'bolt',
+  same_day: 'schedule',
+  next_day: 'local_shipping',
+};
 
 function Item({ icon, label }: UspItem) {
   return (
@@ -79,7 +84,7 @@ export function UspMarquee({ c }: { c: UspContent }) {
   // area and offers to change it, so the claim is never unqualified.
   const speedKey = area ? SPEED_KEY[area.speed] : undefined;
   const items: UspItem[] = [
-    ...(speedKey && area ? [{ label: t(speedKey) }] : []),
+    ...(speedKey && area ? [{ icon: SPEED_ICON[area.speed], label: t(speedKey) }] : []),
     ...(c.items ?? []).filter(i => i.label),
   ];
   if (items.length === 0) return null;
