@@ -68,6 +68,10 @@
 
 {{ parts.estimate_card(estimate) }}
 {{ parts.address_card(address, address_line, recipient_name) }}
+{# The pin, not the typed address. A UAE address line is often unsearchable —
+   "villa 12, behind the mosque" is a real one — and the coordinates are what
+   the courier is actually sent to. #}
+{% if maps_url %}{{ parts.button(maps_url, 'Open the pin in Google Maps') }}{% endif %}
 {{ parts.order_summary(items, totals) }}
 {{ parts.notes_card(order.notes) }}
 {{ parts.button(admin_order_url, 'Open in the admin') }}

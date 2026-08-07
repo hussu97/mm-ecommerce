@@ -66,9 +66,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "totals.low_order_fee": "Small order fee",
         # ── the estimate panel ────────────────────────────────────────────────
         "estimate.delivery": "Estimated delivery",
+        #: A date bounded by an hour, for a van that is not ours to schedule.
+        "date.by_time": "{day} before {time}",
         "estimate.ready": "Ready to collect",
         "estimate.ready_since": "Ready since",
-        "estimate.arriving": "Arriving",
+        "estimate.arriving": "Estimated delivery",
         "estimate.delivered": "Delivered",
         "estimate.collected": "Collected",
         "estimate.note_counter": "Waiting for you at the counter.",
@@ -76,6 +78,13 @@ STRINGS: dict[str, dict[str, str]] = {
             "Now that a driver is carrying it, this is our best estimate."
         ),
         "estimate.note_day": "We'll confirm a time once it's collected.",
+        #: For a `day_by` promise. Distinct from `note_day`, which promises a
+        #: time we will never send for a partner delivery — they do not tell us
+        #: their route, so the closing hour is the whole of what we can commit
+        #: to and saying otherwise sets up a message that never arrives.
+        "estimate.note_day_by": (
+            "It's with our delivery partner, who finish their rounds by then."
+        ),
         # ── timeline steps ────────────────────────────────────────────────────
         "step.preparing": "Baking your order",
         "step.ready": "Packed",
@@ -318,14 +327,16 @@ STRINGS: dict[str, dict[str, str]] = {
         "totals.low_order_fee": "رسوم الطلب الصغير",
         # ── the estimate panel ────────────────────────────────────────────────
         "estimate.delivery": "موعد التوصيل المتوقع",
+        "date.by_time": "{day} قبل {time}",
         "estimate.ready": "جاهز للاستلام",
         "estimate.ready_since": "جاهز منذ",
-        "estimate.arriving": "الوصول المتوقع",
+        "estimate.arriving": "موعد التوصيل المتوقع",
         "estimate.delivered": "تم التوصيل",
         "estimate.collected": "تم الاستلام",
         "estimate.note_counter": "بانتظارك عند الكاشير.",
         "estimate.note_rider": "بعد استلام السائق للطلب، هذا هو أدق تقدير لدينا.",
         "estimate.note_day": "سنؤكد الوقت بمجرد استلام الطلب.",
+        "estimate.note_day_by": "الطلب مع شريك التوصيل، وينهون جولاتهم قبل ذلك.",
         # ── timeline steps ────────────────────────────────────────────────────
         "step.preparing": "جارٍ تحضير طلبك",
         "step.ready": "تم التعبئة",

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from decimal import ROUND_CEILING, Decimal
 from zoneinfo import ZoneInfo
 
@@ -15,8 +14,8 @@ from app.models.delivery_batch import DELIVERY_TIMEZONE
 from app.models.delivery_settings import DeliverySettings
 from app.models.order import DeliveryMethodEnum
 from app.services import (
-    batching_service,
     courier_service,
+    delivery_promise,
     delivery_zone_service,
     lalamove_service,
 )
@@ -27,7 +26,6 @@ __all__ = [
     "DeliveryPrice",
     "UnserviceableAreaError",
     "calculate_fee",
-    "estimate_arrival",
     "price",
     "public_zone_name",
     "quote",
@@ -38,12 +36,12 @@ __all__ = [
 
 TZ = ZoneInfo(DELIVERY_TIMEZONE)
 
-#: How long after a run leaves the kitchen the last box on it is through a door.
-#: One number for every drop on the route rather than a per-stop calculation:
-#: the route is optimised by the courier after we hand it over, so which stop is
-#: last is not knowable when the promise is made. An hour covers the city zones,
-#: which are the only ones this applies to.
-DISPATCH_TO_DOOR = timedelta(hours=1)
+# `DISPATCH_TO_DOOR` used to live here: one hour, applied to every zone alike.
+# It is now `delivery_batch_groups.delivery_minutes_after_dispatch` (90 for the
+# Dubai run, 120 for the northern one, because one crosses three emirates) and
+# `couriers.unbatched_promise_minutes` for anything not waiting for a run. See
+# `services/delivery_promise.py`, which is the only place a delivery time is
+# now decided.
 
 #: What the customer is told when nothing can be quoted to their pin. Says
 #: nothing about who would have carried it — that a courier exists at all is not
@@ -84,63 +82,11 @@ def round_up_aed(amount: Decimal) -> Decimal:
     return amount.to_integral_value(rounding=ROUND_CEILING).quantize(Decimal("0.01"))
 
 
-@dataclass(frozen=True)
-class DeliveryEstimate:
-    """When the customer should expect the box, and how precisely we know it."""
-
-    #: On the shop's clock, which is the clock the customer is standing on.
-    at: datetime
-    #: `"time"` when we can name an hour, `"day"` when only the date is ours to
-    #: promise. The distinction is the whole value of this object: rendering a
-    #: third-party delivery as "tomorrow, 14:00" would invent a precision that
-    #: belongs to somebody else's schedule.
-    precision: str
-
-
-async def estimate_arrival(
-    db: AsyncSession, zone: Zone | None, *, now: datetime | None = None
-) -> DeliveryEstimate:
-    """
-    When delivery to this zone should land.
-
-    Two very different kinds of answer, because there are two very different
-    kinds of knowledge behind them.
-
-    In a zone we dispatch ourselves the schedule is ours: the order joins the
-    run whose window is open now, that run leaves when the window closes, and an
-    hour later it is delivered. Every term in that is a number we control, so it
-    is safe to name an hour. A zone we dispatch but never batch — noon Send —
-    skips the waiting entirely and is simply an hour from now.
-
-    A third-party zone is collected on a schedule we cannot see. The only thing
-    we can honestly commit to is the next day, and it is the next day whether
-    the order came in at nine in the morning or five past eleven at night —
-    saying "today" for an early order would be guessing with someone else's van.
-    """
-    now = now or datetime.now(timezone.utc)
-    local = now.astimezone(TZ)
-
-    if zone is None or not zone.books_itself:
-        return DeliveryEstimate(
-            at=datetime.combine(
-                local.date() + timedelta(days=1), local.time().min, tzinfo=TZ
-            ),
-            precision="day",
-        )
-
-    if not zone.is_batched:
-        # Ours to dispatch, but never batched: a noon Send order is handed to a
-        # rider as soon as it is packed. There is no window to wait for, so the
-        # hour starts now.
-        return DeliveryEstimate(at=local + DISPATCH_TO_DOOR, precision="time")
-
-    windows = await batching_service.active_windows(db, zone.id)
-    match = batching_service.find_window(windows, now)
-    if match is None:
-        # No schedule, or a hole in one. Dispatch does not wait in that case —
-        # the order goes out on its own immediately — so neither does this.
-        return DeliveryEstimate(at=local + DISPATCH_TO_DOOR, precision="time")
-    return DeliveryEstimate(at=match.dispatch_at + DISPATCH_TO_DOOR, precision="time")
+# `DeliveryEstimate` used to be declared here. It is now
+# `delivery_promise.DeliveryPromise`, which is the same two fields plus the
+# `reason` that says which rule produced them — and, more usefully, lives beside
+# the only code allowed to decide a delivery time.
+DeliveryEstimate = delivery_promise.DeliveryPromise
 
 
 @dataclass(frozen=True)
@@ -182,7 +128,7 @@ class DeliveryPrice:
     #: wrong puts a number on screen that the fee was not calculated from. Before
     #: a pin exists there is no zone to ask, so this is the national default and
     #: `threshold_is_provisional` says so.
-    free_threshold: Decimal = Decimal("0.00")
+    free_threshold: Decimal | None = None
     #: True when `free_threshold` is the national default standing in for a zone
     #: we have not resolved yet. The storefront may still show it — "free over
     #: AED 150 in selected areas" — but must not present it as this address's
@@ -251,15 +197,7 @@ async def get_settings(db: AsyncSession) -> DeliverySettings:
     settings = result.scalars().first()
     if settings is None:
         # Fallback if table is empty (should not happen after migration)
-        settings = DeliverySettings(
-            free_delivery_threshold=Decimal("150.00"),
-            pickup_fee=Decimal("0.00"),
-            default_delivery_fee=Decimal("50.00"),
-        )
-    if settings.default_delivery_fee is None:
-        # A row written before the column existed, or a fixture that predates
-        # it. Match the old "Rest of UAE" price rather than charging nothing.
-        settings.default_delivery_fee = Decimal("50.00")
+        settings = DeliverySettings(pickup_fee=Decimal("0.00"))
     return settings
 
 
@@ -308,9 +246,11 @@ async def price(
     if latitude is None or longitude is None:
         # Nothing to price yet, and nothing to promise: whether free delivery
         # reaches this order is a property of an address we have not been given.
-        # `free_available` stays true so the basket can still be encouraged
-        # towards the threshold — the copy that does it says "in selected
-        # areas", which is exactly the uncertainty this state is in.
+        # `free_available` stays true so the basket is not told the offer is
+        # unavailable before anyone knows where it is going — but the threshold
+        # is now `None`, because the national number it used to stand in with no
+        # longer exists. Every zone answers for itself, so before a pin there is
+        # genuinely no figure to name and the storefront shows no countdown.
         return DeliveryPrice(
             zone=None,
             base_fee=None,
@@ -318,15 +258,28 @@ async def price(
             free_available=True,
             serviceable=True,
             is_dynamic=False,
-            free_threshold=settings.free_delivery_threshold,
+            free_threshold=None,
             threshold_is_provisional=True,
         )
 
     zone = await delivery_zone_service.find_zone(db, float(latitude), float(longitude))
-    # No zone at all is treated as dynamic rather than as the default fee: an
-    # address outside every drawn shape is exactly the case we know least about,
-    # and asking the courier is a better answer than a flat guess.
-    is_dynamic = zone is None or zone.is_dynamic
+    if zone is None:
+        # Outside every shape on the active map. That map tiles the whole
+        # country, so this is not "an address we have not drawn yet" any more —
+        # it is an address outside the UAE, or a coordinate that is not a place.
+        # There used to be a national default fee here, quoting AED 80 for a
+        # delivery nobody had worked out how to make; refusing is the honest
+        # answer and the checkout already knows how to offer pickup instead.
+        return DeliveryPrice(
+            zone=None,
+            base_fee=None,
+            free_applied=False,
+            free_available=False,
+            serviceable=False,
+            is_dynamic=False,
+            free_threshold=None,
+        )
+    is_dynamic = zone.is_dynamic
 
     # Asked for on every quote, including in the fixed-fee zones, because the
     # gap between what we charge and what a run costs is the number the fee
@@ -347,16 +300,17 @@ async def price(
 
     eligible = zone is not None and zone.free_delivery_eligible
 
-    # The zone's own threshold, or the national one where it does not set one.
-    # `is None` rather than falsiness on purpose: a zone may legitimately set
-    # zero, meaning free delivery at any basket, and `or` would silently turn
-    # that into 150.
-    threshold = (
-        settings.free_delivery_threshold
-        if zone is None or zone.free_delivery_threshold is None
-        else zone.free_delivery_threshold
-    )
-    qualifies = subtotal >= threshold
+    # The zone's own threshold, and only its own. The national fallback this
+    # used to reach for is gone — a threshold that applied everywhere was too
+    # high for the near zones and too low for the far ones simultaneously.
+    #
+    # `zone` cannot be None here: an unmatched pin returned unserviceable above.
+    # A zone with no threshold on the row cannot happen either now the column is
+    # NOT NULL, but a `Zone` built by hand in a test may leave it unset, and 0
+    # is the reading that gives delivery away rather than charging for it —
+    # which is the mistake worth not making silently.
+    threshold = zone.free_delivery_threshold
+    qualifies = threshold is not None and subtotal >= threshold
 
     if not is_dynamic:
         return DeliveryPrice(
@@ -385,16 +339,24 @@ async def price(
         )
 
     if not lalamove_service.is_enabled():
-        # There is nobody to ask, which is a configuration state rather than a
-        # statement about this address. Refusing every dynamic order because a
-        # credential is missing would take the whole country offline; the
-        # configured default fee keeps the shop selling.
+        # A dynamic zone's whole price *is* the courier's quote, and there is
+        # nobody to ask. This used to fall back to a national default fee, and
+        # with that gone the only other number on the row is `delivery_fee` —
+        # which a dynamic zone deliberately keeps at zero so nobody misreads it
+        # as a price. Falling back to it would hand out free delivery in exactly
+        # the areas that cost the most to reach, every time a credential
+        # expired.
+        #
+        # So: unserviceable, the same as when the courier is asked and refuses.
+        # Being unable to ask is not a better position than being told no, and
+        # the checkout already turns both into "choose another address or
+        # collect from the store".
         return DeliveryPrice(
             zone=zone,
-            base_fee=settings.default_delivery_fee,
+            base_fee=None,
             free_applied=False,
             free_available=False,
-            serviceable=True,
+            serviceable=False,
             is_dynamic=True,
             estimate=None,
             error=error,
@@ -448,7 +410,14 @@ async def calculate_fee(
     if not priced.serviceable:
         raise UnserviceableAreaError()
     fee = priced.fee
-    return settings.default_delivery_fee if fee is None else fee
+    if fee is None:
+        # No pin, so no zone, so no price. This used to answer with the national
+        # default fee; with that gone the only other reading is zero, which is
+        # free delivery handed out for the absence of an address. A delivery
+        # order cannot be written without one anyway, so refusing is both honest
+        # and unreachable from a checkout that has done its job.
+        raise UnserviceableAreaError()
+    return fee
 
 
 async def quote(
@@ -512,7 +481,7 @@ async def quote(
         )
 
     estimate = (
-        await estimate_arrival(db, priced.zone)
+        await delivery_promise.promise_for_zone(db, priced.zone)
         if latitude is not None and longitude is not None and priced.serviceable
         else None
     )
@@ -531,7 +500,9 @@ async def quote(
         # AED 75 in Dubai against AED 200 out at the third-party edge — so
         # reporting the global number here would have the storefront counting
         # down to a figure the fee was never calculated against.
-        "free_threshold": float(priced.free_threshold),
+        "free_threshold": (
+            None if priced.free_threshold is None else float(priced.free_threshold)
+        ),
         # True before a pin exists, when the number above is the national
         # default standing in for a zone we cannot resolve yet. Copy driven by
         # it has to stay hedged ("in selected areas") until a pin lands.
@@ -540,7 +511,7 @@ async def quote(
         # over the threshold would be shown "free delivery" and "AED 150 to go"
         # at the same time.
         "remaining_for_free": 0.0
-        if free_applied
+        if free_applied or priced.free_threshold is None
         else float(max(Decimal("0.00"), priced.free_threshold - subtotal)),
         # The emirate, not the cost band. "Dubai Near" / "Dubai Mid" /
         # "Dubai Far" are our own freight geography — the courier-margin report
@@ -571,9 +542,12 @@ async def get_delivery_rates(db: AsyncSession) -> dict:
     """
     settings = await get_settings(db)
     return {
-        "free_threshold": float(settings.free_delivery_threshold),
+        # No `free_threshold` and no `default_delivery_fee`. Both were national
+        # numbers answering questions the polygon now answers per-zone, and a
+        # storefront quoting them before it has a pin was quoting a figure true
+        # in none of the fifteen zones. The threshold arrives with the quote,
+        # once there is an address to attach it to.
         "pickup_fee": float(settings.pickup_fee),
-        "default_delivery_fee": float(settings.default_delivery_fee),
         # The small-basket fee, so the checkout can explain it without holding
         # its own copy of the numbers. Both are commercial figures that will be
         # argued with, and a storefront constant is a second place to change

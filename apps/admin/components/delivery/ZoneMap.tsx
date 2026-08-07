@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { DeliveryZoneMap, DeliveryZoneShape } from '@/lib/types';
 import { formatCurrency } from '@/lib/utils';
 
@@ -18,10 +18,29 @@ import { formatCurrency } from '@/lib/utils';
  * and without the correction the country comes out visibly stretched.
  */
 
+/**
+ * One entry per `FulfilmentProviderEnum` value.
+ *
+ * `noon_send` was missing, and the `?? PROVIDER_STYLE.third_party` fallback at
+ * every read site meant the omission was invisible: Sharjah Central — the one
+ * zone we deliver ourselves in under an hour, and the cheapest run on the map —
+ * rendered grey and was labelled "Third party" in the tooltip and the legend.
+ * A map whose whole job is "which areas are which courier" was answering wrong
+ * for the courier that matters most.
+ *
+ * Green matches the "NOON SEND" pill in the fees table, so the two screens
+ * describe the same zone the same way.
+ */
 const PROVIDER_STYLE: Record<string, { fill: string; stroke: string; label: string }> = {
-  lalamove: { fill: '#2563eb', stroke: '#1d4ed8', label: 'Courier API' },
+  noon_send: { fill: '#16a34a', stroke: '#15803d', label: 'noon Send' },
+  lalamove: { fill: '#2563eb', stroke: '#1d4ed8', label: 'Lalamove' },
   third_party: { fill: '#94a3b8', stroke: '#64748b', label: 'Third party' },
 };
+
+/** How far in a wheel notch takes you, and the limits. */
+const ZOOM_STEP = 1.18;
+const MIN_SCALE = 1;
+const MAX_SCALE = 40;
 
 const WIDTH = 900;
 const HEIGHT = 640;
@@ -36,6 +55,17 @@ interface Props {
 
 export function ZoneMap({ data, selectedZoneId, onSelect }: Props) {
   const [hovered, setHovered] = useState<DeliveryZoneShape | null>(null);
+  /**
+   * The window onto the map, in viewBox units.
+   *
+   * Zoom is a `viewBox` change rather than a CSS transform so the strokes stay
+   * the width they were drawn at — a scaled-up transform would thicken every
+   * boundary until the small city zones disappeared under their own outlines,
+   * which is the opposite of what zooming in is for.
+   */
+  const [view, setView] = useState({ x: 0, y: 0, w: WIDTH, h: HEIGHT });
+  const [panning, setPanning] = useState<{ x: number; y: number } | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
   // Rendered width travels with the cursor because the SVG scales to its
   // container: the viewBox is 900 units wide and the panel may be 560 pixels,
   // so clamping the tooltip against the viewBox would never actually clamp.
@@ -53,12 +83,57 @@ export function ZoneMap({ data, selectedZoneId, onSelect }: Props) {
 
   const active = hovered ?? projected.zones.find(z => z.zone.id === selectedZoneId)?.zone ?? null;
 
+  /** Screen pixels -> viewBox units, which is what panning has to move by. */
+  function toViewBox(e: { clientX: number; clientY: number }) {
+    const box = svgRef.current?.getBoundingClientRect();
+    if (!box) return { x: 0, y: 0 };
+    return {
+      x: view.x + ((e.clientX - box.left) / box.width) * view.w,
+      y: view.y + ((e.clientY - box.top) / box.height) * view.h,
+    };
+  }
+
+  /** Zoom about the cursor, so the shape under the pointer stays under it. */
+  function zoomAt(anchor: { x: number; y: number }, factor: number) {
+    setView(v => {
+      const scale = WIDTH / v.w;
+      const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale * factor));
+      const w = WIDTH / next;
+      const h = HEIGHT / next;
+      // Keep the anchor at the same fraction across the box.
+      const fx = (anchor.x - v.x) / v.w;
+      const fy = (anchor.y - v.y) / v.h;
+      return {
+        w,
+        h,
+        // Clamped so the country cannot be dragged off the panel entirely.
+        x: Math.min(Math.max(anchor.x - fx * w, 0), WIDTH - w),
+        y: Math.min(Math.max(anchor.y - fy * h, 0), HEIGHT - h),
+      };
+    });
+  }
+
+  const zoomedIn = view.w < WIDTH;
+
   return (
     <div className="relative">
       <svg
-        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-        className="w-full h-auto bg-gray-50 border border-gray-200"
-        onMouseLeave={() => { setHovered(null); onSelect?.(null); }}
+        ref={svgRef}
+        viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
+        className={`w-full h-auto bg-gray-50 border border-gray-200 ${
+          panning ? 'cursor-grabbing' : zoomedIn ? 'cursor-grab' : 'cursor-default'
+        }`}
+        onWheel={e => {
+          // No `preventDefault` — React attaches wheel passively, so the page
+          // would scroll too. Zoom only with a modifier held, which is also the
+          // convention that stops a map hijacking an ordinary page scroll.
+          if (!e.ctrlKey && !e.metaKey && !e.shiftKey) return;
+          zoomAt(toViewBox(e), e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP);
+        }}
+        onMouseDown={e => setPanning(toViewBox(e))}
+        onMouseUp={() => setPanning(null)}
+        onDoubleClick={() => setView({ x: 0, y: 0, w: WIDTH, h: HEIGHT })}
+        onMouseLeave={() => { setHovered(null); onSelect?.(null); setPanning(null); }}
         onMouseMove={e => {
           const box = e.currentTarget.getBoundingClientRect();
           setCursor({
@@ -66,6 +141,13 @@ export function ZoneMap({ data, selectedZoneId, onSelect }: Props) {
             y: e.clientY - box.top,
             width: box.width,
           });
+          if (!panning) return;
+          const at = toViewBox(e);
+          setView(v => ({
+            ...v,
+            x: Math.min(Math.max(v.x - (at.x - panning.x), 0), WIDTH - v.w),
+            y: Math.min(Math.max(v.y - (at.y - panning.y), 0), HEIGHT - v.h),
+          }));
         }}
       >
         {/* The zones tile the country without overlapping — a served city is
@@ -93,6 +175,35 @@ export function ZoneMap({ data, selectedZoneId, onSelect }: Props) {
           );
         })}
       </svg>
+
+      {/* Buttons as well as the wheel: the city zones are a few pixels across
+          at full extent, and a trackpad pinch is not something every admin
+          reaches for. */}
+      <div className="absolute top-2 right-2 flex flex-col gap-1">
+        {[
+          ['+', () => zoomAt({ x: view.x + view.w / 2, y: view.y + view.h / 2 }, ZOOM_STEP)],
+          ['−', () => zoomAt({ x: view.x + view.w / 2, y: view.y + view.h / 2 }, 1 / ZOOM_STEP)],
+        ].map(([label, onClick]) => (
+          <button
+            key={label as string}
+            type="button"
+            onClick={onClick as () => void}
+            className="w-6 h-6 bg-white/90 border border-gray-300 text-gray-600 text-sm leading-none hover:bg-white"
+          >
+            {label as string}
+          </button>
+        ))}
+        {zoomedIn && (
+          <button
+            type="button"
+            onClick={() => setView({ x: 0, y: 0, w: WIDTH, h: HEIGHT })}
+            className="w-6 h-6 bg-white/90 border border-gray-300 text-gray-500 text-[10px] leading-none hover:bg-white"
+            title="Fit the whole country"
+          >
+            ⤢
+          </button>
+        )}
+      </div>
 
       {active && (
         <div
@@ -123,8 +234,8 @@ export function ZoneMap({ data, selectedZoneId, onSelect }: Props) {
           </div>
         ))}
         <span className="text-[11px] font-body text-gray-400 ml-auto">
-          Hover a zone for its fee. Zones do not overlap, so every address is in
-          exactly one.
+          Hover a zone for its fee. ⌘/Ctrl + scroll to zoom, drag to pan,
+          double-click to fit.
         </span>
       </div>
     </div>

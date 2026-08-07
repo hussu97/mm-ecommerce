@@ -33,6 +33,16 @@ interface LocationContextValue {
   setLocation: (next: Location) => void;
   /** Ask the browser. Safe to call when already asked; it just re-prompts. */
   requestBrowserLocation: () => Promise<boolean>;
+  /**
+   * Re-read the customer's default address and move the location to it.
+   *
+   * Call after saving, deleting or re-defaulting an address. The seed runs once
+   * and prefers whatever is in `localStorage`, which is right for a page load
+   * and wrong for the moment somebody changes where they live: without this the
+   * new default was invisible until the browser storage was cleared, and every
+   * delivery estimate on the site kept answering for the old address.
+   */
+  refreshFromAddresses: () => Promise<void>;
 }
 
 const LocationContext = createContext<LocationContextValue | null>(null);
@@ -100,6 +110,22 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
         { enableHighAccuracy: false, timeout: 10_000, maximumAge: 600_000 },
       );
     });
+  }, [setLocation]);
+
+  const refreshFromAddresses = useCallback(async () => {
+    try {
+      const addresses = await addressesApi.list();
+      const preferred = addresses.find(a => a.is_default) ?? addresses[0] ?? null;
+      if (!preferred) return;
+      setLocation({
+        latitude: Number(preferred.latitude),
+        longitude: Number(preferred.longitude),
+        source: 'address',
+        label: preferred.label ?? null,
+      });
+    } catch {
+      /* not signed in, or the call failed — keep whatever we had */
+    }
   }, [setLocation]);
 
   // ── seed, best source first ────────────────────────────────────────────────
@@ -210,8 +236,9 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
       isKnown: location.source !== 'default',
       setLocation,
       requestBrowserLocation,
+      refreshFromAddresses,
     }),
-    [location, area, loading, setLocation, requestBrowserLocation],
+    [location, area, loading, setLocation, requestBrowserLocation, refreshFromAddresses],
   );
 
   return <LocationContext.Provider value={value}>{children}</LocationContext.Provider>;

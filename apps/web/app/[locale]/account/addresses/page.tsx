@@ -1,11 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { addressesApi, ApiError } from '@/lib/api';
+import { addressesApi, authApi, ApiError } from '@/lib/api';
 import { Address, AddressCreate } from '@/lib/types';
 import { Input } from '@/components/ui/Input';
 import { PhoneInput, isValidPhone } from '@/components/ui/PhoneInput';
 import { PhoneVerify } from '@/components/ui/PhoneVerify';
+import { useLocation } from '@/lib/location/LocationProvider';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
@@ -37,6 +38,8 @@ const BLANK_FORM: AddressCreate = {
 export default function AddressesPage() {
   const { addToast } = useToast();
   const { t } = useTranslation();
+  // Changing where you live has to move every delivery estimate on the site.
+  const { refreshFromAddresses } = useLocation();
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -46,6 +49,22 @@ export default function AddressesPage() {
   // The number most recently proved, so the tick disappears the moment the
   // field is edited to something else.
   const [verifiedPhone, setVerifiedPhone] = useState<string | null>(null);
+  // Ask the server whether this number is *already* proved before offering to
+  // prove it. A verification belongs to the handset, not to the address it was
+  // first typed on — somebody adding a second address should not sit through a
+  // second SMS for the same number.
+  useEffect(() => {
+    const phone = form.phone;
+    if (!phone || !isValidPhone(phone) || verifiedPhone === phone) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      authApi
+        .phoneVerified(phone)
+        .then(r => { if (!cancelled && r.verified) setVerifiedPhone(phone); })
+        .catch(() => { /* offer the button; a failed check must not block saving */ });
+    }, 400);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [form.phone, verifiedPhone]);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -106,10 +125,12 @@ export default function AddressesPage() {
       const data = { ...form, unit_number: form.unit_number || undefined };
       if (editId) {
         const updated = await addressesApi.update(editId, data);
+      void refreshFromAddresses();
         setAddresses(prev => prev.map(a => a.id === editId ? updated : a));
         addToast('Address updated', 'success');
       } else {
         const created = await addressesApi.create(data);
+      void refreshFromAddresses();
         setAddresses(prev => [...prev, created]);
         addToast('Address added', 'success');
       }
@@ -125,6 +146,7 @@ export default function AddressesPage() {
     setDeletingId(id);
     try {
       await addressesApi.delete(id);
+      void refreshFromAddresses();
       setAddresses(prev => prev.filter(a => a.id !== id));
       addToast('Address removed', 'success');
     } catch {
@@ -137,6 +159,7 @@ export default function AddressesPage() {
   async function handleSetDefault(id: string) {
     try {
       const updated = await addressesApi.setDefault(id);
+      void refreshFromAddresses();
       setAddresses(prev => prev.map(a => ({ ...a, is_default: a.id === id ? updated.is_default : false })));
     } catch {
       addToast('Failed to update default', 'error');

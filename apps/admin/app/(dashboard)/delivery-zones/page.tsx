@@ -10,7 +10,7 @@ import type {
   DeliveryPricingMode,
   DeliveryZone,
   DeliveryZoneMap,
-  DeliveryZoneShape,
+  BatchGroup,
   DeliverySettings,
   FulfilmentProvider,
 } from '@/lib/types';
@@ -166,7 +166,7 @@ export default function DeliveryZonesPage() {
       )}
 
       {tab === 'batching' && zoneMap && (
-        <BatchingTab zones={zoneMap.zones} />
+        <BatchingTab />
       )}
 
       {tab === 'runs' && (
@@ -505,49 +505,88 @@ function ZoneRow({
 // ── Batching ──────────────────────────────────────────────────────────────────
 
 /**
- * The schedule, per zone.
+ * The schedule, per group.
  *
- * Only Lalamove zones appear. A third-party zone has no run of ours for its
- * orders to share, and noon Send's shared run is a different product with its
- * own endpoint and a cap of three — so a schedule on either would be a setting
- * that does nothing, which is worse than an absent one because somebody will
- * eventually rely on it.
+ * A group is a set of zones whose orders ride together on one courier booking.
+ * This screen used to list zones, each with its own schedule, and which of them
+ * actually shared a van fell out of two schedules coincidentally ending on the
+ * same minute — a decision nobody made and this page could not show. Listing
+ * groups is the point: what you see here is what leaves together.
+ *
+ * A zone in no group is not missing a schedule. It dispatches the moment the
+ * order is ready, which is the right answer for noon Send and for every third
+ * party, and it is stated under each group rather than left as an absence.
  */
-function BatchingTab({ zones }: { zones: DeliveryZoneShape[] }) {
-  const courierZones = zones.filter(z => z.fulfilment_provider === 'lalamove');
-  const [openZone, setOpenZone] = useState<string | null>(courierZones[0]?.id ?? null);
+function BatchingTab() {
+  const [groups, setGroups] = useState<BatchGroup[] | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+  const [error, setError] = useState('');
 
-  if (!courierZones.length) {
+  useEffect(() => {
+    deliveryZonesApi
+      .listBatchGroups()
+      .then(rows => {
+        setGroups(rows);
+        setOpen(rows[0]?.id ?? null);
+      })
+      .catch(err => setError((err as Error).message));
+  }, []);
+
+  if (error) {
+    return (
+      <div className="bg-white border border-gray-200 p-4 text-xs font-body text-red-600">
+        {error}
+      </div>
+    );
+  }
+  if (groups === null) {
+    return (
+      <div className="bg-white border border-gray-200 p-4 text-xs font-body text-gray-400">
+        Loading schedules…
+      </div>
+    );
+  }
+  if (!groups.length) {
     return (
       <div className="bg-white border border-gray-200 p-4 text-xs font-body text-gray-500">
-        No zone on the live map is delivered by Lalamove, so there is nothing to
-        batch. Only Lalamove runs can carry several orders at once — set a zone
-        to “Lalamove” under Fees &amp; couriers first.
+        No batch groups. Every zone dispatches its orders the moment they are
+        ready. Only a courier that can carry several of our orders in one
+        booking can have a schedule at all.
       </div>
     );
   }
 
   return (
     <div className="space-y-3">
-      {courierZones.map(zone => (
-        <div key={zone.id} className="bg-white border border-gray-200">
+      {groups.map(group => (
+        <div key={group.id} className="bg-white border border-gray-200">
           <button
-            onClick={() => setOpenZone(openZone === zone.id ? null : zone.id)}
+            onClick={() => setOpen(open === group.id ? null : group.id)}
             className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors"
           >
             <span className="material-icons text-[18px] text-gray-400">
-              {openZone === zone.id ? 'expand_less' : 'expand_more'}
+              {open === group.id ? 'expand_less' : 'expand_more'}
             </span>
-            <span className="text-sm font-body text-gray-800 flex-1">{zone.name}</span>
-            <span className="text-xs font-body text-gray-400">
-              {zone.pricing_mode === 'dynamic'
-                ? PRICING_LABEL.dynamic
-                : formatCurrency(zone.delivery_fee)}
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-body text-gray-800">
+                {group.name}
+              </span>
+              {/* The zones on this van, spelled out. The whole reason the group
+                  exists is that this list used to be unknowable. */}
+              <span className="block text-xs font-body text-gray-400 truncate">
+                {group.zone_names.join(' · ') || 'No zones on this schedule yet'}
+              </span>
+            </span>
+            <span className="text-xs font-body text-gray-500 shrink-0">
+              {PROVIDER_LABEL[group.courier_code as FulfilmentProvider] ??
+                group.courier_code}{' '}
+              ·{' '}
+              {group.delivery_minutes_after_dispatch}m to the door
             </span>
           </button>
-          {openZone === zone.id && (
+          {open === group.id && (
             <div className="border-t border-gray-100 px-4 py-3">
-              <BatchWindows zoneId={zone.id} zoneName={zone.name} />
+              <BatchWindows groupId={group.id} zoneName={group.name} />
             </div>
           )}
         </div>

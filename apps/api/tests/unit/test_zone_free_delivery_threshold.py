@@ -39,9 +39,7 @@ def noon_send_is_off(monkeypatch):
 NATIONAL = Decimal("150.00")
 
 SETTINGS = DeliverySettings(
-    free_delivery_threshold=NATIONAL,
     pickup_fee=Decimal("0.00"),
-    default_delivery_fee=Decimal("50.00"),
 )
 
 
@@ -113,18 +111,22 @@ async def test_exactly_on_the_zone_threshold_qualifies():
     assert priced.free_applied is True
 
 
-# ── the fallback ──────────────────────────────────────────────────────────────
+# ── there is no fallback any more ─────────────────────────────────────────────
 
 
-async def test_a_zone_with_no_threshold_of_its_own_uses_the_national_one():
-    """NULL means "unchanged", which is what every zone meant before the column
-    existed. A map that predates it must behave exactly as it did."""
+async def test_a_zone_with_no_threshold_of_its_own_makes_no_offer():
+    """
+    NULL used to mean "use the national 150". There is no national number now —
+    every zone answers for itself — so NULL means the zone has no offer, and the
+    reading that gives delivery away is the one not to pick silently.
+
+    The column is NOT NULL on the row, so this is only reachable by a `Zone`
+    built by hand. It is pinned anyway: the default matters most exactly where
+    nobody thought about it.
+    """
     priced = await _price("150.00", _zone("Legacy Zone", None))
-    assert priced.free_applied is True
-    assert priced.free_threshold == NATIONAL
-
-    under = await _price("149.99", _zone("Legacy Zone", None))
-    assert under.free_applied is False
+    assert priced.free_applied is False
+    assert priced.free_threshold is None
 
 
 async def test_zero_is_not_the_same_as_null():
@@ -137,9 +139,17 @@ async def test_zero_is_not_the_same_as_null():
     assert priced.free_threshold == Decimal("0.00")
 
 
-async def test_no_zone_at_all_falls_back_to_the_national_threshold():
+async def test_no_zone_at_all_is_unserviceable():
+    """
+    The active map tiles the whole country, so a pin matching nothing is outside
+    it — not an address we have yet to draw. It used to be quoted the national
+    threshold and a default fee, which was a price for a delivery nobody had
+    worked out how to make.
+    """
     priced = await _price("150.00", None)
-    assert priced.free_threshold == NATIONAL
+    assert priced.serviceable is False
+    assert priced.free_threshold is None
+    assert priced.base_fee is None
 
 
 # ── eligibility still gates it ────────────────────────────────────────────────
@@ -160,16 +170,19 @@ async def test_a_low_threshold_does_not_override_an_ineligible_zone():
 # ── the no-pin case ───────────────────────────────────────────────────────────
 
 
-async def test_without_a_pin_the_threshold_is_the_national_one_and_says_so():
-    """There is no zone to ask yet. The national number is the only honest
-    placeholder, and the flag is what stops the storefront presenting it as this
-    address's answer."""
+async def test_without_a_pin_there_is_no_threshold_to_name():
+    """
+    There is no zone to ask yet, and no national number to stand in with — so
+    the honest answer is none at all, and the storefront shows no countdown
+    until an address exists. `free_available` stays true so the offer is not
+    declared unavailable before anyone knows where the order is going.
+    """
     with patch.object(
         delivery_service, "get_settings", new=AsyncMock(return_value=SETTINGS)
     ):
         priced = await delivery_service.price(AsyncMock(), Decimal("50.00"))
 
-    assert priced.free_threshold == NATIONAL
+    assert priced.free_threshold is None
     assert priced.threshold_is_provisional is True
     assert priced.free_available is True
 

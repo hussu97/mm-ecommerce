@@ -27,9 +27,7 @@ from app.services import order_service
 from app.services.order_service import low_order_fee_for
 
 SETTINGS = DeliverySettings(
-    free_delivery_threshold=Decimal("150.00"),
     pickup_fee=Decimal("0.00"),
-    default_delivery_fee=Decimal("50.00"),
     low_order_fee=Decimal("15.00"),
     low_order_threshold=Decimal("35.00"),
 )
@@ -65,9 +63,7 @@ def test_pickup_never_pays_it():
 def test_a_null_threshold_disables_the_fee():
     """Which is what it means on any deploy that has not switched it on."""
     off = DeliverySettings(
-        free_delivery_threshold=Decimal("150.00"),
         pickup_fee=Decimal("0.00"),
-        default_delivery_fee=Decimal("50.00"),
         low_order_fee=Decimal("15.00"),
         low_order_threshold=None,
     )

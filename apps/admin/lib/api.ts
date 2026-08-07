@@ -6,6 +6,7 @@ import type {
   PromoCode, PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
   TrafficData, UploadResponse, User, DeliverySettings, SalesChannel,
   DeliveryMapVersion, DeliveryPricingMode, DeliveryZone, DeliveryZoneSummary, FulfilmentProvider, OrderDelivery,
+  BatchGroup,
   BatchWindow, BatchWindowWrite, DeliveryBatch, DeliveryZoneMap,
   PaginatedWebhookLogs, WebhookLogDetail, WebhookLogFacets,
 } from './types';
@@ -286,10 +287,15 @@ export const deliveryZonesApi = {
     api.get<DeliveryZoneMap>(`/delivery-zones/map${versionId ? `?version_id=${versionId}` : ''}`),
 
   // ── Batching ────────────────────────────────────────────────────────────
-  listWindows: (zoneId: string) =>
-    api.get<BatchWindow[]>(`/delivery-zones/polygons/${zoneId}/batch-windows`),
-  createWindow: (zoneId: string, data: BatchWindowWrite) =>
-    api.post<BatchWindow>(`/delivery-zones/polygons/${zoneId}/batch-windows`, data),
+  //
+  // Addressed by group rather than by zone: a schedule governs a set of zones
+  // that ride together, and pointing it at one of them was what let two
+  // unrelated schedules merge onto a single booking by accident.
+  listBatchGroups: () => api.get<BatchGroup[]>('/delivery-zones/batch-groups'),
+  listWindows: (groupId: string) =>
+    api.get<BatchWindow[]>(`/delivery-zones/batch-groups/${groupId}/batch-windows`),
+  createWindow: (groupId: string, data: BatchWindowWrite) =>
+    api.post<BatchWindow>(`/delivery-zones/batch-groups/${groupId}/batch-windows`, data),
   updateWindow: (windowId: string, data: BatchWindowWrite) =>
     api.put<BatchWindow>(`/delivery-zones/batch-windows/${windowId}`, data),
   deleteWindow: (windowId: string) =>

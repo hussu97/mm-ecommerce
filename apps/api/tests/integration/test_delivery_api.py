@@ -8,7 +8,7 @@ class TestDeliveryRates:
 
     async def test_get_rates_has_free_threshold(self, client):
         data = (await client.get("/api/v1/delivery/rates")).json()
-        assert "free_threshold" in data
+        assert "pickup_fee" in data
 
     async def test_get_rates_publishes_no_price_list(self, client):
         """
@@ -19,9 +19,7 @@ class TestDeliveryRates:
         data = (await client.get("/api/v1/delivery/rates")).json()
         assert "regions" not in data
         assert set(data) == {
-            "free_threshold",
             "pickup_fee",
-            "default_delivery_fee",
             # National scalars the checkout needs to explain the small-basket
             # fee. Not a price list: nothing here is keyed by a place.
             "low_order_fee",
@@ -52,8 +50,10 @@ class TestDeliveryCalculate:
                 "subtotal": "500.00",
             },
         )
-        assert response.status_code == 200
-        assert response.json()["is_free"] is False
+        # No pin in the request, so no zone and no price. It used to answer
+        # with a national default fee; that is gone, and zero would be free
+        # delivery handed out for the absence of an address.
+        assert response.status_code == 400
 
     async def test_below_threshold_has_fee(self, client):
         response = await client.post(
@@ -63,8 +63,7 @@ class TestDeliveryCalculate:
                 "subtotal": "100.00",
             },
         )
-        assert response.status_code == 200
-        assert float(response.json()["delivery_fee"]) > 0
+        assert response.status_code == 400
 
     async def test_invalid_method_422(self, client):
         response = await client.post(

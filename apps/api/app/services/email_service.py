@@ -32,6 +32,7 @@ __all__ = [
     "send_order_out_for_delivery",
     "send_order_packed",
     "send_order_undelivered",
+    "maps_url",
     "send_owner_order_notification",
     "send_password_reset",
     "send_payment_failed",
@@ -280,6 +281,16 @@ def _when(
 
     if precision == "day":
         return day
+    if precision == "day_by":
+        # Somebody else's van: a date, bounded by an hour, and clearly a bound
+        # rather than an appointment. "Wed 12 Aug before 10:00 PM" says what we
+        # can actually stand behind; naming a time would borrow a precision from
+        # a schedule that is not ours.
+        clock = local.strftime("%-I:%M")
+        meridiem = local.strftime("%p")
+        if locale == "ar":
+            meridiem = _AR_MERIDIEM.get(meridiem, meridiem)
+        return t("date.by_time", day=day, time=f"{clock} {meridiem}")
 
     clock = local.strftime("%-I:%M")
     meridiem = local.strftime("%p")
@@ -336,6 +347,10 @@ def _estimate_block(
         # An area a third party covers. Their van, their schedule; naming an
         # hour would be borrowing a precision that is not ours.
         note = t("estimate.note_day")
+    elif fulfilment.precision == "day_by":
+        # Same van, but the promise now carries the hour they finish. Saying
+        # "we'll confirm a time" here would promise a message that never comes.
+        note = t("estimate.note_day_by")
     return {
         "label": t("estimate.ready") if is_pickup else t("estimate.delivery"),
         "value": value,
@@ -644,6 +659,32 @@ async def send_order_confirmation(order: OrderResponse) -> None:
     )
 
 
+def maps_url(snapshot: dict | None) -> str | None:
+    """
+    A Google Maps link to the pin the customer actually dropped.
+
+    Coordinates, not the typed address. The pin is what the courier is sent to
+    and what the zone was priced from, and a UAE address line is frequently not
+    findable — "villa 12, behind the mosque" is a real address and a hopeless
+    search query. `?q=lat,lng` is the documented form and opens the app on a
+    phone rather than the web map.
+
+    `None` when there is no pin, so the caller renders no button rather than a
+    link to the middle of the sea.
+    """
+    if not snapshot:
+        return None
+    lat, lng = snapshot.get("latitude"), snapshot.get("longitude")
+    if lat is None or lng is None:
+        return None
+    try:
+        return (
+            f"https://www.google.com/maps/search/?api=1&query={float(lat)},{float(lng)}"
+        )
+    except (TypeError, ValueError):
+        return None
+
+
 async def send_owner_order_notification(order: OrderResponse) -> None:
     # Always English: the two people who receive it run the shop and the admin
     # it links to is English-only, so translating it would make the operational
@@ -668,6 +709,7 @@ async def send_owner_order_notification(order: OrderResponse) -> None:
                 admin_order_url=_admin_order_url(order.order_number),
                 customer_name=address_format.recipient_name(snapshot) or "—",
                 customer_phone=snapshot.get("phone"),
+                maps_url=maps_url(snapshot),
                 **context,
             )
             result = await asyncio.to_thread(_send, recipient, subject, html)

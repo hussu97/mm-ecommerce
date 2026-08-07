@@ -258,12 +258,18 @@ async def test_a_noon_send_order_never_joins_a_run(monkeypatch):
     assert result.batch_id is None
 
 
-# ── one run, several zones ────────────────────────────────────────────────────
+# ── one run, one group ────────────────────────────────────────────────────────
 #
-# Windows are per zone because density is local — the city fills a van in an
-# hour, Fujairah never would. A van is not per zone. Two schedules closing on
-# the same minute is two vans leaving the same kitchen for one journey's worth
-# of work, and the base fare gets paid twice for it.
+# Sharing a van is still the point — one route with five drops costs about a
+# third per delivery of five separate ones. What changed is *who decides*. It
+# used to be departure time alone: any two zones whose slots happened to close
+# on the same minute were merged onto one booking, so the partition was a side
+# effect of two unrelated schedules and moving one zone's slot silently
+# repartitioned another's.
+#
+# Now a group says it. The three Dubai bands ride together because somebody put
+# them together; the northern zones closing on the very same minute get their
+# own van.
 
 
 class _Result:
@@ -282,8 +288,8 @@ class _Session:
     Answers `_open_batch`'s lookup from a list, in Python.
 
     The point of interest is *what the query is keyed on*, so the bound
-    parameters are captured: a `polygon_id` appearing among them would mean runs
-    had gone back to being per zone.
+    parameters are captured: the group has to appear among them, or runs have
+    gone back to being merged by departure time alone.
     """
 
     def __init__(self, existing: list[DeliveryBatch] | None = None):
@@ -294,8 +300,15 @@ class _Session:
         self.params = stmt.compile().params
         target = self.params.get("dispatch_at_1")
         status = self.params.get("status_1")
+        group = self.params.get("group_id_1")
         return _Result(
-            [b for b in self.rows if b.dispatch_at == target and b.status == status]
+            [
+                b
+                for b in self.rows
+                if b.dispatch_at == target
+                and b.status == status
+                and b.group_id == group
+            ]
         )
 
     def add(self, obj):
@@ -310,42 +323,63 @@ def _match(polygon_windows: DeliveryBatchWindow, leaves: datetime) -> WindowMatc
     return WindowMatch(window=polygon_windows, dispatch_at=leaves)
 
 
-def _pending(dispatch_at: datetime, polygon_id: uuid.UUID) -> DeliveryBatch:
+def _pending(dispatch_at: datetime, group_id: uuid.UUID) -> DeliveryBatch:
     return DeliveryBatch(
         id=uuid.uuid4(),
-        polygon_id=polygon_id,
+        group_id=group_id,
         dispatch_at=dispatch_at,
         status=BatchStatusEnum.PENDING.value,
         window_label="Batch 5",
     )
 
 
-async def test_two_zones_closing_together_share_one_run():
-    city, outer = uuid.uuid4(), uuid.uuid4()
+async def test_zones_in_one_group_share_a_run():
+    """Two Dubai bands on the same slot are one booking, which is the saving."""
+    dubai_group = uuid.uuid4()
     midnight = dubai(0, 0, day=3)
-    existing = _pending(midnight, city)
+    existing = _pending(midnight, dubai_group)
     db = _Session([existing])
 
     joined = await _open_batch(
-        db, outer, _match(window("Batch 2", "17:00", "24:00"), midnight)
+        db, dubai_group, _match(window("Batch 2", "17:00", "24:00"), midnight)
     )
 
-    assert joined is existing, "the outer zone opened a second van for the same trip"
+    assert joined is existing, "a second van was opened for the same trip"
 
 
-async def test_zones_closing_at_different_times_do_not_share():
-    city, outer = uuid.uuid4(), uuid.uuid4()
-    db = _Session([_pending(dubai(18, 0), city)])
+async def test_different_groups_closing_together_do_not_share():
+    """
+    The bug this refactor exists for. The Dubai and Northern schedules both
+    close at midnight, and they used to be merged into one booking by that
+    coincidence alone — a decision nobody made and nothing displayed.
+    """
+    dubai_group, northern = uuid.uuid4(), uuid.uuid4()
+    midnight = dubai(0, 0, day=3)
+    db = _Session([_pending(midnight, dubai_group)])
 
     joined = await _open_batch(
-        db, outer, _match(window("Batch 2", "17:00", "24:00"), dubai(17, 0))
+        db, northern, _match(window("Batch 2", "17:00", "24:00"), midnight)
+    )
+
+    assert joined.group_id == northern, (
+        "the northern zones were folded into Dubai's van because the two "
+        "schedules happen to close on the same minute"
+    )
+
+
+async def test_zones_in_one_group_closing_at_different_times_do_not_share():
+    group = uuid.uuid4()
+    db = _Session([_pending(dubai(18, 0), group)])
+
+    joined = await _open_batch(
+        db, group, _match(window("Batch 2", "17:00", "24:00"), dubai(17, 0))
     )
 
     assert joined.dispatch_at == dubai(17, 0)
-    assert joined.polygon_id == outer
+    assert joined.group_id == group
 
 
-async def test_the_run_is_found_by_departure_time_not_by_zone():
+async def test_the_run_is_found_by_group_and_departure_together():
     db = _Session()
 
     await _open_batch(
@@ -353,9 +387,9 @@ async def test_the_run_is_found_by_departure_time_not_by_zone():
     )
 
     assert "dispatch_at_1" in db.params
-    assert not any("polygon" in key for key in db.params), (
-        "the lookup is filtering by zone again, so a shared departure would "
-        "open one run per zone"
+    assert "group_id_1" in db.params, (
+        "the lookup dropped the group, so two groups leaving on the same "
+        "minute would be merged onto one booking again"
     )
 
 
@@ -406,6 +440,12 @@ async def test_an_ordinary_order_joins_its_run(monkeypatch):
     monkeypatch.setattr(batching_service.lalamove_service, "get_delivery", get_delivery)
     monkeypatch.setattr(batching_service.lalamove_service, "is_enabled", lambda: True)
     monkeypatch.setattr(batching_service.courier_service, "dispatch", never)
+    # The zone is in a group. Without one it would dispatch on its own, which is
+    # the correct answer for a zone nobody put on a schedule and the wrong one
+    # here.
+    monkeypatch.setattr(
+        batching_service, "group_for_polygon", AsyncMock(return_value=uuid.uuid4())
+    )
     monkeypatch.setattr(
         batching_service,
         "active_windows",

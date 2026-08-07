@@ -10,32 +10,30 @@ from .base import Base, TimestampMixin, UUIDMixin
 
 class DeliverySettings(Base, UUIDMixin, TimestampMixin):
     """
-    The three delivery numbers that are not a property of any zone.
+    The delivery numbers that are genuinely not a property of any zone.
 
-    Expected to have exactly one row. It used to live beside the `Region` model
-    and was the only part of that file worth keeping: the threshold is
-    deliberately the same everywhere, pickup has no zone at all, and the
-    default is what a pin gets when it falls outside every shape on the map.
+    Expected to have exactly one row, and deliberately short. It used to hold a
+    national `free_delivery_threshold` and a `default_delivery_fee`, and both
+    were removed once every polygon carried its own: a second source of truth
+    for a number the map already answers is a number that is wrong wherever the
+    two disagree, and the admin was printing both under "applies to every zone"
+    while no zone used either.
+
+    What is left is what has no zone to belong to. Pickup happens at a counter,
+    so no polygon is involved. The small-order fee is about the fixed cost of
+    baking and boxing an order at all, which does not vary with where it goes —
+    the only genuinely national number here.
+
+    A pin outside every polygon is now **unserviceable** rather than charged a
+    default. The active map tiles the whole country, so "outside every zone"
+    means outside the country, and refusing is more honest than quoting a fee
+    for a delivery nobody has worked out how to make.
     """
 
     __tablename__ = "delivery_settings"
 
-    #: One number for the whole country — a threshold that moved with the
-    #: address would be the one place the delivery map became visible to the
-    #: customer. *Whether* it applies is a different question, and one the zone
-    #: answers: free delivery only reaches the zones we price ourselves, because
-    #: outside them there is no fee of ours to waive, only a courier bill that
-    #: does not shrink when the basket grows.
-    free_delivery_threshold: Mapped[Decimal] = mapped_column(
-        Numeric(10, 2), nullable=False, default=Decimal("150.00")
-    )
     pickup_fee: Mapped[Decimal] = mapped_column(
         Numeric(10, 2), nullable=False, default=Decimal("0.00")
-    )
-    #: Charged when a pin falls outside every zone on the active map — a real
-    #: address we have simply not drawn yet. Quoting nothing would be worse.
-    default_delivery_fee: Mapped[Decimal] = mapped_column(
-        Numeric(10, 2), nullable=False, default=Decimal("50.00"), server_default="50.00"
     )
     #: Charged on a delivery order whose goods come to no more than
     #: `low_order_threshold`. Nationwide, including the zones that deliver free —
@@ -55,4 +53,4 @@ class DeliverySettings(Base, UUIDMixin, TimestampMixin):
     )
 
     def __repr__(self) -> str:
-        return f"<DeliverySettings threshold={self.free_delivery_threshold}>"
+        return f"<DeliverySettings pickup={self.pickup_fee} low_order={self.low_order_fee}>"

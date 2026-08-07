@@ -6,7 +6,7 @@ import type { BatchWindow, BatchWindowWrite } from '@/lib/types';
 import { Button, Spinner } from '@/components/ui';
 
 /**
- * When a zone's orders travel together.
+ * When a group's zones travel together.
  *
  * Every time here is Dubai time, written and read the same way — no offsets,
  * no conversion. An order packed inside a window waits for the window to close
@@ -32,11 +32,11 @@ function blank(index: number): BatchWindowWrite {
 }
 
 interface Props {
-  zoneId: string;
+  groupId: string;
   zoneName: string;
 }
 
-export function BatchWindows({ zoneId, zoneName }: Props) {
+export function BatchWindows({ groupId, zoneName }: Props) {
   const [windows, setWindows] = useState<BatchWindow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -46,14 +46,14 @@ export function BatchWindows({ zoneId, zoneName }: Props) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setWindows(await deliveryZonesApi.listWindows(zoneId));
+      setWindows(await deliveryZonesApi.listWindows(groupId));
       setError('');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load the schedule.');
     } finally {
       setLoading(false);
     }
-  }, [zoneId]);
+  }, [groupId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -120,7 +120,7 @@ export function BatchWindows({ zoneId, zoneName }: Props) {
           {!windows.length && !draft && (
             <tr>
               <td colSpan={4} className="px-3 py-4 text-xs font-body text-gray-400">
-                No schedule. Every order in this zone is dispatched on its own,
+                No schedule. Every order in these zones is dispatched on its own,
                 at full single-run cost.
               </td>
             </tr>
@@ -128,9 +128,9 @@ export function BatchWindows({ zoneId, zoneName }: Props) {
           {draft && (
             <WindowRow
               editing
-              window={{ ...draft, id: 'new', polygon_id: zoneId, wraps_midnight: false }}
+              window={{ ...draft, id: 'new', group_id: groupId, wraps_midnight: false }}
               busy={busy}
-              onSave={data => run(() => deliveryZonesApi.createWindow(zoneId, data))}
+              onSave={data => run(() => deliveryZonesApi.createWindow(groupId, data))}
               onDelete={() => setDraft(null)}
             />
           )}

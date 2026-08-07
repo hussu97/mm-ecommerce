@@ -37,9 +37,14 @@ async function getDefaultDeliveryFee(): Promise<number> {
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return FALLBACK_DELIVERY_FEE;
-    const rates = await res.json();
-    const fee = Number(rates?.default_delivery_fee);
-    return Number.isFinite(fee) ? fee : FALLBACK_DELIVERY_FEE;
+    // `default_delivery_fee` used to come from `/delivery/rates` and is gone:
+    // a pin outside every zone is now unserviceable rather than charged a
+    // national number. This is structured data on a page rendered before any
+    // address exists, so it needs *a* figure — the constant is that figure, and
+    // the per-region table in `SHIPPING_BY_REGION` is what actually describes
+    // the ladder.
+    await res.json();
+    return FALLBACK_DELIVERY_FEE;
   } catch {
     return FALLBACK_DELIVERY_FEE;
   }

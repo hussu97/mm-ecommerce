@@ -16,6 +16,50 @@ const STATUS_STEPS: OrderStatus[] = [
   'delivered',
 ];
 
+/**
+ * Where each step's timestamp comes from.
+ *
+ * Only four of the five have a real one. `confirmed` has no stamp of its own —
+ * nothing records the moment payment cleared separately from the order being
+ * written — and inventing one from `updated_at` would be a number that moves
+ * every time anybody edits the order. Blank is the honest answer.
+ */
+const STEP_STAMP: Partial<Record<OrderStatus, (o: Order) => string>> = {
+  created: o => formatDateTime(o.created_at),
+  packed: o => (o.fulfilment?.packed_at ? formatDateTime(o.fulfilment.packed_at) : ''),
+  out_for_delivery: o =>
+    o.fulfilment?.picked_up_at ? formatDateTime(o.fulfilment.picked_up_at) : '',
+  delivered: o =>
+    o.fulfilment?.delivered_at ? formatDateTime(o.fulfilment.delivered_at) : '',
+};
+
+/**
+ * The promise, at the precision it was made at.
+ *
+ * `day` and `day_by` are a date and nothing else — a third party's van is not
+ * on our schedule, and printing an hour would borrow a precision we do not
+ * have. `exact` is a record of something that already happened rather than a
+ * promise, so it is not shown as one.
+ */
+function promisedFor(order: Order): string | null {
+  const f = order.fulfilment;
+  if (!f?.estimated_at || !f.precision || f.precision === 'exact') return null;
+  const at = new Date(f.estimated_at);
+  const date = at.toLocaleDateString('en-GB', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'Asia/Dubai',
+  });
+  if (f.precision === 'day') return date;
+  const time = at.toLocaleTimeString('en-GB', {
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: 'Asia/Dubai',
+  });
+  return f.precision === 'day_by' ? `${date}, before ${time}` : `${date}, ${time}`;
+}
+
 const STATUS_LABEL: Record<OrderStatus, string> = {
   created: 'created',
   confirmed: 'confirmed',
@@ -143,6 +187,14 @@ export default function OrderDetailPage() {
   const isCancelled = order.status === 'cancelled';
   const isUndelivered = order.status === 'undelivered';
   const currentStepIdx = STATUS_STEPS.indexOf(order.status as OrderStatus);
+  const promisedLabel = promisedFor(order);
+  // Built here rather than in the JSX so the guard and the URL stay together:
+  // a missing pin renders no button rather than a link to the middle of the sea.
+  const snapshot = order.shipping_address_snapshot;
+  const mapsHref =
+    snapshot?.latitude && snapshot?.longitude
+      ? `https://www.google.com/maps/search/?api=1&query=${snapshot.latitude},${snapshot.longitude}`
+      : null;
 
   return (
     <div className="max-w-3xl">
@@ -174,7 +226,18 @@ export default function OrderDetailPage() {
       {/* Status timeline */}
       {!isCancelled && !isUndelivered && (
         <div className="bg-white border border-gray-200 p-4 mb-4">
-          <p className="text-[11px] font-body uppercase tracking-widest text-gray-400 mb-3">Status</p>
+          <div className="flex items-baseline justify-between mb-3">
+            <p className="text-[11px] font-body uppercase tracking-widest text-gray-400">Status</p>
+            {/* The promise, rendered at the precision it was made at. A
+                third-party order has a date and no hour, and printing one would
+                borrow a precision belonging to somebody else's van. */}
+            {promisedLabel && (
+              <p className="text-[11px] font-body text-gray-500">
+                Estimated delivery{' '}
+                <span className="text-gray-800">{promisedLabel}</span>
+              </p>
+            )}
+          </div>
           <div className="flex items-center gap-0">
             {STATUS_STEPS.map((step, idx) => {
               const done = currentStepIdx >= idx;
@@ -189,6 +252,12 @@ export default function OrderDetailPage() {
                     </div>
                     <span className={cn('text-[10px] mt-1 font-body capitalize', done ? 'text-primary' : 'text-gray-400')}>
                       {STATUS_LABEL[step]}
+                    </span>
+                    {/* When it actually happened. A tick tells you an order got
+                        somewhere; the stamp tells you when, which is the
+                        question anyone opening this page at 9pm is asking. */}
+                    <span className="text-[9px] mt-0.5 font-body text-gray-400 text-center leading-tight min-h-[1.2em]">
+                      {STEP_STAMP[step]?.(order) ?? ''}
                     </span>
                   </div>
                   {idx < STATUS_STEPS.length - 1 && (
@@ -261,6 +330,20 @@ export default function OrderDetailPage() {
               <p>{order.shipping_address_snapshot.phone}</p>
               <p>{order.shipping_address_snapshot.address_line_1}</p>
               {order.shipping_address_snapshot.address_line_2 && <p>{order.shipping_address_snapshot.address_line_2}</p>}
+              {/* The pin, not the typed address. A UAE address line is often
+                  unsearchable — "villa 12, behind the mosque" is a real one —
+                  and the coordinates are what the courier is sent to. */}
+              {mapsHref && (
+                <a
+                  href={mapsHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-2 inline-flex items-center gap-1.5 border border-gray-300 px-2.5 py-1.5 text-[11px] font-body text-gray-700 hover:border-primary hover:text-primary transition-colors"
+                >
+                  <span className="material-icons text-[14px]">place</span>
+                  Open the pin in Google Maps
+                </a>
+              )}
             </div>
           )}
         </div>

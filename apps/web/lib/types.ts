@@ -412,10 +412,13 @@ export interface BlogPostListResponse {
  * text — which is the guess the zone map replaced.
  */
 export interface DeliveryRates {
-  free_threshold: number;
+  /**
+   * No `free_threshold` and no `default_delivery_fee`. Both were national
+   * numbers answering what every zone now answers for itself, so quoting them
+   * before there is a pin was quoting a figure true in none of the fifteen
+   * zones. The threshold arrives with the quote, once an address exists.
+   */
   pickup_fee: number;
-  /** Charged when a pin falls outside every zone we have drawn. */
-  default_delivery_fee: number;
   /** The small-basket surcharge. Zero switches it off. */
   low_order_fee: number;
   /**
@@ -454,7 +457,8 @@ export interface DeliveryQuote {
    * happen.
    */
   free_delivery_available: boolean;
-  free_threshold: number;
+  /** Null until a pin resolves to a zone — there is no national number now. */
+  free_threshold: number | null;
   /**
    * True while the threshold above is the national default standing in for a
    * zone we have not resolved yet — no pin dropped. Copy driven by it has to
