@@ -57,7 +57,7 @@ export function DeliveryPromiseBanner() {
   }
 
   // Nothing worth saying, so no strip at all. An empty bar with a lone
-  // "Change" button in it is furniture, not a promise.
+  // location button in it is furniture, not a promise.
   const text = message();
   if (!text) return null;
 
@@ -98,12 +98,12 @@ export function DeliveryPromiseBanner() {
           <button
             type="button"
             onClick={() => void requestBrowserLocation()}
-            className="ms-1 inline-flex items-center gap-1 shrink-0 font-body text-[10px] sm:text-[11px] uppercase tracking-[0.22em] underline underline-offset-4 hover:opacity-70 transition-opacity"
+            aria-label={t('usp.change_area')}
+            className="ms-1 inline-flex items-center shrink-0 hover:opacity-70 transition-opacity"
           >
             <span className="material-icons text-[14px]" aria-hidden="true">
               my_location
             </span>
-            {t('usp.change_area')}
           </button>
         )}
       </div>
