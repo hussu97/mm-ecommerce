@@ -5,6 +5,7 @@ import { useCart } from '@/lib/cart-context';
 import { useToast, QuantitySelector } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { analytics } from '@/lib/analytics';
+import { DeliveryEstimate } from '@/components/product/DeliveryEstimate';
 import { ModifierSelector, SelectedOption } from '@/components/product/ModifierSelector';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
@@ -72,6 +73,10 @@ export function ProductDetailATC({ product }: { product: Product }) {
         )}
         {(hasModifiers && !isValid ? minPrice : Number(totalPrice)).toFixed(2)} AED
       </span>
+
+      {/* Directly under the price, where a customer deciding to buy is already
+          looking, rather than further down with the shipping boilerplate. */}
+      <DeliveryEstimate variant="detail" />
 
       {/* Modifier selectors */}
       {hasModifiers && (

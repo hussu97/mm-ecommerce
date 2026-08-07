@@ -2,6 +2,7 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
+import { DeliveryEstimate } from '@/components/product/DeliveryEstimate';
 import { AddToCartControl } from '@/components/product/AddToCartControl';
 import { ProductBadge } from '@/components/product/ProductBadge';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
@@ -74,6 +75,11 @@ export function ProductCard({ product, badge }: { product: Product; badge?: stri
           <span className="font-body text-sm sm:text-base font-medium text-primary">
             {hasModifiers ? `${t('product.from')} ` : ''}{fromPrice.toFixed(2)} AED
           </span>
+
+          {/* Where it lands and how fast, read from the shared location
+              context so the card, the product page and the cart cannot show
+              three different promises on one journey. */}
+          <DeliveryEstimate />
 
           <AddToCartControl product={product} />
         </div>
