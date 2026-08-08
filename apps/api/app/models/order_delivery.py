@@ -178,6 +178,17 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
 
     # ── what we decided at checkout ───────────────────────────────────────────
     provider: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    #: Who the zone said would carry this, if that is no longer who is carrying
+    #: it. Null on the overwhelming majority of orders, which go out with the
+    #: courier they were priced against.
+    #:
+    #: Set when an admin moves a packed third-party order onto Lalamove. The
+    #: column above is the live answer and every dispatch path keys off it; this
+    #: is the record that the answer changed, which `provider` alone cannot hold
+    #: — once flipped, a reassigned order is indistinguishable from one that was
+    #: always Lalamove, and the two want different promises kept and different
+    #: things said on the admin card.
+    original_provider: Mapped[str | None] = mapped_column(String(20), nullable=True)
     #: The polygon that priced this order, by name, at the time it was placed.
     #: A snapshot: the map is versioned and the zone may be redrawn tomorrow.
     zone_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -274,13 +285,20 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
     pod_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # ── timeline ──────────────────────────────────────────────────────────────
+    #
+    # This is the *booking's* timeline, not the order's. `picked_up_at` and
+    # `delivered_at` used to sit here too and they did not belong: they were the
+    # same two moments `order_status_events` records as `out_for_delivery` and
+    # `delivered`, written by the same webhook a few lines apart, and read by
+    # different screens — so the customer's timeline and the admin's card were
+    # answering one question from two columns that were free to drift.
+    # `fulfilment_service.reached_at` is where both read from now.
+    #
+    # The three below stay because none of them is an order status. A booking is
+    # accepted, and separately called off — and a cancelled *booking* is routine
+    # on an order that is carrying on perfectly well, which is exactly why it
+    # cannot be folded into the order's own history.
     booked_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    picked_up_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    delivered_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     cancelled_at: Mapped[datetime | None] = mapped_column(
@@ -311,6 +329,11 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
     @property
     def is_booked(self) -> bool:
         return bool(self.courier_order_id)
+
+    @property
+    def was_reassigned(self) -> bool:
+        """This order is travelling with a courier its zone did not choose."""
+        return bool(self.original_provider) and self.original_provider != self.provider
 
     @property
     def is_waiting_for_a_batch(self) -> bool:

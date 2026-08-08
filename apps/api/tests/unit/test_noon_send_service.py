@@ -21,7 +21,10 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.models.order import OrderStatusEnum
+from sqlalchemy import inspect
+
+from app.models.order import Order, OrderStatusEnum
+from app.models.order_status_event import pending_events
 from app.models.order_delivery import OrderDelivery
 from app.services import noon_send_service
 from app.services.lalamove_service import PickupPoint
@@ -199,27 +202,45 @@ def test_distance_is_scaled_from_straight_line_by_the_measured_detour():
 # ── one push at a time ────────────────────────────────────────────────────────
 
 
+def _order(status: OrderStatusEnum) -> Order:
+    """A real `Order`, so the status listener fires.
+
+    The moments a courier reports are recorded in `order_status_events` rather
+    than in columns on `order_deliveries`, and the listener only sees an
+    assignment on an actual mapped instance — a `SimpleNamespace` would take the
+    write silently and record nothing. Starts with an empty history: building it
+    at a status is a transition too, and these tests are about the next one.
+    """
+    order = Order(id=uuid.uuid4(), status=status, order_number="MM-NS-1")
+    inspect(order).info.pop("pending_status_events", None)
+    return order
+
+
 @pytest.mark.asyncio
 async def test_collected_sends_the_order_out_for_delivery():
-    order = SimpleNamespace(id=uuid.uuid4(), status=OrderStatusEnum.PACKED)
+    order = _order(OrderStatusEnum.PACKED)
     delivery = _delivery()
     await noon_send_service.apply_webhook(
         _FakeDb(order), _push("picked_up", NOW + timedelta(minutes=5)), delivery
     )
     assert delivery.courier_status == "picked_up"
-    assert delivery.picked_up_at == NOW + timedelta(minutes=5)
     assert order.status == OrderStatusEnum.OUT_FOR_DELIVERY
+    # The collection moment lives in the order's history now, not in a column
+    # on `order_deliveries` — and it is theirs, not ours.
+    assert pending_events(order) and pending_events(order)[0][0] == "out_for_delivery"
+    assert pending_events(order)[0][3] == NOW + timedelta(minutes=5)
 
 
 @pytest.mark.asyncio
 async def test_delivered_closes_the_order():
-    order = SimpleNamespace(id=uuid.uuid4(), status=OrderStatusEnum.OUT_FOR_DELIVERY)
+    order = _order(OrderStatusEnum.OUT_FOR_DELIVERY)
     delivery = _delivery(courier_status="picked_up")
     await noon_send_service.apply_webhook(
         _FakeDb(order), _push("delivered", NOW + timedelta(minutes=30)), delivery
     )
     assert order.status == OrderStatusEnum.DELIVERED
-    assert delivery.delivered_at == NOW + timedelta(minutes=30)
+    assert pending_events(order)[0][0] == "delivered"
+    assert pending_events(order)[0][3] == NOW + timedelta(minutes=30)
 
 
 @pytest.mark.asyncio

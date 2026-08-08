@@ -18,7 +18,9 @@ from app.models import (
     OrderStatusEnum,
     PosOrderStatusEnum,
     PosTable,
+    StatusSourceEnum,
     Till,
+    acting_as,
 )
 from app.models.base import utcnow
 from app.models.user import User
@@ -682,7 +684,14 @@ async def mark_packed(
     # By order number, because that is what `update_status` takes — it reloads
     # the row with the load options the mailer needs, which is the difference
     # between an email that sends and a `MissingGreenlet` nobody sees.
-    await order_service.update_status(db, order.order_number, OrderStatusEnum.PACKED)
+    with acting_as(
+        StatusSourceEnum.POS.value,
+        actor_id=user.id,
+        actor_label=user.email,
+    ):
+        await order_service.update_status(
+            db, order.order_number, OrderStatusEnum.PACKED
+        )
 
     # Inline rather than in a background task, and awaited: this is the email
     # the customer is waiting for, and a background task can be dropped on a

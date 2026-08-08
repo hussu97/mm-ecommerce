@@ -27,6 +27,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
+from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.payment_transaction import (
     PaymentTransaction,
     PaymentTransactionStatusEnum,
@@ -564,21 +565,30 @@ async def _apply_event(db: AsyncSession, gateway: str, event: GatewayEvent) -> d
 
     _record_transaction(order, gateway, event)
 
-    if event.event_type is PaymentEventType.SUCCEEDED:
-        await _handle_payment_succeeded(db, order, event)
-    elif event.event_type is PaymentEventType.FAILED:
-        await _handle_payment_failed(db, order, event)
-    elif event.event_type is PaymentEventType.CANCELLED:
-        logger.info(
-            "Payment cancelled on %s for order %s — order left at %s",
-            gateway,
-            order.order_number,
-            order.status,
-        )
-    elif event.event_type is PaymentEventType.REFUNDED:
-        await _handle_refund(db, order, event)
-    elif event.event_type is PaymentEventType.DISPUTED:
-        await _handle_dispute(order, event)
+    # Four of the five branches below move the order's status, and this is the
+    # one place all of them pass through. Attributing here rather than at each
+    # assignment means a fifth branch is attributed correctly the day it is
+    # written, instead of quietly recording itself as `system`.
+    with acting_as(
+        StatusSourceEnum.PAYMENT.value,
+        actor_label=gateway,
+        note=event.raw_type,
+    ):
+        if event.event_type is PaymentEventType.SUCCEEDED:
+            await _handle_payment_succeeded(db, order, event)
+        elif event.event_type is PaymentEventType.FAILED:
+            await _handle_payment_failed(db, order, event)
+        elif event.event_type is PaymentEventType.CANCELLED:
+            logger.info(
+                "Payment cancelled on %s for order %s — order left at %s",
+                gateway,
+                order.order_number,
+                order.status,
+            )
+        elif event.event_type is PaymentEventType.REFUNDED:
+            await _handle_refund(db, order, event)
+        elif event.event_type is PaymentEventType.DISPUTED:
+            await _handle_dispute(order, event)
 
     return {
         "applied": True,

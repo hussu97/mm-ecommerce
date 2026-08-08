@@ -42,8 +42,9 @@ const STEP_ICON: Record<FulfilmentStage, string> = {
  */
 function formatMoment(
   iso: string,
-  precision: 'time' | 'day' | 'exact' | null,
+  precision: Fulfilment['precision'],
   locale: string,
+  t: (key: string, vars?: Record<string, string>) => string,
 ): string {
   const date = new Date(iso);
   const tz = 'Asia/Dubai';
@@ -61,6 +62,21 @@ function formatMoment(
     minute: '2-digit',
     timeZone: tz,
   }).format(date);
+
+  // A bound, not an appointment. Somebody else's van is not on our schedule, so
+  // the honest shape is "before 10 PM" — the same sentence the confirmation
+  // email and the admin screen have always rendered for this precision.
+  //
+  // `t` returns the key itself when a translation is missing, and this key is
+  // new: between the API deploying and `seed_i18n` running, asking for it gets
+  // back the literal `order.estimate_by_time`. Falling back to the date on its
+  // own is the safe miss — it under-promises rather than printing a key, and
+  // never turns into an hour the customer was not given.
+  if (precision === 'day_by') {
+    const phrase = t('order.estimate_by_time', { day, time });
+    return phrase.includes(day) ? phrase : day;
+  }
+
   return `${day}, ${time}`;
 }
 
@@ -156,7 +172,9 @@ export function FulfilmentPanel({
   const estimateNote =
     stage === 'on_the_way'
       ? t('order.estimate_note_rider')
-      : precision === 'day' && stage !== 'delivered' && stage !== 'collected'
+      : (precision === 'day' || precision === 'day_by') &&
+          stage !== 'delivered' &&
+          stage !== 'collected'
         ? t('order.estimate_note_day')
         : '';
 
@@ -179,7 +197,7 @@ export function FulfilmentPanel({
             {estimateLabel}
           </p>
           <p className="font-display text-xl text-primary leading-tight">
-            {formatMoment(estimated_at, precision, locale)}
+            {formatMoment(estimated_at, precision, locale, t)}
           </p>
           {estimateNote && <p className="text-sm text-gray-500 font-body mt-1.5">{estimateNote}</p>}
         </div>
@@ -232,7 +250,7 @@ export function FulfilmentPanel({
                   </span>
                   {done && when && (
                     <span className="text-xs font-body text-gray-400">
-                      {formatMoment(when, 'time', locale)}
+                      {formatMoment(when, 'time', locale, t)}
                     </span>
                   )}
                 </li>

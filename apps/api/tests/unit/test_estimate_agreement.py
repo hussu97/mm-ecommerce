@@ -83,14 +83,19 @@ def _order(status, **over):
 
 
 def _delivery(**over):
+    """A stand-in for the `order_deliveries` row.
+
+    `picked_up_at` and `delivered_at` are not here: they were a second copy of
+    two moments `order_status_events` now holds, and the history is the source.
+    Tests that need them pass `reached=` to `for_order`.
+    """
     base = dict(
         provider="lalamove",
+        original_provider=None,
         courier_status=None,
         share_link=None,
         batch=None,
         dispatchable_at=None,
-        picked_up_at=None,
-        delivered_at=None,
     )
     base.update(over)
     return SimpleNamespace(**base)
@@ -123,12 +128,10 @@ async def test_a_collected_order_counts_from_the_collection_less_the_allowance()
     """
     picked_up = NOW - timedelta(minutes=5)
     result = await fulfilment_service.for_order(
-        _Db(
-            _delivery(provider="noon_send", picked_up_at=picked_up),
-            courier=NOON_SEND,
-        ),
+        _Db(_delivery(provider="noon_send"), courier=NOON_SEND),
         _order(OrderStatusEnum.OUT_FOR_DELIVERY),
         now=NOW,
+        reached={"out_for_delivery": picked_up},
     )
     assert result.estimated_at == picked_up.astimezone(TZ) + timedelta(minutes=50)
 
@@ -141,12 +144,10 @@ async def test_an_estimate_never_renders_in_the_past():
     """
     picked_up = NOW - timedelta(hours=3)
     result = await fulfilment_service.for_order(
-        _Db(
-            _delivery(provider="noon_send", picked_up_at=picked_up),
-            courier=NOON_SEND,
-        ),
+        _Db(_delivery(provider="noon_send"), courier=NOON_SEND),
         _order(OrderStatusEnum.OUT_FOR_DELIVERY),
         now=NOW,
+        reached={"out_for_delivery": picked_up},
     )
     assert result.estimated_at > NOW.astimezone(TZ)
 

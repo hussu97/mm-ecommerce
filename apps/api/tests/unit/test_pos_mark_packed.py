@@ -31,6 +31,11 @@ pytestmark = pytest.mark.asyncio
 def _user(*permissions: str) -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid.uuid4(),
+        # Read when the packed transition is attributed to this cashier in
+        # `order_status_events`. A stand-in has to carry every field the code
+        # touches, or the omission surfaces as an `AttributeError` in whichever
+        # test happens to run first rather than as a missing column.
+        email="cashier@meltingmoments.test",
         is_admin=False,
         can=lambda permission: permission in permissions,
     )

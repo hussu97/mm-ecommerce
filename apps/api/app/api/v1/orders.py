@@ -16,6 +16,7 @@ from app.core.deps import (
     get_optional_user,
 )
 from app.models.order import Order, OrderStatusEnum
+from app.models.order_status_event import OrderStatusEvent, StatusSourceEnum, acting_as
 from app.models.order_delivery import OrderDelivery
 from app.models.user import User
 from app.schemas.fulfilment import FulfilmentResponse
@@ -82,6 +83,9 @@ class OrderDeliveryResponse(BaseModel):
     pod_status: str | None
     pod_image_url: str | None
     booked_at: datetime | None
+    #: When the parcel was collected and when it arrived. From the order's own
+    #: history rather than from `order_deliveries`, which used to hold its own
+    #: copy of both — see the timeline comment on the model.
     picked_up_at: datetime | None
     delivered_at: datetime | None
     cancelled_at: datetime | None
@@ -89,8 +93,20 @@ class OrderDeliveryResponse(BaseModel):
     last_error: str | None
     needs_attention: bool
 
+    #: Whether an admin moved this order off the courier its zone chose, and
+    #: who that was. Null on the overwhelming majority.
+    original_provider: str | None = None
+
     @classmethod
-    def of(cls, d: OrderDelivery) -> "OrderDeliveryResponse":
+    def of(
+        cls,
+        d: OrderDelivery,
+        reached: dict[str, datetime] | None = None,
+    ) -> "OrderDeliveryResponse":
+        """*reached* is `fulfilment_service.reached_at` — when the order hit each
+        status. Optional so a caller that only wants the courier and the cost
+        need not pay for the query; the two timestamps are then null."""
+        reached = reached or {}
         cost = d.cost_total if d.cost_total is not None else d.quoted_cost
         margin = (
             float(d.fee_charged) - float(cost)
@@ -116,12 +132,13 @@ class OrderDeliveryResponse(BaseModel):
             pod_status=d.pod_status,
             pod_image_url=d.pod_image_url,
             booked_at=d.booked_at,
-            picked_up_at=d.picked_up_at,
-            delivered_at=d.delivered_at,
+            picked_up_at=reached.get(OrderStatusEnum.OUT_FOR_DELIVERY.value),
+            delivered_at=reached.get(OrderStatusEnum.DELIVERED.value),
             cancelled_at=d.cancelled_at,
             cancel_reason=d.cancel_reason,
             last_error=d.last_error,
             needs_attention=d.needs_attention,
+            original_provider=d.original_provider,
         )
 
 
@@ -229,7 +246,8 @@ async def refresh_order_delivery(
         )
 
     return OrderDeliveryResponse.of(
-        await noon_send_service.refresh(db, order.id) or delivery
+        await noon_send_service.refresh(db, order.id) or delivery,
+        await fulfilment_service.reached_at(db, order),
     )
 
 
@@ -328,9 +346,15 @@ async def update_order_status(
     old_order = await order_service.get_by_order_number(db, order_number, admin=True)
     old_status = old_order.status.value
 
-    order = await order_service.update_status(
-        db, order_number, data.status, data.admin_notes
-    )
+    with acting_as(
+        StatusSourceEnum.ADMIN.value,
+        actor_id=admin.id,
+        actor_label=admin.email,
+        note=data.admin_notes,
+    ):
+        order = await order_service.update_status(
+            db, order_number, data.status, data.admin_notes
+        )
 
     # Send email inline (never raises — safe to await before response).
     # Background tasks can be silently dropped on Cloud Run / serverless.
@@ -382,7 +406,11 @@ async def get_order_delivery(
     _admin: User = Depends(get_admin_user),
 ):
     """Who is carrying this order, where it is, and what it cost us."""
-    return OrderDeliveryResponse.of(await _load_delivery(db, order_number))
+    order = await _load_order(db, order_number)
+    return OrderDeliveryResponse.of(
+        await _load_delivery(db, order_number),
+        await fulfilment_service.reached_at(db, order),
+    )
 
 
 @router.post("/{order_number}/delivery/dispatch", response_model=OrderDeliveryResponse)
@@ -422,4 +450,276 @@ async def dispatch_order_delivery(
         },
         request=request,
     )
-    return OrderDeliveryResponse.of(delivery)
+    return OrderDeliveryResponse.of(
+        delivery, await fulfilment_service.reached_at(db, order)
+    )
+
+
+# ── moving a third-party order onto Lalamove (admin only) ─────────────────────
+
+
+class LalamoveQuoteResponse(BaseModel):
+    """What it would cost us to put this order on a courier we book.
+
+    Everything an admin needs to decide, and the reason it is two endpoints:
+    they are agreeing to `cost`, and `assign` will only book at the
+    `quotation_id` that produced it.
+    """
+
+    quotation_id: str
+    cost: float
+    currency: str
+    distance_m: int | None
+    #: Five minutes from now, in practice. Shown so the dialog can say the price
+    #: has gone stale rather than only finding out when the booking is refused.
+    expires_at: datetime | None
+    #: What the customer actually paid for delivery. The quote does not change
+    #: it — see `assign_order_to_lalamove`.
+    fee_charged: float | None
+    #: `fee_charged - cost`. Negative means this delivery loses money, which is
+    #: a decision for the person pressing the button rather than a reason to
+    #: refuse.
+    margin: float | None
+
+
+async def _load_order(db: AsyncSession, order_number: str) -> Order:
+    order = (
+        (await db.execute(select(Order).where(Order.order_number == order_number)))
+        .scalars()
+        .first()
+    )
+    if order is None:
+        raise HTTPException(404, f"Order '{order_number}' not found")
+    return order
+
+
+def _quote_response(
+    quote: lalamove_service.ReassignQuote, delivery: OrderDelivery
+) -> LalamoveQuoteResponse:
+    fee = float(delivery.fee_charged) if delivery.fee_charged is not None else None
+    cost = float(quote.estimate.cost)
+    return LalamoveQuoteResponse(
+        quotation_id=quote.estimate.quotation_id or "",
+        cost=cost,
+        currency=quote.estimate.currency,
+        distance_m=quote.estimate.distance_m,
+        expires_at=quote.expires_at,
+        fee_charged=fee,
+        margin=None if fee is None else fee - cost,
+    )
+
+
+def _assert_assignable(order: Order, delivery: OrderDelivery) -> None:
+    """
+    Whether this order may be handed to Lalamove at all.
+
+    `packed` and nothing else. Earlier is wrong because the box does not exist
+    yet and a driver would arrive at a kitchen still baking. Later is wrong
+    because somebody has already sent it out with the third party, and booking a
+    second courier for a parcel that has left is worse than the problem this
+    solves.
+
+    `packed` is also what keeps the emails right. `should_send_packed` suppresses
+    the packed email for a courier-managed order on the grounds that the
+    out-for-delivery one is the real news — so flipping the provider *before*
+    that decision was made would silence an email the customer should have had.
+    By the time we get here it has been sent.
+    """
+    if order.status != OrderStatusEnum.PACKED:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"An order that is {order.status.value} cannot be assigned to a "
+            "courier — only a packed one can.",
+        )
+    if delivery.provider != FulfilmentProviderEnum.THIRD_PARTY.value:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"This order is already carried by {delivery.provider}.",
+        )
+    if delivery.courier_order_id:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This order already has a courier booking.",
+        )
+    if not lalamove_service.is_enabled():
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "The courier is not configured, so this order cannot be assigned to it.",
+        )
+
+
+@router.post(
+    "/{order_number}/delivery/lalamove/quote", response_model=LalamoveQuoteResponse
+)
+async def quote_lalamove_for_order(
+    order_number: str,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    """
+    What Lalamove would charge to carry this third-party order.
+
+    Reads nothing and writes nothing — it exists so a human sees the number
+    before any money is spent. The quotation is valid for five minutes and
+    `assign` will only book at this exact one.
+    """
+    order = await _load_order(db, order_number)
+    delivery = await _load_delivery(db, order_number)
+    _assert_assignable(order, delivery)
+
+    quote, error = await lalamove_service.quote_for_order(db, order)
+    if quote is None:
+        # 502 rather than 500: this is the courier declining or unreachable, and
+        # the message is written for the admin reading it, not for a log.
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, error or "No price available")
+    return _quote_response(quote, delivery)
+
+
+class LalamoveAssignRequest(BaseModel):
+    #: The id from the quote the admin just agreed to. Required, and checked,
+    #: so a client cannot book at a price nobody was shown.
+    quotation_id: str
+
+
+@router.post(
+    "/{order_number}/delivery/lalamove/assign", response_model=OrderDeliveryResponse
+)
+async def assign_order_to_lalamove(
+    order_number: str,
+    data: LalamoveAssignRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+):
+    """
+    Hand this packed third-party order to Lalamove, at the price just quoted.
+
+    **The customer's delivery fee does not change.** They paid the zone's
+    published fee and that is what they paid; the quote is our cost. It lands in
+    `quoted_cost` / `cost_total`, and the difference shows as `margin` — which
+    is the number the person pressing the button is accepting, and the only one
+    that moves.
+
+    From here the order is on the existing Lalamove path. Its status updates
+    arrive over the webhook, the customer gets the out-for-delivery email with a
+    live tracking link, and nothing further is manual.
+
+    A lapsed quotation is a **409 carrying the new price**, not a silent
+    re-book: five minutes is easy to miss and the whole point of the two steps
+    is that a person agreed to a figure.
+    """
+    order = await _load_order(db, order_number)
+    delivery = await _load_delivery(db, order_number)
+    _assert_assignable(order, delivery)
+
+    quote, error = await lalamove_service.quote_for_order(db, order)
+    if quote is None:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, error or "No price available")
+
+    # The quotation moves on every call, so this cannot compare ids and expect a
+    # match — it compares what was agreed against what is available now. Same
+    # price, book it; different price, show the new one and ask again.
+    if quote.estimate.quotation_id != data.quotation_id:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    "The quoted price has expired. Here is the current one — "
+                    "confirm again to book."
+                ),
+                "quote": _quote_response(quote, delivery).model_dump(mode="json"),
+            },
+        )
+
+    try:
+        delivery = await lalamove_service.assign_and_dispatch(db, order, quote=quote)
+    except lalamove_service.QuotationExpired:
+        # It lapsed between our quote and the booking. Nothing was written.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "message": "The quoted price expired before the booking. Try again.",
+            },
+        ) from None
+
+    await audit_service.log_action(
+        db,
+        action="UPDATE",
+        entity_type="order_delivery",
+        entity_id=order_number,
+        entity_label=order_number,
+        admin=admin,
+        changes={
+            "provider": {
+                "from": delivery.original_provider,
+                "to": delivery.provider,
+            },
+            "quoted_cost": (
+                float(delivery.quoted_cost)
+                if delivery.quoted_cost is not None
+                else None
+            ),
+            "courier_reference": delivery.courier_reference,
+            "courier_order_id": delivery.courier_order_id,
+            "error": delivery.last_error,
+        },
+        request=request,
+    )
+    if delivery.last_error:
+        # The provider has been put back, so the order is still deliverable by
+        # hand. Reported as a failure rather than returned as a success with an
+        # error field the UI might not read.
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, delivery.last_error)
+    return OrderDeliveryResponse.of(
+        delivery, await fulfilment_service.reached_at(db, order)
+    )
+
+
+class OrderStatusEventResponse(BaseModel):
+    """One transition, with who caused it. **Admin only.**
+
+    Separate from the `status_history` on `OrderResponse` for the same reason
+    `OrderDeliveryResponse` is separate from it: that model goes to the
+    customer, and who moved their order and from which register is not theirs.
+    """
+
+    status: str
+    previous_status: str | None
+    at: datetime
+    source: str
+    actor_label: str | None
+    note: str | None
+
+
+@router.get(
+    "/{order_number}/status-events", response_model=list[OrderStatusEventResponse]
+)
+async def list_order_status_events(
+    order_number: str,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    """Every status this order has been through, oldest first, and who moved it."""
+    order = await _load_order(db, order_number)
+    rows = (
+        (
+            await db.execute(
+                select(OrderStatusEvent)
+                .where(OrderStatusEvent.order_id == order.id)
+                .order_by(OrderStatusEvent.at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        OrderStatusEventResponse(
+            status=row.status,
+            previous_status=row.previous_status,
+            at=row.at,
+            source=row.source,
+            actor_label=row.actor_label,
+            note=row.note,
+        )
+        for row in rows
+    ]

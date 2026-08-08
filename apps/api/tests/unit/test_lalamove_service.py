@@ -18,7 +18,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.models.order import OrderStatusEnum
+from app.models.order import Order, OrderStatusEnum
+from app.models.order_status_event import pending_events
+from sqlalchemy import inspect
 from app.models.order_delivery import OrderDelivery
 from app.services import batching_service, lalamove_service
 
@@ -59,8 +61,23 @@ def _delivery(**overrides) -> OrderDelivery:
     return delivery
 
 
-def _order(status=OrderStatusEnum.PACKED):
-    return SimpleNamespace(id=uuid.uuid4(), status=status, order_number="MM-1")
+def _order(status=OrderStatusEnum.PACKED) -> Order:
+    """A real `Order`, not a stand-in.
+
+    The status listener in `order_status_event` fires on attribute assignment,
+    so a `SimpleNamespace` would take `order.status = DELIVERED` silently and
+    record nothing — and the moment a courier reports is now kept in that
+    history rather than in a column on `order_deliveries`. `pending_events`
+    reads it back without needing a flush.
+    """
+    order = Order(id=uuid.uuid4(), status=status, order_number="MM-1")
+    # Building it *at* this status is itself a transition, and the listener
+    # rightly notes it. These tests are about what the webhook does next, so the
+    # order starts with an empty history — the equivalent of one loaded from the
+    # database rather than one just written.
+    pending_events(order).clear()
+    inspect(order).info.pop("pending_status_events", None)
+    return order
 
 
 def _event(status: str, *, at: datetime = NOW, previous: str = "ON_GOING") -> dict:
@@ -98,8 +115,8 @@ async def test_pickup_puts_the_order_on_the_way():
         _FakeDb(order), _event("PICKED_UP", at=NOW + timedelta(minutes=5)), delivery
     )
     assert delivery.courier_status == "PICKED_UP"
-    assert delivery.picked_up_at is not None
     assert order.status == OrderStatusEnum.OUT_FOR_DELIVERY
+    assert [e[0] for e in pending_events(order)] == ["out_for_delivery"]
 
 
 async def test_completion_marks_the_order_delivered():
@@ -110,8 +127,8 @@ async def test_completion_marks_the_order_delivered():
         _event("COMPLETED", at=NOW + timedelta(minutes=30), previous="PICKED_UP"),
         delivery,
     )
-    assert delivery.delivered_at is not None
     assert order.status == OrderStatusEnum.DELIVERED
+    assert [e[0] for e in pending_events(order)] == ["delivered"]
 
 
 @pytest.mark.parametrize("status", ["CANCELED", "REJECTED", "EXPIRED"])
@@ -169,10 +186,13 @@ async def test_replaying_the_same_event_changes_nothing():
     event = _event("PICKED_UP", at=NOW + timedelta(minutes=5))
 
     await lalamove_service.apply_webhook(_FakeDb(order), event, delivery)
-    first_pickup = delivery.picked_up_at
+    first = pending_events(order)
     await lalamove_service.apply_webhook(_FakeDb(order), event, delivery)
 
-    assert delivery.picked_up_at == first_pickup
+    # The second pass finds the order already `out_for_delivery`, so there is no
+    # transition to record — one row, not two, and the stamp is the first one.
+    assert pending_events(order) == first
+    assert [e[0] for e in first] == ["out_for_delivery"]
     assert order.status == OrderStatusEnum.OUT_FOR_DELIVERY
 
 
@@ -439,6 +459,12 @@ async def test_a_completion_is_stamped_when_it_happened():
         _FakeDb(order), _event("COMPLETED", at=completed_at), delivery
     )
 
-    assert delivery.delivered_at == completed_at, (
-        "delivered_at drifted — the local-time `updatedAt` is being read again"
+    # The moment recorded in the order's history is the courier's, to the
+    # second — not ours, and not the four-hours-ahead local time their
+    # `updatedAt` string carries.
+    recorded = pending_events(order)
+    assert [e[0] for e in recorded] == ["delivered"]
+    assert recorded[0][3] == completed_at, (
+        "the delivered stamp drifted — the local-time `updatedAt` is being "
+        "read again in place of the epoch"
     )

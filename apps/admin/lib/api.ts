@@ -10,6 +10,7 @@ import type {
   BatchWindow, BatchWindowWrite, DeliveryBatch, DeliveryZoneMap,
   PaginatedWebhookLogs, WebhookLogDetail, WebhookLogFacets,
   PaymentGateway, PaymentGatewayUpdate,
+  LalamoveQuote, OrderStatusEvent,
 } from './types';
 import type {
   PublicKeyCredentialCreationOptionsJSON,
@@ -21,7 +22,20 @@ export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:800
 // ─── Error ────────────────────────────────────────────────────────────────────
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  /**
+   * FastAPI's `detail`, verbatim, when it is not a plain string.
+   *
+   * Most endpoints raise `HTTPException(400, "some sentence")` and `message` is
+   * the whole answer. A few carry structure — an expired Lalamove quotation
+   * comes back as `{message, quote}` so the dialog can show the new price
+   * instead of asking again blind — and `super(message)` would stringify that
+   * to `[object Object]`.
+   */
+  constructor(
+    public status: number,
+    message: string,
+    public detail?: unknown,
+  ) {
     super(message);
     this.name = 'ApiError';
   }
@@ -62,7 +76,12 @@ async function request<T>(path: string, options: RequestInit = {}, _retry = true
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-    throw new ApiError(res.status, body.detail || `HTTP ${res.status}`);
+    const detail = body.detail;
+    const message =
+      typeof detail === 'string'
+        ? detail
+        : (detail?.message as string) || `HTTP ${res.status}`;
+    throw new ApiError(res.status, message, detail);
   }
 
   if (res.status === 204) return undefined as T;
@@ -248,6 +267,31 @@ export const ordersApi = {
    */
   refreshDelivery: (orderNumber: string) =>
     api.post<OrderDelivery>(`/orders/${orderNumber}/delivery/refresh`),
+
+  /**
+   * What Lalamove would charge to carry this packed third-party order.
+   *
+   * Reads nothing and books nothing — it exists so a human sees the number
+   * before any money moves. Valid five minutes; `assignLalamove` books at this
+   * exact quotation or refuses.
+   */
+  quoteLalamove: (orderNumber: string) =>
+    api.post<LalamoveQuote>(`/orders/${orderNumber}/delivery/lalamove/quote`),
+
+  /**
+   * Hand the order to Lalamove at the price just quoted.
+   *
+   * A 409 means the quote lapsed; its `detail.quote` carries the current price
+   * to re-confirm against.
+   */
+  assignLalamove: (orderNumber: string, quotationId: string) =>
+    api.post<OrderDelivery>(`/orders/${orderNumber}/delivery/lalamove/assign`, {
+      quotation_id: quotationId,
+    }),
+
+  /** Every status this order has been through, and who moved it. */
+  statusEvents: (orderNumber: string) =>
+    api.get<OrderStatusEvent[]>(`/orders/${orderNumber}/status-events`),
 };
 
 // ─── Delivery zones ───────────────────────────────────────────────────────────

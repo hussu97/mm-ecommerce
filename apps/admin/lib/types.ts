@@ -217,6 +217,15 @@ export interface Order {
    * looking at one answer rather than two derivations of it.
    */
   fulfilment: OrderFulfilment | null;
+  /**
+   * When this order reached each status, oldest first, one entry per status.
+   *
+   * The timeline's only source. It used to read `created_at` for step one and
+   * borrow the rest from `order_deliveries`, which only an integrated courier
+   * ever fills — so a pickup order, a third-party zone or anything walked
+   * through by hand showed one stamp and four blanks.
+   */
+  status_history: OrderStatusStamp[];
   payment_method: string | null;
   payment_provider: string | null;
   payment_id: string | null;
@@ -245,6 +254,12 @@ export interface PaginatedOrders {
   page: number;
   per_page: number;
   pages: number;
+}
+
+/** When an order reached one status. */
+export interface OrderStatusStamp {
+  status: OrderStatus;
+  at: string;
 }
 
 /** What `fulfilment_service` knows about where an order has got to. */
@@ -665,6 +680,11 @@ export interface DeliveryZoneSummary {
  */
 export interface OrderDelivery {
   provider: FulfilmentProvider;
+  /**
+   * Who the zone originally chose, when that is no longer who is carrying it.
+   * Null on all but an order an admin moved onto Lalamove by hand.
+   */
+  original_provider: FulfilmentProvider | null;
   zone_name: string | null;
   fee_charged: number | null;
   quoted_cost: number | null;
@@ -690,6 +710,31 @@ export interface OrderDelivery {
   cancel_reason: string | null;
   last_error: string | null;
   needs_attention: boolean;
+}
+
+/** What Lalamove would charge to carry a third-party order, and the margin. */
+export interface LalamoveQuote {
+  quotation_id: string;
+  cost: number;
+  currency: string;
+  distance_m: number | null;
+  /** Five minutes out. Past it the booking is refused and we re-quote. */
+  expires_at: string | null;
+  /** What the customer paid. Assigning does not change it. */
+  fee_charged: number | null;
+  /** `fee_charged - cost`. Negative means this delivery loses money. */
+  margin: number | null;
+}
+
+/** One transition, with who caused it. Admin only. */
+export interface OrderStatusEvent {
+  status: OrderStatus;
+  previous_status: OrderStatus | null;
+  at: string;
+  /** `checkout | admin | pos | payment | courier | system | backfill` */
+  source: string;
+  actor_label: string | null;
+  note: string | null;
 }
 
 export interface DeliverySettings {

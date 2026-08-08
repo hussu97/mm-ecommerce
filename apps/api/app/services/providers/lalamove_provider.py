@@ -79,6 +79,18 @@ class LalamoveError(RuntimeError):
     def is_insufficient_credit(self) -> bool:
         return self.error_id == "ERR_INSUFFICIENT_CREDIT"
 
+    @property
+    def is_expired_quotation(self) -> bool:
+        """The five minutes ran out before the quotation was used.
+
+        Its own predicate because it is the one failure that is not a fault:
+        somebody was shown a price and took too long to agree to it. The caller
+        re-quotes and asks again rather than treating it as an error, and doing
+        that on a string match at the call site is how it would eventually be
+        confused with a genuinely invalid id.
+        """
+        return self.error_id == "ERR_INVALID_QUOTATION_ID"
+
 
 def sign(secret: str, *, timestamp: str, method: str, path: str, body: str) -> str:
     """The HMAC Lalamove expects, for both outbound calls and inbound webhooks."""
@@ -397,14 +409,41 @@ def _unwrap(response: httpx.Response) -> dict[str, Any] | None:
     if response.is_success:
         return payload.get("data", payload)
 
+    # Two shapes, and only one of them was being read.
+    #
+    # Their order endpoints answer `{"errors": [{"id", "message", "detail"}]}`.
+    # Their **quotation** endpoint answers `{"message": "ERR_OUT_OF_SERVICE_AREA"}`
+    # — the code is the message, and there is no `errors` array at all. So every
+    # predicate hanging off `error_id` was silently false for the one call that
+    # produces them most: checkout told a customer "Courier quote failed" for an
+    # address that was simply outside the service area, and `batching_service`
+    # kept retrying dispatches that could never succeed.
     errors = payload.get("errors") or []
     first = errors[0] if errors else {}
-    error_id = first.get("id")
-    message = first.get("message") or first.get("detail") or response.text[:200]
+    message = (
+        first.get("message")
+        or first.get("detail")
+        or payload.get("message")
+        or response.text[:200]
+    )
+    error_id = first.get("id") or _error_code(payload.get("message"))
     logger.warning("Lalamove %s: %s %s", response.status_code, error_id or "-", message)
     raise LalamoveError(
         f"Lalamove: {message}", status=response.status_code, error_id=error_id
     )
+
+
+def _error_code(message: Any) -> str | None:
+    """Their machine-readable code, when the whole message *is* the code.
+
+    Deliberately narrow: only a bare `ERR_...` token counts. A sentence that
+    happens to mention one is prose, and treating it as an id would let a
+    changed error message start driving retry decisions.
+    """
+    if not isinstance(message, str):
+        return None
+    token = message.strip()
+    return token if token.startswith("ERR_") and " " not in token else None
 
 
 def _raw_value(text: str, key: str) -> str | None:

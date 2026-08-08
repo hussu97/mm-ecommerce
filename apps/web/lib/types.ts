@@ -188,8 +188,17 @@ export interface Fulfilment {
   stage: FulfilmentStage;
   /** When to expect it. Null when there is nothing honest to promise. */
   estimated_at: string | null;
-  /** `time` — an hour; `day` — a date only; `exact` — it already happened. */
-  precision: 'time' | 'day' | 'exact' | null;
+  /**
+   * `time` — an hour; `day` — a date only; `day_by` — a date bounded by an
+   * hour ("before 10 PM"); `exact` — it already happened.
+   *
+   * `day_by` was missing here and from `formatMoment`, so it fell through to
+   * the date-and-time branch and the storefront rendered "Wed 12 Aug, 10:00 PM"
+   * — an appointment — where the email and the admin both said "before
+   * 10:00 PM". The API has been sending it for as long as third-party zones
+   * have existed.
+   */
+  precision: 'time' | 'day' | 'day_by' | 'exact' | null;
   /** The courier's live map, once a rider is actually carrying the order. */
   tracking_url: string | null;
   /** Whether a rider we hear back from carries this — decides what we promise. */

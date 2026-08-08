@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.core.deps import get_current_active_user, get_db
 from app.core.limiter import limiter
+from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.user import User
 from app.services import payment_service
 from app.services.webhook_log_service import Recorder
@@ -87,13 +88,23 @@ async def create_payment_session(
     used to take an optional user it never read, which left confirming a
     stranger's pickup order as `cod` a matter of guessing an order number.
     """
-    result = await payment_service.create_session(
-        db,
-        data.order_number,
-        data.payment_method,
-        user_id=current_user.id,
-        admin=current_user.is_admin,
-    )
+    # `create_session` moves the status three ways — a retry back to `created`,
+    # a zero-total order straight to `confirmed`, and a cash pickup the same —
+    # and all three are the customer finishing checkout rather than anything
+    # automated. Attributed at the door, where the caller is known.
+    with acting_as(
+        StatusSourceEnum.CHECKOUT.value,
+        actor_id=current_user.id,
+        actor_label=current_user.email,
+        note=data.payment_method,
+    ):
+        result = await payment_service.create_session(
+            db,
+            data.order_number,
+            data.payment_method,
+            user_id=current_user.id,
+            admin=current_user.is_admin,
+        )
     return CreateSessionResponse(**result)
 
 

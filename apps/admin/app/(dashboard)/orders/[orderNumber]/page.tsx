@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { ordersApi, ApiError } from '@/lib/api';
-import type { Order, OrderDelivery, OrderStatus } from '@/lib/types';
+import type { LalamoveQuote, Order, OrderDelivery, OrderStatus } from '@/lib/types';
 import { Badge, Button } from '@/components/ui';
 import { cn, formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
 
@@ -17,21 +17,23 @@ const STATUS_STEPS: OrderStatus[] = [
 ];
 
 /**
- * Where each step's timestamp comes from.
+ * When this order reached a given step, or '' if it never did.
  *
- * Only four of the five have a real one. `confirmed` has no stamp of its own —
- * nothing records the moment payment cleared separately from the order being
- * written — and inventing one from `updated_at` would be a number that moves
- * every time anybody edits the order. Blank is the honest answer.
+ * One source: the order's own status history. It used to be four separate
+ * lookups — `created_at` for the first step and three columns on
+ * `order_deliveries` for the rest — and those three are courier telemetry, so
+ * a pickup order, a third-party zone or an order somebody walked through by
+ * hand filled in exactly one of the five and left the others blank. `confirmed`
+ * had no source at all and was documented as unanswerable.
+ *
+ * Still blank rather than guessed where a step genuinely never happened: an
+ * order that went straight from packed to delivered has no `out_for_delivery`
+ * row, and inventing one would be worse than the gap.
  */
-const STEP_STAMP: Partial<Record<OrderStatus, (o: Order) => string>> = {
-  created: o => formatDateTime(o.created_at),
-  packed: o => (o.fulfilment?.packed_at ? formatDateTime(o.fulfilment.packed_at) : ''),
-  out_for_delivery: o =>
-    o.fulfilment?.picked_up_at ? formatDateTime(o.fulfilment.picked_up_at) : '',
-  delivered: o =>
-    o.fulfilment?.delivered_at ? formatDateTime(o.fulfilment.delivered_at) : '',
-};
+function stampFor(order: Order, step: OrderStatus): string {
+  const hit = order.status_history?.find(s => s.status === step);
+  return hit ? formatDateTime(hit.at) : '';
+}
 
 /**
  * The promise, at the precision it was made at.
@@ -88,6 +90,13 @@ export default function OrderDetailPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [notes, setNotes] = useState('');
   const [error, setError] = useState('');
+  // The Lalamove quote awaiting a yes. Non-null means the dialog is open; the
+  // price in it is the price that will be booked, and nothing else.
+  const [quote, setQuote] = useState<LalamoveQuote | null>(null);
+  // Set when a quote lapsed and a fresh one replaced it mid-dialog, so the
+  // second confirm is visibly a second decision rather than the same click
+  // going through at a different number.
+  const [quoteExpired, setQuoteExpired] = useState(false);
 
   useEffect(() => {
     ordersApi.get(orderNumber)
@@ -136,6 +145,45 @@ export default function OrderDetailPage() {
       setDelivery(await ordersApi.dispatchDelivery(orderNumber));
     } catch (err) {
       alert((err as Error).message);
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function quoteLalamove() {
+    setActionLoading(true);
+    setQuoteExpired(false);
+    try {
+      setQuote(await ordersApi.quoteLalamove(orderNumber));
+    } catch (err) {
+      alert((err as Error).message);
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function assignLalamove() {
+    if (!quote) return;
+    setActionLoading(true);
+    try {
+      setDelivery(await ordersApi.assignLalamove(orderNumber, quote.quotation_id));
+      // The order itself does not move — it stays `packed` until a rider
+      // collects — but its history has, and the stepper reads that.
+      setOrder(await ordersApi.get(orderNumber));
+      setQuote(null);
+      setQuoteExpired(false);
+    } catch (err) {
+      // A lapsed quotation comes back as a 409 carrying the current price.
+      // Showing it and requiring another click is the whole point of the two
+      // steps: nothing gets booked at a number nobody agreed to.
+      const fresh = (err as ApiError)?.detail as { quote?: LalamoveQuote } | undefined;
+      if (err instanceof ApiError && err.status === 409 && fresh?.quote) {
+        setQuote(fresh.quote);
+        setQuoteExpired(true);
+      } else {
+        alert((err as Error).message);
+        setQuote(null);
+      }
     } finally {
       setActionLoading(false);
     }
@@ -198,6 +246,19 @@ export default function OrderDetailPage() {
 
   return (
     <div className="max-w-3xl">
+      {quote && (
+        <AssignLalamoveDialog
+          quote={quote}
+          expired={quoteExpired}
+          busy={actionLoading}
+          onConfirm={assignLalamove}
+          onCancel={() => {
+            setQuote(null);
+            setQuoteExpired(false);
+          }}
+        />
+      )}
+
       {/* Back + header */}
       <div className="flex items-center gap-3 mb-6">
         <Link href="/orders" className="text-gray-400 hover:text-primary transition-colors">
@@ -257,7 +318,7 @@ export default function OrderDetailPage() {
                         somewhere; the stamp tells you when, which is the
                         question anyone opening this page at 9pm is asking. */}
                     <span className="text-[9px] mt-0.5 font-body text-gray-400 text-center leading-tight min-h-[1.2em]">
-                      {STEP_STAMP[step]?.(order) ?? ''}
+                      {stampFor(order, step)}
                     </span>
                   </div>
                   {idx < STATUS_STEPS.length - 1 && (
@@ -386,6 +447,8 @@ export default function OrderDetailPage() {
           delivery={delivery}
           busy={actionLoading}
           onRedispatch={redispatch}
+          onAssignLalamove={quoteLalamove}
+          canAssignLalamove={order.status === 'packed'}
           onRefresh={refreshCourier}
         />
       )}
@@ -491,6 +554,114 @@ const COURIER_STATUS_LABEL: Record<string, string> = {
 
 const DELIVERED_STATUSES = new Set(['COMPLETED', 'delivered']);
 
+/**
+ * The one decision this whole flow exists for: is this delivery worth the fee.
+ *
+ * A dialog rather than the `window.confirm` every other action on this page
+ * uses, because the answer depends on four numbers and a sentence cannot carry
+ * them legibly. It is local to this file — the admin has no modal component and
+ * inventing a shared one for a single caller would be guessing at the second
+ * caller's requirements.
+ */
+function AssignLalamoveDialog({
+  quote,
+  expired,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  quote: LalamoveQuote;
+  expired: boolean;
+  busy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const currency = quote.currency || 'AED';
+  const losesMoney = quote.margin !== null && quote.margin < 0;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="assign-lalamove-title"
+      // Clicking away cancels; clicking the card must not. Nothing is booked
+      // either way — the booking is the button.
+      onClick={onCancel}
+    >
+      <div
+        className="bg-white border border-gray-200 w-full max-w-sm p-5"
+        onClick={e => e.stopPropagation()}
+      >
+        <h2
+          id="assign-lalamove-title"
+          className="font-display text-lg text-primary mb-1"
+        >
+          Assign to Lalamove
+        </h2>
+        <p className="text-xs text-gray-500 font-body mb-4">
+          A courier is booked immediately. The customer is not charged anything
+          more — this is what the delivery costs us.
+        </p>
+
+        {expired && (
+          <p className="text-xs font-body text-amber-700 bg-amber-50 border border-amber-200 p-2 mb-3">
+            The previous price expired. This is the current one — confirm again
+            to book at it.
+          </p>
+        )}
+
+        <dl className="text-sm font-body border-t border-gray-100">
+          <div className="flex justify-between py-2 border-b border-gray-100">
+            <dt className="text-gray-500">Lalamove quote</dt>
+            <dd className="text-gray-900">
+              {currency} {quote.cost.toFixed(2)}
+              {quote.distance_m !== null && (
+                <span className="text-gray-400">
+                  {' '}
+                  · {(quote.distance_m / 1000).toFixed(1)} km
+                </span>
+              )}
+            </dd>
+          </div>
+          <div className="flex justify-between py-2 border-b border-gray-100">
+            <dt className="text-gray-500">Customer paid</dt>
+            <dd className="text-gray-900">
+              {quote.fee_charged === null
+                ? '—'
+                : `${currency} ${quote.fee_charged.toFixed(2)}`}
+            </dd>
+          </div>
+          <div className="flex justify-between py-2 border-b border-gray-100">
+            <dt className="text-gray-500">Margin</dt>
+            <dd className={cn(losesMoney ? 'text-red-600' : 'text-gray-900')}>
+              {quote.margin === null
+                ? '—'
+                : `${quote.margin < 0 ? '\u2212' : ''}${currency} ${Math.abs(quote.margin).toFixed(2)}`}
+            </dd>
+          </div>
+        </dl>
+
+        {losesMoney && (
+          <p className="text-xs font-body text-red-600 mt-3">
+            This delivery loses money. Assign it anyway only if the order needs
+            to go out today.
+          </p>
+        )}
+
+        <div className="flex justify-end gap-2 mt-5">
+          <Button size="sm" variant="ghost" onClick={onCancel} disabled={busy}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={onConfirm} disabled={busy}>
+            {busy ? 'Booking…' : 'Confirm & book'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const PROVIDER_LABEL: Record<string, string> = {
   lalamove: 'Lalamove',
   noon_send: 'noon Send',
@@ -509,11 +680,16 @@ function DeliveryPanel({
   busy,
   onRedispatch,
   onRefresh,
+  onAssignLalamove,
+  canAssignLalamove,
 }: {
   delivery: OrderDelivery;
   busy: boolean;
   onRedispatch: () => void;
   onRefresh: () => void;
+  onAssignLalamove: () => void;
+  /** Packed and nothing else — see `_assert_assignable` on the API side. */
+  canAssignLalamove: boolean;
 }) {
   const cost = delivery.cost_total ?? delivery.quoted_cost;
   const isCourier = delivery.provider !== 'third_party';
@@ -544,6 +720,15 @@ function DeliveryPanel({
         >
           {PROVIDER_LABEL[delivery.provider] ?? delivery.provider}
         </Badge>
+        {/* This order is not on the courier its zone chose. Worth saying: the
+            provider badge alone makes a reassigned order look like one that was
+            always Lalamove, and the two cost different things to explain. */}
+        {delivery.original_provider &&
+          delivery.original_provider !== delivery.provider && (
+            <span className="text-[10px] font-body text-gray-400">
+              moved from {PROVIDER_LABEL[delivery.original_provider] ?? delivery.original_provider}
+            </span>
+          )}
         {delivery.courier_status && (
           <Badge
             variant={
@@ -666,6 +851,15 @@ function DeliveryPanel({
             <Button size="sm" variant="ghost" onClick={onRefresh} disabled={busy}>
               <span className="material-icons text-[14px]">sync</span>
               Check status
+            </Button>
+          )}
+          {/* A third-party zone has no integration — somebody we already use
+              collects the box. This is the escape hatch for the day that is not
+              good enough: quote Lalamove, look at the number, and decide. */}
+          {!isCourier && canAssignLalamove && !delivery.courier_order_id && (
+            <Button size="sm" variant="ghost" onClick={onAssignLalamove} disabled={busy}>
+              <span className="material-icons text-[14px]">local_shipping</span>
+              Assign to Lalamove
             </Button>
           )}
           {isCourier && (

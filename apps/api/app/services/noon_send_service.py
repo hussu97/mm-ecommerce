@@ -49,6 +49,7 @@ from app.core.config import settings
 from app.models.delivery_batch import DELIVERY_TIMEZONE
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import Order, OrderStatusEnum
+from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.pos_order import OrderPayment
 from app.models.order_delivery import (
     NOON_SEND_STATUS_RANK,
@@ -830,11 +831,12 @@ async def apply_webhook(
             # name and no number to call.
             await _fill_rider_details(delivery)
             await _announce_rider(db, delivery)
-        if status == NoonSendStatusEnum.PICKED_UP.value:
-            delivery.picked_up_at = moment
-        elif status == NoonSendStatusEnum.DELIVERED.value:
-            delivery.delivered_at = moment
-        elif status in NOON_SEND_FAILED_STATUSES:
+        # `picked_up_at` and `delivered_at` used to be written here too. They
+        # were the same two moments `order_status_events` records as
+        # `out_for_delivery` and `delivered` — the same fact in two tables, and
+        # the customer's timeline read one while the admin's read the other.
+        # `_advance_order` carries `moment` into the history instead.
+        if status in NOON_SEND_FAILED_STATUSES:
             delivery.cancelled_at = moment
             delivery.cancel_reason = status
             # Nobody is bringing it. The order is not cancelled — it is paid for
@@ -852,7 +854,7 @@ async def apply_webhook(
     # A failed handover used to be announced separately here, because the order
     # stayed put and `_advance_order` had nothing to do. It has a status of its
     # own now, so there is one path again — and only one email.
-    await _advance_order(db, delivery)
+    await _advance_order(db, delivery, at=updated_at)
 
     return delivery
 
@@ -971,7 +973,17 @@ async def _order_of(db: AsyncSession, delivery: OrderDelivery) -> Order | None:
     )
 
 
-async def _advance_order(db: AsyncSession, delivery: OrderDelivery) -> None:
+async def _advance_order(
+    db: AsyncSession, delivery: OrderDelivery, *, at: datetime | None = None
+) -> None:
+    """Move the order to match the courier, stamped with the courier's clock.
+
+    `at` is null far more often here than for Lalamove: noon Send's status
+    webhook carries `order_nr`, `status_code` and `order_reference` and no
+    usable timestamp at all, which is why `NOON_SEND_STATUS_RANK` exists to
+    order them. The history then records when we heard, which is the only
+    moment there is.
+    """
     target = _ORDER_STATUS_FOR.get(delivery.courier_status or "")
     if target is None:
         return
@@ -1008,7 +1020,16 @@ async def _advance_order(db: AsyncSession, delivery: OrderDelivery) -> None:
     }:
         return
 
-    order.status = target
+    # The courier's own word for what happened goes in the note, so the history
+    # records `picked_up` next to `out_for_delivery` rather than only our
+    # translation of it.
+    with acting_as(
+        StatusSourceEnum.COURIER.value,
+        actor_label=delivery.provider,
+        note=delivery.courier_status,
+        at=at,
+    ):
+        order.status = target
     # The customer hears about it from here, not from the admin screen. These
     # transitions only ever happen because a courier said so, so this is the
     # only place that knows they happened — and "out for delivery" is the email

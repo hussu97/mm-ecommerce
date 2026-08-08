@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 
+import httpx
 import pytest
 
 from app.core.config import settings
@@ -22,6 +23,7 @@ from app.services.providers.lalamove_provider import (
     LalamoveError,
     sign,
 )
+from app.services.providers.lalamove_provider import _unwrap as _parse
 
 KEY = "pk_test_69d70a31a0e00e80d02050750984a7ee"
 SECRET = "sk_test_thisisnotarealsecret"
@@ -196,3 +198,50 @@ def test_the_default_webhook_path_is_the_one_we_serve():
     from app.main import app
 
     assert settings.LALAMOVE_WEBHOOK_PATH in set(app.openapi()["paths"])
+
+
+# ── error shapes ──────────────────────────────────────────────────────────────
+
+
+def test_a_bare_error_code_is_read_as_the_id():
+    """
+    Their quotation endpoint answers `{"message": "ERR_..."}` with no `errors`
+    array, and only the array was being read — so `error_id` was None for the
+    one call that produces these codes most. Checkout said "Courier quote
+    failed" for an address that was simply out of range, and `batching_service`
+    kept retrying dispatches that could never succeed.
+    """
+    with pytest.raises(LalamoveError) as raised:
+        _parse(httpx.Response(422, json={"message": "ERR_OUT_OF_SERVICE_AREA"}))
+    assert raised.value.error_id == "ERR_OUT_OF_SERVICE_AREA"
+    assert raised.value.is_out_of_service_area
+
+
+def test_the_errors_array_still_wins_where_they_send_one():
+    with pytest.raises(LalamoveError) as raised:
+        _parse(
+            httpx.Response(
+                402,
+                json={
+                    "errors": [{"id": "ERR_INSUFFICIENT_CREDIT", "message": "top up"}]
+                },
+            )
+        )
+    assert raised.value.error_id == "ERR_INSUFFICIENT_CREDIT"
+    assert raised.value.is_insufficient_credit
+
+
+def test_prose_mentioning_a_code_is_not_an_id():
+    """
+    Only a bare token counts. A sentence that happens to name a code is prose,
+    and treating it as an id would let a reworded error start driving retry
+    decisions.
+    """
+    with pytest.raises(LalamoveError) as raised:
+        _parse(
+            httpx.Response(
+                422, json={"message": "we hit ERR_OUT_OF_SERVICE_AREA on stop 2"}
+            )
+        )
+    assert raised.value.error_id is None
+    assert not raised.value.is_out_of_service_area

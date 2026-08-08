@@ -541,6 +541,11 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
         "Now that a driver is carrying it, this is our best estimate.",
     ),
     ("order", "estimate_note_day", "We'll confirm a time once it's collected."),
+    # A date bounded by an hour, for the `day_by` precision. Their van, their
+    # schedule — so this is a commitment the customer can plan around without
+    # borrowing a precision that is not ours. Mirrors the mailer's
+    # `date.by_time` in `email_copy.py`, which has always rendered it.
+    ("order", "estimate_by_time", "{day} before {time}"),
     ("order", "track_live", "Track live"),
     (
         "order",
@@ -1138,6 +1143,7 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
         "بعد استلام السائق للطلب، هذا هو أدق تقدير لدينا.",
     ),
     ("order", "estimate_note_day", "سنؤكد الوقت بمجرد استلام الطلب."),
+    ("order", "estimate_by_time", "{day} قبل {time}"),
     ("order", "track_live", "تتبع مباشر"),
     (
         "order",

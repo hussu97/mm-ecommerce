@@ -10,6 +10,60 @@
 
 ## Lessons
 
+### [2026-08-08] A sentinel that is an `Enum` will pass an `isinstance(x, Enum)` check
+- **What went wrong**: the status listener took `oldvalue` from SQLAlchemy's
+  `set` event and normalised it with `if isinstance(status, Enum): return
+  str(status.value)`. On a brand-new object there is no old value, and what
+  SQLAlchemy hands back is `LoaderCallableStatus.NO_VALUE` — a member of *its*
+  enum, whose `.value` is `4`. Every order's first history row came out with
+  `previous_status = '4'`.
+- **Why it hid**: `4` is a plausible-looking string in a nullable column nobody
+  reads on the first row. It only surfaced because a live round-trip printed the
+  transition chain and the first arrow said `4 -> created`.
+- **Rule**: normalise against the *specific* types you expect (`OrderStatusEnum`,
+  `str`), never against a structural supertype. A library's "there is nothing
+  here" sentinel is an object like any other, and a duck-typed check will happily
+  serialise it into a column. And run one real round-trip printing the values —
+  a type check that accepts the wrong thing cannot fail a test that only asserts
+  the right thing is present.
+
+### [2026-08-08] Two tables holding one fact are two answers to one question
+- **What went wrong nearly**: `order_status_events` was added to give the admin
+  timeline its missing stamps, alongside `order_deliveries.picked_up_at` and
+  `delivered_at` — which are the same two moments, written by the same webhook a
+  few lines apart. Hussain caught it before it shipped: the customer's timeline
+  would have read one copy and the admin's delivery card the other, free to
+  drift, with no error anywhere when they did.
+- **The subtlety that made the fix bigger than a delete**: the columns held the
+  *courier's* stamp, and the new rows were being written with `utcnow()`. Moving
+  the source without carrying the moment across would have silently redefined
+  "picked up at" as "webhook processed at" — which for Lalamove, who retry an
+  unacknowledged event for a day, is a different answer entirely.
+- **Rule**: when adding a table that records something an existing column
+  already records, delete the column in the same change or do not add the table.
+  And before deleting it, check what the old writer knew that the new one does
+  not — a timestamp's *provenance* travels with the value, and a migration that
+  moves the number without the provenance moves a different number.
+
+### [2026-08-08] A predicate that is never true reads exactly like a condition that never happens
+- **What went wrong**: `LalamoveError.is_out_of_service_area` had never fired.
+  The response parser only read `{"errors": [{"id": …}]}`, and the quotation
+  endpoint — the one that produces these codes most — answers
+  `{"message": "ERR_OUT_OF_SERVICE_AREA"}` with no array at all. So `error_id`
+  was `None`, checkout told customers "Courier quote failed" for an address that
+  was simply out of range, and `batching_service` kept retrying dispatches that
+  could never succeed.
+- **Why it survived**: nothing tested the parser, and every caller degrades
+  gracefully on the `None` branch. A predicate that is always false produces the
+  fallback behaviour, and the fallback behaviour is not an error.
+- **Rule**: a vendor with two documented error shapes needs a test per shape,
+  pinned from their docs rather than from whatever we happened to receive first.
+  And when a branch exists for a specific error id, grep for one real response of
+  that kind before trusting that the branch has ever been taken —
+  `SELECT ... FROM webhook_logs` and the vendor's own error reference are both
+  cheaper than the bug.
+
+
 ### [2026-08-05] A promise is a fact about what was said, not a calculation to repeat
 - **What went wrong**: the checkout and the confirmation email each derived the delivery estimate independently. Both were correct; they answered different questions. Checkout read the batch window open *at that moment* (`dispatch_at + 1h` = 19:00); the email ran at CONFIRMED, before any batch is assigned, and fell through to a generic `created_at + 2h prep + 1h drive` (17:25). MM-20260805-008 told the customer two different times in the same minute.
 - **Why the obvious fix was wrong**: re-deriving the window at send time. By then the window that was open at checkout may have closed, so the customer would be silently moved onto a later run nobody had mentioned — a *different* wrong answer, and a harder one to notice.

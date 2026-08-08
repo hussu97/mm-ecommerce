@@ -50,14 +50,24 @@ def _order(
 
 
 def _delivery(**overrides) -> SimpleNamespace:
+    """A stand-in for the `order_deliveries` row.
+
+    `picked_up_at` and `delivered_at` used to live here and no longer do — they
+    were a second copy of two moments `order_status_events` records, and the
+    history is the source now. Tests that need them pass `reached=`.
+
+    Every field the code reads is set, including `original_provider`, which is
+    null on all but a reassigned order: a `SimpleNamespace` standing in for an
+    ORM row answers only for the attributes it was given, so an unset one is an
+    `AttributeError` rather than the `None` the column would have returned.
+    """
     base = dict(
         provider="lalamove",
+        original_provider=None,
         courier_status=None,
         share_link=None,
         batch=None,
         dispatchable_at=None,
-        picked_up_at=None,
-        delivered_at=None,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -99,8 +109,16 @@ class _Db:
         return self._branch
 
 
-async def _fulfilment(order, delivery=None, branch=None):
-    return await fulfilment_service.for_order(_Db(delivery, branch), order, now=NOW)
+async def _fulfilment(order, delivery=None, branch=None, reached=None):
+    """*reached* is the order's status history — `{status: moment}`.
+
+    Passed explicitly rather than queried, because `_Db` is not a database.
+    It is what `packed_at`, `picked_up_at` and `delivered_at` are read from
+    now, so a test about a collected parcel puts the moment here.
+    """
+    return await fulfilment_service.for_order(
+        _Db(delivery, branch), order, now=NOW, reached=reached or {}
+    )
 
 
 # ── stages ────────────────────────────────────────────────────────────────────
@@ -239,7 +257,8 @@ async def test_the_estimate_sharpens_the_moment_a_rider_is_holding_it():
     picked_up = NOW - timedelta(minutes=10)
     result = await _fulfilment(
         _order(status=OrderStatusEnum.OUT_FOR_DELIVERY),
-        _delivery(courier_status="picked_up", picked_up_at=picked_up),
+        _delivery(courier_status="picked_up"),
+        reached={"out_for_delivery": picked_up},
     )
     assert result.precision == "time"
     assert result.estimated_at == picked_up.astimezone(TZ) + (
@@ -273,7 +292,8 @@ async def test_a_delivered_order_reports_the_real_moment_not_an_estimate():
     delivered = NOW - timedelta(minutes=20)
     result = await _fulfilment(
         _order(status=OrderStatusEnum.DELIVERED),
-        _delivery(courier_status="completed", delivered_at=delivered),
+        _delivery(courier_status="completed"),
+        reached={"delivered": delivered},
     )
     assert result.precision == "exact"
     assert result.estimated_at == delivered.astimezone(TZ)
@@ -424,7 +444,8 @@ async def test_a_courier_that_texts_the_customer_is_flagged_once_it_moves():
     """
     fulfilment = await _fulfilment(
         _order(status=OrderStatusEnum.OUT_FOR_DELIVERY),
-        _delivery(provider="noon_send", courier_status="picked_up", picked_up_at=NOW),
+        _delivery(provider="noon_send", courier_status="picked_up"),
+        reached={"out_for_delivery": NOW},
     )
     assert fulfilment.tracking_by_sms is True
     assert fulfilment.tracking_url is None
@@ -549,7 +570,8 @@ async def test_a_rider_holding_the_parcel_beats_the_promise():
             promised_at=NOW + timedelta(hours=6),
             promised_precision="time",
         ),
-        _delivery(picked_up_at=picked_up),
+        _delivery(),
+        reached={"out_for_delivery": picked_up},
     )
 
     assert result.estimated_at == picked_up.astimezone(TZ) + (
@@ -626,3 +648,129 @@ async def test_an_order_placed_before_the_column_existed_still_answers():
         + fulfilment_service.KITCHEN_PREP
         + fulfilment_service.DISPATCH_TO_DOOR
     )
+
+
+# ── a promise survives a change of courier ────────────────────────────────────
+#
+# An admin can move a packed third-party order onto Lalamove. Every branch of
+# `_estimate` used to key its sharpness off `provider in _BOOKED_BY_US`, so the
+# moment the column flipped, an order promised a *date* started being answered
+# with an *hour* — a precision nobody had offered and that belongs to a
+# schedule the customer was never quoted.
+#
+# `tasks/lessons.md`, 2026-08-05: a promise is a fact about what was said, not a
+# calculation to repeat. What was said is `promised_precision`, and it is a
+# ceiling for the life of the order.
+
+
+@pytest.mark.asyncio
+async def test_a_day_promise_survives_the_order_moving_to_a_booked_courier():
+    """Still in the kitchen, now on Lalamove. Still a date."""
+    promised = NOW + timedelta(days=1)
+    result = await _fulfilment(
+        _order(
+            status=OrderStatusEnum.PACKED,
+            promised_at=promised,
+            promised_precision="day",
+        ),
+        _delivery(provider="lalamove", original_provider="third_party"),
+    )
+    assert result.precision == "day_by"
+    assert result.estimated_at.date() == promised.astimezone(TZ).date()
+    assert result.estimated_at.hour == fulfilment_service.THIRD_PARTY_BY_HOUR
+
+
+@pytest.mark.asyncio
+async def test_a_rider_collecting_does_not_sharpen_a_day_promise():
+    """
+    The sharpest case in the whole function, and the one that would have broken
+    it: a real pickup event on a courier we book returns an hour. It may only
+    do that for an order that was promised an hour.
+    """
+    promised = NOW + timedelta(days=1)
+    result = await _fulfilment(
+        _order(
+            status=OrderStatusEnum.OUT_FOR_DELIVERY,
+            promised_at=promised,
+            promised_precision="day",
+        ),
+        _delivery(provider="lalamove", original_provider="third_party"),
+        reached={"out_for_delivery": NOW - timedelta(minutes=5)},
+    )
+    assert result.precision == "day_by", "a day promise must never become an hour"
+    # And it is the promised day, not today. A rider collecting early does not
+    # move the date the customer was given.
+    assert result.estimated_at.date() == promised.astimezone(TZ).date()
+
+
+@pytest.mark.asyncio
+async def test_a_day_promise_ignores_a_batch_window():
+    """
+    A run's `dispatch_at` is the one thing allowed to move a *time* promise,
+    because the customer has genuinely been moved to a later run. It cannot
+    turn a date into a time.
+    """
+    promised = NOW + timedelta(days=1)
+    result = await _fulfilment(
+        _order(
+            status=OrderStatusEnum.PACKED,
+            promised_at=promised,
+            promised_precision="day",
+        ),
+        _delivery(
+            provider="lalamove",
+            original_provider="third_party",
+            batch=SimpleNamespace(dispatch_at=NOW + timedelta(hours=1)),
+        ),
+    )
+    assert result.precision == "day_by"
+    assert result.estimated_at.date() == promised.astimezone(TZ).date()
+
+
+@pytest.mark.asyncio
+async def test_a_time_promise_still_sharpens_as_it_always_did():
+    """The pinning must not flatten the orders that were promised an hour."""
+    result = await _fulfilment(
+        _order(
+            status=OrderStatusEnum.OUT_FOR_DELIVERY,
+            promised_at=NOW + timedelta(hours=6),
+            promised_precision="time",
+        ),
+        _delivery(provider="lalamove"),
+        reached={"out_for_delivery": NOW - timedelta(minutes=5)},
+    )
+    assert result.precision == "time"
+
+
+@pytest.mark.asyncio
+async def test_a_reassigned_order_with_no_promise_keeps_the_day_shape():
+    """
+    An order written before `promised_at` existed has nothing stored to repeat,
+    and the fallback used to read the *current* provider — so reassigning one
+    would turn "tomorrow before 10 PM" into an hour. `original_provider` is what
+    remembers that this was somebody else's van.
+    """
+    result = await _fulfilment(
+        _order(status=OrderStatusEnum.PACKED),
+        _delivery(provider="lalamove", original_provider="third_party"),
+    )
+    assert result.precision == "day_by"
+
+
+@pytest.mark.asyncio
+async def test_the_timeline_stamps_come_from_the_history():
+    """
+    They used to be three columns on `order_deliveries` that only an integrated
+    courier ever filled, which is why a third-party order showed one stamp and
+    four blanks.
+    """
+    packed = NOW - timedelta(hours=2)
+    collected = NOW - timedelta(hours=1)
+    result = await _fulfilment(
+        _order(status=OrderStatusEnum.OUT_FOR_DELIVERY),
+        _delivery(provider="third_party"),
+        reached={"packed": packed, "out_for_delivery": collected},
+    )
+    assert result.packed_at == packed
+    assert result.picked_up_at == collected
+    assert result.delivered_at is None

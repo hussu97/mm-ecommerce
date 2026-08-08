@@ -28,7 +28,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import inspect as sa_inspect, select
+from sqlalchemy.exc import NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -39,6 +40,7 @@ from app.models.delivery_batch import DeliveryBatchGroup
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
+from app.models.order_status_event import OrderStatusEvent
 
 __all__ = [
     "Fulfilment",
@@ -194,6 +196,7 @@ async def for_order(
     order: Order,
     *,
     now: datetime | None = None,
+    reached: dict[str, datetime] | None = None,
 ) -> Fulfilment:
     """
     Build the customer's view of one order's fulfilment.
@@ -201,6 +204,11 @@ async def for_order(
     Takes the ORM row rather than the response model because it needs the
     delivery record and the branch, neither of which the customer-facing order
     schema carries — and deliberately must not carry.
+
+    *reached* is `reached_at`'s answer, passed in by a caller that already has
+    it — `order_service.to_response` needs the same map for `status_history`,
+    and running the query twice per order response would be paying twice for
+    one fact.
     """
     now = (now or datetime.now(timezone.utc)).astimezone(TZ)
     stage = estimate_state_of(order)
@@ -228,13 +236,19 @@ async def for_order(
         stage = "undelivered"
 
     promise_minutes = await _promise_minutes(db, delivery)
+    reached = reached if reached is not None else await reached_at(db, order)
 
     branch = None
     if is_pickup and order.branch_id is not None:
         branch = await db.get(Branch, order.branch_id)
 
     estimated_at, precision = _estimate(
-        order, delivery, stage=stage, now=now, promise_minutes=promise_minutes
+        order,
+        delivery,
+        stage=stage,
+        now=now,
+        promise_minutes=promise_minutes,
+        reached=reached,
     )
 
     return Fulfilment(
@@ -249,11 +263,56 @@ async def for_order(
             and stage == "on_the_way"
         ),
         courier_managed=(delivery is not None and delivery.provider in _BOOKED_BY_US),
-        packed_at=delivery.dispatchable_at if delivery is not None else None,
-        picked_up_at=delivery.picked_up_at if delivery is not None else None,
-        delivered_at=delivery.delivered_at if delivery is not None else None,
+        # From the order's own history, not from `order_deliveries`.
+        #
+        # These three used to read `dispatchable_at`, `picked_up_at` and
+        # `delivered_at` off the delivery row, which is why they were blank on
+        # every order no integrated courier touched — a pickup, a third-party
+        # zone, anything walked through by hand. They were also a second copy of
+        # moments `order_status_events` now records, and two copies of a fact
+        # are two chances to disagree. The columns are gone; this is the source.
+        packed_at=reached.get(OrderStatusEnum.PACKED.value),
+        picked_up_at=reached.get(OrderStatusEnum.OUT_FOR_DELIVERY.value),
+        delivered_at=reached.get(OrderStatusEnum.DELIVERED.value),
         branch=branch,
     )
+
+
+async def reached_at(db: AsyncSession, order: Order) -> dict[str, datetime]:
+    """
+    When this order reached each status it has been through.
+
+    The **latest** row per status. An order that went undelivered and was
+    re-dispatched has two `out_for_delivery` rows, and the one that describes
+    where the parcel is now is the second.
+
+    Queried rather than read off `order.status_events`: the courier webhooks
+    select an order bare, and touching an unloaded collection there is a
+    `MissingGreenlet` rather than a query — the failure that silently swallowed
+    four customer emails on 2026-08-05.
+    """
+    try:
+        state = sa_inspect(order)
+    except NoInspectionAvailable:
+        # Not an ORM row at all. The POS path and the test fixtures both hand
+        # over stand-ins, and a stand-in has no history to read.
+        return {}
+    if state.transient or state.pending:
+        # A real `Order`, but one this session has never written. Same answer.
+        return {}
+
+    rows = (
+        (
+            await db.execute(
+                select(OrderStatusEvent.status, OrderStatusEvent.at)
+                .where(OrderStatusEvent.order_id == order.id)
+                .order_by(OrderStatusEvent.at)
+            )
+        )
+        .tuples()
+        .all()
+    )
+    return {status: at for status, at in rows}
 
 
 def _tracking_url(delivery: OrderDelivery | None, *, stage: str) -> str | None:
@@ -315,6 +374,7 @@ def _estimate(
     stage: str,
     now: datetime,
     promise_minutes: timedelta | None = None,
+    reached: dict[str, datetime] | None = None,
 ) -> tuple[datetime | None, str | None]:
     """
     When the customer gets it, and how precisely we know that.
@@ -335,9 +395,7 @@ def _estimate(
     # It already happened. This is a record, not a promise, so it carries the
     # real stamp and a precision that says as much.
     if stage in {"collected", "delivered"}:
-        stamp = (delivery.delivered_at if delivery is not None else None) or (
-            order.updated_at
-        )
+        stamp = (reached or {}).get(OrderStatusEnum.DELIVERED.value) or order.updated_at
         return _local(stamp), "exact"
 
     # A rider arrived and could not hand it over. There is no new time to give
@@ -355,14 +413,27 @@ def _estimate(
 
     # ── delivery ─────────────────────────────────────────────────────────────
     provider = delivery.provider if delivery is not None else None
+    # Whether this order was ever promised an hour.
+    #
+    # Read off the order, not off the courier carrying it now. Those used to be
+    # the same question and are not any more: an admin can move a third-party
+    # order onto Lalamove after it is packed, and every branch below that keys
+    # on `provider in _BOOKED_BY_US` would then start answering at a sharpness
+    # nobody ever offered — a customer told "Sat 9 Aug, before 10 PM" would
+    # watch that become "Sat 9 Aug, 18:40" the moment a rider collected.
+    #
+    # A day promise is therefore a ceiling for the life of the order. Who ends
+    # up driving it is ours to change; what the customer was told is not.
+    promised_a_time = order.promised_precision != "day"
 
     if stage == "on_the_way":
         # The sharpest answer we ever have: one rider, one route, measured from
         # an event the courier reported rather than from anything we assumed.
         # This is the one case that is allowed to overrule the promise, because
-        # it is the only one built from a fact rather than from a schedule.
-        picked_up = delivery.picked_up_at if delivery is not None else None
-        if picked_up is not None and provider in _BOOKED_BY_US:
+        # it is the only one built from a fact rather than from a schedule —
+        # but it may still only sharpen a promise that was made as a time.
+        picked_up = (reached or {}).get(OrderStatusEnum.OUT_FOR_DELIVERY.value)
+        if picked_up is not None and provider in _BOOKED_BY_US and promised_a_time:
             # The promise minus what it had already spent by the time the rider
             # was holding the box. A flat 45 minutes here was the same number
             # for a Dubai run and a northern one, which differ by half an hour.
@@ -373,11 +444,19 @@ def _estimate(
             # email saying the parcel arrived twenty minutes ago is worse than
             # one saying "any moment".
             return max(arriving, _local(now) + timedelta(minutes=5)), "time"
-        # Out for delivery on somebody else's van — the shop marked it by hand.
-        # The day is all that is ours to promise, bounded by the hour they
-        # finish rather than left open: "before 10 PM" is a commitment a
-        # customer can plan around, and "some time on Tuesday" is not.
-        return _by_hour(now, THIRD_PARTY_BY_HOUR), "day_by"
+        # Either it is on somebody else's van and the shop marked it by hand, or
+        # it is on a rider we booked against a day promise. Both get the day,
+        # bounded by the hour rather than left open: "before 10 PM" is a
+        # commitment a customer can plan around, and "some time on Tuesday" is
+        # not.
+        #
+        # The promised date where there is one, not today. A rider collecting an
+        # order early does not move the day it was promised for, and quietly
+        # re-dating it to `now` is how an order promised for tomorrow would
+        # start claiming it arrives this evening.
+        promised = _promise(order)
+        day = promised[0] if promised is not None and not promised_a_time else now
+        return _by_hour(day, THIRD_PARTY_BY_HOUR), "day_by"
 
     # ── still in the kitchen, or packed and waiting for a run ────────────────
     #
@@ -386,7 +465,7 @@ def _estimate(
     # told; do not work it out again.
     batch = delivery.batch if delivery is not None else None
 
-    if batch is not None and batch.dispatch_at is not None:
+    if batch is not None and batch.dispatch_at is not None and promised_a_time:
         # On a run, which is the one thing that can move the answer without a
         # rider touching the box: an order packed after its window closed goes
         # out on the next one. `dispatch_at` is where it is actually going, so
@@ -405,11 +484,16 @@ def _estimate(
     promised = _promise(order)
     if promised is not None:
         at, precision = promised
-        if precision == "day" and provider not in _BOOKED_BY_US:
+        if precision == "day":
             # The date the customer was promised, bounded by the hour the
             # partner finishes. Same day they were told at checkout — this only
             # sharpens "some time on Tuesday" into "Tuesday before 10 PM", which
             # is the difference between a date and something to plan around.
+            #
+            # No longer conditional on the courier. It was, and a reassignment
+            # to Lalamove dropped the bound while the order was still in the
+            # kitchen: the same promise rendered as a bare date one minute and
+            # "before 10 PM" the next, with nothing having happened to the cake.
             return _by_hour(at, THIRD_PARTY_BY_HOUR), "day_by"
         return promised
 
@@ -420,7 +504,16 @@ def _estimate(
     # the confirmation for MM-20260805-008 said 17:25 against a checkout that
     # had said 19:00 — nothing here can know about the window that was open when
     # the customer was looking at the page.
-    if provider not in _BOOKED_BY_US:
+    # `original_provider` as well as `provider`, so an order that was written
+    # against a third-party zone and later moved onto Lalamove keeps the shape
+    # of answer it has been giving. Without it, reassigning one of these — an
+    # order predating `promised_at`, so with no stored promise to fall back on —
+    # would turn "tomorrow before 10 PM" into an hour, which is the one thing
+    # this whole change exists to prevent.
+    was_third_party = provider not in _BOOKED_BY_US or (
+        delivery is not None and delivery.original_provider not in (None, provider)
+    )
+    if was_third_party:
         # A third-party zone is collected on a schedule we cannot see, and it is
         # the next day whether the order came in at nine in the morning or five
         # past eleven at night. Saying "today" would be guessing with somebody

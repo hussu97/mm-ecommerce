@@ -57,6 +57,13 @@ from .order_delivery import (  # noqa: F401
     is_failed,
     is_terminal,
 )
+from .order_status_event import (  # noqa: F401
+    OrderStatusEvent,
+    StatusActor,
+    StatusSourceEnum,
+    acting_as,
+    pending_events,
+)
 from .device_push_token import (  # noqa: F401
     DevicePushToken,
     PushPlatformEnum,
@@ -217,6 +224,11 @@ __all__ = [
     "DeliveryBatchWindow",
     "BatchStatusEnum",
     "OrderDelivery",
+    "OrderStatusEvent",
+    "StatusActor",
+    "StatusSourceEnum",
+    "acting_as",
+    "pending_events",
     "PhoneVerification",
     "CourierStatusEnum",
     "DevicePushToken",

@@ -44,6 +44,7 @@ from app.models.cart import Cart
 from app.models.delivery_batch import DeliveryBatch
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import Order, OrderStatusEnum
+from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.order_delivery import (
     FAILED_COURIER_STATUSES,
     CourierStatusEnum,
@@ -60,13 +61,17 @@ __all__ = [
     "Estimate",
     "PickupPoint",
     "Drop",
+    "QuotationExpired",
+    "ReassignQuote",
     "apply_price",
     "apply_webhook",
     "build_drop",
+    "assign_and_dispatch",
     "cancel_delivery",
     "clear_caches",
     "courier_order_id_of",
     "decimal_or_none",
+    "delivery_key_of",
     "dispatch_order",
     "estimate_for_point",
     "get_delivery",
@@ -75,6 +80,8 @@ __all__ = [
     "normalise_phone",
     "parse_quotation",
     "parse_time",
+    "quote_for_order",
+    "replaced_order_id_of",
     "webhook_time",
     "record_cart_estimate",
     "record_order_delivery",
@@ -580,6 +587,225 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
     return delivery
 
 
+# ── moving a third-party order onto this courier ──────────────────────────────
+#
+# A zone marked `third_party` has no integration by design: somebody we already
+# use collects the box and tells us nothing. That is fine until it is not — the
+# usual partner is full, or the order is late, or the address turns out to be
+# fifteen minutes from the kitchen — and the shop wants this order, today, on a
+# courier we can actually book.
+#
+# What makes that cheap is that nothing here is a second dispatch path. The
+# three gates that keep a third-party order away from the courier
+# (`courier_service.books_itself`, `batching_service.assign_or_dispatch`,
+# `dispatch_order`) all read one column, so moving the order is a matter of
+# changing `provider` and letting the machinery that already exists take it:
+# webhook matching by `courier_order_id`, driver fill, POD, `_advance_order`,
+# the emails.
+#
+# It is deliberately two calls rather than one. The admin is agreeing to a
+# specific number, and a single call that quoted and booked in one breath would
+# be asking them to approve a price they had not seen.
+
+
+@dataclass(frozen=True)
+class ReassignQuote:
+    """A price an admin can say yes to, and the booking it would become."""
+
+    estimate: Estimate
+    #: The quotation's own stops, kept so the booking uses the ids this price
+    #: was calculated for rather than re-deriving them from a second quotation.
+    stops: list[dict[str, Any]]
+    expires_at: datetime | None
+
+
+async def quote_for_order(
+    db: AsyncSession, order: Order
+) -> tuple[ReassignQuote | None, str | None]:
+    """
+    What Lalamove would charge to carry this order, right now.
+
+    Returns `(quote, error)` and never raises, matching `estimate_for_point`.
+
+    Built from `resolve_pickup` and `build_drop` — the same two calls
+    `dispatch_order` makes — rather than from `estimate_for_point`. That
+    function exists to price a pin while a customer drags it around and caches
+    for two minutes on a rounded coordinate, which is exactly right for a
+    checkout and exactly wrong here: the number shown to an admin about to spend
+    money has to be the number that gets spent, quoted for the address the
+    parcel is actually going to.
+    """
+    if not is_enabled():
+        return None, "Courier is not configured"
+
+    drop, reason = build_drop(order)
+    if drop is None:
+        return None, reason
+
+    pickup = await resolve_pickup(db, order.branch_id)
+    if pickup is None:
+        return None, "No pickup branch is configured"
+
+    try:
+        quotation = await provider.create_quotation(
+            [pickup.as_stop(), drop.stop],
+            special_requests=special_requests(),
+            timeout=settings.LALAMOVE_TIMEOUT_SECONDS,
+        )
+    except LalamoveError as exc:
+        return None, (
+            "Address is outside the courier's service area"
+            if exc.is_out_of_service_area
+            else str(exc)
+        )
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.exception("Unexpected error quoting Lalamove for %s", order.order_number)
+        return None, f"Courier quote failed: {exc}"
+
+    estimate = parse_quotation(quotation)
+    if estimate is None or not estimate.quotation_id:
+        return None, "Courier returned no price"
+
+    stops = quotation.get("stops") or []
+    if len(stops) < 2:
+        return None, "Courier quote came back without stops"
+
+    return (
+        ReassignQuote(
+            estimate=estimate,
+            stops=stops,
+            expires_at=parse_time(quotation.get("expiresAt")),
+        ),
+        None,
+    )
+
+
+class QuotationExpired(RuntimeError):
+    """The approved price is no longer available.
+
+    Raised rather than silently re-quoting: the whole point of the two-step
+    flow is that a human agreed to a number, and booking at a different one
+    because the first had lapsed would spend money nobody approved. The caller
+    re-quotes and asks again.
+    """
+
+
+async def assign_and_dispatch(
+    db: AsyncSession,
+    order: Order,
+    *,
+    quote: ReassignQuote,
+) -> OrderDelivery:
+    """
+    Move this order onto Lalamove and book it, at the price that was approved.
+
+    Takes the quote rather than re-quoting. `dispatch_order` quotes afresh for
+    good reasons — it runs unattended, minutes or hours after the order was
+    placed — but here a person is looking at a figure and pressing a button, and
+    the two must be the same figure.
+
+    On failure the provider is put back. A row left saying `lalamove` with no
+    booking is the one state that stalls a paid, packed order: every dispatch
+    path would then believe a courier is coming, and the third-party flow that
+    was actually going to deliver it no longer applies.
+    """
+    delivery = await get_delivery(db, order.id)
+    if delivery is None:
+        raise ValueError("Order has no delivery record")
+
+    was = delivery.provider
+    reference = await courier_reference.assign(db, delivery)
+
+    drop, reason = build_drop(order, reference)
+    if drop is None:
+        delivery.last_error = reason
+        return delivery
+
+    pickup = await resolve_pickup(db, order.branch_id)
+    if pickup is None:
+        delivery.last_error = "No pickup branch is configured"
+        return delivery
+
+    stops = quote.stops
+    try:
+        booking = await provider.place_order(
+            quotation_id=quote.estimate.quotation_id or "",
+            sender={
+                "stopId": stops[0].get("stopId"),
+                "name": pickup.name,
+                "phone": pickup.phone,
+            },
+            recipients=[drop.recipient(stops[1].get("stopId"))],
+            is_pod_enabled=True,
+            metadata={
+                "order_number": order.order_number,
+                "order_id": str(order.id),
+                "courier_reference": reference or "",
+            },
+        )
+    except LalamoveError as exc:
+        if exc.is_expired_quotation:
+            # Not a failure of ours and not the order's fault. Nothing has been
+            # written, so the caller can re-quote and ask again.
+            raise QuotationExpired(str(exc)) from exc
+        delivery.provider = was
+        delivery.last_error = str(exc)
+        logger.warning(
+            "Lalamove reassignment failed for %s: %s", order.order_number, exc
+        )
+        return delivery
+    except Exception as exc:  # pragma: no cover — defensive
+        delivery.provider = was
+        delivery.last_error = f"Courier dispatch failed: {exc}"
+        logger.exception("Unexpected error reassigning %s", order.order_number)
+        return delivery
+
+    # Booked. Only now does the row change hands.
+    delivery.original_provider = was
+    delivery.provider = FulfilmentProviderEnum.LALAMOVE.value
+    # Third-party orders never reach `assign_or_dispatch`, so this has been null
+    # for the life of the order and the timeline's "packed" stamp with it. The
+    # box is demonstrably ready — a courier has just been booked to collect it.
+    if delivery.dispatchable_at is None:
+        delivery.dispatchable_at = datetime.now(timezone.utc)
+
+    delivery.quoted_cost = quote.estimate.cost
+    delivery.quoted_currency = quote.estimate.currency
+    delivery.quoted_distance_m = quote.estimate.distance_m
+    delivery.quotation_id = quote.estimate.quotation_id
+    delivery.quoted_at = datetime.now(timezone.utc)
+
+    delivery.courier_order_id = booking.get("orderId")
+    delivery.courier_previous_status = delivery.courier_status
+    delivery.courier_status = (
+        booking.get("status") or CourierStatusEnum.ASSIGNING_DRIVER.value
+    )
+    delivery.share_link = booking.get("shareLink")
+    delivery.driver_id = booking.get("driverId") or None
+    delivery.stop_id = stops[1].get("stopId")
+    delivery.booked_at = datetime.now(timezone.utc)
+    delivery.status_updated_at = delivery.booked_at
+    delivery.last_error = None
+    apply_price(delivery, booking.get("priceBreakdown"))
+    delivery.last_payload = booking
+
+    logger.info(
+        "Order %s moved from %s to Lalamove order %s (%s %s)",
+        order.order_number,
+        was,
+        delivery.courier_order_id,
+        delivery.quoted_currency or "",
+        delivery.cost_total if delivery.cost_total is not None else "-",
+    )
+
+    # Committed here for the same reason `dispatch_order` commits: a driver has
+    # been engaged and the wallet debited, and neither rolls back with our
+    # transaction. Losing the courier id while their order keeps existing is how
+    # a second driver gets sent to the same cake.
+    await db.commit()
+    return delivery
+
+
 async def cancel_delivery(db: AsyncSession, order: Order) -> OrderDelivery | None:
     """
     Call off the courier when the order is cancelled.
@@ -633,6 +859,29 @@ def courier_order_id_of(payload: dict[str, Any]) -> str | None:
     return str(value) if value else None
 
 
+def replaced_order_id_of(payload: dict[str, Any]) -> str | None:
+    """The booking an `ORDER_REPLACED` event supersedes, if this is one.
+
+    Lalamove adjusts a matched order — a waiting fee, a route change — by
+    cancelling it and cloning it under a new id, then telling us with
+    `ORDER_REPLACED` and a `prevOrderId`. So for this one event type the id that
+    finds our row is not the one in `data.order`.
+    """
+    if payload.get("eventType") != "ORDER_REPLACED":
+        return None
+    value = (payload.get("data") or {}).get("prevOrderId")
+    return str(value) if value else None
+
+
+def delivery_key_of(payload: dict[str, Any]) -> str | None:
+    """Which courier id identifies the delivery row this event is about.
+
+    The same as `courier_order_id_of` for every event except a replacement,
+    where our row still holds the id being superseded.
+    """
+    return replaced_order_id_of(payload) or courier_order_id_of(payload)
+
+
 async def handle_webhook(db: AsyncSession, raw_body: bytes) -> dict[str, Any]:
     """
     Verify, deduplicate and apply one push from Lalamove.
@@ -648,14 +897,19 @@ async def handle_webhook(db: AsyncSession, raw_body: bytes) -> dict[str, Any]:
     if not event_id:
         raise LalamoveError("Webhook has no eventId")
 
-    courier_order_id = courier_order_id_of(payload)
+    # The id that finds our row, which is not always the one in `data.order` —
+    # a replacement names the booking it supersedes instead. Looking this up by
+    # `data.order.orderId` matched nothing, so the clone that was actually
+    # carrying the cake went unrecognised while the cancellation it arrived with
+    # marked the order as needing a human.
+    lookup_id = delivery_key_of(payload)
     deliveries: list[OrderDelivery] = []
-    if courier_order_id:
+    if lookup_id:
         deliveries = list(
             (
                 await db.execute(
                     select(OrderDelivery)
-                    .where(OrderDelivery.courier_order_id == courier_order_id)
+                    .where(OrderDelivery.courier_order_id == lookup_id)
                     .options(selectinload(OrderDelivery.order))
                     .order_by(OrderDelivery.stop_sequence)
                 )
@@ -695,8 +949,8 @@ async def handle_webhook(db: AsyncSession, raw_body: bytes) -> dict[str, Any]:
     # the driver and the status; only proof of delivery is per-customer.
     for delivery in deliveries:
         await apply_webhook(db, payload, delivery=delivery)
-    if courier_order_id:
-        await _apply_to_batch(db, payload, courier_order_id)
+    if lookup_id:
+        await _apply_to_batch(db, payload, lookup_id)
 
     return {
         "received": True,
@@ -728,6 +982,16 @@ async def _apply_to_batch(
     courier_order = data.get("order") or {}
     driver = data.get("driver") or {}
 
+    if payload.get("eventType") == "ORDER_REPLACED":
+        # The run itself was cloned. Repoint it for the same reason the delivery
+        # rows are repointed — otherwise every subsequent event for this run
+        # arrives under an id the batch does not recognise.
+        new_id = courier_order_id_of(payload)
+        if new_id and new_id != batch.courier_order_id:
+            batch.courier_order_id = new_id
+            batch.last_payload = payload
+        return
+
     if status := courier_order.get("status"):
         batch.courier_status = status
     if share_link := courier_order.get("shareLink"):
@@ -746,6 +1010,64 @@ async def _apply_to_batch(
     batch.last_payload = payload
 
 
+def _apply_replacement(
+    delivery: OrderDelivery, payload: dict[str, Any]
+) -> OrderDelivery:
+    """
+    Follow a booking Lalamove cancelled and cloned under a new id.
+
+    They do this to adjust an order that has already been matched — a waiting
+    fee, an edited stop — and it arrives as three events: `CANCELED`, then
+    `ASSIGNING_DRIVER`, then this. The first two are about the old booking and
+    are indistinguishable from a real cancellation, so by the time this lands
+    the row is already carrying `cancelled_at`, a `cancel_reason` and a
+    `last_error` saying nobody is coming.
+
+    All three are wrong about a parcel that is on its way, and the consequence
+    was concrete: `needs_attention` goes true, the order appears on the admin's
+    re-dispatch list, and re-dispatching it books a **second driver for the same
+    cake** while the first is still carrying it.
+
+    So this repoints the row and clears the phantom. The old id is archived
+    rather than dropped — it is what the earlier webhooks and any support
+    conversation quote.
+    """
+    new_id = courier_order_id_of(payload)
+    if not new_id or new_id == delivery.courier_order_id:
+        return delivery
+
+    if delivery.courier_order_id:
+        delivery.previous_courier_order_ids = [
+            *(delivery.previous_courier_order_ids or []),
+            delivery.courier_order_id,
+        ]
+    delivery.courier_order_id = new_id
+
+    # The cancellation was bookkeeping, not an outcome. Cleared so the order
+    # stops reading as abandoned — but `courier_status` is left as the
+    # replacement's own events will set it, rather than guessed at here.
+    delivery.cancelled_at = None
+    delivery.cancel_party = None
+    delivery.cancel_reason = None
+    delivery.last_error = None
+    if delivery.courier_status in FAILED_COURIER_STATUSES:
+        delivery.courier_status = CourierStatusEnum.ASSIGNING_DRIVER.value
+
+    if share_link := (payload.get("data") or {}).get("order", {}).get("shareLink"):
+        delivery.share_link = share_link
+    delivery.last_payload = payload
+
+    logger.info(
+        "Lalamove replaced booking %s with %s for delivery %s",
+        delivery.previous_courier_order_ids[-1]
+        if delivery.previous_courier_order_ids
+        else "?",
+        new_id,
+        delivery.id,
+    )
+    return delivery
+
+
 async def apply_webhook(
     db: AsyncSession,
     payload: dict[str, Any],
@@ -761,15 +1083,16 @@ async def apply_webhook(
     data = payload.get("data") or {}
     courier_order = data.get("order") or {}
     courier_order_id = courier_order_id_of(payload)
+    lookup_id = delivery_key_of(payload)
 
     if delivery is None:
-        if not courier_order_id:
+        if not lookup_id:
             return None
         delivery = (
             (
                 await db.execute(
                     select(OrderDelivery).where(
-                        OrderDelivery.courier_order_id == courier_order_id
+                        OrderDelivery.courier_order_id == lookup_id
                     )
                 )
             )
@@ -777,8 +1100,11 @@ async def apply_webhook(
             .first()
         )
         if delivery is None:
-            logger.info("Lalamove webhook for unknown order %s", courier_order_id)
+            logger.info("Lalamove webhook for unknown order %s", lookup_id)
             return None
+
+    if payload.get("eventType") == "ORDER_REPLACED":
+        return _apply_replacement(delivery, payload)
 
     updated_at = webhook_time(payload)
     if (
@@ -838,11 +1164,14 @@ async def apply_webhook(
             courier_order.get("previousStatus") or delivery.courier_status
         )
         delivery.courier_status = status
-        if status == CourierStatusEnum.PICKED_UP.value:
-            delivery.picked_up_at = updated_at or datetime.now(timezone.utc)
-        elif status == CourierStatusEnum.COMPLETED.value:
-            delivery.delivered_at = updated_at or datetime.now(timezone.utc)
-        elif status in FAILED_COURIER_STATUSES:
+        # `picked_up_at` and `delivered_at` used to be written here as well.
+        # They were the same two moments `order_status_events` now records as
+        # `out_for_delivery` and `delivered` — the same fact in two tables, free
+        # to disagree, and they did not have to disagree by much to matter: one
+        # of them fed the customer's timeline and the other fed the admin's.
+        # `_advance_order` carries the courier's own stamp into the history, so
+        # there is one copy and it is the courier's.
+        if status in FAILED_COURIER_STATUSES:
             delivery.cancelled_at = updated_at or datetime.now(timezone.utc)
             delivery.cancel_party = courier_order.get("cancelParty")
             delivery.cancel_reason = courier_order.get("cancelReason")
@@ -857,7 +1186,7 @@ async def apply_webhook(
     elif status:
         delivery.status_updated_at = datetime.now(timezone.utc)
 
-    await _advance_order(db, delivery)
+    await _advance_order(db, delivery, at=updated_at)
     return delivery
 
 
@@ -971,7 +1300,17 @@ def _pod_for(delivery: OrderDelivery, stops: list[dict[str, Any]]) -> dict | Non
     return None
 
 
-async def _advance_order(db: AsyncSession, delivery: OrderDelivery) -> None:
+async def _advance_order(
+    db: AsyncSession, delivery: OrderDelivery, *, at: datetime | None = None
+) -> None:
+    """Move the order to match the courier, stamped with the courier's clock.
+
+    `at` is the moment their push describes — `webhook_time`, taken from the
+    payload's epoch rather than its formatted string, because their string is
+    Gulf local time carrying a `Z` and parsing it put every delivery four hours
+    in the future. Null when the push carried nothing usable, and the history
+    then falls back to now.
+    """
     target = _ORDER_STATUS_FOR.get(delivery.courier_status or "")
     if target is None:
         return
@@ -1008,7 +1347,16 @@ async def _advance_order(db: AsyncSession, delivery: OrderDelivery) -> None:
     }:
         return
 
-    order.status = target
+    # The courier's own word for what happened goes in the note, so the history
+    # records `PICKED_UP` next to `out_for_delivery` rather than only our
+    # translation of it.
+    with acting_as(
+        StatusSourceEnum.COURIER.value,
+        actor_label=delivery.provider,
+        note=delivery.courier_status,
+        at=at,
+    ):
+        order.status = target
     # The customer hears about it from here, not from the admin screen. These
     # two transitions only ever happen because a courier said so, so this is the
     # only place that knows they happened — and "out for delivery" is the email

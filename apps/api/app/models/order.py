@@ -26,6 +26,7 @@ from .base import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
     from .order_delivery import OrderDelivery
+    from .order_status_event import OrderStatusEvent
     from .payment_transaction import PaymentTransaction
     from .pos_order import (
         OrderCharge,
@@ -314,6 +315,18 @@ class Order(Base, UUIDMixin, TimestampMixin):
         back_populates="order",
         cascade="all, delete-orphan",
         uselist=False,
+    )
+    #: Every status this order has reached, oldest first. Written by the
+    #: listener in `order_status_event`, not by any caller here — see that
+    #: module for why coverage has to be structural.
+    #:
+    #: Lazy by default: most reads of an `Order` do not want its history, and
+    #: the two that do (the timeline and the admin's event list) ask for it.
+    status_events: Mapped[list[OrderStatusEvent]] = relationship(
+        "OrderStatusEvent",
+        back_populates="order",
+        cascade="all, delete-orphan",
+        order_by="OrderStatusEvent.at",
     )
 
     @property

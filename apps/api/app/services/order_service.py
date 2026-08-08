@@ -26,12 +26,18 @@ from app.models.cart import Cart, CartItem
 from app.models.delivery_batch import DELIVERY_TIMEZONE
 from app.models.delivery_settings import DeliverySettings
 from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
+from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.product import Product
 from app.models.pos_order import OrderSourceEnum, PosOrderStatusEnum
 from app.models.promo_code import PromoCode
 from app.models.user import User
 from app.schemas.fulfilment import FulfilmentResponse
-from app.schemas.order import OrderCreate, OrderListResponse, OrderResponse
+from app.schemas.order import (
+    OrderCreate,
+    OrderListResponse,
+    OrderResponse,
+    OrderStatusStamp,
+)
 from app.services import (
     batching_service,
     cart_service,
@@ -153,11 +159,16 @@ async def to_response(db: AsyncSession, order: Order) -> OrderResponse:
     box arrives, and they only do that by construction.
     """
     await _ensure_items_loaded(db, order)
+    reached = await fulfilment_service.reached_at(db, order)
     response = OrderResponse.model_validate(order)
     response.email_has_account = await _email_has_account(db, order.email)
     response.fulfilment = FulfilmentResponse.of(
-        await fulfilment_service.for_order(db, order)
+        await fulfilment_service.for_order(db, order, reached=reached)
     )
+    response.status_history = [
+        OrderStatusStamp(status=status, at=at)
+        for status, at in sorted(reached.items(), key=lambda pair: pair[1])
+    ]
     return response
 
 
@@ -930,29 +941,34 @@ async def create_order(
     # 6. Claim stock for stock-tracked products (fails if any is out of stock)
     await _decrement_stock(db, cart)
 
-    # 7. Persist order rows and clear cart
-    order = await _persist_order(
-        db,
-        data,
-        user_id,
-        cart,
-        items_data,
-        subtotal,
-        discount_amount,
-        promo_code_used,
-        promo_obj,
-        totals.delivery_fee,
-        totals.total,
-        totals.vat_amount,
-        totals.total_excl_vat,
-        fallback_email,
-        branch,
-        promised,
-        # Keyword, not positional. It is a `Decimal` sitting next to three other
-        # `Decimal`s and the argument list is already thirteen long — the one
-        # place a silent swap could still happen is the call, so it is named.
-        low_order_fee=totals.low_order_fee,
-    )
+    # 7. Persist order rows and clear cart.
+    #    The constructor sets `status`, which is a transition like any other and
+    #    is recorded as one — the first row of every order's history is written
+    #    from inside this call.
+    with acting_as(StatusSourceEnum.CHECKOUT.value, actor_id=user_id):
+        order = await _persist_order(
+            db,
+            data,
+            user_id,
+            cart,
+            items_data,
+            subtotal,
+            discount_amount,
+            promo_code_used,
+            promo_obj,
+            totals.delivery_fee,
+            totals.total,
+            totals.vat_amount,
+            totals.total_excl_vat,
+            fallback_email,
+            branch,
+            promised,
+            # Keyword, not positional. It is a `Decimal` sitting next to three
+            # other `Decimal`s and the argument list is already thirteen long —
+            # the one place a silent swap could still happen is the call, so it
+            # is named.
+            low_order_fee=totals.low_order_fee,
+        )
 
     # 8. Open the delivery record — including for zones no courier API touches,
     #    so "what did fulfilment cost" is answerable for the whole country and
@@ -971,7 +987,8 @@ async def create_order(
         _is_cash_on_delivery(data) and order.status == OrderStatusEnum.CREATED
     )
     if confirmed_as_cash:
-        order.status = OrderStatusEnum.CONFIRMED
+        with acting_as(StatusSourceEnum.CHECKOUT.value, note="cash on collection"):
+            order.status = OrderStatusEnum.CONFIRMED
 
     # 10. And only now put it on a register and tell the kitchen — a counter
     #    hears about a website order when it has been paid for. A card order

@@ -21,6 +21,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.models.base import utcnow
+from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.branch import Branch
 from app.models.business_settings import BusinessSettings
 from app.models.charge import Charge
@@ -1087,7 +1088,13 @@ async def close_order(db: AsyncSession, *, order: Order, user: User) -> Order:
         raise ConflictError(f"Order still has {order.balance_due} outstanding")
 
     order.pos_status = PosOrderStatusEnum.CLOSED.value
-    order.status = "confirmed"
+    with acting_as(
+        StatusSourceEnum.POS.value,
+        actor_id=user.id,
+        actor_label=user.email,
+        note="check closed",
+    ):
+        order.status = "confirmed"
     order.closer_id = user.id
     order.closed_at = utcnow()
     for item in order.items:
@@ -1121,7 +1128,13 @@ async def void_order(
         raise ConflictError("This order has payments — refund them before voiding")
 
     order.pos_status = PosOrderStatusEnum.VOID.value
-    order.status = "cancelled"
+    with acting_as(
+        StatusSourceEnum.POS.value,
+        actor_id=user.id,
+        actor_label=user.email,
+        note="check voided",
+    ):
+        order.status = "cancelled"
     order.voided_at = utcnow()
     order.void_reason_id = reason_id
     order.closer_id = user.id
@@ -1213,7 +1226,13 @@ async def join_orders(
     for item in list(source.items):
         item.order_id = target.id
     source.pos_status = PosOrderStatusEnum.JOINED.value
-    source.status = "cancelled"
+    with acting_as(
+        StatusSourceEnum.POS.value,
+        actor_id=user.id,
+        actor_label=user.email,
+        note=f"joined into {target.order_number}",
+    ):
+        source.status = "cancelled"
     source.original_order_id = target.id
     source.closer_id = user.id
     source.closed_at = utcnow()

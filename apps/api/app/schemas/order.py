@@ -70,6 +70,22 @@ class OrderStatusUpdate(BaseModel):
     admin_notes: str | None = None
 
 
+class OrderStatusStamp(BaseModel):
+    """When this order reached one status.
+
+    Two fields and no more. The row behind it also carries who moved the order
+    and from where, and none of that belongs in a payload the customer's own
+    order page reads — same reasoning as `OrderDeliveryResponse` being kept out
+    of `OrderResponse`. The admin's `GET /orders/{n}/status-events` is where the
+    rest of the row is served.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    status: str
+    at: datetime
+
+
 class OrderResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -131,6 +147,19 @@ class OrderResponse(BaseModel):
     #: The language this order was placed in, and the one every email about it
     #: is written in.
     locale: str = "en"
+    #: When this order reached each status, oldest first, at most one entry per
+    #: status.
+    #:
+    #: The timeline used to source four of its five stamps from
+    #: `order_deliveries`, which only an integrated courier ever fills — so a
+    #: pickup order, a third-party zone or an order somebody walked through by
+    #: hand showed `created` and four blanks. These come from the order's own
+    #: history and exist whoever carried it.
+    #:
+    #: The *latest* row per status rather than the first: an order that went
+    #: undelivered and was re-dispatched should show the dispatch that is
+    #: actually happening, not the one that failed.
+    status_history: list[OrderStatusStamp] = []
 
 
 class OrderListResponse(BaseModel):
