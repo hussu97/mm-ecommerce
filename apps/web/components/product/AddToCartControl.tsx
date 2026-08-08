@@ -8,8 +8,24 @@ import { analytics } from '@/lib/analytics';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
 import { computeFromPrice } from '@/lib/pricing';
-import { ModifierModal } from '@/components/product/ModifierModal';
+import dynamic from 'next/dynamic';
 import type { Product } from '@/lib/types';
+
+/**
+ * The options modal, fetched when it is first opened rather than with the grid.
+ *
+ * This control renders on every tile of every listing page, so a static import
+ * put the whole modal — its layout, its option maths, its own imports — into
+ * the first load of a page whose visitor may never tap it. It only ever appears
+ * after a deliberate tap, which is exactly the case `next/dynamic` is for.
+ *
+ * `ssr: false` because it is never part of the server-rendered page: it is
+ * gated behind `showModal`, which starts false.
+ */
+const ModifierModal = dynamic(
+  () => import('@/components/product/ModifierModal').then((m) => m.ModifierModal),
+  { ssr: false },
+);
 import { Icon } from '@/components/ui/Icon';
 
 /**

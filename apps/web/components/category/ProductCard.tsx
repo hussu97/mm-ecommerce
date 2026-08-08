@@ -25,7 +25,23 @@ function ConditionalLink({
   return <Link href={href} className={className}>{children}</Link>;
 }
 
-export function ProductCard({ product, badge }: { product: Product; badge?: string }) {
+export function ProductCard({
+  product,
+  badge,
+  priority = false,
+}: {
+  product: Product;
+  badge?: string;
+  /**
+   * Set on the handful of cards that are above the fold.
+   *
+   * `next/image` is lazy by default, which on a listing page means the LCP
+   * element is an image the browser is told not to hurry — it is not even
+   * discovered until layout has run. `ProductGrid` sets this on the first row
+   * or two; everything below stays lazy, which is what lazy is for.
+   */
+  priority?: boolean;
+}) {
   const { t, locale } = useTranslation();
   const hasModifiers = product.product_modifiers && product.product_modifiers.length > 0;
 
@@ -53,6 +69,7 @@ export function ProductCard({ product, badge }: { product: Product; badge?: stri
               alt={productName}
               fill
               sizes="(max-width: 640px) 50vw, (max-width: 1024px) 50vw, 33vw"
+              priority={priority}
               className="object-cover group-hover:scale-105 transition-transform duration-500"
             />
           ) : (

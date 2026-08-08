@@ -10,8 +10,22 @@ import { useLocation } from '@/lib/location/LocationProvider';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
-import { LocationPicker } from '@/components/ui/LocationPicker';
+import dynamic from 'next/dynamic';
 import { Icon } from '@/components/ui/Icon';
+
+/**
+ * The map, loaded when the form that needs it is open.
+ *
+ * `@vis.gl/react-google-maps` plus the Maps JS API is the heaviest thing this
+ * route can pull in, and it is only reachable behind "add" or "edit". Checkout
+ * already did this in `AddressModal`; this page was the one place still
+ * importing it statically, so opening the address book downloaded a map nobody
+ * had asked for yet.
+ */
+const LocationPicker = dynamic(
+  () => import('@/components/ui/LocationPicker').then((m) => m.LocationPicker),
+  { ssr: false },
+);
 
 /**
  * The same address, asked for the same way as at checkout.

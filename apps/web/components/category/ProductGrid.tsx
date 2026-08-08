@@ -16,8 +16,11 @@ export function ProductGrid({ products }: { products: Product[] }) {
 
   return (
     <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-3 gap-y-7 sm:gap-8">
-      {products.map(product => (
-        <ProductCard key={product.id} product={product} />
+      {products.map((product, i) => (
+        // Two columns on a phone, three from `lg`, so the first four cards are
+        // the ones that can be on screen when the page paints — and one of them
+        // is the LCP element. Everything after stays lazy.
+        <ProductCard key={product.id} product={product} priority={i < 4} />
       ))}
     </div>
   );

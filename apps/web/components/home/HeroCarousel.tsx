@@ -101,6 +101,40 @@ export function HeroCarousel({
   const touchStart = useRef<number | null>(null);
   const current = slides[active] ?? slides[0];
 
+  /**
+   * Whether the slides behind the first one have been allowed to load yet.
+   *
+   * Every slide is `absolute inset-0`, so all three are inside the viewport
+   * even at `opacity: 0` — which means `loading="lazy"` does nothing for them,
+   * and the previous `loading="eager"` on all of them was honest about what was
+   * really happening: three full-bleed banners fetched before the page had
+   * finished with the first. On the live homepage that is about 195 KB of
+   * mobile AVIF, of which 70 KB is the LCP frame and 125 KB is artwork nobody
+   * will see for six seconds.
+   *
+   * So the markup for slides 1..n is simply not there on the server render or
+   * the first paint. It appears once the browser is idle, which is far ahead of
+   * the first auto-advance, so the blank-frame problem the old comment warned
+   * about does not come back.
+   */
+  const [deferredLoaded, setDeferredLoaded] = useState(false);
+
+  useEffect(() => {
+    if (count < 2) return;
+    type IdleWindow = Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+    };
+    const w = window as IdleWindow;
+    const run = () => setDeferredLoaded(true);
+    if (w.requestIdleCallback) {
+      const id = w.requestIdleCallback(run, { timeout: 2000 });
+      return () => (window as unknown as { cancelIdleCallback?: (h: number) => void })
+        .cancelIdleCallback?.(id);
+    }
+    const id = setTimeout(run, 1200);
+    return () => clearTimeout(id);
+  }, [count]);
+
   const go = useCallback(
     (next: number) => setActive(((next % count) + count) % count),
     [count],
@@ -172,21 +206,26 @@ export function HeroCarousel({
                   sized JPEGs and the mobile frame is a different crop, which is
                   art direction the image component cannot express. Nothing
                   re-encodes them for us either, so BannerPicture offers the AVIF
-                  and WebP built next to them. */}
-              <BannerPicture
-                wide={wide}
-                tall={tall}
-                decoding={i === 0 ? 'sync' : 'async'}
-                // Every slide is inside the viewport, so `lazy` buys nothing
-                // but a blank frame the first time the carousel advances past
-                // an image that has not arrived yet. Fetch them all, and let
-                // priority keep the later ones behind the LCP frame.
-                loading="eager"
-                fetchPriority={i === 0 ? 'high' : 'low'}
-                className={`absolute inset-0 h-full w-full object-cover ${
-                  isActive ? 'mm-kenburns' : ''
-                }`}
-              />
+                  and WebP built next to them.
+
+                  Only the first frame is rendered up front. `loading="lazy"`
+                  cannot help the others — every slide is `absolute inset-0` and
+                  so inside the viewport whatever its opacity — so the way to
+                  keep 125 KB of unseen artwork out of the critical path is for
+                  the markup not to exist yet. `deferredLoaded` puts it there on
+                  the first idle frame, seconds before the carousel advances. */}
+              {(i === 0 || deferredLoaded) && (
+                <BannerPicture
+                  wide={wide}
+                  tall={tall}
+                  decoding={i === 0 ? 'sync' : 'async'}
+                  loading="eager"
+                  fetchPriority={i === 0 ? 'high' : 'low'}
+                  className={`absolute inset-0 h-full w-full object-cover ${
+                    isActive ? 'mm-kenburns' : ''
+                  }`}
+                />
+              )}
             </div>
           );
         })}
