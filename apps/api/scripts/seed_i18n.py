@@ -319,7 +319,7 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     (
         "checkout",
         "email_optional_hint",
-        "Add it if you'd like a written confirmation of your order.",
+        "We'll send delivery updates for your order to this email.",
     ),
     ("checkout", "email", "Email"),
     (
@@ -943,7 +943,7 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     (
         "checkout",
         "email_optional_hint",
-        "أضف بريدك الإلكتروني لتصلك رسائل بتحديثات طلبك",
+        "سنرسل تحديثات توصيل طلبك إلى هذا البريد الإلكتروني.",
     ),
     ("checkout", "email", "البريد الإلكتروني"),
     (

@@ -34,16 +34,17 @@ import { dirname, resolve } from 'node:path';
  */
 const ICON_NAMES = [
   'add', 'add_location_alt', 'arrow_back', 'arrow_drop_down', 'arrow_forward',
-  'bakery_dining', 'bolt', 'bookmark_added', 'cake', 'cancel', 'chat',
-  'check_circle', 'chevron_left', 'chevron_right', 'close', 'credit_card',
-  'delete_outline', 'error', 'error_outline', 'expand_more', 'info',
-  'info_outline', 'inventory_2', 'link', 'local_offer', 'local_shipping',
-  'location_off', 'location_on', 'lock', 'login', 'logout', 'mail',
+  'bakery_dining', 'bolt', 'bookmark_added', 'cake', 'cancel', 'card_giftcard',
+  'chat', 'check_circle', 'chevron_left', 'chevron_right', 'close',
+  'credit_card', 'delete_outline', 'error', 'error_outline', 'expand_more',
+  'favorite', 'info', 'info_outline', 'inventory_2', 'link', 'local_offer',
+  'local_shipping', 'location_off', 'location_on', 'lock', 'login', 'logout',
+  'mail',
   'mark_email_read', 'menu', 'my_location', 'near_me', 'payments', 'person',
   'person_add', 'person_outline', 'place', 'radio_button_checked',
   'radio_button_unchecked', 'receipt_long', 'remove', 'schedule', 'search',
-  'search_off', 'settings', 'shopping_bag', 'shopping_basket', 'storefront',
-  'warning', 'wifi_off', 'wrong_location',
+  'search_off', 'settings', 'shopping_bag', 'shopping_basket', 'spa',
+  'storefront', 'warning', 'wifi_off', 'wrong_location',
 ];
 
 const here = dirname(fileURLToPath(import.meta.url));
