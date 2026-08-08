@@ -43,10 +43,81 @@ NOT_FROM_ENV = {
 }
 
 
+class _NoDuplicateKeys(yaml.SafeLoader):
+    """
+    A loader that refuses a mapping with the same key twice.
+
+    PyYAML's default silently keeps the last value, and that silence cost a
+    production deploy on 8 August 2026. A block of `ZIINA_*` variables was
+    inserted into the `api` service twice instead of once into `api` and once
+    into `pos-api`. `yaml.safe_load` read it happily, every test here passed,
+    and the deploy then died on the VM:
+
+        failed to parse docker-compose.prod.yml: yaml: construct errors:
+          line 80: mapping key "ZIINA_ENABLED" already defined at line 64
+
+    Docker Compose parses with Go's yaml.v3, which treats a duplicate key as an
+    error. So the file this suite was reading and the file production reads were
+    not the same file, and the one place that disagreement shows up is the one
+    place it cannot be fixed quickly.
+
+    Two things were wrong and both are fixed here: the duplicate itself, and a
+    test that could not have seen it.
+    """
+
+    def construct_mapping(self, node, deep=False):
+        seen: set = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in seen:
+                raise AssertionError(
+                    f"duplicate key {key!r} at line {key_node.start_mark.line + 1} "
+                    "— Docker Compose refuses to parse this file"
+                )
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
+def _load_compose() -> dict:
+    return yaml.load(COMPOSE.read_text(), Loader=_NoDuplicateKeys)
+
+
 @pytest.fixture(scope="module")
 def api_env() -> dict:
-    compose = yaml.safe_load(COMPOSE.read_text())
-    return compose["services"]["api"]["environment"]
+    return _load_compose()["services"]["api"]["environment"]
+
+
+def test_the_compose_file_parses_the_way_docker_parses_it():
+    """
+    Not a redundant check on top of the fixtures above.
+
+    They read one service each and would go on working with a duplicate key in
+    the other. This reads the whole document under the strict loader, which is
+    what the VM effectively does, and is the assertion that would have caught
+    the 8 August deploy failure locally in under a second.
+    """
+    compose = _load_compose()
+
+    assert set(compose["services"]) >= {"api", "pos-api", "postgres", "nginx"}
+
+
+def test_the_register_gets_the_payment_gateway_credentials_too():
+    """
+    `pos-api` shares `Settings`, so it needs every gateway variable to boot —
+    and it is the service the duplicate-key bug left without any of them, since
+    both copies of the block landed in `api`.
+    """
+    pos_env = _load_compose()["services"]["pos-api"]["environment"]
+
+    for key in (
+        "ZIINA_ENABLED",
+        "ZIINA_API_KEY",
+        "ZIINA_WEBHOOK_SECRET",
+        "ZIINA_API_URL",
+        "ZIINA_TEST_MODE",
+        "ZIINA_TIMEOUT_SECONDS",
+    ):
+        assert key in pos_env, f"{key} never reaches the register"
 
 
 def test_every_setting_can_be_configured(api_env):
