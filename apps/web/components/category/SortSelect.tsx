@@ -70,7 +70,11 @@ export function SortSelect({
         name="sort"
         defaultValue={value ?? ''}
         onChange={(e) => e.currentTarget.form?.requestSubmit()}
-        className="max-w-full font-body text-[11px] uppercase tracking-wider text-primary bg-white border border-gray-200 px-2 py-1 cursor-pointer outline-none focus:border-primary/60"
+        // Below `sm` the anti-zoom rule in globals.css forces this to 16px and
+        // cannot be argued with, so the width has to come off the letterforms
+        // instead: no uppercase, no extra tracking, and a cap so the longest
+        // option truncates rather than pushing the heading off its own row.
+        className="max-w-[11rem] sm:max-w-full font-body text-[11px] normal-case sm:uppercase tracking-normal sm:tracking-wider text-primary bg-white border border-gray-200 px-2 py-1 cursor-pointer outline-none focus:border-primary/60"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>

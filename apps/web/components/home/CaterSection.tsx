@@ -1,5 +1,6 @@
 import { PromotionLink } from '@/components/analytics/PromotionLink';
 import { Reveal } from './Reveal';
+import { Icon } from '@/components/ui/Icon';
 
 export interface Occasion {
   icon: string;
@@ -62,7 +63,7 @@ export function CaterSection({ c, locale }: { c: CaterContent; locale: string })
               className="mm-sheen inline-flex items-center gap-2 px-7 py-3.5 bg-primary text-white text-[11px] sm:text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity"
             >
               {c.cta_text}
-              <span className="material-icons text-[15px] rtl:rotate-180">arrow_forward</span>
+              <Icon name="arrow_forward" className="text-[15px] rtl:rotate-180" />
             </PromotionLink>
           </Reveal>
         )}

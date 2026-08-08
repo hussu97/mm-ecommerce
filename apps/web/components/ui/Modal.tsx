@@ -3,6 +3,7 @@
 import { ReactNode, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils';
+import { Icon } from '@/components/ui/Icon';
 
 interface ModalProps {
   isOpen: boolean;
@@ -59,7 +60,7 @@ export function Modal({ isOpen, onClose, title, children, className }: ModalProp
             className="ml-auto p-1 text-gray-400 hover:text-gray-600 transition-colors"
             aria-label="Close"
           >
-            <span className="material-icons text-xl">close</span>
+            <Icon name="close" className="text-xl" />
           </button>
         </div>
         {/* Body */}

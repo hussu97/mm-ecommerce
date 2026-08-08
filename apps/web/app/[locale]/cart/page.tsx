@@ -18,6 +18,7 @@ import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
 import { FeaturedProductsCarousel } from '@/components/product/FeaturedProductsCarousel';
 import { NewCustomerCouponTray } from '@/components/promo/NewCustomerCouponTray';
+import { Icon } from '@/components/ui/Icon';
 
 const PLACEHOLDER_IMAGE = '/images/logos/main_logo.png';
 
@@ -208,7 +209,7 @@ export default function CartPage() {
     return (
       <div className="max-w-7xl mx-auto px-4 py-16 space-y-16">
         <div className="flex flex-col items-center text-center gap-6">
-          <span className="material-icons text-6xl text-secondary">shopping_bag</span>
+          <Icon name="shopping_bag" className="text-6xl text-secondary" />
           <h1 className="font-display text-3xl text-primary uppercase tracking-widest">{t('cart.empty_title')}</h1>
           <p className="font-body text-sm text-gray-500 max-w-sm">
             {t('cart.empty_body')}
@@ -295,7 +296,7 @@ export default function CartPage() {
                         className="text-gray-300 hover:text-red-400 transition-colors shrink-0 disabled:opacity-50"
                         aria-label="Remove item"
                       >
-                        <span className="material-icons text-xl">close</span>
+                        <Icon name="close" className="text-xl" />
                       </button>
                     </div>
 
@@ -377,7 +378,7 @@ export default function CartPage() {
                       className="text-green-400 hover:text-green-700 transition-colors"
                       aria-label="Remove promo code"
                     >
-                      <span className="material-icons text-base">close</span>
+                      <Icon name="close" className="text-base" />
                     </button>
                   </div>
                 ) : (

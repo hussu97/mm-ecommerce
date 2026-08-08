@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth-context';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { Icon } from '@/components/ui/Icon';
 
 export default function AccountPage() {
   const { user } = useAuth();
@@ -48,9 +49,7 @@ export default function AccountPage() {
             href={href}
             className="group border border-gray-200 hover:border-primary p-5 transition-colors"
           >
-            <span className="material-icons text-3xl text-secondary group-hover:text-primary mb-3 block transition-colors">
-              {icon}
-            </span>
+            <Icon name={icon} className="text-3xl text-secondary group-hover:text-primary mb-3 block transition-colors" />
             <h2 className="text-sm font-medium uppercase tracking-widest text-gray-800 group-hover:text-primary transition-colors mb-1 font-body">
               {label}
             </h2>

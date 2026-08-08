@@ -12,6 +12,7 @@ import { useAuth } from '@/lib/auth-context';
 import { CreateAccountNudge } from './CreateAccountNudge';
 import { localizedField } from '@/lib/i18n/entity';
 import type { Order } from '@/lib/types';
+import { Icon } from '@/components/ui/Icon';
 
 /**
  * The address this order went to, in the shape the address book stores.
@@ -93,7 +94,7 @@ function ConfirmationContent() {
   if (error || !order) {
     return (
       <div className="flex flex-col items-center gap-6 py-20 text-center">
-        <span className="material-icons text-5xl text-secondary">receipt_long</span>
+        <Icon name="receipt_long" className="text-5xl text-secondary" />
         <h1 className="font-display text-2xl text-primary uppercase tracking-widest">{t('confirmation.not_found_title')}</h1>
         <p className="font-body text-sm text-gray-500 max-w-sm">
           {t('confirmation.not_found_body')}
@@ -108,7 +109,7 @@ function ConfirmationContent() {
       {/* Success header */}
       <div className="text-center mb-10">
         <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 mb-4">
-          <span className="material-icons text-3xl text-green-600">check_circle</span>
+          <Icon name="check_circle" className="text-3xl text-green-600" />
         </div>
         <h1 className="font-display text-3xl text-primary uppercase tracking-widest mb-2">
           {t('confirmation.title')}
@@ -217,7 +218,7 @@ function ConfirmationContent() {
       )}
       {order.delivery_method === 'pickup' && (
         <div className="bg-gray-50 rounded-sm p-4 mb-6 flex gap-2 items-start">
-          <span className="material-icons text-base text-primary mt-0.5">storefront</span>
+          <Icon name="storefront" className="text-base text-primary mt-0.5" />
           <p className="font-body text-sm text-gray-600">
             {t('confirmation.pickup_note')}
           </p>

@@ -17,6 +17,7 @@
 
 import type { Fulfilment, FulfilmentStage, PickupBranch } from '@/lib/types';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { Icon } from '@/components/ui/Icon';
 
 /** The journey, per method. Mirrors `email_service._timeline` deliberately. */
 const PICKUP_STEPS: FulfilmentStage[] = ['preparing', 'ready', 'collected'];
@@ -114,7 +115,7 @@ export function BranchCard({ branch }: { branch: PickupBranch }) {
           rel="noopener noreferrer"
           className="mt-4 inline-flex items-center gap-1.5 text-sm font-body text-primary hover:underline"
         >
-          <span className="material-icons text-[18px]">place</span>
+          <Icon name="place" className="text-[18px]" />
           {t('order.open_in_maps')}
         </a>
       )}
@@ -191,7 +192,7 @@ export function FulfilmentPanel({
           rel="noopener noreferrer"
           className="mb-4 flex items-center justify-center gap-2 w-full bg-primary text-white font-body text-sm uppercase tracking-widest py-3.5 hover:bg-primary/90 transition-colors"
         >
-          <span className="material-icons text-[18px]">near_me</span>
+          <Icon name="near_me" className="text-[18px]" />
           {t('order.track_live')}
         </a>
       )}
@@ -220,11 +221,10 @@ export function FulfilmentPanel({
                       : null;
               return (
                 <li key={step} className="flex items-center gap-3">
-                  <span
-                    className={`material-icons text-[20px] ${done ? 'text-primary' : 'text-gray-300'}`}
-                  >
-                    {done ? 'check_circle' : STEP_ICON[step]}
-                  </span>
+                  <Icon
+                    name={done ? 'check_circle' : STEP_ICON[step]}
+                    className={`text-[20px] ${done ? 'text-primary' : 'text-gray-300'}`}
+                  />
                   <span
                     className={`text-sm font-body flex-1 ${done ? 'text-gray-800' : 'text-gray-400'}`}
                   >

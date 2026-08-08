@@ -8,6 +8,7 @@ import { authApi, ApiError } from '@/lib/api';
 import { analytics, failureReason } from '@/lib/analytics';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { Turnstile, isTurnstileEnabled } from '@/components/ui/Turnstile';
+import { Icon } from '@/components/ui/Icon';
 
 export default function ForgotPasswordPage() {
   const { t } = useTranslation();
@@ -38,7 +39,7 @@ export default function ForgotPasswordPage() {
     return (
       <div className="min-h-[70vh] flex items-center justify-center px-4 py-16">
         <div className="w-full max-w-md text-center">
-          <span className="material-icons text-5xl text-primary mb-4 block">mark_email_read</span>
+          <Icon name="mark_email_read" className="text-5xl text-primary mb-4 block" />
           <h1 className="font-display text-3xl text-primary mb-3">{t('auth.check_email_title')}</h1>
           <p className="text-sm text-gray-600 font-body mb-6">
             {t('auth.check_email_body', { email })}

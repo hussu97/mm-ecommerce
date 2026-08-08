@@ -5,7 +5,47 @@ import type { BlogPost } from '@/lib/types';
 import { Breadcrumb } from '@/components/ui';
 import { RSC_API_BASE } from '@/lib/api';
 
+/**
+ * How long a rendered post is held before it is built again. A blog post is the
+ * least volatile thing on the site, so this is generous by a wide margin.
+ *
+ * The literal is not a style choice: Next reads segment config statically, and
+ * an imported constant fails the build with "Invalid segment configuration
+ * export". Keep it in step with `CONTENT_TTL` in `lib/cache-policy.ts`, which
+ * is what every *fetch* on the site uses and what the reasoning lives next to.
+ *
+ * On its own this does nothing — see `generateStaticParams` below.
+ */
+export const revalidate = 60;
+
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
+
+/**
+ * Prerender the published posts.
+ *
+ * `revalidate` alone is not enough on a segment with dynamic params: Next
+ * renders each path on demand and does not hold the result. This is what turns
+ * the route into ISR — the same pairing as the product page.
+ *
+ * `dynamicParams` stays at its default of true, so a post published after the
+ * build still renders; it just does not start warm.
+ */
+export async function generateStaticParams() {
+  const locales = (process.env.NEXT_PUBLIC_SUPPORTED_LOCALES ?? 'en,ar').split(',');
+  try {
+    const res = await fetch(`${RSC_API_BASE}/blog/public?per_page=200`, {
+      next: { revalidate: 300 },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { items?: { slug: string }[] };
+    return (data.items ?? []).flatMap((post) =>
+      locales.map((locale) => ({ locale, slug: post.slug })),
+    );
+  } catch {
+    return [];
+  }
+}
 
 async function fetchPost(slug: string, locale: string): Promise<BlogPost | null> {
   try {

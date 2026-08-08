@@ -8,6 +8,7 @@ import { Order, OrderStatus } from '@/lib/types';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
 import { FulfilmentPanel } from '@/components/order/FulfilmentPanel';
+import { Icon } from '@/components/ui/Icon';
 
 /**
  * How a status looks in the header chip.
@@ -76,7 +77,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
   if (error || !order) {
     return (
       <div className="text-center py-16">
-        <span className="material-icons text-4xl text-gray-300 block mb-3">search_off</span>
+        <Icon name="search_off" className="text-4xl text-gray-300 block mb-3" />
         <p className="text-sm text-gray-500 font-body mb-4">{error || t('order.not_found')}</p>
         <Link href="/account/orders" className="text-sm text-primary hover:underline font-body">
           {t('order.back_to_orders')}
@@ -97,7 +98,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
     <div>
       <div className="flex items-center gap-3 mb-6">
         <Link href="/account/orders" className="text-gray-400 hover:text-primary transition-colors">
-          <span className="material-icons text-[20px]">arrow_back</span>
+          <Icon name="arrow_back" className="text-[20px]" />
         </Link>
         <div>
           <h1 className="font-display text-2xl text-primary leading-tight">{order.order_number}</h1>

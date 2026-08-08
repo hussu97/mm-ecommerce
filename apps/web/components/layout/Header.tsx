@@ -9,6 +9,7 @@ import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { MobileMenu } from './MobileMenu';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import type { Category, Language } from '@/lib/types';
+import { Icon } from '@/components/ui/Icon';
 
 export function Header({ languages = [], categories = [], locale: localeProp }: {
   languages?: Language[];
@@ -34,7 +35,7 @@ export function Header({ languages = [], categories = [], locale: localeProp }: 
               aria-label="Open menu"
               aria-expanded={menuOpen}
             >
-              <span className="material-icons">menu</span>
+              <Icon name="menu" />
             </button>
           </div>
 
@@ -62,14 +63,14 @@ export function Header({ languages = [], categories = [], locale: localeProp }: 
               className="p-2 text-gray-600 hover:text-primary transition-colors"
               aria-label={user && !user.is_guest ? t('nav.my_account') : t('nav.sign_in')}
             >
-              <span className="material-icons">{user && !user.is_guest ? 'person' : 'person_outline'}</span>
+              <Icon name={user && !user.is_guest ? 'person' : 'person_outline'} />
             </Link>
             <Link
               href={`/${locale}/cart`}
               className="relative p-2 -me-2 text-gray-600 hover:text-primary transition-colors"
               aria-label={`${t('nav.cart')}, ${itemCount}`}
             >
-              <span className="material-icons">shopping_bag</span>
+              <Icon name="shopping_bag" />
               {itemCount > 0 && (
                 <span className="absolute top-0.5 right-0.5 min-w-[18px] h-[18px] flex items-center justify-center bg-primary text-white text-[10px] font-bold rounded-full leading-none px-0.5">
                   {itemCount > 99 ? '99+' : itemCount}

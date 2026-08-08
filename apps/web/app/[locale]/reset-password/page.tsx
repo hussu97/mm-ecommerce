@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { authApi, ApiError } from '@/lib/api';
 import { analytics, failureReason } from '@/lib/analytics';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { Icon } from '@/components/ui/Icon';
 
 function ResetPasswordForm() {
   const searchParams = useSearchParams();
@@ -24,7 +25,7 @@ function ResetPasswordForm() {
     return (
       <div className="min-h-[70vh] flex items-center justify-center px-4 py-16">
         <div className="w-full max-w-md text-center">
-          <span className="material-icons text-5xl text-red-400 mb-4 block">error_outline</span>
+          <Icon name="error_outline" className="text-5xl text-red-400 mb-4 block" />
           <h1 className="font-display text-2xl text-primary mb-3">{t('auth.invalid_link')}</h1>
           <p className="text-sm text-gray-500 font-body mb-6">
             {t('auth.invalid_link_body')}
@@ -69,7 +70,7 @@ function ResetPasswordForm() {
     return (
       <div className="min-h-[70vh] flex items-center justify-center px-4 py-16">
         <div className="w-full max-w-md text-center">
-          <span className="material-icons text-5xl text-green-500 mb-4 block">check_circle</span>
+          <Icon name="check_circle" className="text-5xl text-green-500 mb-4 block" />
           <h1 className="font-display text-3xl text-primary mb-3">{t('auth.password_updated')}</h1>
           <p className="text-sm text-gray-600 font-body mb-6">
             {t('auth.password_updated_body')}

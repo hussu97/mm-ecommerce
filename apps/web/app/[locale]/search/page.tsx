@@ -5,6 +5,7 @@ import { RSC_API_BASE } from '@/lib/api';
 import { ProductGrid } from '@/components/category/ProductGrid';
 import { SearchTracker } from '@/components/analytics/SearchTracker';
 import { getTranslations, createT } from '@/lib/i18n/server';
+import { Icon } from '@/components/ui/Icon';
 
 interface SearchParams {
   q?: string;
@@ -78,7 +79,7 @@ export default async function SearchPage({
 
       {!q && (
         <div className="text-center py-24">
-          <span className="material-icons text-5xl text-secondary mb-4 block">search</span>
+          <Icon name="search" className="text-5xl text-secondary mb-4 block" />
           <p className="font-body text-gray-400 text-sm uppercase tracking-widest">
             {t('search.empty_prompt')}
           </p>
@@ -87,7 +88,7 @@ export default async function SearchPage({
 
       {q && data && data.items.length === 0 && (
         <div className="text-center py-24">
-          <span className="material-icons text-5xl text-secondary mb-4 block">inventory_2</span>
+          <Icon name="inventory_2" className="text-5xl text-secondary mb-4 block" />
           <p className="font-body text-gray-500 text-sm uppercase tracking-widest mb-2">
             {t('search.no_results', { q })}
           </p>

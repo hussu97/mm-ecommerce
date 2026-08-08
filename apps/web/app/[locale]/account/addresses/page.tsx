@@ -11,7 +11,22 @@ import { useLocation } from '@/lib/location/LocationProvider';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
-import { LocationPicker } from '@/components/ui/LocationPicker';
+import dynamic from 'next/dynamic';
+import { Icon } from '@/components/ui/Icon';
+
+/**
+ * The map, loaded when the form that needs it is open.
+ *
+ * `@vis.gl/react-google-maps` plus the Maps JS API is the heaviest thing this
+ * route can pull in, and it is only reachable behind "add" or "edit". Checkout
+ * already did this in `AddressModal`; this page was the one place still
+ * importing it statically, so opening the address book downloaded a map nobody
+ * had asked for yet.
+ */
+const LocationPicker = dynamic(
+  () => import('@/components/ui/LocationPicker').then((m) => m.LocationPicker),
+  { ssr: false },
+);
 
 /**
  * The same address, asked for the same way as at checkout.
@@ -191,7 +206,7 @@ export default function AddressesPage() {
         <h1 className="font-display text-2xl text-primary">{t('address.title')}</h1>
         {!showForm && (
           <Button variant="ghost" size="sm" onClick={openAdd}>
-            <span className="material-icons text-[16px]">add</span>
+            <Icon name="add" className="text-[16px]" />
             {t('address.add_address')}
           </Button>
         )}
@@ -295,9 +310,7 @@ export default function AddressesPage() {
               )}
               {verifiedPhone === form.phone && form.phone && (
                 <p className="mt-2 flex items-center gap-1.5 text-sm text-green-700">
-                  <span aria-hidden="true" className="material-icons text-[18px]">
-                    check_circle
-                  </span>
+                  <Icon name="check_circle" className="text-[18px]" />
                   {t('verify.verified')}
                 </p>
               )}
@@ -326,7 +339,7 @@ export default function AddressesPage() {
 
       {addresses.length === 0 && !showForm ? (
         <div className="text-center py-12 border border-dashed border-gray-200">
-          <span className="material-icons text-4xl text-gray-300 block mb-3">location_off</span>
+          <Icon name="location_off" className="text-4xl text-gray-300 block mb-3" />
           <p className="text-sm text-gray-500 font-body mb-4">{t('address.no_addresses')}</p>
           <Button variant="ghost" size="sm" onClick={openAdd}>{t('address.add_first')}</Button>
         </div>

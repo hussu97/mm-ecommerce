@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { analytics } from '@/lib/analytics';
 import { cn } from '@/lib/utils';
+import { Icon } from '@/components/ui/Icon';
 
 interface FaqItem {
   q: string;
@@ -35,9 +36,10 @@ function AccordionItem({ question, answer, index }: { question: string; answer: 
             {question}
           </span>
         </div>
-        <span className={cn('material-icons text-gray-400 shrink-0 transition-transform duration-200', open && 'rotate-180')}>
-          expand_more
-        </span>
+        <Icon
+          name="expand_more"
+          className={cn('text-gray-400 shrink-0 transition-transform duration-200', open && 'rotate-180')}
+        />
       </button>
 
       <div className={cn('overflow-hidden transition-all duration-300', open ? 'max-h-96 pb-5' : 'max-h-0')}>

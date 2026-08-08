@@ -4,6 +4,7 @@ import { createContext, ReactNode, useCallback, useContext, useEffect, useState 
 import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils';
 import { generateId } from '@/lib/utils';
+import { Icon } from '@/components/ui/Icon';
 
 export type ToastType = 'success' | 'error' | 'info' | 'warning';
 
@@ -37,10 +38,10 @@ function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: () => void }) 
         classes,
       )}
     >
-      <span className="material-icons text-lg leading-none mt-0.5 shrink-0">{icon}</span>
+      <Icon name={icon} className="text-lg leading-none mt-0.5 shrink-0" />
       <p className="flex-1 text-sm font-body">{toast.message}</p>
       <button onClick={onRemove} className="opacity-60 hover:opacity-100 transition-opacity ml-1 shrink-0" aria-label="Dismiss">
-        <span className="material-icons text-base leading-none">close</span>
+        <Icon name="close" className="text-base leading-none" />
       </button>
     </div>
   );

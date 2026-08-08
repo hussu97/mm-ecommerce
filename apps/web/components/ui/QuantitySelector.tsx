@@ -1,6 +1,7 @@
 'use client';
 
 import { cn } from '@/lib/utils';
+import { Icon } from '@/components/ui/Icon';
 
 interface QuantitySelectorProps {
   value: number;
@@ -31,7 +32,7 @@ export function QuantitySelector({
         className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-primary hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         aria-label="Decrease quantity"
       >
-        <span className="material-icons text-sm">remove</span>
+        <Icon name="remove" className="text-sm" />
       </button>
       <input
         type="number"
@@ -53,7 +54,7 @@ export function QuantitySelector({
         className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-primary hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         aria-label="Increase quantity"
       >
-        <span className="material-icons text-sm">add</span>
+        <Icon name="add" className="text-sm" />
       </button>
     </div>
   );

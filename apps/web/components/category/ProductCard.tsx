@@ -11,6 +11,7 @@ import { withFallback } from '@/lib/i18n/fallback';
 import { analytics, type ProductList } from '@/lib/analytics';
 import { computeFromPrice } from '@/lib/pricing';
 import type { Product } from '@/lib/types';
+import { Icon } from '@/components/ui/Icon';
 
 function ConditionalLink({
   href,
@@ -30,11 +31,21 @@ function ConditionalLink({
 export function ProductCard({
   product,
   badge,
+  priority = false,
   list,
   position = 0,
 }: {
   product: Product;
   badge?: string;
+  /**
+   * Set on the handful of cards that are above the fold.
+   *
+   * `next/image` is lazy by default, which on a listing page means the LCP
+   * element is an image the browser is told not to hurry — it is not even
+   * discovered until layout has run. `ProductGrid` sets this on the first row
+   * or two; everything below stays lazy, which is what lazy is for.
+   */
+  priority?: boolean;
   /**
    * Which listing this tile is part of.
    *
@@ -91,11 +102,12 @@ export function ProductCard({
               alt={productName}
               fill
               sizes="(max-width: 640px) 50vw, (max-width: 1024px) 50vw, 33vw"
+              priority={priority}
               className="object-cover group-hover:scale-105 transition-transform duration-500"
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center">
-              <span className="material-icons text-5xl sm:text-6xl text-secondary">cake</span>
+              <Icon name="cake" className="text-5xl sm:text-6xl text-secondary" />
             </div>
           )}
           {badgeText && <ProductBadge>{badgeText}</ProductBadge>}

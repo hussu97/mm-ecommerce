@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
@@ -8,6 +9,7 @@ import { Breadcrumb } from '@/components/ui';
 import { localizedField } from '@/lib/i18n/entity';
 import { getTranslations, createT } from '@/lib/i18n/server';
 import { RSC_API_BASE } from '@/lib/api';
+import { CACHE_TAGS, CONTENT_TTL } from '@/lib/cache-policy';
 import { SortSelect } from '@/components/category/SortSelect';
 import {
   DEFAULT_PRODUCT_SORT,
@@ -19,6 +21,31 @@ import {
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 const PER_PAGE = 12;
 
+/**
+ * Just the category, for `generateMetadata`.
+ *
+ * Metadata needs a name and a description; it has no use for a page of
+ * products. It used to call `getCategoryData` for them anyway and drop
+ * everything but `data.category` — and because metadata resolution is its own
+ * render pass, with its own `React.cache` scope and its own default arguments,
+ * that discarded fetch did not even collapse into the one the page makes. On
+ * any page but the first, or any sort but the default, it was a second full
+ * catalogue query per render, thrown away on arrival.
+ */
+const getCategoryMeta = cache(async (slug: string): Promise<Category | null> => {
+  try {
+    const res = await fetch(`${RSC_API_BASE}/categories/${slug}`, {
+      next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return null;
+    const category: Category = await res.json();
+    return category.is_active ? category : null;
+  } catch {
+    return null;
+  }
+});
+
 async function getCategoryData(
   slug: string,
   page: number = 1,
@@ -26,9 +53,12 @@ async function getCategoryData(
 ): Promise<{ category: Category; products: Product[]; total: number; pages: number } | null> {
   try {
     const [catRes, prodRes] = await Promise.all([
-      fetch(`${RSC_API_BASE}/categories/${slug}`, { cache: 'no-store', signal: AbortSignal.timeout(8000) }),
+      fetch(`${RSC_API_BASE}/categories/${slug}`, {
+        next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
+        signal: AbortSignal.timeout(8000),
+      }),
       fetch(`${RSC_API_BASE}/products?category=${slug}&per_page=${PER_PAGE}&page=${page}&sort=${sort}`, {
-        cache: 'no-store',
+        next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
         signal: AbortSignal.timeout(8000),
       }),
     ]);
@@ -55,10 +85,9 @@ export async function generateMetadata({
   params: Promise<{ locale: string; category: string }>;
 }): Promise<Metadata> {
   const { locale, category: slug } = await params;
-  const data = await getCategoryData(slug);
-  if (!data) return {};
+  const category = await getCategoryMeta(slug);
+  if (!category) return {};
 
-  const { category } = data;
   const localizedName = localizedField(category, 'name', category.name, locale);
   const localizedDesc = localizedField(category, 'description', category.description ?? '', locale);
   const description =
@@ -216,7 +245,7 @@ export default async function CategoryPage({
         {/* Category header — trimmed on phones so the grid starts inside the
             first screen rather than a scroll below it. */}
         <header className="mb-4 sm:mb-10">
-          <div className="sm:flex sm:items-end sm:justify-between sm:gap-4">
+          <div className="flex items-center justify-between gap-3 sm:items-end sm:gap-4">
             <div className="min-w-0">
               <h1 className="font-display text-xl sm:text-4xl text-primary uppercase tracking-widest mb-1 sm:mb-3">
                 {categoryName}
@@ -227,9 +256,14 @@ export default async function CategoryPage({
                 </p>
               )}
             </div>
-            {/* Its own line on phones: the control is forced to 16px there (the
-                anti-zoom rule in globals.css) and will not share a row. */}
-            <div className="flex justify-end mt-2 sm:mt-0">
+            {/* Beside the heading, not under it. It used to take its own line on
+                phones because the control is forced to 16px there — the
+                anti-zoom rule in globals.css, which is unlayered and so beats
+                any utility class — and at 16px uppercase with wide tracking the
+                longest option was too wide to share a row. `SortSelect` drops
+                the tracking and the uppercase below `sm`, which is what makes
+                it fit; the row itself was never the problem. */}
+            <div className="flex justify-end shrink-0">
               <SortSelect
                 action={`/${locale}/${slug}`}
                 surface="category"
