@@ -474,7 +474,7 @@ export const webhookLogsApi = {
     endpoint?: string;
     event_type?: string;
     order_number?: string;
-    courier_order_id?: string;
+    external_id?: string;
     // Strings rather than booleans: `buildQs` serialises string | number, and
     // FastAPI parses 'true'/'false' into a bool at the other end.
     matched?: 'true' | 'false';

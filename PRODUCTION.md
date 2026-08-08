@@ -968,7 +968,7 @@ Everything here has a working default; a secret is only needed to change one.
 
 | Secret | Falls back to | Notes |
 |--------|---------------|-------|
-| `LOG_RETENTION_DAYS` | `7` | Covers `webhook_logs`, `email_logs` and `webhook_events`. `webhook_logs` is the fastest-growing table in the database — noon Send push a rider position every 15-30 seconds per live task and every one is stored at full payload — so this bound is what makes that completeness affordable |
+| `LOG_RETENTION_DAYS` | `7` | Covers `webhook_logs`, `email_logs` and `webhook_events`. `webhook_logs` is the fastest-growing table in the database — noon Send push a rider position every 15-30 seconds per live task and every one is stored at full payload — so this bound is what makes that completeness affordable. It now also holds every Stripe and Ziina webhook; no payment history is lost when a row ages out, because `webhook_events` keeps the dedup ledger and `payment_transactions` keeps the outcome, both permanently. What ages out is the raw body |
 | `AUDIT_RETENTION_DAYS` | `90` | Covers `audit_logs` only, and deliberately much longer. That table is not debugging output but the record of who changed what, and it is wanted exactly when somebody disputes a change weeks after it happened |
 
 Swept hourly by a loop inside the API's own lifespan (`app/services/log_retention.py`),

@@ -438,7 +438,7 @@ export default function AnalyticsPage() {
             </Section>
           </div>
 
-          {/* Row E — Revenue by Delivery Method + Payment Provider */}
+          {/* Row E — Revenue by Delivery Method + Payment Method */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
             <Section title="Revenue by Delivery Method">
               {!breakdown?.by_delivery_method.length ? (
@@ -465,13 +465,15 @@ export default function AnalyticsPage() {
               )}
             </Section>
 
-            <Section title="Revenue by Payment Provider">
-              {!breakdown?.by_payment_provider.length ? (
+            {/* What the customer chose. Stable no matter which processor is
+                carrying the card estate this week. */}
+            <Section title="Revenue by Payment Method">
+              {!breakdown?.by_payment_method.length ? (
                 <Empty />
               ) : (
-                <ResponsiveContainer width="100%" height={breakdown.by_payment_provider.length * 52 + 20}>
+                <ResponsiveContainer width="100%" height={breakdown.by_payment_method.length * 52 + 20}>
                   <BarChart
-                    data={breakdown.by_payment_provider}
+                    data={breakdown.by_payment_method}
                     layout="vertical"
                     margin={{ top: 4, right: 60, bottom: 0, left: 8 }}
                   >
@@ -490,6 +492,38 @@ export default function AnalyticsPage() {
               )}
             </Section>
           </div>
+
+          {/* Row E2 — Which processor settled the cards.
+                 Its own row, and hidden when there is only one gateway with
+                 traffic: a single full-width bar labelled "stripe" is not a
+                 breakdown, it is a fact everyone already knows. It appears the
+                 moment a second processor takes an order — including the moment
+                 a failover sends one there, which is exactly when someone wants
+                 to see it. */}
+          {(breakdown?.by_payment_gateway.length ?? 0) > 1 && (
+            <div className="grid grid-cols-1 mb-6">
+              <Section title="Card Revenue by Gateway">
+                <ResponsiveContainer width="100%" height={breakdown!.by_payment_gateway.length * 52 + 20}>
+                  <BarChart
+                    data={breakdown!.by_payment_gateway}
+                    layout="vertical"
+                    margin={{ top: 4, right: 60, bottom: 0, left: 8 }}
+                  >
+                    <XAxis type="number" tick={{ fontSize: 10, fontFamily: 'Jost, sans-serif', fill: '#9ca3af' }} tickFormatter={v => `${v}`} />
+                    <YAxis type="category" dataKey="label" tick={{ fontSize: 10, fontFamily: 'Jost, sans-serif', fill: '#6b7280' }} width={60} />
+                    <Tooltip
+                      formatter={(v: unknown, name: unknown) => [
+                        name === 'revenue' ? formatCurrency(Number(v)) : String(v),
+                        name === 'revenue' ? 'Revenue' : 'Orders',
+                      ]}
+                      contentStyle={{ fontSize: 11, borderColor: '#e5e7eb' }}
+                    />
+                    <Bar dataKey="revenue" fill={PRIMARY} radius={[0, 2, 2, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </Section>
+            </div>
+          )}
 
           {/* Row F — Sales by Delivery Zone + Customer Type */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">

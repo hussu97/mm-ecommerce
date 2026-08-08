@@ -194,7 +194,7 @@ class TestTheRequestIsWrittenDown:
         assert row.provider == "noon_send"
         assert row.endpoint == "status"
         assert row.event_type == "picked_up"
-        assert row.courier_order_id == "EHG84NNJMVG35BTDE"
+        assert row.external_id == "EHG84NNJMVG35BTDE"
         assert row.order_number == "MM-1001"
         assert row.payload == PUSH
         # The key we were sent, recognisably but not usably.

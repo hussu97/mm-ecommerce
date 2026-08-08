@@ -389,6 +389,12 @@ async def handle_webhook(
     concurrent duplicate deliveries cannot cause double-processing. The row is
     written in the same transaction as the work, so a rolled-back attempt leaves
     nothing behind and a retry is free to try again.
+
+    The returned dict is both the HTTP body and what the route records in
+    `webhook_logs`. `matched` is present only once a lookup was actually
+    attempted — see `_apply_event` — because a null there means "the question
+    did not arise" and a `false` means "we should have found an order and did
+    not", and only the second is worth waking up for.
     """
     provider = payment_gateway_router.PROVIDERS.get(gateway)
     if provider is None:
@@ -418,31 +424,45 @@ async def handle_webhook(
         )
         .on_conflict_do_nothing(index_elements=["event_id"])
     )
+    #: What every answer carries, so a log row is identifiable even when the
+    #: event was applied to nothing.
+    described = {
+        "received": True,
+        "event_type": event.raw_type,
+        "external_id": event.payment_id or event.session_id,
+    }
+
     insert_result = await db.execute(stmt)
     if insert_result.rowcount == 0:
         logger.info("Duplicate webhook skipped: event_id=%s", event.event_id)
-        return {"received": True, "duplicate": True}
+        return {**described, "duplicate": True}
 
-    await _apply_event(db, gateway, event)
-    return {"received": True, "event_type": event.raw_type}
+    outcome = await _apply_event(db, gateway, event)
+    return {**described, **outcome}
 
 
 # ── Applying a normalised event ───────────────────────────────────────────────
 
 
-async def _apply_event(db: AsyncSession, gateway: str, event: GatewayEvent) -> None:
-    """Dispatch on what happened, not on who said it."""
+async def _apply_event(db: AsyncSession, gateway: str, event: GatewayEvent) -> dict:
+    """
+    Dispatch on what happened, not on who said it.
+
+    Returns what the audit log needs to know about the attempt: whether an order
+    was found, and which one. `matched` is deliberately absent from the answer
+    when no lookup happened, rather than `false` — see `handle_webhook`.
+    """
     if event.event_type is PaymentEventType.UNHANDLED:
         logger.info(
             "%s webhook %s acknowledged and applied to nothing",
             gateway,
             event.raw_type,
         )
-        return
+        return {"applied": False}
 
     order = await _resolve_order(db, gateway, event)
     if order is None:
-        return
+        return {"applied": False, "matched": False}
 
     _record_transaction(order, gateway, event)
 
@@ -461,6 +481,12 @@ async def _apply_event(db: AsyncSession, gateway: str, event: GatewayEvent) -> N
         await _handle_refund(db, order, event)
     elif event.event_type is PaymentEventType.DISPUTED:
         await _handle_dispute(order, event)
+
+    return {
+        "applied": True,
+        "matched": True,
+        "order_number": order.order_number,
+    }
 
 
 async def _resolve_order(

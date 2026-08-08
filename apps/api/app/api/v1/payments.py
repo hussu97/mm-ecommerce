@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -11,6 +12,7 @@ from app.core.deps import get_current_active_user, get_db
 from app.core.limiter import limiter
 from app.models.user import User
 from app.services import payment_service
+from app.services.webhook_log_service import Recorder
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +98,7 @@ async def create_payment_session(
 
 
 async def process_gateway_webhook(
-    gateway: str, request: Request, db: AsyncSession
+    gateway: str, request: Request, db: AsyncSession, *, mount: str
 ) -> dict:
     """
     The one webhook path, shared by every gateway and every mounted route.
@@ -119,23 +121,74 @@ async def process_gateway_webhook(
     Ziina retries three times and then stops, where Stripe retries for three
     days. That is not a reason to swallow errors here — it is a reason the
     reconciliation path exists (`ziina_provider.fetch_payment_intent`).
+
+    **Every request is recorded in `webhook_logs`, whatever it does**, on the
+    recorder's own session so the row outlives a rolled-back handler. That is
+    the point: the three-day outage above was invisible precisely because the
+    failing requests left nothing behind, and the only evidence — container
+    stdout — had already been taken by a restart. A rejected signature and an
+    unplaceable payment are the two rows most worth having, and both are ones a
+    log written only on success would not contain.
     """
+    recorder = Recorder(gateway, mount, request=request)
     payload = await request.body()
+    recorder.payload = _readable(payload)
 
     try:
-        return await payment_service.handle_webhook(
-            db, gateway, payload, request.headers
-        )
-    except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
-    except BadRequestError as e:
-        logger.warning("Rejected %s webhook: %s", gateway, e)
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except Exception:
-        # CRITICAL, not ERROR: a payment event we failed to apply is money that
-        # moved without the order knowing.
-        logger.critical("%s webhook processing failed", gateway, exc_info=True)
-        raise
+        try:
+            result = await payment_service.handle_webhook(
+                db, gateway, payload, request.headers
+            )
+        except NotFoundError as e:
+            recorder.http_status = 404
+            recorder.finish(error=str(e))
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except BadRequestError as e:
+            # The signature is the only thing checked before the body is read,
+            # so a rejection that mentions it is an authentication failure and
+            # the rest are malformed-payload failures. Told apart because
+            # `signature_valid = false` is the row that means somebody is
+            # pushing forged payment events at us, and it should not be diluted
+            # by every unparseable body that ever arrives.
+            if "signature" in str(e).lower():
+                recorder.signature_valid = False
+            recorder.http_status = 400
+            recorder.finish(error=str(e))
+            logger.warning("Rejected %s webhook: %s", gateway, e)
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            # CRITICAL, not ERROR: a payment event we failed to apply is money
+            # that moved without the order knowing.
+            recorder.http_status = 500
+            # Left null rather than guessed. A 500 can land either side of the
+            # signature check, and "we do not know whether this was authentic"
+            # is a different fact from "it was".
+            recorder.finish(error=str(e))
+            logger.critical("%s webhook processing failed", gateway, exc_info=True)
+            raise
+
+        # Reaching here means the provider verified it.
+        recorder.signature_valid = True
+        recorder.finish(result=result)
+        return result
+    finally:
+        await recorder.save()
+
+
+def _readable(payload: bytes):
+    """
+    The body as something a JSONB column will take, however malformed it is.
+
+    A payload that will not parse is the most interesting one in the table —
+    it is what a misconfigured sender or a truncated request looks like — so it
+    is kept as text rather than dropped for failing to be JSON.
+    """
+    if not payload:
+        return None
+    try:
+        return json.loads(payload)
+    except ValueError:
+        return payload.decode("utf-8", "replace")[:10_000]
 
 
 @router.post("/webhooks/stripe", status_code=status.HTTP_200_OK)
@@ -143,7 +196,7 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     """Stripe webhook endpoint. Named explicitly because it is what production
     is already configured to call — the generic route below would serve it
     identically, and changing the URL of a live webhook buys nothing."""
-    return await process_gateway_webhook("stripe", request, db)
+    return await process_gateway_webhook("stripe", request, db, mount="payments")
 
 
 @router.post("/webhooks/ziina", status_code=status.HTTP_200_OK)
@@ -155,7 +208,7 @@ async def ziina_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     account, set by `POST /webhook`, and any later call overwrites it. See
     `ziina_provider.register_webhook`.
     """
-    return await process_gateway_webhook("ziina", request, db)
+    return await process_gateway_webhook("ziina", request, db, mount="payments")
 
 
 @router.post("/webhooks/{gateway}", status_code=status.HTTP_200_OK)
@@ -169,7 +222,7 @@ async def gateway_webhook(
     gateway is a 404 rather than a 200: acknowledging a webhook for something
     that does not exist is how a misconfigured URL looks healthy for a month.
     """
-    return await process_gateway_webhook(gateway.lower(), request, db)
+    return await process_gateway_webhook(gateway.lower(), request, db, mount="payments")
 
 
 @router.get("/{order_number}/status", response_model=PaymentStatusResponse)

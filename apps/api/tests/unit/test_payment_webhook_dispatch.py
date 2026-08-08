@@ -167,9 +167,15 @@ async def test_a_duplicate_delivery_is_a_no_op(db, order, wired, monkeypatch):
 
     result = await payment_service.handle_webhook(db, "ziina", b"{}", {})
 
-    assert result == {"received": True, "duplicate": True}
+    assert result["duplicate"] is True
     assert order.status == OrderStatusEnum.CREATED
     wired.confirmation.assert_not_awaited()
+    # Still identifiable in the audit log — a duplicate is a row worth having,
+    # and one that says only "duplicate: true" cannot be tied to anything.
+    assert result["event_type"] == "some.event"
+    # And `matched` stays absent, so the column is null rather than a `false`
+    # that would read as "we should have found an order and did not".
+    assert "matched" not in result
 
 
 async def test_an_event_with_no_id_is_refused_rather_than_processed(

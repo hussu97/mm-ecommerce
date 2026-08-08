@@ -110,7 +110,7 @@ def _noon_send_recorder(endpoint: str, request: Request, key: str | None) -> Rec
 @router.post("/stripe", status_code=status.HTTP_200_OK)
 async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     """Compatibility endpoint for Stripe dashboard webhooks."""
-    return await process_gateway_webhook("stripe", request, db)
+    return await process_gateway_webhook("stripe", request, db, mount="webhooks")
 
 
 @router.post("/ziina", status_code=status.HTTP_200_OK)
@@ -122,8 +122,12 @@ async def ziina_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     `/webhooks/stripe` before the payments router had one. Ziina gets the pair
     from the start so that whichever of the two a future operator reaches for
     when registering the URL, they are right.
+
+    Which of the two a processor is actually calling is recorded on every
+    `webhook_logs` row as `endpoint`, so the question can be answered from the
+    admin rather than by asking them.
     """
-    return await process_gateway_webhook("ziina", request, db)
+    return await process_gateway_webhook("ziina", request, db, mount="webhooks")
 
 
 @router.post("/lalamove", status_code=status.HTTP_200_OK)
@@ -213,7 +217,7 @@ async def noon_send_webhook(
             return {"received": True}
 
         recorder.event_type = str(payload.get("status_code") or "").strip() or None
-        recorder.courier_order_id = str(payload.get("order_nr") or "") or None
+        recorder.external_id = str(payload.get("order_nr") or "") or None
         recorder.order_number = str(payload.get("order_reference") or "") or None
 
         if not _noon_send_key_is_valid(x_api_key):
@@ -282,7 +286,7 @@ async def noon_send_tracking_webhook(
             return {"received": True}
 
         recorder.event_type = "tracking"
-        recorder.courier_order_id = str(payload.get("order_nr") or "") or None
+        recorder.external_id = str(payload.get("order_nr") or "") or None
         recorder.order_number = str(payload.get("order_reference") or "") or None
 
         if not _noon_send_key_is_valid(x_api_key):

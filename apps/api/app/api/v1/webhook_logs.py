@@ -1,5 +1,5 @@
 """
-Reading back what the couriers sent us.
+Reading back what everybody sent us — couriers and payment gateways alike.
 
 Shaped like `email_logs`, including its lesson: the id columns are typed as the
 `UUID` they are rather than as `str`, because Pydantic v2 will not coerce one
@@ -41,7 +41,7 @@ class WebhookLogItem(BaseModel):
     signature_valid: bool | None = None
     event_type: str | None = None
     order_number: str | None = None
-    courier_order_id: str | None = None
+    external_id: str | None = None
     matched: bool | None = None
     error: str | None = None
     http_status: int | None = None
@@ -67,11 +67,17 @@ class PaginatedWebhookLogs(BaseModel):
 
 @router.get("", response_model=PaginatedWebhookLogs)
 async def list_webhook_logs(
-    provider: str | None = Query(None, description="lalamove | noon_send"),
-    endpoint: str | None = Query(None, description="status | tracking"),
+    provider: str | None = Query(
+        None, description="lalamove | noon_send | stripe | ziina"
+    ),
+    endpoint: str | None = Query(
+        None, description="status | tracking | payments | webhooks"
+    ),
     event_type: str | None = Query(None, description="Their word for it"),
     order_number: str | None = Query(None, description="Search by order number"),
-    courier_order_id: str | None = Query(None, description="Their booking id"),
+    external_id: str | None = Query(
+        None, description="Their id: a courier booking, a payment intent"
+    ),
     matched: bool | None = Query(
         None, description="Whether the push found an order at all"
     ),
@@ -83,7 +89,7 @@ async def list_webhook_logs(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_admin_user),
 ) -> PaginatedWebhookLogs:
-    """Every inbound courier webhook, newest first (admin only)."""
+    """Every inbound webhook, newest first (admin only)."""
     stmt = select(WebhookLog)
 
     if provider:
@@ -94,8 +100,8 @@ async def list_webhook_logs(
         stmt = stmt.where(WebhookLog.event_type == event_type)
     if order_number:
         stmt = stmt.where(WebhookLog.order_number.ilike(f"%{order_number}%"))
-    if courier_order_id:
-        stmt = stmt.where(WebhookLog.courier_order_id.ilike(f"%{courier_order_id}%"))
+    if external_id:
+        stmt = stmt.where(WebhookLog.external_id.ilike(f"%{external_id}%"))
     if matched is not None:
         stmt = stmt.where(WebhookLog.matched.is_(matched))
     if errors_only:

@@ -395,6 +395,15 @@ export interface CustomerBreakdown {
 export interface BreakdownItem { label: string; orders: number; revenue: number; }
 export interface RevenueBreakdown {
   by_delivery_method: BreakdownItem[];
+  /** How customers chose to pay: `card` or `cod`. The commercial split. */
+  by_payment_method: BreakdownItem[];
+  /**
+   * Which processor settled the card orders: `stripe` or `ziina`. Card only —
+   * cash has no gateway, and a `cod` slice here would make the chart answer
+   * neither question.
+   */
+  by_payment_gateway: BreakdownItem[];
+  /** @deprecated The old combined split. Now identical to `by_payment_method`. */
   by_payment_provider: BreakdownItem[];
 }
 
@@ -443,7 +452,8 @@ export interface WebhookLog {
   signature_valid: boolean | null;
   event_type: string | null;
   order_number: string | null;
-  courier_order_id: string | null;
+  /** Their id for whatever the push was about: a courier booking, a payment intent. */
+  external_id: string | null;
   /** Whether the push found an order at all. A run of `false` is a real problem. */
   matched: boolean | null;
   error: string | null;

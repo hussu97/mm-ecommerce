@@ -83,6 +83,47 @@ table for a word.
 - [x] `payment_method_selected` now reports `card` where it reported `stripe`;
       `docs/umami-analytics-setup.md` updated with a changelog row.
 
+## Follow-up: the audit log, and the analytics split
+
+Two things the gateway work implied and did not do.
+
+### Payment webhooks join `webhook_logs` (migration `090`)
+- [x] `courier_order_id` → `external_id`. The column means "their id for
+      whatever this push is about", and writing `pi_3RxK…` into something called
+      `courier_order_id` is the same conflation the gateway split had just
+      finished removing from `orders`. `order_deliveries` and `delivery_batches`
+      keep theirs — those genuinely are courier bookings.
+- [x] Every payment webhook recorded, on the recorder's own session, **whatever
+      it does**. The rows worth having are the ones a success-only log would not
+      contain: the forged signature, the event that matched no order, the
+      handler that raised. That last one is the exact shape of the three-day
+      outage — the failures left no record and stdout had been taken by a
+      restart.
+- [x] `endpoint` records which *mount* answered (`payments` / `webhooks`), so
+      "which URL is Stripe actually configured against" is answerable from the
+      admin instead of by asking Stripe.
+- [x] `matched` stays **null** when no lookup happened — a duplicate, a
+      payment-in-progress transition. Only `false` means "we should have found
+      an order and did not", which is what keeps that column worth watching.
+- [x] `signature_valid = false` is reserved for authentication failures, not
+      every unparseable body. Diluting it makes it useless as an alert.
+- [x] Admin screen: Stripe and Ziina in the filters, both mounts, generic
+      column labels.
+
+### The revenue breakdown stops answering two questions on one axis
+- [x] `by_payment_method` (`card` / `cod`) — the commercial split, stable no
+      matter which processor carries the cards this week.
+- [x] `by_payment_gateway` (`stripe` / `ziina`) — card only. Cash is excluded
+      rather than shown as a third slice; "cod" is not a gateway.
+- [x] `by_payment_provider` kept as an alias of the method split so nothing
+      built against it breaks mid-deploy.
+- [x] Legacy `stripe` values in `payment_method` normalised **and merged** on
+      read — un-merged they draw a phantom third slice that shrinks as old
+      orders age out, which looks exactly like a real trend.
+- [x] Cache key bumped to `v2`; the old shape would fail validation on read.
+- [x] The gateway chart hides itself until a second processor has traffic. One
+      full-width bar labelled "stripe" is not a breakdown.
+
 ## Review
 
 **Verified, not assumed.**
