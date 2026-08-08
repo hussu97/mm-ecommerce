@@ -228,7 +228,14 @@ jobs:
         run: npx vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Deploy
-        run: npx vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
+        # `--archive=tgz` uploads one tarball instead of one request per file.
+        # Without it a Next build's several thousand static assets are several
+        # thousand uploads, and the free plan caps those at 5000 per 24 hours
+        # across the whole account — so two apps and a few redeploys in one day
+        # is enough to hit it. It fails as `api-upload-free` *after* a
+        # successful build, which reads like a broken deploy rather than a
+        # quota, and blocks every further deploy for a day.
+        run: npx vercel deploy --prebuilt --prod --archive=tgz --token=${{ secrets.VERCEL_TOKEN }}
 
   deploy-admin:
     name: Deploy Admin to Vercel
@@ -271,7 +278,14 @@ jobs:
         run: npx vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Deploy
-        run: npx vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
+        # `--archive=tgz` uploads one tarball instead of one request per file.
+        # Without it a Next build's several thousand static assets are several
+        # thousand uploads, and the free plan caps those at 5000 per 24 hours
+        # across the whole account — so two apps and a few redeploys in one day
+        # is enough to hit it. It fails as `api-upload-free` *after* a
+        # successful build, which reads like a broken deploy rather than a
+        # quota, and blocks every further deploy for a day.
+        run: npx vercel deploy --prebuilt --prod --archive=tgz --token=${{ secrets.VERCEL_TOKEN }}
 
   deploy-gcp:
     name: Deploy API to GCP
