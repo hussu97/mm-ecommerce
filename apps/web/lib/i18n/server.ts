@@ -2,7 +2,7 @@ import { cache } from "react";
 
 import type { Language } from "@/lib/types";
 import { RSC_API_BASE } from "@/lib/api";
-import { CONTENT_TTL } from "@/lib/cache-policy";
+import { CONTENT_TTL, HAS_REMOTE_API } from "@/lib/cache-policy";
 
 /**
  * Every UI string for one language.
@@ -42,18 +42,24 @@ import { CONTENT_TTL } from "@/lib/cache-policy";
  *   - a non-2xx is never written to the data cache in the first place.
  *
  * A 200 carrying `{}` is a different thing — that is the API's answer, and it
- * is honoured.
+ * is honoured. So is a failure where `HAS_REMOTE_API` is false: CI builds with
+ * no API on the runner, and a compile check has nothing to protect.
  */
 export const getTranslations = cache(
   async (locale: string): Promise<Record<string, string>> => {
-    const res = await fetch(`${RSC_API_BASE}/i18n/translations/${locale}`, {
-      next: { revalidate: CONTENT_TTL, tags: ['i18n'] },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) {
-      throw new Error(`translations ${locale}: HTTP ${res.status}`);
+    try {
+      const res = await fetch(`${RSC_API_BASE}/i18n/translations/${locale}`, {
+        next: { revalidate: CONTENT_TTL, tags: ['i18n'] },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) {
+        throw new Error(`translations ${locale}: HTTP ${res.status}`);
+      }
+      return await res.json();
+    } catch (err) {
+      if (HAS_REMOTE_API) throw err;
+      return {};
     }
-    return await res.json();
   },
 );
 
