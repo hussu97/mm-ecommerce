@@ -356,10 +356,21 @@ export default function OrderDetailPage() {
               <dt className="text-gray-500">Method</dt>
               <dd className="text-gray-700 capitalize">{order.delivery_method}</dd>
             </div>
+            {/* Two lines, because they are two facts. "Card" is what the
+                customer chose; the gateway is which processor settled it, and
+                that is the one worth seeing when reconciling a payout or
+                chasing a payment that a failover moved. A cash order has no
+                gateway, so the second line stays off it. */}
             <div className="flex justify-between">
               <dt className="text-gray-500">Payment</dt>
-              <dd className="text-gray-700 capitalize">{order.payment_provider ?? '—'}</dd>
+              <dd className="text-gray-700 capitalize">{order.payment_method ?? '—'}</dd>
             </div>
+            {order.payment_method !== 'cod' && (
+              <div className="flex justify-between">
+                <dt className="text-gray-500">Gateway</dt>
+                <dd className="text-gray-700 capitalize">{order.payment_provider ?? '—'}</dd>
+              </div>
+            )}
             {order.promo_code_used && (
               <div className="flex justify-between">
                 <dt className="text-gray-500">Promo</dt>

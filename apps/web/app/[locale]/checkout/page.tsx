@@ -9,6 +9,7 @@ import {
   ordersApi, paymentsApi, addressesApi, branchesApi, deliveryApi,
   getSessionId,
 } from '@/lib/api';
+import { toPaymentMethod, toWireMethod, type PaymentMethod } from '@/lib/types';
 import { useAuth } from '@/lib/auth-context';
 import { accountEmailOf, ensureCheckoutAuth } from '@/lib/checkout-auth';
 import { Button } from '@/components/ui/Button';
@@ -58,7 +59,7 @@ interface CheckoutForm {
   deliveryMethod: 'delivery' | 'pickup';
   /** Which branch to collect from. Empty until one is chosen; pickup only. */
   pickupBranchId: string;
-  paymentMethod: 'stripe' | 'cod';
+  paymentMethod: PaymentMethod;
   promoCode: string;
   promoDiscount: number;
   promoMessage: string;
@@ -72,7 +73,7 @@ const INITIAL_FORM: CheckoutForm = {
   selectedAddressId: '',
   deliveryMethod: 'delivery',
   pickupBranchId: '',
-  paymentMethod: 'stripe',
+  paymentMethod: 'card',
   promoCode: '', promoDiscount: 0, promoMessage: '',
   notes: '',
 };
@@ -80,9 +81,15 @@ const INITIAL_FORM: CheckoutForm = {
 /**
  * Cash only works when the customer comes to the counter, so it is offered for
  * collection and not for delivery. Card works for both.
+ *
+ * There is one card option, and there is no second one to add: Stripe and Ziina
+ * are not choices a customer makes. Which of them settles the card is decided
+ * server-side from the `payment_gateways` table, so a processor outage is
+ * answered by an admin toggle rather than by a release, and this screen never
+ * has to know which one it was.
  */
-function paymentOptionsFor(method: 'delivery' | 'pickup'): ('stripe' | 'cod')[] {
-  return method === 'pickup' ? ['cod', 'stripe'] : ['stripe'];
+function paymentOptionsFor(method: 'delivery' | 'pickup'): PaymentMethod[] {
+  return method === 'pickup' ? ['cod', 'card'] : ['card'];
 }
 
 // ─── The small-basket fee ─────────────────────────────────────────────────────
@@ -980,7 +987,7 @@ function CheckoutContent() {
         orderNumber = retryOrder.order_number;
         analytics.paymentRetry({
           order_number: retryOrder.order_number,
-          provider: retryOrder.payment_method ?? undefined,
+          provider: retryOrder.payment_provider ?? undefined,
         });
       } else {
         if (!cart || cart.items.length === 0) {
@@ -1012,7 +1019,11 @@ function CheckoutContent() {
           // Stamped on the order, and every email about it is written in it.
           locale,
           promo_code: form.promoDiscount > 0 ? form.promoCode : undefined,
-          payment_method: paymentMethod,
+          // The legacy word, for one release. The previous API validates this
+          // against an enum that has no `card` in it, and the web ships to
+          // Vercel minutes before the API reaches the VM — so sending `card`
+          // here 422s every order created in that window. See `toWireMethod`.
+          payment_method: toWireMethod(paymentMethod),
           notes: form.notes || undefined,
           session_id: getSessionId() ?? undefined,
         });
@@ -1025,8 +1036,10 @@ function CheckoutContent() {
 
       // Past this line the order exists; anything that fails now is the gateway.
       stage = 'create_session';
-      const provider = retryOrder?.payment_method ?? paymentMethod;
-      const session = await paymentsApi.createSession(orderNumber, provider);
+      // A retry replays the order's own method, and an order from before the
+      // method/gateway split carries `stripe` there — read as `card`.
+      const method = retryOrder ? toPaymentMethod(retryOrder.payment_method) : paymentMethod;
+      const session = await paymentsApi.createSession(orderNumber, method);
 
       analytics.checkoutStepComplete({ step: 1, delivery_method: form.deliveryMethod });
 
@@ -1064,7 +1077,10 @@ function CheckoutContent() {
           order_number: createdOrder?.order_number ?? retryOrder?.order_number ?? '',
           error_message: message,
           reason,
-          provider: retryOrder?.payment_method ?? paymentMethod,
+          // The gateway that actually failed, when the order got far enough
+          // to have one. That is the value worth alerting on: `card` says a
+          // payment broke, `stripe` says which processor broke it.
+          provider: retryOrder?.payment_provider ?? paymentMethod,
           total,
           stage,
         });

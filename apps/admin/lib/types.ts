@@ -395,6 +395,15 @@ export interface CustomerBreakdown {
 export interface BreakdownItem { label: string; orders: number; revenue: number; }
 export interface RevenueBreakdown {
   by_delivery_method: BreakdownItem[];
+  /** How customers chose to pay: `card` or `cod`. The commercial split. */
+  by_payment_method: BreakdownItem[];
+  /**
+   * Which processor settled the card orders: `stripe` or `ziina`. Card only —
+   * cash has no gateway, and a `cod` slice here would make the chart answer
+   * neither question.
+   */
+  by_payment_gateway: BreakdownItem[];
+  /** @deprecated The old combined split. Now identical to `by_payment_method`. */
   by_payment_provider: BreakdownItem[];
 }
 
@@ -443,7 +452,8 @@ export interface WebhookLog {
   signature_valid: boolean | null;
   event_type: string | null;
   order_number: string | null;
-  courier_order_id: string | null;
+  /** Their id for whatever the push was about: a courier booking, a payment intent. */
+  external_id: string | null;
   /** Whether the push found an order at all. A run of `false` is a real problem. */
   matched: boolean | null;
   error: string | null;
@@ -722,4 +732,51 @@ export interface PaginatedAuditLogs {
   page: number;
   per_page: number;
   pages: number;
+}
+
+// ─── Payment Gateways ─────────────────────────────────────────────────────────
+
+/**
+ * A card processor and the terms on which it is sent traffic.
+ *
+ * The customer never sees any of this. They chose "card"; which of Stripe or
+ * Ziina settles it is an operations decision, and this is the shape of it.
+ */
+export interface PaymentGateway {
+  code: string;
+  name: string;
+  /** Whether an operator has switched it on. */
+  is_active: boolean;
+  /** Lower goes first — both when choosing and when falling back. */
+  priority: number;
+  /**
+   * Whether it may be reached for *automatically* after another gateway failed.
+   *
+   * Not the same question as `is_active`. A processor with worse rates is a
+   * fine deliberate choice and a bad reflex.
+   */
+  supports_failover: boolean;
+  min_amount: number | null;
+  max_amount: number | null;
+  /** Sends sandbox payments that take test cards and charge nothing. */
+  test_mode: boolean;
+  /**
+   * Whether this *environment* holds credentials for it.
+   *
+   * Computed on the server, never stored — it is a fact about the running
+   * container. A gateway that is not configured cannot be activated, which is
+   * what lets the Ziina toggle exist on production and do nothing.
+   */
+  is_configured: boolean;
+  /** Whether the router would actually pick it right now. */
+  is_routable: boolean;
+}
+
+export interface PaymentGatewayUpdate {
+  is_active?: boolean;
+  priority?: number;
+  supports_failover?: boolean;
+  min_amount?: number | null;
+  max_amount?: number | null;
+  test_mode?: boolean;
 }

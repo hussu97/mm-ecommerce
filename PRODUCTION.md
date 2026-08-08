@@ -635,6 +635,32 @@ outright. The steps below are kept for rebuilding the host from scratch.
 | `STRIPE_PUBLISHABLE_KEY` | `pk_live_...` | Stripe dashboard → Developers → API keys |
 | `STRIPE_WEBHOOK_SECRET` | `whsec_...` | Stripe dashboard → Developers → Webhooks → signing secret |
 
+#### Ziina (second card gateway — **not live**)
+
+Ziina is built, wired and switched off. It exists so that a Stripe incident can
+be answered by flipping a row in **Admin → Payment Gateways** instead of cutting
+a release. Leaving every secret below unset is the supported production state:
+the gateway row ships inactive, `ZIINA_ENABLED` defaults false in three separate
+files, and the admin refuses to activate a gateway that has no credentials — so
+the toggle is visible on production and cannot do anything.
+
+| Secret | Production value | Notes |
+|--------|-----------------|-------|
+| `ZIINA_ENABLED` | `false` | The master switch. Leave false until Ziina is signed off. |
+| `ZIINA_API_KEY` | *(unset)* | Ziina dashboard → Developers → API keys |
+| `ZIINA_WEBHOOK_SECRET` | *(unset)* | Your own value — set it and the URL together via `POST /webhook` |
+| `ZIINA_API_URL` | *(unset)* | Defaults to `https://api-v2.ziina.com/api` |
+| `ZIINA_TEST_MODE` | *(unset)* | `true` sends `test: true` on every intent — sandbox only |
+| `ZIINA_TIMEOUT_SECONDS` | *(unset)* | Defaults to `10` |
+
+**To go live on Ziina later**, in this order: set `ZIINA_API_KEY` and
+`ZIINA_WEBHOOK_SECRET`, set `ZIINA_ENABLED=true`, deploy (the API refuses to
+boot if the flag is on and either secret is missing), register the webhook at
+`https://api.meltingmomentscakes.com/api/v1/webhooks/ziina`, then activate the
+row in the admin. To make Ziina the *primary*, give it a lower priority number
+than Stripe; to keep it purely as a standby, leave the priorities alone and it
+will only be reached when Stripe cannot produce a session.
+
 #### Email (Resend)
 
 | Secret | Production value | Notes |
@@ -942,7 +968,7 @@ Everything here has a working default; a secret is only needed to change one.
 
 | Secret | Falls back to | Notes |
 |--------|---------------|-------|
-| `LOG_RETENTION_DAYS` | `7` | Covers `webhook_logs`, `email_logs` and `webhook_events`. `webhook_logs` is the fastest-growing table in the database — noon Send push a rider position every 15-30 seconds per live task and every one is stored at full payload — so this bound is what makes that completeness affordable |
+| `LOG_RETENTION_DAYS` | `7` | Covers `webhook_logs`, `email_logs` and `webhook_events`. `webhook_logs` is the fastest-growing table in the database — noon Send push a rider position every 15-30 seconds per live task and every one is stored at full payload — so this bound is what makes that completeness affordable. It now also holds every Stripe and Ziina webhook; no payment history is lost when a row ages out, because `webhook_events` keeps the dedup ledger and `payment_transactions` keeps the outcome, both permanently. What ages out is the raw body |
 | `AUDIT_RETENTION_DAYS` | `90` | Covers `audit_logs` only, and deliberately much longer. That table is not debugging output but the record of who changed what, and it is wanted exactly when somebody disputes a change weeks after it happened |
 
 Swept hourly by a loop inside the API's own lifespan (`app/services/log_retention.py`),

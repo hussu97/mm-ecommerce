@@ -25,6 +25,7 @@ import stripe
 from app.core.config import settings
 from app.core.exceptions import BadRequestError
 from app.services.providers import stripe_provider as sp
+from app.services.providers.base import PaymentEventType
 
 SECRET = "whsec_test_secret"
 
@@ -85,12 +86,13 @@ def test_a_succeeded_payment_yields_its_order_number():
             },
         )
     )
-    parsed = sp.provider.handle_webhook(payload, header)
+    parsed = sp.provider.parse_webhook(payload, {"stripe-signature": header})
 
-    assert parsed["event_type"] == "payment_intent.succeeded"
-    assert parsed["order_number"] == "MM-20260804-001"
-    assert parsed["payment_intent_id"] == "pi_live_123"
-    assert parsed["event_id"] == "evt_test_1"
+    assert parsed.event_type is PaymentEventType.SUCCEEDED
+    assert parsed.raw_type == "payment_intent.succeeded"
+    assert parsed.order_number == "MM-20260804-001"
+    assert parsed.payment_id == "pi_live_123"
+    assert parsed.event_id == "evt_test_1"
 
 
 def test_a_failed_payment_yields_its_order_number():
@@ -100,9 +102,10 @@ def test_a_failed_payment_yields_its_order_number():
             {"id": "pi_live_9", "metadata": {"order_number": "MM-20260804-002"}},
         )
     )
-    parsed = sp.provider.handle_webhook(payload, header)
-    assert parsed["event_type"] == "payment_intent.payment_failed"
-    assert parsed["order_number"] == "MM-20260804-002"
+    parsed = sp.provider.parse_webhook(payload, {"stripe-signature": header})
+    assert parsed.event_type is PaymentEventType.FAILED
+    assert parsed.raw_type == "payment_intent.payment_failed"
+    assert parsed.order_number == "MM-20260804-002"
 
 
 def test_a_refund_is_read_off_the_charge():
@@ -116,9 +119,9 @@ def test_a_refund_is_read_off_the_charge():
             },
         )
     )
-    parsed = sp.provider.handle_webhook(payload, header)
-    assert parsed["payment_intent_id"] == "pi_live_7"
-    assert parsed["order_number"] == "MM-20260804-003"
+    parsed = sp.provider.parse_webhook(payload, {"stripe-signature": header})
+    assert parsed.payment_id == "pi_live_7"
+    assert parsed.order_number == "MM-20260804-003"
 
 
 def test_a_dispute_names_only_the_payment_intent():
@@ -126,9 +129,9 @@ def test_a_dispute_names_only_the_payment_intent():
     payload, header = _signed(
         _event("charge.dispute.created", {"id": "dp_1", "payment_intent": "pi_live_8"})
     )
-    parsed = sp.provider.handle_webhook(payload, header)
-    assert parsed["payment_intent_id"] == "pi_live_8"
-    assert parsed["order_number"] is None
+    parsed = sp.provider.parse_webhook(payload, {"stripe-signature": header})
+    assert parsed.payment_id == "pi_live_8"
+    assert parsed.order_number is None
 
 
 def test_an_event_without_metadata_does_not_explode():
@@ -138,9 +141,9 @@ def test_an_event_without_metadata_does_not_explode():
     whole endpoint down.
     """
     payload, header = _signed(_event("payment_intent.succeeded", {"id": "pi_x"}))
-    parsed = sp.provider.handle_webhook(payload, header)
-    assert parsed["order_number"] is None
-    assert parsed["payment_intent_id"] == "pi_x"
+    parsed = sp.provider.parse_webhook(payload, {"stripe-signature": header})
+    assert parsed.order_number is None
+    assert parsed.payment_id == "pi_x"
 
 
 # ── the signature is still the gate ───────────────────────────────────────────
@@ -155,7 +158,7 @@ def test_a_forged_payload_is_refused():
         _event("payment_intent.succeeded", {"id": "pi_forged"})
     ).encode()
     with pytest.raises(BadRequestError, match="signature"):
-        sp.provider.handle_webhook(payload, "t=1,v1=deadbeef")
+        sp.provider.parse_webhook(payload, {"stripe-signature": "t=1,v1=deadbeef"})
 
 
 def test_an_unconfigured_secret_refuses_everything():
@@ -164,6 +167,6 @@ def test_an_unconfigured_secret_refuses_everything():
     settings.STRIPE_WEBHOOK_SECRET = ""
     try:
         with pytest.raises(BadRequestError):
-            sp.provider.handle_webhook(payload, header)
+            sp.provider.parse_webhook(payload, {"stripe-signature": header})
     finally:
         settings.STRIPE_WEBHOOK_SECRET = SECRET

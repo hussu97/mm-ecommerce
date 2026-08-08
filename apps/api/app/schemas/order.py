@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import enum
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -8,15 +7,16 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.models.order import DeliveryMethodEnum, OrderStatusEnum
+
+# Re-exported so `from app.schemas.order import PaymentMethodEnum` keeps working.
+# It is defined next to the model rather than here because it is now a domain
+# value with a column behind it — `card` versus `cod` — and not a shape the API
+# happens to accept. See `app/models/payment_gateway.py` for why `stripe` is
+# still in it.
+from app.models.payment_gateway import PaymentMethodEnum  # noqa: F401
+
 from .address import AddressCreate
 from .fulfilment import FulfilmentResponse
-
-
-class PaymentMethodEnum(str, enum.Enum):
-    STRIPE = "stripe"
-    COD = "cod"
-    TABBY = "tabby"
-    TAMARA = "tamara"
 
 
 class OrderItemResponse(BaseModel):
@@ -54,8 +54,11 @@ class OrderCreate(BaseModel):
     #: `order_service` rather than refused — a bad locale must not lose a sale.
     locale: str | None = Field(None, max_length=5)
     promo_code: str | None = None
+    #: What the customer chose, not who will process it. `stripe` is still
+    #: accepted because a browser holding the previous bundle sends it and means
+    #: `card`; `order_service` normalises it before the row is written.
     payment_method: PaymentMethodEnum = Field(
-        description="stripe | cod | tabby | tamara"
+        description="card | cod (legacy aliases: stripe, tabby, tamara)"
     )
     notes: str | None = None
     # Guest checkout: identify which cart to convert

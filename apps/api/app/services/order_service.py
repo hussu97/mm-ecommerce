@@ -41,6 +41,7 @@ from app.services import (
     email_service,
     fulfilment_service,
     lalamove_service,
+    payment_methods,
     pos_order_service,
     pos_pricing,
     promo_code_service,
@@ -523,8 +524,21 @@ def normalise_locale(value: str | None) -> str:
     return code if code in SUPPORTED_LOCALES else DEFAULT_LOCALE
 
 
+def _normalised_payment_method(data: OrderCreate) -> str:
+    """
+    What to stamp on the order: `card` or `cod`, never a gateway's name.
+
+    The checkout used to send `stripe` and this column used to store it, which
+    made "how did they pay" and "who processed it" the same field — and they
+    stop being the same field the moment there is a second processor. One
+    helper, shared with `payment_service`, so the two cannot disagree about
+    what an incoming value means.
+    """
+    return payment_methods.normalise_method(data.payment_method)
+
+
 def _is_cash_on_delivery(data: OrderCreate) -> bool:
-    return str(getattr(data.payment_method, "value", data.payment_method)) == "cod"
+    return _normalised_payment_method(data) == payment_methods.COD
 
 
 async def resolve_branch(
@@ -713,7 +727,10 @@ async def _persist_order(
         branch_id=branch.id if branch is not None else None,
         promo_code_used=promo_code_used,
         shipping_address_snapshot=address_snapshot,
-        payment_method=data.payment_method,
+        # `card` or `cod`, never the name of a processor. Normalised on the way
+        # in so a browser still posting `stripe` cannot write a gateway into the
+        # column that answers "how did the customer choose to pay".
+        payment_method=_normalised_payment_method(data),
         notes=data.notes,
         # What the checkout said, kept verbatim. Every email about this order
         # repeats this rather than working out its own answer — which is how the

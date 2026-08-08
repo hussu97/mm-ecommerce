@@ -1,5 +1,5 @@
 import { analytics, normalisePath } from './analytics';
-import { AdvertisedPromo, Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, DeliveryRates, DeliveryQuote, DeliveryArea, PickupBranch, TrackResult } from './types';
+import { AdvertisedPromo, Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, PaymentMethod, toWireMethod, DeliveryRates, DeliveryQuote, DeliveryArea, PickupBranch, TrackResult } from './types';
 import { CACHE_TAGS, CONTENT_TTL } from './cache-policy';
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -293,10 +293,25 @@ export const branchesApi = {
 };
 
 export const paymentsApi = {
-  createSession: (orderNumber: string, provider: string) =>
+  /**
+   * Ask the server to start a payment.
+   *
+   * `method` is what the customer chose — `card` or `cod`. It is deliberately
+   * not a gateway: which processor settles a card is decided server-side from
+   * the `payment_gateways` table, so a Stripe outage is answered by an admin
+   * toggle rather than a release, and no client can pick its own processor.
+   *
+   * Both field names go on the wire for the duration of one rollout, and the
+   * legacy one carries the legacy *word*. The web and the API deploy in
+   * parallel and the API is the slower of the two, so this bundle runs against
+   * the previous API for minutes — and that one resolves a provider by exact
+   * string, where `card` is not one. See `toWireMethod`.
+   */
+  createSession: (orderNumber: string, method: PaymentMethod) =>
     api.post<PaymentSessionResponse>('/payments/create-session', {
       order_number: orderNumber,
-      provider,
+      method,
+      provider: toWireMethod(method),
     }),
 };
 

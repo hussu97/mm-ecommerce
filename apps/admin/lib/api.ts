@@ -9,6 +9,7 @@ import type {
   BatchGroup,
   BatchWindow, BatchWindowWrite, DeliveryBatch, DeliveryZoneMap,
   PaginatedWebhookLogs, WebhookLogDetail, WebhookLogFacets,
+  PaymentGateway, PaymentGatewayUpdate,
 } from './types';
 import type {
   PublicKeyCredentialCreationOptionsJSON,
@@ -473,7 +474,7 @@ export const webhookLogsApi = {
     endpoint?: string;
     event_type?: string;
     order_number?: string;
-    courier_order_id?: string;
+    external_id?: string;
     // Strings rather than booleans: `buildQs` serialises string | number, and
     // FastAPI parses 'true'/'false' into a bool at the other end.
     matched?: 'true' | 'false';
@@ -487,6 +488,21 @@ export const webhookLogsApi = {
   get: (id: string) => api.get<WebhookLogDetail>(`/webhook-logs/${id}`),
   /** The values actually present, so the filters offer real options. */
   facets: () => api.get<WebhookLogFacets>('/webhook-logs/providers'),
+};
+
+// ─── Payment Gateways ─────────────────────────────────────────────────────────
+
+/**
+ * The switch that decides which processor takes a card.
+ *
+ * Changes take effect on the very next checkout — the router re-reads these
+ * rows on every request rather than caching them, because the whole point is
+ * that an incident is answered now and not on the next deploy.
+ */
+export const paymentGatewaysApi = {
+  list: () => api.get<PaymentGateway[]>('/payment-gateways'),
+  update: (code: string, data: PaymentGatewayUpdate) =>
+    api.patch<PaymentGateway>(`/payment-gateways/${code}`, data),
 };
 
 // ─── Audit Logs ───────────────────────────────────────────────────────────────

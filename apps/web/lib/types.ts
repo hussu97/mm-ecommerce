@@ -431,7 +431,64 @@ export interface DeliveryRates {
 
 // ─── Payment ──────────────────────────────────────────────────────────────────
 
+/**
+ * What the customer chooses. Not who processes it.
+ *
+ * There is one card option on the checkout and there always was — the customer
+ * never had an opinion about Stripe. Which processor settles the card is chosen
+ * on the server from the `payment_gateways` table, so it can be changed during
+ * an incident without shipping anything, and it is deliberately not a value
+ * this app can name.
+ */
+export type PaymentMethod = 'card' | 'cod';
+
+/**
+ * A stored `payment_method`, read as one of the two things it can mean.
+ *
+ * Orders written before methods and gateways were separated carry `stripe`
+ * here, and the retry path feeds exactly that value back in — so a customer
+ * retrying last week's failed payment would otherwise send a word this app no
+ * longer has a branch for. Anything unrecognised is a card, which is the only
+ * option available for delivery and the historical default.
+ */
+export function toPaymentMethod(value: string | null | undefined): PaymentMethod {
+  return value?.toLowerCase() === 'cod' ? 'cod' : 'card';
+}
+
+/**
+ * The word to put on the wire for a payment method.
+ *
+ * `card` internally, `stripe` over HTTP — for one release only, and for a
+ * specific reason: **the web and the API deploy independently and in parallel.**
+ * `deploy-web` goes to Vercel and needs only `lint-web`; `deploy-gcp` goes to
+ * the VM behind migrations and health checks, and takes minutes longer. The web
+ * is therefore live against the *previous* API for the whole of that window.
+ *
+ * The previous API validates `payment_method` against an enum of
+ * `{stripe, cod, tabby, tamara}` and resolves a payment provider by exact
+ * string. Sending it `card` fails twice over — a 422 on order creation, then a
+ * "Unknown payment provider 'card'" on the session — so every card checkout
+ * would fail from the moment the frontend shipped until the API caught up.
+ *
+ * `stripe` is understood by both: the old API takes it literally, the new one
+ * normalises it to `card` (`payment_methods.normalise_method`), which is the
+ * legacy-alias path that exists for exactly this. Nothing is stored as `stripe`
+ * either way — the API writes `card`.
+ *
+ * **Safe to delete once the API carrying `card` is deployed.** It buys nothing
+ * after that, and leaving it is how a gateway name lives on in a client that
+ * has no business naming one.
+ */
+export function toWireMethod(method: PaymentMethod): 'stripe' | 'cod' {
+  return method === 'cod' ? 'cod' : 'stripe';
+}
+
 export interface PaymentSessionResponse {
+  /**
+   * The gateway that was actually used — `stripe`, `ziina`, `cod`, `none`.
+   * Reported so a failure can be attributed to a processor in analytics; it is
+   * never shown to the customer.
+   */
   provider: string;
   session_id: string | null;
   checkout_url: string | null;

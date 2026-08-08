@@ -26,6 +26,7 @@ from .base import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
     from .order_delivery import OrderDelivery
+    from .payment_transaction import PaymentTransaction
     from .pos_order import (
         OrderCharge,
         OrderDiscount,
@@ -140,8 +141,20 @@ class Order(Base, UUIDMixin, TimestampMixin):
     )
     promo_code_used: Mapped[str | None] = mapped_column(String(50), nullable=True)
     shipping_address_snapshot: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    #: What the customer chose: `card` or `cod` (`PaymentMethodEnum`).
+    #:
+    #: Not who processed it. Every card order written before gateways were split
+    #: out holds `stripe` here, which is why the enum still accepts it — but the
+    #: two questions are different ones and this column only answers the first.
     payment_method: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    #: Who processed it: `stripe`, `ziina`, or `cod` for money taken at the
+    #: counter. Chosen by `payment_gateway_router` at session creation, from the
+    #: `payment_gateways` table — never by the checkout page.
     payment_provider: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    #: The gateway handle for the *current* attempt: a session while the customer
+    #: is paying, the confirmed payment once they have. `payment_transactions`
+    #: is the full history; this is the shortcut every existing reader already
+    #: uses, kept in step with the latest row.
     payment_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     vat_rate: Mapped[Any] = mapped_column(
         Numeric(5, 4), nullable=False, default=Decimal("0.0500")
@@ -274,6 +287,16 @@ class Order(Base, UUIDMixin, TimestampMixin):
     )
     payments: Mapped[list[OrderPayment]] = relationship(
         "OrderPayment", cascade="all, delete-orphan", lazy="selectin"
+    )
+    #: Every attempt to take money for this order online, one row per gateway
+    #: session. Distinct from `payments` above, which is the register's tender
+    #: ledger — cash in a till and a card on a gateway are not the same object
+    #: and were never going to fit in one table.
+    payment_transactions: Mapped[list[PaymentTransaction]] = relationship(
+        "PaymentTransaction",
+        back_populates="order",
+        cascade="all, delete-orphan",
+        order_by="PaymentTransaction.created_at",
     )
     order_charges: Mapped[list[OrderCharge]] = relationship(
         "OrderCharge", cascade="all, delete-orphan", lazy="selectin"

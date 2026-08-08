@@ -64,6 +64,22 @@ You'll get **sandbox credentials first** for testing. Production keys come after
 
 ### Step 4: Configure Webhooks
 
+> **Note (Aug 2026).** These two URLs no longer exist as hand-written routes.
+> Payment webhooks are now served by one generic handler,
+> `POST /api/v1/payments/webhooks/{gateway}`, which answers **404** for a
+> gateway nothing implements — deliberately, so a misconfigured URL cannot look
+> healthy for a month by returning 200 to nobody. The URLs below therefore start
+> working the moment `tabby`/`tamara` are registered in
+> `payment_gateway_router.PROVIDERS`, and there is nothing to add to the routing
+> layer when that happens.
+>
+> Note also that BNPL is a payment **method**, not a card gateway: it is
+> something the customer chooses, not a processor we can silently move card
+> traffic onto. It belongs in `PaymentMethodEnum` with its own branch in
+> `payment_service.create_session`, not in the `payment_gateways` table
+> alongside Stripe and Ziina. See the module docstrings in
+> `providers/tabby_provider.py`.
+
 In the merchant portal (or via API):
 
 1. Register your webhook URL:

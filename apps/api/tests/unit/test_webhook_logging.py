@@ -63,7 +63,7 @@ async def test_a_push_that_moved_an_order_is_recorded(saved):
     recorder = Recorder("noon_send", "status", request=_request())
     recorder.payload = {"order_nr": "HG85NNJRJYC4A7EI", "status_code": "delivered"}
     recorder.event_type = "delivered"
-    recorder.courier_order_id = "HG85NNJRJYC4A7EI"
+    recorder.external_id = "HG85NNJRJYC4A7EI"
     recorder.finish(result={"received": True, "matched": True})
     await recorder.save()
 
@@ -176,13 +176,13 @@ async def test_over_long_values_are_truncated_not_refused(saved):
     """A column overflow would lose the row, which is the one thing it must not do."""
     recorder = Recorder("noon_send", "status", request=_request())
     recorder.order_number = "MM-" + "9" * 200
-    recorder.courier_order_id = "X" * 200
+    recorder.external_id = "X" * 200
     recorder.finish(result={"received": True})
     await recorder.save()
 
     (row,) = saved
     assert len(row.order_number) == 30
-    assert len(row.courier_order_id) == 64
+    assert len(row.external_id) == 64
 
 
 # ── how long it is kept ───────────────────────────────────────────────────────

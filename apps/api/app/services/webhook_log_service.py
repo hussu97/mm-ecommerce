@@ -1,5 +1,5 @@
 """
-Writing down what a courier sent us, before anything is decided about it.
+Writing down what arrived, before anything is decided about it.
 
 Two properties matter, and both are why this is a module rather than three
 lines inside each route.
@@ -9,10 +9,12 @@ a `NoonSendError`, a constraint, an unhandled anything — and a record that
 disappears with the failure it was recording is worse than no record at all. The
 same reasoning, and the same shape, as `email_service._log`.
 
-**It never raises.** A courier that gets a 500 because we could not write a log
-row would retry (Lalamove, ten times over a day, then disabling the URL) or
-would not (noon Send, ever). Both outcomes are far worse than a missing row, so
-every failure here is swallowed into the application log.
+**It never raises.** A sender that gets a 500 because we could not write a log
+row would retry (Lalamove, ten times over a day, then disabling the URL; Stripe,
+for three days) or would not (noon Send, ever). All of those outcomes are worse
+than a missing row, and for a payment gateway the worst of them is a *successful*
+payment retried into a 500 forever because of a logging fault. So every failure
+here is swallowed into the application log.
 """
 
 from __future__ import annotations
@@ -75,7 +77,7 @@ class Recorder:
         self.signature_valid: bool | None = None
         self.event_type: str | None = None
         self.order_number: str | None = None
-        self.courier_order_id: str | None = None
+        self.external_id: str | None = None
         self.matched: bool | None = None
         self.payload: Any = None
         self.result: Any = None
@@ -87,17 +89,29 @@ class Recorder:
 
     def read(self, result: Any) -> None:
         """
-        Take `matched` and the event type from whatever the handler returned.
+        Take what the handler learned from whatever it returned.
 
-        Both couriers answer with a dict carrying those keys, so this saves each
-        route restating the same three lines — and, more to the point, stops one
+        Every handler answers with a dict carrying these keys, so this saves each
+        route restating the same six lines — and, more to the point, stops one
         of them quietly not restating them.
+
+        `matched` is read only when the key is *present*. A handler that never
+        got as far as looking for an order — a connection test, a duplicate, a
+        payment event of a kind we act on nothing for — must leave the column
+        null rather than assert `false`, because `false` is the alarming value
+        and it should keep meaning "we should have found one and did not".
         """
         self.result = result
         if isinstance(result, dict):
             if "matched" in result:
                 self.matched = bool(result["matched"])
             self.event_type = self.event_type or _string(result.get("event_type"), 60)
+            self.order_number = self.order_number or _string(
+                result.get("order_number"), 30
+            )
+            self.external_id = self.external_id or _string(
+                result.get("external_id"), 64
+            )
 
     def finish(self, *, result: Any = None, error: str | None = None) -> None:
         if result is not None:
@@ -122,7 +136,7 @@ class Recorder:
                         signature_valid=self.signature_valid,
                         event_type=_string(self.event_type, 60),
                         order_number=_string(self.order_number, 30),
-                        courier_order_id=_string(self.courier_order_id, 64),
+                        external_id=_string(self.external_id, 64),
                         matched=self.matched,
                         payload=_jsonable(self.payload),
                         result=_jsonable(self.result),

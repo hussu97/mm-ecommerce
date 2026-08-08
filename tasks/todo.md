@@ -1,132 +1,166 @@
-# Umami event expansion — phase 4
+# Multi-gateway card payments — Stripe **or** Ziina
 
-## Why
+## The problem
 
-Today's 19 events answer "how many people bought". They cannot answer **why the
-other 97% did not**. Every failure the storefront can produce — an address we do
-not deliver to, a payment that came back cancelled, a coupon the server refused,
-an API that 500'd — is currently invisible: the customer sees a red toast and we
-see nothing at all. The same is true of the merchandising: the hero carousel, the
-promo banners and the category tiles are the most expensive real estate on the
-site and not one click on them is recorded.
+"Stripe" is currently three different things wearing one word: the payment
+*method* the customer picks, the *gateway* that processes it, and the shape of
+every webhook, column and code path that touches money. So there is no seam to
+switch on. When Stripe has an incident — and it will — the only lever is a
+deploy.
 
-So: **every unhappy path gets an event, and every happy path gets attributes rich
-enough to segment on.**
+The customer never had an opinion about this. They picked **card**. Which
+processor carries it is an operations decision, and it should be an operations
+*switch*.
 
-## Design rules for this phase
+## The split
 
-- Every failure carries a `reason` (a short stable slug, never a raw message) and,
-  where it exists, a `status`.
-- Every money event carries `currency: 'AED'` so the values are never ambiguous.
-- Every event that can happen in more than one place carries `surface`.
-- `api_error` normalises its path (`/orders/MM-1234` → `/orders/:id`) so the
-  property does not explode into thousands of distinct values.
-- No PII. No email, no phone, no address line, no raw coordinates.
+| Concept | Values | Who decides | Where it lives |
+|---|---|---|---|
+| Payment **method** | `card`, `cod` | the customer | `orders.payment_method` |
+| Payment **gateway** | `stripe`, `ziina` | us, at runtime | `orders.payment_provider` |
 
----
+`payment_provider` already holds exactly this (`'stripe'`/`'cod'`) — it keeps its
+name and its meaning gets written down, rather than renaming a column on a live
+table for a word.
 
 ## Plan
 
-### 1. `lib/analytics.ts` — new API surface
-- [x] Add `clean()` so `null`/`undefined`/`''` never reach Umami
-- [x] Add the 40 new event helpers below
-- [x] Enrich the 9 existing helpers with new attributes
+### Database (migration `089`)
+- [x] `payment_gateways` — the routing table, modelled on `couriers`: `code`,
+      `name`, `is_active`, `priority`, `supports_failover`, `min_amount`,
+      `max_amount`, `test_mode`. Seeded **stripe active / ziina inactive**.
+- [x] `payment_transactions` — one row per attempt against a gateway:
+      `gateway`, `session_id`, `payment_id`, `status`, `amount`, `checkout_url`,
+      `error_*`, `raw_status`. This is what replaces sniffing `pi_` off a
+      string to decide whether money moved.
+- [x] Backfill `orders.payment_method`: `'stripe' → 'card'`.
 
-### 2. Discovery & merchandising
-- [x] `select_promotion` — HeroCarousel, PromoBanners, CategoryTiles, CaterSection
-- [x] `select_item` — ProductCard, everywhere a tile is clicked
-- [x] `sort_products` — SortSelect
-- [x] `search_no_results` — SearchTracker
+### Provider interface
+- [x] `providers/base.py` — `PaymentGatewayProvider` returning normalised
+      `GatewaySession` / `GatewayEvent`; `PaymentEventType` enum so
+      `payment_service` never sees a gateway's own vocabulary.
+- [x] `providers/stripe_provider.py` — adapted, behaviour unchanged.
+- [x] `providers/ziina_provider.py` — new. `POST /payment_intent`, amount in
+      fils, `X-Hmac-Signature` (hex SHA-256 HMAC) on the way back.
+- [x] `providers/tabby_provider.py`, `tamara_provider.py` — moved onto the new
+      base so they stay honest stubs.
 
-### 3. Product
-- [x] `product_unavailable` — out-of-stock seen on PDP / tile
-- [x] `modifier_selected` — which box size, which flavour
-- [x] `options_modal_opened`
-- [x] `add_to_cart_failed`
-- [x] enrich `view_product`, `add_to_cart`, `remove_from_cart`
+### Routing
+- [x] `payment_gateway_router.py` — picks the highest-priority gateway that is
+      active, configured, and in range; `failover_after()` for the next one.
+- [x] `payment_service.create_session` takes a **method**, not a gateway, and
+      fails over on a transport error.
+- [x] `payment_service.handle_webhook(gateway, …)` — one code path for every
+      gateway. Order resolution: metadata → transaction → legacy `payment_id`.
 
-### 4. Cart
-- [x] `view_cart`, `cart_empty`, `update_cart_quantity`, `cart_action_failed`
-- [x] `coupon_tray_shown`
-- [x] enrich `promo_applied`, `promo_failed` with `surface` + `subtotal`
+### API
+- [x] `POST /payments/create-session` accepts `method` (`provider` still
+      accepted — prod is live and rolls out in two pieces).
+- [x] `POST /payments/webhooks/{gateway}` generic, with `/webhooks/stripe` and
+      `/webhooks/ziina` kept as named routes.
+- [x] `GET|PATCH /payment-gateways` for the admin — the actual switch.
 
-### 5. Checkout — the richest seam
-- [x] `view_checkout`
-- [x] `delivery_quote` — fee, base fee, free-delivery state, serviceability
-- [x] `delivery_unserviceable`
-- [x] `free_delivery_unlocked`
-- [x] `low_order_fee_applied`
-- [x] `payment_method_selected`
-- [x] `payment_cancelled` — returned from the gateway without paying
-- [x] `payment_retry`
-- [x] `order_create_failed`
-- [x] `checkout_cart_empty`, `checkout_load_failed`
-- [x] `pickup_branch_selected`
-- [x] `address_saved`, `address_save_failed`, `address_deleted`, `saved_address_selected`
-- [x] `location_pin_set`, `geolocation_denied`
-- [x] enrich `checkout_error`, `payment_failed`, `order_completed`
+### Frontend
+- [x] web: `'stripe' | 'cod'` → `'card' | 'cod'`; legacy values normalised on
+      read so a retry of an old order still works.
+- [x] admin: gateway shown on the order; a Payment Gateways screen to flip it.
 
-### 6. Auth & account
-- [x] `login_failed`, `signup_failed`, `logout`
-- [x] `password_reset_requested`, `password_reset_completed`, `password_reset_failed`
-- [x] `phone_verify_started|sent|send_failed|succeeded|failed|resent`
+### Production must stay Stripe-only
+- [x] `ziina` seeds **inactive**.
+- [x] `ZIINA_ENABLED` defaults `false`; `is_configured()` is false without it.
+- [x] The admin refuses to activate a gateway that is not configured — so the
+      button exists in prod and cannot do anything.
+- [x] Test pinning all three.
 
-### 7. Global errors
-- [x] `api_error` — one hook in `lib/api.ts` covers every endpoint
-- [x] `app_error` — `app/error.tsx`
-- [x] `page_not_found` — 404
+### Checklist rule 9 — the five places
+- [x] `apps/api/.env.example`
+- [x] `PRODUCTION.md` step 13c
+- [x] `.github/workflows/deploy.yml`
+- [x] `.github/workflows/rollback.yml`
+- [x] `docker-compose.prod.yml` — the one that is silent when forgotten
 
-### 8. Engagement
-- [x] `faq_opened`
-- [x] `order_track_failed`
-- [x] enrich `contact_click` with `surface`, `order_tracked` with `delivery_method`
+### Rule 10 — analytics
+- [x] `payment_method_selected` now reports `card` where it reported `stripe`;
+      `docs/umami-analytics-setup.md` updated with a changelog row.
 
-### 9. Docs & dashboard
-- [x] Update `docs/umami-analytics-setup.md` — events table, goals, funnels, changelog
-- [x] Rebuild goals in Umami
-- [x] Rebuild funnels in Umami
-- [x] Verify events arrive on the live site
+## Follow-up: the audit log, and the analytics split
 
----
+Two things the gateway work implied and did not do.
+
+### Payment webhooks join `webhook_logs` (migration `090`)
+- [x] `courier_order_id` → `external_id`. The column means "their id for
+      whatever this push is about", and writing `pi_3RxK…` into something called
+      `courier_order_id` is the same conflation the gateway split had just
+      finished removing from `orders`. `order_deliveries` and `delivery_batches`
+      keep theirs — those genuinely are courier bookings.
+- [x] Every payment webhook recorded, on the recorder's own session, **whatever
+      it does**. The rows worth having are the ones a success-only log would not
+      contain: the forged signature, the event that matched no order, the
+      handler that raised. That last one is the exact shape of the three-day
+      outage — the failures left no record and stdout had been taken by a
+      restart.
+- [x] `endpoint` records which *mount* answered (`payments` / `webhooks`), so
+      "which URL is Stripe actually configured against" is answerable from the
+      admin instead of by asking Stripe.
+- [x] `matched` stays **null** when no lookup happened — a duplicate, a
+      payment-in-progress transition. Only `false` means "we should have found
+      an order and did not", which is what keeps that column worth watching.
+- [x] `signature_valid = false` is reserved for authentication failures, not
+      every unparseable body. Diluting it makes it useless as an alert.
+- [x] Admin screen: Stripe and Ziina in the filters, both mounts, generic
+      column labels.
+
+### The revenue breakdown stops answering two questions on one axis
+- [x] `by_payment_method` (`card` / `cod`) — the commercial split, stable no
+      matter which processor carries the cards this week.
+- [x] `by_payment_gateway` (`stripe` / `ziina`) — card only. Cash is excluded
+      rather than shown as a third slice; "cod" is not a gateway.
+- [x] `by_payment_provider` kept as an alias of the method split so nothing
+      built against it breaks mid-deploy.
+- [x] Legacy `stripe` values in `payment_method` normalised **and merged** on
+      read — un-merged they draw a phantom third slice that shrinks as old
+      orders age out, which looks exactly like a real trend.
+- [x] Cache key bumped to `v2`; the old shape would fail validation on read.
+- [x] The gateway chart hides itself until a second processor has traffic. One
+      full-width bar labelled "stripe" is not a breakdown.
 
 ## Review
 
-### Shipped
-- **19 → 66 events.** Every unhappy path the storefront can produce is now
-  recorded; the happy path carries attributes rich enough to segment on.
-- **Goals 7 → 24**, **funnels 3 → 9**, built in Umami and verified.
-- Pipeline verified live: `search` and `view_product` fired from
-  meltingmomentscakes.com and landed in Umami within seconds, geo-attributed to
-  AE/Sharjah — so the August 6 geography fix is still holding.
+**Verified, not assumed.**
 
-### Two real bugs found on the way
-- `normalisePath()` had a rule-ordering fault — the collection rule ran last and
-  rewrote `/orders/:orderNumber` back to `/orders/:slug`, undoing the more
-  specific match. Caught by the new tests, fixed, and a regression test added.
-- The footer and FAQ WhatsApp buttons were plain `<a>` tags and had never been
-  tracked — the two places somebody reaches for WhatsApp *after* the site has
-  failed to answer them.
+- API: 1164 passed / 21 skipped. 80 of those are new and about this change.
+- Web: 267 passed, `tsc --noEmit` clean over 2068 files. Admin: `tsc` clean.
+- `ruff check` and `ruff format --check`: clean across all 384 files.
+- The migration was run against a **throwaway Postgres 16**, from empty to head:
+  the whole chain applies, `payment_gateways` seeds `stripe` active / `ziina`
+  inactive, and the backfill was checked against three planted
+  production-shaped rows. `stripe → card` on the method; `cod` untouched;
+  `payment_provider` untouched. `downgrade` then `upgrade` round-trips and
+  restores the previous release's vocabulary, so a rollback leaves a database
+  the running code can read.
+- The API was **booted against that migrated database** and the live endpoints
+  answered correctly: `/payment-gateways` 401 unauthenticated, the Ziina webhook
+  400 (refused, not a polite 200), an unknown gateway 404.
+- The production lock was exercised against the real database, in three steps:
+  with no credentials the router picks `stripe`; **with the Ziina row switched
+  on and still no credentials it still picks `stripe`**; only with the flag *and*
+  a key does it pick `ziina`. An AED 1.50 basket is refused with a sentence
+  naming the AED 2.00 floor.
 
-### The funnel audit found worse
-- **The Main Purchase Funnel had reported zero conversions for thirty days.** It
-  required `view_product` as step 2, but every listing tile can add to the
-  basket without opening a product page, so it discarded 71% of add-to-carts and
-  100% of purchases. Fixed: `/* 686 → add_to_cart 24 → begin_checkout 11 →
-  order_completed 3`.
-- **The Promo Code Funnel was losing one purchase in three** — `promo_applied`
-  fires from the checkout as well as the basket, so anyone applying a code there
-  broke the step ordering and dropped out despite converting.
-- Search-to-Purchase had the same `view_product` fault.
-- The docs described a funnel configuration that did not exist, which is why
-  none of this had been noticed. Now transcribed from the live dashboard.
-- Journeys: auto-generated by Umami, nothing to configure. Left alone.
+**One real bug, found by running it.** The gateway seed bound `min_amount` as a
+string, and asyncpg binds `str` as `VARCHAR`, which Postgres refuses to compare
+to `numeric`. It would have failed on the very first migration run in any
+environment. Every test passed while it was broken — nothing but an actual
+database was ever going to catch it.
 
-### Also fixed
-- The delivery strip had no border and sits on a cream that matches the hero
-  photo's backdrop, so on mobile the two merged into one wash. Given the brand's
-  own divider at full strength.
+**Deliberately not done:** Ziina is not launched. No production secret is set,
+the row ships inactive, `ZIINA_ENABLED` is false in three separate files, and
+the admin refuses to activate a gateway it has no credentials for. The
+instructions for turning it on later are in `PRODUCTION.md`, in order.
 
-### Still open — needs a deploy
-The new events are on `fix/admin-fees-per-zone-threshold`. `deploy.yml` triggers
-on `main`, so **44 of the 66 events are not live yet** and the goals and funnels
-that depend on them read zero by design. Merge to `main` to switch them on.
+**Deferred, and worth doing:** an admin view of `payment_transactions` per order
+(the data is captured and recorded from today; nothing renders the history yet),
+and a reconciliation job driving `ziina_provider.fetch_payment_intent` for
+intents whose webhooks were missed — Ziina retries three times and then stops,
+unlike Stripe's three days. Neither blocks this, and neither matters while
+Ziina takes no traffic.

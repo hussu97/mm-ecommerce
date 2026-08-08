@@ -136,6 +136,28 @@ class BreakdownItem(BaseModel):
 
 class RevenueBreakdown(BaseModel):
     by_delivery_method: list[BreakdownItem]
+
+    #: How customers chose to pay: `card` or `cod`.
+    #:
+    #: This is the commercial question — what share of takings comes in at the
+    #: counter versus on a card — and it is stable no matter which processor is
+    #: carrying the card estate this week.
+    by_payment_method: list[BreakdownItem]
+
+    #: Which processor settled the card orders: `stripe` or `ziina`.
+    #:
+    #: Card only. Cash is deliberately excluded rather than shown as a third
+    #: slice, because "cash" is not a gateway and putting it here makes the
+    #: chart answer neither question — which is what the old combined breakdown
+    #: did, back when there was only one processor and it did not show.
+    by_payment_gateway: list[BreakdownItem]
+
+    #: The previous name for the combined `{stripe, cod}` split.
+    #:
+    #: Kept so a dashboard or export built against it does not break mid-deploy.
+    #: It now carries the same rows as `by_payment_method`, which is what it
+    #: always meant to whoever was reading it: with one processor, "provider"
+    #: and "method" were the same word.
     by_payment_provider: list[BreakdownItem]
 
 
@@ -672,6 +694,57 @@ async def get_customers(
     return result_obj
 
 
+#: Values of `payment_provider` that are not a card processor.
+#:
+#: Cash sets the column to `cod`, which was reasonable when the column was the
+#: only place either question could be answered. It is excluded from the gateway
+#: chart rather than renamed, because rewriting it on tens of thousands of live
+#: rows to tidy up one chart is not a trade worth making.
+_NOT_A_GATEWAY = ("cod", "none")
+
+
+def _payment_method_label(value: str | None) -> str:
+    """
+    A stored `payment_method`, as one of the two things it can mean.
+
+    Mirrors `payment_methods.normalise_method` deliberately loosely: that one
+    raises on a word it does not know, which is right at the edge of the system
+    and wrong in a chart. An unrecognised value here is shown as itself, because
+    a breakdown that hides a row it did not expect is a breakdown whose total
+    quietly stops adding up.
+    """
+    if not value:
+        return "unknown"
+    lowered = value.strip().lower()
+    if lowered == "cod":
+        return "cod"
+    if lowered in ("card", "stripe", "ziina"):
+        return "card"
+    return lowered
+
+
+def _merged(rows) -> list[BreakdownItem]:
+    """
+    Sum rows that share a label, biggest first.
+
+    Needed because normalising `stripe` and `card` to the same slice means two
+    GROUP BY rows land on one label, and a chart drawn from the un-merged list
+    shows "card" twice with the split falling wherever the deploy happened to
+    land.
+    """
+    totals: dict[str, list[float]] = {}
+    for label, orders, revenue in rows:
+        bucket = totals.setdefault(label, [0, 0.0])
+        bucket[0] += orders
+        bucket[1] += revenue
+    return [
+        BreakdownItem(label=label, orders=int(orders), revenue=revenue)
+        for label, (orders, revenue) in sorted(
+            totals.items(), key=lambda kv: kv[1][1], reverse=True
+        )
+    ]
+
+
 @router.get("/revenue-breakdown", response_model=RevenueBreakdown)
 async def get_revenue_breakdown(
     start_date: Optional[date] = Query(None),
@@ -679,10 +752,24 @@ async def get_revenue_breakdown(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_admin_user),
 ):
-    """Revenue split by delivery method and payment provider."""
+    """
+    Revenue split by delivery method, by payment method, and by gateway.
+
+    The last two used to be one chart, which worked only for as long as there
+    was exactly one card processor: `{stripe, cod}` read naturally as "how did
+    they pay". With two it reads as neither — `{stripe, ziina, cod}` puts a
+    commercial question and an operational one on the same axis and answers
+    both badly. So: *method* is the commercial split and is what the business
+    cares about; *gateway* is card-only and is what you look at during a
+    processor incident.
+    """
     start, end = _date_range(start_date, end_date)
 
-    cache_key = f"analytics:revenue-breakdown:{start}:{end}"
+    # `v2` because the shape changed. A key left alone would read back an entry
+    # written by the previous release, find no `by_payment_method` in it, and
+    # fail validation — turning a deploy into a broken analytics page for
+    # however long the TTL had left to run.
+    cache_key = f"analytics:revenue-breakdown:v2:{start}:{end}"
     cached = await cache_get(cache_key)
     if cached is not None:
         return RevenueBreakdown(**cached)
@@ -705,17 +792,39 @@ async def get_revenue_breakdown(
     )
     delivery_rows = (await db.execute(delivery_stmt)).all()
 
-    payment_stmt = (
+    # How they chose to pay. Read off `payment_method`, and normalised, because
+    # every card order written before methods and gateways were split holds
+    # `stripe` in that column — leaving it raw would show a permanent phantom
+    # third slice that shrinks as old orders age out of the window.
+    method_stmt = (
+        select(
+            Order.payment_method.label("label"),
+            func.count(Order.id).label("orders"),
+            func.coalesce(func.sum(Order.total), 0).label("revenue"),
+        )
+        .where(*base_filter)
+        .group_by(Order.payment_method)
+    )
+    method_rows = (await db.execute(method_stmt)).all()
+    by_method = _merged(
+        (_payment_method_label(r.label), int(r.orders), float(r.revenue))
+        for r in method_rows
+    )
+
+    # Who settled the card orders. Cash is excluded: it has no gateway, and a
+    # `cod` slice in a chart about processors is the same conflation this split
+    # was made to remove.
+    gateway_stmt = (
         select(
             Order.payment_provider.label("label"),
             func.count(Order.id).label("orders"),
             func.coalesce(func.sum(Order.total), 0).label("revenue"),
         )
-        .where(*base_filter)
+        .where(*base_filter, Order.payment_provider.notin_(_NOT_A_GATEWAY))
         .group_by(Order.payment_provider)
         .order_by(func.sum(Order.total).desc())
     )
-    payment_rows = (await db.execute(payment_stmt)).all()
+    gateway_rows = (await db.execute(gateway_stmt)).all()
 
     result_obj = RevenueBreakdown(
         by_delivery_method=[
@@ -724,14 +833,17 @@ async def get_revenue_breakdown(
             )
             for r in delivery_rows
         ],
-        by_payment_provider=[
+        by_payment_method=by_method,
+        by_payment_gateway=[
             BreakdownItem(
                 label=str(r.label) if r.label else "unknown",
                 orders=int(r.orders),
                 revenue=float(r.revenue),
             )
-            for r in payment_rows
+            for r in gateway_rows
         ],
+        # Same rows as `by_payment_method`, under the old name. See the schema.
+        by_payment_provider=by_method,
     )
     await cache_set(cache_key, result_obj.model_dump(mode="json"), ttl=_ANALYTICS_TTL)
     return result_obj
