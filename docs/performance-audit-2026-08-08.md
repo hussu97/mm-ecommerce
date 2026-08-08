@@ -1,5 +1,10 @@
 # Performance & latency deep-dive — 8 August 2026
 
+> **Status, 8 August 2026 — Tiers 1–3 shipped.** What follows is the original
+> audit, kept as written so the before-numbers stay honest. See
+> [§5 What shipped](#5-what-shipped) at the end for what changed and what is
+> deliberately still open.
+
 Storefront (`apps/web`), API (`apps/api`), and the GCP VM that hosts the API.
 Every number below was measured, not estimated. Method is noted per finding.
 
@@ -341,3 +346,78 @@ the win is.
   request, cold and warm.
 - **Font attribution**: built `@font-face` blocks mapped to `.next/static/media`
   files on disk; `.p.` infix marks a preloaded file.
+
+---
+
+## 5. What shipped
+
+Everything in Tiers 1–3, plus two of the four backend items. The region move
+(`iad1` → `me-central1`) was made in the Vercel project settings and takes
+effect on the next deploy.
+
+### Rendering and caching
+
+| | Before | After |
+|---|---|---|
+| Routes served from cache | 0 of 27 | 18 ISR (`●`), rest dynamic for a reason |
+| Homepage, 5 views | 7 API calls **per view** | **0** |
+| Product page, 5 views | 5 API calls per view | **0** |
+| Category page, 5 views | 9 API calls per view | **0** (still a function invocation — it reads `searchParams`) |
+| RSC prefetches per homepage visit | 29, over 15 routes, 11.8 s origin time | **0** |
+| Response headers | `no-store`, `x-vercel-cache: MISS` | `s-maxage=60`, `x-nextjs-cache: HIT` |
+
+The root layout moved under `[locale]` so the shell stopped reading `cookies()`;
+`prefetch={true}` came off `CategoryNav`; the shared server fetches went through
+`React.cache`; and the two `no-store` decisions became a 60 s TTL with cache
+tags. `revalidate` alone turned out to do nothing on a segment with dynamic
+params — the product and blog routes needed `generateStaticParams` alongside it,
+which took watching for `x-nextjs-cache` and never seeing it to find.
+
+Freshness was verified end to end: a product renamed in Postgres appeared on the
+storefront inside the window, with stale-while-revalidate serving the old copy
+until the background render finished.
+
+### Payload
+
+- Material Icons is gone. 128 KB of webfont and two third-party origins replaced
+  by 19 KB of path data for 55 icons, extracted from the real font by
+  `apps/web/scripts/extract-icons.mjs` rather than redrawn. Icons now paint with
+  the page instead of waiting for hydration.
+- No font is preloaded any more, so each page downloads only its own script's
+  faces rather than all four families. The unused 300 weights are gone.
+- The first four product-grid images carry `priority` — the LCP element on every
+  listing page was lazy-loaded.
+- The hero renders one frame on the server and brings the rest in on idle,
+  keeping ~125 KB of unseen artwork off the critical path.
+- `ModifierModal` and the account page's `LocationPicker` are `next/dynamic`.
+
+### Infrastructure
+
+`http2 on` for all three TLS server blocks, an upstream pool with `keepalive 32`,
+and `Connection: upgrade` scoped to real WebSocket handshakes instead of every
+request. The API rate limit went from 10r/s to 30r/s with a burst of 100 —
+necessary now, because a deploy prerenders the catalogue from one Vercel address.
+Both config paths validated with `nginx -t`.
+
+### Backend
+
+`product_service.get_all` no longer counts through its own `ORDER BY`. The count
+was built off the finished statement, so `price_asc` had Postgres evaluate
+`_from_price()` for every row and sort them to produce a number that cannot
+depend on order. Totals verified unchanged across every sort and filter shape.
+
+### Deliberately not done
+
+- **On-demand cache invalidation.** Every cached fetch carries a tag (`i18n`,
+  `cms`, `catalogue`) so a `revalidateTag` from the API would take the 60 s delay
+  to zero. It needs a shared secret across the five locations in CLAUDE.md §9 and
+  API-side calls on write. The TTL is the safety net until then.
+- **Redis before `get_optional_user`.** Measured: a warm `/categories` makes zero
+  database queries, because the storefront's server-side fetches carry no cookies
+  and `_get_user_from_token` returns before touching the database. The only
+  callers with a token are the admin app, which bypasses the cache anyway.
+- **Rate limiting on the right key.** Shop traffic is still keyed on an address
+  that is not the shopper's. Raising the limit bought headroom, not correctness.
+- **`/[category]`, `/all-products`, `/search`** stay dynamic: they read
+  `searchParams`, which no amount of `revalidate` will change. Their *data* is
+  cached, so they cost a function invocation and no API traffic.
