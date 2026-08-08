@@ -51,8 +51,16 @@ def saved(monkeypatch):
     return rows
 
 
-def _request(host: str = "34.18.98.2"):
-    return SimpleNamespace(client=SimpleNamespace(host=host))
+def _request(host: str = "172.18.0.3", forwarded: str | None = "34.18.98.2"):
+    """
+    A webhook as it actually reaches the app: through nginx.
+
+    `client.host` is the nginx container every time, which is why the default
+    here is a bridge address rather than a plausible-looking public one — a
+    test that let those be the same would pass with the header ignored.
+    """
+    headers = {"X-Forwarded-For": forwarded} if forwarded is not None else {}
+    return SimpleNamespace(client=SimpleNamespace(host=host), headers=headers)
 
 
 # ── what gets written down ────────────────────────────────────────────────────
@@ -169,6 +177,56 @@ async def test_a_request_with_no_client_is_still_recorded(saved):
 
     (row,) = saved
     assert row.remote_ip is None
+
+
+# ── who sent it ───────────────────────────────────────────────────────────────
+#
+# On 2026-08-08 three unsigned pushes arrived in the same second — one of them
+# naming a gateway this system has no provider for — and the table could say
+# only that they came from 172.18.0.3, which is nginx and therefore every row
+# that has ever been written. The address was in the request the whole time.
+
+
+@pytest.mark.asyncio
+async def test_the_sender_is_recorded_not_the_proxy(saved):
+    recorder = Recorder("stripe", "webhooks", request=_request())
+    recorder.finish(result={"received": True})
+    await recorder.save()
+
+    (row,) = saved
+    assert row.remote_ip == "34.18.98.2"
+
+
+@pytest.mark.asyncio
+async def test_a_sender_cannot_choose_the_address_recorded_against_it(saved):
+    """
+    The header is append-only, so a forged one arrives as a prefix: nginx puts
+    the address it actually saw on the end. Reading the first hop would let an
+    unsigned push write its own alibi into the column that exists to identify
+    it — and the rows worth reading here are exactly the unsigned ones.
+    """
+    recorder = Recorder(
+        "stripe",
+        "webhooks",
+        request=_request(forwarded="1.2.3.4, 185.220.101.7"),
+    )
+    recorder.finish(result={"received": True})
+    await recorder.save()
+
+    (row,) = saved
+    assert row.remote_ip == "185.220.101.7"
+
+
+@pytest.mark.asyncio
+async def test_a_direct_request_still_records_its_peer(saved):
+    """No proxy in front — a container calling the API on the bridge network,
+    or the app run without nginx locally. Falls back rather than losing it."""
+    recorder = Recorder("stripe", "webhooks", request=_request(forwarded=None))
+    recorder.finish(result={"received": True})
+    await recorder.save()
+
+    (row,) = saved
+    assert row.remote_ip == "172.18.0.3"
 
 
 @pytest.mark.asyncio

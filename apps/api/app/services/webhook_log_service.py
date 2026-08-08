@@ -41,6 +41,38 @@ def _string(value: Any, limit: int) -> str | None:
     return text[:limit] or None
 
 
+def _client_ip(request: Any) -> str | None:
+    """
+    Where the request actually came from, rather than where it reached us.
+
+    Every webhook arrives through the one nginx container, so `request.client`
+    is nginx's address on the bridge network — `172.18.0.x` on every row ever
+    written, which is no help at all when the question this table exists to
+    answer is who sent this. nginx has been passing the real one in
+    `X-Forwarded-For` the whole time (`$proxy_add_x_forwarded_for`, set at the
+    http level in `nginx/nginx.conf`); nothing here was reading it.
+
+    The **last** entry is the one to take, not the first. That header is
+    append-only: nginx adds the peer it saw to whatever the sender already put
+    there, so a sender that opens with `X-Forwarded-For: 1.2.3.4` produces
+    `1.2.3.4, <its real address>` and only the rightmost hop is ours. Taking
+    the first — as `audit_service` does, where the sender is an authenticated
+    admin and the convention is standard — would let an unsigned push choose
+    what this column says about it, and this table is read precisely when a
+    push is suspect. There is exactly one hop to strip: the API containers
+    publish no ports, so nginx is the only way in, and the domain's A record
+    points at the VM rather than at a proxy.
+    """
+    headers = getattr(request, "headers", None)
+    forwarded = headers.get("X-Forwarded-For") if headers is not None else None
+    if forwarded:
+        hops = [hop.strip() for hop in forwarded.split(",") if hop.strip()]
+        if hops:
+            return hops[-1]
+    client = getattr(request, "client", None)
+    return client.host if client else None
+
+
 class Recorder:
     """
     One inbound request, filled in as the handler learns things about it.
@@ -70,9 +102,7 @@ class Recorder:
         self.provider = provider
         self.endpoint = endpoint
         self.started = datetime.now(timezone.utc)
-        self.remote_ip: str | None = None
-        if request is not None and getattr(request, "client", None):
-            self.remote_ip = request.client.host
+        self.remote_ip: str | None = _client_ip(request)
         self.api_key_fingerprint = key_fingerprint
         self.signature_valid: bool | None = None
         self.event_type: str | None = None
