@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { cmsApi } from '@/lib/api';
 import { Breadcrumb } from '@/components/ui';
 import { BUSINESS_ID, FOUNDER, FOUNDER_ID } from '@/lib/schema';
+import { Icon } from '@/components/ui/Icon';
 
 interface Value {
   icon: string;
@@ -233,9 +234,7 @@ export default async function AboutPage({
                 key={title}
                 className="border border-gray-200 hover:border-primary p-6 text-center transition-colors group"
               >
-                <span className="material-icons text-3xl text-secondary group-hover:text-primary mb-4 block transition-colors">
-                  {icon}
-                </span>
+                <Icon name={icon} className="text-3xl text-secondary group-hover:text-primary mb-4 block transition-colors" />
                 <h3 className="font-body text-sm font-medium uppercase tracking-widest text-gray-800 mb-2">
                   {title}
                 </h3>
@@ -266,7 +265,7 @@ export default async function AboutPage({
             className="inline-flex items-center gap-2 font-body text-xs uppercase tracking-widest bg-white text-primary px-8 py-3.5 hover:bg-white/90 transition-all duration-200"
           >
             {c.cta?.button_text ?? 'Shop Now'}
-            <span className="material-icons text-[16px]">arrow_forward</span>
+            <Icon name="arrow_forward" className="text-[16px]" />
           </Link>
         </div>
       </section>

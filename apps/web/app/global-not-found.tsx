@@ -23,18 +23,24 @@ import './globals.css';
  * API call. It has to work when the thing that failed is everything else.
  */
 
+// `preload: false` for the same reason as the locale layout, and for one more:
+// Next hoists font preloads out of whichever module declares them, so leaving
+// it on here put a preload for these two Latin faces in the <head> of every
+// page on the site — including the Arabic ones, which render in neither.
 const raleway = Raleway({
   subsets: ['latin'],
   weight: ['400', '600'],
   variable: '--font-raleway',
   display: 'swap',
+  preload: false,
 });
 
 const jost = Jost({
   subsets: ['latin'],
-  weight: ['300', '400'],
+  weight: ['400'],
   variable: '--font-jost',
   display: 'swap',
+  preload: false,
 });
 
 export const metadata: Metadata = {

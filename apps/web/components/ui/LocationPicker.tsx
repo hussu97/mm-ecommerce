@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 import { APIProvider, Map, AdvancedMarker, useMapsLibrary, useMap, type MapMouseEvent } from '@vis.gl/react-google-maps';
+import { Icon } from '@/components/ui/Icon';
 
 const DUBAI_CENTER = { lat: 25.2048, lng: 55.2708 };
 const MELTING_MOMENTS_CAKES = {
@@ -189,7 +190,7 @@ function MapContent({ lat, lng, onChange, placeholder, height = '200px' }: Locat
           onClick={useCurrentLocation}
           className="inline-flex items-center gap-1.5 text-xs font-body text-primary hover:underline"
         >
-          <span className="material-icons text-sm">my_location</span>
+          <Icon name="my_location" className="text-sm" />
           Use my current location
         </button>
       </div>

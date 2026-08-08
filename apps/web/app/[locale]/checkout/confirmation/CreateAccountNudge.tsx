@@ -8,6 +8,7 @@ import { addressesApi, ApiError } from '@/lib/api';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { analytics } from '@/lib/analytics';
 import type { AddressCreate } from '@/lib/types';
+import { Icon } from '@/components/ui/Icon';
 
 /**
  * Offered after the order is already placed, never before it.
@@ -49,7 +50,7 @@ export function CreateAccountNudge({
   if (done) {
     return (
       <div className="bg-green-50 border border-green-100 rounded-sm p-4 mb-6 flex gap-2 items-start">
-        <span className="material-icons text-base text-green-600 mt-0.5">check_circle</span>
+        <Icon name="check_circle" className="text-base text-green-600 mt-0.5" />
         <p className="font-body text-sm text-green-800">
           {addressSaved
             ? t(hasAccount ? 'confirmation.signed_in_address_saved' : 'confirmation.create_account_address_saved')
@@ -115,9 +116,7 @@ export function CreateAccountNudge({
   return (
     <div className="bg-secondary/10 border border-secondary/30 rounded-sm p-4 mb-6">
       <div className="flex gap-2 items-start mb-3">
-        <span className="material-icons text-base text-primary mt-0.5">
-          {hasAccount ? 'login' : 'bookmark_added'}
-        </span>
+        <Icon name={hasAccount ? 'login' : 'bookmark_added'} className="text-base text-primary mt-0.5" />
         <div>
           <p className="font-body text-sm font-medium text-gray-800">
             {t(hasAccount ? 'confirmation.sign_in_title' : 'confirmation.create_account_title')}

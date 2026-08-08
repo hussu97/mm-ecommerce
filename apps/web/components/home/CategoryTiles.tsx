@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { localizedField } from '@/lib/i18n/entity';
 import { Reveal } from './Reveal';
 import type { Category } from '@/lib/types';
+import { Icon } from '@/components/ui/Icon';
 
 export interface CategoryTile {
   /** Category slug, e.g. `cat-brownies`. Also drives the link target. */
@@ -147,9 +148,7 @@ export function CategoryTiles({
                         </p>
                       )}
                     </div>
-                    <span className="material-icons text-white/85 text-lg sm:text-xl rtl:rotate-180 translate-x-0 group-hover:translate-x-1 transition-transform duration-300">
-                      arrow_forward
-                    </span>
+                    <Icon name="arrow_forward" className="text-white/85 text-lg sm:text-xl rtl:rotate-180 translate-x-0 group-hover:translate-x-1 transition-transform duration-300" />
                   </div>
                 </div>
               </Link>

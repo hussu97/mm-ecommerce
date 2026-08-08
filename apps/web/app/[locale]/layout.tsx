@@ -34,32 +34,58 @@ import type { Language } from "@/lib/types";
 
 const SUPPORTED_LOCALES = (process.env.NEXT_PUBLIC_SUPPORTED_LOCALES ?? "en,ar").split(",");
 
+/**
+ * Four families, none of them preloaded, and no 300 weight anywhere.
+ *
+ * `preload` was on by default, which meant `next/font` emitted a preload for
+ * every family on every page — 132 KB across 7 files, of which roughly half was
+ * always the wrong alphabet. An English page eagerly fetched 64 KB of Tajawal
+ * and Cairo; an Arabic page fetched 68 KB of Raleway and Jost. On a phone that
+ * is bandwidth taken directly from the LCP image.
+ *
+ * Turning it off is what makes the split work, because `globals.css` already
+ * picks by script: `body` resolves to Jost, `[dir="rtl"] body` to Cairo. Left
+ * to discover the faces through the stylesheet, a browser downloads only the
+ * two the page actually renders in. The cost is that discovery waits on the CSS
+ * — which `display: "swap"` already covers, since text paints in the fallback
+ * either way and never blocks on a font.
+ *
+ * The 300s are gone because nothing asked for them. The only weight utilities
+ * in the codebase are `font-medium` (500), `font-semibold` (600),
+ * `font-normal` (400) and one `font-bold` (700); `font-light` appears nowhere,
+ * so those four faces were downloaded and never drawn with.
+ */
+
 const raleway = Raleway({
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
+  weight: ["400", "500", "600", "700"],
   variable: "--font-raleway",
   display: "swap",
+  preload: false,
 });
 
 const jost = Jost({
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600"],
+  weight: ["400", "500", "600"],
   variable: "--font-jost",
   display: "swap",
+  preload: false,
 });
 
 const tajawal = Tajawal({
   subsets: ["arabic"],
-  weight: ["300", "400", "500", "700"],
+  weight: ["400", "500", "700"],
   variable: "--font-tajawal",
   display: "swap",
+  preload: false,
 });
 
 const cairo = Cairo({
   subsets: ["arabic"],
-  weight: ["300", "400", "500", "600", "700"],
+  weight: ["400", "500", "600", "700"],
   variable: "--font-cairo",
   display: "swap",
+  preload: false,
 });
 
 export const metadata: Metadata = {
@@ -116,26 +142,17 @@ export default async function LocaleLayout({
   const direction = (currentLang?.direction ?? (locale === "ar" ? "rtl" : "ltr")) as "ltr" | "rtl";
   const t = createT(translations);
 
-  // All four, regardless of script. These class names only define
-  // `--font-raleway` and friends, and nothing reads them: `globals.css` picks
-  // its faces by real family name ("Raleway", "Tajawal") and Next 16 emits
-  // `@font-face` under exactly those names, so the mapping is redundant.
-  //
-  // Which means dropping the Arabic pair here would not stop them loading —
-  // the `@font-face` rules and their preloads come from the module-scope
-  // `Tajawal()`/`Cairo()` calls above, not from this attribute. Silencing the
-  // 64 KB of Arabic preload on English pages needs `preload: false` on those
-  // two, which is a change to how fonts arrive and is tracked separately.
+  // All four regardless of script, and it costs nothing to do so: these class
+  // names only define `--font-raleway` and friends, and nothing reads them.
+  // `globals.css` picks its faces by real family name ("Raleway", "Tajawal"),
+  // and Next 16 emits `@font-face` under exactly those names, so the mapping is
+  // redundant — which is also why dropping the Arabic pair here would not have
+  // stopped them loading. What stops that is `preload: false` above.
   const fontVariables = `${raleway.variable} ${jost.variable} ${tajawal.variable} ${cairo.variable}`;
 
   return (
     <html lang={locale} dir={direction} className={fontVariables}>
       <head>
-        <link
-          rel="preload"
-          href="https://fonts.googleapis.com/icon?family=Material+Icons"
-          as="style"
-        />
         <link
           rel="search"
           type="application/opensearchdescription+xml"
@@ -168,9 +185,6 @@ export default async function LocaleLayout({
           </TranslationProvider>
         </Providers>
         <SpeedInsights />
-
-        {/* Material Icons — loaded async to avoid render-blocking */}
-        <Script id="material-icons" strategy="afterInteractive">{`(function(){var l=document.createElement('link');l.rel='stylesheet';l.href='https://fonts.googleapis.com/icon?family=Material+Icons';document.head.appendChild(l)})()`}</Script>
 
         {/* Umami analytics — no-cookie, GDPR-friendly.
             Both paths are first-party and name neither the tool nor the shop, so

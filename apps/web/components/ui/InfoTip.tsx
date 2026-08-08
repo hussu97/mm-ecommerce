@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
+import { Icon } from '@/components/ui/Icon';
 
 /**
  * Whether this element was focused by the keyboard rather than by a press.
@@ -111,7 +112,7 @@ export function InfoTip({ label, children, className }: InfoTipProps) {
         onBlur={() => setPinned(false)}
         className="inline-flex items-center justify-center text-gray-400 hover:text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded-full transition-colors"
       >
-        <span className="material-icons text-[15px] leading-none">info_outline</span>
+        <Icon name="info_outline" className="text-[15px] leading-none" />
       </button>
 
       {open && (

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { ordersApi } from '@/lib/api';
 import { Order, OrderStatus } from '@/lib/types';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { Icon } from '@/components/ui/Icon';
 
 export default function OrdersPage() {
   const { t } = useTranslation();
@@ -58,7 +59,7 @@ export default function OrdersPage() {
 
       {orders.length === 0 && !error ? (
         <div className="text-center py-16 border border-dashed border-gray-200">
-          <span className="material-icons text-4xl text-gray-300 block mb-3">receipt_long</span>
+          <Icon name="receipt_long" className="text-4xl text-gray-300 block mb-3" />
           <p className="text-sm text-gray-500 font-body mb-4">{t('order.no_orders')}</p>
           <Link href="/" className="text-sm text-primary hover:underline font-body">
             {t('order.start_shopping')}
@@ -95,9 +96,7 @@ export default function OrdersPage() {
                   <span className="text-sm font-medium text-gray-800 font-body">
                     AED {Number(order.total).toFixed(2)}
                   </span>
-                  <span className="material-icons text-gray-300 group-hover:text-primary transition-colors text-[18px]">
-                    chevron_right
-                  </span>
+                  <Icon name="chevron_right" className="text-gray-300 group-hover:text-primary transition-colors text-[18px]" />
                 </div>
               </Link>
             );

@@ -2,6 +2,7 @@
 
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { useLocation } from '@/lib/location/LocationProvider';
+import { Icon } from '@/components/ui/Icon';
 
 /**
  * The delivery promise, said in terms of where the customer actually is.
@@ -84,9 +85,7 @@ export function DeliveryPromiseBanner() {
             aria-label={t('usp.change_area')}
             className="ms-1 inline-flex items-center shrink-0 hover:opacity-70 transition-opacity"
           >
-            <span className="material-icons text-[14px]" aria-hidden="true">
-              my_location
-            </span>
+            <Icon name="my_location" className="text-[14px]" />
           </button>
         )}
       </div>

@@ -3,6 +3,7 @@
 import * as Sentry from '@sentry/nextjs';
 import Link from 'next/link';
 import { useEffect } from 'react';
+import { Icon } from '@/components/ui/Icon';
 
 export default function Error({
   error,
@@ -18,7 +19,7 @@ export default function Error({
 
   return (
     <div className="min-h-[70vh] flex flex-col items-center justify-center px-4 text-center">
-      <span className="material-icons text-6xl text-secondary mb-4">error_outline</span>
+      <Icon name="error_outline" className="text-6xl text-secondary mb-4" />
       <h1 className="font-display text-2xl sm:text-3xl text-primary uppercase tracking-widest mb-4">
         Something Went Wrong
       </h1>

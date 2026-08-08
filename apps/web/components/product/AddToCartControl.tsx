@@ -10,6 +10,7 @@ import { localizedField } from '@/lib/i18n/entity';
 import { computeFromPrice } from '@/lib/pricing';
 import { ModifierModal } from '@/components/product/ModifierModal';
 import type { Product } from '@/lib/types';
+import { Icon } from '@/components/ui/Icon';
 
 /**
  * The add-to-cart control used on every product tile.
@@ -111,7 +112,7 @@ export function AddToCartControl({
               className="shrink-0 inline-flex items-center gap-1 px-1.5 sm:px-2 py-1 bg-primary/10 text-primary font-body text-[11px] rounded-sm"
               aria-label={t('product.in_basket', { n: inCart })}
             >
-              <span className="material-icons text-sm">shopping_basket</span>
+              <Icon name="shopping_basket" className="text-sm" />
               {inCart}
             </span>
           )}
@@ -137,7 +138,7 @@ export function AddToCartControl({
           aria-label={inCart === 1 ? t('cart.remove_item') : t('product.decrease')}
           className="w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center text-primary hover:bg-primary/10 transition-colors disabled:opacity-40"
         >
-          <span className="material-icons text-base">{inCart === 1 ? 'delete_outline' : 'remove'}</span>
+          <Icon name={inCart === 1 ? 'delete_outline' : 'remove'} className="text-base" />
         </button>
         <span className="font-body text-sm text-primary tabular-nums" aria-live="polite">
           {inCart}
@@ -148,7 +149,7 @@ export function AddToCartControl({
           aria-label={t('product.increase')}
           className="w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center text-primary hover:bg-primary/10 transition-colors disabled:opacity-40"
         >
-          <span className="material-icons text-base">add</span>
+          <Icon name="add" className="text-base" />
         </button>
       </div>
     );

@@ -11,6 +11,7 @@ import { addressesApi } from '@/lib/api';
 import { guestAddresses } from '@/lib/guest-addresses';
 import { reverseGeocode } from '@/lib/geocode';
 import type { Address } from '@/lib/types';
+import { Icon } from '@/components/ui/Icon';
 
 const LocationPicker = dynamic(
   () => import('@/components/ui/LocationPicker').then((m) => ({ default: m.LocationPicker })),
@@ -239,7 +240,7 @@ export function AddressModal({
                 className="p-1 -ms-1 text-gray-400 hover:text-primary transition-colors"
                 aria-label={t('common.back')}
               >
-                <span className="material-icons text-xl">arrow_back</span>
+                <Icon name="arrow_back" className="text-xl" />
               </button>
             )}
             <h3 className="font-display text-lg text-primary tracking-wide truncate">
@@ -253,7 +254,7 @@ export function AddressModal({
             className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
             aria-label={t('common.close')}
           >
-            <span className="material-icons text-xl">close</span>
+            <Icon name="close" className="text-xl" />
           </button>
         </div>
 
@@ -311,7 +312,7 @@ export function AddressModal({
                 onClick={() => { setDraft(EMPTY); setMode('form'); }}
                 className="w-full flex items-center justify-center gap-2 py-3 border border-dashed border-gray-300 rounded-sm text-sm font-body text-primary hover:border-primary transition-colors"
               >
-                <span className="material-icons text-base">add</span>
+                <Icon name="add" className="text-base" />
                 {t('address.new_address')}
               </button>
             </div>

@@ -11,6 +11,7 @@ import { DeliveryEstimate } from '@/components/product/DeliveryEstimate';
 import { ProductBadge } from '@/components/product/ProductBadge';
 import { Reveal } from './Reveal';
 import type { Product } from '@/lib/types';
+import { Icon } from '@/components/ui/Icon';
 
 export interface FeaturedContent {
   title?: string;
@@ -47,7 +48,7 @@ function ProductCard({ product, badge }: { product: Product; badge?: string }) {
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
-            <span className="material-icons text-5xl text-secondary">cake</span>
+            <Icon name="cake" className="text-5xl text-secondary" />
           </div>
         )}
 
@@ -133,7 +134,7 @@ export function FeaturedProducts({
               className="hidden sm:inline-flex items-center gap-1.5 shrink-0 border border-primary/60 text-primary text-[11px] font-body uppercase tracking-widest px-4 py-2.5 hover:bg-primary hover:text-white transition-colors duration-200"
             >
               {c.view_all_text}
-              <span className="material-icons text-[14px] rtl:rotate-180">arrow_forward</span>
+              <Icon name="arrow_forward" className="text-[14px] rtl:rotate-180" />
             </Link>
           )}
         </Reveal>
@@ -146,7 +147,7 @@ export function FeaturedProducts({
               className="absolute start-0 top-1/3 -translate-y-1/2 z-10 bg-white/90 rounded-full p-1 shadow-md -ms-2"
               aria-label="Scroll left"
             >
-              <span className="material-icons text-primary text-xl rtl:rotate-180">chevron_left</span>
+              <Icon name="chevron_left" className="text-primary text-xl rtl:rotate-180" />
             </button>
           )}
           <div
@@ -166,7 +167,7 @@ export function FeaturedProducts({
               className="absolute end-0 top-1/3 -translate-y-1/2 z-10 bg-white/90 rounded-full p-1 shadow-md -me-2"
               aria-label="Scroll right"
             >
-              <span className="material-icons text-primary text-xl rtl:rotate-180">chevron_right</span>
+              <Icon name="chevron_right" className="text-primary text-xl rtl:rotate-180" />
             </button>
           )}
         </div>
@@ -187,7 +188,7 @@ export function FeaturedProducts({
               className="flex items-center justify-center gap-1.5 border border-primary/60 text-primary text-[11px] font-body uppercase tracking-widest px-4 py-3 hover:bg-primary hover:text-white transition-colors duration-200"
             >
               {c.view_all_text}
-              <span className="material-icons text-[14px] rtl:rotate-180">arrow_forward</span>
+              <Icon name="arrow_forward" className="text-[14px] rtl:rotate-180" />
             </Link>
           </div>
         )}

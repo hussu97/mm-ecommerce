@@ -4,6 +4,7 @@ import { cmsApi } from '@/lib/api';
 import { FaqAccordion } from './FaqAccordion';
 import { Breadcrumb } from '@/components/ui';
 import { OG_IMAGE } from '@/lib/schema';
+import { Icon } from '@/components/ui/Icon';
 
 interface FaqItem {
   question: string;
@@ -132,14 +133,14 @@ export default async function FaqPage({
               rel="noopener noreferrer"
               className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-primary text-white text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity"
             >
-              <span className="material-icons text-[16px]">chat</span>
+              <Icon name="chat" className="text-[16px]" />
               {c.cta?.whatsapp_text ?? 'WhatsApp Us'}
             </a>
             <Link
               href="/contact"
               className="inline-flex items-center justify-center gap-2 px-6 py-3 border border-primary text-primary text-xs font-body uppercase tracking-widest hover:bg-primary hover:text-white transition-all duration-200"
             >
-              <span className="material-icons text-[16px]">mail</span>
+              <Icon name="mail" className="text-[16px]" />
               {c.cta?.contact_text ?? 'Contact Form'}
             </Link>
           </div>

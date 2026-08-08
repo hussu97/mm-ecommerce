@@ -10,6 +10,7 @@ import { localizedField } from '@/lib/i18n/entity';
 import { withFallback } from '@/lib/i18n/fallback';
 import { computeFromPrice } from '@/lib/pricing';
 import type { Product } from '@/lib/types';
+import { Icon } from '@/components/ui/Icon';
 
 function ConditionalLink({
   href,
@@ -56,7 +57,7 @@ export function ProductCard({ product, badge }: { product: Product; badge?: stri
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center">
-              <span className="material-icons text-5xl sm:text-6xl text-secondary">cake</span>
+              <Icon name="cake" className="text-5xl sm:text-6xl text-secondary" />
             </div>
           )}
           {badgeText && <ProductBadge>{badgeText}</ProductBadge>}

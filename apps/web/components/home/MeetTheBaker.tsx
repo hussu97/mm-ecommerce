@@ -1,6 +1,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { Reveal } from './Reveal';
+import { Icon } from '@/components/ui/Icon';
 
 export interface BakerGalleryItem {
   image?: string;
@@ -78,7 +79,7 @@ export function MeetTheBaker({ c, locale }: { c: BakerContent; locale: string })
                   className="inline-flex items-center gap-2 mt-7 border border-white text-white text-[11px] sm:text-xs font-body uppercase tracking-widest px-6 py-3 hover:bg-white hover:text-primary transition-colors duration-300"
                 >
                   {c.button_text}
-                  <span className="material-icons text-[15px] rtl:rotate-180">arrow_forward</span>
+                  <Icon name="arrow_forward" className="text-[15px] rtl:rotate-180" />
                 </Link>
               </Reveal>
             )}

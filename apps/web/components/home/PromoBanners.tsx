@@ -3,6 +3,7 @@ import { Reveal } from './Reveal';
 import { BannerPicture } from './BannerPicture';
 import { isLiveLink, liveSlugSet } from '@/lib/category-links';
 import type { Category } from '@/lib/types';
+import { Icon } from '@/components/ui/Icon';
 
 export interface PromoItem {
   image?: string;
@@ -91,7 +92,7 @@ export function PromoBanners({
                         className="mm-sheen inline-flex items-center gap-2 mt-5 sm:mt-6 px-6 py-3 bg-primary text-white text-[11px] sm:text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity"
                       >
                         {promo.cta_text}
-                        <span className="material-icons text-[15px] rtl:rotate-180">arrow_forward</span>
+                        <Icon name="arrow_forward" className="text-[15px] rtl:rotate-180" />
                       </Link>
                     )}
                   </div>

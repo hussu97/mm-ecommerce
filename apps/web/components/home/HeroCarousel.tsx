@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { BannerPicture } from './BannerPicture';
 import { isLiveLink, liveSlugSet } from '@/lib/category-links';
 import type { Category } from '@/lib/types';
+import { Icon } from '@/components/ui/Icon';
 
 export interface HeroSlide {
   /** Wide banner, ~12:5. Falls back to `image_mobile` if omitted. */
@@ -247,7 +248,7 @@ export function HeroCarousel({
                     className="mm-sheen inline-flex items-center gap-2 px-6 sm:px-7 py-3 sm:py-3.5 bg-primary text-white text-[11px] sm:text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity"
                   >
                     {current.cta_text}
-                    <span className="material-icons text-[15px] rtl:rotate-180">arrow_forward</span>
+                    <Icon name="arrow_forward" className="text-[15px] rtl:rotate-180" />
                   </Link>
                 )}
                 {current.secondary_text && (
@@ -290,7 +291,7 @@ export function HeroCarousel({
                   aria-label="Previous slide"
                   className="h-10 w-10 flex items-center justify-center rounded-full bg-white/75 backdrop-blur-sm text-primary hover:bg-white transition-colors"
                 >
-                  <span className="material-icons text-xl rtl:rotate-180">chevron_left</span>
+                  <Icon name="chevron_left" className="text-xl rtl:rotate-180" />
                 </button>
                 <button
                   type="button"
@@ -298,7 +299,7 @@ export function HeroCarousel({
                   aria-label="Next slide"
                   className="h-10 w-10 flex items-center justify-center rounded-full bg-white/75 backdrop-blur-sm text-primary hover:bg-white transition-colors"
                 >
-                  <span className="material-icons text-xl rtl:rotate-180">chevron_right</span>
+                  <Icon name="chevron_right" className="text-xl rtl:rotate-180" />
                 </button>
               </div>
             </div>
