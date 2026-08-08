@@ -122,7 +122,25 @@ jobs:
         # is enough to hit it. It fails as `api-upload-free` *after* a
         # successful build, which reads like a broken deploy rather than a
         # quota, and blocks every further deploy for a day.
-        run: npx vercel deploy --prebuilt --prod --archive=tgz --token=${{ secrets.VERCEL_TOKEN }}
+        #
+        # Retried because that tarball is a single ~30MB request over the open
+        # internet, and it does fail: the web app's upload died as a bare
+        # `fetch failed` 7.3MB into 29.2MB, on the same command that had
+        # succeeded for admin two minutes earlier and for web twenty minutes
+        # before that. Nothing was wrong — the build was already done and paid
+        # for, and it was thrown away for a dropped connection. Retrying is
+        # safe: a deployment only goes live once its upload completes, so a
+        # half-sent archive promotes nothing.
+        run: |
+          for attempt in 1 2 3; do
+            if npx vercel deploy --prebuilt --prod --archive=tgz --token=${{ secrets.VERCEL_TOKEN }}; then
+              exit 0
+            fi
+            echo "::warning::vercel deploy attempt ${attempt} of 3 failed"
+            sleep $((attempt * 10))
+          done
+          echo "::error::vercel deploy failed three times"
+          exit 1
 
   deploy-admin:
     name: Test & Deploy Admin to Vercel
@@ -181,7 +199,25 @@ jobs:
         # is enough to hit it. It fails as `api-upload-free` *after* a
         # successful build, which reads like a broken deploy rather than a
         # quota, and blocks every further deploy for a day.
-        run: npx vercel deploy --prebuilt --prod --archive=tgz --token=${{ secrets.VERCEL_TOKEN }}
+        #
+        # Retried because that tarball is a single ~30MB request over the open
+        # internet, and it does fail: the web app's upload died as a bare
+        # `fetch failed` 7.3MB into 29.2MB, on the same command that had
+        # succeeded for admin two minutes earlier and for web twenty minutes
+        # before that. Nothing was wrong — the build was already done and paid
+        # for, and it was thrown away for a dropped connection. Retrying is
+        # safe: a deployment only goes live once its upload completes, so a
+        # half-sent archive promotes nothing.
+        run: |
+          for attempt in 1 2 3; do
+            if npx vercel deploy --prebuilt --prod --archive=tgz --token=${{ secrets.VERCEL_TOKEN }}; then
+              exit 0
+            fi
+            echo "::warning::vercel deploy attempt ${attempt} of 3 failed"
+            sleep $((attempt * 10))
+          done
+          echo "::error::vercel deploy failed three times"
+          exit 1
 
   deploy-gcp:
     name: Test & Deploy API to GCP

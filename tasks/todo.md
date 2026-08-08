@@ -180,3 +180,25 @@ Measured first, from `gh api .../jobs`, rather than guessing:
 - The web `Build` and `Deploy` steps still repeat work between PR Check and the
   deploy. A Turbo remote cache would share it, but it needs a token and a
   service, so it was left alone
+
+## Follow-up: the Vercel upload is retried now
+
+Run 31260006904 failed with a bare `Error: fetch failed` 7.3MB into a 29.2MB
+tarball upload. Not a quota and not a config fault — the identical command had
+succeeded for admin two minutes earlier and for web twenty minutes before that,
+and the build was already finished and paid for when the connection dropped.
+
+Both Vercel `Deploy` steps now retry three times with a 10s/20s backoff. Safe to
+retry: a deployment only goes live once its upload completes, so a half-sent
+archive promotes nothing.
+
+Steady-state numbers from the following run, with the API's Docker layer cache
+warm again (it was busted twice by `pyproject.toml` changing):
+
+| Job | Was (lint + deploy, serial) | Now (merged) |
+|---|---|---|
+| Web | 55 + 246 = 301s | **104s** |
+| Admin | 42 + 71 = 113s | **89s** |
+| API | 106 + 78 = 184s | 245s, of which 48s was the one-time image rebuild |
+
+`Run pytest` serial: 48s, against 50s for the xdist attempt and 47s at baseline.

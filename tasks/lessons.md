@@ -273,3 +273,29 @@
   send route) are no longer environment-configurable at all. An environment that
   disagrees with the code about them is a fault, not a deployment choice, so
   there is nothing to get out of sync.
+
+### [2026-08-08] A speedup measured on this laptop is not a speedup in CI
+- **What went wrong**: Added `pytest -n auto --dist loadfile` to both workflows
+  because it halved the suite locally (9.6s -> 5.6s on ten cores), and I had
+  gone to some trouble first proving it was *safe* — checked the three real-DB
+  modules for colliding cleanup prefixes, ran them twice against a throwaway
+  Postgres to catch leftover rows. All of that was sound, and none of it was
+  the question. On the runner it measured 50s against 47s serial: slightly
+  worse. ~1280 tests that each take a millisecond, whose real CI cost is
+  importing the app once — which every xdist worker then pays again. I had
+  projected "46s -> ~20s" in the write-up before any of it ran.
+- **Rule**: Parallelism pays when the work is the bottleneck. Before splitting a
+  job across workers, find out what the seconds are actually made of — startup,
+  import, download, or execution — because only the last one divides. A local
+  timing on different hardware answers a different question than the one CI is
+  asking.
+- **What worked instead, and why**: the three changes that held up all deleted
+  work rather than redistributing it — 149s of re-encoding images already
+  committed to the repo, 165s of uploading files one request at a time, 19s of
+  pip resolving what uv resolves in 2. Look for work that should not happen at
+  all before looking for work to spread around.
+- **Also**: I only caught this because I pulled per-step timings from the run
+  *after* pushing and compared them to a baseline run with the same job set.
+  Shipping a CI change without measuring the result is how a regression sits
+  there looking like an improvement — the projection in the commit message
+  would have been the only record, and it was wrong.
