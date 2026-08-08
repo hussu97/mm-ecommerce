@@ -113,7 +113,12 @@ async def list_orders(
     user: User = Depends(get_current_active_user),
 ):
     await _require_permission(user, "orders.read")
-    stmt = select(Order).where(Order.is_pos.is_(True))
+    # An unpaid storefront order is not on this list. See
+    # `pos_order_service.paid_for_clause` — the counter is told about a website
+    # order when the money lands, not when the checkout page was opened.
+    stmt = select(Order).where(
+        Order.is_pos.is_(True), pos_order_service.paid_for_clause()
+    )
     if branch_id:
         stmt = stmt.where(Order.branch_id == branch_id)
     if business_date:
@@ -497,6 +502,7 @@ async def dispatch_board(
         Order.is_pos.is_(True),
         Order.order_type == "delivery",
         Order.pos_status.in_(sorted(pos_order_service.OPEN_STATUSES)),
+        pos_order_service.paid_for_clause(),
     )
     if branch_id:
         stmt = stmt.where(Order.branch_id == branch_id)
@@ -571,6 +577,7 @@ async def open_checks(
             Order.is_pos.is_(True),
             Order.branch_id == branch_id,
             Order.pos_status == PosOrderStatusEnum.ACTIVE.value,
+            pos_order_service.paid_for_clause(),
         )
         .options(
             selectinload(Order.items),
@@ -614,6 +621,15 @@ async def accept_order(
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             f"Order is {order.pos_status} and cannot be accepted.",
+        )
+    # Accepting is what turns a website order into an open check the kitchen
+    # works from, so it must not be reachable for one nobody has paid for. The
+    # list no longer offers these, but a device holding a stale row — or one
+    # replaying a queued action after the payment failed — still can ask.
+    if not pos_order_service.is_paid_for(order):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This order has not been paid for yet.",
         )
 
     order.pos_status = PosOrderStatusEnum.ACTIVE.value

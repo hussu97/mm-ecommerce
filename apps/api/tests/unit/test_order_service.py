@@ -409,6 +409,63 @@ def _delivery_data(promo_code: str | None = None) -> OrderCreate:
     )
 
 
+def _cash_data() -> OrderCreate:
+    """Cash on collection — the one method that confirms at checkout."""
+    return OrderCreate(
+        email="test@example.com",
+        delivery_method=DeliveryMethodEnum.PICKUP,
+        payment_method="cod",
+        session_id="sess_test",
+    )
+
+
+# ── What reaches a counter, and when ──────────────────────────────────────────
+
+
+class TestOnlyPaidOrdersReachTheRegister:
+    """
+    The register hears about a website order when the money lands.
+
+    `create_order` used to attach every order to a branch and push the kitchen
+    one line after the insert, before anything had been charged. A card order
+    is `created` at that point and stays there until Stripe's
+    `payment_intent.succeeded` — so an abandoned card screen put an order on
+    the counter's incoming list, sounded the unaccepted-order alarm, and left
+    it there indefinitely for a payment that never happened.
+    """
+
+    async def test_a_card_order_is_not_published_at_checkout(self):
+        cart = _cart(items=[_cart_item(_product("100.00"))])
+        db = _db_for_create(cart, _order_mock())
+
+        with patch(
+            "app.services.order_service.publish_to_register",
+            new_callable=AsyncMock,
+        ) as publish:
+            await create_order(db, _pickup_data(), user_id=None)
+
+        publish.assert_not_awaited()
+        assert db.add.call_args_list[0][0][0].status == OrderStatusEnum.CREATED
+
+    async def test_a_cash_order_is_published_at_checkout(self):
+        """
+        Cash has no payment event to wait for. The customer pays at the counter
+        when they collect, so the order is accepted on the spot — and a shop
+        that is not told about it is a customer arriving to nothing.
+        """
+        cart = _cart(items=[_cart_item(_product("100.00"))])
+        db = _db_for_create(cart, _order_mock(status=OrderStatusEnum.CONFIRMED))
+
+        with patch(
+            "app.services.order_service.publish_to_register",
+            new_callable=AsyncMock,
+        ) as publish:
+            await create_order(db, _cash_data(), user_id=None)
+
+        publish.assert_awaited_once()
+        assert publish.await_args[0][1].status == OrderStatusEnum.CONFIRMED
+
+
 # ── Status transition logic ───────────────────────────────────────────────────
 
 

@@ -44,6 +44,13 @@ def order():
         payment_method="card",
         payment_id="pi_ziina_1",
         payment_transactions=[],
+        # A confirmation now also puts the order on its branch's register, so
+        # the stub carries the columns that path reads. Publishing itself is
+        # stubbed in `wired` — it is the same call whichever gateway sent the
+        # event, which is exactly what this file is not about.
+        source="online",
+        branch_id="branch-uuid",
+        check_number=None,
     )
 
 
@@ -65,6 +72,9 @@ def wired(monkeypatch, order):
     )
     monkeypatch.setattr(
         payment_service.order_service, "to_response", AsyncMock(return_value=object())
+    )
+    monkeypatch.setattr(
+        payment_service.order_service, "publish_to_register", AsyncMock()
     )
     sent = SimpleNamespace(
         confirmation=AsyncMock(),

@@ -231,6 +231,7 @@ async def create_session(
     )
     if order_total <= Decimal("0.00"):
         order.status = OrderStatusEnum.CONFIRMED
+        await order_service.publish_to_register(db, order)
         await db.flush()
         order_response = await order_service.to_response(db, order)
         await email_service.send_order_confirmation(order_response)
@@ -263,6 +264,10 @@ async def create_session(
         order.payment_method = COD
         order.payment_provider = COD
         order.payment_id = None
+        # Same reasoning as the email below: the usual path has already done
+        # this, and `publish_to_register` no-ops on a second call — but a cash
+        # order that reached `created` some other way has to reach a counter.
+        await order_service.publish_to_register(db, order)
         await db.flush()
         if not already_confirmed:
             order_response = await order_service.to_response(db, order)
@@ -722,6 +727,13 @@ async def _handle_payment_succeeded(
     if payment_id:
         order.payment_id = payment_id
     order.status = OrderStatusEnum.CONFIRMED
+
+    # The money has landed, so now the shop is told. This is the moment a card
+    # order becomes work: before it, the customer had only opened a payment
+    # page, and a kitchen that had already been shouted at about it would be
+    # baking against a charge that might never be made.
+    await order_service.publish_to_register(db, order)
+
     order_response = await order_service.to_response(db, order)
 
     logger.info(

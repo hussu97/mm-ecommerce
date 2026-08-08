@@ -1,166 +1,64 @@
-# Multi-gateway card payments — Stripe **or** Ziina
+# Unpaid orders were reaching the POS registers
 
-## The problem
+## Why
 
-"Stripe" is currently three different things wearing one word: the payment
-*method* the customer picks, the *gateway* that processes it, and the shape of
-every webhook, column and code path that touches money. So there is no seam to
-switch on. When Stripe has an incident — and it will — the only lever is a
-deploy.
+Orders sitting at `status = created` were appearing on the iPad and iPhone POS
+apps' incoming list, sounding the unaccepted-order alarm and offering a cashier
+an **Accept** button — for a sale nobody had paid for.
 
-The customer never had an opinion about this. They picked **card**. Which
-processor carries it is an operations decision, and it should be an operations
-*switch*.
+`order_service.create_order` put every storefront order on a branch's register
+one line after the insert: `attach_online_order` stamped `is_pos`, a check
+number, a business day and `pos_status = pending`, then `notify_order_placed`
+pushed every terminal at the branch. That runs at checkout. A card order is
+`created` at that point and stays there until Stripe's
+`payment_intent.succeeded` — and for an abandoned checkout, a card never
+entered, or an ignored 3-D Secure prompt, it stays `created` forever.
 
-## The split
-
-| Concept | Values | Who decides | Where it lives |
-|---|---|---|---|
-| Payment **method** | `card`, `cod` | the customer | `orders.payment_method` |
-| Payment **gateway** | `stripe`, `ziina` | us, at runtime | `orders.payment_provider` |
-
-`payment_provider` already holds exactly this (`'stripe'`/`'cod'`) — it keeps its
-name and its meaning gets written down, rather than renaming a column on a live
-table for a word.
+Cash and zero-total orders confirm at creation and are genuinely work. Every
+other payment method has an event to wait for, and we were not waiting for it.
 
 ## Plan
 
-### Database (migration `089`)
-- [x] `payment_gateways` — the routing table, modelled on `couriers`: `code`,
-      `name`, `is_active`, `priority`, `supports_failover`, `min_amount`,
-      `max_amount`, `test_mode`. Seeded **stripe active / ziina inactive**.
-- [x] `payment_transactions` — one row per attempt against a gateway:
-      `gateway`, `session_id`, `payment_id`, `status`, `amount`, `checkout_url`,
-      `error_*`, `raw_status`. This is what replaces sniffing `pi_` off a
-      string to decide whether money moved.
-- [x] Backfill `orders.payment_method`: `'stripe' → 'card'`.
+Two halves, because a write-path fix cannot reach the rows already wrong in
+production.
 
-### Provider interface
-- [x] `providers/base.py` — `PaymentGatewayProvider` returning normalised
-      `GatewaySession` / `GatewayEvent`; `PaymentEventType` enum so
-      `payment_service` never sees a gateway's own vocabulary.
-- [x] `providers/stripe_provider.py` — adapted, behaviour unchanged.
-- [x] `providers/ziina_provider.py` — new. `POST /payment_intent`, amount in
-      fils, `X-Hmac-Signature` (hex SHA-256 HMAC) on the way back.
-- [x] `providers/tabby_provider.py`, `tamara_provider.py` — moved onto the new
-      base so they stay honest stubs.
+### 1. Publish on confirmation, not on insert
+- [x] `order_service.publish_to_register()` — attach + push in one place, keyed
+      on the order being *confirmed*, no-op for a counter order, idempotent
+      (the push guards on the same check number the attach does)
+- [x] `create_order` calls it only when the order confirmed at checkout (cash)
+- [x] `payment_service._handle_payment_succeeded` — the card path
+- [x] `payment_service.create_session` — zero-total and cash-on-collection
+- [x] `order_service.update_status` — an admin confirming by hand
 
-### Routing
-- [x] `payment_gateway_router.py` — picks the highest-priority gateway that is
-      active, configured, and in range; `failover_after()` for the next one.
-- [x] `payment_service.create_session` takes a **method**, not a gateway, and
-      fails over on a transport error.
-- [x] `payment_service.handle_webhook(gateway, …)` — one code path for every
-      gateway. Order resolution: metadata → transaction → legacy `payment_id`.
+### 2. Never *read* an unpaid storefront order onto a register
+- [x] `pos_order_service.is_paid_for()` / `paid_for_clause()` — one rule, in
+      Python and in SQL
+- [x] Applied to `GET /pos/orders`, `GET /pos/orders/dispatch/board`,
+      `GET /pos/kitchen/open-checks`
+- [x] `POST /pos/orders/{id}/accept` returns 409 for an unpaid order, so a
+      device holding a stale row or replaying a queued action cannot pull one
+      onto a check
 
-### API
-- [x] `POST /payments/create-session` accepts `method` (`provider` still
-      accepted — prod is live and rolls out in two pieces).
-- [x] `POST /payments/webhooks/{gateway}` generic, with `/webhooks/stripe` and
-      `/webhooks/ziina` kept as named routes.
-- [x] `GET|PATCH /payment-gateways` for the admin — the actual switch.
-
-### Frontend
-- [x] web: `'stripe' | 'cod'` → `'card' | 'cod'`; legacy values normalised on
-      read so a retry of an old order still works.
-- [x] admin: gateway shown on the order; a Payment Gateways screen to flip it.
-
-### Production must stay Stripe-only
-- [x] `ziina` seeds **inactive**.
-- [x] `ZIINA_ENABLED` defaults `false`; `is_configured()` is false without it.
-- [x] The admin refuses to activate a gateway that is not configured — so the
-      button exists in prod and cannot do anything.
-- [x] Test pinning all three.
-
-### Checklist rule 9 — the five places
-- [x] `apps/api/.env.example`
-- [x] `PRODUCTION.md` step 13c
-- [x] `.github/workflows/deploy.yml`
-- [x] `.github/workflows/rollback.yml`
-- [x] `docker-compose.prod.yml` — the one that is silent when forgotten
-
-### Rule 10 — analytics
-- [x] `payment_method_selected` now reports `card` where it reported `stripe`;
-      `docs/umami-analytics-setup.md` updated with a changelog row.
-
-## Follow-up: the audit log, and the analytics split
-
-Two things the gateway work implied and did not do.
-
-### Payment webhooks join `webhook_logs` (migration `090`)
-- [x] `courier_order_id` → `external_id`. The column means "their id for
-      whatever this push is about", and writing `pi_3RxK…` into something called
-      `courier_order_id` is the same conflation the gateway split had just
-      finished removing from `orders`. `order_deliveries` and `delivery_batches`
-      keep theirs — those genuinely are courier bookings.
-- [x] Every payment webhook recorded, on the recorder's own session, **whatever
-      it does**. The rows worth having are the ones a success-only log would not
-      contain: the forged signature, the event that matched no order, the
-      handler that raised. That last one is the exact shape of the three-day
-      outage — the failures left no record and stdout had been taken by a
-      restart.
-- [x] `endpoint` records which *mount* answered (`payments` / `webhooks`), so
-      "which URL is Stripe actually configured against" is answerable from the
-      admin instead of by asking Stripe.
-- [x] `matched` stays **null** when no lookup happened — a duplicate, a
-      payment-in-progress transition. Only `false` means "we should have found
-      an order and did not", which is what keeps that column worth watching.
-- [x] `signature_valid = false` is reserved for authentication failures, not
-      every unparseable body. Diluting it makes it useless as an alert.
-- [x] Admin screen: Stripe and Ziina in the filters, both mounts, generic
-      column labels.
-
-### The revenue breakdown stops answering two questions on one axis
-- [x] `by_payment_method` (`card` / `cod`) — the commercial split, stable no
-      matter which processor carries the cards this week.
-- [x] `by_payment_gateway` (`stripe` / `ziina`) — card only. Cash is excluded
-      rather than shown as a third slice; "cod" is not a gateway.
-- [x] `by_payment_provider` kept as an alias of the method split so nothing
-      built against it breaks mid-deploy.
-- [x] Legacy `stripe` values in `payment_method` normalised **and merged** on
-      read — un-merged they draw a phantom third slice that shrinks as old
-      orders age out, which looks exactly like a real trend.
-- [x] Cache key bumped to `v2`; the old shape would fail validation on read.
-- [x] The gateway chart hides itself until a second processor has traffic. One
-      full-width bar labelled "stripe" is not a breakdown.
+### 3. Tests
+- [x] `test_unpaid_orders_stay_off_the_register.py` — the rule over every
+      `OrderStatusEnum` member, both channels, the SQL mirror, publishing and
+      its idempotency, and each confirmation route
+- [x] `test_order_service.py::TestOnlyPaidOrdersReachTheRegister` — a card
+      order is not published at checkout; a cash order is
 
 ## Review
 
-**Verified, not assumed.**
+`1108 passed, 21 skipped`. `ruff check` and `ruff format` clean.
 
-- API: 1164 passed / 21 skipped. 80 of those are new and about this change.
-- Web: 267 passed, `tsc --noEmit` clean over 2068 files. Admin: `tsc` clean.
-- `ruff check` and `ruff format --check`: clean across all 384 files.
-- The migration was run against a **throwaway Postgres 16**, from empty to head:
-  the whole chain applies, `payment_gateways` seeds `stripe` active / `ziina`
-  inactive, and the backfill was checked against three planted
-  production-shaped rows. `stripe → card` on the method; `cod` untouched;
-  `payment_provider` untouched. `downgrade` then `upgrade` round-trips and
-  restores the previous release's vocabulary, so a rollback leaves a database
-  the running code can read.
-- The API was **booted against that migrated database** and the live endpoints
-  answered correctly: `/payment-gateways` 401 unauthenticated, the Ziina webhook
-  400 (refused, not a polite 200), an unknown gateway 404.
-- The production lock was exercised against the real database, in three steps:
-  with no credentials the router picks `stripe`; **with the Ziina row switched
-  on and still no credentials it still picks `stripe`**; only with the flag *and*
-  a key does it pick `ziina`. An AED 1.50 basket is refused with a sentence
-  naming the AED 2.00 floor.
+**No iOS change, so no TestFlight release.** The incoming queue is entirely
+server-driven: `IncomingOrdersModel` holds no cache, polls `/pos/orders` every
+20 seconds, and `refresh()` already acknowledges the alarm for any order that
+has left the waiting list. The registers clear themselves within one poll of
+the API deploy.
 
-**One real bug, found by running it.** The gateway seed bound `min_amount` as a
-string, and asyncpg binds `str` as `VARCHAR`, which Postgres refuses to compare
-to `numeric`. It would have failed on the very first migration run in any
-environment. Every test passed while it was broken — nothing but an actual
-database was ever going to catch it.
-
-**Deliberately not done:** Ziina is not launched. No production secret is set,
-the row ships inactive, `ZIINA_ENABLED` is false in three separate files, and
-the admin refuses to activate a gateway it has no credentials for. The
-instructions for turning it on later are in `PRODUCTION.md`, in order.
-
-**Deferred, and worth doing:** an admin view of `payment_transactions` per order
-(the data is captured and recorded from today; nothing renders the history yet),
-and a reconciliation job driving `ziina_provider.fetch_payment_intent` for
-intents whose webhooks were missed — Ziina retries three times and then stops,
-unlike Stripe's three days. Neither blocks this, and neither matters while
-Ziina takes no traffic.
+**No migration.** The storefront orders already sitting `is_pos = true,
+pos_status = pending, status = created` in production stay in the table and
+simply stop being returned. If one of them is ever paid for, the read filter
+lets it through and it appears on the counter correctly — which is the right
+behaviour, and a `DELETE` or a `void` sweep would have thrown that away.

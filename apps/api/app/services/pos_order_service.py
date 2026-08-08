@@ -14,7 +14,7 @@ import logging
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -25,7 +25,7 @@ from app.models.branch import Branch
 from app.models.business_settings import BusinessSettings
 from app.models.charge import Charge
 from app.models.kitchen_flow import KitchenFlow
-from app.models.order import DeliveryMethodEnum, Order, OrderItem
+from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
 from app.models.payment_method import PaymentMethod, PaymentMethodTypeEnum
 from app.models.pos_order import (
     DiscountSourceEnum,
@@ -66,7 +66,9 @@ __all__ = [
     "apply_charge",
     "close_order",
     "get_order",
+    "is_paid_for",
     "open_order",
+    "paid_for_clause",
     "record_payment",
     "recalculate",
     "send_to_kitchen",
@@ -87,6 +89,50 @@ LIVE_ITEM_STATUSES = {
     OrderItemStatusEnum.ACTIVE.value,
     OrderItemStatusEnum.CLOSED.value,
 }
+
+#: What a storefront order looks like before anybody has paid for it.
+#:
+#: `created` is a checkout that got as far as writing a row and may never be
+#: paid for at all — the browser closed, the card screen was abandoned, the
+#: 3-D Secure prompt was ignored. `payment_failed` is one whose card was
+#: declined. Neither is work the counter owes anybody.
+UNPAID_ONLINE_STATUSES: tuple[OrderStatusEnum, ...] = (
+    OrderStatusEnum.CREATED,
+    OrderStatusEnum.PAYMENT_FAILED,
+)
+
+
+def is_paid_for(order: Order) -> bool:
+    """
+    Whether this order is something a register should be looking at.
+
+    Only ever false for the storefront. A counter check sits at `created` for
+    its whole life on the register — that is what an order being rung up *is*,
+    and the cashier who opened it is standing in front of it. A website order
+    at `created` is the opposite: nobody has paid, and nobody at the shop has
+    any reason to know it exists.
+    """
+    if order.source != OrderSourceEnum.ONLINE.value:
+        return True
+    return order.status not in UNPAID_ONLINE_STATUSES
+
+
+def paid_for_clause():
+    """
+    `is_paid_for` as SQL, for every query that feeds a register or a board.
+
+    A filter rather than only a guard on the write path, because the write
+    path cannot reach rows that are already wrong. Production has storefront
+    orders sitting `is_pos = true, pos_status = pending, status = created`
+    from when the attach ran at checkout — an abandoned card payment that has
+    been shouting on an iPad ever since. This is what makes them disappear
+    without a migration, and what makes them reappear, correctly, if the
+    payment ever does land.
+    """
+    return or_(
+        Order.source != OrderSourceEnum.ONLINE.value,
+        Order.status.notin_(UNPAID_ONLINE_STATUSES),
+    )
 
 
 # ─── Loading ──────────────────────────────────────────────────────────────────

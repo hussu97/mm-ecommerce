@@ -62,6 +62,7 @@ __all__ = [
     "get_by_order_number",
     "get_for_notification",
     "get_user_orders",
+    "publish_to_register",
     "update_status",
 ]
 
@@ -628,15 +629,44 @@ async def resolve_branch(
     )
 
 
-async def _attach_to_branch(db: AsyncSession, order: Order, branch: Branch) -> None:
+async def publish_to_register(
+    db: AsyncSession, order: Order, branch: Branch | None = None
+) -> None:
     """
-    Give the order its place on the register: check number, business day, state.
+    Tell the shop about a website order: check number, business day, state, push.
 
-    Separate from `resolve_branch` and deliberately best-effort. Which kitchen
-    is making it is part of the order and is written with it; whether the till
-    could open a business day for it is not worth losing a paid sale over. What
-    this misses is findable by `is_pos = false AND source = 'online'`.
+    **Called when the money lands, not when the row is written.** It used to run
+    inside `create_order`, one line after the insert — so every checkout that
+    reached our database reached a counter, whether or not it was ever paid for.
+    A card order sits at `created` until its gateway says the money moved, and
+    an abandoned checkout stays there forever; both arrived on the iPad as
+    `pos_status = pending`, sounded the unaccepted-order alarm, and left a
+    cashier baking against a payment that had not happened and might never.
+    Cash and zero-total orders confirm at creation and so still publish there —
+    the trigger is the confirmation, not the endpoint.
+
+    Deliberately best-effort, and unchanged in that. Which kitchen is making it
+    is part of the order and is written with it; whether the till could open a
+    business day for it is not worth losing a paid sale over. What this misses
+    is findable by `is_pos = false AND source = 'online'`.
+
+    Idempotent. Every confirmation path funnels through here and some of them
+    overlap — a cash order confirmed by `create_order` and then asked for a
+    payment session again. `attach_online_order` already guards on the check
+    number; the push is guarded on the same fact, because the one thing that
+    must not repeat is the alarm.
     """
+    if order.source != OrderSourceEnum.ONLINE.value:
+        return
+    if branch is None:
+        if order.branch_id is None:  # pragma: no cover — column is NOT NULL
+            return
+        branch = await db.get(Branch, order.branch_id)
+        if branch is None:  # pragma: no cover — FK is RESTRICT
+            return
+
+    first_time = order.check_number is None
+
     try:
         await pos_order_service.attach_online_order(db, order, branch)
     except Exception:  # pragma: no cover — defensive
@@ -645,6 +675,17 @@ async def _attach_to_branch(db: AsyncSession, order: Order, branch: Branch) -> N
             order.order_number,
             branch.reference,
         )
+
+    # Best-effort and last, because a push that fails must not fail an order
+    # that is already written and already visible to anyone who pulls the
+    # pending list.
+    if first_time and order.branch_id is not None:
+        try:
+            await push_service.notify_order_placed(db, order)
+        except Exception:  # pragma: no cover — defensive
+            logger.exception(
+                "Could not notify %s about %s", order.branch_id, order.order_number
+            )
 
 
 async def _persist_order(
@@ -921,39 +962,30 @@ async def create_order(
             db, order, zone=totals.zone, cart=cart
         )
 
-    # 9. Put it on a register — check number, business day, pending state. The
-    #    branch itself was stamped on the row at insert; this is the POS wiring
-    #    around it, and it is best-effort: a business day that will not open is
-    #    not a reason to lose a sale that is already paid for.
-    await _attach_to_branch(db, order, branch)
-
-    # 10. Tell the kitchen. Best-effort and last, because a push that fails must
-    #    not fail an order that is already written and already visible to
-    #    anyone who pulls the pending list.
-    if order.branch_id is not None:
-        try:
-            await push_service.notify_order_placed(db, order)
-        except Exception:  # pragma: no cover — defensive
-            logger.exception(
-                "Could not notify %s about %s", order.branch_id, order.order_number
-            )
-
-    # 11. Cash orders confirm themselves. A card order is confirmed by Stripe's
-    #    `payment_intent.succeeded` and a failure lands it in `payment_failed`,
+    # 9. Cash orders confirm themselves. A card order is confirmed by its
+    #    gateway's success event and a failure lands it in `payment_failed`,
     #    but cash has no such event — so without this it would sit in `created`
-    #    until an admin noticed, which for an order already printing in a
-    #    kitchen is a status that means nothing.
+    #    until an admin noticed, which for an order the customer is walking in
+    #    to collect is a status that means nothing.
     confirmed_as_cash = (
         _is_cash_on_delivery(data) and order.status == OrderStatusEnum.CREATED
     )
     if confirmed_as_cash:
         order.status = OrderStatusEnum.CONFIRMED
 
+    # 10. And only now put it on a register and tell the kitchen — a counter
+    #    hears about a website order when it has been paid for. A card order
+    #    reaches this in `created` and is published by the payment webhook
+    #    instead; see `publish_to_register` for what used to happen here and
+    #    why it moved.
+    if order.status == OrderStatusEnum.CONFIRMED:
+        await publish_to_register(db, order, branch)
+
     stmt = select(Order).options(*_order_load_options()).where(Order.id == order.id)
     result = await db.execute(stmt)
     response = await to_response(db, result.scalar_one())
 
-    # 12. And tell the customer, here rather than later. The confirmation used
+    # 11. And tell the customer, here rather than later. The confirmation used
     #    to be sent only by `payment_service.create_session`, one HTTP call
     #    further on — so a browser that closed, timed out or lost signal in
     #    between left a confirmed order printing in the kitchen while the
@@ -1126,6 +1158,13 @@ async def update_status(
     order.status = new_status
     if admin_notes is not None:
         order.admin_notes = admin_notes
+
+    # Confirming by hand is a confirmation like any other — a bank transfer
+    # reconciled in the morning, or a declined card the customer paid another
+    # way. The register hears about the order the moment the money is
+    # acknowledged, whichever route acknowledged it.
+    if new_status == OrderStatusEnum.CONFIRMED:
+        await publish_to_register(db, order)
 
     # Packed means the box is ready, which is the moment it can travel —
     # earlier and a driver waits at the counter. Whether it leaves now or waits
