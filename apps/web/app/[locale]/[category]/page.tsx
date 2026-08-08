@@ -245,7 +245,7 @@ export default async function CategoryPage({
         {/* Category header — trimmed on phones so the grid starts inside the
             first screen rather than a scroll below it. */}
         <header className="mb-4 sm:mb-10">
-          <div className="sm:flex sm:items-end sm:justify-between sm:gap-4">
+          <div className="flex items-center justify-between gap-3 sm:items-end sm:gap-4">
             <div className="min-w-0">
               <h1 className="font-display text-xl sm:text-4xl text-primary uppercase tracking-widest mb-1 sm:mb-3">
                 {categoryName}
@@ -256,9 +256,14 @@ export default async function CategoryPage({
                 </p>
               )}
             </div>
-            {/* Its own line on phones: the control is forced to 16px there (the
-                anti-zoom rule in globals.css) and will not share a row. */}
-            <div className="flex justify-end mt-2 sm:mt-0">
+            {/* Beside the heading, not under it. It used to take its own line on
+                phones because the control is forced to 16px there — the
+                anti-zoom rule in globals.css, which is unlayered and so beats
+                any utility class — and at 16px uppercase with wide tracking the
+                longest option was too wide to share a row. `SortSelect` drops
+                the tracking and the uppercase below `sm`, which is what makes
+                it fit; the row itself was never the problem. */}
+            <div className="flex justify-end shrink-0">
               <SortSelect
                 action={`/${locale}/${slug}`}
                 value={sort}
