@@ -192,13 +192,25 @@ Both Vercel `Deploy` steps now retry three times with a 10s/20s backoff. Safe to
 retry: a deployment only goes live once its upload completes, so a half-sent
 archive promotes nothing.
 
-Steady-state numbers from the following run, with the API's Docker layer cache
-warm again (it was busted twice by `pyproject.toml` changing):
+Steady state, measured on run 31260260610 once the API's Docker layer cache was
+warm again (`pyproject.toml` changing had busted it on the two runs before):
 
 | Job | Was (lint + deploy, serial) | Now (merged) |
 |---|---|---|
-| Web | 55 + 246 = 301s | **104s** |
-| Admin | 42 + 71 = 113s | **89s** |
-| API | 106 + 78 = 184s | 245s, of which 48s was the one-time image rebuild |
+| Web | 55 + 246 = 301s | **142s** |
+| Admin | 42 + 71 = 113s | **104s** |
+| API | 106 + 78 = 184s | **161s** |
+| **Whole run** | **316s** | **173s** |
 
-`Run pytest` serial: 48s, against 50s for the xdist attempt and 47s at baseline.
+Per step, where it came from:
+
+| Step | Was | Now |
+|---|---|---|
+| web `Build` — the image fix | 167s | **32s** |
+| admin `Deploy` — `--archive=tgz` | 165s | **18s** |
+| API `Install dependencies` — uv | 19s | **2s** |
+| API `Build and push API image` | 4s | 10s (cache warm; 48–67s while busted) |
+| API `Run pytest` | 47s | 49s serial — 50s under xdist, which is why it was reverted |
+
+Beware comparing against the failed run 31260006904: its web job reads 104s only
+because the job died early at `Deploy`. 142s is the real figure.
