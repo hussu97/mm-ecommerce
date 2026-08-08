@@ -180,11 +180,10 @@ jobs:
         env:
           RUFF_CACHE_DIR: ~/.cache/ruff
 
-      # `-n auto --dist loadfile`: 1278 tests across ~100 files, and nothing in
-      # them is order-dependent across files. `loadfile` pins each file to one
-      # worker, which is what keeps the three real-database modules from
-      # interleaving with themselves. `-v` printed 1278 lines nobody reads.
+      # Serial on purpose — see the note in deploy.yml. xdist measured slower
+      # here (50s vs 47s): the cost is importing the app, and each worker pays
+      # it again. `-v` is gone; it printed 1280 lines nobody reads.
       - name: Run pytest
         run: |
           cd apps/api
-          pytest tests/ -n auto --dist loadfile --tb=short --cov=app --cov-report=term-missing
+          pytest tests/ --tb=short --cov=app --cov-report=term-missing

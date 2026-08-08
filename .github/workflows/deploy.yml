@@ -260,14 +260,18 @@ jobs:
           cd apps/api
           DATABASE_URL="$TEST_DATABASE_URL" alembic upgrade head
 
-      # `-n auto --dist loadfile`: 1278 tests across ~100 files, and nothing in
-      # them is order-dependent across files. `loadfile` pins each file to one
-      # worker, which is what keeps the three real-database modules from
-      # interleaving with themselves. `-v` printed 1278 lines nobody reads.
+      # Deliberately serial. `-n auto --dist loadfile` was tried here and
+      # measured 50s against 47s for the serial run — slightly *worse*. The
+      # suite is ~1280 fast tests whose CI cost is importing the app, not
+      # running them, and every xdist worker pays that import separately. It
+      # does help on a developer machine with more cores (9.6s -> 5.6s), which
+      # is why the dependency is still there.
+      #
+      # `-v` is gone though: it printed 1280 lines nobody reads.
       - name: Run pytest
         run: |
           cd apps/api
-          pytest tests/ -n auto --dist loadfile --tb=short --cov=app --cov-report=term-missing
+          pytest tests/ --tb=short --cov=app --cov-report=term-missing
 
       # ── Deploy ──────────────────────────────────────────────────────────────
 

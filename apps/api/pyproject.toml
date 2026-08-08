@@ -38,11 +38,16 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
-    # CI runs the suite with `-n auto --dist loadfile`. `loadfile` is the part
-    # that matters: it keeps every test in a file on one worker, so the three
-    # modules that talk to a real database cannot interleave with themselves.
-    # Across files they are already safe — each cleans up only its own prefix
-    # (`pytest-pricesort`, `pytest-custom-`, and MenuGroup rows).
+    # For local use: `pytest -n auto --dist loadfile` roughly halves the suite
+    # on a machine with cores to spare (9.6s -> 5.6s). CI runs it serially —
+    # there it measured slightly *slower*, because the cost is importing the
+    # app rather than running the tests, and each worker pays that separately.
+    #
+    # Use `--dist loadfile` when you do run it in parallel. It keeps every test
+    # in a file on one worker, so the three modules that talk to a real
+    # database cannot interleave with themselves. Across files they are already
+    # safe — each cleans up only its own prefix (`pytest-pricesort`,
+    # `pytest-custom-`, and MenuGroup rows).
     "pytest-xdist>=3.6.0",
     "httpx>=0.28.0",
     # Reads docker-compose.prod.yml, so the tests can check that a setting

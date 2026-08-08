@@ -140,8 +140,12 @@ Measured first, from `gh api .../jobs`, rather than guessing:
       deliberately does not** — it runs migrations and restarts containers, and
       killing it partway is how you get a half-migrated database
 - [x] `pip` → `uv` for the API deps (19s → ~2s)
-- [x] `pytest -n auto --dist loadfile` (+ `pytest-xdist`), and dropped `-v`,
-      which printed 1278 lines nobody reads
+- [x] Dropped `-v` from pytest, which printed 1280 lines nobody reads
+- [ ] ~~`pytest -n auto --dist loadfile`~~ — **tried and reverted.** Measured
+      50s against 47s serial on the runner: slightly *worse*. The suite's CI
+      cost is importing the app, not running the tests, and every xdist worker
+      pays that import separately. It does help locally (9.6s -> 5.6s), so
+      `pytest-xdist` stays as a dev dependency
 
 ## Verification
 
@@ -151,11 +155,21 @@ Measured first, from `gh api .../jobs`, rather than guessing:
 - Re-running the optimiser still produces byte-identical output — 0 changed files
 - `pnpm --filter web build` works through the new guard; lint clean (12
   pre-existing warnings, 0 errors), 277 tests pass, `tsc` clean
-- xdist checked against a **throwaway Postgres**, not just the mocked suite:
-  1281 passed in 10.19s, run twice consecutively to catch leftover-row
-  contamination between workers. `--dist loadfile` is what makes this safe — it
-  pins each file to one worker, and the three real-DB modules already clean up
-  only their own prefixes (`pytest-pricesort`, `pytest-custom-`, MenuGroup rows)
+- Suite checked against a **throwaway Postgres**, not just the mocked run:
+  1281 passed, twice consecutively
+- Measured on the runner afterwards, which is how the xdist regression was
+  caught. Per-step, against a baseline run that also touched `deploy.yml` so
+  the same three jobs ran in both:
+
+  | Step | Was | Now |
+  |---|---|---|
+  | web `Build` (the image fix) | 167s | **30s** |
+  | admin `Deploy` (`--archive=tgz`) | 165s | **18s** |
+  | API `Install dependencies` (uv) | 19s | **2s** |
+  | API `Run pytest` (xdist) | 47s | 50s — reverted |
+
+  Full three-app deploy 316s -> 263s, and 63s of that 263 was a one-time Docker
+  layer rebuild from `pyproject.toml` changing
 - `actionlint` clean on both changed workflows
 
 ## Still open
