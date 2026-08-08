@@ -26,6 +26,26 @@
  */
 export const CONTENT_TTL = 60;
 
+/**
+ * Whether this build or runtime has a real API behind it.
+ *
+ * `NEXT_PUBLIC_API_URL` is an absolute URL wherever there is one to talk to —
+ * Vercel production and previews both set it. It is unset in CI, where the
+ * build is a type-check and a compile and there is no API on the runner at all,
+ * and it is a relative path in local dev, where requests go through the Next
+ * rewrite.
+ *
+ * This exists to decide what a failed fetch *means*. Where an API is configured
+ * and does not answer, that is a fault and the fetch should throw, so a build
+ * fails rather than prerendering a page of raw translation keys and an empty
+ * catalogue. Where there is no API by design, the same failure is expected and
+ * a page rendered from empty data is a perfectly good compile check.
+ *
+ * The distinction is the whole point: without it, adding ISR turned CI's
+ * apiless build into a hard failure.
+ */
+export const HAS_REMOTE_API = (process.env.NEXT_PUBLIC_API_URL ?? '').startsWith('http');
+
 /** Cache tags, so a later on-demand purge has something to aim at. */
 export const CACHE_TAGS = {
   /** UI strings and the language list. */

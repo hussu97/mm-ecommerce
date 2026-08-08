@@ -1,7 +1,7 @@
 import { cache } from 'react';
 
 import { RSC_API_BASE } from '@/lib/api';
-import { CACHE_TAGS, CONTENT_TTL } from '@/lib/cache-policy';
+import { CACHE_TAGS, CONTENT_TTL, HAS_REMOTE_API } from '@/lib/cache-policy';
 import type { Category } from '@/lib/types';
 
 /**
@@ -25,17 +25,23 @@ import type { Category } from '@/lib/types';
  *
  * Failing loudly instead means a build that cannot reach the API stops, and an
  * ISR revalidation that cannot reach it keeps the last good page up. A 200
- * carrying `[]` is honoured — that is the API saying there are no categories.
+ * carrying `[]` is honoured — that is the API saying there are no categories —
+ * and so is a failure where `HAS_REMOTE_API` is false, which is CI.
  */
 export const getCategories = cache(async (): Promise<Category[]> => {
-  const res = await fetch(`${RSC_API_BASE}/categories`, {
-    next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!res.ok) {
-    throw new Error(`categories: HTTP ${res.status}`);
+  try {
+    const res = await fetch(`${RSC_API_BASE}/categories`, {
+      next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) {
+      throw new Error(`categories: HTTP ${res.status}`);
+    }
+    return (await res.json()) as Category[];
+  } catch (err) {
+    if (HAS_REMOTE_API) throw err;
+    return [];
   }
-  return (await res.json()) as Category[];
 });
 
 /** Live categories, in the order the admin arranged them. */

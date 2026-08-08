@@ -16,6 +16,7 @@ import {
   productSortLabel,
   productSortOptions,
 } from '@/lib/product-sort';
+import { fetchJson } from '@/lib/fetch-json';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 const PER_PAGE = 12;
@@ -173,10 +174,10 @@ export default async function AllProductsPage({
 
   const productUrl = `${RSC_API_BASE}/products?per_page=${PER_PAGE}&page=${page}&sort=${sort}${category ? `&category=${category}` : ''}`;
 
-  const [categories, productsRes, translations] = await Promise.all([
+  const [categories, productData, translations] = await Promise.all([
     // Shared with the locale layout's nav bar, so this render asks once.
     getActiveCategories(),
-    fetch(productUrl, {
+    fetchJson<ProductListResponse>(productUrl, {
       next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
       signal: AbortSignal.timeout(8000),
     }),
@@ -185,7 +186,6 @@ export default async function AllProductsPage({
 
   const t = createT(translations);
 
-  const productData: ProductListResponse | null = productsRes.ok ? await productsRes.json() : null;
   const products: Product[] = productData?.items ?? [];
   const pages = productData?.pages ?? 1;
 

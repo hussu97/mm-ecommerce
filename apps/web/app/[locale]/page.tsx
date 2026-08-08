@@ -16,6 +16,7 @@ import { MeetTheBaker, type BakerContent } from '@/components/home/MeetTheBaker'
 import { CaterSection, type CaterContent } from '@/components/home/CaterSection';
 import { orderedSections, type HomeLayout, type SectionKey } from '@/lib/home-sections';
 import { BAKERY_BASE, BUSINESS_ID, OG_IMAGE } from '@/lib/schema';
+import { fetchJson } from '@/lib/fetch-json';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 
@@ -114,17 +115,17 @@ async function getHomeContent(locale: string): Promise<HomeContent> {
   }
 }
 
+/**
+ * The bestsellers rail. Throws on a broken API rather than quietly rendering an
+ * empty rail — which, cached for a minute, is a homepage that has stopped
+ * selling anything. See `lib/fetch-json.ts`.
+ */
 async function getFeaturedProducts(): Promise<Product[]> {
-  try {
-    const res = await fetch(`${RSC_API_BASE}/products/featured`, {
-      next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return [];
-    return res.json();
-  } catch {
-    return [];
-  }
+  const items = await fetchJson<Product[]>(`${RSC_API_BASE}/products/featured`, {
+    next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
+    signal: AbortSignal.timeout(8000),
+  });
+  return items ?? [];
 }
 
 export async function generateMetadata({

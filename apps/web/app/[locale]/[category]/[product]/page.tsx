@@ -17,6 +17,7 @@ import {
   RETURN_POLICY,
   SHIPPING_BY_REGION,
 } from '@/lib/schema';
+import { fetchJsonOrNull } from '@/lib/fetch-json';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 
 /**
@@ -77,12 +78,10 @@ export async function generateStaticParams() {
 }
 
 async function getProduct(slug: string): Promise<Product | null> {
-  const res = await fetch(`${RSC_API_BASE}/products/${slug}`, {
+  return fetchJsonOrNull<Product>(`${RSC_API_BASE}/products/${slug}`, {
     next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
     signal: AbortSignal.timeout(8000),
   });
-  if (!res.ok) return null;
-  return res.json();
 }
 
 const FALLBACK_DELIVERY_FEE = 50;
