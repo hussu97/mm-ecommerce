@@ -3,6 +3,7 @@ import { cmsApi } from '@/lib/api';
 import { Breadcrumb } from '@/components/ui';
 import { ContactLink } from '@/components/analytics/ContactLink';
 import { BAKERY_BASE, BUSINESS_ID, OG_IMAGE } from '@/lib/schema';
+import { Icon } from '@/components/ui/Icon';
 
 interface ContactContent {
   header?: { label?: string; title?: string; subtitle?: string };
@@ -191,9 +192,7 @@ export default async function ContactPage({
               key={title}
               className="border border-gray-200 p-5 text-center hover:border-primary transition-colors group"
             >
-              <span className="material-icons text-2xl text-secondary group-hover:text-primary mb-3 block transition-colors">
-                {icon}
-              </span>
+              <Icon name={icon} className="text-2xl text-secondary group-hover:text-primary mb-3 block transition-colors" />
               <h3 className="font-body text-xs font-medium uppercase tracking-widest text-gray-700 mb-2">
                 {title}
               </h3>

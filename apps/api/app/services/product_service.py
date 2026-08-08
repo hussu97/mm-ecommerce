@@ -150,14 +150,20 @@ async def get_all(
     parameter puts bottled water on a cake website. Asking for the POS
     catalogue is explicit; leaking to the web is not possible by omission.
     """
-    stmt = select(Product).options(*_product_load_options())
+    # Built in two halves on purpose. Everything that decides *which* rows match
+    # goes on `stmt`; the ordering and the eager loads go on afterwards, and only
+    # onto the query that actually returns rows.
+    #
+    # The count used to be taken off the finished statement, ordering and all.
+    # `ORDER BY` inside a subquery is not dropped by the planner, so `price_asc`
+    # had Postgres evaluate `_from_price()` — two correlated subqueries over
+    # product_modifiers and modifier_options — for every row in the catalogue
+    # and then sort them, all to produce a number that cannot depend on order.
+    # `joinedload(Product.category)` was adding a LEFT JOIN to it too.
+    stmt = select(Product)
 
     if sort == "category":
-        stmt = stmt.outerjoin(Category, Product.category_id == Category.id).order_by(
-            Category.name.asc(), Product.name.asc()
-        )
-    else:
-        stmt = stmt.order_by(*_order_for(sort))
+        stmt = stmt.outerjoin(Category, Product.category_id == Category.id)
 
     if is_active is not None:
         stmt = stmt.where(Product.is_active == is_active)  # noqa: E712
@@ -184,14 +190,19 @@ async def get_all(
     if featured is not None:
         stmt = stmt.where(Product.is_featured == featured)
 
-    # Total count
+    # Count the matching rows — no ordering, no loaders, nothing to sort.
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total_result = await db.execute(count_stmt)
     total = total_result.scalar() or 0
 
-    # Paginated results
+    # Now the page itself, which is the only query that needs either.
+    if sort == "category":
+        stmt = stmt.order_by(Category.name.asc(), Product.name.asc())
+    else:
+        stmt = stmt.order_by(*_order_for(sort))
+
     offset = (page - 1) * per_page
-    stmt = stmt.offset(offset).limit(per_page)
+    stmt = stmt.options(*_product_load_options()).offset(offset).limit(per_page)
     result = await db.execute(stmt)
     products = result.scalars().unique().all()
 

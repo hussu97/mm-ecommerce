@@ -9,6 +9,7 @@ import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import type { Category, Language } from '@/lib/types';
+import { Icon } from '@/components/ui/Icon';
 
 interface MobileMenuProps {
   isOpen: boolean;
@@ -86,7 +87,7 @@ export function MobileMenu({ isOpen, onClose, languages = [], categories = [], l
             className="p-1 text-gray-400 hover:text-primary transition-colors"
             aria-label="Close menu"
           >
-            <span className="material-icons">close</span>
+            <Icon name="close" />
           </button>
         </div>
 
@@ -134,14 +135,14 @@ export function MobileMenu({ isOpen, onClose, languages = [], categories = [], l
                 onClick={onClose}
                 className="flex items-center justify-center gap-2 w-full py-2.5 text-xs font-body uppercase tracking-widest text-primary border border-primary hover:bg-primary hover:text-white transition-all duration-200"
               >
-                <span className="material-icons text-sm">person</span>
+                <Icon name="person" className="text-sm" />
                 {t('nav.my_account')}
               </Link>
               <button
                 onClick={handleLogout}
                 className="flex items-center justify-center gap-2 w-full py-2.5 text-xs font-body uppercase tracking-widest text-gray-500 border border-gray-300 hover:bg-gray-50 transition-all duration-200"
               >
-                <span className="material-icons text-sm">logout</span>
+                <Icon name="logout" className="text-sm" />
                 {t('nav.sign_out')}
               </button>
             </>
@@ -152,7 +153,7 @@ export function MobileMenu({ isOpen, onClose, languages = [], categories = [], l
                 onClick={onClose}
                 className="flex items-center justify-center gap-2 w-full py-2.5 text-xs font-body uppercase tracking-widest text-primary border border-primary hover:bg-primary hover:text-white transition-all duration-200"
               >
-                <span className="material-icons text-sm">person</span>
+                <Icon name="person" className="text-sm" />
                 {t('nav.sign_in')}
               </Link>
               <Link
@@ -160,7 +161,7 @@ export function MobileMenu({ isOpen, onClose, languages = [], categories = [], l
                 onClick={onClose}
                 className="flex items-center justify-center gap-2 w-full py-2.5 text-xs font-body uppercase tracking-widest bg-primary text-white hover:opacity-90 transition-all duration-200"
               >
-                <span className="material-icons text-sm">person_add</span>
+                <Icon name="person_add" className="text-sm" />
                 {t('nav.sign_up')}
               </Link>
             </>

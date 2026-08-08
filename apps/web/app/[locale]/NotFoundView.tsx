@@ -1,16 +1,23 @@
+'use client';
+
 import Link from 'next/link';
-import type { Metadata } from 'next';
-import { cookies } from 'next/headers';
+
 import { NotFoundTracker } from '@/components/analytics/NotFoundTracker';
-import { getTranslations, createT } from '@/lib/i18n/server';
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
 
-export const metadata: Metadata = { title: '404 — Page Not Found' };
-
-export default async function NotFound() {
-  const cookieStore = await cookies();
-  const locale = cookieStore.get('mm_locale')?.value ?? 'en';
-  const translations = await getTranslations(locale);
-  const t = createT(translations);
+/**
+ * The body of the 404, split out so the page beside it can stay a server
+ * component and keep exporting `metadata` — a client component cannot.
+ *
+ * Client rather than server because of where the language comes from.
+ * `not-found.tsx` is never handed `params`, and this now renders under
+ * `[locale]/layout.tsx`, so the translation context is the only thing that
+ * knows which language to apologise in. It used to read `cookies()` and fetch
+ * the whole translation map itself, which is what made the entire route tree
+ * dynamic.
+ */
+export function NotFoundView() {
+  const { t, locale } = useTranslation();
 
   return (
     <div className="min-h-[70vh] flex flex-col items-center justify-center px-4 text-center">
@@ -26,13 +33,13 @@ export default async function NotFound() {
       </p>
       <div className="flex flex-col sm:flex-row gap-3">
         <Link
-          href="/"
+          href={`/${locale}`}
           className="px-6 py-3 bg-primary text-white text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity"
         >
           {t('error.back_to_home')}
         </Link>
         <Link
-          href="/contact"
+          href={`/${locale}/contact`}
           className="px-6 py-3 border border-gray-300 text-gray-600 text-xs font-body uppercase tracking-widest hover:bg-gray-50 transition-colors"
         >
           {t('error.contact_us')}

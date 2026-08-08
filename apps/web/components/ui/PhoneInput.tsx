@@ -9,6 +9,7 @@ import {
   type CountryCode,
 } from 'libphonenumber-js';
 import { cn } from '@/lib/utils';
+import { Icon } from '@/components/ui/Icon';
 
 /**
  * Phone entry that survives how people actually supply a number: pasted out of
@@ -168,7 +169,7 @@ export function PhoneInput({
           >
             <span className="text-base leading-none">{flag(country)}</span>
             <span>+{getCountryCallingCode(country)}</span>
-            <span className="material-icons text-sm text-gray-400">arrow_drop_down</span>
+            <Icon name="arrow_drop_down" className="text-sm text-gray-400" />
           </span>
           <select
             aria-label="Country calling code"

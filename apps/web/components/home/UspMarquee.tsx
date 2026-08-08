@@ -4,6 +4,7 @@ import type { CSSProperties } from 'react';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { useLocation } from '@/lib/location/LocationProvider';
 import type { DeliverySpeed } from '@/lib/location/types';
+import { Icon } from '@/components/ui/Icon';
 
 export interface UspItem {
   /** A Material Icons ligature (`local_shipping`) or any emoji / short glyph. */
@@ -51,7 +52,7 @@ function Item({ icon, label }: UspItem) {
     <span dir="auto" className="inline-flex items-center gap-2.5 px-6 sm:px-9 shrink-0">
       {icon &&
         (MATERIAL_LIGATURE.test(icon) ? (
-          <span className="material-icons text-[17px] opacity-80">{icon}</span>
+          <Icon name={icon} className="text-[17px] opacity-80" />
         ) : (
           <span className="text-base leading-none">{icon}</span>
         ))}

@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { cn } from '@/lib/utils';
+import { Icon } from '@/components/ui/Icon';
 
 export default function AccountLayout({ children }: { children: React.ReactNode }) {
   const { user, isLoading, logout } = useAuth();
@@ -68,7 +69,7 @@ export default function AccountLayout({ children }: { children: React.ReactNode 
                       : 'text-gray-600 hover:bg-gray-50 hover:text-primary border-l-2 border-transparent',
                   )}
                 >
-                  <span className="material-icons text-[18px]">{icon}</span>
+                  <Icon name={icon} className="text-[18px]" />
                   {label}
                 </Link>
               );
@@ -80,7 +81,7 @@ export default function AccountLayout({ children }: { children: React.ReactNode 
               onClick={handleLogout}
               className="flex items-center gap-3 px-4 py-3 w-full text-sm text-gray-500 hover:text-red-500 font-body transition-colors"
             >
-              <span className="material-icons text-[18px]">logout</span>
+              <Icon name="logout" className="text-[18px]" />
               {t('nav.sign_out')}
             </button>
           </div>

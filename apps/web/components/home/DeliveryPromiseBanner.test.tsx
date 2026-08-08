@@ -131,7 +131,15 @@ describe('DeliveryPromiseBanner', () => {
     mockIsKnown = false;
     render(<DeliveryPromiseBanner />);
     expect(screen.queryByText('Change')).toBeNull();
-    expect(screen.getByRole('button', { name: /change/i })).toHaveTextContent('my_location');
+
+    // The crosshair is drawn now, not spelled. This used to assert the button
+    // read `my_location`, which passed only because the icon *was* that word —
+    // Material Icons rendered the ligature as a glyph, and anything that broke
+    // the font put the word itself in front of a customer. There is no text in
+    // the button at all any more, which is the actual thing worth asserting.
+    const button = screen.getByRole('button', { name: /change/i });
+    expect(button).toHaveTextContent('');
+    expect(button.querySelector('svg')).not.toBeNull();
   });
 
   it('hides the location affordance once the location is real', () => {

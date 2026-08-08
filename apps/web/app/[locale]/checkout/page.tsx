@@ -25,6 +25,7 @@ import { guestAddresses } from '@/lib/guest-addresses';
 import { AddressModal, formatAddress, toDraft, type AddressDraft } from './components/AddressModal';
 import { PromoCodeStep } from './components/PromoCodeStep';
 import type { Address, Cart, CartItem, DeliveryRates, DeliveryQuote, PickupBranch } from '@/lib/types';
+import { Icon } from '@/components/ui/Icon';
 
 // ─── Session persistence ──────────────────────────────────────────────────────
 
@@ -189,7 +190,7 @@ function UnserviceableNotice({
       className="mt-3 border border-amber-300 bg-amber-50/70 rounded-sm px-3.5 py-3"
     >
       <div className="flex gap-2.5">
-        <span className="material-icons text-xl text-amber-600 shrink-0">wrong_location</span>
+        <Icon name="wrong_location" className="text-xl text-amber-600 shrink-0" />
         <div className="min-w-0">
           <p className="font-body text-sm text-amber-900">{t('checkout.unserviceable_title')}</p>
           <p className="font-body text-xs text-amber-800/80 mt-1 leading-relaxed">
@@ -284,7 +285,7 @@ function ChoiceRow({
         selected ? 'border-primary bg-primary/5' : 'border-gray-200 hover:border-primary/40'
       }`}
     >
-      <span className={`material-icons text-xl ${selected ? 'text-primary' : 'text-gray-400'}`}>{icon}</span>
+      <Icon name={icon} className={`text-xl ${selected ? 'text-primary' : 'text-gray-400'}`} />
       <span className="flex-1 min-w-0">
         <span className="block font-body text-sm text-gray-800">{title}</span>
         {subtitle && <span className="block font-body text-xs text-gray-400 mt-0.5">{subtitle}</span>}
@@ -347,9 +348,10 @@ function PickupBranchPicker({
                 aria-pressed={selected}
                 className="w-full flex items-start gap-3 px-3.5 py-3 text-start"
               >
-                <span className={`material-icons text-xl mt-0.5 ${selected ? 'text-primary' : 'text-gray-400'}`}>
-                  {selected ? 'radio_button_checked' : 'radio_button_unchecked'}
-                </span>
+                <Icon
+                  name={selected ? 'radio_button_checked' : 'radio_button_unchecked'}
+                  className={`text-xl mt-0.5 ${selected ? 'text-primary' : 'text-gray-400'}`}
+                />
                 <span className="flex-1 min-w-0">
                   <span className="block font-body text-sm text-gray-800">{name}</span>
                   {address && (
@@ -367,7 +369,7 @@ function PickupBranchPicker({
                   rel="noopener noreferrer"
                   className="mx-3.5 mb-3 inline-flex items-center gap-1.5 font-body text-xs text-primary hover:underline"
                 >
-                  <span className="material-icons text-sm">place</span>
+                  <Icon name="place" className="text-sm" />
                   {t('checkout.branch_directions')}
                 </a>
               )}
@@ -1077,7 +1079,7 @@ function CheckoutContent() {
   if (cartError && !submitting && !retryOrder) {
     return (
       <div className="max-w-md mx-auto px-4 py-16 flex flex-col items-center text-center gap-4">
-        <span className="material-icons text-5xl text-secondary">wifi_off</span>
+        <Icon name="wifi_off" className="text-5xl text-secondary" />
         <h1 className="font-display text-2xl text-primary uppercase tracking-widest">
           {t('checkout.cart_load_failed')}
         </h1>
@@ -1101,7 +1103,7 @@ function CheckoutContent() {
   if (cart && cart.items.length === 0 && !submitting && !retryOrder && !restoringOrder) {
     return (
       <div className="max-w-md mx-auto px-4 py-16 flex flex-col items-center text-center gap-4">
-        <span className="material-icons text-5xl text-secondary">shopping_bag</span>
+        <Icon name="shopping_bag" className="text-5xl text-secondary" />
         <h1 className="font-display text-2xl text-primary uppercase tracking-widest">{t('checkout.cart_empty')}</h1>
         <Link href={`/${locale}`}><Button variant="primary">{t('cart.continue_shopping')}</Button></Link>
       </div>
@@ -1150,7 +1152,7 @@ function CheckoutContent() {
                     : t('checkout.free_delivery_upsell', { amount: remainingForFree.toFixed(2) })}
             trailing={
               unserviceable ? (
-                <span className="material-icons text-lg text-amber-600">wrong_location</span>
+                <Icon name="wrong_location" className="text-lg text-amber-600" />
               ) : !knowsFee ? (
                 <span className="text-gray-400">—</span>
               ) : freeApplied && (baseFee ?? 0) > 0 ? (
@@ -1214,9 +1216,7 @@ function CheckoutContent() {
                 errors.address ? 'border-red-400' : 'border-gray-200'
               }`}
             >
-              <span className="material-icons text-xl text-primary">
-                {hasAddress ? 'location_on' : 'add_location_alt'}
-              </span>
+              <Icon name={hasAddress ? 'location_on' : 'add_location_alt'} className="text-xl text-primary" />
               <span className="flex-1 min-w-0">
                 {hasAddress ? (
                   <>
@@ -1234,7 +1234,7 @@ function CheckoutContent() {
                   </>
                 )}
               </span>
-              <span className="material-icons text-lg text-gray-300">chevron_right</span>
+              <Icon name="chevron_right" className="text-lg text-gray-300" />
             </button>
             {errors.address && <p className="mt-1.5 text-xs text-red-500 font-body">{errors.address}</p>}
             {/* The one line that answers "when", placed where the pin that
@@ -1300,7 +1300,7 @@ function CheckoutContent() {
       <Section label={accountEmail ? t('checkout.email') : t('checkout.email_optional')}>
         {accountEmail ? (
           <div className="flex items-start gap-2.5 border border-gray-200 bg-gray-50 rounded-sm px-3 py-2.5">
-            <span className="material-icons text-base text-primary mt-0.5">mark_email_read</span>
+            <Icon name="mark_email_read" className="text-base text-primary mt-0.5" />
             <div className="min-w-0">
               <p className="font-body text-sm text-gray-800 truncate">{accountEmail}</p>
               <p className="font-body text-xs text-gray-400 mt-0.5">
@@ -1332,9 +1332,10 @@ function CheckoutContent() {
             const only = paymentOptions.length === 1;
             const row = (
               <>
-                <span className={`material-icons text-xl ${paymentMethod === id || only ? 'text-primary' : 'text-gray-400'}`}>
-                  {isCod ? 'payments' : 'credit_card'}
-                </span>
+                <Icon
+                  name={isCod ? 'payments' : 'credit_card'}
+                  className={`text-xl ${paymentMethod === id || only ? 'text-primary' : 'text-gray-400'}`}
+                />
                 <span className="flex-1 min-w-0">
                   <span className="block font-body text-sm text-gray-800">
                     {isCod ? t('checkout.cash_on_delivery') : t('checkout.credit_debit_card')}
@@ -1445,7 +1446,7 @@ function CheckoutContent() {
           {blocked ? t('checkout.unserviceable_short') : placeOrderLabel}
         </Button>
         <p className="mt-3 flex items-center justify-center gap-1.5 text-gray-400">
-          <span className="material-icons text-sm">lock</span>
+          <Icon name="lock" className="text-sm" />
           <span className="font-body text-xs">{t('checkout.security_note')}</span>
         </p>
       </div>

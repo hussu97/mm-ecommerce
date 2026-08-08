@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { Icon } from '@/components/ui/Icon';
 
 const DISMISS_KEY = 'mm_promo_banner_dismissed';
 
@@ -29,7 +30,7 @@ export function PromoBanner() {
         className="absolute right-3 top-1/2 -translate-y-1/2 opacity-70 hover:opacity-100 transition-opacity"
         aria-label="Dismiss promotion banner"
       >
-        <span className="material-icons text-sm">close</span>
+        <Icon name="close" className="text-sm" />
       </button>
     </div>
   );

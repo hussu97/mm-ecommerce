@@ -6,6 +6,7 @@ import { promoApi } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import type { AdvertisedPromo } from '@/lib/types';
+import { Icon } from '@/components/ui/Icon';
 
 interface NewCustomerCouponTrayProps {
   /** The code applied to this basket, if one is. Either spelling counts. */
@@ -122,7 +123,7 @@ export function NewCustomerCouponTray({ appliedCode, onApply }: NewCustomerCoupo
       className="rounded-sm border border-secondary/40 bg-secondary/5 p-4 space-y-3"
     >
       <div className="flex items-start gap-3">
-        <span className="material-icons text-xl text-secondary shrink-0">local_offer</span>
+        <Icon name="local_offer" className="text-xl text-secondary shrink-0" />
         <div className="flex-1 min-w-0">
           <p className="font-body text-sm font-medium text-gray-900 leading-snug">
             {t('promo.new_customer_title', {
@@ -138,7 +139,7 @@ export function NewCustomerCouponTray({ appliedCode, onApply }: NewCustomerCoupo
         </div>
         {applied ? (
           <span className="shrink-0 inline-flex items-center gap-1 font-body text-xs font-medium text-green-700">
-            <span className="material-icons text-base">check_circle</span>
+            <Icon name="check_circle" className="text-base" />
             {t('promo.new_customer_applied')}
           </span>
         ) : (

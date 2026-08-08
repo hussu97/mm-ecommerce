@@ -8,6 +8,7 @@ import { authApi } from '@/lib/api';
 import { getFirebaseAuth, getRecaptchaVerifier, isFirebaseConfigured } from '@/lib/firebase';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { withFallback } from '@/lib/i18n/fallback';
+import { Icon } from '@/components/ui/Icon';
 
 /**
  * Prove a phone number, in two steps, without leaving the page.
@@ -156,9 +157,7 @@ export function PhoneVerify({
   if (step === 'done') {
     return (
       <p className={`flex items-center gap-1.5 text-sm text-green-700 ${className}`}>
-        <span aria-hidden="true" className="material-icons text-[18px]">
-          check_circle
-        </span>
+        <Icon name="check_circle" className="text-[18px]" />
         {label('verify.verified', 'Verified')}
       </p>
     );

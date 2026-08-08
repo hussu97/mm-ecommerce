@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Image from 'next/image';
+import { Icon } from '@/components/ui/Icon';
 
 interface ProductImageGalleryProps {
   images: string[];
@@ -25,7 +26,7 @@ export function ProductImageGallery({ images, name }: ProductImageGalleryProps) 
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
-            <span className="material-icons text-8xl text-secondary">cake</span>
+            <Icon name="cake" className="text-8xl text-secondary" />
           </div>
         )}
       </div>

@@ -3,6 +3,27 @@ import { withSentryConfig } from "@sentry/nextjs";
 
 const nextConfig: NextConfig = {
   // output: "standalone" is for self-hosted Docker only — not needed on Vercel
+  experimental: {
+    // Enables `app/global-not-found.tsx`, which is the 404 for URLs that never
+    // reach a locale. Needed because the root layout now lives under `[locale]`
+    // — see the comment in `app/[locale]/layout.tsx`. Without it those URLs get
+    // Next's unstyled `__next_error__` document.
+    globalNotFound: true,
+    // How long the client router may reuse a prefetched entry before asking for
+    // it again. The default for a dynamic route is 0, which means a prefetch is
+    // stale the moment it lands: a link scrolling back into view, or a re-render
+    // of the nav, refetches the whole route. That is why one homepage view was
+    // measured making 29 prefetch requests for 15 distinct routes — each route
+    // fetched roughly twice, for nothing.
+    //
+    // 30s is well inside the window in which somebody actually clicks the link
+    // they were just shown, and every one of these routes is a catalogue page
+    // whose contents do not change minute to minute.
+    staleTimes: {
+      dynamic: 30,
+      static: 180,
+    },
+  },
   async rewrites() {
     return [
       // Proxy API requests through Next.js so auth cookies are same-origin.

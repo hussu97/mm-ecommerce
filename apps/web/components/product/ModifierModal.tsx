@@ -10,6 +10,7 @@ import { ModifierSelector, SelectedOption } from './ModifierSelector';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
 import type { Product } from '@/lib/types';
+import { Icon } from '@/components/ui/Icon';
 
 interface Props {
   product: Product;
@@ -99,7 +100,7 @@ export function ModifierModal({ product, onClose }: Props) {
             )}
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 shrink-0">
-            <span className="material-icons text-[20px]">close</span>
+            <Icon name="close" className="text-[20px]" />
           </button>
         </div>
 
@@ -120,7 +121,7 @@ export function ModifierModal({ product, onClose }: Props) {
                 disabled={qty <= 1}
                 className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-primary disabled:opacity-40"
               >
-                <span className="material-icons text-[16px]">remove</span>
+                <Icon name="remove" className="text-[16px]" />
               </button>
               <span className="w-8 text-center text-sm font-body">{qty}</span>
               <button
@@ -128,7 +129,7 @@ export function ModifierModal({ product, onClose }: Props) {
                 onClick={() => setQty(q => q + 1)}
                 className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-primary"
               >
-                <span className="material-icons text-[16px]">add</span>
+                <Icon name="add" className="text-[16px]" />
               </button>
             </div>
             <span className="ml-auto font-body font-medium text-primary text-base">

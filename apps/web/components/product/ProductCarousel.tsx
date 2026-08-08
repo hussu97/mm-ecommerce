@@ -4,6 +4,7 @@ import { useRef, useState, useEffect } from 'react';
 import { ProductCard } from '@/components/category/ProductCard';
 import type { ProductList } from '@/lib/analytics';
 import type { Product } from '@/lib/types';
+import { Icon } from '@/components/ui/Icon';
 
 export function ProductCarousel({
   title,
@@ -53,7 +54,7 @@ export function ProductCarousel({
             className="absolute left-0 top-1/3 -translate-y-1/2 z-10 -translate-x-4 w-8 h-8 bg-white border border-gray-200 shadow-sm hidden sm:flex items-center justify-center hover:bg-gray-50 transition-colors"
             aria-label="Scroll left"
           >
-            <span className="material-icons text-base text-gray-600">chevron_left</span>
+            <Icon name="chevron_left" className="text-base text-gray-600" />
           </button>
         )}
 
@@ -74,7 +75,7 @@ export function ProductCarousel({
             className="absolute right-0 top-1/3 -translate-y-1/2 z-10 translate-x-4 w-8 h-8 bg-white border border-gray-200 shadow-sm hidden sm:flex items-center justify-center hover:bg-gray-50 transition-colors"
             aria-label="Scroll right"
           >
-            <span className="material-icons text-base text-gray-600">chevron_right</span>
+            <Icon name="chevron_right" className="text-base text-gray-600" />
           </button>
         )}
       </div>

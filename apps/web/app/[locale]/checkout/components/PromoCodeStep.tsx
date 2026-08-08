@@ -10,6 +10,7 @@ import { useToast } from '@/components/ui/Toast';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { withFallback } from '@/lib/i18n/fallback';
 import { analytics } from '@/lib/analytics';
+import { Icon } from '@/components/ui/Icon';
 
 interface PromoCodeStepProps {
   promoCode: string;
@@ -151,7 +152,7 @@ export function PromoCodeStep({
           className="text-green-400 hover:text-green-700 transition-colors"
           aria-label={t('checkout.remove_promo')}
         >
-          <span className="material-icons text-base">close</span>
+          <Icon name="close" className="text-base" />
         </button>
       </div>
     );
