@@ -58,6 +58,31 @@ services:
       SECRET_KEY: ${SECRET_KEY}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+      # The register shares `Settings`, so it needs these to boot even though
+      # it takes no card payments over a gateway — a till takes cash and a
+      # terminal. Same defaults, same reason.
+      ZIINA_ENABLED: ${ZIINA_ENABLED:-false}
+      ZIINA_API_KEY: ${ZIINA_API_KEY:-}
+      ZIINA_WEBHOOK_SECRET: ${ZIINA_WEBHOOK_SECRET:-}
+      ZIINA_API_URL: ${ZIINA_API_URL:-https://api-v2.ziina.com/api}
+      ZIINA_TEST_MODE: ${ZIINA_TEST_MODE:-false}
+      ZIINA_TIMEOUT_SECONDS: ${ZIINA_TIMEOUT_SECONDS:-10}
+      # ── Ziina (the second card gateway) ─────────────────────────────────
+      # Present, and deliberately switched off. Production runs on Stripe;
+      # Ziina exists so a Stripe incident is a row update in `payment_gateways`
+      # rather than a deploy, and it must not take live traffic before someone
+      # decides it should.
+      #
+      # `ZIINA_ENABLED` defaults false here as well as in `Settings`, because a
+      # default in this file silently overrides the one in the app — the same
+      # mechanism that put the AED 5 door-to-door charge back on every Lalamove
+      # booking. Two falses, so neither file alone can turn it on by accident.
+      ZIINA_ENABLED: ${ZIINA_ENABLED:-false}
+      ZIINA_API_KEY: ${ZIINA_API_KEY:-}
+      ZIINA_WEBHOOK_SECRET: ${ZIINA_WEBHOOK_SECRET:-}
+      ZIINA_API_URL: ${ZIINA_API_URL:-https://api-v2.ziina.com/api}
+      ZIINA_TEST_MODE: ${ZIINA_TEST_MODE:-false}
+      ZIINA_TIMEOUT_SECONDS: ${ZIINA_TIMEOUT_SECONDS:-10}
       RESEND_API_KEY: ${RESEND_API_KEY}
       FROM_EMAIL: ${FROM_EMAIL:-noreply@meltingmomentscakes.com}
       CLOUDFLARE_R2_ACCESS_KEY: ${CLOUDFLARE_R2_ACCESS_KEY}

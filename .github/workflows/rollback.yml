@@ -77,6 +77,12 @@ jobs:
           STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_PUBLISHABLE_KEY=${{ secrets.STRIPE_PUBLISHABLE_KEY }}
           STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          ZIINA_ENABLED=${{ secrets.ZIINA_ENABLED }}
+          ZIINA_API_KEY=${{ secrets.ZIINA_API_KEY }}
+          ZIINA_WEBHOOK_SECRET=${{ secrets.ZIINA_WEBHOOK_SECRET }}
+          ZIINA_API_URL=${{ secrets.ZIINA_API_URL }}
+          ZIINA_TEST_MODE=${{ secrets.ZIINA_TEST_MODE }}
+          ZIINA_TIMEOUT_SECONDS=${{ secrets.ZIINA_TIMEOUT_SECONDS }}
           RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
           FROM_EMAIL=${{ secrets.FROM_EMAIL }}
           CLOUDFLARE_R2_ACCESS_KEY=${{ secrets.CLOUDFLARE_R2_ACCESS_KEY }}

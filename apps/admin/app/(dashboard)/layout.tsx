@@ -40,6 +40,10 @@ const NAV: Array<
   { href: '/promo-codes',   label: 'Promo Codes',     icon: 'local_offer' },
   { href: '/customers',     label: 'Customers',       icon: 'people' },
   { href: '/delivery-zones', label: 'Delivery',       icon: 'local_shipping' },
+  // Under "Online store" and not "System": this is the lever you reach for
+  // during a processor incident, and an incident is not the moment to go
+  // hunting three sections down.
+  { href: '/payment-gateways', label: 'Payments',     icon: 'credit_card' },
   { href: '/analytics',     label: 'Analytics',       icon: 'bar_chart' },
   { href: '/content',       label: 'Content',         icon: 'edit_note' },
   { href: '/languages',     label: 'Languages',       icon: 'translate' },

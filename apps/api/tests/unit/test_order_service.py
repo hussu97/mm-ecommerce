@@ -847,13 +847,46 @@ class TestCreateOrderCalculations:
         assert order_arg.email == "customer@example.com"
 
     async def test_payment_method_stored_on_order(self):
+        """
+        The column records what the *customer* chose, not who processed it.
+
+        `_pickup_data` still sends `stripe`, which is what a browser holding the
+        previous bundle posts and what every card order written before the
+        method/gateway split carries. It has to keep working, and it has to be
+        normalised on the way in — a gateway's name landing in this column is
+        how the two questions got conflated in the first place.
+        """
         cart = _cart(items=[_cart_item(_product())])
         db = _db_for_create(cart, _order_mock())
 
         await create_order(db, _pickup_data(), user_id=None)
 
         order_arg = db.add.call_args_list[0][0][0]
-        assert order_arg.payment_method == "stripe"
+        assert order_arg.payment_method == "card"
+
+    async def test_a_card_order_never_records_a_gateway_as_its_method(self):
+        """
+        Whatever card-ish word arrives, `card` is what is written.
+
+        `ziina` is deliberately not in this list and is rejected by the schema:
+        it has never been a value of this column and accepting it would invite a
+        client to name a gateway where a method belongs. `stripe` is here only
+        because it is already on tens of thousands of rows.
+        """
+        for sent in ("card", "stripe"):
+            cart = _cart(items=[_cart_item(_product())])
+            db = _db_for_create(cart, _order_mock())
+            data = OrderCreate(
+                email="test@example.com",
+                delivery_method=DeliveryMethodEnum.PICKUP,
+                payment_method=sent,
+                session_id="sess_test",
+            )
+
+            await create_order(db, data, user_id=None)
+
+            order_arg = db.add.call_args_list[0][0][0]
+            assert order_arg.payment_method == "card", sent
 
     async def test_initial_status_is_created(self):
         cart = _cart(items=[_cart_item(_product())])

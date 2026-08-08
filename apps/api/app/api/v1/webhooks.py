@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.deps import get_db
-from app.api.v1.payments import stripe_webhook as payments_stripe_webhook
+from app.api.v1.payments import process_gateway_webhook
 from app.services import lalamove_service, noon_send_service
 from app.services.providers.lalamove_provider import LalamoveError
 from app.services.providers.noon_send_provider import NoonSendError
@@ -108,13 +108,22 @@ def _noon_send_recorder(endpoint: str, request: Request, key: str | None) -> Rec
 
 
 @router.post("/stripe", status_code=status.HTTP_200_OK)
-async def stripe_webhook(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    stripe_signature: str | None = Header(None, alias="stripe-signature"),
-):
+async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     """Compatibility endpoint for Stripe dashboard webhooks."""
-    return await payments_stripe_webhook(request, db, stripe_signature)
+    return await process_gateway_webhook("stripe", request, db)
+
+
+@router.post("/ziina", status_code=status.HTTP_200_OK)
+async def ziina_webhook(request: Request, db: AsyncSession = Depends(get_db)):
+    """
+    Ziina's push endpoint, mounted here as well as under `/payments`.
+
+    Both mounts exist for Stripe because production was configured against
+    `/webhooks/stripe` before the payments router had one. Ziina gets the pair
+    from the start so that whichever of the two a future operator reaches for
+    when registering the URL, they are right.
+    """
+    return await process_gateway_webhook("ziina", request, db)
 
 
 @router.post("/lalamove", status_code=status.HTTP_200_OK)

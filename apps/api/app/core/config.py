@@ -90,10 +90,39 @@ class Settings(BaseSettings):
                 return [item.strip() for item in v.split(",") if item.strip()]
         return v
 
-    # ── Stripe ────────────────────────────────────────────────────────────────
+    # ── Stripe (card gateway) ─────────────────────────────────────────────────
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
     STRIPE_PUBLISHABLE_KEY: str = ""
+
+    # ── Ziina (card gateway) ─────────────────────────────────────────────────
+    #
+    # The second processor for card payments. Which of the two a given order
+    # goes through is decided at runtime from the `payment_gateways` table, not
+    # from here — see `payment_gateway_router`. These are only the credentials.
+    #
+    # **Production runs on Stripe.** Ziina exists so that a Stripe incident is a
+    # row update rather than a deploy, and until it has been signed off it must
+    # not take live traffic. Three independent things have to be true before it
+    # can: the `payment_gateways` row is active (it ships inactive),
+    # `ZIINA_ENABLED` is true (it defaults false, everywhere), and a key is
+    # present. Any one of them false and the router will not pick it.
+    #
+    #: The master switch. Deliberately separate from the API key: keys turn up
+    #: on a VM for all sorts of reasons and none of them is a decision to start
+    #: charging real cards through a new processor.
+    ZIINA_ENABLED: bool = False
+    ZIINA_API_KEY: str = ""
+    #: The secret we registered with `POST /webhook`. Ziina signs the raw body
+    #: with it as a hex SHA-256 HMAC in `X-Hmac-Signature`. Without it the
+    #: webhook endpoint refuses every push rather than trusting an unsigned one.
+    ZIINA_WEBHOOK_SECRET: str = ""
+    ZIINA_API_URL: str = "https://api-v2.ziina.com/api"
+    #: Sends `test: true` on every payment intent, which takes test cards and
+    #: charges nothing. The `payment_gateways` row can also ask for this
+    #: per-gateway; either one turning it on is enough.
+    ZIINA_TEST_MODE: bool = False
+    ZIINA_TIMEOUT_SECONDS: int = 10
 
     # ── Resend (email) ────────────────────────────────────────────────────────
     RESEND_API_KEY: str = ""
@@ -328,6 +357,19 @@ class Settings(BaseSettings):
         for name, value in required.items():
             if not value:
                 errors.append(f"{name} is required in production but is not set")
+
+        # Turning Ziina on in production is a deliberate act, and a half-done
+        # one is worse than not doing it: a gateway with a key and no webhook
+        # secret takes real money and then refuses every event telling us it
+        # did, leaving paid orders sitting in `created`. Fail on boot instead,
+        # while the previous container is still serving.
+        if self.ZIINA_ENABLED:
+            for name in ("ZIINA_API_KEY", "ZIINA_WEBHOOK_SECRET"):
+                if not getattr(self, name):
+                    errors.append(
+                        f"ZIINA_ENABLED is set but {name} is empty — a gateway "
+                        "that can charge and cannot be told what it charged"
+                    )
 
         if errors:
             formatted = "\n  • ".join(errors)

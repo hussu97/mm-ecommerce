@@ -181,9 +181,14 @@ function ConfirmationContent() {
         <div className="h-px bg-gray-200" />
         <div className="flex justify-between font-semibold text-base">
           {/* Nothing has been paid yet on a cash order — the money changes
-              hands at the door or the counter. */}
+              hands at the door or the counter.
+
+              Asked of the *method*, not the gateway. They agree today because
+              cash sets both, but "did the customer choose to pay cash" is the
+              question here, and the gateway column now answers a different one:
+              which of Stripe or Ziina settled a card. */}
           <span>
-            {order.payment_provider === 'cod'
+            {order.payment_method === 'cod'
               ? t('confirmation.total_due')
               : t('confirmation.total_paid')}
           </span>

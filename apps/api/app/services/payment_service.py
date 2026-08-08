@@ -1,8 +1,24 @@
+"""
+Taking money for an online order, without knowing who is taking it.
+
+This module used to be a Stripe integration with a `provider` argument that only
+ever had one useful value. It now knows about *methods* — card, cash, nothing to
+pay — and delegates the question of which processor settles a card to
+`payment_gateway_router`, which reads it out of a table.
+
+The seam that makes this work is `providers/base.py`: every gateway hands back
+the same `GatewaySession` and the same `GatewayEvent`, so everything below
+`_apply_event` is written once and is the same code whether the money came
+through Stripe or Ziina. There is deliberately no `if gateway == "stripe"` in
+this file, and adding one would be the first step back to where it started.
+"""
+
 from __future__ import annotations
 
 import logging
 import uuid
 from decimal import Decimal
+from typing import Mapping
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -11,50 +27,43 @@ from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
+from app.models.payment_transaction import (
+    PaymentTransaction,
+    PaymentTransactionStatusEnum,
+)
 from app.models.webhook_event import WebhookEvent
-from app.services import email_service, order_service
-from app.services.providers.base import PaymentProvider
+from app.services import email_service, order_service, payment_gateway_router
+from app.services.payment_methods import CARD, COD, normalise_method
+from app.services.providers.base import (
+    GatewayEvent,
+    GatewayUnavailableError,
+    PaymentEventType,
+)
 from app.services.providers.stripe_provider import provider as stripe_provider
 
 __all__ = [
+    "COD",
     "create_session",
     "get_status",
-    "handle_stripe_webhook",
-    "handle_tabby_webhook",
-    "handle_tamara_webhook",
+    "handle_webhook",
+    "normalise_method",
 ]
 
 logger = logging.getLogger(__name__)
 
-# The statuses a `payment_intent.succeeded` may legitimately move an order out
-# of. Everything else is either already done or deliberately finished, and a
-# webhook must not walk it backwards — see `_handle_payment_succeeded`.
+#: The statuses a successful payment may legitimately move an order out
+#: of. Everything else is either already done or deliberately finished, and a
+#: webhook must not walk it backwards — see `_handle_payment_succeeded`.
 _CONFIRMABLE_FROM = {
     OrderStatusEnum.CREATED,
     OrderStatusEnum.PAYMENT_FAILED,
 }
 
-# Registry: only providers that are fully implemented.
-# Tabby and Tamara are stubs — add them here once integrated.
-_PROVIDERS: dict[str, PaymentProvider] = {
-    "stripe": stripe_provider,
-}
-
-
-def _get_provider(name: str) -> PaymentProvider:
-    p = _PROVIDERS.get(name.lower())
-    if not p:
-        raise BadRequestError(
-            f"Unknown payment provider '{name}'. Currently supported: "
-            + ", ".join(_PROVIDERS)
-        )
-    return p
-
 
 async def _load_order(db: AsyncSession, order_number: str) -> Order:
     stmt = (
         select(Order)
-        .options(selectinload(Order.items))
+        .options(selectinload(Order.items), selectinload(Order.payment_transactions))
         .where(Order.order_number == order_number)
     )
     result = await db.execute(stmt)
@@ -64,22 +73,64 @@ async def _load_order(db: AsyncSession, order_number: str) -> Order:
     return order
 
 
-async def _load_order_by_payment_intent(
-    db: AsyncSession, payment_intent_id: str | None
+async def _load_order_by_handle(
+    db: AsyncSession,
+    gateway: str,
+    *,
+    payment_id: str | None = None,
+    session_id: str | None = None,
 ) -> Order:
-    """Look up an order by its confirmed payment_intent ID (pi_...)."""
-    if not payment_intent_id:
-        raise NotFoundError("No payment_intent_id provided")
+    """
+    Find the order a gateway handle belongs to.
+
+    This is the correlation path for a gateway that carries no metadata — which
+    is to say for Ziina, whose `CreatePaymentIntentDto` has nowhere at all to
+    put an order number. The handle we stored when we created the session is the
+    only link, so it has to be a reliable one.
+
+    `payment_transactions` is asked first because it is the record built for
+    this, and `orders.payment_id` second because orders written before that
+    table existed have nothing else. Both are scoped by gateway where they can
+    be: Stripe and Ziina both mint IDs beginning `pi_`, and an unscoped lookup
+    would eventually confirm the wrong order.
+    """
+    handles = [h for h in (payment_id, session_id) if h]
+    if not handles:
+        raise NotFoundError("Webhook carried no payment handle to match on")
+
     stmt = (
         select(Order)
-        .options(selectinload(Order.items))
-        .where(Order.payment_id == payment_intent_id)
+        .join(PaymentTransaction, PaymentTransaction.order_id == Order.id)
+        .options(selectinload(Order.items), selectinload(Order.payment_transactions))
+        .where(
+            PaymentTransaction.gateway == gateway,
+            (PaymentTransaction.payment_id.in_(handles))
+            | (PaymentTransaction.session_id.in_(handles)),
+        )
+        .limit(1)
     )
-    result = await db.execute(stmt)
-    order = result.scalar_one_or_none()
-    if not order:
-        raise NotFoundError(f"No order found for payment_intent '{payment_intent_id}'")
-    return order
+    order = (await db.execute(stmt)).scalars().first()
+    if order is not None:
+        return order
+
+    legacy = (
+        (
+            await db.execute(
+                select(Order)
+                .options(
+                    selectinload(Order.items), selectinload(Order.payment_transactions)
+                )
+                .where(Order.payment_id.in_(handles))
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if legacy is not None:
+        return legacy
+
+    raise NotFoundError(f"No order found for {gateway} handle {handles[0]}")
 
 
 def _assert_may_act_on(
@@ -105,20 +156,47 @@ def _assert_may_act_on(
         raise ForbiddenError("Not your order")
 
 
+def _is_paid(order: Order) -> bool:
+    """
+    Whether money has actually moved for this order.
+
+    A settled `payment_transactions` row is the answer, and the legacy prefix
+    check behind it is only for orders written before that table existed —
+    those carry a bare `pi_…` on `orders.payment_id` and nothing else, and
+    dropping the fallback would silently reopen a payment window on every one
+    of them.
+
+    The fallback is scoped to Stripe on purpose. Ziina mints its payment intent
+    at session creation, so `pi_…` is present on a Ziina order the instant the
+    customer is redirected — reading that as "paid" would mark every abandoned
+    Ziina checkout as settled.
+    """
+    if any(t.is_settled for t in order.payment_transactions):
+        return True
+    if order.payment_provider in (None, "stripe"):
+        return stripe_provider.is_confirmed_payment_id(order.payment_id)
+    return False
+
+
 async def create_session(
     db: AsyncSession,
     order_number: str,
-    provider: str,
+    method: str,
     *,
     user_id: uuid.UUID | None = None,
     admin: bool = False,
 ) -> dict:
     """
     Create a payment checkout session for the given order.
-    Stores session_id in order.payment_id. Returns {provider, session_id, checkout_url}.
+
+    *method* is what the customer chose — `card` or `cod` — not a gateway.
+    Which processor settles a card is chosen here, from the `payment_gateways`
+    table, and reported back in the response so the caller can log it. The
+    caller does not get to ask for one.
     """
     order = await _load_order(db, order_number)
     _assert_may_act_on(order, user_id, admin)
+    method = normalise_method(method)
 
     if order.status == OrderStatusEnum.CANCELLED:
         raise BadRequestError("Cannot create payment session for a cancelled order")
@@ -129,7 +207,7 @@ async def create_session(
         await db.flush()
 
     # Idempotency: if already has a confirmed payment, reject
-    if stripe_provider.is_confirmed_payment_id(order.payment_id):
+    if _is_paid(order):
         raise BadRequestError("Order has already been paid")
 
     # Zero-total orders (100% discount) are confirmed immediately — no payment needed.
@@ -155,7 +233,7 @@ async def create_session(
     # spot and the money is collected at the door. Cash is how most of this
     # market pays for food, and requiring a card up front turns those
     # customers away at the last screen.
-    if provider == "cod":
+    if method == COD:
         # Cash is offered for collection only: the customer pays at the counter
         # when they pick the order up. There is no cash handling on the delivery
         # side, so a cash *delivery* must not be creatable even by hand.
@@ -169,7 +247,8 @@ async def create_session(
         # cash order that reached `created` some other way.
         already_confirmed = order.status == OrderStatusEnum.CONFIRMED
         order.status = OrderStatusEnum.CONFIRMED
-        order.payment_provider = "cod"
+        order.payment_method = COD
+        order.payment_provider = COD
         order.payment_id = None
         await db.flush()
         if not already_confirmed:
@@ -178,136 +257,325 @@ async def create_session(
             await email_service.send_owner_order_notification(order_response)
         logger.info("Cash-on-delivery order confirmed: order=%s", order_number)
         return {
-            "provider": "cod",
+            "provider": COD,
             "session_id": None,
             "checkout_url": None,
             "confirmed": True,
         }
 
-    # Stripe AED minimum is 2.00 AED. Orders below this threshold cannot be charged.
-    _STRIPE_AED_MINIMUM = Decimal("2.00")
-    if provider == "stripe" and order_total < _STRIPE_AED_MINIMUM:
-        raise BadRequestError(
-            f"The order total after discount (AED {order_total:.2f}) is below the minimum "
-            f"chargeable amount of AED {_STRIPE_AED_MINIMUM:.2f}. "
-            "Please add more items or adjust your discount."
-        )
-
-    p = _get_provider(provider)
-    result = p.create_session(order)
-
-    # Persist session_id + provider on the order
-    order.payment_provider = provider
-    order.payment_id = result["session_id"]
-    await db.flush()
-
-    logger.info(
-        "Payment session created: order=%s provider=%s session=%s",
-        order_number,
-        provider,
-        result["session_id"],
-    )
-
-    return {
-        "provider": provider,
-        "session_id": result["session_id"],
-        "checkout_url": result["checkout_url"],
-    }
+    return await _create_card_session(db, order, order_total)
 
 
-async def handle_stripe_webhook(
-    db: AsyncSession, payload: bytes, signature: str
+async def _create_card_session(
+    db: AsyncSession, order: Order, order_total: Decimal
 ) -> dict:
     """
-    Verify and process a Stripe webhook event.
+    Route a card payment to a gateway, falling over to the next on an outage.
 
-    Handles:
-      - payment_intent.succeeded     → confirm order, send confirmation email
-      - payment_intent.payment_failed → mark order failed, send failure email
-      - charge.refunded               → mark order refunded, send refund email
-      - charge.dispute.created        → mark order disputed, log CRITICAL for admin
+    The failover is the entire reason this feature exists, so it is worth being
+    precise about what it will and will not do. A `GatewayUnavailableError` —
+    a connection that never landed, a 502, a 201 with no redirect URL — means
+    the processor never got as far as an opinion about this order, so asking a
+    different one costs nothing and saves the checkout. Anything else is an
+    opinion: a declined card, an amount out of range, a malformed request. Those
+    propagate, because a second processor is not a second chance at a refusal.
+
+    Every attempt leaves a row, including the abandoned ones. "Which gateway did
+    this order try, in what order, and what did each one say" is the first
+    question anyone asks about a checkout that misbehaved, and before this table
+    it had no answer at all.
+    """
+    options = await payment_gateway_router.candidates(db, order_total)
+    if not options:
+        # Re-asks so the customer gets the specific reason — too small, versus
+        # nothing available — rather than a generic failure.
+        await payment_gateway_router.select_gateway(db, order_total)
+
+    choice = options[0]
+    tried: list[str] = []
+
+    while choice is not None:
+        tried.append(choice.code)
+        transaction = PaymentTransaction(
+            order_id=order.id,
+            gateway=choice.code,
+            status=PaymentTransactionStatusEnum.PENDING.value,
+            amount=order_total,
+            currency="AED",
+        )
+        db.add(transaction)
+
+        try:
+            session = choice.provider.create_session(order, test_mode=choice.test_mode)
+        except GatewayUnavailableError as exc:
+            transaction.status = PaymentTransactionStatusEnum.FAILED.value
+            transaction.error_code = "gateway_unavailable"
+            transaction.error_message = str(exc)[:2000]
+            await db.flush()
+            logger.error(
+                "Gateway '%s' could not create a session for %s: %s",
+                choice.code,
+                order.order_number,
+                exc,
+            )
+            choice = payment_gateway_router.failover_after(tried, options)
+            if choice is not None:
+                logger.warning(
+                    "Failing over from '%s' to '%s' for order %s",
+                    tried[-1],
+                    choice.code,
+                    order.order_number,
+                )
+            continue
+        except Exception:
+            # An opinion, or a bug. Either way the attempt is recorded before it
+            # propagates, so a 500 in checkout is not also an invisible one.
+            transaction.status = PaymentTransactionStatusEnum.FAILED.value
+            transaction.error_code = "refused"
+            await db.flush()
+            raise
+
+        transaction.session_id = session.session_id
+        transaction.payment_id = session.payment_id
+        transaction.checkout_url = session.checkout_url
+        transaction.raw_status = session.raw_status
+
+        order.payment_method = CARD
+        order.payment_provider = choice.code
+        order.payment_id = session.session_id
+        await db.flush()
+
+        logger.info(
+            "Payment session created: order=%s gateway=%s session=%s%s",
+            order.order_number,
+            choice.code,
+            session.session_id,
+            f" (after {', '.join(tried[:-1])} failed)" if len(tried) > 1 else "",
+        )
+
+        return {
+            "provider": choice.code,
+            "session_id": session.session_id,
+            "checkout_url": session.checkout_url,
+        }
+
+    logger.critical(
+        "Every card gateway failed for order %s (tried %s) — card checkout is down",
+        order.order_number,
+        ", ".join(tried),
+    )
+    # The customer is told nothing about which processor failed or how. That
+    # detail is in the CRITICAL above and on every abandoned transaction row,
+    # which is where the person who can act on it is looking.
+    raise BadRequestError(
+        "Card payments are temporarily unavailable. Please try again shortly."
+    )
+
+
+async def handle_webhook(
+    db: AsyncSession,
+    gateway: str,
+    payload: bytes,
+    headers: Mapping[str, str],
+) -> dict:
+    """
+    Verify and process a payment webhook from *gateway*.
+
+    One function for every processor. The gateway's provider verifies the
+    signature and translates the event; everything after that is written against
+    `PaymentEventType` and has no idea who sent it.
 
     Dedup is handled atomically via INSERT ... ON CONFLICT DO NOTHING so that
-    concurrent duplicate deliveries from Stripe cannot cause double-processing.
+    concurrent duplicate deliveries cannot cause double-processing. The row is
+    written in the same transaction as the work, so a rolled-back attempt leaves
+    nothing behind and a retry is free to try again.
     """
-    parsed = stripe_provider.handle_webhook(payload, signature)
-    event_id: str = parsed["event_id"]
-    event_type: str = parsed["event_type"]
-    order_number: str | None = parsed.get("order_number")
-    payment_intent_id: str | None = parsed.get("payment_intent_id")
+    provider = payment_gateway_router.PROVIDERS.get(gateway)
+    if provider is None:
+        raise NotFoundError(f"Unknown payment gateway '{gateway}'")
 
-    # Atomic dedup: if this event_id was already processed the INSERT is a no-op
-    # (the unique index on event_id is enforced at the DB level — race-condition-safe)
+    event = provider.parse_webhook(payload, headers)
+
+    if not event.event_id:
+        # Without an ID there is no dedup, and without dedup a retry sends the
+        # customer a second confirmation email. A gateway that issues none must
+        # synthesise one; see `ziina_provider`.
+        logger.error(
+            "%s webhook had no event id (type=%s) — refusing to process it "
+            "undeduplicated",
+            gateway,
+            event.raw_type,
+        )
+        raise BadRequestError("Webhook carried no event id")
+
     stmt = (
         pg_insert(WebhookEvent)
         .values(
-            provider="stripe",
-            event_id=event_id,
-            event_type=event_type,
-            order_number=order_number,
+            provider=gateway,
+            event_id=event.event_id,
+            event_type=event.raw_type[:100],
+            order_number=event.order_number,
         )
         .on_conflict_do_nothing(index_elements=["event_id"])
     )
     insert_result = await db.execute(stmt)
     if insert_result.rowcount == 0:
-        logger.info("Duplicate webhook skipped: event_id=%s", event_id)
+        logger.info("Duplicate webhook skipped: event_id=%s", event.event_id)
         return {"received": True, "duplicate": True}
 
-    if event_type == "payment_intent.succeeded":
-        await _handle_payment_succeeded(db, order_number, payment_intent_id)
+    await _apply_event(db, gateway, event)
+    return {"received": True, "event_type": event.raw_type}
 
-    elif event_type == "payment_intent.payment_failed":
-        await _handle_payment_failed(db, order_number, event_type)
 
-    elif event_type == "charge.refunded":
-        await _handle_charge_refunded(
-            db,
-            order_number,
-            payment_intent_id,
-            fully_refunded=parsed.get("fully_refunded"),
-            amount_refunded=parsed.get("amount_refunded"),
-            amount_captured=parsed.get("amount_captured"),
+# ── Applying a normalised event ───────────────────────────────────────────────
+
+
+async def _apply_event(db: AsyncSession, gateway: str, event: GatewayEvent) -> None:
+    """Dispatch on what happened, not on who said it."""
+    if event.event_type is PaymentEventType.UNHANDLED:
+        logger.info(
+            "%s webhook %s acknowledged and applied to nothing",
+            gateway,
+            event.raw_type,
         )
+        return
 
-    elif event_type == "charge.dispute.created":
-        await _handle_dispute_created(db, payment_intent_id)
+    order = await _resolve_order(db, gateway, event)
+    if order is None:
+        return
 
-    return {"received": True, "event_type": event_type}
+    _record_transaction(order, gateway, event)
+
+    if event.event_type is PaymentEventType.SUCCEEDED:
+        await _handle_payment_succeeded(db, order, event)
+    elif event.event_type is PaymentEventType.FAILED:
+        await _handle_payment_failed(db, order, event)
+    elif event.event_type is PaymentEventType.CANCELLED:
+        logger.info(
+            "Payment cancelled on %s for order %s — order left at %s",
+            gateway,
+            order.order_number,
+            order.status,
+        )
+    elif event.event_type is PaymentEventType.REFUNDED:
+        await _handle_refund(db, order, event)
+    elif event.event_type is PaymentEventType.DISPUTED:
+        await _handle_dispute(order, event)
 
 
-# ── Private handlers ──────────────────────────────────────────────────────────
+async def _resolve_order(
+    db: AsyncSession, gateway: str, event: GatewayEvent
+) -> Order | None:
+    """
+    Which order this event is about, or a CRITICAL log and nothing.
+
+    Never raises. An event we cannot place is money that moved with no order to
+    attach it to, and the only useful response is to record it loudly and answer
+    200 — raising would make the gateway retry a lookup that will fail
+    identically forever, and on Ziina that is three retries and then silence.
+    """
+    try:
+        if event.order_number:
+            return await _load_order(db, event.order_number)
+        return await _load_order_by_handle(
+            db,
+            gateway,
+            payment_id=event.payment_id,
+            session_id=event.session_id,
+        )
+    except NotFoundError:
+        level = (
+            logger.critical
+            if event.event_type
+            in (
+                PaymentEventType.SUCCEEDED,
+                PaymentEventType.REFUNDED,
+                PaymentEventType.DISPUTED,
+            )
+            else logger.error
+        )
+        level(
+            "%s %s — no order found (order_number=%s payment=%s session=%s) "
+            "— manual reconciliation required",
+            gateway,
+            event.raw_type,
+            event.order_number,
+            event.payment_id,
+            event.session_id,
+        )
+        return None
+
+
+def _record_transaction(order: Order, gateway: str, event: GatewayEvent) -> None:
+    """
+    Bring the attempt's row in step with what the gateway just said.
+
+    Matched on the handles rather than on "the most recent row", because a
+    customer who abandons one checkout and starts another leaves two live
+    attempts and the events for the first can arrive after the second exists.
+    An event whose handles match nothing — which is every event on an order
+    created before this table — is left alone rather than written onto the
+    wrong row.
+    """
+    handles = {h for h in (event.payment_id, event.session_id) if h}
+    if not handles:
+        return
+
+    status = _TRANSACTION_STATUSES.get(event.event_type)
+    for transaction in order.payment_transactions:
+        if transaction.gateway != gateway:
+            continue
+        if not ({transaction.payment_id, transaction.session_id} & handles):
+            continue
+        # Stripe's Payment Intent does not exist until the customer pays, so
+        # this is where a Stripe attempt learns its own payment handle.
+        if event.payment_id and not transaction.payment_id:
+            transaction.payment_id = event.payment_id
+        # A cancel or a failure arriving after a success is a late duplicate,
+        # not a reversal — gateways reorder deliveries and Ziina emits a status
+        # per transition with no ordering guarantee at all. Only a refund or a
+        # dispute may move an attempt off `succeeded`, because only those two
+        # actually undo it.
+        if status is not None and not (
+            transaction.is_settled
+            and status
+            not in (
+                PaymentTransactionStatusEnum.REFUNDED,
+                PaymentTransactionStatusEnum.DISPUTED,
+            )
+        ):
+            transaction.status = status.value
+        transaction.raw_status = event.raw_type[:60]
+        if event.error_code:
+            transaction.error_code = event.error_code[:80]
+        if event.error_message:
+            transaction.error_message = event.error_message[:2000]
+        return
+
+
+#: What each outcome means for the attempt's own row. `UNHANDLED` never gets
+#: here, and `CANCELLED` deliberately does not clear a settled row — a cancel
+#: arriving after a success is a late duplicate, not a reversal.
+_TRANSACTION_STATUSES = {
+    PaymentEventType.SUCCEEDED: PaymentTransactionStatusEnum.SUCCEEDED,
+    PaymentEventType.FAILED: PaymentTransactionStatusEnum.FAILED,
+    PaymentEventType.CANCELLED: PaymentTransactionStatusEnum.CANCELLED,
+    PaymentEventType.REFUNDED: PaymentTransactionStatusEnum.REFUNDED,
+    PaymentEventType.DISPUTED: PaymentTransactionStatusEnum.DISPUTED,
+}
 
 
 async def _handle_payment_succeeded(
-    db: AsyncSession,
-    order_number: str | None,
-    payment_intent_id: str | None,
+    db: AsyncSession, order: Order, event: GatewayEvent
 ) -> None:
-    if not order_number:
-        logger.critical(
-            "payment_intent.succeeded — no order_number in metadata "
-            "(payment_intent=%s) — manual reconciliation required",
-            payment_intent_id,
-        )
-        return
-
-    try:
-        order = await _load_order(db, order_number)
-    except NotFoundError:
-        logger.critical(
-            "payment_intent.succeeded — order not found for order_number=%s "
-            "(payment_intent=%s) — manual reconciliation required",
-            order_number,
-            payment_intent_id,
-        )
-        return
+    payment_id = event.payment_id or event.session_id
 
     if order.status == OrderStatusEnum.CONFIRMED:
-        if payment_intent_id:
-            order.payment_id = payment_intent_id
+        if payment_id:
+            order.payment_id = payment_id
         logger.info(
             "Payment succeeded webhook skipped — order %s is already confirmed",
-            order_number,
+            order.order_number,
         )
         return
 
@@ -315,31 +583,33 @@ async def _handle_payment_succeeded(
     # payment event. CANCELLED is the dangerous one: cancelling returns every
     # line's stock (order_service.update_status), so confirming it again would
     # put the order back into the kitchen holding no claim on ingredients that
-    # may since have been sold twice. Stripe genuinely does deliver these —
+    # may since have been sold twice. Gateways genuinely do deliver these —
     # a customer pays on a tab left open after the shop cancelled — so it is
     # recorded loudly for a human to refund rather than silently applied.
     if order.status not in _CONFIRMABLE_FROM:
-        if payment_intent_id:
-            order.payment_id = payment_intent_id
+        if payment_id:
+            order.payment_id = payment_id
         logger.critical(
-            "payment_intent.succeeded arrived for order %s in terminal status %s "
-            "(payment_intent=%s) — money was taken for an order that will not be "
-            "fulfilled. Refund manually.",
-            order_number,
+            "Payment succeeded for order %s in terminal status %s "
+            "(gateway=%s payment=%s) — money was taken for an order that will "
+            "not be fulfilled. Refund manually.",
+            order.order_number,
             order.status,
-            payment_intent_id,
+            order.payment_provider,
+            payment_id,
         )
         return
 
-    if payment_intent_id:
-        order.payment_id = payment_intent_id
+    if payment_id:
+        order.payment_id = payment_id
     order.status = OrderStatusEnum.CONFIRMED
     order_response = await order_service.to_response(db, order)
 
     logger.info(
-        "Payment confirmed: order=%s payment_intent=%s",
-        order_number,
-        payment_intent_id,
+        "Payment confirmed: order=%s gateway=%s payment=%s",
+        order.order_number,
+        order.payment_provider,
+        payment_id,
     )
 
     try:
@@ -348,37 +618,18 @@ async def _handle_payment_succeeded(
     except Exception as exc:
         logger.error(
             "Failed to send order confirmation emails for %s: %s",
-            order_number,
+            order.order_number,
             exc,
         )
 
 
 async def _handle_payment_failed(
-    db: AsyncSession,
-    order_number: str | None,
-    event_type: str,
+    db: AsyncSession, order: Order, event: GatewayEvent
 ) -> None:
-    if not order_number:
-        logger.warning(
-            "%s — no order_number in metadata, skipping status update",
-            event_type,
-        )
-        return
-
-    try:
-        order = await _load_order(db, order_number)
-    except NotFoundError:
-        logger.error(
-            "Webhook: order not found for order_number=%s (event=%s)",
-            order_number,
-            event_type,
-        )
-        return
-
     if order.status != OrderStatusEnum.CREATED:
         logger.info(
             "Payment failed event ignored — order %s already in status %s",
-            order_number,
+            order.order_number,
             order.status,
         )
         return
@@ -387,9 +638,11 @@ async def _handle_payment_failed(
     order_response = await order_service.to_response(db, order)
 
     logger.warning(
-        "Payment failed: event=%s order=%s",
-        event_type,
-        order_number,
+        "Payment failed: gateway=%s event=%s order=%s reason=%s",
+        order.payment_provider,
+        event.raw_type,
+        order.order_number,
+        event.error_message or event.error_code or "unstated",
     )
 
     try:
@@ -397,56 +650,33 @@ async def _handle_payment_failed(
     except Exception as exc:
         logger.error(
             "Failed to send payment failed email for %s: %s",
-            order_number,
+            order.order_number,
             exc,
         )
 
 
-async def _handle_charge_refunded(
-    db: AsyncSession,
-    order_number: str | None,
-    payment_intent_id: str | None,
-    *,
-    fully_refunded: bool | None = None,
-    amount_refunded: int | None = None,
-    amount_captured: int | None = None,
-) -> None:
+async def _handle_refund(db: AsyncSession, order: Order, event: GatewayEvent) -> None:
     """
-    Charge metadata doesn't always carry order_number — fall back to looking
-    up the order by payment_intent_id (stored in order.payment_id after confirmation).
+    A refund is not automatically the whole order.
 
-    Stripe fires `charge.refunded` for a partial refund too. This used to move
-    the order to REFUNDED either way, so knocking AED 5 off a damaged box
-    marked the whole order refunded, dropped it out of the fulfilment views and
-    told the customer by email that their money was on its way back. A partial
-    is now recorded and reported, and the order keeps the status it had.
+    Stripe fires `charge.refunded` for a partial too. This used to move the
+    order to REFUNDED either way, so knocking AED 5 off a damaged box marked the
+    whole order refunded, dropped it out of the fulfilment views and told the
+    customer by email that their money was on its way back. A partial is now
+    recorded and reported, and the order keeps the status it had.
     """
-    try:
-        order = (
-            await _load_order(db, order_number)
-            if order_number
-            else await _load_order_by_payment_intent(db, payment_intent_id)
-        )
-    except NotFoundError:
-        logger.critical(
-            "charge.refunded — no order found for order_number=%s / "
-            "payment_intent=%s — manual reconciliation required",
-            order_number,
-            payment_intent_id,
-        )
-        return
-
-    is_full = _is_full_refund(fully_refunded, amount_refunded, amount_captured)
+    is_full = _is_full_refund(order, event)
 
     if not is_full:
         logger.warning(
-            "Partial refund on order %s (payment_intent=%s): %s of %s minor units "
-            "refunded. Order status left at %s — adjust by hand if the whole "
-            "order is being unwound.",
+            "Partial refund on order %s (gateway=%s payment=%s): %s of %s minor "
+            "units refunded. Order status left at %s — adjust by hand if the "
+            "whole order is being unwound.",
             order.order_number,
-            payment_intent_id,
-            amount_refunded,
-            amount_captured,
+            order.payment_provider,
+            event.payment_id,
+            event.amount_refunded,
+            event.amount_captured,
             order.status,
         )
         return
@@ -462,9 +692,10 @@ async def _handle_charge_refunded(
     order_response = await order_service.to_response(db, order)
 
     logger.info(
-        "Refund processed: order=%s payment_intent=%s",
+        "Refund processed: order=%s gateway=%s payment=%s",
         order.order_number,
-        payment_intent_id,
+        order.payment_provider,
+        event.payment_id,
     )
 
     try:
@@ -477,68 +708,43 @@ async def _handle_charge_refunded(
         )
 
 
-def _is_full_refund(
-    fully_refunded: bool | None,
-    amount_refunded: int | None,
-    amount_captured: int | None,
-) -> bool:
+def _is_full_refund(order: Order, event: GatewayEvent) -> bool:
     """
-    Whether a `charge.refunded` event unwound the entire charge.
+    Whether this refund unwound the entire charge.
 
-    Stripe's own `refunded` flag is authoritative when present. The amounts are
-    the fallback for an event shape that omits it. When neither is readable the
-    answer is "yes": treating an unknown as full preserves the behaviour every
-    refund had before partials were told apart, so an unrecognised payload
-    cannot quietly leave a fully-refunded order looking unrefunded.
+    The gateway's own "nothing left on this charge" flag is authoritative when
+    it sends one — Stripe does. The amounts are the fallback, and the second
+    fallback is the order's own total, which is what answers it for Ziina: their
+    refund object carries what was refunded and never what was originally
+    captured, so the only thing to compare against is what we charged.
+
+    When none of the three is readable the answer is "yes". Treating an unknown
+    as full preserves the behaviour every refund had before partials were told
+    apart, so an unrecognised payload cannot quietly leave a fully-refunded
+    order looking unrefunded.
     """
-    if fully_refunded is not None:
-        return bool(fully_refunded)
-    if amount_refunded is not None and amount_captured:
-        return amount_refunded >= amount_captured
+    if event.fully_refunded is not None:
+        return bool(event.fully_refunded)
+    if event.amount_refunded is not None and event.amount_captured:
+        return event.amount_refunded >= event.amount_captured
+    if event.amount_refunded is not None and order.total is not None:
+        return event.amount_refunded >= int(Decimal(str(order.total)) * 100)
     return True
 
 
-async def _handle_dispute_created(
-    db: AsyncSession,
-    payment_intent_id: str | None,
-) -> None:
+async def _handle_dispute(order: Order, event: GatewayEvent) -> None:
     """
     Chargeback filed — mark order as DISPUTED and log CRITICAL so it surfaces
     in monitoring. No customer email — this requires manual admin review.
     """
-    try:
-        order = await _load_order_by_payment_intent(db, payment_intent_id)
-    except NotFoundError:
-        logger.critical(
-            "CHARGEBACK FILED — no order found for payment_intent=%s "
-            "— manual reconciliation required",
-            payment_intent_id,
-        )
-        return
-
     order.status = OrderStatusEnum.DISPUTED
-
     logger.critical(
-        "CHARGEBACK FILED: order=%s payment_intent=%s "
+        "CHARGEBACK FILED: order=%s gateway=%s payment=%s "
         "— immediate manual review required",
         order.order_number,
-        payment_intent_id,
+        order.payment_provider,
+        event.payment_id,
     )
-
-
-# ── Other providers ───────────────────────────────────────────────────────────
-
-
-async def handle_tabby_webhook(payload: bytes, signature: str) -> dict:
-    """Stub: Tabby webhook handler. Always acknowledges receipt."""
-    logger.info("Tabby webhook received (stub) — not yet processed")
-    return {"received": True}
-
-
-async def handle_tamara_webhook(payload: bytes, signature: str) -> dict:
-    """Stub: Tamara webhook handler. Always acknowledges receipt."""
-    logger.info("Tamara webhook received (stub) — not yet processed")
-    return {"received": True}
 
 
 async def get_status(
@@ -552,13 +758,11 @@ async def get_status(
     order = await _load_order(db, order_number)
     _assert_may_act_on(order, user_id, admin)
 
-    paid = stripe_provider.is_confirmed_payment_id(order.payment_id)
-
     return {
         "order_number": order.order_number,
         "payment_provider": order.payment_provider,
         "payment_method": order.payment_method,
         "payment_id": order.payment_id,
-        "paid": paid,
+        "paid": _is_paid(order),
         "order_status": order.status,
     }

@@ -431,7 +431,36 @@ export interface DeliveryRates {
 
 // ─── Payment ──────────────────────────────────────────────────────────────────
 
+/**
+ * What the customer chooses. Not who processes it.
+ *
+ * There is one card option on the checkout and there always was — the customer
+ * never had an opinion about Stripe. Which processor settles the card is chosen
+ * on the server from the `payment_gateways` table, so it can be changed during
+ * an incident without shipping anything, and it is deliberately not a value
+ * this app can name.
+ */
+export type PaymentMethod = 'card' | 'cod';
+
+/**
+ * A stored `payment_method`, read as one of the two things it can mean.
+ *
+ * Orders written before methods and gateways were separated carry `stripe`
+ * here, and the retry path feeds exactly that value back in — so a customer
+ * retrying last week's failed payment would otherwise send a word this app no
+ * longer has a branch for. Anything unrecognised is a card, which is the only
+ * option available for delivery and the historical default.
+ */
+export function toPaymentMethod(value: string | null | undefined): PaymentMethod {
+  return value?.toLowerCase() === 'cod' ? 'cod' : 'card';
+}
+
 export interface PaymentSessionResponse {
+  /**
+   * The gateway that was actually used — `stripe`, `ziina`, `cod`, `none`.
+   * Reported so a failure can be attributed to a processor in analytics; it is
+   * never shown to the customer.
+   */
   provider: string;
   session_id: string | null;
   checkout_url: string | null;

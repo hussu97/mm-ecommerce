@@ -1,5 +1,5 @@
 import { analytics, normalisePath } from './analytics';
-import { AdvertisedPromo, Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, DeliveryRates, DeliveryQuote, DeliveryArea, PickupBranch, TrackResult } from './types';
+import { AdvertisedPromo, Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, PaymentMethod, DeliveryRates, DeliveryQuote, DeliveryArea, PickupBranch, TrackResult } from './types';
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -292,10 +292,23 @@ export const branchesApi = {
 };
 
 export const paymentsApi = {
-  createSession: (orderNumber: string, provider: string) =>
+  /**
+   * Ask the server to start a payment.
+   *
+   * `method` is what the customer chose — `card` or `cod`. It is deliberately
+   * not a gateway: which processor settles a card is decided server-side from
+   * the `payment_gateways` table, so a Stripe outage is answered by an admin
+   * toggle rather than a release, and no client can pick its own processor.
+   *
+   * `provider` is sent alongside for the duration of one rollout: the API still
+   * accepts the old field name, and sending both means a browser that loaded
+   * this bundle against a not-yet-deployed API keeps working.
+   */
+  createSession: (orderNumber: string, method: PaymentMethod) =>
     api.post<PaymentSessionResponse>('/payments/create-session', {
       order_number: orderNumber,
-      provider,
+      method,
+      provider: method,
     }),
 };
 

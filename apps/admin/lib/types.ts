@@ -723,3 +723,50 @@ export interface PaginatedAuditLogs {
   per_page: number;
   pages: number;
 }
+
+// ─── Payment Gateways ─────────────────────────────────────────────────────────
+
+/**
+ * A card processor and the terms on which it is sent traffic.
+ *
+ * The customer never sees any of this. They chose "card"; which of Stripe or
+ * Ziina settles it is an operations decision, and this is the shape of it.
+ */
+export interface PaymentGateway {
+  code: string;
+  name: string;
+  /** Whether an operator has switched it on. */
+  is_active: boolean;
+  /** Lower goes first — both when choosing and when falling back. */
+  priority: number;
+  /**
+   * Whether it may be reached for *automatically* after another gateway failed.
+   *
+   * Not the same question as `is_active`. A processor with worse rates is a
+   * fine deliberate choice and a bad reflex.
+   */
+  supports_failover: boolean;
+  min_amount: number | null;
+  max_amount: number | null;
+  /** Sends sandbox payments that take test cards and charge nothing. */
+  test_mode: boolean;
+  /**
+   * Whether this *environment* holds credentials for it.
+   *
+   * Computed on the server, never stored — it is a fact about the running
+   * container. A gateway that is not configured cannot be activated, which is
+   * what lets the Ziina toggle exist on production and do nothing.
+   */
+  is_configured: boolean;
+  /** Whether the router would actually pick it right now. */
+  is_routable: boolean;
+}
+
+export interface PaymentGatewayUpdate {
+  is_active?: boolean;
+  priority?: number;
+  supports_failover?: boolean;
+  min_amount?: number | null;
+  max_amount?: number | null;
+  test_mode?: boolean;
+}

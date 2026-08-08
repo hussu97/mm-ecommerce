@@ -3,19 +3,34 @@ from __future__ import annotations
 import json
 import logging
 from decimal import Decimal
-from urllib.parse import quote
+from typing import Mapping
 
 import stripe
-from stripe._error import SignatureVerificationError, StripeError
+from stripe._error import APIConnectionError, SignatureVerificationError, StripeError
 
 from app.core.config import settings
 from app.core.exceptions import BadRequestError
 from app.models.order import Order
-from app.services.providers.base import PaymentProvider
+from app.services.providers import checkout_urls
+from app.services.providers.base import (
+    GatewayEvent,
+    GatewaySession,
+    GatewayUnavailableError,
+    PaymentEventType,
+    PaymentGatewayProvider,
+)
 
 logger = logging.getLogger(__name__)
 
 _PAYMENT_INTENT_PREFIX = "pi_"
+
+#: Stripe refuses an AED charge under 2.00 at its own edge.
+_AED_MINIMUM = Decimal("2.00")
+
+#: Stripe's own status codes that mean "us, not you". A 5xx or a dropped
+#: connection is a reason to try the other processor; a 402 declined card is
+#: emphatically not, and neither is a 400 about a malformed line item.
+_UNAVAILABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 
 def _fee_label(delivery_fee: Decimal, low_order_fee: Decimal) -> str:
@@ -36,8 +51,10 @@ def _fee_label(delivery_fee: Decimal, low_order_fee: Decimal) -> str:
     return "Delivery Fee"
 
 
-class StripeProvider(PaymentProvider):
+class StripeProvider(PaymentGatewayProvider):
     """Stripe Checkout Sessions + webhook handler."""
+
+    code = "stripe"
 
     # ── private helpers ───────────────────────────────────────────────────────
 
@@ -45,12 +62,23 @@ class StripeProvider(PaymentProvider):
     def _configure() -> None:
         stripe.api_key = settings.STRIPE_SECRET_KEY
 
-    # ── PaymentProvider interface ─────────────────────────────────────────────
+    # ── PaymentGatewayProvider interface ──────────────────────────────────────
 
-    def create_session(self, order: Order) -> dict:
+    def is_configured(self) -> bool:
+        return bool(settings.STRIPE_SECRET_KEY)
+
+    def minimum_amount(self) -> Decimal | None:
+        return _AED_MINIMUM
+
+    def create_session(
+        self, order: Order, *, test_mode: bool = False
+    ) -> GatewaySession:
         """
         Create a Stripe Checkout Session for the given order.
-        Returns {session_id, checkout_url}.
+
+        `test_mode` is ignored: Stripe decides live-versus-test from the secret
+        key itself, so honouring a per-session flag here would let the admin
+        appear to switch an environment it has no way of switching.
         """
         self._configure()
 
@@ -116,12 +144,10 @@ class StripeProvider(PaymentProvider):
 
         # The email rides along so the confirmation page can prove ownership to
         # GET /orders/{order_number} even if the guest session cookie was lost.
-        success_url = (
-            f"{settings.WEB_URL}/checkout/confirmation"
-            f"?order_number={order.order_number}&email={quote(order.email)}"
-            f"&session_id={{CHECKOUT_SESSION_ID}}"
+        success_url = checkout_urls.success_url(
+            order, reference_token="{CHECKOUT_SESSION_ID}"
         )
-        cancel_url = f"{settings.WEB_URL}/checkout?step=payment&order_number={order.order_number}"
+        cancel_url = checkout_urls.cancel_url(order)
 
         try:
             session = stripe.checkout.Session.create(
@@ -144,21 +170,46 @@ class StripeProvider(PaymentProvider):
                 },
                 idempotency_key=f"sess_{order.order_number}",
             )
+        except APIConnectionError as e:
+            # Never reached Stripe at all. The order is fine; the road is not.
+            logger.error("Stripe unreachable creating session: %s", e)
+            raise GatewayUnavailableError(f"Stripe unreachable: {e}") from e
         except StripeError as e:
+            status = getattr(e, "http_status", None)
+            if status in _UNAVAILABLE_STATUSES:
+                logger.error("Stripe returned %s creating session: %s", status, e)
+                raise GatewayUnavailableError(f"Stripe error {status}: {e}") from e
             logger.error("Stripe session creation failed: %s", e)
             raise BadRequestError(
                 f"Payment session creation failed: {getattr(e, 'user_message', None) or str(e)}"
             )
 
-        return {"session_id": session.id, "checkout_url": session.url}
+        return GatewaySession(
+            session_id=session.id,
+            checkout_url=session.url,
+            # Stripe's Payment Intent does not exist until the customer pays, so
+            # there is deliberately nothing to record here yet. The confirmation
+            # webhook is what fills it in.
+            payment_id=None,
+            raw_status=getattr(session, "status", None),
+        )
 
-    def handle_webhook(self, payload: bytes, signature: str) -> dict:
+    def parse_webhook(self, payload: bytes, headers: Mapping[str, str]) -> GatewayEvent:
         """
-        Verify and parse a Stripe webhook event.
+        Verify a Stripe webhook and translate it into a `GatewayEvent`.
 
-        Returns a normalised dict with:
-          event_id, event_type, order_number, payment_intent_id
+        Handles, and maps:
+          - payment_intent.succeeded      → SUCCEEDED
+          - payment_intent.payment_failed → FAILED
+          - payment_intent.canceled       → CANCELLED
+          - charge.refunded               → REFUNDED
+          - charge.dispute.created        → DISPUTED
+        Everything else → UNHANDLED, which is acknowledged and applied to nothing.
         """
+        signature = _header(headers, "stripe-signature")
+        if not signature:
+            raise BadRequestError("Missing Stripe-Signature header")
+
         if not settings.STRIPE_WEBHOOK_SECRET:
             raise BadRequestError("Stripe webhook secret not configured")
 
@@ -189,23 +240,29 @@ class StripeProvider(PaymentProvider):
         except ValueError:
             raise BadRequestError("Could not parse webhook payload")
 
-        event_type: str = body.get("type", "")
+        raw_type: str = body.get("type", "")
         obj: dict = (body.get("data") or {}).get("object") or {}
         metadata: dict = obj.get("metadata") or {}
 
         order_number: str | None = None
-        payment_intent_id: str | None = None
+        payment_id: str | None = None
+        session_id: str | None = None
         amount_refunded: int | None = None
         amount_captured: int | None = None
         fully_refunded: bool | None = None
+        error_code: str | None = None
+        error_message: str | None = None
 
-        if event_type.startswith("payment_intent."):
-            payment_intent_id = obj.get("id")
+        if raw_type.startswith("payment_intent."):
+            payment_id = obj.get("id")
             order_number = metadata.get("order_number")
-        elif event_type == "charge.dispute.created":
-            payment_intent_id = obj.get("payment_intent")
-        elif event_type.startswith("charge."):
-            payment_intent_id = obj.get("payment_intent")
+            last_error = obj.get("last_payment_error") or {}
+            error_code = last_error.get("code")
+            error_message = last_error.get("message")
+        elif raw_type == "charge.dispute.created":
+            payment_id = obj.get("payment_intent")
+        elif raw_type.startswith("charge."):
+            payment_id = obj.get("payment_intent")
             order_number = metadata.get("order_number")
             # A refund is not automatically the whole order. `refunded` is
             # Stripe's own "nothing left on this charge" flag; the amounts are
@@ -213,28 +270,70 @@ class StripeProvider(PaymentProvider):
             amount_refunded = obj.get("amount_refunded")
             amount_captured = obj.get("amount")
             fully_refunded = obj.get("refunded")
+        elif raw_type.startswith("checkout.session."):
+            session_id = obj.get("id")
+            payment_id = obj.get("payment_intent")
+            order_number = metadata.get("order_number")
 
         logger.info(
             "Stripe webhook: type=%s order=%s payment_intent=%s",
-            event_type,
+            raw_type,
             order_number,
-            payment_intent_id,
+            payment_id,
         )
 
-        return {
-            "event_id": body.get("id"),
-            "event_type": event_type,
-            "order_number": order_number,
-            "payment_intent_id": payment_intent_id,
-            "amount_refunded": amount_refunded,
-            "amount_captured": amount_captured,
-            "fully_refunded": fully_refunded,
-        }
+        return GatewayEvent(
+            event_id=body.get("id"),
+            event_type=_EVENT_TYPES.get(raw_type, PaymentEventType.UNHANDLED),
+            raw_type=raw_type,
+            order_number=order_number,
+            session_id=session_id,
+            payment_id=payment_id,
+            amount_refunded=amount_refunded,
+            amount_captured=amount_captured,
+            fully_refunded=fully_refunded,
+            error_code=error_code,
+            error_message=error_message,
+        )
 
     def is_confirmed_payment_id(self, payment_id: str | None) -> bool:
-        """True when payment_id is a confirmed Payment Intent (not a pending session)."""
+        """
+        True when *payment_id* is a confirmed Payment Intent (not a session).
+
+        Kept only for orders written before `payment_transactions` existed,
+        which have no row to read and whose paid-ness is recoverable from
+        nothing but this prefix. New code asks the transaction; see
+        `payment_service._is_paid`.
+        """
         return bool(payment_id and payment_id.startswith(_PAYMENT_INTENT_PREFIX))
 
 
-# Module-level singleton — imported by payment_service
+#: Stripe's vocabulary → ours. A dict rather than a chain of `if`s because it is
+#: a translation table, and the thing a reader wants from it is the whole
+#: mapping at once.
+_EVENT_TYPES: dict[str, PaymentEventType] = {
+    "payment_intent.succeeded": PaymentEventType.SUCCEEDED,
+    "payment_intent.payment_failed": PaymentEventType.FAILED,
+    "payment_intent.canceled": PaymentEventType.CANCELLED,
+    "charge.refunded": PaymentEventType.REFUNDED,
+    "charge.dispute.created": PaymentEventType.DISPUTED,
+}
+
+
+def _header(headers: Mapping[str, str], name: str) -> str | None:
+    """
+    Case-insensitively read a header out of whatever mapping we were handed.
+
+    Starlette's own `request.headers` is already case-insensitive; a plain dict
+    built in a test is not, and a signature check that passes in production and
+    fails in a test for that reason is a bad afternoon.
+    """
+    lowered = name.lower()
+    for key, value in headers.items():
+        if key.lower() == lowered:
+            return value
+    return None
+
+
+# Module-level singleton — imported by the gateway registry
 provider = StripeProvider()
