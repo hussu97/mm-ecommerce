@@ -4,6 +4,7 @@ import { cmsApi, RSC_API_BASE } from '@/lib/api';
 // The same request-scoped fetch the locale layout uses for the nav bar, so one
 // homepage render asks the API for the category list once rather than twice.
 import { getCategories } from '@/lib/catalogue';
+import { CACHE_TAGS, CONTENT_TTL } from '@/lib/cache-policy';
 import type { Product, Category } from '@/lib/types';
 import { DeliveryPromiseBanner } from '@/components/home/DeliveryPromiseBanner';
 import { HeroCarousel, type HeroContent } from '@/components/home/HeroCarousel';
@@ -116,7 +117,7 @@ async function getHomeContent(locale: string): Promise<HomeContent> {
 async function getFeaturedProducts(): Promise<Product[]> {
   try {
     const res = await fetch(`${RSC_API_BASE}/products/featured`, {
-      cache: 'no-store',
+      next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
       signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return [];

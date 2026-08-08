@@ -5,6 +5,23 @@ import type { BlogPost } from '@/lib/types';
 import { Breadcrumb } from '@/components/ui';
 import { RSC_API_BASE } from '@/lib/api';
 
+/**
+ * ISR, rather than a render per visit.
+ *
+ * No `generateStaticParams` here on purpose — posts are published from the
+ * admin, and a build should not have to be the thing that publishes one — so
+ * Next renders each path on first request. Without this export that render is
+ * thrown away and repeated for the next visitor; with it, the path is held and
+ * served from the CDN, then re-rendered in the background once it expires. A
+ * blog post is the least volatile thing on the site.
+ *
+ * The literal is not a style choice: Next reads segment config statically, and
+ * an imported constant fails the build with "Invalid segment configuration
+ * export". Keep it in step with `CONTENT_TTL` in `lib/cache-policy.ts`, which
+ * is what every *fetch* on the site uses and what the reasoning lives next to.
+ */
+export const revalidate = 60;
+
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 
 async function fetchPost(slug: string, locale: string): Promise<BlogPost | null> {

@@ -9,6 +9,7 @@ import { Breadcrumb } from '@/components/ui';
 import { localizedField } from '@/lib/i18n/entity';
 import { getTranslations, createT } from '@/lib/i18n/server';
 import { RSC_API_BASE } from '@/lib/api';
+import { CACHE_TAGS, CONTENT_TTL } from '@/lib/cache-policy';
 import { SortSelect } from '@/components/category/SortSelect';
 import {
   DEFAULT_PRODUCT_SORT,
@@ -34,7 +35,7 @@ const PER_PAGE = 12;
 const getCategoryMeta = cache(async (slug: string): Promise<Category | null> => {
   try {
     const res = await fetch(`${RSC_API_BASE}/categories/${slug}`, {
-      cache: 'no-store',
+      next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
       signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return null;
@@ -52,9 +53,12 @@ async function getCategoryData(
 ): Promise<{ category: Category; products: Product[]; total: number; pages: number } | null> {
   try {
     const [catRes, prodRes] = await Promise.all([
-      fetch(`${RSC_API_BASE}/categories/${slug}`, { cache: 'no-store', signal: AbortSignal.timeout(8000) }),
+      fetch(`${RSC_API_BASE}/categories/${slug}`, {
+        next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
+        signal: AbortSignal.timeout(8000),
+      }),
       fetch(`${RSC_API_BASE}/products?category=${slug}&per_page=${PER_PAGE}&page=${page}&sort=${sort}`, {
-        cache: 'no-store',
+        next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
         signal: AbortSignal.timeout(8000),
       }),
     ]);

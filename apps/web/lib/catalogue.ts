@@ -1,28 +1,25 @@
 import { cache } from 'react';
 
 import { RSC_API_BASE } from '@/lib/api';
+import { CACHE_TAGS, CONTENT_TTL } from '@/lib/cache-policy';
 import type { Category } from '@/lib/types';
 
 /**
- * The category list, fetched at most once per request.
+ * The category list.
  *
- * Three places want this on a single homepage render — the locale layout for
- * the nav bar, the page for its tiles, and `buildJsonLd` for the Menu schema —
- * and each of them used to call `/categories` itself. `cache: 'no-store'` opts
- * out of Next's request memoisation, so those were three real calls to the API
- * for one byte-identical answer.
+ * Two caches, doing two different jobs. `React.cache` collapses the several
+ * callers inside one render — the locale layout wants it for the nav bar, the
+ * homepage for its tiles and again for the Menu schema — into a single call.
+ * The data cache underneath means that call usually is not made at all.
  *
- * `React.cache` memoises for the life of one request only, so this keeps the
- * freshness `no-store` was chosen for: the API answers from Redis and drops the
- * key on any admin write, and this layer cannot hold anything past the response
- * it was built for.
+ * See `CONTENT_TTL` for why the TTL is what it is.
  *
  * Callers that need only the live ones should use `getActiveCategories`.
  */
 export const getCategories = cache(async (): Promise<Category[]> => {
   try {
     const res = await fetch(`${RSC_API_BASE}/categories`, {
-      cache: 'no-store',
+      next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
       signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return [];

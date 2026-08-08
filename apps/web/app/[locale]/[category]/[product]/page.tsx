@@ -4,10 +4,11 @@ import { Breadcrumb } from '@/components/ui';
 import { ProductDetailATC } from './ProductDetailATC';
 import { ProductImageGallery } from './ProductImageGallery';
 import { RecentlyViewedProducts } from '@/components/product/RecentlyViewedProducts';
-import type { Product, ProductModifier } from '@/lib/types';
+import type { Product, ProductListResponse, ProductModifier } from '@/lib/types';
 import { localizedField } from '@/lib/i18n/entity';
 import { getTranslations, createT } from '@/lib/i18n/server';
 import { RSC_API_BASE } from '@/lib/api';
+import { CACHE_TAGS, CONTENT_TTL } from '@/lib/cache-policy';
 import {
   BRAND,
   PRODUCT_BRAND,
@@ -18,8 +19,68 @@ import {
 } from '@/lib/schema';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 
+/**
+ * How long a rendered product page is held before it is built again.
+ *
+ * Safe for stock: a page up to a minute stale can offer something that has just
+ * sold out, but it cannot sell it. `cart_service.add_item` refuses an
+ * out-of-stock product, and `order_service` decrements with a conditional
+ * UPDATE, so the worst case is a customer told "out of stock" at the basket
+ * rather than on the tile.
+ *
+ * The literal is not a style choice: Next reads segment config statically, and
+ * an imported constant fails the build with "Invalid segment configuration
+ * export". Keep it in step with `CONTENT_TTL` in `lib/cache-policy.ts`.
+ *
+ * On its own this does nothing here — see `generateStaticParams` below.
+ */
+export const revalidate = 60;
+
+/**
+ * Prerender the catalogue.
+ *
+ * `revalidate` on its own is not enough on a segment with dynamic params: Next
+ * renders each path on demand and does not hold the result, so every visit to
+ * a product page paid for a full render — verified by watching for
+ * `x-nextjs-cache` and never seeing it. This export is what actually turns the
+ * route into ISR.
+ *
+ * `dynamicParams` stays at its default of true, so this is a warm start rather
+ * than an allow-list: a product added in the admin after the build still
+ * renders, it just does not get the benefit of having been rendered already.
+ *
+ * The catalogue is tens of items, so the build cost is trivial. If the API is
+ * unreachable at build time this returns nothing and the whole route falls back
+ * to on-demand rendering, which is exactly where it was before.
+ */
+export async function generateStaticParams() {
+  const locales = (process.env.NEXT_PUBLIC_SUPPORTED_LOCALES ?? 'en,ar').split(',');
+  try {
+    const res = await fetch(`${RSC_API_BASE}/products?per_page=500`, {
+      next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as ProductListResponse;
+    return data.items.flatMap((p) =>
+      p.category?.slug
+        ? locales.map((locale) => ({
+            locale,
+            category: p.category!.slug,
+            product: p.slug,
+          }))
+        : [],
+    );
+  } catch {
+    return [];
+  }
+}
+
 async function getProduct(slug: string): Promise<Product | null> {
-  const res = await fetch(`${RSC_API_BASE}/products/${slug}`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
+  const res = await fetch(`${RSC_API_BASE}/products/${slug}`, {
+    next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
+    signal: AbortSignal.timeout(8000),
+  });
   if (!res.ok) return null;
   return res.json();
 }
