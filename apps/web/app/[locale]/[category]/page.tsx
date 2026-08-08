@@ -18,6 +18,7 @@ import {
   productSortOptions,
   type ProductSort,
 } from '@/lib/product-sort';
+import { fetchJson, fetchJsonOrNull } from '@/lib/fetch-json';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 const PER_PAGE = 12;
 
@@ -33,17 +34,11 @@ const PER_PAGE = 12;
  * catalogue query per render, thrown away on arrival.
  */
 const getCategoryMeta = cache(async (slug: string): Promise<Category | null> => {
-  try {
-    const res = await fetch(`${RSC_API_BASE}/categories/${slug}`, {
-      next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return null;
-    const category: Category = await res.json();
-    return category.is_active ? category : null;
-  } catch {
-    return null;
-  }
+  const category = await fetchJsonOrNull<Category>(`${RSC_API_BASE}/categories/${slug}`, {
+    next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
+    signal: AbortSignal.timeout(8000),
+  });
+  return category?.is_active ? category : null;
 });
 
 async function getCategoryData(
@@ -51,32 +46,32 @@ async function getCategoryData(
   page: number = 1,
   sort: ProductSort = DEFAULT_PRODUCT_SORT,
 ): Promise<{ category: Category; products: Product[]; total: number; pages: number } | null> {
-  try {
-    const [catRes, prodRes] = await Promise.all([
-      fetch(`${RSC_API_BASE}/categories/${slug}`, {
+  // No try/catch that turns a failure into `null`. `null` means notFound(), and
+  // under ISR a 404 rendered during a blip is *kept* — a live category gone for
+  // the whole TTL. `fetchJsonOrNull` returns null only for a real 404 and
+  // throws otherwise, so a broken API produces an error, not a missing page.
+  const [category, data] = await Promise.all([
+    fetchJsonOrNull<Category>(`${RSC_API_BASE}/categories/${slug}`, {
+      next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
+      signal: AbortSignal.timeout(8000),
+    }),
+    fetchJson<ProductListResponse>(
+      `${RSC_API_BASE}/products?category=${slug}&per_page=${PER_PAGE}&page=${page}&sort=${sort}`,
+      {
         next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
         signal: AbortSignal.timeout(8000),
-      }),
-      fetch(`${RSC_API_BASE}/products?category=${slug}&per_page=${PER_PAGE}&page=${page}&sort=${sort}`, {
-        next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
-        signal: AbortSignal.timeout(8000),
-      }),
-    ]);
-    if (!catRes.ok) return null;
+      },
+    ),
+  ]);
 
-    const category: Category = await catRes.json();
-    if (!category.is_active) return null;
+  if (!category || !category.is_active) return null;
 
-    const data: ProductListResponse | null = prodRes.ok ? await prodRes.json() : null;
-    const products = data?.items ?? [];
-    const total = data?.total ?? 0;
-    const pages = data?.pages ?? 1;
-
-    return { category, products, total, pages };
-  } catch (error) {
-    console.error('[category] Failed to load data for slug:', slug, error);
-    return null;
-  }
+  return {
+    category,
+    products: data?.items ?? [],
+    total: data?.total ?? 0,
+    pages: data?.pages ?? 1,
+  };
 }
 
 export async function generateMetadata({
