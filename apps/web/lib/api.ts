@@ -1,3 +1,4 @@
+import { analytics, normalisePath } from './analytics';
 import { AdvertisedPromo, Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, DeliveryRates, DeliveryQuote, DeliveryArea, PickupBranch, TrackResult } from './types';
 import { CACHE_TAGS, CONTENT_TTL } from './cache-policy';
 
@@ -72,7 +73,42 @@ async function request<T>(path: string, options: RequestInit = {}, _retry = true
 
   if (sessionId) headers['X-Session-Id'] = sessionId;
 
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include' });
+  const method = (options.method ?? 'GET').toUpperCase();
+
+  /**
+   * Record the failure once, here, for every endpoint the storefront has.
+   *
+   * Thirty call sites each catch their own errors and show their own toast, and
+   * none of them told us anything — so a 500 on the delivery quote and a 429 on
+   * the promo check both looked, from the dashboard, exactly like a quiet day.
+   * The one place every one of them passes through is this function.
+   *
+   * **401 is not a failure and is never recorded.** `/auth/me` runs on every
+   * page load to find out whether anybody is signed in, and for a shopper who
+   * is not — which is the overwhelming majority of this site's traffic — the
+   * honest answer to that question is 401. Reporting it made `api_error` fire
+   * once per anonymous page view: the loudest event on the site, saying only
+   * "somebody visited while logged out", drowning the 500s this exists to
+   * surface and spending the event quota on it. That is exactly what happened
+   * for the twenty minutes after this shipped.
+   *
+   * A session that dies mid-journey is still visible, because whatever the
+   * customer was doing when it died fails its own way and has its own event.
+   */
+  const report = (status: number) => {
+    if (status === 401) return;
+    analytics.apiError({ status, endpoint: normalisePath(path), method });
+  };
+
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include' }).catch(
+    (err) => {
+      // A request that never arrived. Status 0 is the convention for it, and
+      // distinguishing it matters: it is the shape a blocked or dropped mobile
+      // connection takes, not a server that answered badly.
+      report(0);
+      throw err;
+    },
+  );
 
   if (res.status === 401 && _retry) {
     const refreshed = await refreshAccessToken();
@@ -83,6 +119,7 @@ async function request<T>(path: string, options: RequestInit = {}, _retry = true
   }
 
   if (!res.ok) {
+    report(res.status);
     const body = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
     // Pydantic 422 returns detail as an array of {loc, msg, type}
     let message: string;

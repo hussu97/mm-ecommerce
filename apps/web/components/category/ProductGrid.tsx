@@ -1,8 +1,16 @@
+import type { ProductList } from '@/lib/analytics';
 import type { Product } from '@/lib/types';
 import { ProductCard } from './ProductCard';
 import { Icon } from '@/components/ui/Icon';
 
-export function ProductGrid({ products }: { products: Product[] }) {
+export function ProductGrid({
+  products,
+  list = 'category',
+}: {
+  products: Product[];
+  /** Which listing this grid is. Decides how `select_item` is attributed. */
+  list?: ProductList;
+}) {
   if (products.length === 0) {
     return (
       <div className="text-center py-24">
@@ -20,7 +28,13 @@ export function ProductGrid({ products }: { products: Product[] }) {
         // Two columns on a phone, three from `lg`, so the first four cards are
         // the ones that can be on screen when the page paints — and one of them
         // is the LCP element. Everything after stays lazy.
-        <ProductCard key={product.id} product={product} priority={i < 4} />
+        <ProductCard
+          key={product.id}
+          product={product}
+          list={list}
+          position={i}
+          priority={i < 4}
+        />
       ))}
     </div>
   );

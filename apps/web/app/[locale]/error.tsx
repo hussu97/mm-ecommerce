@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { useEffect } from 'react';
 import { Icon } from '@/components/ui/Icon';
 
+import { analytics } from '@/lib/analytics';
+
 export default function Error({
   error,
   reset,
@@ -14,6 +16,11 @@ export default function Error({
 }) {
   useEffect(() => {
     Sentry.captureException(error);
+    // Sentry has the stack; Umami has the journey. Recording it in both is what
+    // lets a spike in this be read against the funnel it broke — a crash on the
+    // checkout and a crash on the blog are one number in Sentry and two very
+    // different problems here.
+    analytics.appError({ digest: error.digest, path: window.location.pathname });
     console.error(error);
   }, [error]);
 

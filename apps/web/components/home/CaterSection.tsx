@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import { PromotionLink } from '@/components/analytics/PromotionLink';
 import { Reveal } from './Reveal';
 import { Icon } from '@/components/ui/Icon';
 
@@ -55,13 +55,16 @@ export function CaterSection({ c, locale }: { c: CaterContent; locale: string })
 
         {c.cta_text && (
           <Reveal delay={120} className="mt-9 text-center">
-            <Link
+            <PromotionLink
               href={`/${locale}${c.cta_href ?? '/contact'}`}
+              creative="cater"
+              slot={0}
+              title={c.cta_text}
               className="mm-sheen inline-flex items-center gap-2 px-7 py-3.5 bg-primary text-white text-[11px] sm:text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity"
             >
               {c.cta_text}
               <Icon name="arrow_forward" className="text-[15px] rtl:rotate-180" />
-            </Link>
+            </PromotionLink>
           </Reveal>
         )}
 

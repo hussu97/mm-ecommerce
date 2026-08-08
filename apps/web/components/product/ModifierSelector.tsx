@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { analytics } from '@/lib/analytics';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
 import { isModifierPriced } from '@/lib/pricing';
@@ -165,7 +166,12 @@ function ModifierGroup({
 export function ModifierSelector({ product, onChange }: Props) {
   const { t, locale } = useTranslation();
 
-  const productModifiers = product.product_modifiers ?? [];
+  // Memoised because `recordPick` closes over it: the `?? []` produces a fresh
+  // array on every render, which would rebuild the callback on every render too.
+  const productModifiers = useMemo(
+    () => product.product_modifiers ?? [],
+    [product.product_modifiers],
+  );
   const absolutePrices = isModifierPriced(product);
 
   // Open with the cheapest option already chosen for any group that only ever
@@ -219,7 +225,42 @@ export function ModifierSelector({ product, onChange }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
 
+  /**
+   * Record a pick, in the untranslated names.
+   *
+   * Deliberately not fired for the preselected cheapest option, and not for
+   * clearing one: what is being counted is a decision a customer made, and a
+   * default nobody touched is not one. English names throughout so an Arabic
+   * session and an English session land on the same row — the dashboard is read
+   * by one team, and two spellings of "Box of 6" is two products that do not
+   * add up.
+   */
+  const recordPick = useCallback(
+    (modifierId: string, optionId: string) => {
+      const pm = productModifiers.find(p => p.modifier_id === modifierId);
+      const option = pm?.modifier.options.find(o => o.id === optionId);
+      if (!pm || !option) return;
+      analytics.modifierSelected({
+        product_name: product.name,
+        group_name: pm.modifier.name,
+        option_name: option.name,
+        price_delta: Number(option.price),
+      });
+    },
+    [productModifiers, product.name],
+  );
+
   const handleSelect = (modifierId: string, optionId: string, checked: boolean) => {
+    // Same reasoning as `handleIncrement`: only a tick that will actually stick
+    // counts, and the decision is made out here so the updater stays pure.
+    if (checked) {
+      const group = productModifiers.find(p => p.modifier_id === modifierId);
+      const atMax =
+        group !== undefined &&
+        group.maximum_options > 1 &&
+        selected.filter(s => s.modifier_id === modifierId).length >= group.maximum_options;
+      if (!atMax) recordPick(modifierId, optionId);
+    }
     setSelected(prev => {
       const pm = productModifiers.find(p => p.modifier_id === modifierId);
       const isSingle = pm ? pm.maximum_options === 1 : false;
@@ -242,8 +283,16 @@ export function ModifierSelector({ product, onChange }: Props) {
   };
 
   const handleIncrement = (modifierId: string, optionId: string) => {
+    // A press that hits the group's ceiling changes nothing, so it is not a
+    // pick. Checked out here rather than inside the updater: React may run an
+    // updater more than once, and an event fired from inside one is an event
+    // sent twice.
+    const pm = productModifiers.find(p => p.modifier_id === modifierId);
+    if (pm && selected.filter(s => s.modifier_id === modifierId).length >= pm.maximum_options) {
+      return;
+    }
+    recordPick(modifierId, optionId);
     setSelected(prev => {
-      const pm = productModifiers.find(p => p.modifier_id === modifierId);
       const total = prev.filter(s => s.modifier_id === modifierId).length;
       if (pm && total >= pm.maximum_options) return prev;
       return [...prev, { modifier_id: modifierId, option_id: optionId }];

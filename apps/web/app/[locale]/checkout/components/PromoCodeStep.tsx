@@ -74,14 +74,26 @@ export function PromoCodeStep({
       if (result.valid) {
         onChange({ promoCode: code, promoDiscount: Number(result.discount_amount), promoMessage: result.message ?? '' });
         if (announced) {
-          analytics.promoApplied({ code, discount: Number(result.discount_amount) });
+          analytics.promoApplied({
+            code,
+            discount: Number(result.discount_amount),
+            surface: 'checkout',
+            subtotal,
+          });
           addToast(t('checkout.promo_applied', { code }), 'success');
         }
       } else {
         const reason = result.message ?? t('checkout.invalid_promo');
         setError(reason);
         setNeedsVerify(Boolean(result.requires_phone_verification));
-        analytics.promoFailed({ code, reason });
+        analytics.promoFailed({
+          code,
+          // Trimmed because the server's refusals are full sentences and a
+          // property with one distinct value per incident cannot be grouped.
+          reason: reason.slice(0, 60),
+          surface: 'checkout',
+          subtotal,
+        });
         onChange({ promoCode: code, promoDiscount: 0, promoMessage: '' });
       }
     } catch {
@@ -91,7 +103,7 @@ export function PromoCodeStep({
       // worse of the two failures.
       if (announced) {
         setError(t('checkout.promo_error'));
-        analytics.promoFailed({ code, reason: 'network_error' });
+        analytics.promoFailed({ code, reason: 'network_error', surface: 'checkout', subtotal });
       }
     } finally {
       setLoading(false);

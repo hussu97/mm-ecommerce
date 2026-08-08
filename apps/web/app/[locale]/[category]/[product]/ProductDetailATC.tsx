@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useCart } from '@/lib/cart-context';
 import { useToast, QuantitySelector } from '@/components/ui';
 import { ApiError } from '@/lib/api';
-import { analytics } from '@/lib/analytics';
+import { analytics, failureReason } from '@/lib/analytics';
 import { DeliveryEstimate } from '@/components/product/DeliveryEstimate';
 import { ModifierSelector, SelectedOption } from '@/components/product/ModifierSelector';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
@@ -27,7 +27,19 @@ export function ProductDetailATC({ product }: { product: Product }) {
       category: (product.category as { name?: string } | undefined)?.name ?? '',
       price: minPrice,
       has_modifiers: !!hasModifiers,
+      slug: product.slug,
+      in_stock: !isOutOfStock,
     });
+    // A page view that could never have become a sale. Paired with
+    // `view_product` above it gives the lost-demand list directly: which
+    // products people keep arriving at while the button says Out of Stock.
+    if (isOutOfStock) {
+      analytics.productUnavailable({
+        product_name: product.name,
+        surface: 'pdp',
+        reason: 'out_of_stock',
+      });
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [totalPrice, setTotalPrice] = useState(Number(product.base_price));
@@ -54,10 +66,16 @@ export function ProductDetailATC({ product }: { product: Product }) {
         variant_name: selectedOptions.map(o => o.option_id).join('+'),
         price: totalPrice,
         quantity: qty,
+        surface: 'pdp',
       });
       addToast(t('product.added_to_cart', { name: productName }), 'success');
       setQty(1);
     } catch (err) {
+      analytics.addToCartFailed({
+        product_name: product.name,
+        surface: 'pdp',
+        reason: failureReason(err),
+      });
       addToast(err instanceof ApiError ? err.message : t('product.failed_to_add'), 'error');
     } finally {
       setAdding(false);

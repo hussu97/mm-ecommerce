@@ -8,6 +8,7 @@ import { ProductBadge } from '@/components/product/ProductBadge';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
 import { withFallback } from '@/lib/i18n/fallback';
+import { analytics, type ProductList } from '@/lib/analytics';
 import { computeFromPrice } from '@/lib/pricing';
 import type { Product } from '@/lib/types';
 import { Icon } from '@/components/ui/Icon';
@@ -16,19 +17,23 @@ function ConditionalLink({
   href,
   children,
   className,
+  onClick,
 }: {
   href: string | null;
   children: React.ReactNode;
   className?: string;
+  onClick?: () => void;
 }) {
   if (!href) return <div className={className}>{children}</div>;
-  return <Link href={href} className={className}>{children}</Link>;
+  return <Link href={href} className={className} onClick={onClick}>{children}</Link>;
 }
 
 export function ProductCard({
   product,
   badge,
   priority = false,
+  list,
+  position = 0,
 }: {
   product: Product;
   badge?: string;
@@ -41,6 +46,14 @@ export function ProductCard({
    * or two; everything below stays lazy, which is what lazy is for.
    */
   priority?: boolean;
+  /**
+   * Which listing this tile is part of.
+   *
+   * Optional because a tile with no list attached still works — it simply does
+   * not record where it was clicked out of. Every rail that matters passes it.
+   */
+  list?: ProductList;
+  position?: number;
 }) {
   const { t, locale } = useTranslation();
   const hasModifiers = product.product_modifiers && product.product_modifiers.length > 0;
@@ -57,12 +70,32 @@ export function ProductCard({
     ? badge ?? withFallback(t, 'plp.bestseller', 'Bestseller')
     : undefined;
 
+  /**
+   * Which rail sent someone to a product page, and how far down it they had to
+   * look.
+   *
+   * `view_product` says the page was reached and never how. The same brownie is
+   * reached from a category listing, from search, from the homepage rail and
+   * from "recently viewed", and those are four different merchandising
+   * questions — the position is what answers whether anything below the fold is
+   * ever clicked at all.
+   */
+  const recordClick = () => {
+    if (!list) return;
+    analytics.selectItem({
+      product_name: product.name,
+      list,
+      position,
+      price: fromPrice,
+    });
+  };
+
   return (
     <>
       <article className="flex flex-col group">
 
         {/* Image */}
-        <ConditionalLink href={pdpHref} className="relative aspect-square overflow-hidden bg-[#f9f5f0] block">
+        <ConditionalLink href={pdpHref} onClick={recordClick} className="relative aspect-square overflow-hidden bg-[#f9f5f0] block">
           {image ? (
             <Image
               src={image}
@@ -82,7 +115,7 @@ export function ProductCard({
 
         {/* Details */}
         <div className="pt-3 sm:pt-4 flex flex-col flex-1 gap-2 sm:gap-3">
-          <ConditionalLink href={pdpHref}>
+          <ConditionalLink href={pdpHref} onClick={recordClick}>
             <h3 className="font-display text-sm sm:text-base text-gray-800 leading-snug hover:text-primary transition-colors line-clamp-2 min-h-[2.5rem] sm:min-h-[2.75rem]">
               {productName}
             </h3>

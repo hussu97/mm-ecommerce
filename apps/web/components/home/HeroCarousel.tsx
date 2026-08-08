@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
+import { PromotionLink } from '@/components/analytics/PromotionLink';
 import { BannerPicture } from './BannerPicture';
 import { isLiveLink, liveSlugSet } from '@/lib/category-links';
 import type { Category } from '@/lib/types';
@@ -282,21 +282,27 @@ export function HeroCarousel({
                 style={{ ['--mm-delay' as string]: '220ms' }}
               >
                 {current.cta_text && (
-                  <Link
+                  <PromotionLink
                     href={`/${locale}${current.cta_href ?? '/all-products'}`}
+                    creative="hero"
+                    slot={active}
+                    title={current.headline ?? current.cta_text ?? ''}
                     className="mm-sheen inline-flex items-center gap-2 px-6 sm:px-7 py-3 sm:py-3.5 bg-primary text-white text-[11px] sm:text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity"
                   >
                     {current.cta_text}
                     <Icon name="arrow_forward" className="text-[15px] rtl:rotate-180" />
-                  </Link>
+                  </PromotionLink>
                 )}
                 {current.secondary_text && (
-                  <Link
+                  <PromotionLink
                     href={`/${locale}${current.secondary_href ?? '/about'}`}
+                    creative="hero"
+                    slot={active}
+                    title={current.secondary_text ?? ''}
                     className="inline-flex items-center px-6 sm:px-7 py-3 sm:py-3.5 border border-primary/70 text-primary text-[11px] sm:text-xs font-body uppercase tracking-widest hover:bg-primary hover:text-white transition-colors duration-200"
                   >
                     {current.secondary_text}
-                  </Link>
+                  </PromotionLink>
                 )}
               </div>
             </div>

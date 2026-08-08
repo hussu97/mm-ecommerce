@@ -2,7 +2,7 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { Suspense, useState, useEffect, useCallback, useMemo } from 'react';
+import { Suspense, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useCart } from '@/lib/cart-context';
 import {
@@ -20,7 +20,7 @@ import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
-import { analytics } from '@/lib/analytics';
+import { analytics, failureReason } from '@/lib/analytics';
 import { guestAddresses } from '@/lib/guest-addresses';
 import { AddressModal, formatAddress, toDraft, type AddressDraft } from './components/AddressModal';
 import { PromoCodeStep } from './components/PromoCodeStep';
@@ -635,6 +635,12 @@ function CheckoutContent() {
     const returnOrder = searchParams.get('order_number');
     if (searchParams.get('step') === 'payment' && returnOrder) {
       setRestoringOrder(true);
+      // An order exists and has not been paid for. This is the most expensive
+      // thing that happens on the site and until now it was invisible: the
+      // customer got a warning toast, the order sat unpaid, and nothing
+      // anywhere counted it. Fired before the lookup, so a lookup that also
+      // fails does not hide the cancellation underneath it.
+      analytics.paymentCancelled({ order_number: returnOrder });
       ordersApi.get(returnOrder)
         .then((order) => {
           setRetryOrder(order);
@@ -795,11 +801,91 @@ function CheckoutContent() {
     const timer = setTimeout(() => {
       deliveryApi
         .quote(effectiveSubtotal, form.locationLat, form.locationLng, form.addressLine1)
-        .then((q) => { if (!cancelled) setQuote(q); })
+        .then((q) => {
+          if (cancelled) return;
+          setQuote(q);
+          // What this pin was actually priced at. Nothing recorded so far said
+          // what customers are being quoted, how often free delivery lands, or
+          // how often the answer is "nowhere near us" — and delivery pricing is
+          // the lever this shop pulls most often. Only quotes with a pin behind
+          // them: a quote for a blank address is the same answer every time and
+          // would drown the real ones.
+          if (form.locationLat !== null && form.locationLng !== null) {
+            analytics.deliveryQuote({
+              serviceable: q.serviceable !== false,
+              delivery_fee: q.delivery_fee ?? undefined,
+              base_fee: q.base_fee ?? undefined,
+              free_applied: q.free_delivery_applied,
+              free_available: q.free_delivery_available,
+              free_threshold: q.free_threshold ?? undefined,
+              subtotal: effectiveSubtotal,
+            });
+          }
+        })
         .catch(() => { /* leave the previous quote in place */ });
     }, 400);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [effectiveSubtotal, form.locationLat, form.locationLng, form.addressLine1, retryOrder]);
+
+  /**
+   * The three states worth a goal of their own, each fired once per checkout.
+   *
+   * They are all derivable from `delivery_quote` above, but a derivable fact is
+   * not a funnel step: Umami matches goals and funnel steps on the event name,
+   * so "how many baskets hit an address we cannot serve" only becomes a number
+   * you can watch, and a step you can measure drop-off across, if it is named.
+   * The refs make each of them once-per-visit rather than once-per-keystroke.
+   */
+  const seenUnserviceable = useRef(false);
+  const seenFreeUnlocked = useRef(false);
+  const seenLowOrderFee = useRef(false);
+
+  useEffect(() => {
+    if (unserviceable && !seenUnserviceable.current) {
+      seenUnserviceable.current = true;
+      analytics.deliveryUnserviceable({
+        subtotal,
+        item_count: cart?.items.length ?? 0,
+      });
+    }
+    if (freeApplied && !seenFreeUnlocked.current && freeThreshold !== null) {
+      seenFreeUnlocked.current = true;
+      analytics.freeDeliveryUnlocked({ threshold: freeThreshold, subtotal: effectiveSubtotal });
+    }
+    if (lowOrderFee > 0 && !seenLowOrderFee.current && !retryOrder) {
+      seenLowOrderFee.current = true;
+      analytics.lowOrderFeeApplied({ fee: lowOrderFee, subtotal });
+    }
+  }, [unserviceable, freeApplied, freeThreshold, lowOrderFee, subtotal, effectiveSubtotal, cart, retryOrder]);
+
+  /**
+   * Arriving at the checkout at all, with the basket that arrived with them.
+   *
+   * The main funnel stepped through `/*​/checkout` as a page view, which cannot
+   * tell a guest from a signed-in customer, cannot see the basket, and counts a
+   * cancelled payment coming back from the gateway as a fresh arrival.
+   */
+  const checkoutViewed = useRef(false);
+  useEffect(() => {
+    if (checkoutViewed.current || !cart || cart.items.length === 0) return;
+    checkoutViewed.current = true;
+    analytics.viewCheckout({
+      item_count: cart.items.length,
+      subtotal: cart.subtotal ?? 0,
+      is_guest: !user || Boolean(user.is_guest),
+      has_saved_address: savedAddresses.length > 0,
+    });
+  }, [cart, user, savedAddresses.length]);
+
+  // The checkout that never rendered a form at all — the basket could not be
+  // read. `api_error` catches the request; this catches the outcome, which is a
+  // customer looking at a "try again" screen instead of a place-order button.
+  const loadFailureReported = useRef(false);
+  useEffect(() => {
+    if (!cartError || loadFailureReported.current) return;
+    loadFailureReported.current = true;
+    analytics.checkoutLoadFailed();
+  }, [cartError]);
 
 
   const currentDraft: AddressDraft = {
@@ -863,15 +949,28 @@ function CheckoutContent() {
       }
 
       if (Object.keys(found).length > 0) {
+        const fields = Object.keys(found);
         setErrors(found);
-        analytics.checkoutError({ step: 1, field: Object.keys(found)[0] });
-        focusFirstError(Object.keys(found)[0]);
+        analytics.checkoutError({
+          step: 1,
+          field: fields[0],
+          // The whole set, not just the first. A form failing on one field is a
+          // typo; the same three fields failing together is a form problem.
+          fields: fields.sort().join(','),
+          error_count: fields.length,
+          delivery_method: form.deliveryMethod,
+        });
+        focusFirstError(fields[0]);
         return;
       }
       setErrors({});
     }
 
     setSubmitting(true);
+    // Which half of this we got to, so a failure below can say whether the order
+    // was ever written. The two are entirely different problems: nothing was
+    // created, versus an order exists and cannot be paid for.
+    let stage: 'create_order' | 'create_session' = 'create_order';
     let createdOrder: import('@/lib/types').Order | null = null;
     try {
       if (!user) await ensureCheckoutAuth(user);
@@ -879,8 +978,13 @@ function CheckoutContent() {
       let orderNumber: string;
       if (retryOrder) {
         orderNumber = retryOrder.order_number;
+        analytics.paymentRetry({
+          order_number: retryOrder.order_number,
+          provider: retryOrder.payment_method ?? undefined,
+        });
       } else {
         if (!cart || cart.items.length === 0) {
+          analytics.checkoutCartEmpty();
           addToast(t('checkout.cart_empty'), 'error');
           setSubmitting(false);
           return;
@@ -919,6 +1023,8 @@ function CheckoutContent() {
         await refreshCart();
       }
 
+      // Past this line the order exists; anything that fails now is the gateway.
+      stage = 'create_session';
       const provider = retryOrder?.payment_method ?? paymentMethod;
       const session = await paymentsApi.createSession(orderNumber, provider);
 
@@ -938,14 +1044,35 @@ function CheckoutContent() {
       // Keep a created order so payment can be retried without a cart.
       if (createdOrder) setRetryOrder(createdOrder);
       const message = err instanceof Error ? err.message : 'Something went wrong. Please try again.';
-      analytics.paymentFailed({
-        order_number: createdOrder?.order_number ?? retryOrder?.order_number ?? '',
-        error_message: message,
-      });
+      const reason = failureReason(err);
+
+      // An order that was never written is not a payment failure, and counting
+      // it as one is how a promo rule that refuses every basket hides inside the
+      // gateway's numbers. `create_order` is refused by our own API — a coupon
+      // that no longer applies, an address the zone map rejects, a sold-out
+      // line — and it needs its own event and its own name.
+      if (stage === 'create_order') {
+        analytics.orderCreateFailed({
+          reason,
+          status: (err as { status?: number }).status,
+          delivery_method: form.deliveryMethod,
+          total,
+          has_promo: form.promoDiscount > 0,
+        });
+      } else {
+        analytics.paymentFailed({
+          order_number: createdOrder?.order_number ?? retryOrder?.order_number ?? '',
+          error_message: message,
+          reason,
+          provider: retryOrder?.payment_method ?? paymentMethod,
+          total,
+          stage,
+        });
+      }
       addToast(message, 'error');
       setSubmitting(false);
     }
-  }, [form, cart, retryOrder, user, accountEmail, locale, addToast, refreshCart, t, paymentMethod, isDelivery, unserviceable, pickupBranches]);
+  }, [form, cart, retryOrder, user, accountEmail, locale, addToast, refreshCart, t, paymentMethod, isDelivery, unserviceable, pickupBranches, total]);
 
   // ── Non-form states ────────────────────────────────────────────────────────
 
@@ -1065,7 +1192,12 @@ function CheckoutContent() {
           <PickupBranchPicker
             branches={pickupBranches}
             selectedId={form.pickupBranchId}
-            onSelect={(id) => { onChange({ pickupBranchId: id }); clearError('pickupBranch'); }}
+            onSelect={(id) => {
+              const branch = pickupBranches.find((b) => b.id === id);
+              if (branch) analytics.pickupBranchSelected({ branch_name: branch.name });
+              onChange({ pickupBranchId: id });
+              clearError('pickupBranch');
+            }}
             error={errors.pickupBranch}
             locale={locale}
             t={t}
@@ -1223,7 +1355,14 @@ function CheckoutContent() {
                 key={id}
                 type="button"
                 aria-pressed={paymentMethod === id}
-                onClick={() => onChange({ paymentMethod: id })}
+                onClick={() => {
+                  analytics.paymentMethodSelected({
+                    method: id,
+                    delivery_method: form.deliveryMethod,
+                    total,
+                  });
+                  onChange({ paymentMethod: id });
+                }}
                 className={`w-full flex items-center gap-3 px-3.5 py-3 border rounded-sm text-start transition-colors ${
                   paymentMethod === id ? 'border-primary bg-primary/5' : 'border-gray-200 hover:border-primary/40'
                 }`}

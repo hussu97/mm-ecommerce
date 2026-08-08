@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef } from 'react';
 import { APIProvider, Map, AdvancedMarker, useMapsLibrary, useMap, type MapMouseEvent } from '@vis.gl/react-google-maps';
 import { Icon } from '@/components/ui/Icon';
 
+import { analytics } from '@/lib/analytics';
+
 const DUBAI_CENTER = { lat: 25.2048, lng: 55.2708 };
 const MELTING_MOMENTS_CAKES = {
   lat: 25.3304139,
@@ -118,6 +120,10 @@ function MapContent({ lat, lng, onChange, placeholder, height = '200px' }: Locat
       if (!loc) return;
       const newLat = loc.lat();
       const newLng = loc.lng();
+      // How the pin got where it is. Four routes to the same field, and which
+      // one people actually use is what decides whether the map is worth its
+      // size on a phone — or whether search alone would do.
+      analytics.locationPinSet({ method: 'autocomplete', surface: 'checkout' });
       onChangeRef.current(newLat, newLng, formatSelectedAddress(place));
       mapRef.current?.panTo({ lat: newLat, lng: newLng });
       mapRef.current?.setZoom(15);
@@ -155,6 +161,7 @@ function MapContent({ lat, lng, onChange, placeholder, height = '200px' }: Locat
   const handleMapClick = useCallback(
     (e: MapMouseEvent) => {
       if (!e.detail.latLng) return;
+      analytics.locationPinSet({ method: 'map_tap', surface: 'checkout' });
       onChange(e.detail.latLng.lat, e.detail.latLng.lng);
     },
     [onChange]
@@ -168,11 +175,17 @@ function MapContent({ lat, lng, onChange, placeholder, height = '200px' }: Locat
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;
+        analytics.locationPinSet({ method: 'current_location', surface: 'checkout' });
         onChangeRef.current(latitude, longitude);
         mapRef.current?.panTo({ lat: latitude, lng: longitude });
         mapRef.current?.setZoom(16);
       },
-      () => { /* denied or unavailable — the map is still there to tap */ },
+      () => {
+        // Denied or unavailable — the map is still there to tap. Worth counting
+        // even so: a high refusal rate is the reason the one-tap shortcut on
+        // this form looks unused.
+        analytics.geolocationDenied({ surface: 'checkout' });
+      },
       { enableHighAccuracy: true, timeout: 10_000 },
     );
   }, []);
@@ -210,7 +223,9 @@ function MapContent({ lat, lng, onChange, placeholder, height = '200px' }: Locat
             position={position}
             draggable
             onDragEnd={(e) => {
-              if (e.latLng) onChange(e.latLng.lat(), e.latLng.lng());
+              if (!e.latLng) return;
+              analytics.locationPinSet({ method: 'drag', surface: 'checkout' });
+              onChange(e.latLng.lat(), e.latLng.lng());
             }}
           />
         )}

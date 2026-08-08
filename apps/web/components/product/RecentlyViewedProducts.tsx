@@ -49,7 +49,7 @@ export function RecentlyViewedProducts({
 
   return (
     <div className="max-w-7xl mx-auto px-4 pb-16">
-      <ProductCarousel title={t('product.recently_viewed')} products={products} />
+      <ProductCarousel title={t('product.recently_viewed')} products={products} list="recently_viewed" />
     </div>
   );
 }

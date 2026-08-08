@@ -5,7 +5,7 @@ import Image from 'next/image';
 import { useCart } from '@/lib/cart-context';
 import { useToast } from '@/components/ui';
 import { ApiError } from '@/lib/api';
-import { analytics } from '@/lib/analytics';
+import { analytics, failureReason } from '@/lib/analytics';
 import { ModifierSelector, SelectedOption } from './ModifierSelector';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
@@ -61,10 +61,16 @@ export function ModifierModal({ product, onClose }: Props) {
         variant_name: selectedOptions.map(o => o.option_id).join('+'),
         price: totalPrice,
         quantity: qty,
+        surface: 'modal',
       });
       addToast(t('product.added_to_cart', { name: productName }), 'success');
       onClose();
     } catch (err) {
+      analytics.addToCartFailed({
+        product_name: product.name,
+        surface: 'modal',
+        reason: failureReason(err),
+      });
       addToast(err instanceof ApiError ? err.message : t('product.failed_to_add'), 'error');
     } finally {
       setAdding(false);

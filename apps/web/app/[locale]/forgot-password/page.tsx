@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { authApi, ApiError } from '@/lib/api';
+import { analytics, failureReason } from '@/lib/analytics';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { Turnstile, isTurnstileEnabled } from '@/components/ui/Turnstile';
 import { Icon } from '@/components/ui/Icon';
@@ -24,8 +25,10 @@ export default function ForgotPasswordPage() {
     setError('');
     try {
       await authApi.forgotPassword(email, turnstileToken || undefined);
+      analytics.passwordResetRequested();
       setSubmitted(true);
     } catch (err) {
+      analytics.passwordResetFailed({ stage: 'request', reason: failureReason(err) });
       setError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.');
     } finally {
       setLoading(false);

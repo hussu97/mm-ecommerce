@@ -27,22 +27,42 @@ import { CONTENT_TTL } from "@/lib/cache-policy";
  * `React.cache` on top is a different thing again and does the other half: it
  * collapses the metadata pass, the layout and the page into one call within a
  * single render, which the data cache does not do for a cache miss.
+ *
+ * **It throws rather than falling back to `{}`, and that is the important
+ * part.** An empty map is not a degraded page, it is a page of raw keys —
+ * `nav.all` where the word "All" should be — and once caching exists, a
+ * swallowed failure is a *cached* page of raw keys. This was not hypothetical:
+ * a build run against the live API came back rate-limited, this returned `{}`,
+ * and every prerendered route baked in the key names.
+ *
+ * Throwing is what makes every layer behave:
+ *
+ *   - during `next build`, the build fails instead of shipping the damage;
+ *   - during an ISR revalidation, Next keeps serving the last good page;
+ *   - a non-2xx is never written to the data cache in the first place.
+ *
+ * A 200 carrying `{}` is a different thing — that is the API's answer, and it
+ * is honoured.
  */
 export const getTranslations = cache(
   async (locale: string): Promise<Record<string, string>> => {
-    try {
-      const res = await fetch(`${RSC_API_BASE}/i18n/translations/${locale}`, {
-        next: { revalidate: CONTENT_TTL, tags: ['i18n'] },
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!res.ok) return {};
-      return await res.json();
-    } catch {
-      return {};
+    const res = await fetch(`${RSC_API_BASE}/i18n/translations/${locale}`, {
+      next: { revalidate: CONTENT_TTL, tags: ['i18n'] },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) {
+      throw new Error(`translations ${locale}: HTTP ${res.status}`);
     }
+    return await res.json();
   },
 );
 
+/**
+ * The language list. Falls back to an empty list on purpose, unlike the two
+ * above: everything that reads it already copes — the layout derives direction
+ * from the locale when the list is empty, and the switcher simply does not
+ * render. A missing switcher is a smaller thing than a broken page.
+ */
 export const getLanguages = cache(async (): Promise<Language[]> => {
   try {
     const res = await fetch(`${RSC_API_BASE}/i18n/languages`, {

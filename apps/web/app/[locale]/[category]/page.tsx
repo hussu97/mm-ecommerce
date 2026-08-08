@@ -266,6 +266,7 @@ export default async function CategoryPage({
             <div className="flex justify-end shrink-0">
               <SortSelect
                 action={`/${locale}/${slug}`}
+                surface="category"
                 value={sort}
                 options={productSortOptions(t)}
                 label={productSortLabel(t)}

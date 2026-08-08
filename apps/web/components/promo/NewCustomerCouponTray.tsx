@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { analytics } from '@/lib/analytics';
 import { promoApi } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
@@ -56,12 +57,34 @@ export function NewCustomerCouponTray({ appliedCode, onApply }: NewCustomerCoupo
     return () => { cancelled = true; };
   }, []);
 
-  if (!promo) return null;
   // The copy this tray has is percentage-shaped ("{percent}% off your first
   // {orders} orders"). A fixed-amount coupon rendered through it would read as
   // "20% off" for a 20-dirham discount, so it gets no tray until there is
   // wording that fits it.
-  if (promo.discount_type !== 'percentage' || promo.first_orders_limit === null) return null;
+  const displayable =
+    promo !== null && promo.discount_type === 'percentage' && promo.first_orders_limit !== null;
+
+  /**
+   * The impression, once, and only when the tray really is on screen.
+   *
+   * Without it `promo_applied` has no denominator: taps on the tray were
+   * counted and the baskets that saw the offer and scrolled past it were not,
+   * so "does the tray work" was a number divided by nothing. It sits above the
+   * early returns because a hook cannot live below one — `displayable` is the
+   * same condition those returns use.
+   */
+  const shown = useRef(false);
+  useEffect(() => {
+    if (!displayable || shown.current || !promo || promo.first_orders_limit === null) return;
+    shown.current = true;
+    analytics.couponTrayShown({
+      code: promo.code,
+      percent: Number(promo.discount_value),
+      first_orders_limit: promo.first_orders_limit,
+    });
+  }, [displayable, promo]);
+
+  if (!promo || !displayable || promo.first_orders_limit === null) return null;
 
   // The Arabic spelling is a second name for the same row, so either one
   // applies the same coupon. Show the one the page is being read in.

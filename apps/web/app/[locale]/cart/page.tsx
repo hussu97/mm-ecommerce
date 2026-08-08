@@ -2,12 +2,12 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useCart } from '@/lib/cart-context';
 import { promoApi, ensureSessionId } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { accountEmailOf, ensureCheckoutAuth } from '@/lib/checkout-auth';
-import { analytics } from '@/lib/analytics';
+import { analytics, failureReason } from '@/lib/analytics';
 import { Button } from '@/components/ui/Button';
 import { Breadcrumb } from '@/components/ui/Breadcrumb';
 import { Input } from '@/components/ui/Input';
@@ -40,10 +40,39 @@ export default function CartPage() {
   const discount = appliedPromo?.discount ?? 0;
   const total = Math.max(0, subtotal - discount);
 
-  const handleQuantityChange = useCallback(async (itemId: string, quantity: number) => {
+  /**
+   * The basket, once per visit to this page.
+   *
+   * The main funnel used to step through `/*​/cart` as a page view, which counts
+   * the address rather than the basket — a refresh is a second view, and an
+   * empty basket looks identical to a full one. An event carries what is in it,
+   * so cart-to-checkout drop-off can finally be read against basket size.
+   *
+   * Guarded by a ref rather than a dependency list because `cart` is refetched
+   * on every mutation: without it, taking one brownie out of the basket counts
+   * as arriving at the basket again.
+   */
+  const cartViewed = useRef(false);
+  useEffect(() => {
+    if (isLoading || !cart || cartViewed.current) return;
+    cartViewed.current = true;
+    if (items.length === 0) {
+      analytics.cartEmpty();
+      return;
+    }
+    analytics.viewCart({
+      item_count: items.length,
+      subtotal,
+      has_promo: appliedPromo !== null,
+    });
+  }, [isLoading, cart, items.length, subtotal, appliedPromo]);
+
+  const handleQuantityChange = useCallback(async (itemId: string, quantity: number, productName: string, from: number) => {
     try {
       await updateItem(itemId, quantity);
-    } catch {
+      analytics.updateCartQuantity({ product_name: productName, from, to: quantity, surface: 'cart' });
+    } catch (err) {
+      analytics.cartActionFailed({ action: 'update', reason: failureReason(err), surface: 'cart' });
       addToast(t('cart.failed_update'), 'error');
     }
   }, [updateItem, addToast, t]);
@@ -51,8 +80,9 @@ export default function CartPage() {
   const handleRemove = useCallback(async (itemId: string, productName: string) => {
     try {
       await removeItem(itemId);
-      analytics.removeFromCart({ product_name: productName });
-    } catch {
+      analytics.removeFromCart({ product_name: productName, surface: 'cart' });
+    } catch (err) {
+      analytics.cartActionFailed({ action: 'remove', reason: failureReason(err), surface: 'cart' });
       addToast(t('cart.failed_remove'), 'error');
     }
   }, [removeItem, addToast, t]);
@@ -66,7 +96,7 @@ export default function CartPage() {
    * error itself — the tray shows its own failure next to its own button, and
    * the input shows it under the input.
    */
-  const applyCode = useCallback(async (raw: string): Promise<string | null> => {
+  const applyCode = useCallback(async (raw: string, fromTray = false): Promise<string | null> => {
     const code = raw.trim().toUpperCase();
     if (!code) return null;
 
@@ -82,15 +112,40 @@ export default function CartPage() {
       const result = await promoApi.validate(code, subtotal, {
         email: accountEmailOf(user),
       });
-      if (!result.valid) return result.message ?? t('cart.invalid_promo');
+      if (!result.valid) {
+        analytics.promoFailed({
+          code,
+          // The server's own words, kept short enough to group on. Whether a
+          // coupon was refused for being expired, spent or not-for-you is the
+          // difference between a campaign that ended and one that is broken.
+          reason: (result.message ?? 'invalid').slice(0, 60),
+          surface: 'cart',
+          subtotal,
+          from_tray: fromTray,
+        });
+        return result.message ?? t('cart.invalid_promo');
+      }
 
       const discountAmount = Number(result.discount_amount);
       setPromoCode(code);
       setAppliedPromo({ code, discount: discountAmount, message: result.message ?? '' });
-      analytics.promoApplied({ code, discount: discountAmount });
+      analytics.promoApplied({
+        code,
+        discount: discountAmount,
+        surface: 'cart',
+        subtotal,
+        from_tray: fromTray,
+      });
       addToast(t('cart.promo_applied', { code }), 'success');
       return null;
-    } catch {
+    } catch (err) {
+      analytics.promoFailed({
+        code,
+        reason: failureReason(err),
+        surface: 'cart',
+        subtotal,
+        from_tray: fromTray,
+      });
       return t('cart.promo_error');
     }
   }, [subtotal, user, addToast, t]);
@@ -111,7 +166,11 @@ export default function CartPage() {
   const handleProceedToCheckout = useCallback(async () => {
     if (items.length === 0) return;
 
-    analytics.beginCheckout({ item_count: items.length, subtotal });
+    analytics.beginCheckout({
+      item_count: items.length,
+      subtotal,
+      has_promo: appliedPromo !== null,
+    });
     setCheckoutLoading(true);
     try {
       // Create guest session if not authenticated
@@ -248,7 +307,7 @@ export default function CartPage() {
                     <div className="flex items-center justify-between mt-auto pt-2">
                       <QuantitySelector
                         value={item.quantity}
-                        onChange={(q) => handleQuantityChange(item.id, q)}
+                        onChange={(q) => handleQuantityChange(item.id, q, item.product_name ?? '', item.quantity)}
                         min={1}
                         max={99}
                         disabled={isLoading}
@@ -301,7 +360,7 @@ export default function CartPage() {
                   the people who were buying anyway. */}
               <NewCustomerCouponTray
                 appliedCode={appliedPromo?.code ?? null}
-                onApply={applyCode}
+                onApply={(code) => applyCode(code, true)}
               />
 
               {/* Promo code */}

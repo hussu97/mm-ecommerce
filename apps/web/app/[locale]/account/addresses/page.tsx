@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { analytics, failureReason } from '@/lib/analytics';
 import { addressesApi, authApi, ApiError } from '@/lib/api';
 import { Address, AddressCreate } from '@/lib/types';
 import { Input } from '@/components/ui/Input';
@@ -149,8 +150,14 @@ export default function AddressesPage() {
         setAddresses(prev => [...prev, created]);
         addToast('Address added', 'success');
       }
+      analytics.addressSaved({
+        surface: 'account',
+        has_pin: form.latitude !== null && form.longitude !== null,
+        is_new: !editId,
+      });
       closeForm();
     } catch (err) {
+      analytics.addressSaveFailed({ surface: 'account', reason: failureReason(err) });
       addToast(err instanceof ApiError ? err.message : 'Failed to save address', 'error');
     } finally {
       setSaving(false);
@@ -163,6 +170,7 @@ export default function AddressesPage() {
       await addressesApi.delete(id);
       void refreshFromAddresses();
       setAddresses(prev => prev.filter(a => a.id !== id));
+      analytics.addressDeleted({ surface: 'account' });
       addToast('Address removed', 'success');
     } catch {
       addToast('Failed to delete address', 'error');
@@ -294,7 +302,7 @@ export default function AddressesPage() {
                   not require an SMS. It is what unlocks the new-customer
                   offer, and the offer is the reason to bother. */}
               {isValidPhone(form.phone) && verifiedPhone !== form.phone && (
-                <PhoneVerify
+                <PhoneVerify surface="account"
                   phone={form.phone}
                   onVerified={setVerifiedPhone}
                   className="mt-2"

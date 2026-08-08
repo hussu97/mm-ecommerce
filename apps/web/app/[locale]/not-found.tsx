@@ -1,50 +1,17 @@
-'use client';
+import type { Metadata } from 'next';
 
-import Link from 'next/link';
+import { NotFoundView } from './NotFoundView';
 
-import { useTranslation } from '@/lib/i18n/TranslationProvider';
+export const metadata: Metadata = { title: '404 — Page Not Found' };
 
 /**
- * The 404, rendered inside the locale shell.
+ * The 404 for anything under a locale — which, thanks to the proxy, is very
+ * nearly everything. `global-not-found.tsx` covers the handful of URLs that
+ * never reach a language at all.
  *
- * It used to sit at `app/not-found.tsx` and read `cookies()` to work out which
- * language to apologise in, then fetch the whole translation map itself. Both
- * are unnecessary here: it renders under `[locale]/layout.tsx`, so the locale is
- * settled and the strings are already in context. A client component rather
- * than a server one for exactly that reason — `not-found.tsx` is not handed
- * `params`, and the context is the only thing that knows.
+ * A server component only so it can carry `metadata`; the visible half is in
+ * `NotFoundView`, which needs the translation context. See the note there.
  */
 export default function NotFound() {
-  const { t, locale } = useTranslation();
-
-  return (
-    <div className="min-h-[70vh] flex flex-col items-center justify-center px-4 text-center">
-      <p className="font-display text-8xl sm:text-[10rem] text-secondary/60 leading-none select-none">
-        404
-      </p>
-      <h1 className="font-display text-2xl sm:text-3xl text-primary uppercase tracking-widest mt-2 mb-4">
-        {t('error.not_found_title')}
-      </h1>
-      <p className="font-body text-sm text-gray-500 max-w-sm mb-8">
-        {t('error.not_found_body')}
-      </p>
-      <div className="flex flex-col sm:flex-row gap-3">
-        <Link
-          href={`/${locale}`}
-          className="px-6 py-3 bg-primary text-white text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity"
-        >
-          {t('error.back_to_home')}
-        </Link>
-        <Link
-          href={`/${locale}/contact`}
-          className="px-6 py-3 border border-gray-300 text-gray-600 text-xs font-body uppercase tracking-widest hover:bg-gray-50 transition-colors"
-        >
-          {t('error.contact_us')}
-        </Link>
-      </div>
-      {/* Decorative line */}
-      <div className="mt-12 w-16 h-0.5 bg-secondary/40" />
-      <p className="font-body text-xs text-gray-400 italic mt-3">{t('error.tagline')}</p>
-    </div>
-  );
+  return <NotFoundView />;
 }
