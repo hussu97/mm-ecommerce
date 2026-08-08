@@ -158,7 +158,7 @@ async def test_the_fee_sits_outside_vat_exactly_as_delivery_does():
 # ── it must reach the payment session ─────────────────────────────────────────
 
 
-def test_stripe_line_items_add_up_to_the_order_total():
+async def test_stripe_line_items_add_up_to_the_order_total():
     """
     The guard that matters. A fee on the order but not in the session means the
     card is charged less than the order says, the books disagree, and both
@@ -192,7 +192,7 @@ def test_stripe_line_items_add_up_to_the_order_total():
         stripe_mock.checkout.Session.create.return_value = SimpleNamespace(
             id="cs_test", url="https://stripe.test/pay"
         )
-        provider.create_session(order)
+        await provider.create_session(order)
 
     kwargs = stripe_mock.checkout.Session.create.call_args.kwargs
     line_items = kwargs["line_items"]
@@ -220,7 +220,7 @@ def test_stripe_line_items_add_up_to_the_order_total():
     )
 
 
-def test_a_fee_only_order_still_gets_a_line():
+async def test_a_fee_only_order_still_gets_a_line():
     """Delivery can be free while the small-basket fee is not — Sharjah is
     exactly that case. Keying the line on `delivery_fee > 0` would drop the
     charge entirely."""
@@ -252,7 +252,7 @@ def test_a_fee_only_order_still_gets_a_line():
         stripe_mock.checkout.Session.create.return_value = SimpleNamespace(
             id="cs_test", url="https://stripe.test/pay"
         )
-        provider.create_session(order)
+        await provider.create_session(order)
 
     line_items = stripe_mock.checkout.Session.create.call_args.kwargs["line_items"]
     charged = sum(

@@ -131,7 +131,7 @@ class PaymentGatewayProvider(ABC):
         return True
 
     @abstractmethod
-    def create_session(
+    async def create_session(
         self,
         order: Order,
         *,
@@ -139,6 +139,15 @@ class PaymentGatewayProvider(ABC):
     ) -> GatewaySession:
         """
         Create a checkout for *order* and return where to send the customer.
+
+        Async because it is a network call made while a customer waits, and every
+        other outbound integration here (`lalamove_provider`, `noon_send_provider`,
+        `turnstile_service`) is already `httpx.AsyncClient`. A blocking call in
+        here does not just slow the checkout down — it stalls the whole worker,
+        serving nothing at all for the duration of the timeout. That is worst
+        exactly when it matters most: a gateway having a bad day is a gateway
+        answering slowly, and the failover is supposed to be what saves the
+        checkout, not a second thing to wait on.
 
         Raises `GatewayUnavailableError` when the gateway is at fault (and the
         router should try the next one), and `BadRequestError` when the order is

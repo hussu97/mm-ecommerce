@@ -9,7 +9,7 @@ import {
   ordersApi, paymentsApi, addressesApi, branchesApi, deliveryApi,
   getSessionId,
 } from '@/lib/api';
-import { toPaymentMethod, type PaymentMethod } from '@/lib/types';
+import { toPaymentMethod, toWireMethod, type PaymentMethod } from '@/lib/types';
 import { useAuth } from '@/lib/auth-context';
 import { accountEmailOf, ensureCheckoutAuth } from '@/lib/checkout-auth';
 import { Button } from '@/components/ui/Button';
@@ -1017,7 +1017,11 @@ function CheckoutContent() {
           // Stamped on the order, and every email about it is written in it.
           locale,
           promo_code: form.promoDiscount > 0 ? form.promoCode : undefined,
-          payment_method: paymentMethod,
+          // The legacy word, for one release. The previous API validates this
+          // against an enum that has no `card` in it, and the web ships to
+          // Vercel minutes before the API reaches the VM — so sending `card`
+          // here 422s every order created in that window. See `toWireMethod`.
+          payment_method: toWireMethod(paymentMethod),
           notes: form.notes || undefined,
           session_id: getSessionId() ?? undefined,
         });

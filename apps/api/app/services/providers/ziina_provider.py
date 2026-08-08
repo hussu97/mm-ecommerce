@@ -131,7 +131,7 @@ class ZiinaProvider(PaymentGatewayProvider):
     def minimum_amount(self) -> Decimal | None:
         return _AED_MINIMUM
 
-    def create_session(
+    async def create_session(
         self, order: Order, *, test_mode: bool = False
     ) -> GatewaySession:
         """
@@ -166,12 +166,14 @@ class ZiinaProvider(PaymentGatewayProvider):
         }
 
         try:
-            response = httpx.post(
-                f"{self._base_url()}/payment_intent",
-                json=payload,
-                headers=self._headers(),
-                timeout=settings.ZIINA_TIMEOUT_SECONDS,
-            )
+            async with httpx.AsyncClient(
+                timeout=settings.ZIINA_TIMEOUT_SECONDS
+            ) as client:
+                response = await client.post(
+                    f"{self._base_url()}/payment_intent",
+                    json=payload,
+                    headers=self._headers(),
+                )
         except httpx.HTTPError as exc:
             logger.error("Ziina unreachable creating payment intent: %s", exc)
             raise GatewayUnavailableError(f"Ziina unreachable: {exc}") from exc
@@ -338,7 +340,7 @@ class ZiinaProvider(PaymentGatewayProvider):
 
     # ── operational helpers ───────────────────────────────────────────────────
 
-    def register_webhook(self, url: str, secret: str) -> dict:
+    async def register_webhook(self, url: str, secret: str) -> dict:
         """
         Point Ziina's webhook at *url*, signed with *secret*.
 
@@ -349,16 +351,16 @@ class ZiinaProvider(PaymentGatewayProvider):
         the provider uses, and so the one-account-one-URL constraint is written
         down somewhere a reader will find it before they set it twice.
         """
-        response = httpx.post(
-            f"{self._base_url()}/webhook",
-            json={"url": url, "secret": secret},
-            headers=self._headers(),
-            timeout=settings.ZIINA_TIMEOUT_SECONDS,
-        )
+        async with httpx.AsyncClient(timeout=settings.ZIINA_TIMEOUT_SECONDS) as client:
+            response = await client.post(
+                f"{self._base_url()}/webhook",
+                json={"url": url, "secret": secret},
+                headers=self._headers(),
+            )
         response.raise_for_status()
         return response.json()
 
-    def fetch_payment_intent(self, intent_id: str) -> dict:
+    async def fetch_payment_intent(self, intent_id: str) -> dict:
         """
         Read an intent back from Ziina.
 
@@ -369,11 +371,11 @@ class ZiinaProvider(PaymentGatewayProvider):
         answered: we hold the intent ID against the order already, so the truth
         is one GET away.
         """
-        response = httpx.get(
-            f"{self._base_url()}/payment_intent/{intent_id}",
-            headers=self._headers(),
-            timeout=settings.ZIINA_TIMEOUT_SECONDS,
-        )
+        async with httpx.AsyncClient(timeout=settings.ZIINA_TIMEOUT_SECONDS) as client:
+            response = await client.get(
+                f"{self._base_url()}/payment_intent/{intent_id}",
+                headers=self._headers(),
+            )
         response.raise_for_status()
         return response.json()
 

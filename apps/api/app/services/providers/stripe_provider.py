@@ -70,7 +70,7 @@ class StripeProvider(PaymentGatewayProvider):
     def minimum_amount(self) -> Decimal | None:
         return _AED_MINIMUM
 
-    def create_session(
+    async def create_session(
         self, order: Order, *, test_mode: bool = False
     ) -> GatewaySession:
         """
@@ -79,6 +79,13 @@ class StripeProvider(PaymentGatewayProvider):
         `test_mode` is ignored: Stripe decides live-versus-test from the secret
         key itself, so honouring a per-session flag here would let the admin
         appear to switch an environment it has no way of switching.
+
+        Async in signature only. `stripe-python`'s sync client blocks the event
+        loop for the length of the call, which it has always done here — this
+        change neither improves that nor makes it worse. Moving Stripe onto the
+        SDK's `*_async` methods is a change against the one gateway currently
+        taking live money, and does not belong in the same commit as the gateway
+        it is being made interchangeable with.
         """
         self._configure()
 

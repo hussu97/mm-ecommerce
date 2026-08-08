@@ -236,6 +236,56 @@ async def test_the_handle_is_the_fallback_for_a_gateway_with_no_metadata(
     assert payment_service._load_order_by_handle.await_args.args[1] == "ziina"
 
 
+class TestTheHandleLookupIsScopedByGateway:
+    """
+    Both processors mint ids beginning `pi_`.
+
+    An unscoped lookup would let a Ziina event land on a Stripe order that
+    happened to share a handle — confirming an order nobody paid for, mailing
+    the customer about it, and putting a cake in the kitchen. Vanishingly
+    unlikely, and not a coin worth flipping on this particular code path.
+
+    Both queries in `_load_order_by_handle` are checked, because the second one
+    — the fallback for orders written before `payment_transactions` existed —
+    was the one that was missing it.
+    """
+
+    @staticmethod
+    def _statements(db):
+        return [str(call.args[0]) for call in db.execute.await_args_list]
+
+    async def _lookup(self, gateway: str):
+        db = MagicMock()
+        empty = MagicMock()
+        empty.scalars.return_value.first.return_value = None
+        db.execute = AsyncMock(return_value=empty)
+        with pytest.raises(NotFoundError):
+            await payment_service._load_order_by_handle(
+                db, gateway, payment_id="pi_ambiguous"
+            )
+        return self._statements(db)
+
+    async def test_the_transaction_query_names_the_gateway(self):
+        transactions_query, _legacy = await self._lookup("ziina")
+        assert "payment_transactions.gateway" in transactions_query
+
+    async def test_the_legacy_query_names_the_gateway_too(self):
+        _transactions, legacy = await self._lookup("ziina")
+        assert "orders.payment_provider" in legacy
+
+    async def test_a_null_provider_counts_as_stripe_and_only_stripe(self):
+        """
+        Orders carrying a bare `pi_…` and no provider predate the second
+        gateway, so they are Stripe's — and must not be reachable from a Ziina
+        event, which is precisely the collision being guarded against.
+        """
+        _t, stripe_legacy = await self._lookup("stripe")
+        assert "IS NULL" in stripe_legacy.upper()
+
+        _t, ziina_legacy = await self._lookup("ziina")
+        assert "IS NULL" not in ziina_legacy.upper()
+
+
 async def test_an_unplaceable_success_is_logged_not_raised(
     db, wired, monkeypatch, caplog
 ):

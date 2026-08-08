@@ -29,24 +29,28 @@ from app.services.providers.base import GatewaySession, GatewayUnavailableError
 
 
 class _Provider:
-    def __init__(self, code, *, raises=None):
+    def __init__(self, code, *, raises=None, session_id=None):
         self.code = code
         self._raises = raises
+        # Stripe hands back the *same* session id for a repeat call on one
+        # order — it is called with a per-order idempotency key. That is the
+        # behaviour the retry test below depends on.
+        self.session_id = session_id or f"{code}_sess"
         self.calls = 0
 
     def is_configured(self):
         return True
 
-    def create_session(self, order, *, test_mode=False):
+    async def create_session(self, order, *, test_mode=False):
         self.calls += 1
         if self._raises:
             raise self._raises
         return GatewaySession(
-            session_id=f"{self.code}_sess", checkout_url=f"https://{self.code}/pay"
+            session_id=self.session_id, checkout_url=f"https://{self.code}/pay"
         )
 
 
-def _choice(code, *, raises=None, supports_failover=True):
+def _choice(code, *, raises=None, supports_failover=True, session_id=None):
     return GatewayChoice(
         row=PaymentGateway(
             code=code,
@@ -56,7 +60,7 @@ def _choice(code, *, raises=None, supports_failover=True):
             supports_failover=supports_failover,
             test_mode=False,
         ),
-        provider=_Provider(code, raises=raises),
+        provider=_Provider(code, raises=raises, session_id=session_id),
     )
 
 
@@ -174,7 +178,23 @@ async def test_a_refused_card_is_never_re_presented(db, order, monkeypatch):
     assert options[1].provider.calls == 0
 
 
-async def test_a_refusal_is_still_recorded_before_it_propagates(db, order, monkeypatch):
+async def test_a_refusal_is_written_down_even_though_it_will_not_survive(
+    db, order, monkeypatch
+):
+    """
+    The row is added, and `get_db` will roll it back on the way out — which is
+    correct, not a bug. A request that ends in an exception did nothing, and the
+    database should not claim otherwise.
+
+    Pinned anyway, because the row *does* survive when the request survives: a
+    failover that eventually finds a working gateway commits the whole set, and
+    "Stripe was tried first and 502'd" is then on the order. The two cases share
+    this code and only differ in how the request ends.
+
+    An earlier version of this test was named "…is still recorded before it
+    propagates" and its comment claimed the attempt outlived the exception. It
+    did not, and the mock session it ran against could not have told anyone.
+    """
     monkeypatch.setattr(
         payment_service.payment_gateway_router,
         "candidates",
@@ -187,6 +207,119 @@ async def test_a_refusal_is_still_recorded_before_it_propagates(db, order, monke
     (attempt,) = _added_transactions(db)
     assert attempt.status == PaymentTransactionStatusEnum.FAILED.value
     assert attempt.error_code == "refused"
+    # No session id, which is what keeps a run of these clear of
+    # `uq_payment_transactions_gateway_session`. On a bad day there are several.
+    assert attempt.session_id is None
+
+
+async def test_a_failed_attempt_carries_no_session_id(db, order, monkeypatch):
+    """
+    Several failures for one order and one gateway must be insertable.
+
+    The unique index on `(gateway, session_id)` is partial — `WHERE session_id
+    IS NOT NULL` — so attempts that never got a session do not collide with each
+    other. Losing that would turn a second outage on the same order into a 500.
+    """
+    monkeypatch.setattr(
+        payment_service.payment_gateway_router,
+        "candidates",
+        AsyncMock(
+            return_value=[
+                _choice("stripe", raises=GatewayUnavailableError("502")),
+                _choice("ziina", raises=GatewayUnavailableError("503")),
+            ]
+        ),
+    )
+
+    with pytest.raises(BadRequestError):
+        await payment_service._create_card_session(db, order, order.total)
+
+    attempts = _added_transactions(db)
+    assert len(attempts) == 2
+    assert all(a.session_id is None for a in attempts)
+
+
+class TestRetryingAPayment:
+    """
+    The regression that would have broken a live flow.
+
+    Stripe is called with `idempotency_key=f"sess_{order_number}"`, so a second
+    `create_session` for the same order inside 24 hours returns the *same*
+    Checkout Session — the same `cs_…`. Before this was handled, the retry added
+    a second `payment_transactions` row carrying that id, violated
+    `uq_payment_transactions_gateway_session`, and handed a 500 to the customer
+    whose card had just been declined and who had pressed "try again".
+
+    Reproduced against a real Postgres during review; the mock session used by
+    the rest of this file cannot enforce an index, so these assert the
+    behaviour that keeps the index satisfied rather than the index itself.
+    """
+
+    async def test_a_repeat_session_reuses_its_row(self, db, order, monkeypatch):
+        monkeypatch.setattr(
+            payment_service.payment_gateway_router,
+            "candidates",
+            AsyncMock(return_value=[_choice("stripe", session_id="cs_same")]),
+        )
+
+        await payment_service._create_card_session(db, order, order.total)
+        first = list(order.payment_transactions)
+        await payment_service._create_card_session(db, order, order.total)
+
+        assert len(order.payment_transactions) == 1, "a second row would collide"
+        assert order.payment_transactions[0] is first[0]
+        assert order.payment_transactions[0].session_id == "cs_same"
+
+    async def test_a_genuinely_new_session_gets_its_own_row(
+        self, db, order, monkeypatch
+    ):
+        """
+        Ziina takes no idempotency key, so every retry is a new payment intent
+        and deserves its own row. Reusing one here would lose the earlier
+        intent's id — which is the only handle a Ziina webhook can be matched on.
+        """
+        monkeypatch.setattr(
+            payment_service.payment_gateway_router,
+            "candidates",
+            AsyncMock(return_value=[_choice("ziina", session_id="pi_first")]),
+        )
+        await payment_service._create_card_session(db, order, order.total)
+
+        monkeypatch.setattr(
+            payment_service.payment_gateway_router,
+            "candidates",
+            AsyncMock(return_value=[_choice("ziina", session_id="pi_second")]),
+        )
+        await payment_service._create_card_session(db, order, order.total)
+
+        assert [t.session_id for t in order.payment_transactions] == [
+            "pi_first",
+            "pi_second",
+        ]
+
+    async def test_the_same_id_on_a_different_gateway_is_a_different_attempt(
+        self, db, order, monkeypatch
+    ):
+        """
+        Both processors mint ids beginning `pi_`. The index is scoped by
+        gateway, and so is the reuse — otherwise a Ziina intent could be written
+        onto a Stripe attempt.
+        """
+        monkeypatch.setattr(
+            payment_service.payment_gateway_router,
+            "candidates",
+            AsyncMock(return_value=[_choice("stripe", session_id="pi_collide")]),
+        )
+        await payment_service._create_card_session(db, order, order.total)
+
+        monkeypatch.setattr(
+            payment_service.payment_gateway_router,
+            "candidates",
+            AsyncMock(return_value=[_choice("ziina", session_id="pi_collide")]),
+        )
+        await payment_service._create_card_session(db, order, order.total)
+
+        assert [t.gateway for t in order.payment_transactions] == ["stripe", "ziina"]
 
 
 async def test_every_gateway_down_is_an_apology_not_a_stack_trace(

@@ -1,4 +1,5 @@
 import { analytics, normalisePath } from './analytics';
+import { toWireMethod } from './types';
 import { AdvertisedPromo, Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, PaymentMethod, DeliveryRates, DeliveryQuote, DeliveryArea, PickupBranch, TrackResult } from './types';
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -300,15 +301,17 @@ export const paymentsApi = {
    * the `payment_gateways` table, so a Stripe outage is answered by an admin
    * toggle rather than a release, and no client can pick its own processor.
    *
-   * `provider` is sent alongside for the duration of one rollout: the API still
-   * accepts the old field name, and sending both means a browser that loaded
-   * this bundle against a not-yet-deployed API keeps working.
+   * Both field names go on the wire for the duration of one rollout, and the
+   * legacy one carries the legacy *word*. The web and the API deploy in
+   * parallel and the API is the slower of the two, so this bundle runs against
+   * the previous API for minutes — and that one resolves a provider by exact
+   * string, where `card` is not one. See `toWireMethod`.
    */
   createSession: (orderNumber: string, method: PaymentMethod) =>
     api.post<PaymentSessionResponse>('/payments/create-session', {
       order_number: orderNumber,
       method,
-      provider: method,
+      provider: toWireMethod(method),
     }),
 };
 

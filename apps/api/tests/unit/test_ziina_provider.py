@@ -15,6 +15,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from decimal import Decimal
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -209,139 +211,163 @@ class TestCreateSession:
 
     @staticmethod
     def _order():
-        from types import SimpleNamespace
-        from decimal import Decimal
-
         return SimpleNamespace(
             order_number="MM-20260808-001",
             email="customer@example.com",
             total=Decimal("125.00"),
         )
 
-    def test_the_amount_goes_across_in_fils(self, monkeypatch):
+    @staticmethod
+    def _client(monkeypatch, *, response=None, raises=None, captured=None):
+        """
+        Stand in for `httpx.AsyncClient`.
+
+        The provider must not block the event loop — every other outbound
+        integration here is already async, and a sync call in a request handler
+        stalls the whole worker for the length of the timeout, serving nothing
+        at all. That is worst exactly when it matters: a gateway having a bad
+        day is a gateway answering slowly, and the failover is meant to be what
+        saves the checkout rather than a second thing to wait on.
+
+        So the fake is deliberately async-only. A provider that regressed to
+        `httpx.post` would not call it and the tests would fail.
+        """
+
+        class _FakeClient:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_):
+                return False
+
+            async def post(self, url, **kwargs):
+                if captured is not None:
+                    captured.update(kwargs.get("json") or {})
+                if raises is not None:
+                    raise raises
+                return response
+
+        monkeypatch.setattr(zp.httpx, "AsyncClient", _FakeClient)
+
+    async def test_the_amount_goes_across_in_fils(self, monkeypatch):
         """AED 125.00 is 12500, not 125. Getting this wrong charges a hundredth
         of the order and nothing anywhere disagrees."""
-        captured = {}
-
-        def fake_post(url, **kwargs):
-            captured.update(kwargs["json"])
-            return httpx.Response(
+        captured: dict = {}
+        self._client(
+            monkeypatch,
+            captured=captured,
+            response=httpx.Response(
                 201,
                 json={
                     "id": "pi_z1",
                     "redirect_url": "https://pay.ziina.com/pi_z1",
                     "status": "requires_payment_instrument",
                 },
-            )
+            ),
+        )
 
-        monkeypatch.setattr(zp.httpx, "post", fake_post)
-
-        session = zp.provider.create_session(self._order())
+        session = await zp.provider.create_session(self._order())
 
         assert captured["amount"] == 12500
         assert captured["currency_code"] == "AED"
         assert session.session_id == "pi_z1"
         assert session.checkout_url == "https://pay.ziina.com/pi_z1"
 
-    def test_the_order_number_rides_in_the_message(self, monkeypatch):
+    async def test_the_order_number_rides_in_the_message(self, monkeypatch):
         """
         Ziina has nowhere to put metadata, so `message` — which the customer
         sees on the hosted page — is the only place the order number can go.
         It is what makes a "which payment was this?" conversation answerable.
         """
-        captured = {}
-        monkeypatch.setattr(
-            zp.httpx,
-            "post",
-            lambda url, **kw: (
-                captured.update(kw["json"]),
-                httpx.Response(
-                    201, json={"id": "pi_z1", "redirect_url": "https://x/y"}
-                ),
-            )[1],
+        captured: dict = {}
+        self._client(
+            monkeypatch,
+            captured=captured,
+            response=httpx.Response(
+                201, json={"id": "pi_z1", "redirect_url": "https://x/y"}
+            ),
         )
 
-        zp.provider.create_session(self._order())
+        await zp.provider.create_session(self._order())
 
         assert "MM-20260808-001" in captured["message"]
 
-    def test_the_intent_is_recorded_as_the_payment_handle(self, monkeypatch):
+    async def test_the_intent_is_recorded_as_the_payment_handle(self, monkeypatch):
         """
         Unlike Stripe, whose Payment Intent does not exist until the customer
         pays. Recording it now is what lets a refund webhook that quotes only
         the intent find the order.
         """
-        monkeypatch.setattr(
-            zp.httpx,
-            "post",
-            lambda url, **kw: httpx.Response(
+        self._client(
+            monkeypatch,
+            response=httpx.Response(
                 201, json={"id": "pi_z1", "redirect_url": "https://x/y"}
             ),
         )
 
-        session = zp.provider.create_session(self._order())
+        session = await zp.provider.create_session(self._order())
 
         assert session.payment_id == "pi_z1" == session.session_id
 
     @pytest.mark.parametrize("status", [500, 502, 503, 504, 429])
-    def test_their_outage_is_failover_worthy(self, monkeypatch, status):
-        monkeypatch.setattr(
-            zp.httpx, "post", lambda url, **kw: httpx.Response(status, text="nope")
-        )
+    async def test_their_outage_is_failover_worthy(self, monkeypatch, status):
+        self._client(monkeypatch, response=httpx.Response(status, text="nope"))
 
         with pytest.raises(GatewayUnavailableError):
-            zp.provider.create_session(self._order())
+            await zp.provider.create_session(self._order())
 
-    def test_an_unreachable_host_is_failover_worthy(self, monkeypatch):
-        def boom(url, **kwargs):
-            raise httpx.ConnectError("no route to host")
-
-        monkeypatch.setattr(zp.httpx, "post", boom)
+    async def test_an_unreachable_host_is_failover_worthy(self, monkeypatch):
+        self._client(monkeypatch, raises=httpx.ConnectError("no route to host"))
 
         with pytest.raises(GatewayUnavailableError):
-            zp.provider.create_session(self._order())
+            await zp.provider.create_session(self._order())
 
-    def test_a_refusal_is_not_failover_worthy(self, monkeypatch):
+    async def test_a_timeout_is_failover_worthy(self, monkeypatch):
+        """
+        The one that matters most in an incident: a gateway having a bad day
+        answers slowly rather than refusing outright.
+        """
+        self._client(monkeypatch, raises=httpx.ReadTimeout("too slow"))
+
+        with pytest.raises(GatewayUnavailableError):
+            await zp.provider.create_session(self._order())
+
+    async def test_a_refusal_is_not_failover_worthy(self, monkeypatch):
         """
         A 400 is an opinion about what we sent. Re-presenting it to a second
         processor turns one honest refusal into two, and if the second one takes
         it the order is paid through a gateway nobody chose.
         """
-        monkeypatch.setattr(
-            zp.httpx,
-            "post",
-            lambda url, **kw: httpx.Response(400, json={"message": "amount too low"}),
+        self._client(
+            monkeypatch,
+            response=httpx.Response(400, json={"message": "amount too low"}),
         )
 
         with pytest.raises(BadRequestError, match="amount too low"):
-            zp.provider.create_session(self._order())
+            await zp.provider.create_session(self._order())
 
-    def test_a_created_intent_with_nowhere_to_send_anyone_is_an_outage(
+    async def test_a_created_intent_with_nowhere_to_send_anyone_is_an_outage(
         self, monkeypatch
     ):
         """A 201 without a redirect URL is not a session, whatever it says."""
-        monkeypatch.setattr(
-            zp.httpx,
-            "post",
-            lambda url, **kw: httpx.Response(201, json={"id": "pi_z1"}),
-        )
+        self._client(monkeypatch, response=httpx.Response(201, json={"id": "pi_z1"}))
 
         with pytest.raises(GatewayUnavailableError, match="redirect"):
-            zp.provider.create_session(self._order())
+            await zp.provider.create_session(self._order())
 
-    def test_test_mode_is_passed_through(self, monkeypatch):
-        captured = {}
-        monkeypatch.setattr(
-            zp.httpx,
-            "post",
-            lambda url, **kw: (
-                captured.update(kw["json"]),
-                httpx.Response(
-                    201, json={"id": "pi_z1", "redirect_url": "https://x/y"}
-                ),
-            )[1],
+    async def test_test_mode_is_passed_through(self, monkeypatch):
+        captured: dict = {}
+        self._client(
+            monkeypatch,
+            captured=captured,
+            response=httpx.Response(
+                201, json={"id": "pi_z1", "redirect_url": "https://x/y"}
+            ),
         )
 
-        zp.provider.create_session(self._order(), test_mode=True)
+        await zp.provider.create_session(self._order(), test_mode=True)
 
         assert captured["test"] is True

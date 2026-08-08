@@ -43,7 +43,7 @@ class TabbyProvider(PaymentGatewayProvider):
     def is_configured(self) -> bool:
         return False
 
-    def create_session(
+    async def create_session(
         self, order: Order, *, test_mode: bool = False
     ) -> GatewaySession:
         raise BadRequestError("Tabby payment provider is not yet integrated.")

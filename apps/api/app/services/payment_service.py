@@ -113,6 +113,19 @@ async def _load_order_by_handle(
     if order is not None:
         return order
 
+    # Scoped to the gateway that sent the event, exactly like the query above.
+    # Both processors mint ids beginning `pi_`, and an unscoped match here would
+    # let a Ziina event land on a Stripe order that happened to share a handle —
+    # confirming an order nobody paid for and mailing the customer about it.
+    # Vanishingly unlikely, and not a coin worth flipping on a code path whose
+    # failure mode is "the shop bakes a cake".
+    #
+    # A null provider counts as Stripe, and only as Stripe: it is the one
+    # gateway that existed when the rows carrying a bare `pi_…` were written.
+    owner = Order.payment_provider == gateway
+    if gateway == "stripe":
+        owner = owner | Order.payment_provider.is_(None)
+
     legacy = (
         (
             await db.execute(
@@ -120,7 +133,7 @@ async def _load_order_by_handle(
                 .options(
                     selectinload(Order.items), selectinload(Order.payment_transactions)
                 )
-                .where(Order.payment_id.in_(handles))
+                .where(Order.payment_id.in_(handles), owner)
                 .limit(1)
             )
         )
@@ -288,30 +301,29 @@ async def _create_card_session(
     options = await payment_gateway_router.candidates(db, order_total)
     if not options:
         # Re-asks so the customer gets the specific reason — too small, versus
-        # nothing available — rather than a generic failure.
+        # nothing available — rather than a generic failure. `select_gateway`
+        # always raises on an empty list; the raise after it is here so that a
+        # future edit which makes it return instead fails loudly rather than
+        # falling into `options[0]` and an IndexError inside a checkout.
         await payment_gateway_router.select_gateway(db, order_total)
+        raise BadRequestError(
+            "Card payments are temporarily unavailable. Please try again shortly."
+        )
 
     choice = options[0]
     tried: list[str] = []
 
     while choice is not None:
         tried.append(choice.code)
-        transaction = PaymentTransaction(
-            order_id=order.id,
-            gateway=choice.code,
-            status=PaymentTransactionStatusEnum.PENDING.value,
-            amount=order_total,
-            currency="AED",
-        )
-        db.add(transaction)
 
         try:
-            session = choice.provider.create_session(order, test_mode=choice.test_mode)
+            session = await choice.provider.create_session(
+                order, test_mode=choice.test_mode
+            )
         except GatewayUnavailableError as exc:
-            transaction.status = PaymentTransactionStatusEnum.FAILED.value
-            transaction.error_code = "gateway_unavailable"
-            transaction.error_message = str(exc)[:2000]
-            await db.flush()
+            _record_failed_attempt(
+                db, order, choice.code, order_total, "gateway_unavailable", str(exc)
+            )
             logger.error(
                 "Gateway '%s' could not create a session for %s: %s",
                 choice.code,
@@ -327,18 +339,40 @@ async def _create_card_session(
                     order.order_number,
                 )
             continue
-        except Exception:
-            # An opinion, or a bug. Either way the attempt is recorded before it
-            # propagates, so a 500 in checkout is not also an invisible one.
-            transaction.status = PaymentTransactionStatusEnum.FAILED.value
-            transaction.error_code = "refused"
-            await db.flush()
+        except Exception as exc:
+            # An opinion about this order, or a bug. Either way it propagates,
+            # and `get_db` rolls the whole request back on the way out — so the
+            # row added here does not survive, and is not meant to. Nothing
+            # happened, and the database should say nothing happened. The
+            # diagnosis lives in the log line, which is not transactional.
+            _record_failed_attempt(
+                db, order, choice.code, order_total, "refused", str(exc)
+            )
+            logger.error(
+                "Gateway '%s' refused a session for %s: %s",
+                choice.code,
+                order.order_number,
+                exc,
+            )
             raise
 
+        transaction = _attempt_for(order, choice.code, session.session_id)
+        if transaction is None:
+            transaction = PaymentTransaction(
+                order_id=order.id,
+                gateway=choice.code,
+                amount=order_total,
+                currency="AED",
+            )
+            order.payment_transactions.append(transaction)
+            db.add(transaction)
+
+        transaction.status = PaymentTransactionStatusEnum.PENDING.value
         transaction.session_id = session.session_id
         transaction.payment_id = session.payment_id
         transaction.checkout_url = session.checkout_url
         transaction.raw_status = session.raw_status
+        transaction.amount = order_total
 
         order.payment_method = CARD
         order.payment_provider = choice.code
@@ -369,6 +403,65 @@ async def _create_card_session(
     # which is where the person who can act on it is looking.
     raise BadRequestError(
         "Card payments are temporarily unavailable. Please try again shortly."
+    )
+
+
+def _attempt_for(
+    order: Order, gateway: str, session_id: str | None
+) -> PaymentTransaction | None:
+    """
+    The existing attempt this session belongs to, if there is one.
+
+    **This is what stops a payment retry 500ing.** Stripe is called with
+    `idempotency_key=f"sess_{order_number}"`, so a second `create_session` for
+    the same order inside 24 hours returns the *same* Checkout Session — same
+    `cs_…` id. Inserting a new row for it violates
+    `uq_payment_transactions_gateway_session`, and the customer whose card was
+    declined and who pressed "try again" gets a 500 instead of a payment page.
+
+    Reusing the row is also the truthful reading: Stripe handed back the same
+    session because it *is* the same attempt, not a new one. A retry that
+    genuinely produces a new session — every Ziina one, since they take no
+    idempotency key — finds nothing here and gets its own row.
+    """
+    if not session_id:
+        return None
+    for transaction in order.payment_transactions:
+        if transaction.gateway == gateway and transaction.session_id == session_id:
+            return transaction
+    return None
+
+
+def _record_failed_attempt(
+    db: AsyncSession,
+    order: Order,
+    gateway: str,
+    amount: Decimal,
+    error_code: str,
+    message: str,
+) -> None:
+    """
+    Note an attempt that never produced a session.
+
+    No `session_id`, which is what keeps it clear of the unique index — several
+    of these can exist for one order, and on a bad day they should.
+
+    It survives only if the request does: a failover that eventually finds a
+    working gateway commits the whole set, so "Stripe was tried first and 502'd"
+    is on the order. A request that ends in an exception rolls back and takes
+    these with it, which is correct — nothing happened, and the database should
+    not claim otherwise. `logger.error` above is the non-transactional record.
+    """
+    db.add(
+        PaymentTransaction(
+            order_id=order.id,
+            gateway=gateway,
+            status=PaymentTransactionStatusEnum.FAILED.value,
+            amount=amount,
+            currency="AED",
+            error_code=error_code,
+            error_message=message[:2000],
+        )
     )
 
 
