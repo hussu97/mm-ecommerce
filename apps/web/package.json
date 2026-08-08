@@ -3,8 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "node scripts/optimize-images.mjs && next dev --port 3000",
-    "build": "node scripts/optimize-images.mjs && next build",
+    "dev": "next dev --port 3000",
+    "build": "node scripts/check-images.mjs && next build",
+    "images": "node scripts/optimize-images.mjs",
     "start": "next start --port 3000",
     "lint": "eslint .",
     "test": "vitest run",

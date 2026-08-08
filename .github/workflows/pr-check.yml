@@ -4,6 +4,13 @@ on:
   pull_request:
     branches: [main]
 
+# Pushing twice to a branch used to leave the first run checking a commit
+# nobody was going to merge, all the way to the end. Only the newest commit on
+# a branch is worth the minutes.
+concurrency:
+  group: pr-check-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   changes:
     name: Detect changed paths
@@ -132,8 +139,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: "pip"
-          cache-dependency-path: apps/api/pyproject.toml
+
+      # `pip install -e ".[dev]"` took 19s of this job's 74s. uv resolves and
+      # installs the same set in a couple of seconds, and caches the wheels
+      # itself — so `cache: pip` on setup-python above is no longer needed.
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: apps/api/pyproject.toml
 
       - name: Cache ruff
         uses: actions/cache@v4
@@ -151,7 +164,7 @@ jobs:
       - name: Install dependencies
         run: |
           cd apps/api
-          pip install -e ".[dev]"
+          uv pip install --system -e ".[dev]"
 
       - name: Ruff check
         run: |
@@ -167,7 +180,11 @@ jobs:
         env:
           RUFF_CACHE_DIR: ~/.cache/ruff
 
+      # `-n auto --dist loadfile`: 1278 tests across ~100 files, and nothing in
+      # them is order-dependent across files. `loadfile` pins each file to one
+      # worker, which is what keeps the three real-database modules from
+      # interleaving with themselves. `-v` printed 1278 lines nobody reads.
       - name: Run pytest
         run: |
           cd apps/api
-          pytest tests/ -v --tb=short --cov=app --cov-report=term-missing
+          pytest tests/ -n auto --dist loadfile --tb=short --cov=app --cov-report=term-missing

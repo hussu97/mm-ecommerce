@@ -9,6 +9,14 @@ on:
   # nothing until something deploys again.
   workflow_dispatch:
 
+# One deploy at a time. Deliberately NOT cancel-in-progress: this job runs
+# migrations and restarts containers on the VM, and killing it partway through
+# either of those is how you get a half-migrated database with no job left
+# alive to finish the job. Queue instead.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 jobs:
   changes:
     name: Detect -changed paths
@@ -48,148 +56,18 @@ jobs:
               - 'docker-compose*.yml'
               - '.github/workflows/deploy.yml'
 
-  # ── Lint / test (no build — vercel build handles that in the deploy job) ────
-
-  lint-web:
-    name: Lint & Test (Web)
-    needs: changes
-    if: needs.changes.outputs.web == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.0
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "pnpm"
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Lint
-        run: pnpm --filter web lint
-
-      - name: Test
-        run: pnpm --filter web test
-
-      - name: Type-check
-        run: pnpm --filter web exec tsc --noEmit
-
-  lint-admin:
-    name: Lint & Test (Admin)
-    needs: changes
-    if: needs.changes.outputs.admin == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.0
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "pnpm"
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Lint
-        run: pnpm --filter admin lint
-
-      - name: Test
-        run: pnpm --filter admin test
-
-      - name: Type-check
-        run: pnpm --filter admin exec tsc --noEmit
-
-  lint-python:
-    name: Lint & Test (Python)
-    needs: changes
-    if: needs.changes.outputs.api == 'true'
-    runs-on: ubuntu-latest
-    # A real database, because the bugs that reached production were a lazy
-    # load in async context and a stale read after commit. Neither is visible
-    # without a live session and a round trip.
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: mm
-          POSTGRES_PASSWORD: mm
-          POSTGRES_DB: mm_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: "pip"
-          cache-dependency-path: apps/api/pyproject.toml
-
-      - name: Cache ruff
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ruff
-          key: ruff-${{ runner.os }}-${{ hashFiles('apps/api/pyproject.toml') }}
-
-      - name: Cache pytest
-        uses: actions/cache@v4
-        with:
-          path: apps/api/.pytest_cache
-          key: pytest-${{ runner.os }}-${{ hashFiles('apps/api/pyproject.toml') }}
-          restore-keys: pytest-${{ runner.os }}-
-
-      - name: Install dependencies
-        run: |
-          cd apps/api
-          pip install -e ".[dev]"
-
-      - name: Ruff check
-        run: |
-          cd apps/api
-          ruff check .
-        env:
-          RUFF_CACHE_DIR: ~/.cache/ruff
-
-      - name: Ruff format check
-        run: |
-          cd apps/api
-          ruff format --check .
-        env:
-          RUFF_CACHE_DIR: ~/.cache/ruff
-
-      - name: Prepare the test database
-        env:
-          TEST_DATABASE_URL: postgresql+asyncpg://mm:mm@localhost:5432/mm_test
-        run: |
-          cd apps/api
-          DATABASE_URL="$TEST_DATABASE_URL" alembic upgrade head
-
-      - name: Run pytest
-        env:
-          TEST_DATABASE_URL: postgresql+asyncpg://mm:mm@localhost:5432/mm_test
-        run: |
-          cd apps/api
-          pytest tests/ -v --tb=short --cov=app --cov-report=term-missing
-
-  # ── Deploy ───────────────────────────────────────────────────────────────────
+  # ── Test & deploy ────────────────────────────────────────────────────────────
+  #
+  # Lint and test are steps here rather than jobs of their own. As separate
+  # jobs they gated the deploy serially, so every deploy paid for a second
+  # runner to boot, check the repo out, install node and install the workspace
+  # a second time — about 65s of wall clock to re-create a machine identical to
+  # the one the deploy was about to build on. Steps run in order, so a failing
+  # lint still stops the deploy before anything is built or shipped.
 
   deploy-web:
-    name: Deploy Web to Vercel
-    needs: [changes, lint-web]
+    name: Test & Deploy Web to Vercel
+    needs: changes
     if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     environment: production
@@ -221,6 +99,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Lint
+        run: pnpm --filter web lint
+
+      - name: Test
+        run: pnpm --filter web test
+
+      - name: Type-check
+        run: pnpm --filter web exec tsc --noEmit
+
       - name: Pull Vercel environment
         run: npx vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
 
@@ -238,8 +125,8 @@ jobs:
         run: npx vercel deploy --prebuilt --prod --archive=tgz --token=${{ secrets.VERCEL_TOKEN }}
 
   deploy-admin:
-    name: Deploy Admin to Vercel
-    needs: [changes, lint-admin]
+    name: Test & Deploy Admin to Vercel
+    needs: changes
     if: needs.changes.outputs.admin == 'true'
     runs-on: ubuntu-latest
     environment: production
@@ -271,6 +158,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Lint
+        run: pnpm --filter admin lint
+
+      - name: Test
+        run: pnpm --filter admin test
+
+      - name: Type-check
+        run: pnpm --filter admin exec tsc --noEmit
+
       - name: Pull Vercel environment
         run: npx vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
 
@@ -288,16 +184,92 @@ jobs:
         run: npx vercel deploy --prebuilt --prod --archive=tgz --token=${{ secrets.VERCEL_TOKEN }}
 
   deploy-gcp:
-    name: Deploy API to GCP
-    needs: [changes, lint-python]
+    name: Test & Deploy API to GCP
+    needs: changes
     if: needs.changes.outputs.api == 'true'
     runs-on: ubuntu-latest
     environment: production
     permissions:
       contents: read
       packages: write  # push to GHCR
+    # A real database, because the bugs that reached production were a lazy
+    # load in async context and a stale read after commit. Neither is visible
+    # without a live session and a round trip.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: mm
+          POSTGRES_PASSWORD: mm
+          POSTGRES_DB: mm_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://mm:mm@localhost:5432/mm_test
     steps:
       - uses: actions/checkout@v4
+
+      # ── Test ────────────────────────────────────────────────────────────────
+      # Nothing below this block runs if any of it fails, so the image is never
+      # built and the VM is never touched on a red suite.
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # `pip install -e ".[dev]"` took 19s of this job's 97s. uv resolves and
+      # installs the same set in a couple of seconds, and caches the wheels
+      # itself — so `cache: pip` on setup-python above is no longer needed.
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: apps/api/pyproject.toml
+
+      - name: Cache ruff
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ruff
+          key: ruff-${{ runner.os }}-${{ hashFiles('apps/api/pyproject.toml') }}
+
+      - name: Install dependencies
+        run: |
+          cd apps/api
+          uv pip install --system -e ".[dev]"
+
+      - name: Ruff check
+        run: |
+          cd apps/api
+          ruff check .
+        env:
+          RUFF_CACHE_DIR: ~/.cache/ruff
+
+      - name: Ruff format check
+        run: |
+          cd apps/api
+          ruff format --check .
+        env:
+          RUFF_CACHE_DIR: ~/.cache/ruff
+
+      - name: Prepare the test database
+        run: |
+          cd apps/api
+          DATABASE_URL="$TEST_DATABASE_URL" alembic upgrade head
+
+      # `-n auto --dist loadfile`: 1278 tests across ~100 files, and nothing in
+      # them is order-dependent across files. `loadfile` pins each file to one
+      # worker, which is what keeps the three real-database modules from
+      # interleaving with themselves. `-v` printed 1278 lines nobody reads.
+      - name: Run pytest
+        run: |
+          cd apps/api
+          pytest tests/ -n auto --dist loadfile --tb=short --cov=app --cov-report=term-missing
+
+      # ── Deploy ──────────────────────────────────────────────────────────────
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

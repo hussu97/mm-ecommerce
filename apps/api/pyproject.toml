@@ -38,6 +38,12 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
+    # CI runs the suite with `-n auto --dist loadfile`. `loadfile` is the part
+    # that matters: it keeps every test in a file on one worker, so the three
+    # modules that talk to a real database cannot interleave with themselves.
+    # Across files they are already safe — each cleans up only its own prefix
+    # (`pytest-pricesort`, `pytest-custom-`, and MenuGroup rows).
+    "pytest-xdist>=3.6.0",
     "httpx>=0.28.0",
     # Reads docker-compose.prod.yml, so the tests can check that a setting
     # which gates behaviour actually reaches the container that enforces it.

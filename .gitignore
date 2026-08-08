@@ -48,6 +48,10 @@ yarn-error.log*
 # Testing
 coverage/
 .nyc_output/
+# pytest-cov's data file, plus the per-worker `.coverage.host.pid.random`
+# files xdist leaves behind when a run is interrupted before they are combined.
+.coverage
+.coverage.*
 
 # Misc
 *.tgz

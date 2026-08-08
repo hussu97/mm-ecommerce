@@ -108,3 +108,61 @@ machine take the order.
 
 - Not run against Lalamove **sandbox** end to end. The unit tests mock `httpx`,
   so the request shapes are pinned but a real quotation has not been bought.
+
+---
+
+# CI: cutting the workflows down (2026-08-08)
+
+Measured first, from `gh api .../jobs`, rather than guessing:
+
+| Workflow | Was | Critical path |
+|---|---|---|
+| PR Check | 241s | web job 228s, of which **Build 171s** |
+| Deploy (web) | 351s | changes 7s → lint-web 48s → deploy-web 282s |
+| Deploy (api) | 211s | changes 5s → lint-python 97s → deploy-gcp 94s |
+
+## Done
+
+- [x] **`optimize-images.mjs` ran on every build — 149s of the web app's 171s
+      build step.** From the run log: `08:33:16 → 08:35:45` for the images, then
+      ~22s for `next build`. It was paid twice per deploy, because `vercel build`
+      runs the same npm script. `public/images` is committed, and running the
+      optimiser locally changed **0 of the 45 files** — the work was pure waste
+      on every run. Removed from `build` and `dev`; kept as `pnpm --filter web
+      images`, with `check-images.mjs` in its place (0.038s) so a change to
+      `image-src` without a re-encode fails the build instead of silently
+      shipping the old artwork
+- [x] `lint-web` / `lint-admin` / `lint-python` folded into the deploy jobs as
+      steps. As jobs they gated the deploy serially, so every deploy booted a
+      second runner and re-did checkout + setup-node + install to reproduce the
+      machine the deploy was about to build on
+- [x] `concurrency` groups. PR Check cancels superseded runs; **Deploy
+      deliberately does not** — it runs migrations and restarts containers, and
+      killing it partway is how you get a half-migrated database
+- [x] `pip` → `uv` for the API deps (19s → ~2s)
+- [x] `pytest -n auto --dist loadfile` (+ `pytest-xdist`), and dropped `-v`,
+      which printed 1278 lines nobody reads
+
+## Verification
+
+- Guard proven **both** ways: passes on a clean tree in 0.038s; adding an
+  un-encoded file to `image-src/logos` makes it exit 1 with the regenerate
+  instruction; passes again once reverted
+- Re-running the optimiser still produces byte-identical output — 0 changed files
+- `pnpm --filter web build` works through the new guard; lint clean (12
+  pre-existing warnings, 0 errors), 277 tests pass, `tsc` clean
+- xdist checked against a **throwaway Postgres**, not just the mocked suite:
+  1281 passed in 10.19s, run twice consecutively to catch leftover-row
+  contamination between workers. `--dist loadfile` is what makes this safe — it
+  pins each file to one worker, and the three real-DB modules already clean up
+  only their own prefixes (`pytest-pricesort`, `pytest-custom-`, MenuGroup rows)
+- `actionlint` clean on both changed workflows
+
+## Still open
+
+- **PR Check's Python job has no Postgres service**, so the 21 real-database
+  tests only ever run on the deploy. A PR can go green and then fail on `main`.
+  Adding the service there costs ~22s and closes the gap
+- The web `Build` and `Deploy` steps still repeat work between PR Check and the
+  deploy. A Turbo remote cache would share it, but it needs a token and a
+  service, so it was left alone
