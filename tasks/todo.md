@@ -1,216 +1,260 @@
-# Lalamove for third-party zones, and an order history that can date itself
+# Cart add-ons with personalisation, and the free-delivery nudge
 
 ## Why
 
-Two asks that turned out to share one root cause: **an order with no integrated
-courier produces no facts, so nothing downstream has anything to show.**
+Two changes to the cart page, from the conversion audit
+([tasks/conversion-audit.md](conversion-audit.md)):
 
-1. A zone marked `third_party` has no integration by design — someone we already
-   use collects the box and tells us nothing. That is fine until it is not, and
-   there was no way to put one of those orders on a courier we can actually
-   book.
-2. The admin's status timeline showed a stamp under *Created* and four blanks.
+1. The homepage marquee advertises **"GIFT BOXES WITH A HANDWRITTEN NOTE"** and
+   there is no gift-message field anywhere in the codebase. A customer who came
+   for the gifting proposition reaches checkout with no way to say who it's from.
+2. `free_delivery_threshold` is surfaced on the home banner and at checkout
+   (`checkout/page.tsx:520–532`) but the cart page mentions it **zero times**. By
+   checkout the basket is decided; the cart is where a second box gets added.
 
-The timeline was blank because four of its five stamps read `order_deliveries`
-columns that only a courier webhook ever fills — so a pickup order, a
-third-party zone, or anything walked through by hand filled in exactly one.
-`confirmed` had no source at all.
+## Design
 
-## What was already there
+### The dedup trap this has to be built around
 
-Lalamove is fully integrated: HMAC client, quote/dispatch/webhook/POD/driver,
-batching, a signed receiver, and `LALAMOVE_*` in all five secret locations.
-**No new env vars**, so CLAUDE.md §9 does not apply and
-`test_compose_env_allowlist.py` is untouched.
+`cart_service._options_key()` keys a cart line on `(product_id, sorted option
+counts)`. Two gift notes with different messages produce an identical key, so the
+second add merges into the first as `quantity: 2` — **and one of the two messages
+is gone**, with no error. The note therefore has to participate in the dedup key.
+This is the single most important correctness point in the change.
 
-Three early-returns kept third-party orders away from it, and all three key off
-one column — `OrderDelivery.provider`. Changing it is what makes the existing
-machine take the order.
+### Two orthogonal product flags
 
-## Done
+The ask was a "handwritten note" config, explicitly with "other items as future".
+Those are two different questions, so two fields rather than one overloaded flag:
 
-### 1. `order_status_events` — one source of truth for the journey
-- [x] New table: status, previous_status, at, source, actor, note
-- [x] Captured by a **SQLAlchemy listener on `Order.status`**, not by callers.
-      `Order.status` is assigned from 13 places and only 2 go through
-      `order_service.update_status`; a recorder each writer must remember to
-      call is already incomplete
-- [x] Attribution from a `ContextVar` set at the entry points that know who is
-      acting — admin endpoint, register, payment webhooks, both couriers,
-      checkout. Unset means `system`, which is honest rather than wrong
-- [x] Courier webhooks pass `at=` so the history carries **their** moment, not
-      our processing time
-- [x] Migration `091` backfills from `created_at`, `order_deliveries`,
-      `audit_logs` and `payment_transactions`; never from `updated_at`
-- [x] **Dropped `order_deliveries.picked_up_at` / `delivered_at`** — they were
-      the same two moments, in a second table, read by a different screen.
-      `booked_at`, `cancelled_at` and `dispatchable_at` stay: none is an order
-      status
-- [x] `status_history` on `OrderResponse` (timestamps only) and
-      `GET /orders/{n}/status-events` for the admin (with actor and source)
+| Field | Question it answers |
+|-------|--------------------|
+| `is_cart_addon` | Does this show in the cart's add-on tray? |
+| `personalisation_type` | Does this capture text, and what kind? |
 
-### 2. The estimate stays date-based
-- [x] `promised_precision == "day"` is now a **ceiling for the life of the
-      order**. Every branch of `_estimate` used to key its sharpness off the
-      *current* provider, so a reassignment turned "Sat 9 Aug, before 10 PM"
-      into "Sat 9 Aug, 18:40" the moment a rider collected
-- [x] `original_provider` on `order_deliveries` so an order with no stored
-      promise still remembers it was somebody else's van
-- [x] Storefront `formatMoment` gained the missing `day_by` case — it had been
-      rendering an appointment where the email and admin said "before 10 PM"
-- [x] `order.estimate_by_time` seeded EN + AR
+A future candle or ribbon is a tray item with no text; a future engraved plaque
+might capture text without being a tray item. Keeping them separate means neither
+future needs a migration. `personalisation_type` is a string, not a boolean, so
+the second kind of personalisation is data rather than another column.
 
-### 3. Quote → confirm → book
-- [x] `POST /orders/{n}/delivery/lalamove/quote` — prices the order's own
-      address via the same `resolve_pickup` + `build_drop` the booking uses, not
-      the two-minute-cached `estimate_for_point`
-- [x] `POST /orders/{n}/delivery/lalamove/assign` — books at the approved
-      quotation. Guards: status `packed`, provider `third_party`, no existing
-      booking, courier configured
-- [x] A lapsed quotation is a **409 carrying the new price**, never a silent
-      re-book
-- [x] Failure puts `provider` back to `third_party` — a row saying `lalamove`
-      with no booking is the one state that strands a paid, packed order
-- [x] **The customer's fee never changes.** The quote is our cost; the margin is
-      what the admin is accepting
+Following the `is_customisable` precedent on `Product` — an explicit typed flag
+that turns an extra flow on — rather than free-form JSONB, because this config
+drives **server-side validation** and must not be shaped like whatever the last
+writer put there.
 
-### 4. Things the audit found on the way
-- [x] `ORDER_REPLACED` was unhandled. Lalamove cancel-and-clones a matched order
-      to adjust it, so the row was left saying "nobody is coming" while the
-      parcel was on its way — and re-dispatching would have put a **second
-      driver on the same cake**
-- [x] The provider only parsed `{"errors": [...]}`, but the quotation endpoint
-      answers `{"message": "ERR_..."}`. Every `error_id` predicate was silently
-      false there: checkout said "quote failed" for an out-of-range address, and
-      `batching_service` retried dispatches that could never succeed
-- [x] `ApiError` flattened FastAPI's structured `detail` to `[object Object]`
+### Deliberately *not* adding a `personalisation_required` column
 
-### 5. Admin
-- [x] Timeline reads `status_history` — five stamps on every order
-- [x] "Assign to Lalamove" on a packed third-party order, with a dialog showing
-      cost, distance, what the customer paid and the margin (red when negative)
-- [x] "moved from Third party" on the delivery card
+If `personalisation_type` is set, the note is required. An add-on whose entire
+value is the text it carries is worthless empty, and a paid gift note delivered
+blank is a customer complaint. One rule, no column, no admin field to get wrong.
+If a future add-on genuinely wants optional text, that is a migration made when
+we know what it needs.
 
-## Verification
+### A dedicated endpoint for the note
 
-- 1257 passing, 21 skipped; `ruff check` and `ruff format --check` clean
-- Both Next apps build; both typecheck
-- Migration `091` applied, downgraded and re-applied on a **throwaway Postgres**
-  with seeded fixtures covering a third-party delivered order, a Lalamove order
-  with full telemetry, an admin-walked order and a card order. Backfill verified
-  row by row, including the duplicate audit row deduping to the earliest
-- Downgrade refills `picked_up_at` / `delivered_at` from the history, so going
-  back loses nothing
-- The listener verified live against the real schema across every writer style:
-  constructor, direct assignment, `acting_as` block, and a raw string
+`PUT /cart/items/{id}` takes `quantity` and nothing else. The note is edited by
+typing, which means debounced saves — and a debounced save that also carries a
+quantity will eventually clobber a quantity change made in the same second. So
+the note gets `PUT /cart/items/{id}/note`. One endpoint, one job.
 
-## Still open
+### The nudge may only promise what it can bound to a place
 
-- Not run against Lalamove **sandbox** end to end. The unit tests mock `httpx`,
-  so the request shapes are pinned but a real quotation has not been bought.
+`DeliveryPromiseBanner` establishes the rule and its docstring explains why: a
+free-delivery claim is only ever made about a **named zone**, because the
+national average ("free over 150") is wrong in every zone — Sharjah is free at
+any basket, the far emirates want 200. The cart nudge follows the same rule:
+no serviceable area or no zone name → **render nothing**. A stale or borrowed
+promise is worse than silence.
+
+No new endpoint — `useLocation()` already supplies `area.free_threshold`,
+`free_delivery_available`, `serviceable` and `zone_name`.
 
 ---
 
-# CI: cutting the workflows down (2026-08-08)
+## Tasks
 
-Measured first, from `gh api .../jobs`, rather than guessing:
+### 1. Data model — migration `092`
+- [ ] `products.is_cart_addon` — bool, default false, not null
+- [ ] `products.personalisation_type` — varchar(30), nullable (`handwritten_note`)
+- [ ] `products.personalisation_max_length` — int, default 100, not null
+- [ ] `cart_items.personalisation_note` — text, nullable
+- [ ] `order_items.personalisation_note` — text, nullable. **Separate from
+      `kitchen_notes`**, which is a POS field cashiers write — mixing a
+      customer's gift text into it is how the wrong thing gets printed
+- [ ] Partial index on `products (is_cart_addon) WHERE is_cart_addon`
+- [ ] Verify up + down on a throwaway Postgres (per MEMORY: the suite mocks the
+      DB, so a broken migration passes every test)
 
-| Workflow | Was | Critical path |
-|---|---|---|
-| PR Check | 241s | web job 228s, of which **Build 171s** |
-| Deploy (web) | 351s | changes 7s → lint-web 48s → deploy-web 282s |
-| Deploy (api) | 211s | changes 5s → lint-python 97s → deploy-gcp 94s |
+### 2. API
+- [ ] `_options_key()` includes the normalised note — different text, different line
+- [ ] `CartItemCreate.personalisation_note`
+- [ ] `PUT /cart/items/{id}/note`
+- [ ] Server validates length against the **product's** `personalisation_max_length`,
+      not a constant; rejects a note on a product with no `personalisation_type`
+- [ ] `CartItemResponse` exposes `personalisation_note`, `personalisation_type`,
+      `personalisation_max_length` so the cart page needs no second fetch
+- [ ] `GET /products/cart-addons` — active, website-visible, `is_cart_addon`
+- [ ] `_compute_item_totals` snapshots the note onto `OrderItem` and **raises if a
+      personalisation product carries an empty note** — the checkout guard
+- [ ] Count characters, not bytes: an Arabic note must get the same 100 as English
 
-## Done
+### 3. Storefront
+- [ ] `CartAddonTray` — mini carousel/list on the cart page; hidden when there is
+      nothing to show or everything is already in the basket
+- [ ] Cart line: textarea when `personalisation_type` is set, with label, live
+      `n/max` counter, `maxLength`, debounced save
+- [ ] `FreeDeliveryNudge` — progress + remaining, or the qualified state; silent
+      when the area is unknown or unnamed
+- [ ] i18n EN + AR for every new string; check RTL on the counter and progress bar
+- [ ] Analytics: `cart_addon_added`, `personalisation_entered`, and the existing
+      `free_delivery_unlocked`
 
-- [x] **`optimize-images.mjs` ran on every build — 149s of the web app's 171s
-      build step.** From the run log: `08:33:16 → 08:35:45` for the images, then
-      ~22s for `next build`. It was paid twice per deploy, because `vercel build`
-      runs the same npm script. `public/images` is committed, and running the
-      optimiser locally changed **0 of the 45 files** — the work was pure waste
-      on every run. Removed from `build` and `dev`; kept as `pnpm --filter web
-      images`, with `check-images.mjs` in its place (0.038s) so a change to
-      `image-src` without a re-encode fails the build instead of silently
-      shipping the old artwork
-- [x] `lint-web` / `lint-admin` / `lint-python` folded into the deploy jobs as
-      steps. As jobs they gated the deploy serially, so every deploy booted a
-      second runner and re-did checkout + setup-node + install to reproduce the
-      machine the deploy was about to build on
-- [x] `concurrency` groups. PR Check cancels superseded runs; **Deploy
-      deliberately does not** — it runs migrations and restarts containers, and
-      killing it partway is how you get a half-migrated database
-- [x] `pip` → `uv` for the API deps (19s → ~2s)
-- [x] Dropped `-v` from pytest, which printed 1280 lines nobody reads
-- [ ] ~~`pytest -n auto --dist loadfile`~~ — **tried and reverted.** Measured
-      50s against 47s serial on the runner: slightly *worse*. The suite's CI
-      cost is importing the app, not running the tests, and every xdist worker
-      pays that import separately. It does help locally (9.6s -> 5.6s), so
-      `pytest-xdist` stays as a dev dependency
+### 4. Admin
+- [ ] `ProductForm`: cart add-on toggle, personalisation type, max length
+- [ ] Order detail shows the note on the line — somebody has to read it to write it
+- [ ] Owner notification email carries it, for the same reason
+- [ ] Order confirmation email shows it back to the customer, so a typo is caught
+      before it is handwritten
+
+### 5. Obligations
+- [ ] **CLAUDE.md §10** — new analytics events mean
+      `docs/umami-analytics-setup.md` gets its Custom Events rows **and** a
+      Changelog row. Not optional
+- [ ] §9 does not apply — no new env vars
+- [ ] Tests: dedup separation, length rejection, empty-note checkout block,
+      snapshot onto the order, nudge zone rules
+- [ ] `ruff check` + `ruff format --check`; both Next apps build and typecheck
+- [ ] Commit with `--author="Hussain Abbasi <h_abbasi97@hotmail.com>"`, no
+      `Co-Authored-By`
+
+### 5. Register / POS
+The note is not a modifier, so `option_snapshot.for_register` will not carry it —
+it has to be added to the line payload explicitly.
+- [ ] Note travels on the POS order-line payload and renders on the register
+- [ ] Appears on the kitchen/packing ticket, so whoever writes it can read it
+- [ ] A line whose note fails to decode must degrade to a line **without** a note,
+      never to a dropped line — `option_snapshot`'s docstring records what a
+      failed decode cost last time: a branch saw an empty queue
+
+## Out of scope (say so rather than silently skip)
+- Gift *wrapping* as a distinct concept, and gift-recipient address separation.
+
+## Review
+
+All of the above is done. Two things worth recording.
+
+### The migration id was too long, and only a real database said so
+
+`092_cart_addons_and_personalisation` is 35 characters and
+`alembic_version.version_num` is `varchar(32)`. Every DDL statement ran, then
+the upgrade failed writing down that it had — leaving a database with the new
+columns and no record of the revision.
+
+Nothing in the test suite could have caught it: the suite mocks the database, so
+a migration that cannot apply passes all 1290 tests. It was found by running
+`alembic upgrade head` against a throwaway Postgres, which is the practice
+MEMORY already records for exactly this reason. Renamed to
+`092_cart_addons_personalisation` (31).
+
+### `merge` had the same dedup hole as `add_item`
+
+The plan named `_options_key` as the trap and it turned out to have two callers,
+not one. `cart_service.merge` folds a guest basket into a user's on sign-in and
+compared lines the same way — so a guest who wrote a gift note and *then* logged
+in had it silently dropped into an existing line. Fixed alongside, and the new
+item carries the note through.
 
 ## Verification
 
-- Guard proven **both** ways: passes on a clean tree in 0.038s; adding an
-  un-encoded file to `image-src/logos` makes it exit 1 with the regenerate
-  instruction; passes again once reverted
-- Re-running the optimiser still produces byte-identical output — 0 changed files
-- `pnpm --filter web build` works through the new guard; lint clean (12
-  pre-existing warnings, 0 errors), 277 tests pass, `tsc` clean
-- Suite checked against a **throwaway Postgres**, not just the mocked run:
-  1281 passed, twice consecutively
-- Measured on the runner afterwards, which is how the xdist regression was
-  caught. Per-step, against a baseline run that also touched `deploy.yml` so
-  the same three jobs ran in both:
+- **1290 passed**, 21 skipped (was 1257 at the start of this branch); 23 of the
+  new ones are `tests/unit/test_personalisation.py`
+- Web: 308 passed across 32 files, including 14 for the nudge's zone rules
+- `ruff check` and `ruff format --check` clean across 287 files
+- Both Next apps build; both `tsc --noEmit` clean
+- Migration `092` applied → downgraded → re-applied on a **throwaway Postgres**,
+  with the partial index and all four columns verified present after each
+  upgrade and absent after the downgrade
+- An Arabic note with a newline round-tripped through the real column and
+  counted as 25 characters, confirming characters rather than bytes
 
-  | Step | Was | Now |
-  |---|---|---|
-  | web `Build` (the image fix) | 167s | **30s** |
-  | admin `Deploy` (`--archive=tgz`) | 165s | **18s** |
-  | API `Install dependencies` (uv) | 19s | **2s** |
-  | API `Run pytest` (xdist) | 47s | 50s — reverted |
+## Not done, and why
 
-  Full three-app deploy 316s -> 263s, and 63s of that 263 was a one-time Docker
-  layer rebuild from `pyproject.toml` changing
-- `actionlint` clean on both changed workflows
+- **Nothing on the PDP.** A note can only be added from the basket. Adding it at
+  the product page is a second entry point to the same field and worth doing,
+  but it is not what was asked for.
+- The seeded copy assumes one personalisation kind. A second one needs a label
+  and placeholder in `seed_i18n.py` and an entry in `PersonalisationField`'s
+  `COPY` map — deliberately, so an unlabelled box can never render.
+- No gift-note product exists yet. The feature is inert until one is created in
+  the admin with **Offer in the cart add-on tray** ticked and **Asks the
+  customer to write** set to *Handwritten note*.
 
-## Still open
+---
 
-- **PR Check's Python job has no Postgres service**, so the 21 real-database
-  tests only ever run on the deploy. A PR can go green and then fail on `main`.
-  Adding the service there costs ~22s and closes the gap
-- The web `Build` and `Deploy` steps still repeat work between PR Check and the
-  deploy. A Turbo remote cache would share it, but it needs a token and a
-  service, so it was left alone
+# The new-customer coupon: applicable at the basket, verified only for delivery
 
-## Follow-up: the Vercel upload is retried now
+## Why
 
-Run 31260006904 failed with a bare `Error: fetch failed` 7.3MB into a 29.2MB
-tarball upload. Not a quota and not a config fault — the identical command had
-succeeded for admin two minutes earlier and for web twenty minutes before that,
-and the build was already finished and paid for when the connection dropped.
+`NEW` (20% off first 3 orders) carries `requires_phone_verification`, and that
+flag was enforced at the wrong moment, in the wrong place, and on the wrong
+orders — so the offer was unclaimable by exactly the customer it targets.
 
-Both Vercel `Deploy` steps now retry three times with a 10s/20s backoff. Safe to
-retry: a deployment only goes live once its upload completes, so a half-sent
-archive promotes nothing.
+- **The basket tray was a guaranteed dead end.** `cart/page.tsx` validated the
+  code without sending a phone at all (its own comment said "the basket has no
+  phone"), so `is_phone_verified(None)` was always false and the tray always
+  drew the red *"Verify your phone number to use this code"* — on a page with no
+  phone field and no verification widget anywhere on it.
+- **Verification was unreachable for guests.** The only guest-reachable
+  `PhoneVerify` sat inside `PromoCodeStep`, collapsed behind an "add promo or
+  note" toggle, and rendered only *after* a refusal. The other lived in the
+  account address book, behind a sign-in.
+- **The gate hit the orders it should not.** It exists because a delivery costs
+  a courier that a 20% discount can take past break-even. A collection costs
+  nothing — yet a pickup order was refused *harder*, because the only phone
+  `create_order` looked at came from a shipping address a pickup does not have.
+- **Nothing announced the offer before the basket**, and four machine-readable
+  surfaces announced it *wrongly*: `llms.txt`, `llms-full.txt` and
+  `ai-plugin.json` each hard-coded "15% off" with no code, while the row said 20%
+  with the code `NEW`.
 
-Steady state, measured on run 31260260610 once the API's Docker layer cache was
-warm again (`pyproject.toml` changing had busted it on the two runs before):
+## What changed
 
-| Job | Was (lint + deploy, serial) | Now (merged) |
-|---|---|---|
-| Web | 55 + 246 = 301s | **142s** |
-| Admin | 42 + 71 = 113s | **104s** |
-| API | 106 + 78 = 184s | **161s** |
-| **Whole run** | **316s** | **173s** |
+- `promo_code_service.validate` gained `delivery_method` and
+  `enforce_phone_verification`. It now **reports** an outstanding verification
+  (`valid: true`, real discount, `phone_verified: false`) instead of refusing;
+  `create_order` is the only caller that enforces, and only for delivery.
+  Response carries two orthogonal flags — see `pendingVerification` in `types.ts`.
+- Cart: the code applies, the discount shows, and a neutral note replaces the red
+  alert. `One offer per customer.` deleted; terms collapse to one line behind
+  "Show more".
+- Checkout: `PhoneVerify` moved into `AddressModal` under the phone field, where
+  the number is typed anyway and a guest can reach it. Place Order is blocked for
+  delivery until verified, with a prompt that reopens the address form; the
+  server refuses in its own words as a backstop. Pickup is never blocked.
+- Homepage: the dead `PromoBanner` component was repurposed into a live strip fed
+  from `/promo-codes/featured`, plus a JSON-LD `Offer` on the `Bakery` entity and
+  the offer in the meta description. `lib/offer.ts` is the single source all four
+  machine-readable surfaces now read.
 
-Per step, where it came from:
+## Verified
 
-| Step | Was | Now |
-|---|---|---|
-| web `Build` — the image fix | 167s | **32s** |
-| admin `Deploy` — `--archive=tgz` | 165s | **18s** |
-| API `Install dependencies` — uv | 19s | **2s** |
-| API `Build and push API image` | 4s | 10s (cache warm; 48–67s while busted) |
-| API `Run pytest` | 47s | 49s serial — 50s under xdist, which is why it was reverted |
+Against a real Postgres and a running API/web (not mocks): cart applies with a
+14.00 discount on a 70.00 basket; pickup + coupon + unverified → order created;
+delivery + unverified → HTTP 400 in its own words and no row written; delivery +
+verified → order created. Homepage strip, JSON-LD `Offer`, both `llms*.txt`,
+`ai-plugin.json` and the meta description all carry the live 20% / `NEW`.
 
-Beware comparing against the failed run 31260006904: its web job reads 104s only
-because the job died early at `Deploy`. 142s is the real figure.
+**Not verified locally:** the Firebase OTP round trip. There are no Firebase env
+vars in this environment and `PhoneVerify` renders `null` without them by design,
+so the send/confirm step needs checking on a deploy that has them.
+
+## Follow-ups (flagged, not fixed)
+
+- `promo_code_service.create_bulk` copies `max_uses_per_user`,
+  `max_discount_amount` and `first_orders_limit` but **not**
+  `requires_phone_verification` — bulk-issued codes silently lose the gate.
+- `seed_db.py` seeds no coupon with a `first_orders_limit`, so on a fresh DB
+  `advertisable()` returns `None` and neither the tray nor the banner ever
+  appears. Confirmed live: `/promo-codes/featured` returned `null` until a row
+  was inserted by hand.
+- `promo_banner.text` is now an orphaned translation key.

@@ -17,20 +17,31 @@ import { useToast } from '@/components/ui/Toast';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
 import { FeaturedProductsCarousel } from '@/components/product/FeaturedProductsCarousel';
-import { NewCustomerCouponTray } from '@/components/promo/NewCustomerCouponTray';
+import { NewCustomerCouponTray, type ApplyOutcome } from '@/components/promo/NewCustomerCouponTray';
+import { CartAddonTray } from '@/components/cart/CartAddonTray';
+import { FreeDeliveryNudge } from '@/components/cart/FreeDeliveryNudge';
+import { PersonalisationField } from '@/components/cart/PersonalisationField';
+import { pendingVerification, needsPersonalisation, type Product } from '@/lib/types';
 import { Icon } from '@/components/ui/Icon';
 
 const PLACEHOLDER_IMAGE = '/images/logos/main_logo.png';
 
 export default function CartPage() {
   const { t, locale } = useTranslation();
-  const { cart, isLoading, updateItem, removeItem, mergeCart } = useCart();
+  const { cart, isLoading, addItem, updateItem, updateNote, removeItem, mergeCart } = useCart();
   const { addToast } = useToast();
   const { user } = useAuth();
 
   const [promoCode, setPromoCode] = useState('');
   const [promoLoading, setPromoLoading] = useState(false);
-  const [appliedPromo, setAppliedPromo] = useState<{ code: string; discount: number; message: string } | null>(null);
+  // `needsVerify` rides on the applied code rather than sitting in a state of
+  // its own, because the two are one fact: this coupon, and what it still owes
+  // before a delivery order can be placed with it. Held apart they can be set
+  // in different orders and disagree — and the one that gets handed to the
+  // checkout is the one that decides whether the pay button works.
+  const [appliedPromo, setAppliedPromo] = useState<
+    { code: string; discount: number; message: string; needsVerify: boolean } | null
+  >(null);
   const [promoError, setPromoError] = useState<string | null>(null);
 
   const [checkoutLoading, setCheckoutLoading] = useState(false);
@@ -39,6 +50,24 @@ export default function CartPage() {
   const subtotal = cart?.subtotal ?? 0;
   const discount = appliedPromo?.discount ?? 0;
   const total = Math.max(0, subtotal - discount);
+
+  // Which add-ons are already here, so the tray stops offering them.
+  const productIdsInCart = new Set(items.map((i) => i.product_id));
+
+  /**
+   * Lines that are paid for and still say nothing.
+   *
+   * The checkout refuses these — see `order_service._compute_item_totals` — so
+   * catching it here saves a round trip to a page the customer would be bounced
+   * off. The server keeps the rule regardless; this is courtesy, not the guard.
+   */
+  //
+  // Filtered off `cart?.items` rather than off `items` above, which is the same
+  // array. React Compiler cannot prove an imported predicate leaves its
+  // argument alone, so filtering `items` marks it as possibly-mutated and every
+  // hook downstream that depends on `items.length` loses its memoization —
+  // which fails the lint as an error, not a warning.
+  const unfinished = (cart?.items ?? []).filter(needsPersonalisation);
 
   /**
    * The basket, once per visit to this page.
@@ -88,6 +117,33 @@ export default function CartPage() {
   }, [removeItem, addToast, t]);
 
   /**
+   * Take an add-on from the tray.
+   *
+   * Returns the failure rather than toasting it, so the tray can show it beside
+   * its own button — a toast for a control this small is easy to miss, and the
+   * customer is looking at the strip they just tapped.
+   */
+  const handleAddAddon = useCallback(async (product: Product): Promise<string | null> => {
+    try {
+      await addItem(product.id, 1);
+      return null;
+    } catch (err) {
+      return err instanceof Error ? err.message : t('cart.failed_add');
+    }
+  }, [addItem, t]);
+
+  /**
+   * Save a line's message.
+   *
+   * Rethrows so the field can keep what was typed on screen next to the reason
+   * it did not save. Swallowing it here would clear the error state and leave
+   * somebody believing a message was stored that never was.
+   */
+  const handleNoteSave = useCallback(async (itemId: string, note: string) => {
+    await updateNote(itemId, note);
+  }, [updateNote]);
+
+  /**
    * Put a code on the basket, whichever control asked for it.
    *
    * One path for the typed field and the coupon tray, so the two cannot end up
@@ -96,19 +152,23 @@ export default function CartPage() {
    * error itself — the tray shows its own failure next to its own button, and
    * the input shows it under the input.
    */
-  const applyCode = useCallback(async (raw: string, fromTray = false): Promise<string | null> => {
+  const applyCode = useCallback(async (raw: string, fromTray = false): Promise<ApplyOutcome> => {
     const code = raw.trim().toUpperCase();
-    if (!code) return null;
+    if (!code) return { kind: 'applied' };
 
     setPromoError(null);
     setAppliedPromo(null);
 
     try {
-      // The account's email, where there is one. The basket has no phone and no
-      // typed email, so this is as much identity as this page can offer — and
-      // the coupon is re-validated at the checkout against the full set, which
-      // is where a refusal is still actionable. A signed-in returning customer
-      // therefore finds out here rather than two screens later.
+      // The account's email, where there is one. The basket has no phone, no
+      // typed email and no chosen delivery method, so this is as much identity
+      // as this page can offer — and the coupon is re-validated at the checkout
+      // against the full set. A signed-in returning customer therefore finds
+      // out here rather than two screens later.
+      //
+      // No `delivery_method` on purpose: unsent means "not chosen", and the
+      // server answers that cautiously by reporting the phone gate as still
+      // outstanding. Reporting is all it does here — see `promo_code_service`.
       const result = await promoApi.validate(code, subtotal, {
         email: accountEmailOf(user),
       });
@@ -123,12 +183,18 @@ export default function CartPage() {
           subtotal,
           from_tray: fromTray,
         });
-        return result.message ?? t('cart.invalid_promo');
+        return { kind: 'error', note: result.message ?? t('cart.invalid_promo') };
       }
 
       const discountAmount = Number(result.discount_amount);
+      const pending = pendingVerification(result);
       setPromoCode(code);
-      setAppliedPromo({ code, discount: discountAmount, message: result.message ?? '' });
+      setAppliedPromo({
+        code,
+        discount: discountAmount,
+        message: result.message ?? '',
+        needsVerify: pending,
+      });
       analytics.promoApplied({
         code,
         discount: discountAmount,
@@ -137,7 +203,10 @@ export default function CartPage() {
         from_tray: fromTray,
       });
       addToast(t('cart.promo_applied', { code }), 'success');
-      return null;
+      // The code is on and the discount is real; what is left is an errand, and
+      // one that only a delivery order will actually be asked to run. Counted
+      // as an application rather than a failure, because that is what it is.
+      return { kind: pending ? 'pending' : 'applied' };
     } catch (err) {
       analytics.promoFailed({
         code,
@@ -146,14 +215,15 @@ export default function CartPage() {
         subtotal,
         from_tray: fromTray,
       });
-      return t('cart.promo_error');
+      return { kind: 'error', note: t('cart.promo_error') };
     }
   }, [subtotal, user, addToast, t]);
 
   const handleApplyPromo = useCallback(async () => {
     if (!promoCode.trim()) return;
     setPromoLoading(true);
-    setPromoError(await applyCode(promoCode));
+    const outcome = await applyCode(promoCode);
+    setPromoError(outcome.kind === 'error' ? outcome.note : null);
     setPromoLoading(false);
   }, [promoCode, applyCode]);
 
@@ -188,6 +258,11 @@ export default function CartPage() {
             promoCode: appliedPromo.code,
             promoDiscount: appliedPromo.discount,
             promoMessage: appliedPromo.message,
+            // Carried with the code, because the basket is where it was
+            // answered and the checkout would otherwise have to ask again to
+            // learn something it has already been told. It is what turns the
+            // pay button into a prompt rather than a refusal.
+            promoNeedsVerify: appliedPromo.needsVerify,
           }));
         } catch { /* noop */ }
       }
@@ -304,6 +379,17 @@ export default function CartPage() {
                       {unitPrice.toFixed(2)} AED each
                     </p>
 
+                    {/*
+                      Renders itself away when this product asks for nothing, so
+                      no condition is needed here — and the one that decides is
+                      the product's own config rather than a list kept in sync
+                      by hand.
+                    */}
+                    <PersonalisationField
+                      item={item}
+                      onSave={(note) => handleNoteSave(item.id, note)}
+                    />
+
                     <div className="flex items-center justify-between mt-auto pt-2">
                       <QuantitySelector
                         value={item.quantity}
@@ -320,6 +406,8 @@ export default function CartPage() {
                 </article>
               );
             })}
+
+            <CartAddonTray inCart={productIdsInCart} onAdd={handleAddAddon} />
           </section>
 
           {/* Order summary */}
@@ -347,6 +435,12 @@ export default function CartPage() {
                 </div>
               </div>
 
+              {/* Measured against the discounted total, because that is what
+                  the checkout compares to the threshold. Promising free
+                  delivery on a figure the next screen disagrees with is worse
+                  than not promising it. */}
+              <FreeDeliveryNudge total={total} />
+
               <div className="h-px bg-gray-200" />
 
               {/* Total */}
@@ -366,21 +460,34 @@ export default function CartPage() {
               {/* Promo code */}
               <div className="space-y-2">
                 {appliedPromo ? (
-                  <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-sm px-3 py-2">
-                    <div>
-                      <p className="font-body text-xs font-medium text-green-800">{appliedPromo.code}</p>
-                      {appliedPromo.message && (
-                        <p className="font-body text-xs text-green-600">{appliedPromo.message}</p>
-                      )}
+                  <>
+                    <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-sm px-3 py-2">
+                      <div>
+                        <p className="font-body text-xs font-medium text-green-800">{appliedPromo.code}</p>
+                        {appliedPromo.message && (
+                          <p className="font-body text-xs text-green-600">{appliedPromo.message}</p>
+                        )}
+                      </div>
+                      <button
+                        onClick={handleRemovePromo}
+                        className="text-green-400 hover:text-green-700 transition-colors"
+                        aria-label="Remove promo code"
+                      >
+                        <Icon name="close" className="text-base" />
+                      </button>
                     </div>
-                    <button
-                      onClick={handleRemovePromo}
-                      className="text-green-400 hover:text-green-700 transition-colors"
-                      aria-label="Remove promo code"
-                    >
-                      <Icon name="close" className="text-base" />
-                    </button>
-                  </div>
+                    {/* Outside the green box on purpose. The box says the code
+                        went on, which is true; this says what is still owed
+                        before a delivery order can be placed with it, which is
+                        a different statement and should not read as part of the
+                        good news. */}
+                    {appliedPromo.needsVerify && (
+                      <p className="font-body text-xs text-gray-500 flex items-start gap-1.5">
+                        <Icon name="info" className="text-sm shrink-0 text-secondary" />
+                        <span>{t('cart.promo_verify_at_checkout')}</span>
+                      </p>
+                    )}
+                  </>
                 ) : (
                   <div className="flex gap-2 items-start">
                     <div className="flex-1 min-w-0">
@@ -411,13 +518,27 @@ export default function CartPage() {
               </div>
 
               {/* CTA */}
+              {/*
+                A disabled button with no explanation is a dead end. The reason
+                sits above it and names the product, because with several lines
+                in the basket "add your message" does not say which one.
+              */}
+              {unfinished.length > 0 && (
+                <p className="font-body text-xs text-amber-600" role="alert">
+                  {t('cart.note_required_before_checkout', {
+                    product: unfinished
+                      .map((i) => localizedField({ translations: i.product_translations }, 'name', i.product_name ?? '', locale))
+                      .join(', '),
+                  })}
+                </p>
+              )}
               <Button
                 variant="primary"
                 size="lg"
                 fullWidth
                 onClick={handleProceedToCheckout}
                 loading={checkoutLoading}
-                disabled={items.length === 0}
+                disabled={items.length === 0 || unfinished.length > 0}
               >
                 {t('cart.proceed_to_checkout')}
               </Button>

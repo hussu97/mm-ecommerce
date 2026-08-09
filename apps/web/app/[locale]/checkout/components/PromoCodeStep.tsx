@@ -3,12 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
-import { PhoneVerify } from '@/components/ui/PhoneVerify';
 import { promoApi } from '@/lib/api';
-import { isFirebaseConfigured } from '@/lib/firebase';
+import { pendingVerification } from '@/lib/types';
 import { useToast } from '@/components/ui/Toast';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
-import { withFallback } from '@/lib/i18n/fallback';
 import { analytics } from '@/lib/analytics';
 import { Icon } from '@/components/ui/Icon';
 
@@ -27,8 +25,18 @@ interface PromoCodeStepProps {
    * the order is refused at the last step with nothing the customer can do
    * about it from there.
    */
-  identity?: { email?: string | null; phone?: string | null };
-  onChange: (patch: { promoCode: string; promoDiscount: number; promoMessage: string }) => void;
+  identity?: {
+    email?: string | null;
+    phone?: string | null;
+    /** Which kind of order this is. The phone gate only applies to deliveries. */
+    delivery_method?: 'delivery' | 'pickup' | null;
+  };
+  onChange: (patch: {
+    promoCode: string;
+    promoDiscount: number;
+    promoMessage: string;
+    promoNeedsVerify: boolean;
+  }) => void;
 }
 
 /**
@@ -42,15 +50,6 @@ export function PromoCodeStep({
   const { addToast } = useToast();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Set when the *only* thing standing between this customer and the discount
-  // is an unverified phone — which is a refusal with a button that fixes it,
-  // and so is worth telling apart from every other refusal.
-  const [needsVerify, setNeedsVerify] = useState(false);
-
-  const label = useCallback(
-    (key: string, english: string) => withFallback(t, key, english),
-    [t],
-  );
 
   /**
    * Check a code and put the answer on the form.
@@ -68,11 +67,21 @@ export function PromoCodeStep({
     if (!code) return;
     setLoading(true);
     setError(null);
-    setNeedsVerify(false);
     try {
       const result = await promoApi.validate(code, subtotal, identity);
       if (result.valid) {
-        onChange({ promoCode: code, promoDiscount: Number(result.discount_amount), promoMessage: result.message ?? '' });
+        // Valid *and* still owing a proved number is now a real answer: the
+        // discount is applied and the SMS is asked for on the address form.
+        // Reported up rather than kept here because the pay button is what acts
+        // on it, and this panel is folded away behind a toggle most customers
+        // never open.
+        const pending = pendingVerification(result);
+        onChange({
+          promoCode: code,
+          promoDiscount: Number(result.discount_amount),
+          promoMessage: result.message ?? '',
+          promoNeedsVerify: pending,
+        });
         if (announced) {
           analytics.promoApplied({
             code,
@@ -85,7 +94,6 @@ export function PromoCodeStep({
       } else {
         const reason = result.message ?? t('checkout.invalid_promo');
         setError(reason);
-        setNeedsVerify(Boolean(result.requires_phone_verification));
         analytics.promoFailed({
           code,
           // Trimmed because the server's refusals are full sentences and a
@@ -94,7 +102,7 @@ export function PromoCodeStep({
           surface: 'checkout',
           subtotal,
         });
-        onChange({ promoCode: code, promoDiscount: 0, promoMessage: '' });
+        onChange({ promoCode: code, promoDiscount: 0, promoMessage: '', promoNeedsVerify: false });
       }
     } catch {
       // A network failure on a silent re-check leaves the discount alone. The
@@ -130,12 +138,11 @@ export function PromoCodeStep({
     // `apply` is deliberately not a dependency: it closes over the same values
     // this effect watches, so including it would re-fire on its own identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subtotal, identity?.email, identity?.phone]);
+  }, [subtotal, identity?.email, identity?.phone, identity?.delivery_method]);
 
   const handleRemove = () => {
-    onChange({ promoCode: '', promoDiscount: 0, promoMessage: '' });
+    onChange({ promoCode: '', promoDiscount: 0, promoMessage: '', promoNeedsVerify: false });
     setError(null);
-    setNeedsVerify(false);
   };
 
   if (promoDiscount > 0) {
@@ -166,9 +173,8 @@ export function PromoCodeStep({
             placeholder={t('checkout.promo_placeholder')}
             value={promoCode}
             onChange={(e) => {
-              onChange({ promoCode: e.target.value.toUpperCase(), promoDiscount: 0, promoMessage: '' });
+              onChange({ promoCode: e.target.value.toUpperCase(), promoDiscount: 0, promoMessage: '', promoNeedsVerify: false });
               setError(null);
-              setNeedsVerify(false);
             }}
             onKeyDown={(e) => e.key === 'Enter' && handleApply()}
             error={error ?? undefined}
@@ -186,31 +192,16 @@ export function PromoCodeStep({
         </Button>
       </div>
 
-      {/* The way out, next to the refusal. Without it the message is a dead end:
-          the only other place a number can be verified is the address book,
-          which is behind a sign-in — and a guest is precisely who this coupon
-          is for. Retries the code itself on success, so the customer does not
-          have to work out that they should press Apply again. */}
-      {needsVerify && identity?.phone && isFirebaseConfigured() && (
-        <div className="mt-2 border-s-2 border-secondary/40 ps-3">
-          <p className="font-body text-xs text-gray-500 mb-1.5">
-            {label('verify.subtitle', "We'll text you a 6-digit code.")}
-          </p>
-          <PhoneVerify
-            phone={identity.phone}
-            onVerified={() => { void apply(promoCode); }}
-          />
-        </div>
-      )}
-      {/* No number yet, or a build with no Firebase keys in it — a preview
-          deploy, most often. `PhoneVerify` renders nothing at all in that case,
-          so without this check the heading above would sit over empty space:
-          a customer told a code is coming and no button to ask for one. */}
-      {needsVerify && !(identity?.phone && isFirebaseConfigured()) && (
-        <p className="mt-2 font-body text-xs text-gray-500">
-          {label('verify.enter_phone_first', 'Add your mobile number above, then apply the code again.')}
-        </p>
-      )}
+      {/* No verification panel here any more, and deliberately none.
+          It used to live at this spot because a refused code was the only
+          signal we had — but the server no longer refuses a coupon over an
+          unproved number while the customer is still shopping, so this branch
+          was never reached again. An unproved number is now reported as
+          outstanding, the discount applies, and the SMS is asked for on the
+          address form, where the number is being typed anyway and where a guest
+          can actually reach it. This panel is folded away behind an "add promo
+          or note" toggle that most customers never open, which is the last
+          place a required step should hide. */}
     </div>
   );
 }

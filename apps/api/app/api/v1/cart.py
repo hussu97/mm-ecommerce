@@ -9,7 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_db, get_optional_user
 from app.core.exceptions import UnauthorizedError
 from app.models.user import User
-from app.schemas.cart import CartItemCreate, CartItemUpdate, CartResponse
+from app.schemas.cart import (
+    CartItemCreate,
+    CartItemNoteUpdate,
+    CartItemUpdate,
+    CartResponse,
+)
 from app.services import cart_service
 
 router = APIRouter()
@@ -66,6 +71,32 @@ async def update_cart_item(
     user_id, session_id = _resolve_identity(current_user, x_session_id)
     return await cart_service.update_item(
         db, user_id=user_id, session_id=session_id, item_id=item_id, data=data
+    )
+
+
+@router.put("/items/{item_id}/note", response_model=CartResponse)
+async def update_cart_item_note(
+    item_id: uuid.UUID,
+    data: CartItemNoteUpdate,
+    x_session_id: str | None = Header(None, alias="X-Session-Id"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_optional_user),
+):
+    """
+    Set the personalised message on a cart item.
+
+    Its own route rather than a field on the quantity update, because the note
+    is saved as the customer types and a debounced save that also carried a
+    quantity would eventually overwrite a stepper change made in the same
+    moment.
+    """
+    user_id, session_id = _resolve_identity(current_user, x_session_id)
+    return await cart_service.update_item_note(
+        db,
+        user_id=user_id,
+        session_id=session_id,
+        item_id=item_id,
+        note=data.note,
     )
 
 

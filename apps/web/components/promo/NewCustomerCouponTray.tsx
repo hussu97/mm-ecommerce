@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { analytics } from '@/lib/analytics';
 import { promoApi } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
@@ -8,18 +8,34 @@ import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import type { AdvertisedPromo } from '@/lib/types';
 import { Icon } from '@/components/ui/Icon';
 
+/**
+ * What came of applying the code.
+ *
+ * `pending` is deliberately not a kind of failure: the coupon went on and the
+ * discount is real, and something is still owed before a *delivery* order can
+ * be placed with it. Treating those two as one is how this tray used to tell
+ * every new customer — the only people the offer is for — that they could not
+ * have the offer it was advertising to them.
+ *
+ * Only `error` carries text, because only `error` is displayed here. What is
+ * outstanding is written once, by the page, beside the applied code.
+ */
+export type ApplyOutcome =
+  | { kind: 'applied' }
+  | { kind: 'pending' }
+  | { kind: 'error'; note: string };
+
 interface NewCustomerCouponTrayProps {
   /** The code applied to this basket, if one is. Either spelling counts. */
   appliedCode: string | null;
   /**
-   * Applies a code on the caller's behalf. Resolves to an error message to
-   * show, or `null` when it went on.
+   * Applies a code on the caller's behalf.
    *
    * The tray does not validate anything itself: the basket, the discount and
    * the toast all belong to the page that owns them, and a second code path for
    * applying a coupon is a second chance for the two to disagree.
    */
-  onApply: (code: string) => Promise<string | null>;
+  onApply: (code: string) => Promise<ApplyOutcome>;
 }
 
 /**
@@ -46,7 +62,9 @@ export function NewCustomerCouponTray({ appliedCode, onApply }: NewCustomerCoupo
   const { t, locale } = useTranslation();
   const [promo, setPromo] = useState<AdvertisedPromo | null>(null);
   const [applying, setApplying] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<ApplyOutcome | null>(null);
+  const [termsOpen, setTermsOpen] = useState(false);
+  const restId = useId();
 
   useEffect(() => {
     let cancelled = false;
@@ -101,16 +119,21 @@ export function NewCustomerCouponTray({ appliedCode, onApply }: NewCustomerCoupo
     // Only when it is true of this coupon. A term about a step the customer
     // does not have to take is a reason not to bother.
     promo.requires_phone_verification ? t('promo.terms_verify') : null,
-    t('promo.terms_one_account'),
     t('promo.terms_limited'),
     t('promo.terms_combine'),
   ].filter((line): line is string => Boolean(line));
 
+  // The first line and the rest. Six lines of small print was most of the
+  // tray's height, above the fold, for text that is read after the decision
+  // rather than before it — so it pushed the Apply button down the page to
+  // answer a question nobody had asked yet. Folded, not dropped: the terms are
+  // still the terms, and every one of them is a click away.
+  const [lead, ...rest] = terms;
+
   const handleApply = async () => {
     setApplying(true);
-    setError(null);
-    const message = await onApply(code);
-    setError(message);
+    setOutcome(null);
+    setOutcome(await onApply(code));
     setApplying(false);
   };
 
@@ -155,9 +178,15 @@ export function NewCustomerCouponTray({ appliedCode, onApply }: NewCustomerCoupo
         )}
       </div>
 
-      {error && (
+      {/* Refusals only. A coupon that went on but still owes a verified number
+          is a success with an errand attached, and painting that red is exactly
+          how this tray used to tell every new customer — the only people the
+          offer is for — that they could not have it. That case is now the
+          applied state above, and the errand is written once, under the applied
+          box directly below this tray, rather than in both places. */}
+      {outcome?.kind === 'error' && (
         <p role="alert" className="font-body text-xs text-red-600">
-          {error}
+          {outcome.note}
         </p>
       )}
 
@@ -166,14 +195,40 @@ export function NewCustomerCouponTray({ appliedCode, onApply }: NewCustomerCoupo
           {t('promo.terms_title')}
         </p>
         <ul className="space-y-1">
-          {terms.map((line) => (
-            <li key={line} className="font-body text-xs text-gray-500 leading-relaxed ps-3 relative">
-              <span aria-hidden className="absolute start-0 top-0">·</span>
-              {line}
-            </li>
-          ))}
+          <Term line={lead} />
         </ul>
+        {rest.length > 0 && (
+          <>
+            {/* Rendered whether or not it is open, and hidden with `hidden`
+                rather than unmounted, so `aria-controls` always points at
+                something real — a control naming an element that is not in the
+                document is worse than no control. */}
+            <ul id={restId} hidden={!termsOpen} className="space-y-1 mt-1">
+              {rest.map((line) => (
+                <Term key={line} line={line} />
+              ))}
+            </ul>
+            <button
+              type="button"
+              onClick={() => setTermsOpen((open) => !open)}
+              aria-expanded={termsOpen}
+              aria-controls={restId}
+              className="mt-1.5 font-body text-xs text-secondary underline underline-offset-2 hover:text-primary transition-colors"
+            >
+              {termsOpen ? t('promo.terms_less') : t('promo.terms_more')}
+            </button>
+          </>
+        )}
       </div>
     </section>
+  );
+}
+
+function Term({ line }: { line: string }) {
+  return (
+    <li className="font-body text-xs text-gray-500 leading-relaxed ps-3 relative">
+      <span aria-hidden className="absolute start-0 top-0">·</span>
+      {line}
+    </li>
   );
 }

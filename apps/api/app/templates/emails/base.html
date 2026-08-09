@@ -124,6 +124,9 @@
     .item-name { font-size: 16px; color: #333333; line-height: 1.4; }
     .item-options { font-size: 13px; color: #8f8f8f; padding-top: 3px; line-height: 1.5; }
     .item-qty { font-size: 13px; color: #8f8f8f; padding-top: 3px; }
+    /* Darker than .item-options: this one is meant to be read and checked, not
+       skimmed past like a list of flavours. */
+    .item-note { font-size: 13px; color: #6a6a6a; padding-top: 3px; line-height: 1.5; font-style: italic; }
     .item-price { font-size: 16px; color: #333333; text-align: right; white-space: nowrap; }
 
     /* Totals */
@@ -200,7 +203,7 @@
       .panel, .panel-tinted, .panel-warning { border-color: #3a2e31 !important; background-color: #241d1f !important; }
       .hero-title, .kv-value-lg, .totals .grand td, .footer .signoff, .footer a, a { color: #e0b7bd !important; }
       .hero-title.is-warning { color: #f0a49c !important; }
-      p, .kv-value, .item-name, .item-price, .step-label.is-done, strong { color: #e8e0e1 !important; }
+      p, .kv-value, .item-name, .item-price, .item-note, .step-label.is-done, strong { color: #e8e0e1 !important; }
       p.muted, .item-options, .item-qty, .totals td, .footer p, .step-when { color: #a89a9d !important; }
       .items td, .totals .grand td, .footer { border-color: #34292c !important; }
       .order-chip { background-color: #2b2225 !important; border-color: #4a3b3f !important; color: #e0b7bd !important; }

@@ -8,11 +8,14 @@
  * way down the form, and the order is refused at the last step, where a
  * customer has nothing left to do but leave.
  *
- * The second half of the same problem is the refusal that *is* fixable. "Verify
- * your phone number to use this code" is a dead end unless the thing that fixes
- * it is next to it — the only other place a number can be proved is the address
- * book, which is behind a sign-in, and a guest is precisely who this coupon is
- * for.
+ * The second half of the same problem is the condition that is not a refusal at
+ * all. An unproved mobile number is something the customer can still do, and
+ * only a delivery order is ever asked for it — so the discount applies, the
+ * step is reported upward, and the SMS is asked for on the address form. This
+ * panel deliberately no longer offers one: it is folded away behind an "add
+ * promo or note" toggle most customers never open, which is the last place a
+ * required step should hide, and a guest — precisely who this coupon is for —
+ * had no other reachable way to prove anything.
  */
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -108,45 +111,91 @@ describe('PromoCodeStep', () => {
     });
   });
 
-  it('offers the OTP next to a refusal an OTP would fix', async () => {
+  it('applies the discount even while a number is still unproved', async () => {
     mocks.validate.mockResolvedValue({
-      valid: false,
-      discount_amount: 0,
-      message: 'Verify your phone number to use this code',
+      valid: true,
+      discount_amount: 15,
+      message: null,
       requires_phone_verification: true,
+      phone_verified: false,
     });
 
-    renderStep();
+    const { onChange } = renderStep();
     fireEvent.click(screen.getByText('Apply'));
 
+    // The discount is real and goes on the form. Refusing it here is what used
+    // to leave a new customer reading an advert for an offer they were told,
+    // on the same screen, that they could not have.
     await waitFor(() =>
-      expect(screen.getByText('send-code-to-+971501234567')).toBeInTheDocument(),
+      expect(onChange).toHaveBeenCalledWith(
+        expect.objectContaining({ promoCode: 'WELCOME15', promoDiscount: 15 }),
+      ),
     );
-
-    // And confirming it retries the code, rather than leaving the customer to
-    // work out that they should press Apply again.
-    mocks.validate.mockResolvedValue({ valid: true, discount_amount: 15, message: null });
-    fireEvent.click(screen.getByText('send-code-to-+971501234567'));
-    await waitFor(() => expect(mocks.validate).toHaveBeenCalledTimes(2));
   });
 
-  it('says which field to fill in when there is no number to verify yet', async () => {
+  it('reports an outstanding verification upward rather than handling it here', async () => {
     mocks.validate.mockResolvedValue({
-      valid: false,
-      discount_amount: 0,
-      message: 'Verify your phone number to use this code',
+      valid: true,
+      discount_amount: 15,
+      message: null,
       requires_phone_verification: true,
+      phone_verified: false,
     });
 
-    renderStep({ identity: { email: null, phone: null } });
+    const { onChange } = renderStep();
     fireEvent.click(screen.getByText('Apply'));
 
     await waitFor(() =>
-      expect(
-        screen.getByText('Add your mobile number above, then apply the code again.'),
-      ).toBeInTheDocument(),
+      expect(onChange).toHaveBeenCalledWith(
+        expect.objectContaining({ promoNeedsVerify: true }),
+      ),
     );
+
+    // And no OTP panel here. This step is folded away behind an "add promo or
+    // note" toggle that most customers never open — the last place a required
+    // step should hide. Verification lives on the address form, where the
+    // number is being typed anyway and where a guest can reach it.
     expect(screen.queryByText(/send-code-to/)).not.toBeInTheDocument();
+  });
+
+  it('does not claim a verification is owed when the number already proved one', async () => {
+    mocks.validate.mockResolvedValue({
+      valid: true,
+      discount_amount: 15,
+      message: null,
+      requires_phone_verification: true,
+      phone_verified: true,
+    });
+
+    const { onChange } = renderStep();
+    fireEvent.click(screen.getByText('Apply'));
+
+    // The coupon carries the gate; this customer has already cleared it. Asking
+    // again would be a second SMS for a handset that proved itself once.
+    await waitFor(() =>
+      expect(onChange).toHaveBeenCalledWith(
+        expect.objectContaining({ promoNeedsVerify: false }),
+      ),
+    );
+  });
+
+  it('tells the server which kind of order this is', async () => {
+    renderStep({
+      identity: { email: null, phone: '+971501234567', delivery_method: 'pickup' },
+    });
+    fireEvent.click(screen.getByText('Apply'));
+
+    // The phone gate is a delivery rule — a collection costs us no courier and
+    // is never asked. Validating without saying which this is gets the cautious
+    // answer, and a pickup order is then told it owes a number it will never be
+    // asked for.
+    await waitFor(() =>
+      expect(mocks.validate).toHaveBeenCalledWith(
+        'WELCOME15',
+        100,
+        expect.objectContaining({ delivery_method: 'pickup' }),
+      ),
+    );
   });
 
   it('does not offer an OTP for a refusal an OTP cannot fix', async () => {

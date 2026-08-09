@@ -219,15 +219,31 @@ export const productsApi = {
     return api.get<ProductListResponse>(`/products${qs}`);
   },
   featured: (limit = 8) => api.get<Product[]>(`/products/featured?limit=${limit}`),
+  /** The small extras the basket offers alongside itself. */
+  cartAddons: (limit = 8) => api.get<Product[]>(`/products/cart-addons?limit=${limit}`),
   bySlug: (slug: string) => api.get<Product>(`/products/${slug}`),
 };
 
 export const cartApi = {
   get: () => api.get<Cart>('/cart'),
-  addItem: (product_id: string, quantity: number, selected_options: Array<{modifier_id: string; option_id: string}> = []) =>
-    api.post<Cart>('/cart/items', { product_id, quantity, selected_options }),
+  addItem: (
+    product_id: string,
+    quantity: number,
+    selected_options: Array<{modifier_id: string; option_id: string}> = [],
+    personalisation_note?: string,
+  ) =>
+    api.post<Cart>('/cart/items', { product_id, quantity, selected_options, personalisation_note }),
   updateItem: (item_id: string, quantity: number) =>
     api.put<Cart>(`/cart/items/${item_id}`, { quantity }),
+  /**
+   * Set the message on a line.
+   *
+   * Separate from `updateItem` because this one is called as the customer
+   * types. Sending a quantity alongside a debounced note would eventually put
+   * back the quantity that was on screen when they started typing.
+   */
+  updateItemNote: (item_id: string, note: string) =>
+    api.put<Cart>(`/cart/items/${item_id}/note`, { note }),
   removeItem: (item_id: string) =>
     api.delete<Cart>(`/cart/items/${item_id}`),
   clear: () => api.delete<Cart>('/cart'),
@@ -249,13 +265,23 @@ export const promoApi = {
   validate: (
     code: string,
     order_subtotal: number,
-    identity?: { email?: string | null; phone?: string | null },
+    identity?: {
+      email?: string | null;
+      phone?: string | null;
+      /**
+       * Which kind of order this will be, once that is known. The phone gate is
+       * asked of deliveries and not of collections, so a basket that has not
+       * chosen yet sends nothing and gets the cautious answer.
+       */
+      delivery_method?: 'delivery' | 'pickup' | null;
+    },
   ) =>
     api.post<PromoValidateResponse>('/promo-codes/validate', {
       code,
       order_subtotal,
       email: identity?.email || null,
       phone: identity?.phone || null,
+      delivery_method: identity?.delivery_method || null,
     }),
   /**
    * The new-customer coupon currently being advertised, or `null` when none is.

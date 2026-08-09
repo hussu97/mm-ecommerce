@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Spinner } from '@/components/ui/Spinner';
 import { PhoneInput, isValidPhone } from '@/components/ui/PhoneInput';
+import { PhoneVerify } from '@/components/ui/PhoneVerify';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { analytics, failureReason } from '@/lib/analytics';
 import { addressesApi } from '@/lib/api';
@@ -72,11 +73,27 @@ interface AddressModalProps {
   selectedAddressId: string;
   /** Opens straight on the form when the customer has nothing saved yet. */
   initialDraft?: AddressDraft | null;
+  /**
+   * Whether this order has something riding on a proved number — today, a
+   * coupon whose gate only delivery orders are asked to clear.
+   *
+   * Off by default, and deliberately not "always on": most customers have no
+   * coupon on the basket, and putting an SMS step in front of all of them to
+   * serve the few is a cost paid by the wrong people. The panel appears when
+   * there is a reason for it, which is also when the customer has a reason to
+   * bother with it.
+   */
+  askToVerify?: boolean;
+  /** The number most recently proved, owned by the checkout. */
+  verifiedPhone?: string | null;
+  /** Called with the number the *server* confirmed, not the one typed. */
+  onVerified?: (phone: string) => void;
 }
 
 export function AddressModal({
   isOpen, onClose, onSave, isAuthenticated,
   savedAddresses, onSavedAddressesChange, selectedAddressId, initialDraft,
+  askToVerify = false, verifiedPhone = null, onVerified,
 }: AddressModalProps) {
   const { t } = useTranslation();
   const [mode, setMode] = useState<'list' | 'form'>('list');
@@ -418,6 +435,32 @@ export function AddressModal({
                     onChange={field('phone')}
                     error={errors.phone}
                   />
+                  {/* Where the number is being typed anyway.
+                      Verification used to live only behind a "add promo or
+                      note" toggle further down the checkout, and only after a
+                      refusal — so the guest this offer is written for had no
+                      reachable way to prove anything. It is still not required
+                      to save: an address is an address, and a customer with no
+                      coupon must never be held up by an SMS. */}
+                  {askToVerify && isValidPhone(draft.phone) && (
+                    verifiedPhone === draft.phone ? (
+                      <p className="mt-2 flex items-center gap-1.5 text-sm text-green-700">
+                        <Icon name="check_circle" className="text-[18px]" />
+                        {t('verify.verified')}
+                      </p>
+                    ) : (
+                      <div className="mt-2">
+                        <p className="font-body text-xs text-gray-500 mb-1.5">
+                          {t('verify.subtitle')}
+                        </p>
+                        <PhoneVerify
+                          surface="checkout"
+                          phone={draft.phone}
+                          onVerified={(confirmed) => onVerified?.(confirmed)}
+                        />
+                      </div>
+                    )
+                  )}
                 </div>
               </div>
             </div>

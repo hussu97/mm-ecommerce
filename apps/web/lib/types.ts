@@ -76,6 +76,11 @@ export interface Product {
   is_active: boolean;
   is_featured: boolean;
   display_order: number;
+  /** Offered in the basket's add-on tray. */
+  is_cart_addon?: boolean;
+  /** What this product asks to have written on it, if anything. */
+  personalisation_type?: 'handwritten_note' | null;
+  personalisation_max_length?: number;
   created_at: string;
   updated_at: string;
   product_modifiers: ProductModifier[];
@@ -102,6 +107,15 @@ export interface SelectedOptionSnapshot {
   option_price: number;
 }
 
+/**
+ * What a product asks the customer to write on it.
+ *
+ * A union rather than a string because every member needs a label and a
+ * placeholder in both languages before it can be rendered — an unrecognised
+ * value has no copy and would draw an unlabelled box.
+ */
+export type PersonalisationType = 'handwritten_note';
+
 export interface CartItem {
   id: string;
   cart_id: string;
@@ -114,6 +128,26 @@ export interface CartItem {
   product_translations?: Record<string, Record<string, string>>;
   unit_price: number | null;
   line_total: number | null;
+  /** What the customer has typed so far, or null when they have not. */
+  personalisation_note?: string | null;
+  /**
+   * The product's config, carried on the line so the basket can render the
+   * field and its counter without fetching every product a second time.
+   */
+  personalisation_type?: PersonalisationType | null;
+  personalisation_max_length?: number | null;
+}
+
+/**
+ * Does this line still owe a message before it can be bought?
+ *
+ * One definition, because three places need the same answer and they must
+ * agree: the field's own error, the checkout button's disabled state, and the
+ * summary that explains why it is disabled. The server enforces the same rule
+ * at order time — this only saves the customer a round trip to hear it.
+ */
+export function needsPersonalisation(item: CartItem): boolean {
+  return Boolean(item.personalisation_type) && !item.personalisation_note?.trim();
 }
 
 export interface Cart {
@@ -295,11 +329,28 @@ export interface PromoValidateResponse {
   discount_amount: number;
   message: string | null;
   /**
-   * True when an unverified phone is the only thing between this customer and
-   * the discount — i.e. there is a button that fixes it, rather than a refusal
-   * they can do nothing about.
+   * Whether this coupon carries the phone gate at all — a property of the
+   * offer, true even for somebody who verified months ago.
    */
   requires_phone_verification?: boolean;
+  /**
+   * Whether the number we sent satisfies that gate. True whenever the gate does
+   * not apply — a pickup order is never asked — so `pendingVerification` below
+   * is the only thing a caller has to reason about.
+   */
+  phone_verified?: boolean;
+}
+
+/**
+ * Is a verified number still owed on this coupon?
+ *
+ * One definition, because the two flags are meaningless apart and every screen
+ * that shows the discount has to agree about whether it is safe yet. The
+ * default of `true` for `phone_verified` matters: an older API build that does
+ * not send the field must not read as "outstanding" and block a checkout.
+ */
+export function pendingVerification(r: PromoValidateResponse): boolean {
+  return Boolean(r.requires_phone_verification) && r.phone_verified === false;
 }
 
 /**
@@ -322,6 +373,12 @@ export interface AdvertisedPromo {
   /** How many of a customer's first orders it covers. */
   first_orders_limit: number | null;
   requires_phone_verification: boolean;
+  /**
+   * ISO timestamp for when the campaign closes, or null when it is open-ended.
+   * Stated in the homepage's structured data so an offer published to search
+   * and answer engines does not read as perpetual.
+   */
+  valid_until?: string | null;
 }
 
 // ─── Address ──────────────────────────────────────────────────────────────────

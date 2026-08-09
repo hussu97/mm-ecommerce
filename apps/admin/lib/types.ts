@@ -136,6 +136,11 @@ export interface Product {
    */
   sales_channels: SalesChannel[];
   display_order: number;
+  /** Offered in the basket's add-on tray. */
+  is_cart_addon?: boolean;
+  /** What this product asks to have written on it; null asks for nothing. */
+  personalisation_type?: 'handwritten_note' | null;
+  personalisation_max_length?: number;
   created_at: string;
   updated_at: string;
   product_modifiers: ProductModifier[];
@@ -193,6 +198,14 @@ export interface OrderItem {
   unit_price: number;
   total_price: number;
   selected_options_snapshot: SelectedOptionSnapshot[];
+  /**
+   * What the customer asked to have written on this line, verbatim.
+   *
+   * Distinct from `kitchen_notes`: that one is typed by a cashier. This is the
+   * one string on the order that has to be reproduced exactly, spelling
+   * included, because somebody is about to copy it onto a card.
+   */
+  personalisation_note?: string | null;
 }
 
 export interface Order {

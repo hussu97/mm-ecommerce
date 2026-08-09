@@ -15,6 +15,17 @@ from .modifier import ProductModifierResponse
 
 SalesChannel = Literal["pos", "web"]
 
+#: The kinds of text a product can ask a customer for.
+#:
+#: A `Literal` rather than a free string so the admin cannot invent a fourth
+#: kind the storefront has no field for — every value here needs a label and a
+#: placeholder in both languages before it means anything to a shopper.
+PersonalisationType = Literal["handwritten_note"]
+
+#: What fits on the card the team currently writes on. Overridable per product,
+#: because the ceiling describes stationery rather than software.
+DEFAULT_PERSONALISATION_MAX_LENGTH = 100
+
 
 def _dedupe_channels(value: list[str] | None) -> list[str] | None:
     """
@@ -63,6 +74,11 @@ class ProductCreate(BaseModel):
     #: Free-form nutrition panel: protein, carbs, fat, salt, allergens.
     nutrition: dict | None = None
     display_order: int = 0
+    is_cart_addon: bool = False
+    personalisation_type: PersonalisationType | None = None
+    personalisation_max_length: int = Field(
+        default=DEFAULT_PERSONALISATION_MAX_LENGTH, ge=1, le=500
+    )
 
     _canonical_channels = field_validator("sales_channels")(_dedupe_channels)
 
@@ -88,6 +104,9 @@ class ProductUpdate(BaseModel):
     #: Free-form nutrition panel: protein, carbs, fat, salt, allergens.
     nutrition: dict | None = None
     display_order: int | None = None
+    is_cart_addon: bool | None = None
+    personalisation_type: PersonalisationType | None = None
+    personalisation_max_length: int | None = Field(None, ge=1, le=500)
 
     _canonical_channels = field_validator("sales_channels")(_dedupe_channels)
 
@@ -121,6 +140,12 @@ class ProductResponse(BaseModel):
     )
     nutrition: dict | None = None
     display_order: int
+    is_cart_addon: bool = False
+    #: What this product asks the customer to write, and how much of it fits.
+    #: Carried on the response so the storefront can render the field, its label
+    #: and its counter from the product it already has.
+    personalisation_type: str | None = None
+    personalisation_max_length: int = DEFAULT_PERSONALISATION_MAX_LENGTH
     created_at: datetime
     updated_at: datetime
     product_modifiers: list[ProductModifierResponse] = []

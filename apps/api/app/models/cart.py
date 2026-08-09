@@ -102,6 +102,12 @@ class CartItem(Base, UUIDMixin):
     selected_options: Mapped[Any] = mapped_column(
         JSONB, nullable=False, server_default="[]"
     )
+    #: What the customer wants written, for a product whose
+    #: `personalisation_type` asks for it. Null everywhere else.
+    #:
+    #: This participates in the line's dedup key — see `cart_service`. Two gift
+    #: notes carrying different messages are two lines, never one line of two.
+    personalisation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )

@@ -251,6 +251,33 @@ async def get_featured(db: AsyncSession, limit: int = 8) -> list[ProductResponse
     return [ProductResponse.model_validate(p) for p in products]
 
 
+async def get_cart_addons(db: AsyncSession, limit: int = 8) -> list[ProductResponse]:
+    """
+    The small things the cart offers alongside the basket — a gift note today.
+
+    Sold-out add-ons are left out rather than shown greyed. The tray is a
+    suggestion the customer did not ask for, and a suggestion that cannot be
+    taken is just a smaller basket page.
+    """
+    stmt = (
+        select(Product)
+        .options(*_product_load_options())
+        .where(
+            Product.is_cart_addon == True,  # noqa: E712
+            *website_product_visibility_clause(),
+        )
+        .order_by(Product.display_order, Product.created_at.desc())
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    products = result.scalars().unique().all()
+    return [
+        ProductResponse.model_validate(p)
+        for p in products
+        if not (p.is_stock_product and p.stock_quantity <= 0)
+    ]
+
+
 async def create(db: AsyncSession, data: ProductCreate) -> ProductResponse:
     existing = await db.execute(select(Product).where(Product.slug == data.slug))
     if existing.scalar_one_or_none():

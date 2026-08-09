@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { RSC_API_BASE } from '@/lib/api';
+import { getFeaturedPromo, offerSentence } from '@/lib/offer';
 import type { Category } from '@/lib/types';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
@@ -7,6 +8,12 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscake
 export const revalidate = 3600;
 
 export async function GET() {
+  // The live campaign, so this file cannot go on advertising a coupon the
+  // checkout refuses. It said "15% off" by hand while the row said 20% and
+  // named no code at all — to every answer engine that reads this instead of
+  // the site.
+  const offer = offerSentence(await getFeaturedPromo());
+
   let categories: Category[] = [];
   try {
     const res = await fetch(`${RSC_API_BASE}/categories`, { next: { revalidate: 3600 } });
@@ -46,10 +53,7 @@ export async function GET() {
 - Store pickup from Sharjah is free, and has no small-order fee
 - Price range: AED 15 – AED 200
 
-## Offers
-- New customers get 15% off their first 3 orders, up to AED 30 off per order, with a verified mobile number. Limited time.
-
-## Payment
+${offer ? `## Offers\n- ${offer}\n\n` : ''}## Payment
 - Card online: Visa, Mastercard and Apple Pay, via Stripe
 - Cash is accepted on **pickup orders only** — there is no cash on delivery
 - Tabby and Tamara (buy now, pay later) are not live yet

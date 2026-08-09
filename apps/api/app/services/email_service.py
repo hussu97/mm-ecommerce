@@ -196,6 +196,10 @@ def _item_rows(order: OrderResponse) -> list[dict[str, Any]]:
                 "quantity": item.quantity,
                 "unit_price": _money(item.unit_price),
                 "total_price": _money(item.total_price),
+                # Shown back to the customer so a typo is caught while it is
+                # still ink on nobody's card, and to the kitchen so there is
+                # something to copy from.
+                "note": item.personalisation_note,
             }
         )
     return rows

@@ -374,6 +374,14 @@ class OrderItem(Base, UUIDMixin):
     selected_options_snapshot: Mapped[Any] = mapped_column(
         JSONB, nullable=False, server_default="[]"
     )
+    #: What the customer asked to have written on this line, captured at order
+    #: time like every other snapshot here.
+    #:
+    #: Deliberately not `kitchen_notes`. That field is typed by a cashier at the
+    #: counter; this one is typed by the customer on the website. Sharing a
+    #: column would put "no nuts" and "Happy birthday, Sara" in the same string
+    #: with nothing to tell them apart — and both of them get printed.
+    personalisation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # ─── POS fields ───────────────────────────────────────────────────────────
     status: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)

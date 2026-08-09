@@ -916,7 +916,7 @@ async def send_to_kitchen(
                     product_name=item.product_name,
                     quantity=item.quantity,
                     modifiers_summary=_summarise_options(item),
-                    notes=item.kitchen_notes,
+                    notes=_ticket_notes(item),
                     status=KitchenTicketStatusEnum.NEW.value,
                 )
             )
@@ -961,6 +961,25 @@ def _summarise_options(item: OrderItem) -> str | None:
         quantity = int(option.get("quantity") or 1)
         parts.append(f"{quantity} × {name}" if quantity > 1 else str(name))
     return ", ".join(parts) if parts else None
+
+
+def _ticket_notes(item: OrderItem) -> str | None:
+    """
+    Everything on this line somebody has to read, in one field.
+
+    `KitchenTicketItem` has a single `notes` column and two things now want it:
+    the cashier's instruction and the customer's message. Both are printed, so
+    neither can be dropped — but they must not read as one sentence either. The
+    message is labelled and quoted, because it is the one string on the ticket
+    that has to be reproduced exactly, spelling and all, and a packer needs to
+    see where it starts and stops.
+    """
+    parts: list[str] = []
+    if item.kitchen_notes:
+        parts.append(item.kitchen_notes.strip())
+    if item.personalisation_note:
+        parts.append(f'✎ Write: "{item.personalisation_note.strip()}"')
+    return "\n".join(parts) if parts else None
 
 
 # ─── Payment and close ────────────────────────────────────────────────────────

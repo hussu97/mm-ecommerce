@@ -21,10 +21,11 @@ const STRINGS: Record<string, string> = {
   'promo.terms_title': 'Terms',
   'promo.terms_max': 'Up to {max} AED off per order.',
   'promo.terms_first_orders': 'Valid on your first {orders} orders.',
-  'promo.terms_verify': 'Requires a verified mobile number.',
-  'promo.terms_one_account': 'One offer per customer.',
+  'promo.terms_verify': 'Delivery orders need a verified mobile number.',
   'promo.terms_limited': 'Limited time promotion.',
   'promo.terms_combine': 'Cannot be combined with other offers.',
+  'promo.terms_more': 'Show more',
+  'promo.terms_less': 'Show less',
 };
 
 vi.mock('@/lib/i18n/TranslationProvider', () => ({
@@ -52,9 +53,30 @@ const COUPON = {
   requires_phone_verification: false,
 };
 
+/**
+ * Every term, folded or not.
+ *
+ * `hidden: true` on purpose: most of these tests are about what the terms *say*
+ * — which figures they quote, which conditions they name, what they never
+ * reveal about how eligibility is judged — and that is equally true of a line
+ * one click away. Whether a line starts folded is its own test, below.
+ */
 function termsText(): string {
-  return screen.getByRole('list').textContent ?? '';
+  return screen
+    .getAllByRole('list', { hidden: true })
+    .map((list) => list.textContent ?? '')
+    .join(' ');
 }
+
+/** What the tray shows before anybody presses "Show more". */
+function visibleTermsText(): string {
+  return screen
+    .getAllByRole('list')
+    .map((list) => list.textContent ?? '')
+    .join(' ');
+}
+
+const APPLIED = { kind: 'applied' } as const;
 
 describe('NewCustomerCouponTray', () => {
   beforeEach(() => {
@@ -120,18 +142,68 @@ describe('NewCustomerCouponTray', () => {
     mocks.featured.mockResolvedValue(COUPON);
     const { unmount } = render(<NewCustomerCouponTray appliedCode={null} onApply={vi.fn()} />);
     await screen.findByText('20% off your first 2 orders');
-    expect(termsText()).not.toContain('Requires a verified mobile number.');
+    expect(termsText()).not.toContain('Delivery orders need a verified mobile number.');
     unmount();
 
     mocks.featured.mockResolvedValue({ ...COUPON, requires_phone_verification: true });
     render(<NewCustomerCouponTray appliedCode={null} onApply={vi.fn()} />);
     await screen.findByText('20% off your first 2 orders');
-    expect(termsText()).toContain('Requires a verified mobile number.');
+    expect(termsText()).toContain('Delivery orders need a verified mobile number.');
+  });
+
+  it('shows one term and folds the rest away', async () => {
+    mocks.featured.mockResolvedValue(COUPON);
+    render(<NewCustomerCouponTray appliedCode={null} onApply={vi.fn()} />);
+    await screen.findByText('20% off your first 2 orders');
+
+    // Six lines of small print above the fold pushed the Apply button down the
+    // page to answer a question nobody had asked yet.
+    expect(visibleTermsText()).toContain('Up to 40 AED off per order.');
+    expect(visibleTermsText()).not.toContain('Limited time promotion.');
+
+    const toggle = screen.getByRole('button', { name: 'Show more' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    // Folded, not dropped — the terms are still in the document, and still
+    // reachable to anyone who wants them.
+    expect(termsText()).toContain('Limited time promotion.');
+
+    fireEvent.click(toggle);
+
+    expect(visibleTermsText()).toContain('Limited time promotion.');
+    expect(visibleTermsText()).toContain('Cannot be combined with other offers.');
+    expect(screen.getByRole('button', { name: 'Show less' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+  });
+
+  it('names the list it folds, so the control is not pointing at nothing', async () => {
+    mocks.featured.mockResolvedValue(COUPON);
+    const { container } = render(<NewCustomerCouponTray appliedCode={null} onApply={vi.fn()} />);
+    await screen.findByText('20% off your first 2 orders');
+
+    const controls = screen.getByRole('button', { name: 'Show more' }).getAttribute('aria-controls');
+    expect(controls).toBeTruthy();
+    expect(container.querySelector(`#${CSS.escape(controls!)}`)).not.toBeNull();
+  });
+
+  it('does not paint an outstanding verification as a refusal', async () => {
+    mocks.featured.mockResolvedValue({ ...COUPON, requires_phone_verification: true });
+    const onApply = vi.fn().mockResolvedValue({ kind: 'pending' });
+    render(<NewCustomerCouponTray appliedCode={null} onApply={onApply} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Apply' }));
+
+    // The code went on and the discount is real. Colouring that red is how this
+    // tray used to tell every new customer — the only people the offer is for —
+    // that they could not have it.
+    await waitFor(() => expect(onApply).toHaveBeenCalled());
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('applies the code on one tap, without it being typed', async () => {
     mocks.featured.mockResolvedValue(COUPON);
-    const onApply = vi.fn().mockResolvedValue(null);
+    const onApply = vi.fn().mockResolvedValue(APPLIED);
     render(<NewCustomerCouponTray appliedCode={null} onApply={onApply} />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Apply' }));
@@ -142,7 +214,7 @@ describe('NewCustomerCouponTray', () => {
   it('offers the Arabic spelling of the code to an Arabic reader', async () => {
     mocks.locale = 'ar';
     mocks.featured.mockResolvedValue(COUPON);
-    const onApply = vi.fn().mockResolvedValue(null);
+    const onApply = vi.fn().mockResolvedValue(APPLIED);
     render(<NewCustomerCouponTray appliedCode={null} onApply={onApply} />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Apply' }));
@@ -152,7 +224,9 @@ describe('NewCustomerCouponTray', () => {
 
   it('shows why it would not go on', async () => {
     mocks.featured.mockResolvedValue(COUPON);
-    const onApply = vi.fn().mockResolvedValue('This code is for new customers only');
+    const onApply = vi
+      .fn()
+      .mockResolvedValue({ kind: 'error', note: 'This code is for new customers only' });
     render(<NewCustomerCouponTray appliedCode={null} onApply={onApply} />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Apply' }));

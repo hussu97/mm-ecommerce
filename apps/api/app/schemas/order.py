@@ -33,6 +33,8 @@ class OrderItemResponse(BaseModel):
     unit_price: float
     total_price: float
     selected_options_snapshot: list[Any] = []
+    #: What the customer asked to have written on this line, if anything.
+    personalisation_note: str | None = None
 
 
 class OrderCreate(BaseModel):

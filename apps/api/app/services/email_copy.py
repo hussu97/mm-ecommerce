@@ -47,6 +47,10 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
         # ── shared section headings ───────────────────────────────────────────
         "section.your_order": "Your order",
+        #: Prefixes the message on a personalised line, in both the customer's
+        #: confirmation and the owner's copy. Deliberately imperative — the
+        #: owner's copy is the instruction to whoever picks up the pen.
+        "item.note_label": "Handwritten note:",
         "section.collect_from": "Collect from",
         "section.delivering_to": "Delivering to",
         "section.progress": "Progress",
@@ -308,6 +312,7 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
         # ── shared section headings ───────────────────────────────────────────
         "section.your_order": "طلبك",
+        "item.note_label": "بطاقة مكتوبة بخط اليد:",
         "section.collect_from": "الاستلام من",
         "section.delivering_to": "التوصيل إلى",
         "section.progress": "مراحل الطلب",

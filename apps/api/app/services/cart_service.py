@@ -26,13 +26,64 @@ from app.services.storefront_visibility import (
 __all__ = [
     "add_item",
     "option_charge",
+    "clean_note",
     "clear",
     "find_cart",
     "get_or_create",
     "merge",
     "remove_item",
     "update_item",
+    "update_item_note",
+    "validate_note",
 ]
+
+
+def clean_note(note: str | None) -> str | None:
+    """
+    A note reduced to what a person would actually read, or None.
+
+    Whitespace-only is None rather than the empty string, so "they left it
+    blank" has one representation and not three. Line endings are normalised
+    because a note is typed in a textarea and CRLF would otherwise make two
+    identical messages look different to the dedup key below.
+    """
+    if note is None:
+        return None
+    cleaned = note.replace("\r\n", "\n").replace("\r", "\n").strip()
+    return cleaned or None
+
+
+def validate_note(product: Product, note: str | None) -> str | None:
+    """
+    The cleaned note this product will accept, or a `BadRequestError`.
+
+    The product is the authority on both questions — whether text is wanted at
+    all, and how much of it fits. A ceiling in the schema only bounds what a
+    client may post; it cannot know that this card holds a hundred characters.
+    """
+    cleaned = clean_note(note)
+
+    if not product.personalisation_type:
+        if cleaned:
+            raise BadRequestError(
+                f"'{product.name}' does not take a personalised message"
+            )
+        return None
+
+    if not cleaned:
+        # Not an error here — a note is typed after the item is in the basket,
+        # so an empty one is an unfinished basket rather than a bad request.
+        # Checkout is where it becomes a refusal; see `order_service`.
+        return None
+
+    # `len` on a Python str counts characters, so an Arabic message gets the
+    # same allowance as an English one rather than a third of it.
+    if len(cleaned) > product.personalisation_max_length:
+        raise BadRequestError(
+            f"Message is too long — {product.personalisation_max_length} "
+            "characters at most"
+        )
+    return cleaned
 
 
 def _cart_load_options():
@@ -101,6 +152,12 @@ async def _build_response(cart: Cart) -> CartResponse:
         item_resp.product_translations = product.translations or {} if product else {}
         item_resp.unit_price = float(unit_price)
         item_resp.line_total = float(line_total)
+        item_resp.personalisation_type = (
+            product.personalisation_type if product else None
+        )
+        item_resp.personalisation_max_length = (
+            product.personalisation_max_length if product else None
+        )
 
         items.append(item_resp)
 
@@ -177,19 +234,33 @@ async def _build_options_snapshot(
     ]
 
 
-def _options_key(product_id: uuid.UUID, selected_options: list[dict]) -> tuple:
+def _options_key(
+    product_id: uuid.UUID,
+    selected_options: list[dict],
+    personalisation_note: str | None = None,
+) -> tuple:
     """
-    Dedup key: the product plus exactly what was chosen, quantities included.
+    Dedup key: the product, exactly what was chosen, and what it says.
 
     Two brownie boxes are the same line only if they hold the same brownies in
     the same numbers. Keying on the option ids alone would merge a box of two
     Ferrero and one Fudge into a box of one Ferrero and two Fudge.
+
+    The note is in the key for a sharper version of the same problem. Two gift
+    notes are the same product with the same (empty) options, so without it the
+    second one merges into the first as `quantity: 2` and **the second message
+    is gone** — no error, no trace, and the customer finds out when the wrong
+    card arrives. Different words are different lines.
     """
     counted: dict[str, int] = {}
     for opt in selected_options:
         key = str(opt["option_id"])
         counted[key] = counted.get(key, 0) + int(opt.get("quantity") or 1)
-    return (product_id, tuple(sorted(counted.items())))
+    return (
+        product_id,
+        tuple(sorted(counted.items())),
+        clean_note(personalisation_note),
+    )
 
 
 async def get_or_create(
@@ -265,8 +336,9 @@ async def add_item(
 
     # Build + validate options snapshot
     options_snapshot = await _build_options_snapshot(db, product, data.selected_options)
+    note = validate_note(product, data.personalisation_note)
 
-    # Check for duplicate: same product + same sorted options
+    # Check for duplicate: same product + same sorted options + same message
     existing_items_result = await db.execute(
         select(CartItem).where(
             CartItem.cart_id == cart.id, CartItem.product_id == data.product_id
@@ -274,10 +346,12 @@ async def add_item(
     )
     existing_items = existing_items_result.scalars().all()
 
-    new_key = _options_key(data.product_id, options_snapshot)
+    new_key = _options_key(data.product_id, options_snapshot, note)
     duplicate = None
     for item in existing_items:
-        item_key = _options_key(data.product_id, item.selected_options or [])
+        item_key = _options_key(
+            data.product_id, item.selected_options or [], item.personalisation_note
+        )
         if item_key == new_key:
             duplicate = item
             break
@@ -296,6 +370,7 @@ async def add_item(
             product_id=data.product_id,
             quantity=quantity,
             selected_options=options_snapshot,
+            personalisation_note=note,
         )
         db.add(item)
 
@@ -321,6 +396,39 @@ async def update_item(
         raise NotFoundError("Cart item not found")
 
     item.quantity = data.quantity
+    await db.flush()
+
+    cart = await _load_cart(db, cart.id)
+    return await _build_response(cart)
+
+
+async def update_item_note(
+    db: AsyncSession,
+    user_id: uuid.UUID | None,
+    session_id: str | None,
+    item_id: uuid.UUID,
+    note: str,
+) -> CartResponse:
+    """
+    Set what one line says.
+
+    Editing rather than adding, so this does **not** consult the dedup key: a
+    customer who types the message already on another line has two boxes with
+    the same card, which is a perfectly ordinary thing to want and not a
+    collision to fold away. `add_item` merges; editing never does.
+    """
+    cart = await _get_user_cart(db, user_id, session_id)
+
+    item_result = await db.execute(
+        select(CartItem)
+        .options(selectinload(CartItem.product))
+        .where(CartItem.id == item_id, CartItem.cart_id == cart.id)
+    )
+    item = item_result.scalar_one_or_none()
+    if not item:
+        raise NotFoundError("Cart item not found")
+
+    item.personalisation_note = validate_note(item.product, note)
     await db.flush()
 
     cart = await _load_cart(db, cart.id)
@@ -408,15 +516,22 @@ async def merge(
     products_by_id = {p.id: p for p in products_result.scalars().all()}
 
     for guest_item in guest_items:
-        # Check if user cart already has same product + options — no DB hit
+        # Same product, same options and the same message — no DB hit. The note
+        # belongs in this key for the reason it belongs in `add_item`'s: signing
+        # in must not silently fold two different cards into one.
         guest_key = _options_key(
-            guest_item.product_id, guest_item.selected_options or []
+            guest_item.product_id,
+            guest_item.selected_options or [],
+            guest_item.personalisation_note,
         )
         existing = None
         for ui in all_user_items:
             if (
                 ui.product_id == guest_item.product_id
-                and _options_key(ui.product_id, ui.selected_options or []) == guest_key
+                and _options_key(
+                    ui.product_id, ui.selected_options or [], ui.personalisation_note
+                )
+                == guest_key
             ):
                 existing = ui
                 break
@@ -446,6 +561,7 @@ async def merge(
                 product_id=guest_item.product_id,
                 quantity=merged_qty,
                 selected_options=guest_item.selected_options,
+                personalisation_note=guest_item.personalisation_note,
             )
             db.add(new_item)
 

@@ -54,4 +54,12 @@ export const CACHE_TAGS = {
   cms: 'cms',
   /** Categories and products. */
   catalogue: 'catalogue',
+  /**
+   * The advertised new-customer coupon.
+   *
+   * Its own tag rather than sharing `catalogue`, because retiring a campaign
+   * and editing a product are different acts with different urgency — an
+   * expired offer left on the homepage is a promise the checkout will refuse.
+   */
+  promo: 'promo',
 } as const;

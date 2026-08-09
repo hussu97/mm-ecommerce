@@ -101,6 +101,33 @@ class Product(Base, UUIDMixin, TimestampMixin):
     )
     display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
+    # ─── Cart add-ons and personalisation ─────────────────────────────────────
+    #: Whether the cart offers this product in its add-on tray.
+    #:
+    #: Kept apart from `personalisation_type` because they answer different
+    #: questions. A candle belongs in the tray and has nothing to write on it; an
+    #: engraved plaque captures text and has no business in a dessert basket's
+    #: tray. Folding both into one flag makes the second add-on a migration.
+    is_cart_addon: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
+    #: What this product asks the customer to write, or null for nothing.
+    #:
+    #: A string rather than a boolean so the next kind of personalisation — a
+    #: ribbon colour, a candle age — is a value the admin picks rather than
+    #: another column. `handwritten_note` is the only one today.
+    #:
+    #: Setting this makes the text **required**: an add-on whose entire value is
+    #: the message it carries is worth nothing blank, and a paid gift note
+    #: delivered empty is a complaint rather than a sale.
+    personalisation_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    #: The character ceiling, per product, because it describes the card being
+    #: written on rather than anything about our software. Counted in characters
+    #: so an Arabic message gets the same allowance as an English one.
+    personalisation_max_length: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=100, server_default="100"
+    )
+
     # ─── POS fields ───────────────────────────────────────────────────────────
     name_localized: Mapped[str | None] = mapped_column(String(200), nullable=True)
     # Which taxes apply. Null means the product is untaxed.

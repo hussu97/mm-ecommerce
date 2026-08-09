@@ -5,7 +5,7 @@ import { cmsApi, RSC_API_BASE } from '@/lib/api';
 // homepage render asks the API for the category list once rather than twice.
 import { getCategories } from '@/lib/catalogue';
 import { CACHE_TAGS, CONTENT_TTL } from '@/lib/cache-policy';
-import type { Product, Category } from '@/lib/types';
+import type { AdvertisedPromo, Product, Category } from '@/lib/types';
 import { DeliveryPromiseBanner } from '@/components/home/DeliveryPromiseBanner';
 import { HeroCarousel, type HeroContent } from '@/components/home/HeroCarousel';
 import { UspMarquee, type UspContent } from '@/components/home/UspMarquee';
@@ -14,9 +14,11 @@ import { CategoryTiles, type CategoriesContent } from '@/components/home/Categor
 import { PromoBanners, type PromosContent } from '@/components/home/PromoBanners';
 import { MeetTheBaker, type BakerContent } from '@/components/home/MeetTheBaker';
 import { CaterSection, type CaterContent } from '@/components/home/CaterSection';
+import { PromoBanner } from '@/components/layout/PromoBanner';
 import { orderedSections, type HomeLayout, type SectionKey } from '@/lib/home-sections';
 import { BAKERY_BASE, BUSINESS_ID, OG_IMAGE } from '@/lib/schema';
 import { fetchJson } from '@/lib/fetch-json';
+import { getFeaturedPromo, isAdvertisable, offerSentence } from '@/lib/offer';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 
@@ -32,7 +34,46 @@ interface HomeContent {
   seo?: { title?: string; description?: string };
 }
 
-function buildJsonLd(categories: Category[], featuredProducts: Product[]) {
+/**
+ * The coupon as a schema.org `Offer`, or null when there is nothing to state.
+ *
+ * Every figure comes off the row, so retiring the campaign in the admin removes
+ * this node on the next revalidation rather than leaving a dead code published
+ * to every crawler that has ever read the page. `validThrough` is omitted
+ * rather than guessed when the campaign is open-ended — an invented end date is
+ * a worse claim than no end date.
+ *
+ * `discountCode` and `discount` are schema.org *pending* terms, and there is no
+ * Google rich result for a site-wide coupon. This is not chasing one: consumers
+ * that do not understand a term ignore it, the `makesOffer` edge on the bakery
+ * is standard vocabulary, and the value is that an answer engine reading this
+ * graph can state the offer correctly instead of inventing one.
+ */
+export function buildOffer(promo: AdvertisedPromo | null) {
+  if (!isAdvertisable(promo)) return null;
+  const percent = Number(promo.discount_value);
+  return {
+    '@type': 'Offer',
+    '@id': `${SITE_URL}/#new-customer-offer`,
+    name: `${percent}% off your first ${promo.first_orders_limit} orders`,
+    // The same sentence `llms.txt` publishes, so the graph and the file an
+    // answer engine reads cannot describe the campaign differently.
+    description: offerSentence(promo)!,
+    url: `${SITE_URL}/en/all-products`,
+    discountCode: promo.code,
+    discount: percent,
+    priceCurrency: 'AED',
+    seller: { '@id': BUSINESS_ID },
+    ...(promo.valid_until ? { validThrough: promo.valid_until } : {}),
+  };
+}
+
+function buildJsonLd(
+  categories: Category[],
+  featuredProducts: Product[],
+  promo: AdvertisedPromo | null,
+) {
+  const offer = buildOffer(promo);
   // Group featured products by category for the Menu schema
   const categoryMap = new Map<string, { name: string; slug: string; products: Product[] }>();
   for (const cat of categories.filter(c => c.is_active)) {
@@ -68,6 +109,10 @@ function buildJsonLd(categories: Category[], featuredProducts: Product[]) {
         description:
           'Home bakery in Sharjah delivering brownies, cookies, cookie melts, cakes and desserts across all seven emirates. Everything is baked to order.',
         hasMenu: `${SITE_URL}/en/all-products`,
+        // The offer hangs off the bakery that makes it, so a reader that
+        // resolves this entity gets the campaign with it rather than having to
+        // notice a loose node in the graph.
+        ...(offer ? { makesOffer: { '@id': offer['@id'] } } : {}),
         potentialAction: {
           '@type': 'OrderAction',
           target: {
@@ -102,6 +147,10 @@ function buildJsonLd(categories: Category[], featuredProducts: Product[]) {
             })),
           })),
       },
+      // Last, and only when a campaign is actually running. The whole node
+      // disappears with the campaign — there is no version of it that outlives
+      // the coupon it describes.
+      ...(offer ? [offer] : []),
     ],
   };
 }
@@ -134,12 +183,27 @@ export async function generateMetadata({
   params: Promise<{ locale: string }>;
 }): Promise<Metadata> {
   const { locale } = await params;
-  const c = await getHomeContent(locale);
+  const [c, promo] = await Promise.all([getHomeContent(locale), getFeaturedPromo()]);
   const title =
     c.seo?.title ?? 'Melting Moments Cakes — Brownie & Dessert Delivery Across the UAE';
-  const description =
+  const base =
     c.seo?.description ??
     'Home bakery in Sharjah delivering fudgy brownies, gooey cookies, cookie melts, cakes and desserts to Dubai, Sharjah, Ajman and the rest of the UAE. Baked to order.';
+
+  // The live offer, appended to whatever the description already says.
+  //
+  // This is the line a search result shows and the line an answer engine is
+  // most likely to quote back, so an offer absent from it is an offer that does
+  // not exist as far as either is concerned. Appended rather than replacing,
+  // because what the bakery sells is still the thing being described — and it
+  // reverts on its own the moment the campaign ends, with no copy to go and
+  // unwrite. Held to a length a SERP will actually show.
+  const offerLine = isAdvertisable(promo)
+    ? ` New customers: ${Number(promo.discount_value)}% off your first ` +
+      `${promo.first_orders_limit} orders with code ${promo.code}.`
+    : '';
+  const description =
+    offerLine && (base + offerLine).length <= 320 ? base + offerLine : base;
 
   return {
     title,
@@ -167,13 +231,14 @@ export default async function HomePage({
 }) {
   const { locale } = await params;
 
-  const [c, featuredProducts, categories] = await Promise.all([
+  const [c, featuredProducts, categories, promo] = await Promise.all([
     getHomeContent(locale),
     getFeaturedProducts(),
     getCategories(),
+    getFeaturedPromo(),
   ]);
 
-  const jsonLd = buildJsonLd(categories, featuredProducts);
+  const jsonLd = buildJsonLd(categories, featuredProducts, promo);
   const activeCategories = categories.filter(cat => cat.is_active);
 
   const sections: Record<SectionKey, React.ReactNode> = {
@@ -196,6 +261,9 @@ export default async function HomePage({
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
+      {/* Above the hero, because it is the one thing on this page a shopper who
+          has never bought here needs to know before they start looking. */}
+      <PromoBanner promo={promo} />
       {/* Scroll reveals start at opacity 0 and are un-hidden by an observer.
           With scripting off there is no observer, so opt out of the whole
           effect rather than serve an invisible page. */}

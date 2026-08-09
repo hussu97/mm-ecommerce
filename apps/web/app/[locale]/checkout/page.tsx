@@ -6,7 +6,7 @@ import { Suspense, useState, useEffect, useCallback, useMemo, useRef } from 'rea
 import { useSearchParams } from 'next/navigation';
 import { useCart } from '@/lib/cart-context';
 import {
-  ordersApi, paymentsApi, addressesApi, branchesApi, deliveryApi,
+  authApi, ordersApi, paymentsApi, addressesApi, branchesApi, deliveryApi,
   getSessionId,
 } from '@/lib/api';
 import { toPaymentMethod, toWireMethod, type PaymentMethod } from '@/lib/types';
@@ -63,6 +63,21 @@ interface CheckoutForm {
   promoCode: string;
   promoDiscount: number;
   promoMessage: string;
+  /**
+   * Whether the applied code still owes us a proved mobile number.
+   *
+   * Travels with the code rather than being worked out here, because the code
+   * can arrive from either of two places — typed into the panel below, or
+   * applied in the basket and carried over in `mm_checkout` — and only the one
+   * that validated it heard the answer. Recomputing it here would mean a third
+   * round trip that says what we already know.
+   *
+   * A stale `true` costs nothing: the gate also asks whether this number is
+   * verified, and a verified number clears it. A stale `false` is caught by the
+   * server at order creation, which refuses in its own words — see
+   * `handleSubmit`.
+   */
+  promoNeedsVerify: boolean;
   notes: string;
 }
 
@@ -74,7 +89,7 @@ const INITIAL_FORM: CheckoutForm = {
   deliveryMethod: 'delivery',
   pickupBranchId: '',
   paymentMethod: 'card',
-  promoCode: '', promoDiscount: 0, promoMessage: '',
+  promoCode: '', promoDiscount: 0, promoMessage: '', promoNeedsVerify: false,
   notes: '',
 };
 
@@ -623,9 +638,53 @@ function CheckoutContent() {
     () => ({
       email: accountEmail ?? (form.email.trim() || null),
       phone: form.phone.trim() || null,
+      // The phone gate is a delivery rule, so the answer depends on this. Sent
+      // with the identity because it is part of "who is asking, for what" —
+      // without it, a collection is told it needs a verified number it will
+      // never actually be asked for.
+      delivery_method: form.deliveryMethod,
     }),
-    [accountEmail, form.email, form.phone],
+    [accountEmail, form.email, form.phone, form.deliveryMethod],
   );
+
+  // The number most recently proved. Held here rather than inside the address
+  // form because two things need it — the form, to stop offering an SMS for a
+  // number already proved, and the pay button, to know whether the discount is
+  // safe — and a second copy is a second chance for them to disagree.
+  const [verifiedPhone, setVerifiedPhone] = useState<string | null>(null);
+
+  // Ask whether this number is *already* proved before offering to prove it. A
+  // verification belongs to the handset, not to the order it was first typed
+  // on, so a returning customer must not sit through a second SMS. Debounced,
+  // because it watches a field being typed into.
+  useEffect(() => {
+    const phone = form.phone.trim();
+    if (!phone || !isValidPhone(phone) || verifiedPhone === phone) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      authApi
+        .phoneVerified(phone)
+        .then((r) => { if (!cancelled && r.verified) setVerifiedPhone(phone); })
+        // A failed check must never block an order. The server asks the same
+        // question again at order creation, and that answer is the binding one.
+        .catch(() => { /* offer the button */ });
+    }, 400);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [form.phone, verifiedPhone]);
+
+  /**
+   * Is this order being held up by an unproved number?
+   *
+   * All four conditions matter. A collection is never asked (no courier, no
+   * cost to protect). A basket with no discount on it has nothing to lose. A
+   * coupon without the gate does not care. And a number already proved has
+   * already answered.
+   */
+  const verificationOutstanding =
+    isDelivery &&
+    form.promoDiscount > 0 &&
+    form.promoNeedsVerify &&
+    verifiedPhone !== form.phone.trim();
   const paymentOptions = paymentOptionsFor(form.deliveryMethod);
   // Keep the selection legal: switching to delivery must not leave cash chosen.
   const paymentMethod = paymentOptions.includes(form.paymentMethod)
@@ -857,7 +916,7 @@ function CheckoutContent() {
     }
     if (freeApplied && !seenFreeUnlocked.current && freeThreshold !== null) {
       seenFreeUnlocked.current = true;
-      analytics.freeDeliveryUnlocked({ threshold: freeThreshold, subtotal: effectiveSubtotal });
+      analytics.freeDeliveryUnlocked({ threshold: freeThreshold, subtotal: effectiveSubtotal, surface: 'checkout' });
     }
     if (lowOrderFee > 0 && !seenLowOrderFee.current && !retryOrder) {
       seenLowOrderFee.current = true;
@@ -943,6 +1002,14 @@ function CheckoutContent() {
           // The API refuses this too. Stopping here saves the customer a round
           // trip and a payment page they were never going to get through.
           found.unserviceable = t('checkout.unserviceable_title');
+        } else if (verificationOutstanding) {
+          // Checked after the address is complete, because the way to fix it is
+          // to open the address form — and telling somebody to go and verify a
+          // number they have not typed yet is not an instruction they can
+          // follow. The API refuses this too; stopping here means the refusal
+          // arrives next to the button that resolves it rather than as a toast
+          // on a form the customer has already left.
+          found.verifyPhone = t('checkout.verify_phone_required');
         }
       } else {
         if (!form.firstName.trim()) found.firstName = t('checkout.first_name_required');
@@ -1085,10 +1152,23 @@ function CheckoutContent() {
           stage,
         });
       }
+      // The server's backstop for the phone gate, caught by its own words.
+      //
+      // The check above this normally stops it, but it reads a flag carried
+      // from wherever the code was applied — and that flag can be stale: a
+      // customer who verified, changed their number, and came back. The API is
+      // the one that decides, so when it says this, put the form back into the
+      // state that offers the fix rather than leaving a toast in front of a
+      // button that will keep failing.
+      if (stage === 'create_order' && /verify your mobile number/i.test(message)) {
+        setForm((f) => ({ ...f, promoNeedsVerify: true }));
+        setErrors({ verifyPhone: t('checkout.verify_phone_required') });
+        focusFirstError('verifyPhone');
+      }
       addToast(message, 'error');
       setSubmitting(false);
     }
-  }, [form, cart, retryOrder, user, accountEmail, locale, addToast, refreshCart, t, paymentMethod, isDelivery, unserviceable, pickupBranches, total]);
+  }, [form, cart, retryOrder, user, accountEmail, locale, addToast, refreshCart, t, paymentMethod, isDelivery, unserviceable, pickupBranches, total, verificationOutstanding]);
 
   // ── Non-form states ────────────────────────────────────────────────────────
 
@@ -1253,6 +1333,25 @@ function CheckoutContent() {
               <Icon name="chevron_right" className="text-lg text-gray-300" />
             </button>
             {errors.address && <p className="mt-1.5 text-xs text-red-500 font-body">{errors.address}</p>}
+            {/* Said next to the thing that fixes it, and made a button rather
+                than a sentence: the verification lives inside the address form,
+                and "open the address form" is not something a customer should
+                have to infer from an error message. Shown whenever it is
+                outstanding — not only after the pay button has been pressed —
+                so it is a step rather than a rejection. */}
+            {verificationOutstanding && (
+              <button
+                type="button"
+                data-field="verifyPhone"
+                onClick={() => setAddressOpen(true)}
+                className="mt-1.5 w-full text-start flex items-start gap-1.5 text-xs font-body text-amber-800"
+              >
+                <Icon name="verified_user" className="text-sm shrink-0" />
+                <span className="underline underline-offset-2">
+                  {t('checkout.verify_phone_required')}
+                </span>
+              </button>
+            )}
             {/* The one line that answers "when", placed where the pin that
                 decides it was just chosen. */}
             {arrival && !unserviceable && (
@@ -1498,6 +1597,12 @@ function CheckoutContent() {
         onSavedAddressesChange={setSavedAddresses}
         selectedAddressId={form.selectedAddressId}
         initialDraft={hasAddress ? currentDraft : null}
+        // Offered only when this order actually needs it. A verification panel
+        // on every address edit is an SMS asked of the large majority of
+        // customers who have no coupon on the basket and nothing to prove.
+        askToVerify={isDelivery && form.promoDiscount > 0 && form.promoNeedsVerify}
+        verifiedPhone={verifiedPhone}
+        onVerified={setVerifiedPhone}
       />
     </div>
   );

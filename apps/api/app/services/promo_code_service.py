@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.phone import phone_identities
-from app.models.order import Order, OrderStatusEnum
+from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.models.promo_code import DiscountTypeEnum, PromoCode
 from app.services import firebase_auth_service
 from app.schemas.promo_code import (
@@ -166,8 +166,31 @@ async def validate(
     user_id: uuid.UUID | None = None,
     email: str | None = None,
     phone: str | None = None,
+    *,
+    delivery_method: DeliveryMethodEnum | None = None,
+    enforce_phone_verification: bool = False,
 ) -> PromoCodeValidateResponse:
-    """Validate a promo code and return the discount amount (does NOT increment uses)."""
+    """
+    Validate a promo code and return the discount amount (does NOT increment uses).
+
+    The phone gate is the one rule here that is answered twice: reported while
+    the customer is still shopping, enforced when the order is written.
+
+    That split is deliberate. Refusing the code in the basket taught the
+    customer the offer was not for them, at a screen with no phone field on it
+    and no way to prove anything — an advert for a discount and a red line
+    saying they cannot have it. Reporting it lets the code go on, the discount
+    show, and the one outstanding step be asked for at the checkout, where the
+    number is being typed anyway. `enforce_phone_verification=True` belongs to
+    `create_order` and nothing else; every read-only caller wants the report.
+
+    `delivery_method` decides whether the gate applies at all. It is asked of
+    deliveries because those cost us a courier and a percentage off the top can
+    take the order past break-even; a collection costs us nothing to hand over,
+    so it is not asked. `None` — the basket, before that has been chosen — is
+    treated as "might yet be a delivery" and reports the gate as outstanding,
+    which is the answer that leaves the customer somewhere to go.
+    """
     promo = await find_by_code(db, code)
 
     if not promo:
@@ -192,15 +215,26 @@ async def validate(
             valid=False, message="Promo code has reached its usage limit"
         )
 
-    if getattr(promo, "requires_phone_verification", False):
-        verified = await firebase_auth_service.is_phone_verified(db, phone)
-        if not verified:
+    # Whether this coupon carries the gate, and whether the number we were given
+    # clears it. Worked out here and carried down to the return rather than
+    # returned from here, because a coupon can be gated *and* refused for an
+    # unrelated reason — and the refusal the customer needs to read is the one
+    # they cannot fix by fetching their phone.
+    gated = bool(getattr(promo, "requires_phone_verification", False))
+    # A collection is never asked. `None` is, because the basket has not chosen
+    # yet and the safe reading of "might be a delivery" is to say so early.
+    gate_applies = gated and delivery_method != DeliveryMethodEnum.PICKUP
+    phone_verified = True
+    if gate_applies:
+        phone_verified = await firebase_auth_service.is_phone_verified(db, phone)
+        if not phone_verified and enforce_phone_verification:
             return PromoCodeValidateResponse(
                 valid=False,
                 # Named plainly, because unlike the new-customer refusal this
                 # one is actionable: there is a button that fixes it.
                 message="Verify your phone number to use this code",
                 requires_phone_verification=True,
+                phone_verified=False,
             )
 
     if promo.first_orders_limit is not None:
@@ -229,7 +263,16 @@ async def validate(
         )
 
     discount = _calc_discount(promo, subtotal)
-    return PromoCodeValidateResponse(valid=True, discount_amount=discount)
+    # Valid, with the real discount on it, even where the gate is still open —
+    # that number is what lets the basket show the saving next to the code it
+    # just accepted. The two flags say what is still owed; `create_order` is
+    # where not paying it costs the customer the discount.
+    return PromoCodeValidateResponse(
+        valid=True,
+        discount_amount=discount,
+        requires_phone_verification=gated,
+        phone_verified=phone_verified,
+    )
 
 
 async def advertisable(db: AsyncSession) -> PromoCodeAdvertResponse | None:

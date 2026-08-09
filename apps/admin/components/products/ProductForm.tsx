@@ -36,6 +36,10 @@ export function ProductForm({ product }: Props) {
     is_stock_product: product?.is_stock_product ?? false,
     stock_quantity: String(product?.stock_quantity ?? 0),
     display_order: String(product?.display_order ?? 0),
+    is_cart_addon: product?.is_cart_addon ?? false,
+    // '' is "asks for nothing", which is what almost every product is.
+    personalisation_type: product?.personalisation_type ?? '',
+    personalisation_max_length: String(product?.personalisation_max_length ?? 100),
   });
   // A new product sells everywhere by default; an existing one keeps what
   // it has, including an empty list, which is a real answer rather than a
@@ -148,6 +152,11 @@ export function ProductForm({ product }: Props) {
       is_stock_product: form.is_stock_product,
       stock_quantity: Number(form.stock_quantity) || 0,
       display_order: Number(form.display_order) || 0,
+      is_cart_addon: form.is_cart_addon,
+      // '' back to null: the API's `personalisation_type` is a closed set and
+      // the empty string is not in it.
+      personalisation_type: form.personalisation_type || null,
+      personalisation_max_length: Number(form.personalisation_max_length) || 100,
     };
 
     try {
@@ -306,6 +315,60 @@ export function ProductForm({ product }: Props) {
               onChange={e => setForm(f => ({ ...f, display_order: e.target.value }))}
             />
           </div>
+        </div>
+
+        {/*
+          Two settings, deliberately not one. "Offered in the basket" and "asks
+          the customer to write something" are different questions, and a
+          product can want either without the other.
+        */}
+        <div className="mt-5 pt-5 border-t border-gray-100 space-y-4">
+          <h3 className="text-xs font-body text-gray-500 uppercase tracking-wider">Cart add-on &amp; personalisation</h3>
+          <label className="flex items-center gap-2 cursor-pointer text-xs font-body text-gray-600 uppercase tracking-wider">
+            <input
+              type="checkbox"
+              checked={form.is_cart_addon}
+              onChange={e => setForm(f => ({ ...f, is_cart_addon: e.target.checked }))}
+              className="accent-primary"
+            />
+            Offer in the cart add-on tray
+          </label>
+
+          <div className="flex flex-wrap gap-6 items-start">
+            <div className="w-56">
+              <label className="block text-xs font-body text-gray-600 uppercase tracking-wider mb-1">
+                Asks the customer to write
+              </label>
+              <select
+                value={form.personalisation_type}
+                onChange={e => setForm(f => ({ ...f, personalisation_type: e.target.value }))}
+                className="w-full border border-gray-200 px-3 py-2 text-sm font-body focus:outline-none focus:border-primary"
+              >
+                <option value="">Nothing</option>
+                <option value="handwritten_note">Handwritten note</option>
+              </select>
+            </div>
+            {form.personalisation_type && (
+              <div className="w-40">
+                <Input
+                  label="Max characters"
+                  type="number"
+                  min="1"
+                  max="500"
+                  step="1"
+                  value={form.personalisation_max_length}
+                  onChange={e => setForm(f => ({ ...f, personalisation_max_length: e.target.value }))}
+                  error={errors.personalisation_max_length}
+                />
+              </div>
+            )}
+          </div>
+          {form.personalisation_type && (
+            <p className="text-xs font-body text-gray-500">
+              The message becomes required — checkout refuses this line until the customer fills it in.
+              Set the limit to what physically fits on the card.
+            </p>
+          )}
         </div>
       </section>
 

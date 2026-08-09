@@ -1189,6 +1189,63 @@ class TestCreateOrderWithPromo:
 
     @patch("app.services.order_service.promo_code_service.validate")
     @patch("app.services.order_service.promo_code_service.get_promo")
+    async def test_the_delivery_method_reaches_the_gate(
+        self, mock_get_promo, mock_validate
+    ):
+        """
+        The phone gate is a delivery rule, and only `validate` knows the rule —
+        so `create_order` has to tell it which kind of order this is.
+
+        Before this, it did not, and the phone it passed came solely from the
+        shipping address. A pickup has none, so a collection carrying a gated
+        coupon was refused at submit no matter what the customer did, while the
+        delivery it was written to protect was judged on the same missing
+        value. Both halves are asserted here because either one alone still
+        reproduces that bug.
+        """
+        mock_validate.return_value = PromoCodeValidateResponse(
+            valid=True, discount_amount=Decimal("10.00")
+        )
+        mock_get_promo.return_value = MagicMock(
+            max_uses=None, id=uuid.uuid4(), code="NEW"
+        )
+
+        cart = _cart(items=[_cart_item(_product("100.00"))])
+        db = self._promo_db(cart, _order_mock())
+
+        await create_order(db, _pickup_data(promo_code="NEW"), user_id=None)
+
+        kwargs = mock_validate.call_args.kwargs
+        assert kwargs["delivery_method"] == DeliveryMethodEnum.PICKUP
+        # And this is the one caller that refuses rather than reports.
+        assert kwargs["enforce_phone_verification"] is True
+
+    @patch("app.services.order_service.promo_code_service.validate")
+    @patch("app.services.order_service.promo_code_service.get_promo")
+    async def test_an_unverified_delivery_order_is_refused_in_its_own_words(
+        self, mock_get_promo, mock_validate
+    ):
+        """
+        Told apart from every other promo refusal, because it is the only one
+        the customer can still act on: the address form has the button. A
+        generic "Promo code: ..." sends them hunting for a bad code instead.
+        """
+        mock_validate.return_value = PromoCodeValidateResponse(
+            valid=False,
+            message="Verify your phone number to use this code",
+            requires_phone_verification=True,
+            phone_verified=False,
+        )
+
+        cart = _cart(items=[_cart_item(_product("100.00"))])
+        db = AsyncMock()
+        db.execute = AsyncMock(return_value=_result(scalar_one_or_none=cart))
+
+        with pytest.raises(BadRequestError, match="[Vv]erify your mobile number"):
+            await create_order(db, _delivery_data(promo_code="NEW"), user_id=None)
+
+    @patch("app.services.order_service.promo_code_service.validate")
+    @patch("app.services.order_service.promo_code_service.get_promo")
     async def test_discount_brings_delivery_to_free_at_threshold(
         self, mock_get_promo, mock_validate, delivery_pricing
     ):

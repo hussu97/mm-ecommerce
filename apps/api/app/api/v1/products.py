@@ -46,6 +46,7 @@ async def _invalidate_catalogue_caches() -> None:
     rest of the TTL and the cashier taps into an empty grid.
     """
     await cache_delete_pattern("products:featured:*")
+    await cache_delete_pattern("products:cart_addons:*")
     await cache_delete_pattern("categories:channel:*")
 
 
@@ -122,6 +123,31 @@ async def list_featured(
         return cached
 
     result = await product_service.get_featured(db, limit=limit)
+    await cache_set(
+        cache_key,
+        [r.model_dump(mode="json") for r in result],
+        ttl=_FEATURED_TTL,
+    )
+    return result
+
+
+@router.get("/cart-addons", response_model=list[ProductResponse])
+async def list_cart_addons(
+    limit: int = Query(8, ge=1, le=20),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Products the cart offers as add-ons.
+
+    Declared above `/{slug}` deliberately: FastAPI matches in order, and below
+    it this path would be read as a product whose slug is "cart-addons".
+    """
+    cache_key = f"products:cart_addons:{limit}"
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    result = await product_service.get_cart_addons(db, limit=limit)
     await cache_set(
         cache_key,
         [r.model_dump(mode="json") for r in result],

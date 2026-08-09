@@ -44,6 +44,12 @@ async def validate_promo_code(
         # entering somebody else's address must not thereby become a new one.
         email=(current_user.email if current_user else None) or data.email,
         phone=data.phone,
+        delivery_method=data.delivery_method,
+        # Never from here. This endpoint answers "may I have this discount, and
+        # what is left to do for it" — it does not hand one out, so refusing on
+        # an unverified phone would only take the code off a basket that is
+        # nowhere near being an order yet. `create_order` enforces it.
+        enforce_phone_verification=False,
     )
 
 

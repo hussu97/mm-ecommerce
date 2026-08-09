@@ -142,6 +142,11 @@ class OrderItemResponse(ORMModel):
     status: str | None
     is_open_price: bool
     kitchen_notes: str | None
+    #: What the customer asked to have written on this line. Distinct from
+    #: `kitchen_notes`, which the cashier types — the register shows them apart
+    #: because one is an instruction to the kitchen and the other is words
+    #: somebody has to copy onto a card by hand, spelling included.
+    personalisation_note: str | None = None
     kitchen_flow_id: UUID | None
     course_id: UUID | None = None
     sent_to_kitchen_at: datetime | None

@@ -6,6 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
+from app.models.order import DeliveryMethodEnum
 from app.models.promo_code import DiscountTypeEnum
 
 #: A percentage discount above this is not a discount, it is the shop paying the
@@ -164,6 +165,15 @@ class PromoCodeAdvertResponse(BaseModel):
     #: the offer needs something they have not done is the worst moment to learn
     #: it.
     requires_phone_verification: bool = False
+    #: When the campaign closes, if it closes. Null means open-ended.
+    #:
+    #: Public because the storefront states the offer in structured data, and an
+    #: offer published with no end is an offer that reads as perpetual — a
+    #: search engine or an answer engine will keep quoting a campaign that ended
+    #: months ago, and the customer arrives with a code the checkout refuses.
+    #: Nothing here that the shopper is not already told: the terms say the
+    #: promotion is limited, and this only says until when.
+    valid_until: datetime | None = None
 
 
 class PromoCodeValidateRequest(BaseModel):
@@ -179,16 +189,34 @@ class PromoCodeValidateRequest(BaseModel):
     #: would be caught while the guest case, the one that matters, would not.
     email: str | None = Field(None, max_length=255)
     phone: str | None = Field(None, max_length=30)
+    #: How this order will be handed over, when that has been chosen.
+    #:
+    #: The phone gate exists because a delivery costs us a courier, and a
+    #: percentage discount on top of that can take the order past break-even —
+    #: so it is asked of delivery orders and not of collections. `None` means
+    #: "not chosen yet", which is the basket: the answer there is provisional
+    #: and the code goes on regardless.
+    delivery_method: DeliveryMethodEnum | None = None
 
 
 class PromoCodeValidateResponse(BaseModel):
     valid: bool
     discount_amount: Decimal = Decimal("0.00")
     message: str | None = None
-    #: True when the only thing standing between this customer and the discount
-    #: is an unverified phone. Lets the checkout put the OTP button next to the
-    #: message instead of leaving them to work it out from the wording.
+    #: Whether this coupon carries the phone gate at all — a property of the
+    #: row, true even for a customer who has already verified.
     requires_phone_verification: bool = False
+    #: Whether the number we were handed satisfies that gate. Always true when
+    #: the gate does not apply, so that "outstanding" is exactly
+    #: `requires_phone_verification and not phone_verified` and a client never
+    #: has to know which delivery methods the rule covers.
+    #:
+    #: Two fields rather than one because they answer different questions, and
+    #: the single flag they replace could not distinguish "this offer needs a
+    #: verified number" from "yours is not verified yet" — so the storefront
+    #: could only show the prompt on a refusal, which is the one moment it is
+    #: too late to be useful.
+    phone_verified: bool = True
 
     @field_serializer("discount_amount")
     def _serialize_discount_amount(self, v: Decimal) -> float:

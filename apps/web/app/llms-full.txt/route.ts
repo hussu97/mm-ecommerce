@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { RSC_API_BASE } from '@/lib/api';
+import { getFeaturedPromo, offerSentence } from '@/lib/offer';
 import type { BlogPost, BlogPostListResponse, Category, Product, ProductListResponse } from '@/lib/types';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
@@ -10,12 +11,16 @@ interface FaqItem { question: string; answer: string }
 
 export async function GET() {
   // Fetch categories, products, FAQ, and blog posts in parallel
-  const [categories, allProducts, faqItems, blogPosts] = await Promise.all([
+  const [categories, allProducts, faqItems, blogPosts, promo] = await Promise.all([
     fetchCategories(),
     fetchAllProducts(),
     fetchFaq(),
     fetchBlogPosts(),
+    getFeaturedPromo(),
   ]);
+  // Off the row rather than written here, so this file cannot keep
+  // advertising a campaign that has ended. See `lib/offer.ts`.
+  const offer = offerSentence(promo);
 
   // Group products by category
   const categoryMap = new Map<string, { category: Category; products: Product[] }>();
@@ -58,10 +63,7 @@ export async function GET() {
 - Orders of AED 35 or less carry a AED 15 small-order fee. It disappears above AED 35 and never applies to pickup.
 - Store pickup from Sharjah is free
 
-### Offers
-- New customers: 15% off the first 3 orders, capped at AED 30 off per order. Requires a verified mobile number. Limited-time promotion.
-
-### Payment Methods
+${offer ? `### Offers\n- ${offer}\n\n` : ''}### Payment Methods
 - Card online: Visa, Mastercard, Apple Pay (via Stripe)
 - Cash is accepted on pickup orders only. There is no cash on delivery.
 - Tabby and Tamara (buy now, pay later) are not live yet

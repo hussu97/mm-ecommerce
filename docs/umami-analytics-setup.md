@@ -54,6 +54,8 @@ coordinates.
 | `remove_from_cart` | product_name, surface | existing + phase 4 | cart/page.tsx, AddToCartControl.tsx (stepping a tile to zero) |
 | `view_cart` | item_count, subtotal, has_promo, currency | phase 4 | cart/page.tsx (once per visit, not per mutation) |
 | `coupon_tray_shown` | code, percent, first_orders_limit | phase 4 | NewCustomerCouponTray.tsx (the impression, so the tray has a denominator) |
+| `coupon_banner_shown` | code, percent | phase 5 | PromoBanner.tsx (the homepage strip, once per undismissed visit) |
+| `coupon_banner_clicked` | code | phase 5 | PromoBanner.tsx (the tap; numerator to the impression above) |
 | `promo_applied` | code, discount, surface, subtotal, from_tray, currency | existing + phase 4 | cart/page.tsx, PromoCodeStep.tsx |
 | `begin_checkout` | item_count, subtotal, has_promo, currency | existing + phase 4 | cart/page.tsx |
 | `view_checkout` | item_count, subtotal, is_guest, has_saved_address, currency | phase 4 | checkout/page.tsx (once per visit) |
@@ -64,7 +66,9 @@ coordinates.
 | `select_delivery_method` | method, fee, currency | phase 3 | checkout/page.tsx (the delivery/pickup toggle) |
 | `pickup_branch_selected` | branch_name | phase 4 | checkout/page.tsx |
 | `delivery_quote` | serviceable, delivery_fee, base_fee, free_applied, free_available, free_threshold, subtotal, currency | phase 4 | checkout/page.tsx (each settled quote with a pin behind it) |
-| `free_delivery_unlocked` | threshold, subtotal, currency | phase 4 | checkout/page.tsx (once per visit) |
+| `free_delivery_unlocked` | threshold, subtotal, currency, surface (cart\|checkout), zone (cart only) | phase 4 + phase 5 | checkout/page.tsx (once per visit), FreeDeliveryNudge.tsx (once per crossing, on the cart) |
+| `cart_addon_added` | product_name, price, personalised, currency | phase 5 | CartAddonTray.tsx — an extra taken from the basket's tray |
+| `personalisation_entered` | product_name, type (`handwritten_note`), length | phase 5 | PersonalisationField.tsx — once per line, on the first save carrying text |
 | `payment_method_selected` | method (`card` \| `cod`), delivery_method, total, currency | phase 4 | checkout/page.tsx |
 | `checkout_step_complete` | step (always 1), delivery_method | phase 1 | checkout/page.tsx |
 | `payment_retry` | order_number, provider (the *gateway* the previous attempt used) | phase 4 | checkout/page.tsx (paying for an order that already exists) |
@@ -93,7 +97,7 @@ the dashboard recorded a quiet day.
 | `search_no_results` | query, category | phase 4 | SearchTracker.tsx — the shop's most actionable list: a product to stock or a synonym to index |
 | `product_unavailable` | product_name, surface, reason: out_of_stock | phase 4 | ProductDetailATC.tsx — demand arriving at a page that cannot sell |
 | `add_to_cart_failed` | product_name, surface, reason | phase 4 | ProductDetailATC.tsx, AddToCartControl.tsx, ModifierModal.tsx |
-| `cart_action_failed` | action (update\|remove), reason, surface | phase 4 | cart/page.tsx, AddToCartControl.tsx |
+| `cart_action_failed` | action (add\|update\|remove), reason, surface | phase 4 + phase 5 | cart/page.tsx, AddToCartControl.tsx, CartAddonTray.tsx |
 | `cart_empty` | — | phase 4 | cart/page.tsx |
 | `promo_failed` | code, reason (server's words, ≤60 chars), surface, subtotal, from_tray | phase 3 + phase 4 | cart/page.tsx, PromoCodeStep.tsx |
 | `checkout_load_failed` | — | phase 4 | checkout/page.tsx — the basket could not be read, so no form ever rendered |
@@ -154,7 +158,8 @@ Each is an **Event** goal whose value is the event name.
 | Product Viewed | `view_product` | |
 | Search Performed | `search` | |
 | Promo Applied | `promo_applied` | |
-| Free Delivery Unlocked | `free_delivery_unlocked` | how often the threshold is actually earned |
+| Free Delivery Unlocked | `free_delivery_unlocked` | how often the threshold is actually earned — filter on `surface` to see whether the cart or the checkout is where baskets grow |
+| Cart Add-on Added | `cart_addon_added` | whether the basket's tray earns its place on the page |
 | Promotion Clicked | `select_promotion` | whether the hero and the banners do anything |
 | Phone Verified | `phone_verify_succeeded` | the step that gates the new-customer coupon |
 | Account Registered | `user_signup` | |
@@ -264,6 +269,21 @@ apply rate finally has a denominator.
 | 1. Tray seen | Event | `coupon_tray_shown` |
 | 2. Code applied | Event | `promo_applied` |
 | 3. Purchase | Event | `order_completed` |
+
+### 5b. Coupon Banner Funnel
+
+The same question one step earlier. The tray is seen by somebody who has
+already filled a basket; the homepage strip is seen before anyone has decided
+to buy, which is the whole reason it exists — so whether announcing the offer
+earlier reaches customers the tray never did has to be readable on its own,
+not unpicked out of the tray's numbers.
+
+| Step | Match type | Value |
+|---|---|---|
+| 1. Banner seen | Event | `coupon_banner_shown` |
+| 2. Banner clicked | Event | `coupon_banner_clicked` |
+| 3. Code applied | Event | `promo_applied` |
+| 4. Purchase | Event | `order_completed` |
 
 ### 6. Delivery Address Funnel
 
@@ -467,6 +487,8 @@ funnel is what is wrong, not the tracking.
 
 | Date | Change |
 |---|---|
+| 2026-08-09 | **Two events added: `cart_addon_added`, `personalisation_entered`** (`CartAddonTray.tsx`, `PersonalisationField.tsx` — the basket's new add-on tray and the handwritten-note field). **Two existing events gained fields, neither renamed:** `free_delivery_unlocked` now carries `surface` (`cart`\|`checkout`) and, on the cart only, `zone`; `cart_action_failed`'s `action` gained `add`. Nothing removed. No funnel changes. Context: the free-delivery threshold was previously only ever said at checkout, where the basket is already decided — it now also appears on the cart, so expect `free_delivery_unlocked` volume to roughly double and **history before this date to be checkout-only**; filter on `surface` before comparing across the boundary. `zone` is absent on checkout events by design, because the checkout reads its threshold from a settled quote rather than from a named area. New goal **Cart Add-on Added**. |
+| 2026-08-09 | **Two events added: `coupon_banner_shown`, `coupon_banner_clicked`** (`PromoBanner.tsx`, the new homepage strip). Nothing removed or renamed. New funnel **5b — Coupon Banner**, kept separate from funnel 5 because the strip is seen before a basket exists and the tray after one, so merging them would hide whether announcing the offer earlier reaches anyone new. No goal changes. Context: the new-customer coupon was previously unreachable in practice — the basket tray validated without a phone, so a coupon requiring one always refused, and the only verification UI a guest could reach sat behind a collapsed "add promo or note" panel. The code now applies at the basket and the phone gate is enforced only on delivery orders at `create_order`, so `promo_applied` fires in cases that previously fired `promo_failed` with reason `Verify your phone number…` — expect that reason to drop to near zero and `promo_applied` on surface `cart` to rise. |
 | 2026-04-18 | Initial setup — 15 events, 7 goals, 3 funnels across 3 phases |
 | 2026-04-18 | Fix Main Purchase Funnel step 1: `/` → `/*` to match locale-prefixed homepages (`/en`, `/ar`) |
 | 2026-06-05 | Queue custom events briefly when the Umami script has not loaded yet; no event names or payload fields changed |

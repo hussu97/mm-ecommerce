@@ -478,6 +478,18 @@ export default function OrderDetailPage() {
                       ))}
                     </div>
                   )}
+                  {/*
+                    Louder than the options above it, and quoted. This is the
+                    line somebody copies onto a card by hand — it has to be
+                    legible and its edges have to be obvious, so a trailing
+                    space or a deliberate lower-case name survives the reading.
+                  */}
+                  {item.personalisation_note && (
+                    <div className="mt-1 border-s-2 border-primary/40 ps-2" dir="auto">
+                      <div className="text-[10px] font-body uppercase tracking-widest text-gray-400">Handwritten note</div>
+                      <div className="text-xs font-body text-gray-800 whitespace-pre-wrap">&ldquo;{item.personalisation_note}&rdquo;</div>
+                    </div>
+                  )}
                 </td>
                 <td className="px-4 py-2.5 text-center text-xs font-body text-gray-600">{item.quantity}</td>
                 <td className="px-4 py-2.5 text-right text-xs font-body text-gray-600">{formatCurrency(item.unit_price)}</td>

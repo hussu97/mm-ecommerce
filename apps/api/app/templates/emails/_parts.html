@@ -166,6 +166,13 @@
         <td class="stack-full" style="width: 70%;">
           <div class="item-name" dir="auto">{{ item.name }}</div>
           {% if item.options %}<div class="item-options" dir="auto">{{ item.options }}</div>{% endif %}
+          {#
+            Shown back verbatim, and quoted so its edges are visible. This is
+            the one line in the email a customer should proof-read: it is about
+            to be copied onto a card by hand, and a typo is only free to fix
+            before somebody writes it.
+          #}
+          {% if item.note %}<div class="item-note" dir="auto">{{ t('item.note_label') }} &ldquo;{{ item.note }}&rdquo;</div>{% endif %}
           <div class="item-qty" dir="ltr">{{ item.quantity }} &times; AED {{ item.unit_price }}</div>
         </td>
         <td class="item-price stack-full" style="width: 30%;" dir="ltr">AED {{ item.total_price }}</td>

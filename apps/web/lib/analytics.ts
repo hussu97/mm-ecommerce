@@ -415,7 +415,10 @@ export const analytics = {
     }),
 
   cartActionFailed: (data: {
-    action: 'update' | 'remove';
+    // 'add' joined when the cart grew an add-on tray — a failure there is a
+    // refused sale on the page furthest down the funnel, so it is worth
+    // telling apart from a failed quantity tap.
+    action: 'add' | 'update' | 'remove';
     reason: string;
     surface: Surface;
   }) => track('cart_action_failed', data),
@@ -430,6 +433,24 @@ export const analytics = {
     percent: number;
     first_orders_limit: number;
   }) => track('coupon_tray_shown', data),
+
+  /**
+   * The homepage strip rendered, once per visit that was not dismissed.
+   *
+   * Separate from `coupon_tray_shown` rather than sharing it with a `surface`,
+   * because the two answer different questions and only one of them is new. The
+   * tray is seen by somebody who has already filled a basket; this is seen
+   * before anyone has decided to buy, which is the entire reason it exists — so
+   * "does announcing the offer earlier bring in customers the tray never
+   * reached" has to be readable without unpicking one number into two.
+   */
+  couponBannerShown: (data: {
+    code: string;
+    percent: number;
+  }) => track('coupon_banner_shown', data),
+
+  /** A tap on that strip. The numerator to the impression above. */
+  couponBannerClicked: (data: { code: string }) => track('coupon_banner_clicked', data),
 
   // ─── Phase 4d: Checkout ──────────────────────────────────────────────────
 
@@ -463,8 +484,38 @@ export const analytics = {
   deliveryUnserviceable: (data: { subtotal: number; item_count: number }) =>
     track('delivery_unserviceable', { ...data, currency: CURRENCY }),
 
-  freeDeliveryUnlocked: (data: { threshold: number; subtotal: number }) =>
-    track('free_delivery_unlocked', { ...data, currency: CURRENCY }),
+  /**
+   * A basket crossed the free-delivery line.
+   *
+   * `surface` was added when the cart started saying this too. Without it the
+   * two screens are indistinguishable in Umami, and the whole point of moving
+   * the nudge earlier is being able to tell whether the cart is where baskets
+   * grow. `zone` is optional because only the cart knows it — the checkout has
+   * a confirmed address by then and reads its threshold from the quote.
+   */
+  freeDeliveryUnlocked: (data: {
+    threshold: number;
+    subtotal: number;
+    surface?: 'cart' | 'checkout';
+    zone?: string;
+  }) => track('free_delivery_unlocked', { ...data, currency: CURRENCY }),
+
+  /** An add-on taken from the basket's tray. */
+  cartAddonAdded: (data: {
+    product_name: string;
+    price: number;
+    personalised: boolean;
+  }) => track('cart_addon_added', { ...data, currency: CURRENCY }),
+
+  /**
+   * Somebody wrote a message on a line. Fired once per line, on the first save
+   * that carries text — not per keystroke, and not again when they edit it.
+   */
+  personalisationEntered: (data: {
+    product_name: string;
+    type: string;
+    length: number;
+  }) => track('personalisation_entered', data),
 
   lowOrderFeeApplied: (data: { fee: number; subtotal: number }) =>
     track('low_order_fee_applied', { ...data, currency: CURRENCY }),

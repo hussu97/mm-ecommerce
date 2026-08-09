@@ -299,3 +299,27 @@
   Shipping a CI change without measuring the result is how a regression sits
   there looking like an improvement — the projection in the commit message
   would have been the only record, and it was wrong.
+
+## Check the machine-readable surfaces when a commercial fact changes
+
+Asked to fix a coupon's UX, I first treated "SEO/GEO" as the homepage. The real
+damage was in files no human opens: `llms.txt`, `llms-full.txt` and
+`ai-plugin.json` each hard-coded "New customers get 15% off their first 3
+orders" with no code, while the live row was 20% with the code `NEW`. Those
+files are written *for* answer engines, cached for an hour to a day, and read by
+people who never load the site — so a stale figure there is quoted back as fact
+and the checkout then refuses the customer who arrives on it.
+
+**Rule:** when changing a price, discount, fee, threshold or delivery promise,
+grep the whole repo for the *old figure* before finishing — not just for the
+component that renders it. If more than one surface states a commercial fact,
+they must all read it from one function (`lib/offer.ts` is the pattern), because
+the ones that drift are always the ones nobody looks at.
+
+## Do not commit into another session's working tree without asking
+
+The session-start git status said "clean"; by the time I ran `git diff`, six
+files I had edited also carried an unrelated in-flight feature. That snapshot is
+taken once and never refreshes. **Rule:** run `git status` immediately before
+staging, and if unrelated work is present, surface it and let the user decide
+rather than sweeping it into a commit under their name.

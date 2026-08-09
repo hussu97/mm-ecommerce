@@ -313,6 +313,18 @@ def _compute_item_totals(cart: Cart) -> tuple[list[dict], Decimal]:
             raise BadRequestError("A product in your cart is no longer available")
 
         selected_options = cart_item.selected_options or []
+
+        # A product that asks for a message must have one by the time it is
+        # bought. The cart tolerates a blank — the field appears only after the
+        # item is in the basket, so empty there means "not finished yet" — but
+        # an order is the last moment anyone can be asked, and a gift note
+        # delivered blank is a paid item that does nothing.
+        note = cart_service.clean_note(cart_item.personalisation_note)
+        if product.personalisation_type and not note:
+            raise BadRequestError(
+                f"Add your message for '{product.name}' before checking out"
+            )
+
         # Shared with the cart's own pricing so a checkout can never total a
         # basket differently from the basket page the shopper just read.
         options_price = sum(
@@ -336,6 +348,7 @@ def _compute_item_totals(cart: Cart) -> tuple[list[dict], Decimal]:
                 "unit_price": unit_price,
                 "total_price": line_total,
                 "selected_options_snapshot": selected_options,
+                "personalisation_note": note,
             }
         )
 
@@ -880,8 +893,25 @@ async def create_order(
                 if data.shipping_address is not None
                 else None
             ),
+            # The phone gate is a delivery rule — see `validate`. Passing the
+            # method means a collection is not judged on a number it was never
+            # asked for: before this, a pickup order carrying a gated code was
+            # refused outright, because the only phone this call knows about
+            # lives on a shipping address a pickup does not have.
+            delivery_method=data.delivery_method,
+            # The one caller that enforces rather than reports. Everything up to
+            # here has been provisional; this is the row being written.
+            enforce_phone_verification=True,
         )
         if not validation.valid:
+            # Told apart from every other refusal because it is the only one the
+            # customer can still fix from the checkout — the address form has
+            # the button. A generic "Promo code: ..." toast sends them looking
+            # for a problem with the code instead.
+            if validation.requires_phone_verification and not validation.phone_verified:
+                raise BadRequestError(
+                    "Verify your mobile number to use this code on a delivery order"
+                )
             raise BadRequestError(f"Promo code: {validation.message}")
         discount_amount = validation.discount_amount
         promo_obj = await promo_code_service.get_promo(db, data.promo_code)
