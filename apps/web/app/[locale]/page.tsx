@@ -18,7 +18,7 @@ import { PromoBanner } from '@/components/layout/PromoBanner';
 import { orderedSections, type HomeLayout, type SectionKey } from '@/lib/home-sections';
 import { BAKERY_BASE, BUSINESS_ID, OG_IMAGE } from '@/lib/schema';
 import { fetchJson } from '@/lib/fetch-json';
-import { getFeaturedPromo, isAdvertisable, offerSentence } from '@/lib/offer';
+import { getFeaturedPromo, isAdvertisable, offerHeadline, offerSentence } from '@/lib/offer';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 
@@ -49,17 +49,21 @@ interface HomeContent {
  * is standard vocabulary, and the value is that an answer engine reading this
  * graph can state the offer correctly instead of inventing one.
  */
-export function buildOffer(promo: AdvertisedPromo | null) {
+export function buildOffer(promo: AdvertisedPromo | null, locale: 'en' | 'ar' = 'en') {
   if (!isAdvertisable(promo)) return null;
   const percent = Number(promo.discount_value);
   return {
     '@type': 'Offer',
     '@id': `${SITE_URL}/#new-customer-offer`,
-    name: `${percent}% off your first ${promo.first_orders_limit} orders`,
+    // Stated in the language of the page carrying it. The `@id` is shared
+    // across both, which is correct — it is one campaign — but the prose is
+    // what a reader quotes, and quoting English at an Arabic page is how the
+    // Arabic snippet ends up half in the wrong language.
+    name: offerHeadline(promo, locale)!,
     // The same sentence `llms.txt` publishes, so the graph and the file an
     // answer engine reads cannot describe the campaign differently.
-    description: offerSentence(promo)!,
-    url: `${SITE_URL}/en/all-products`,
+    description: offerSentence(promo, locale)!,
+    url: `${SITE_URL}/${locale}/all-products`,
     discountCode: promo.code,
     discount: percent,
     priceCurrency: 'AED',
@@ -72,8 +76,9 @@ function buildJsonLd(
   categories: Category[],
   featuredProducts: Product[],
   promo: AdvertisedPromo | null,
+  locale: 'en' | 'ar',
 ) {
-  const offer = buildOffer(promo);
+  const offer = buildOffer(promo, locale);
   // Group featured products by category for the Menu schema
   const categoryMap = new Map<string, { name: string; slug: string; products: Product[] }>();
   for (const cat of categories.filter(c => c.is_active)) {
@@ -198,9 +203,17 @@ export async function generateMetadata({
   // because what the bakery sells is still the thing being described — and it
   // reverts on its own the moment the campaign ends, with no copy to go and
   // unwrite. Held to a length a SERP will actually show.
-  const offerLine = isAdvertisable(promo)
-    ? ` New customers: ${Number(promo.discount_value)}% off your first ` +
-      `${promo.first_orders_limit} orders with code ${promo.code}.`
+  //
+  // **In the language of the page.** This shipped English-only and appended a
+  // clause about "New customers" to an otherwise Arabic description, which is
+  // precisely the string Google prints as the Arabic snippet. The CMS
+  // description is per-locale; the offer has to be too.
+  const lang = locale === 'ar' ? 'ar' : 'en';
+  const headline = offerHeadline(promo, lang);
+  const offerLine = headline
+    ? lang === 'ar'
+      ? ` للعملاء الجدد: ${headline} بكود ${promo!.code}.`
+      : ` New customers: ${headline} with code ${promo!.code}.`
     : '';
   const description =
     offerLine && (base + offerLine).length <= 320 ? base + offerLine : base;
@@ -238,7 +251,7 @@ export default async function HomePage({
     getFeaturedPromo(),
   ]);
 
-  const jsonLd = buildJsonLd(categories, featuredProducts, promo);
+  const jsonLd = buildJsonLd(categories, featuredProducts, promo, locale === 'ar' ? 'ar' : 'en');
   const activeCategories = categories.filter(cat => cat.is_active);
 
   const sections: Record<SectionKey, React.ReactNode> = {

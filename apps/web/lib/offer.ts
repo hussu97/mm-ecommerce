@@ -47,30 +47,63 @@ export function isAdvertisable(promo: AdvertisedPromo | null): promo is Advertis
 }
 
 /**
- * One English sentence describing the live offer, or `null` when none is.
+ * One sentence describing the live offer, or `null` when none is.
  *
- * Written for the machine-readable surfaces — `llms.txt`, `llms-full.txt`, the
- * plugin manifest, the meta description — which are English-only and want prose
- * rather than an i18n key. The customer-facing components render the same facts
- * through `promo.*` translations instead.
+ * Written for the surfaces that want prose rather than an i18n key: the
+ * `llms*.txt` files, the plugin manifest, the meta description and the JSON-LD
+ * `Offer`. The customer-facing components render the same facts through the
+ * `promo.*` translations instead.
  *
  * Names the code, which every hand-written version of this sentence forgot: an
  * answer engine telling somebody about a discount they then cannot find is
  * worse than not mentioning it. Says "delivery orders" about the phone gate,
- * because collection is never asked.
+ * because a collection is never asked.
+ *
+ * **Locale is not decorative here.** The machine-readable files are English by
+ * construction and default to it, but the meta description is per-locale, and
+ * an English clause appended to Arabic prose is what a search engine prints as
+ * the Arabic snippet — which is exactly what shipped before this argument
+ * existed. Copy is inlined rather than read from the `promo.*` translations
+ * because these callers are `generateMetadata` and route handlers with no
+ * translation context, and a fetch per render to build one sentence is a worse
+ * trade than two strings kept beside each other.
  */
-export function offerSentence(promo: AdvertisedPromo | null): string | null {
+export function offerSentence(
+  promo: AdvertisedPromo | null,
+  locale: 'en' | 'ar' = 'en',
+): string | null {
   if (!isAdvertisable(promo)) return null;
   const percent = Number(promo.discount_value);
+  const orders = promo.first_orders_limit;
+  const cap = promo.max_discount_amount;
+  const gated = promo.requires_phone_verification;
+
+  if (locale === 'ar') {
+    const parts = [
+      `العملاء الجدد يحصلون على خصم ${percent}% على أول ${orders} طلبات باستخدام كود ${promo.code}`,
+    ];
+    if (cap !== null) parts.push(`خصم يصل إلى ${cap} درهم لكل طلب`);
+    if (gated) parts.push('طلبات التوصيل تتطلب رقم هاتف متحقق منه');
+    return `${parts.join('، ')}. عرض لفترة محدودة.`;
+  }
+
   const parts = [
-    `New customers get ${percent}% off each of their first ${promo.first_orders_limit} ` +
+    `New customers get ${percent}% off each of their first ${orders} ` +
       `orders with the code ${promo.code}`,
   ];
-  if (promo.max_discount_amount !== null) {
-    parts.push(`up to AED ${promo.max_discount_amount} off per order`);
-  }
-  if (promo.requires_phone_verification) {
-    parts.push('delivery orders need a verified mobile number');
-  }
+  if (cap !== null) parts.push(`up to AED ${cap} off per order`);
+  if (gated) parts.push('delivery orders need a verified mobile number');
   return `${parts.join(', ')}. Limited-time promotion.`;
+}
+
+/** The offer as a short headline — the JSON-LD `Offer.name`. */
+export function offerHeadline(
+  promo: AdvertisedPromo | null,
+  locale: 'en' | 'ar' = 'en',
+): string | null {
+  if (!isAdvertisable(promo)) return null;
+  const percent = Number(promo.discount_value);
+  return locale === 'ar'
+    ? `خصم ${percent}% على أول ${promo.first_orders_limit} طلبات`
+    : `${percent}% off your first ${promo.first_orders_limit} orders`;
 }

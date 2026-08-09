@@ -11,7 +11,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { isAdvertisable, offerSentence } from '@/lib/offer';
+import { isAdvertisable, offerHeadline, offerSentence } from '@/lib/offer';
 import { buildOffer } from './page';
 
 const COUPON = {
@@ -59,6 +59,42 @@ describe('the homepage offer node', () => {
 
   it('says nothing about an offer that is not running', () => {
     expect(offerSentence(null)).toBeNull();
+  });
+
+  it('states the offer in the language of the page carrying it', () => {
+    // This shipped English-only and appended "New customers: 15% off your first
+    // 3 orders with code NEW." to an otherwise Arabic meta description — which
+    // is the exact string a search engine prints as the Arabic snippet.
+    const ar = offerSentence(COUPON, 'ar')!;
+    expect(ar).toContain('العملاء الجدد');
+    // The code and the figures stay in Latin script — they are what the
+    // customer types and what the checkout matches on.
+    expect(ar).toContain('NEW');
+    expect(ar).toContain('20');
+    expect(ar).toContain('3');
+    // No English prose smuggled into the Arabic sentence.
+    expect(ar).not.toMatch(/New customers|off per order|Limited-time/);
+
+    const en = offerSentence(COUPON, 'en')!;
+    expect(en).toContain('New customers');
+    // And no Arabic in the English one.
+    expect(en).not.toMatch(/[؀-ۿ]/);
+  });
+
+  it("gives the JSON-LD Offer a name and a link in the page's language", () => {
+    const ar = buildOffer(COUPON, 'ar')!;
+    expect(ar.name).toContain('خصم');
+    expect(ar.name).not.toMatch(/off your first/);
+    expect(ar.url).toContain('/ar/');
+    // One campaign, so one @id across both languages — only the prose differs.
+    expect(ar['@id']).toBe(buildOffer(COUPON, 'en')!['@id']);
+  });
+
+  it('defaults to English for the machine-readable files', () => {
+    // llms.txt, llms-full.txt and ai-plugin.json are English by construction
+    // and call this with no locale at all.
+    expect(offerSentence(COUPON)).toBe(offerSentence(COUPON, 'en'));
+    expect(offerHeadline(COUPON)).toBe(offerHeadline(COUPON, 'en'));
   });
 
   it('says when the campaign closes', () => {
