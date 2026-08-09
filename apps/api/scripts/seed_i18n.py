@@ -292,7 +292,7 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "low_order_fee_what_is_this", "What is this?"),
     # ── the new-customer coupon ───────────────────────────────────────────
     ("promo", "new_customer_title", "{percent}% off your first {orders} orders"),
-    ("promo", "new_customer_cta", "Use code {code}"),
+    ("promo", "use_code", "Use code"),
     ("promo", "new_customer_apply", "Apply"),
     ("promo", "new_customer_applied", "Applied"),
     ("promo", "terms_title", "Terms"),
@@ -962,7 +962,7 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "low_order_fee_what_is_this", "ما هذا؟"),
     # ── the new-customer coupon ───────────────────────────────────────────
     ("promo", "new_customer_title", "خصم {percent}% على أول {orders} طلبات"),
-    ("promo", "new_customer_cta", "استخدم كود {code}"),
+    ("promo", "use_code", "استخدم كود"),
     ("promo", "new_customer_apply", "تطبيق"),
     ("promo", "new_customer_applied", "تم التطبيق"),
     ("promo", "terms_title", "الشروط"),

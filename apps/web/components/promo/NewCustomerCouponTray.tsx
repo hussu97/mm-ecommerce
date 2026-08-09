@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import type { AdvertisedPromo } from '@/lib/types';
 import { Icon } from '@/components/ui/Icon';
+import { CouponCode } from '@/components/promo/CouponCode';
 
 /**
  * What came of applying the code.
@@ -154,10 +155,13 @@ export function NewCustomerCouponTray({ appliedCode, onApply }: NewCustomerCoupo
               orders: promo.first_orders_limit,
             })}
           </p>
-          {/* The code itself, spelled out. Some people would rather type it, and
-              anyone comparing this against an email or a poster needs to see it. */}
-          <p className="font-body text-xs text-gray-500 mt-0.5">
-            {t('promo.new_customer_cta', { code })}
+          {/* The code itself, spelled out and boxed. Some people would rather
+              type it than tap Apply, and anyone comparing this against an email
+              or a poster needs to see it — which only works if it looks like a
+              code rather than like the end of the sentence before it. */}
+          <p className="font-body text-xs text-gray-500 mt-1 flex items-center gap-1.5">
+            <span>{t('promo.use_code')}</span>
+            <CouponCode code={code} />
           </p>
         </div>
         {applied ? (

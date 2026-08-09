@@ -24,7 +24,7 @@ vi.mock('@/lib/analytics', () => ({
 
 const STRINGS: Record<string, string> = {
   'promo.new_customer_title': '{percent}% off your first {orders} orders',
-  'promo.new_customer_cta': 'Use code {code}',
+  'promo.use_code': 'Use code',
   'promo.dismiss_banner': 'Dismiss offer',
 };
 
@@ -62,7 +62,10 @@ describe('PromoBanner', () => {
     render(<PromoBanner promo={COUPON} />);
 
     expect(screen.getByText(/20% off your first 3 orders/)).toBeInTheDocument();
-    expect(screen.getByText(/Use code NEW/)).toBeInTheDocument();
+    expect(screen.getByText('Use code')).toBeInTheDocument();
+    // Boxed and set apart, not run together with the sentence explaining the
+    // offer — it is the one part of the strip the customer has to type.
+    expect(screen.getByText('NEW')).toBeInTheDocument();
   });
 
   it('renders nothing when no campaign is running', () => {
@@ -83,7 +86,7 @@ describe('PromoBanner', () => {
     mocks.locale = 'ar';
     render(<PromoBanner promo={COUPON} />);
 
-    expect(screen.getByText(/Use code جديد/)).toBeInTheDocument();
+    expect(screen.getByText('جديد')).toBeInTheDocument();
   });
 
   it('stays dismissed for the rest of the session', () => {

@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { analytics } from '@/lib/analytics';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import type { AdvertisedPromo } from '@/lib/types';
+import { CouponCode } from '@/components/promo/CouponCode';
 import { Icon } from '@/components/ui/Icon';
 
 const DISMISS_KEY = 'mm_promo_banner_dismissed';
@@ -75,13 +76,16 @@ export function PromoBanner({ promo }: { promo: AdvertisedPromo | null }) {
         className="inline-flex items-center gap-2 hover:opacity-90 transition-opacity"
       >
         <Icon name="local_offer" className="text-sm" aria-hidden />
-        <span>
-          {t('promo.new_customer_title', {
-            percent: promo.discount_value,
-            orders: promo.first_orders_limit,
-          })}
-          {' · '}
-          {t('promo.new_customer_cta', { code })}
+        <span className="inline-flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1">
+          <span>
+            {t('promo.new_customer_title', {
+              percent: promo.discount_value,
+              orders: promo.first_orders_limit,
+            })}
+          </span>
+          <span aria-hidden className="opacity-50">·</span>
+          <span>{t('promo.use_code')}</span>
+          <CouponCode code={code} tone="dark" />
         </span>
       </Link>
       <button

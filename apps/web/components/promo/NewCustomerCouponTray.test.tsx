@@ -15,7 +15,7 @@ vi.mock('@/lib/api', () => ({
 // the tray reading its numbers off the API.
 const STRINGS: Record<string, string> = {
   'promo.new_customer_title': '{percent}% off your first {orders} orders',
-  'promo.new_customer_cta': 'Use code {code}',
+  'promo.use_code': 'Use code',
   'promo.new_customer_apply': 'Apply',
   'promo.new_customer_applied': 'Applied',
   'promo.terms_title': 'Terms',
@@ -105,7 +105,7 @@ describe('NewCustomerCouponTray', () => {
     render(<NewCustomerCouponTray appliedCode={null} onApply={vi.fn()} />);
 
     expect(await screen.findByText('20% off your first 2 orders')).toBeInTheDocument();
-    expect(screen.getByText('Use code FIRST20')).toBeInTheDocument();
+    expect(screen.getByText('FIRST20')).toBeInTheDocument();
     expect(termsText()).toContain('Up to 40 AED off per order.');
     expect(termsText()).toContain('Valid on your first 2 orders.');
   });
@@ -121,7 +121,7 @@ describe('NewCustomerCouponTray', () => {
     render(<NewCustomerCouponTray appliedCode={null} onApply={vi.fn()} />);
 
     expect(await screen.findByText('10% off your first 3 orders')).toBeInTheDocument();
-    expect(screen.getByText('Use code WELCOME10')).toBeInTheDocument();
+    expect(screen.getByText('WELCOME10')).toBeInTheDocument();
     expect(termsText()).toContain('Up to 25 AED off per order.');
   });
 
