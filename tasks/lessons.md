@@ -323,3 +323,22 @@ files I had edited also carried an unrelated in-flight feature. That snapshot is
 taken once and never refreshes. **Rule:** run `git status` immediately before
 staging, and if unrelated work is present, surface it and let the user decide
 rather than sweeping it into a commit under their name.
+
+## A migration is not verified until a real Postgres has run it
+
+`092` was written with the revision id `092_cart_addons_and_personalisation`.
+`alembic_version.version_num` is `varchar(32)`; that string is 35 characters. On
+`alembic upgrade head` every DDL statement ran and the migration then failed
+writing down *that* it had — leaving a database carrying the new columns with no
+record of the revision, which is the one state that cannot be re-run or rolled
+back cleanly.
+
+The full API suite — 1290 tests — passed throughout. It mocks the database, so a
+migration that cannot apply is invisible to it, and CI would have gone green all
+the way to a deploy that broke on the VM.
+
+**Rule:** never call a migration done on the strength of the test suite. Run
+`alembic upgrade head`, then `downgrade -1`, then `upgrade head` again against a
+throwaway Postgres, and assert the columns and indexes are present after each
+upgrade and gone after the downgrade. Keep revision ids **≤32 characters** —
+prefer `NNN_two_or_three_words` and drop the conjunctions.
