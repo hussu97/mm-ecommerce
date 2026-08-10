@@ -99,6 +99,9 @@ export function AddressModal({
   const [mode, setMode] = useState<'list' | 'form'>('list');
   const [draft, setDraft] = useState<AddressDraft>(EMPTY);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // Raised by `PhoneVerify` while a code is outstanding, so the number it was
+  // sent to cannot move underneath it.
+  const [codePending, setCodePending] = useState(false);
   const [saving, setSaving] = useState(false);
   const [geocoding, setGeocoding] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -440,6 +443,12 @@ export function AddressModal({
                     value={draft.phone}
                     onChange={field('phone')}
                     error={errors.phone}
+                    // Fixed while a code is outstanding against it. The code
+                    // Firebase issued is bound to one number; letting the field
+                    // drift under it means confirming a code for a number the
+                    // customer is no longer looking at. "Change number" in the
+                    // panel below is the way back.
+                    disabled={codePending}
                   />
                   {/* Where the number is being typed anyway.
                       Verification used to live only behind a "add promo or
@@ -463,6 +472,7 @@ export function AddressModal({
                           surface="checkout"
                           phone={draft.phone}
                           onVerified={(confirmed) => onVerified?.(confirmed)}
+                          onCodePending={setCodePending}
                         />
                       </div>
                     )

@@ -65,6 +65,8 @@ export default function AddressesPage() {
   // The number most recently proved, so the tick disappears the moment the
   // field is edited to something else.
   const [verifiedPhone, setVerifiedPhone] = useState<string | null>(null);
+  // See AddressModal: locks the field while a code is outstanding.
+  const [codePending, setCodePending] = useState(false);
   // Ask the server whether this number is *already* proved before offering to
   // prove it. A verification belongs to the handset, not to the address it was
   // first typed on — somebody adding a second address should not sit through a
@@ -297,6 +299,8 @@ export default function AddressesPage() {
                   setForm(f => ({ ...f, phone: v }));
                 }}
                 error={errors.phone}
+                // See AddressModal: the number is fixed while a code is out.
+                disabled={codePending}
               />
               {/* Optional here, and deliberately so: saving an address should
                   not require an SMS. It is what unlocks the new-customer
@@ -305,6 +309,7 @@ export default function AddressesPage() {
                 <PhoneVerify surface="account"
                   phone={form.phone}
                   onVerified={setVerifiedPhone}
+                  onCodePending={setCodePending}
                   className="mt-2"
                 />
               )}

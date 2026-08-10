@@ -38,11 +38,17 @@ vi.mock('@/lib/api', () => ({
   },
 }));
 
-// Turnstile off by default; the one test that cares turns it on.
+// Turnstile off by default; the tests that care turn it on. `emit` is captured
+// so a test can decide *when* Cloudflare answers, which is the whole question
+// the send path now has to handle gracefully.
 const turnstileEnabled = { value: false };
+let emitTurnstile: ((token: string) => void) | null = null;
 vi.mock('@/components/ui/Turnstile', () => ({
   isTurnstileEnabled: () => turnstileEnabled.value,
-  Turnstile: () => null,
+  Turnstile: ({ onToken }: { onToken: (t: string) => void }) => {
+    emitTurnstile = onToken;
+    return null;
+  },
 }));
 
 vi.mock('@/lib/i18n/TranslationProvider', () => ({
@@ -71,6 +77,7 @@ const PHONE = '+971501234567';
 beforeEach(() => {
   vi.clearAllMocks();
   turnstileEnabled.value = false;
+  emitTurnstile = null;
   phoneVerified.mockResolvedValue({ phone: PHONE, verified: false });
   signInWithPhoneNumber.mockResolvedValue({ confirm: vi.fn() });
 });
@@ -184,15 +191,127 @@ describe('PhoneVerify — what it costs', () => {
     expect(signInWithPhoneNumber).toHaveBeenCalledTimes(1);
   });
 
-  it('will not buy an SMS before Turnstile has answered', async () => {
+  it('waits for Turnstile rather than refusing, and says only "Sending…"', async () => {
     turnstileEnabled.value = true;
     render(<PhoneVerify phone={PHONE} onVerified={vi.fn()} />);
 
     fireEvent.click(screen.getByRole('button', { name: /send code/i }));
 
-    await screen.findByRole('alert');
+    // The button answers the only question being asked — did my click do
+    // anything — and nothing is spent while Cloudflare is still thinking.
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /sending/i })).toBeDisabled(),
+    );
     expect(signInWithPhoneNumber).not.toHaveBeenCalled();
-    // And nothing was spent on the lookup either.
-    expect(phoneVerified).not.toHaveBeenCalled();
+
+    // No error, and above all no red line telling a customer about a security
+    // check they did not ask about and cannot do anything about.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText(/security check/i)).not.toBeInTheDocument();
+
+    // Cloudflare answers; the send the customer already asked for goes out.
+    emitTurnstile!('tok');
+    await waitFor(() => expect(signInWithPhoneNumber).toHaveBeenCalledTimes(1));
+  });
+
+  it('gives up on a Turnstile that never answers, in the usual words', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    turnstileEnabled.value = true;
+    render(<PhoneVerify phone={PHONE} onVerified={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /send code/i }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(16_000);
+    });
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/unavailable/i);
+    // Still nothing bought, and still nothing said about bot checks.
+    expect(signInWithPhoneNumber).not.toHaveBeenCalled();
+    expect(alert).not.toHaveTextContent(/security check/i);
+  });
+
+  it('spends the Turnstile solution it already has without waiting', async () => {
+    turnstileEnabled.value = true;
+    render(<PhoneVerify phone={PHONE} onVerified={vi.fn()} />);
+    emitTurnstile!('tok');
+
+    await sendOnce();
+
+    expect(signInWithPhoneNumber).toHaveBeenCalledTimes(1);
+    expect(verifyPhone).not.toHaveBeenCalled();
+  });
+});
+
+describe('PhoneVerify — the number the code was sent to', () => {
+  it('tells the caller to lock the field, and to unlock it again', async () => {
+    const onCodePending = vi.fn();
+    render(
+      <PhoneVerify phone={PHONE} onVerified={vi.fn()} onCodePending={onCodePending} />,
+    );
+
+    // Nothing is outstanding before the first send, so the customer can still
+    // correct the number they are in the middle of typing.
+    expect(onCodePending).toHaveBeenLastCalledWith(false);
+
+    await sendOnce();
+    expect(onCodePending).toHaveBeenLastCalledWith(true);
+
+    fireEvent.click(screen.getByRole('button', { name: /change number/i }));
+    await waitFor(() => expect(onCodePending).toHaveBeenLastCalledWith(false));
+  });
+
+  it('releases the field if it unmounts mid-flow', async () => {
+    const onCodePending = vi.fn();
+    const { unmount } = render(
+      <PhoneVerify phone={PHONE} onVerified={vi.fn()} onCodePending={onCodePending} />,
+    );
+    await sendOnce();
+    expect(onCodePending).toHaveBeenLastCalledWith(true);
+
+    // Otherwise the form is left with an input nothing will ever re-enable.
+    unmount();
+    expect(onCodePending).toHaveBeenLastCalledWith(false);
+  });
+
+  it('“Change number” drops the outstanding code and returns to the start', async () => {
+    render(<PhoneVerify phone={PHONE} onVerified={vi.fn()} />);
+    await sendOnce();
+
+    fireEvent.click(screen.getByRole('button', { name: /change number/i }));
+
+    // Back to the beginning: no code box, and the first button again.
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /send code|resend in/i })).toBeInTheDocument(),
+    );
+    expect(screen.queryByLabelText(/6-digit code/i)).not.toBeInTheDocument();
+  });
+
+  it('changing the number does not buy three more messages', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    render(<PhoneVerify phone={PHONE} onVerified={vi.fn()} />);
+    await sendOnce();
+
+    // The ceiling is about what this panel may spend, and a retyped digit does
+    // not make the next SMS cheaper. Resetting the flow must not reset it.
+    fireEvent.click(screen.getByRole('button', { name: /change number/i }));
+
+    expect(screen.getByRole('button', { name: /resend in/i })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: /resend in/i }));
+    expect(signInWithPhoneNumber).toHaveBeenCalledTimes(1);
+  });
+
+  it('abandons a code when the number changes underneath it', async () => {
+    const { rerender } = render(<PhoneVerify phone={PHONE} onVerified={vi.fn()} />);
+    await sendOnce();
+
+    // A saved address picked, a form reset — the confirmation Firebase handed
+    // us belongs to the old number and confirming it would prove the wrong one.
+    rerender(<PhoneVerify phone="+971509999999" onVerified={vi.fn()} />);
+
+    await waitFor(() =>
+      expect(screen.queryByLabelText(/6-digit code/i)).not.toBeInTheDocument(),
+    );
   });
 });

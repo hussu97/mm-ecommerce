@@ -433,3 +433,43 @@ response model that serialises it in the same change — the type checker will n
 because the handler returns a `dict`. And write the regression test through the
 response model, not the service dict: a test asserting on the dict passes while
 production 500s, which is exactly what the existing delivery tests did.
+
+## Don't narrate the machinery, and don't style waiting as failure
+
+I added a Turnstile gate to the "Send code" button and, when the token had not
+arrived yet, refused the click and printed **"Still running the security check —
+one moment."** in red, below the form.
+
+Three faults in one line. It described an internal mechanism the customer never
+asked about and cannot act on. It used the error slot and error colour for
+something that was not an error and needed nothing from them. And it *refused*
+work the customer had explicitly asked for, when the honest response to "not
+ready yet" is to wait — the button was right there, able to say "Sending…".
+
+The correct shape: the control that was pressed shows what is happening, the
+work proceeds as soon as it can, and a message is only written when there is
+something the person must know or do.
+
+**Rule:** before writing user-facing copy, ask who the sentence is for. If it
+names a vendor, a check, a token, a queue or a retry, it is for me and belongs in
+a comment or a log. Waiting states belong on the control that was pressed, never
+in the error slot — reserve that for something the reader can act on. This
+applies to loading, retrying and rate-limiting alike.
+
+## An empty state is a claim, and it needs the data to make it
+
+The cart page rendered "YOUR CART IS EMPTY" on its very first paint. The guard
+was `!isLoading && items.length === 0`, and `isLoading` is the *mutation* flag —
+`refreshCart` never sets it. So before the first fetch returned, `cart` was
+`null`, `items` was `[]`, and the page confidently told a returning guest their
+basket was empty. Adding anything re-rendered with the fetched cart and their
+old items appeared, which reads as items materialising out of nowhere.
+
+The context already exported `cartLoaded` for precisely this question, and the
+checkout already used it. Only this page did not.
+
+**Rule:** "no data yet" and "no data" are different states and must render
+differently. Any empty state, zero count or "not found" needs a loaded flag in
+its condition — absence of data is never on its own evidence of absence. When a
+context exposes both a mutation flag and a loaded flag, check which question each
+answers before reaching for one.

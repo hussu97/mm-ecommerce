@@ -60,11 +60,21 @@ const RESEND_COOLDOWN_SECONDS = 60;
  */
 const MAX_SENDS = 3;
 
+/**
+ * How long a send will wait for Cloudflare before calling it broken.
+ *
+ * Long enough to cover a slow connection solving an invisible challenge, short
+ * enough that a customer is not left watching a pending button on a page where
+ * the check will never complete because something is blocking it.
+ */
+const TURNSTILE_WAIT_MS = 15_000;
+
 export function PhoneVerify({
   phone,
   onVerified,
   className = '',
   surface = 'checkout',
+  onCodePending,
 }: {
   /** E.164, as `PhoneInput` produces it. */
   phone: string;
@@ -73,12 +83,39 @@ export function PhoneVerify({
   className?: string;
   /** Where this panel is embedded, so the funnel can be read per context. */
   surface?: Surface;
+  /**
+   * Whether a code is currently outstanding against `phone`.
+   *
+   * The number field belongs to the form around this panel, not to this panel,
+   * and while a code is in flight it must not be editable — a code sent to one
+   * number and confirmed against a field showing another is a customer being
+   * told their verification failed for no reason they can see. The caller locks
+   * its own input on this, and "Change number" below is the way back out.
+   *
+   * Must be referentially stable — a bare `setState` is ideal.
+   */
+  onCodePending?: (pending: boolean) => void;
 }) {
   const { t } = useTranslation();
   const [step, setStep] = useState<Step>('idle');
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+
+  /**
+   * Cloudflare's answer, in a ref rather than state.
+   *
+   * `send` needs to *wait* on this, and awaiting a value that only arrives via
+   * a re-render means either an extra effect or a stale closure. A ref is read
+   * at the moment it is needed, which is exactly the semantics wanted here.
+   * Nothing renders from it, so nothing is lost by it not being state.
+   */
+  const turnstileRef = useRef<string | null>(null);
+  const handleTurnstile = useCallback((token: string) => {
+    // Turnstile emits '' when a solution expires as well as on failure, and an
+    // expired token is worse than none: the API rejects it as
+    // `timeout-or-duplicate` after the SMS has already been paid for.
+    turnstileRef.current = token || null;
+  }, []);
 
   // Firebase hands back a confirmation object, not a token — the code is
   // checked against it, so it has to survive between the two steps.
@@ -107,6 +144,16 @@ export function PhoneVerify({
   const [sends, setSends] = useState(0);
   const cooldown = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
 
+  /**
+   * The number the outstanding code was actually sent to.
+   *
+   * Firebase's confirmation object is bound to one number, so if `phone` moves
+   * underneath us the code on screen belongs to a number the customer is no
+   * longer looking at. Locking the field is the first defence; this is the one
+   * that holds when a caller changes the value some other way.
+   */
+  const [sentTo, setSentTo] = useState<string | null>(null);
+
   // Twice a second, so the number shown is never a second behind the deadline it
   // is derived from. Runs only while one is pending.
   useEffect(() => {
@@ -130,25 +177,81 @@ export function PhoneVerify({
     [t],
   );
 
+  /**
+   * Whether a code is outstanding — the state in which the number is fixed.
+   *
+   * `sending` counts only once one has already been bought, so pressing the
+   * first "Send code" does not lock the field before anything has been sent.
+   */
+  const codePending =
+    step === 'code' || step === 'verifying' || (step === 'sending' && sends > 0);
+
+  useEffect(() => {
+    onCodePending?.(codePending);
+  }, [codePending, onCodePending]);
+
+  // Tell the caller the number is free again when this panel goes away
+  // mid-flow, or the form is left with an input nothing will ever unlock.
+  useEffect(() => () => onCodePending?.(false), [onCodePending]);
+
+  /**
+   * Abandon the outstanding code and return to the start.
+   *
+   * The spend guards deliberately survive: `sends` and the cooldown are about
+   * how many messages this panel may buy, and a mistyped digit does not make
+   * the next SMS cheaper. Retyping the number is not a way to earn three more.
+   *
+   * Cloudflare's solution survives too. It attests to a browser, not to a phone
+   * number, and it is still the same browser — making somebody re-solve a bot
+   * check for correcting a typo is a penalty for our benefit, not theirs.
+   */
+  const resetFlow = useCallback(() => {
+    confirmationRef.current = null;
+    try {
+      verifierRef.current?.clear();
+    } catch {
+      /* already gone */
+    }
+    verifierRef.current = null;
+    setSentTo(null);
+    setCode('');
+    setError(null);
+    setStep('idle');
+  }, []);
+
+  // The number moved without going through the button — a caller resetting the
+  // form, a saved address being picked. The code on screen belongs to the old
+  // one and confirming it would verify a number the customer is no longer
+  // looking at.
+  useEffect(() => {
+    if (sentTo !== null && phone !== sentTo) resetFlow();
+  }, [phone, sentTo, resetFlow]);
+
   // A build without the Firebase vars should look like a site that does not
   // offer verification, not one where the button is broken.
   if (!isFirebaseConfigured()) return null;
+
+  /**
+   * Cloudflare's solution, once it arrives, or `null` if it never does.
+   *
+   * Polled rather than awaited on a promise because the token can also be
+   * *replaced* — Turnstile re-issues on expiry — and the useful question is
+   * "is there a valid one right now", asked repeatedly, not "tell me once".
+   */
+  const waitForTurnstile = async (): Promise<string | null> => {
+    const deadline = Date.now() + TURNSTILE_WAIT_MS;
+    while (Date.now() < deadline) {
+      if (turnstileRef.current) return turnstileRef.current;
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    }
+    return null;
+  };
 
   const send = async () => {
     // Cheap refusals first, before anything is spent. The buttons are disabled
     // in these states too; this is the guard that holds when they are not —
     // a double click landing between renders, or a caller wiring its own button.
     if (step === 'sending' || cooldown > 0 || sends >= MAX_SENDS) return;
-
-    // Our bot check now sits in front of the *paid* action rather than only in
-    // front of the ledger write. It stops a script driving this component; it
-    // does not stop one driving Google directly, which is App Check's job.
-    if (isTurnstileEnabled() && !turnstileToken) {
-      setError(
-        label('verify.checking', 'Still running the security check — one moment.'),
-      );
-      return;
-    }
 
     // Six events for one short flow, because it gates a discount and each step
     // fails for its own reason. An SMS that never arrives, a code typed wrong
@@ -157,7 +260,32 @@ export function PhoneVerify({
     if (step === 'code') analytics.phoneVerifyResent({ surface });
     else analytics.phoneVerifyStarted({ surface });
     setError(null);
+    // Set before anything is awaited, so the button says "Sending…" from the
+    // instant it is pressed rather than after the first round trip.
     setStep('sending');
+
+    // Our bot check sits in front of the *paid* action rather than only in
+    // front of the ledger write. It stops a script driving this component; it
+    // does not stop one driving Google directly, which is App Check's job.
+    //
+    // Cloudflare normally answers before anyone can reach this button, but on a
+    // slow connection it is a race — and losing that race is not the customer's
+    // problem to read about. This used to refuse the click and print "Still
+    // running the security check" in red, which told them about a mechanism
+    // they never asked for, in the styling of an error, for something that was
+    // not wrong and needed nothing from them. Now it simply waits, behind the
+    // pending button they are already looking at.
+    if (isTurnstileEnabled() && !turnstileRef.current) {
+      const solved = await waitForTurnstile();
+      if (!solved) {
+        // Genuinely broken now — blocked, offline, or Cloudflare down. This one
+        // is worth saying, and it is said the way every other failure here is.
+        analytics.phoneVerifySendFailed({ surface, reason: 'unavailable' });
+        setError(label('verify.unavailable', 'Verification is unavailable right now.'));
+        setStep('idle');
+        return;
+      }
+    }
 
     // A proof belongs to the number, not to the panel it was made in, and it
     // outlives this component by `PHONE_VERIFICATION_TTL_SECONDS`. Asking costs
@@ -192,6 +320,7 @@ export function PhoneVerify({
       // The line above is the one that costs $0.09. Count it here and nowhere
       // else — a send that threw bought nothing and must not spend the ceiling.
       setSends((n) => n + 1);
+      setSentTo(phone);
       setCooldownUntil(Date.now() + RESEND_COOLDOWN_SECONDS * 1000);
       analytics.phoneVerifySent({ surface });
       setStep('code');
@@ -239,7 +368,7 @@ export function PhoneVerify({
       // The server is the only thing whose answer counts. It re-verifies the
       // signature and the audience, and returns the number *it* read out of the
       // token — which is what we hand back, rather than what was typed.
-      const result = await authApi.verifyPhone(idToken, turnstileToken);
+      const result = await authApi.verifyPhone(idToken, turnstileRef.current);
       analytics.phoneVerifySucceeded({ surface });
       setStep('done');
       onVerified(result.phone);
@@ -291,27 +420,43 @@ export function PhoneVerify({
               {label('verify.confirm', 'Confirm')}
             </button>
           </div>
-          {sends >= MAX_SENDS ? (
-            // No fourth message. Say why, and point at the thing that is
-            // actually wrong — by this point it is the number, not the network.
-            <p className="text-xs text-gray-500 self-start">
-              {label(
-                'verify.no_more_sends',
-                'That’s all the codes we can send to this number. Check it’s correct, or contact us.',
-              )}
-            </p>
-          ) : (
+          <div className="flex items-center gap-3">
+            {sends >= MAX_SENDS ? (
+              // No fourth message. Say why, and point at the thing that is
+              // actually wrong — by this point it is the number, not the network.
+              <p className="text-xs text-gray-500">
+                {label(
+                  'verify.no_more_sends',
+                  'That’s all the codes we can send to this number.',
+                )}
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={send}
+                disabled={cooldown > 0 || step === 'sending'}
+                className="text-xs text-primary underline disabled:no-underline disabled:text-gray-400"
+              >
+                {step === 'sending'
+                  ? label('verify.sending', 'Sending…')
+                  : cooldown > 0
+                    ? `${label('verify.resend_in', 'Resend in')} ${cooldown}s`
+                    : label('verify.resend', 'Resend code')}
+              </button>
+            )}
+
+            {/* The way out of a locked field. Always available — this is the
+                button somebody reaches for the moment they notice the digit
+                they got wrong, which is usually while the first code is still
+                in flight. */}
             <button
               type="button"
-              onClick={send}
-              disabled={cooldown > 0 || step === 'sending'}
-              className="text-xs text-primary underline self-start disabled:no-underline disabled:text-gray-400"
+              onClick={resetFlow}
+              className="text-xs text-gray-500 underline"
             >
-              {cooldown > 0
-                ? `${label('verify.resend_in', 'Resend in')} ${cooldown}s`
-                : label('verify.resend', 'Resend code')}
+              {label('verify.change_number', 'Change number')}
             </button>
-          )}
+          </div>
         </>
       ) : (
         <button
@@ -320,13 +465,18 @@ export function PhoneVerify({
           disabled={!phone || step === 'sending' || cooldown > 0 || sends >= MAX_SENDS}
           className="bg-primary text-white text-xs uppercase tracking-widest px-4 py-2 self-start disabled:opacity-50"
         >
-          {cooldown > 0
-            ? `${label('verify.resend_in', 'Resend in')} ${cooldown}s`
-            : label('verify.send_code', 'Send code')}
+          {/* "Sending…" covers the Cloudflare wait as well as the send itself.
+              Both are the same answer to the only question being asked, which is
+              whether the button did anything. */}
+          {step === 'sending'
+            ? label('verify.sending', 'Sending…')
+            : cooldown > 0
+              ? `${label('verify.resend_in', 'Resend in')} ${cooldown}s`
+              : label('verify.send_code', 'Send code')}
         </button>
       )}
 
-      {isTurnstileEnabled() && <Turnstile onToken={setTurnstileToken} />}
+      {isTurnstileEnabled() && <Turnstile onToken={handleTurnstile} />}
 
       {error && (
         <p role="alert" className="text-xs text-red-600">

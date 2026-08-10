@@ -28,7 +28,7 @@ const PLACEHOLDER_IMAGE = '/images/logos/main_logo.png';
 
 export default function CartPage() {
   const { t, locale } = useTranslation();
-  const { cart, isLoading, addItem, updateItem, updateNote, removeItem, mergeCart } = useCart();
+  const { cart, isLoading, cartLoaded, addItem, updateItem, updateNote, removeItem, mergeCart } = useCart();
   const { addToast } = useToast();
   const { user } = useAuth();
 
@@ -279,7 +279,24 @@ export default function CartPage() {
   // a stale one sends an Arabic basket to the English checkout.
   }, [items.length, subtotal, appliedPromo, user, mergeCart, addToast, t, locale]);
 
-  // Empty cart
+  // Still fetching the basket for the first time.
+  //
+  // Distinct from `isLoading`, which is the *mutation* flag — `refreshCart`
+  // never sets it, so this page used to reach the empty state below on its very
+  // first render, before the request had returned. A returning guest whose
+  // basket was sitting on the server was told it was empty, and only saw their
+  // items when adding something else happened to re-render the page with the
+  // fetched cart. `cartLoaded` is the flag that answers "has the first fetch
+  // finished", and the checkout has always used it; this page did not.
+  if (!cartLoaded) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 py-20 flex justify-center">
+        <Spinner size="lg" />
+      </div>
+    );
+  }
+
+  // Empty cart — now only when we have actually been told it is empty.
   if (!isLoading && items.length === 0) {
     return (
       <div className="max-w-7xl mx-auto px-4 py-16 space-y-16">
