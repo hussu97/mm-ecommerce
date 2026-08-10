@@ -114,7 +114,11 @@ function ConfirmationContent() {
         <h1 className="font-display text-3xl text-primary uppercase tracking-widest mb-2">
           {t('confirmation.title')}
         </h1>
-        <p className="font-body text-sm text-gray-500">
+        {/* `data-clarity-mask` because this sentence interpolates the
+            customer's email address. Clarity's Balanced mode does detect and
+            mask email-shaped text, but that is a dashboard setting an admin can
+            change; the attribute holds regardless of the mode. */}
+        <p className="font-body text-sm text-gray-500" data-clarity-mask="true">
           {/* Guests who declined an email are stored under a generated
               `…@guest.local`. Promising to write to it — and printing it back
               at them — would be a confirmation nobody receives. */}
@@ -201,11 +205,15 @@ function ConfirmationContent() {
         </div>
       </div>
 
-      {/* Delivery info */}
+      {/* Delivery info. The line itself is masked out of Clarity recordings:
+          this is the one place on the site that prints a customer's full
+          delivery address back at them, and Clarity masks only input boxes and
+          dropdowns by default. The heading stays unmasked, so the block is
+          still recognisable in a replay. */}
       {order.delivery_method === 'delivery' && order.shipping_address_snapshot && (
         <div className="bg-gray-50 rounded-sm p-4 mb-6">
           <p className="font-body text-xs uppercase tracking-widest text-gray-500 mb-2">{t('confirmation.delivering_to')}</p>
-          <p className="font-body text-sm text-gray-800">
+          <p className="font-body text-sm text-gray-800" data-clarity-mask="true">
             {[
               order.shipping_address_snapshot.unit_number,
               order.shipping_address_snapshot.address_line_1,

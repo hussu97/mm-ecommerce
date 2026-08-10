@@ -5,6 +5,15 @@ Update it whenever `apps/web/lib/analytics.ts` changes.
 
 ---
 
+> **Every event in this file also goes to Microsoft Clarity.** Since 2026-08-10,
+> `track()` in `apps/web/lib/analytics.ts` feeds both tools from one call, so
+> anything added below reaches Clarity automatically as a filterable event —
+> there is no second list to maintain. What Clarity does with an event, which
+> payload fields become filters and which are deliberately withheld, is in
+> [`docs/microsoft-clarity-setup.md`](microsoft-clarity-setup.md). Umami remains
+> the source of truth for **counts**; Clarity answers **why**, on the subset of
+> sessions it is not blocked from recording.
+
 ## Custom Events Reference
 
 All events are fired via `window.umami.track(name, data)` from `apps/web/lib/analytics.ts`.
@@ -487,6 +496,7 @@ funnel is what is wrong, not the tracking.
 
 | Date | Change |
 |---|---|
+| 2026-08-10 | **No event added, removed or renamed, and no Umami history is affected** — but every event now goes to a second tool. Microsoft Clarity was added to the storefront (`docs/microsoft-clarity-setup.md`), fed from inside `track()` rather than from the call sites, so all 66 events reach it under the same names and any event added here in future reaches it with no extra work. Two changes to shared code came with it and are worth knowing when reading this file: the pre-load queue moved out of `analytics.ts` into `lib/deferred-dispatch.ts` — same 250ms poll, same 30s ceiling, same ordering guarantee, now with a 500-item cap so a session behind a blocker cannot grow it without bound — and `clean()` now runs once, before either tool is called, so Clarity can never see a property Umami was not given. Nothing to change in the Umami dashboard. |
 | 2026-08-09 | **Two events added: `cart_addon_added`, `personalisation_entered`** (`CartAddonTray.tsx`, `PersonalisationField.tsx` — the basket's new add-on tray and the handwritten-note field). **Two existing events gained fields, neither renamed:** `free_delivery_unlocked` now carries `surface` (`cart`\|`checkout`) and, on the cart only, `zone`; `cart_action_failed`'s `action` gained `add`. Nothing removed. No funnel changes. Context: the free-delivery threshold was previously only ever said at checkout, where the basket is already decided — it now also appears on the cart, so expect `free_delivery_unlocked` volume to roughly double and **history before this date to be checkout-only**; filter on `surface` before comparing across the boundary. `zone` is absent on checkout events by design, because the checkout reads its threshold from a settled quote rather than from a named area. New goal **Cart Add-on Added**. |
 | 2026-08-09 | **Two events added: `coupon_banner_shown`, `coupon_banner_clicked`** (`PromoBanner.tsx`, the new homepage strip). Nothing removed or renamed. New funnel **5b — Coupon Banner**, kept separate from funnel 5 because the strip is seen before a basket exists and the tray after one, so merging them would hide whether announcing the offer earlier reaches anyone new. No goal changes. Context: the new-customer coupon was previously unreachable in practice — the basket tray validated without a phone, so a coupon requiring one always refused, and the only verification UI a guest could reach sat behind a collapsed "add promo or note" panel. The code now applies at the basket and the phone gate is enforced only on delivery orders at `create_order`, so `promo_applied` fires in cases that previously fired `promo_failed` with reason `Verify your phone number…` — expect that reason to drop to near zero and `promo_applied` on surface `cart` to rise. |
 | 2026-04-18 | Initial setup — 15 events, 7 goals, 3 funnels across 3 phases |

@@ -138,7 +138,11 @@ export function CreateAccountNudge({
             onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
             error={error}
           />
-          <p className="mt-1.5 text-xs text-gray-400 font-body truncate">{email}</p>
+          {/* The email the account would be created under, printed in full.
+              Masked out of Clarity recordings — the password field above it is
+              masked by Clarity in every mode, and it would be a poor showing to
+              hide the password and keep the address it belongs to. */}
+          <p className="mt-1.5 text-xs text-gray-400 font-body truncate" data-clarity-mask="true">{email}</p>
         </div>
         <Button variant="primary" onClick={submit} loading={busy} className="shrink-0">
           {t(hasAccount ? 'confirmation.sign_in_cta' : 'confirmation.create_account_cta')}

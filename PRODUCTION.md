@@ -315,7 +315,16 @@ docker compose -f docker-compose.prod.yml up -d api
    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_CHANGE_ME
    NEXT_PUBLIC_SUPPORTED_LOCALES=en,ar
    NEXT_PUBLIC_UMAMI_WEBSITE_ID=<from Umami Cloud dashboard>
+   NEXT_PUBLIC_CLARITY_PROJECT_ID=<from clarity.microsoft.com → Settings → Overview>
    ```
+   > `NEXT_PUBLIC_CLARITY_PROJECT_ID` turns on Microsoft Clarity — session
+   > recordings and heatmaps. Public by design, like the Umami website ID: it
+   > identifies the project and authorises nothing, and there is no secret half
+   > to set on the API or in GitHub Actions. Leave it empty and the storefront
+   > renders no script, makes no request and sets no cookie. Setup and the
+   > dashboard configuration it expects — masking above all — are in
+   > `docs/microsoft-clarity-setup.md`; read the Privacy section before turning
+   > it on, because unlike Umami this one records the page.
    > Do **not** add `NEXT_PUBLIC_UMAMI_URL`. The analytics paths are internal to
    > the storefront and hard-coded in `app/layout.tsx`; a stale value here once
    > pointed the tracker at a 404 and stopped analytics dead. If the project

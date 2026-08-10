@@ -351,7 +351,13 @@ export default function AddressesPage() {
               className={`border p-4 ${addr.is_default ? 'border-primary bg-primary/5' : 'border-gray-200'}`}
             >
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
+                {/* Masked out of Clarity recordings, with its children: this is
+                    a customer's name, home address and phone rendered as plain
+                    text, which Clarity's default mode does not treat as
+                    sensitive — only input boxes and dropdowns are masked
+                    everywhere. The label and the buttons stay outside it, so a
+                    recording still shows which card was acted on. */}
+                <div className="min-w-0" data-clarity-mask="true">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-xs font-medium uppercase tracking-widest text-gray-700 font-body">
                       {addr.label}

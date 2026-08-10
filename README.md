@@ -216,6 +216,12 @@ NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_...
 # still sets it, delete it.
 NEXT_PUBLIC_UMAMI_WEBSITE_ID=
 
+# Microsoft Clarity — session recordings and heatmaps, the "why" behind the
+# numbers Umami counts. Leave empty for no script, no request and no cookie.
+# Project ID from clarity.microsoft.com -> Settings -> Overview; it is public
+# by design and has no secret half. See docs/microsoft-clarity-setup.md.
+NEXT_PUBLIC_CLARITY_PROJECT_ID=
+
 # Sentry project: mm-frontend
 NEXT_PUBLIC_SENTRY_DSN=
 NEXT_PUBLIC_APP_ENV=development
@@ -370,6 +376,16 @@ UMAMI_WEBSITE_ID=<paste website ID>
 ```env
 NEXT_PUBLIC_UMAMI_WEBSITE_ID=<paste website ID>
 ```
+
+Microsoft Clarity sits alongside it and is set up independently — one variable,
+no API key, and every storefront event reaches it automatically:
+```env
+NEXT_PUBLIC_CLARITY_PROJECT_ID=<paste project ID>
+```
+It answers a different question from Umami: recordings and heatmaps rather than
+counts, on the subset of sessions a content blocker does not stop. Read the
+Privacy section of [`docs/microsoft-clarity-setup.md`](docs/microsoft-clarity-setup.md)
+before enabling it — unlike Umami, Clarity records the page and sets cookies.
 
 Restart the API after updating its `.env`. Page views will appear in the admin analytics dashboard under **Visitor Trend** and **Top Pages**, and the storefront's custom events under **Storefront Events**.
 
