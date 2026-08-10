@@ -210,6 +210,27 @@ export default async function LocaleLayout({
             strategy="afterInteractive"
           />
         )}
+
+        {/* Microsoft Clarity — session recordings and heatmaps.
+            Umami counts; this is the half that shows you what the count was made
+            of. Every storefront event is mirrored into it as a filterable event
+            from `lib/analytics.ts`, so a recording can be found by what happened
+            in it rather than scrolled for. See `docs/microsoft-clarity-setup.md`.
+
+            Loaded from clarity.ms rather than proxied through this origin, which
+            is the one place this deliberately differs from Umami above. The tag
+            hard-codes its own ingest hosts, so a first-party rewrite would serve
+            the file and have it beacon to clarity.ms regardless — the rewrite
+            would buy nothing and hide that it had bought nothing. A blocked
+            visitor is simply not recorded, which is why Umami stays the source
+            of truth for counts. */}
+        {process.env.NEXT_PUBLIC_CLARITY_PROJECT_ID && (
+          <Script
+            id="ms-clarity"
+            src={`https://www.clarity.ms/tag/${process.env.NEXT_PUBLIC_CLARITY_PROJECT_ID}`}
+            strategy="afterInteractive"
+          />
+        )}
       </body>
     </html>
   );

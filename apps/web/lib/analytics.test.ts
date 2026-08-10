@@ -8,6 +8,7 @@ describe('analytics', () => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
     delete window.umami;
+    delete window.clarity;
   });
 
   afterEach(() => {
@@ -15,6 +16,7 @@ describe('analytics', () => {
     // test and fires its events against the next test's mock.
     vi.runOnlyPendingTimers();
     vi.useRealTimers();
+    delete window.clarity;
   });
 
   it('tracks immediately when Umami is loaded', () => {
@@ -159,6 +161,83 @@ describe('analytics', () => {
     analytics.addToCart({ product_name: 'A', variant_name: '', price: 12.5, quantity: 3 });
 
     expect(track.mock.calls[0][1]).toMatchObject({ price: 12.5, quantity: 3, value: 37.5 });
+  });
+});
+
+/**
+ * Clarity is fed from inside `track()` rather than from the call sites, which is
+ * what makes "every event" true of both tools at once. These tests are about
+ * that wiring; what Clarity does with an event once it has it lives in
+ * `clarity.test.ts`.
+ */
+describe('analytics → Clarity mirror', () => {
+  let clarityCalls: unknown[][];
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    delete window.umami;
+    clarityCalls = [];
+    window.clarity = ((...args: unknown[]) => {
+      clarityCalls.push(args);
+    }) as typeof window.clarity;
+  });
+
+  afterEach(() => {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+    delete window.clarity;
+  });
+
+  it('mirrors an event to Clarity', () => {
+    analytics.viewProduct({
+      product_name: 'Salted Caramel Brownie',
+      category: 'Brownies',
+      price: 28,
+      has_modifiers: true,
+    });
+
+    expect(clarityCalls).toContainEqual(['event', 'view_product']);
+    expect(clarityCalls).toContainEqual(['set', 'category', 'Brownies']);
+  });
+
+  /**
+   * Umami being blocked, absent or slow must not cost Clarity the event, and the
+   * reverse. The two are fed from one call but they do not share a queue.
+   */
+  it('reaches Clarity even when Umami has not loaded', () => {
+    expect(window.umami).toBeUndefined();
+
+    analytics.beginCheckout({ item_count: 2, subtotal: 50 });
+
+    expect(clarityCalls).toContainEqual(['event', 'begin_checkout']);
+  });
+
+  /**
+   * `clean()` runs before either tool is called, so a field dropped for Umami
+   * cannot reappear as a Clarity tag. Without this the two dashboards could
+   * disagree about whether a property existed at all.
+   */
+  it('mirrors the cleaned payload, not the raw one', () => {
+    analytics.promoFailed({ code: 'WELCOME15', reason: 'expired', surface: undefined });
+
+    const tagKeys = clarityCalls.filter((c) => c[0] === 'set').map((c) => c[1]);
+    expect(tagKeys).toContain('code');
+    expect(tagKeys).toContain('reason');
+    expect(tagKeys).not.toContain('surface');
+  });
+
+  it('prioritises the session for a completed order', () => {
+    analytics.orderCompleted({
+      order_number: 'MM-20260810-0042',
+      total: 143.75,
+      payment_provider: 'stripe',
+      delivery_method: 'delivery',
+      item_count: 3,
+    });
+
+    expect(clarityCalls).toContainEqual(['upgrade', 'order_completed']);
+    expect(clarityCalls).toContainEqual(['set', 'order_number', 'MM-20260810-0042']);
+    expect(clarityCalls).toContainEqual(['set', 'value_band', '100-200']);
   });
 });
 

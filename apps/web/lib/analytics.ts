@@ -1,6 +1,17 @@
-// ─── Umami custom event tracking ─────────────────────────────────────────────
-// window.umami is injected by the Umami script loaded in layout.tsx.
-// Falls back silently when the script isn't present (dev / ad-blocker).
+// ─── Storefront event tracking ───────────────────────────────────────────────
+//
+// One function — `track()` below — is the only way an event leaves this app, and
+// it feeds two tools:
+//
+//   Umami   counts. `window.umami` is injected by the script in layout.tsx.
+//   Clarity explains. `window.clarity` likewise; see `lib/clarity.ts`.
+//
+// Both fall back silently when their script isn't present (dev / ad-blocker),
+// and both are fed from the same call so the two dashboards cannot drift apart
+// on what happened.
+
+import { mirrorToClarity } from './clarity';
+import { createDeferredDispatch } from './deferred-dispatch';
 
 declare global {
   interface Window {
@@ -15,53 +26,16 @@ type QueuedEvent = {
   data?: Record<string, unknown>;
 };
 
-const queuedEvents: QueuedEvent[] = [];
-
 /**
- * How long to keep waiting for the Umami script, and how often to look.
- *
- * The script is `afterInteractive`, so anything a page tracks on mount races
- * it. This used to be four fixed timers — 100ms, 500ms, 1.5s, 3s, all scheduled
- * from the first queued event — and after the last of them nothing ever looked
- * again: an event queued on a connection where a third-party script takes more
- * than three seconds was dropped for good, silently, with no retry and no
- * error. That window is smallest on exactly the page it matters most on, the
- * order confirmation, which arrives as a fresh document from the payment
- * gateway and tracks `order_completed` as soon as its first API call returns.
- *
- * A plain poll to a generous ceiling costs a handful of property reads and
- * cannot fail that way. It stops the moment the script appears.
+ * Umami's script is `afterInteractive`, so anything a page tracks on mount races
+ * it and has to wait. What that race cost before it was handled properly — and
+ * why it is a poll rather than a handful of timers — is in
+ * `deferred-dispatch.ts`, which Clarity now shares.
  */
-const POLL_INTERVAL_MS = 250;
-const POLL_CEILING_MS = 30_000;
-
-let pollTimer: number | null = null;
-
-function flushQueuedEvents(): boolean {
-  if (typeof window === 'undefined' || !window.umami) return false;
-
-  while (queuedEvents.length > 0) {
-    const queued = queuedEvents.shift()!;
-    window.umami.track(queued.event, queued.data);
-  }
-  return true;
-}
-
-function stopPolling() {
-  if (pollTimer !== null) {
-    window.clearInterval(pollTimer);
-    pollTimer = null;
-  }
-}
-
-function scheduleFlush() {
-  if (pollTimer !== null || typeof window === 'undefined') return;
-
-  const deadline = Date.now() + POLL_CEILING_MS;
-  pollTimer = window.setInterval(() => {
-    if (flushQueuedEvents() || Date.now() > deadline) stopPolling();
-  }, POLL_INTERVAL_MS);
-}
+const dispatch = createDeferredDispatch<NonNullable<Window['umami']>, QueuedEvent>({
+  resolve: () => (typeof window === 'undefined' ? undefined : window.umami),
+  send: (umami, queued) => umami.track(queued.event, queued.data),
+});
 
 /**
  * Drop the properties that carry no information.
@@ -90,10 +64,14 @@ function clean(data?: Record<string, unknown>): Record<string, unknown> | undefi
 function track(event: string, data?: Record<string, unknown>) {
   if (typeof window === 'undefined') return;
 
-  // Queue first, then drain — so an event fired while something older is still
-  // waiting cannot overtake it.
-  queuedEvents.push({ event, data: clean(data) });
-  if (!flushQueuedEvents()) scheduleFlush();
+  const payload = clean(data);
+
+  dispatch({ event, data: payload });
+
+  // The same event, to the tool that can show you the session it happened in.
+  // Here rather than at sixty-six call sites, and after `clean()` rather than
+  // before it, so Clarity never sees a property Umami was not given either.
+  mirrorToClarity(event, payload);
 }
 
 /**

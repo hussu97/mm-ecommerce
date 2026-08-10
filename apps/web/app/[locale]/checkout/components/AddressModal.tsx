@@ -301,6 +301,12 @@ export function AddressModal({
                     className={`border rounded-sm p-3 transition-colors ${
                       active ? 'border-primary bg-primary/5' : 'border-gray-200'
                     }`}
+                    // A saved address is a home address and a phone number, and
+                    // Clarity only masks inputs and dropdowns by default. The
+                    // card is masked whole — which of them was picked is still
+                    // visible from the highlight and from
+                    // `saved_address_selected`.
+                    data-clarity-mask="true"
                   >
                     <button
                       onClick={() => {

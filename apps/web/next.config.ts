@@ -87,11 +87,17 @@ const nextConfig: NextConfig = {
             key: 'Content-Security-Policy-Report-Only',
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com https://maps.googleapis.com",
+              // `*.clarity.ms` covers both halves of Microsoft Clarity: the tag
+              // is served from `www.clarity.ms` and the recording is uploaded to
+              // a regional host (`x.clarity.ms`) the script picks itself, so
+              // naming only the one we load would report a violation per session
+              // and — once this is enforced — record nothing at all. `c.bing.com`
+              // is the identifier sync the tag makes alongside it.
+              "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com https://maps.googleapis.com https://*.clarity.ms",
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "font-src 'self' https://fonts.gstatic.com data:",
-              "img-src 'self' data: blob: https://*.r2.cloudflarestorage.com https://pub-*.r2.dev https://storage.googleapis.com https://media.meltingmomentscakes.com https://maps.googleapis.com https://maps.gstatic.com https://*.googleusercontent.com",
-              "connect-src 'self' https://api.meltingmomentscakes.com https://cloud.umami.is https://maps.googleapis.com https://*.ingest.sentry.io https://*.ingest.de.sentry.io",
+              "img-src 'self' data: blob: https://*.r2.cloudflarestorage.com https://pub-*.r2.dev https://storage.googleapis.com https://media.meltingmomentscakes.com https://maps.googleapis.com https://maps.gstatic.com https://*.googleusercontent.com https://*.clarity.ms https://c.bing.com",
+              "connect-src 'self' https://api.meltingmomentscakes.com https://cloud.umami.is https://maps.googleapis.com https://*.ingest.sentry.io https://*.ingest.de.sentry.io https://*.clarity.ms https://c.bing.com",
               "frame-src https://challenges.cloudflare.com",
               "frame-ancestors 'none'",
               "base-uri 'self'",

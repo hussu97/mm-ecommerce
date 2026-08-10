@@ -93,7 +93,11 @@ export default function SettingsPage() {
         <div className="max-w-md">
           {resetSent ? (
             <div className="bg-green-50 border border-green-200 p-4">
-              <p className="text-sm text-green-700 font-body">
+              {/* Interpolates the account's email address; masked so a Clarity
+                  recording shows that the reset was sent without showing to
+                  whom. The form above needs no attribute — Clarity masks input
+                  boxes in every mode. */}
+              <p className="text-sm text-green-700 font-body" data-clarity-mask="true">
                 {t('settings.reset_sent_body', { email: user.email })}
               </p>
             </div>

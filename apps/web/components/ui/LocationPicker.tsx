@@ -250,7 +250,12 @@ export function LocationPicker({
   }
 
   return (
-    <div className="space-y-2">
+    // Masked out of Clarity session recordings, and this is the most important
+    // of the masks: a map centred on a dropped pin *is* a home address, and no
+    // amount of text masking covers it — the address is the picture. Nothing
+    // inside here is uploaded, so a replay shows the container and not the
+    // location. What the pin did is still recorded, by `location_pin_set`.
+    <div className="space-y-2" data-clarity-mask="true">
       <APIProvider apiKey={apiKey} libraries={['places']}>
         <MapContent lat={lat} lng={lng} onChange={onChange} placeholder={placeholder} height={height} />
       </APIProvider>
