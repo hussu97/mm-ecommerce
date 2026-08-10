@@ -145,3 +145,74 @@ the `friendly-name` argument.
   consent on in the dashboard and call it from the banner — the note is in
   `docs/microsoft-clarity-setup.md`.
 </content>
+
+---
+
+# Firebase OTP: stop the SMS burn, and brand the message
+
+## Why
+
+Three days of phone verification cost $4.04 with **zero** completed
+verifications. Firebase bills per SMS *sent*, not per verification finished, and
+UAE SMS is $0.09 — so that is roughly 45 billed sends (~75 including the free
+10/day).
+
+The structural fault: `signInWithPhoneNumber` runs browser→Google directly, so
+the step that costs money is the one step nothing of ours sits in front of.
+Turnstile and the `10/minute` limiter guard `/auth/verify-phone`, which runs
+*after* the SMS is already bought. `auth.py` says so itself: "Turnstile here
+guards our ledger rather than Google's SMS bill."
+
+## Tasks
+
+- [x] `PhoneVerify`: ask `/auth/phone-verified` **before** sending. The account
+      page already does this on the number; checkout never did, so a returning
+      customer paid for a duplicate SMS.
+- [x] `PhoneVerify`: 60s cooldown on resend, with the remaining seconds shown.
+      The button had no throttle at all — every click was $0.09.
+- [x] `PhoneVerify`: cap billed sends per mount, then stop offering the button.
+- [x] `PhoneVerify`: require the Turnstile solution *before* the send, not only
+      at the record step, so our bot check sits in front of the paid action.
+- [x] Unit tests for all four.
+- [x] Console steps for the operator (region policy, App Check, SMS Defense) and
+      the custom auth domain that fixes the SMS text.
+
+## Known limit of the code half
+
+A determined bot calls Google's REST endpoint with the public API key and never
+runs any of this. Client-side guards stop honest over-clicking and casual abuse,
+which is what a $4.04 three-day bill actually looks like. Only App Check, the
+AE-only region policy and reCAPTCHA SMS Defense are enforced by Google.
+
+## Review
+
+`PhoneVerify` now refuses to spend in four ways: it asks `/auth/phone-verified`
+before buying anything, holds a 60s cooldown between sends, stops at three, and
+will not send until Turnstile has answered. The cooldown is a **deadline**, not a
+ticking counter — a counter is subject to background-tab timer throttling, and
+this is precisely the panel a customer leaves to go and read an SMS, so a counter
+would still owe them 40 seconds on return.
+
+Two things surfaced while doing it. The already-verified check existed and was
+wired up on the account page only, so checkout had been paying twice for the same
+number. And `tsc` caught that a resend set `step` to `sending`, which fell out of
+the code-entry branch and replaced the customer's half-typed code box with the
+button they had just pressed; the branch now holds while a resend is in flight.
+
+## Verified
+
+`pnpm vitest run` — 34 files, 335 tests, all passing, 8 of them new and all
+about how many times `signInWithPhoneNumber` may run. `tsc --noEmit` clean.
+`pnpm lint` 0 errors (13 warnings, all pre-existing and elsewhere).
+
+**Not verified:** the live Firebase round trip, for the same reason as before —
+there are no Firebase env vars in this environment and `PhoneVerify` renders
+`null` without them by design. The cooldown, the ceiling, the pre-send check and
+the Turnstile gate are all proved against a mocked SDK; that the real SDK still
+sends is unchanged code and needs a deploy that has the vars to confirm.
+
+**Not fixed here — console-side, needs the account owner.** The code half only
+stops honest over-clicking; anything driving Google's REST endpoint with the
+public API key skips this file. Firebase App Check, the AE-only SMS region
+policy, and reCAPTCHA SMS Defense are the parts Google enforces. The custom auth
+domain that puts the brand in the SMS text is also console-side.

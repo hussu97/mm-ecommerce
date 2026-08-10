@@ -22,9 +22,39 @@ import { Icon } from '@/components/ui/Icon';
  * not send an SMS without an `AppVerifier`, so its reCAPTCHA is unavoidable;
  * ours is invisible and guards the endpoint that records the result. Both are
  * configured to be silent, so the customer normally sees neither.
+ *
+ * **Every send costs money.** `signInWithPhoneNumber` goes browser→Google, so
+ * our server is not in the path and cannot rate limit it; Firebase bills per SMS
+ * *sent*, whether or not the code is ever typed back. Three days of this
+ * component with no cooldown on "Resend code" and no check for an existing proof
+ * cost $4.04 across ~45 billed messages and produced no completed verification
+ * at all. The guards below are all there is between a customer's index finger
+ * and the bill: ask before paying, one send per minute, and a ceiling.
+ *
+ * They are honest-user guards, not a security control. Anything driving Google's
+ * REST endpoint with the public API key skips this file entirely — the AE-only
+ * SMS region policy, App Check and reCAPTCHA SMS Defense are the parts Google
+ * enforces, and they are configured in a console rather than here.
  */
 
 type Step = 'idle' | 'sending' | 'code' | 'verifying' | 'done';
+
+/**
+ * The wait between two sends, in seconds.
+ *
+ * Long enough that an SMS has a fair chance to arrive first — resending because
+ * the network was slow buys a second message and no new information.
+ */
+const RESEND_COOLDOWN_SECONDS = 60;
+
+/**
+ * How many messages one mount of this panel may ever buy.
+ *
+ * A customer who has burned three has a problem no fourth SMS will solve — a
+ * wrong number, a dead SIM, a carrier dropping the sender. Past here the panel
+ * says so instead of continuing to spend.
+ */
+const MAX_SENDS = 3;
 
 export function PhoneVerify({
   phone,
@@ -61,6 +91,26 @@ export function PhoneVerify({
   const verifierRef = useRef<{ clear: () => void } | null>(null);
   const recaptchaId = useId().replace(/:/g, '');
 
+  // When another send becomes allowed, and how many have been bought.
+  //
+  // A deadline rather than a counter that ticks down. Counting seconds is
+  // subject to whatever the browser does to timers in a background tab — and
+  // this panel is exactly the one a customer leaves to go and read an SMS. A
+  // decremented counter would still owe them 40 seconds when they came back; a
+  // deadline has simply passed.
+  const [cooldownUntil, setCooldownUntil] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
+  const [sends, setSends] = useState(0);
+  const cooldown = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
+
+  // Twice a second, so the number shown is never a second behind the deadline it
+  // is derived from. Runs only while one is pending.
+  useEffect(() => {
+    if (cooldownUntil <= Date.now()) return;
+    const ticker = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(ticker);
+  }, [cooldownUntil]);
+
   // A component that unmounts mid-flow — the customer collapses the panel, the
   // promo step re-renders — must not leave a live widget behind on the node.
   useEffect(() => () => {
@@ -81,6 +131,21 @@ export function PhoneVerify({
   if (!isFirebaseConfigured()) return null;
 
   const send = async () => {
+    // Cheap refusals first, before anything is spent. The buttons are disabled
+    // in these states too; this is the guard that holds when they are not —
+    // a double click landing between renders, or a caller wiring its own button.
+    if (step === 'sending' || cooldown > 0 || sends >= MAX_SENDS) return;
+
+    // Our bot check now sits in front of the *paid* action rather than only in
+    // front of the ledger write. It stops a script driving this component; it
+    // does not stop one driving Google directly, which is App Check's job.
+    if (isTurnstileEnabled() && !turnstileToken) {
+      setError(
+        label('verify.checking', 'Still running the security check — one moment.'),
+      );
+      return;
+    }
+
     // Six events for one short flow, because it gates a discount and each step
     // fails for its own reason. An SMS that never arrives, a code typed wrong
     // and a Firebase quota are three different problems and the customer sees
@@ -89,6 +154,25 @@ export function PhoneVerify({
     else analytics.phoneVerifyStarted({ surface });
     setError(null);
     setStep('sending');
+
+    // A proof belongs to the number, not to the panel it was made in, and it
+    // outlives this component by `PHONE_VERIFICATION_TTL_SECONDS`. Asking costs
+    // one request; not asking costs an SMS. The account page already checked
+    // this while the customer typed — checkout never did, so the customer who
+    // verified on Tuesday paid for a second message on Wednesday.
+    try {
+      const existing = await authApi.phoneVerified(phone);
+      if (existing.verified) {
+        analytics.phoneVerifySucceeded({ surface });
+        setStep('done');
+        onVerified(existing.phone);
+        return;
+      }
+    } catch {
+      // Fails open: a check we could not make must not block a verification the
+      // customer can still complete the expensive way.
+    }
+
     try {
       const { signInWithPhoneNumber } = await import('firebase/auth');
       const auth = await getFirebaseAuth();
@@ -101,6 +185,10 @@ export function PhoneVerify({
       const verifier = await getRecaptchaVerifier(recaptchaId);
       verifierRef.current = verifier;
       confirmationRef.current = await signInWithPhoneNumber(auth, phone, verifier);
+      // The line above is the one that costs $0.09. Count it here and nowhere
+      // else — a send that threw bought nothing and must not spend the ceiling.
+      setSends((n) => n + 1);
+      setCooldownUntil(Date.now() + RESEND_COOLDOWN_SECONDS * 1000);
       analytics.phoneVerifySent({ surface });
       setStep('code');
     } catch (err) {
@@ -113,6 +201,10 @@ export function PhoneVerify({
         surface,
         reason: rateLimited ? 'rate_limited' : 'unavailable',
       });
+      // Cool down on failure as well. A send that fails is the one a customer
+      // retries hardest, and "too-many-requests" in particular means Firebase is
+      // already refusing — hammering it converts a slow minute into a quota ban.
+      setCooldownUntil(Date.now() + RESEND_COOLDOWN_SECONDS * 1000);
       setError(
         rateLimited
           ? label('verify.too_many', 'Too many attempts. Try again in a few minutes.')
@@ -168,7 +260,10 @@ export function PhoneVerify({
       {/* Firebase renders its invisible reCAPTCHA into this node. */}
       <div id={recaptchaId} />
 
-      {step === 'code' || step === 'verifying' ? (
+      {/* `sending` belongs here once a code is already outstanding: a resend
+          would otherwise tear the code field down mid-flight and hand the
+          customer back the "Send code" button they just pressed. */}
+      {step === 'code' || step === 'verifying' || (step === 'sending' && sends > 0) ? (
         <>
           <label htmlFor={`${recaptchaId}-code`} className="text-xs text-gray-600">
             {label('verify.code_label', '6-digit code')}
@@ -192,22 +287,38 @@ export function PhoneVerify({
               {label('verify.confirm', 'Confirm')}
             </button>
           </div>
-          <button
-            type="button"
-            onClick={send}
-            className="text-xs text-primary underline self-start"
-          >
-            {label('verify.resend', 'Resend code')}
-          </button>
+          {sends >= MAX_SENDS ? (
+            // No fourth message. Say why, and point at the thing that is
+            // actually wrong — by this point it is the number, not the network.
+            <p className="text-xs text-gray-500 self-start">
+              {label(
+                'verify.no_more_sends',
+                'That’s all the codes we can send to this number. Check it’s correct, or contact us.',
+              )}
+            </p>
+          ) : (
+            <button
+              type="button"
+              onClick={send}
+              disabled={cooldown > 0 || step === 'sending'}
+              className="text-xs text-primary underline self-start disabled:no-underline disabled:text-gray-400"
+            >
+              {cooldown > 0
+                ? `${label('verify.resend_in', 'Resend in')} ${cooldown}s`
+                : label('verify.resend', 'Resend code')}
+            </button>
+          )}
         </>
       ) : (
         <button
           type="button"
           onClick={send}
-          disabled={!phone || step === 'sending'}
+          disabled={!phone || step === 'sending' || cooldown > 0 || sends >= MAX_SENDS}
           className="bg-primary text-white text-xs uppercase tracking-widest px-4 py-2 self-start disabled:opacity-50"
         >
-          {label('verify.send_code', 'Send code')}
+          {cooldown > 0
+            ? `${label('verify.resend_in', 'Resend in')} ${cooldown}s`
+            : label('verify.send_code', 'Send code')}
         </button>
       )}
 

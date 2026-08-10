@@ -342,3 +342,33 @@ the way to a deploy that broke on the VM.
 throwaway Postgres, and assert the columns and indexes are present after each
 upgrade and gone after the downgrade. Keep revision ids **≤32 characters** —
 prefer `NNN_two_or_three_words` and drop the conjunctions.
+
+## Put the guard in front of the step that spends money
+
+Phone verification cost $4.04 in three days and completed zero verifications.
+Nothing was broken in the sense a test could catch: every check the code makes,
+it makes correctly.
+
+The fault was placement. `signInWithPhoneNumber` runs browser→Google, so the
+paid step never touches our server — and both our controls, Turnstile and a
+`10/minute` limiter, sat on `/auth/verify-phone`, which runs *after* the SMS is
+bought. We rate limited the free action and left the billed one open. The module
+docstring even said so — "Turnstile here guards our ledger rather than Google's
+SMS bill" — which is the tell: the observation had been made and read as a note
+rather than as a defect.
+
+Three specifics fell out of the same blind spot. "Resend code" had no cooldown,
+so one impatient customer was worth $0.09 a click. Nothing capped the sends.
+And the checkout never asked `/auth/phone-verified` before sending, though the
+endpoint existed and the account page already called it — so a returning
+customer's proof was on file and got paid for again.
+
+**Rule:** for any third-party call billed per invocation, find where the money
+is actually spent and ask what stands in front of *that* line, not in front of
+the request that records the result. Then check the four in order: is there a
+cooldown on every control that can re-trigger it; is there a ceiling; is the
+existing answer consulted before buying a new one; and does our own bot check
+run before the spend or after it. Client-side guards only stop honest
+over-clicking — anything the vendor enforces (region policy, App Check, fraud
+scoring) is a console setting, so "the code is fixed" is half an answer and the
+console half needs naming explicitly to whoever owns the account.
