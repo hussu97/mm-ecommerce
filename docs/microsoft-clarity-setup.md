@@ -270,13 +270,40 @@ Work down this list; it is ordered by how often each has been the answer.
 ### 1. Is the tag on the page at all?
 
 ```bash
-curl -s https://meltingmomentscakes.com/en | grep -o 'clarity.ms/tag/[^"]*'
+curl -s https://meltingmomentscakes.com/en | grep -o 'clarity","script","[^"]*'
 ```
 
 Nothing means `NEXT_PUBLIC_CLARITY_PROJECT_ID` is not set on the Vercel **web**
 project, or the deploy that set it has not shipped. Note that this is a check on
-the *server-rendered* document — the script is `afterInteractive`, but the tag
-is emitted by the server either way.
+the *server-rendered* document — the script is `afterInteractive`, but the
+bootstrap is emitted by the server either way.
+
+**This check passing proves less than it looks like it does** — see §1b. It says
+the project id reached the page, nothing more.
+
+### 1b. Is it the bootstrap, or just the tag URL?
+
+The page must carry Microsoft's **inline bootstrap**, not a bare
+`<script src="https://www.clarity.ms/tag/<id>">`. The file that URL serves is a
+712-byte loader whose first statement calls `window.clarity(...)` and pushes
+onto `window.clarity.q`. It *consumes* the global; the inline stub is what
+*defines* it.
+
+Point a `src` at it with no stub and the tag throws `a[c] is not a function` on
+its first line, never fetches the real recorder from `scripts.clarity.ms`, and
+leaves `window.clarity` undefined permanently. Every mirrored event is then
+dropped while Umami keeps counting normally — so the dashboards disagree and
+only Clarity's is empty.
+
+This shipped that way on 2026-08-10 and survived a code review, because from the
+outside everything looks right: the tag is in the DOM, the project id is
+correct, and the URL returns HTTP 200. The only visible symptom was one
+minified console error. The test is §3, not §1.
+
+```bash
+# Right: defines the global, then injects the tag.
+curl -s https://meltingmomentscakes.com/en | grep -c 'c\[a\]=c\[a\]||function'   # expect 1
+```
 
 ### 2. Does the browser load it?
 

@@ -223,13 +223,31 @@ export default async function LocaleLayout({
             the file and have it beacon to clarity.ms regardless — the rewrite
             would buy nothing and hide that it had bought nothing. A blocked
             visitor is simply not recorded, which is why Umami stays the source
-            of truth for counts. */}
+            of truth for counts.
+
+            Injected as Microsoft's own inline bootstrap rather than pointed at
+            the tag with `src`, and that is not a style choice. The file at
+            `clarity.ms/tag/<id>` is a 712-byte loader whose *first statement*
+            calls `window.clarity(...)` and pushes onto `window.clarity.q` — it
+            consumes the global, it does not define it. The stub below is what
+            defines it. Loaded with `src` alone the tag threw
+            `a[c] is not a function` on its first line, never fetched the real
+            recorder from `scripts.clarity.ms`, and left `window.clarity`
+            undefined forever — so every event mirrored from `lib/analytics.ts`
+            was dropped while Umami looked perfectly healthy. Verified live on
+            2026-08-10: script tag present, resource HTTP 200, global undefined.
+
+            The stub also *is* the queue, which is the second reason it matters:
+            calls made before the recorder finishes loading are buffered rather
+            than lost. See `docs/microsoft-clarity-setup.md`. */}
         {process.env.NEXT_PUBLIC_CLARITY_PROJECT_ID && (
-          <Script
-            id="ms-clarity"
-            src={`https://www.clarity.ms/tag/${process.env.NEXT_PUBLIC_CLARITY_PROJECT_ID}`}
-            strategy="afterInteractive"
-          />
+          <Script id="ms-clarity" strategy="afterInteractive">
+            {`(function(c,l,a,r,i,t,y){
+    c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+    t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+    y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+})(window,document,"clarity","script","${process.env.NEXT_PUBLIC_CLARITY_PROJECT_ID}");`}
+          </Script>
         )}
       </body>
     </html>

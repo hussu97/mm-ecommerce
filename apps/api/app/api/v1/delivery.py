@@ -84,10 +84,18 @@ class DeliveryQuoteResponse(BaseModel):
     free_delivery_available: bool = True
     #: The basket that earns free delivery *at this pin*. Thresholds vary by
     #: zone, so this is the zone's own number wherever one has resolved.
-    free_threshold: float
-    #: True when the threshold above is the national default standing in for a
-    #: zone we cannot resolve yet — i.e. no pin has been dropped. Copy driven by
-    #: it must stay hedged until it turns false. Defaulted so an older client
+    #:
+    #: **Null before a pin exists.** Thresholds stopped being national when the
+    #: outer zones went fixed-fee — every zone answers for itself now, so with no
+    #: pin there is genuinely no figure to name. This field was left as a
+    #: required `float` when `price()` changed, and since FastAPI validates the
+    #: response, a quote with no pin raised `ResponseValidationError` and the
+    #: checkout got a 500 on its very first call. The storefront had already
+    #: been written for `number | null`; only this line disagreed.
+    free_threshold: float | None = None
+    #: True when there is no resolved zone behind the threshold above — i.e. no
+    #: pin has been dropped, and `free_threshold` is therefore null. Copy driven
+    #: by it must stay hedged until it turns false. Defaulted so an older client
     #: that does not read it behaves exactly as before.
     free_threshold_provisional: bool = False
     remaining_for_free: float

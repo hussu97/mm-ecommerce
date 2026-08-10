@@ -389,3 +389,47 @@ run before the spend or after it. Client-side guards only stop honest
 over-clicking — anything the vendor enforces (region policy, App Check, fraud
 scoring) is a console setting, so "the code is fixed" is half an answer and the
 console half needs naming explicitly to whoever owns the account.
+
+## A third-party tag can be present, reachable, and still dead
+
+Microsoft Clarity shipped as `<Script src="https://www.clarity.ms/tag/<id>">`.
+Everything an inspection would check was true: the tag was in the DOM, the
+project id was right, the URL returned HTTP 200, and the CSP allowed it. It
+recorded nothing at all.
+
+The file that URL serves is a 712-byte loader whose first statement is
+`a[c]("metadata", …)` — it *calls* `window.clarity` and pushes onto
+`window.clarity.q`. It never defines either. Microsoft's install snippet is an
+inline stub that defines the global as a queue and *then* injects that loader,
+and pointing `src` straight at the loader skips the half that makes it work. It
+threw `a[c] is not a function` on its first line and never fetched the real
+recorder. `window.clarity` stayed undefined forever, so every mirrored event was
+dropped while Umami counted normally and the two dashboards silently disagreed.
+
+**Rule:** a vendor's install snippet is a contract, not boilerplate to tidy. When
+one is inline, ask what it defines before replacing it with a `src` — a stub that
+buffers early calls is the usual answer, and collapsing it is invisible until the
+data does not arrive. Verify a tag by the global it is supposed to install
+(`typeof window.X === 'function'`, and the second-stage script in the network
+list), never by the presence of the script element. And when a minified
+`X is not a function` appears in a console, chase it: it is the only symptom this
+class of failure produces.
+
+## A response model is a place a 500 hides
+
+`POST /delivery/quote` returned 500 for every call made before an address pin
+existed — which is the checkout's *first* call, on every session. The handler was
+correct throughout. `price()` had been changed to return `free_threshold=None`
+before a pin, because thresholds stopped being national when the outer zones went
+fixed-fee; `DeliveryQuoteResponse.free_threshold` was left as a required `float`.
+FastAPI validates the response, so the null raised `ResponseValidationError`
+*after* the work was done, and it surfaced as our fault in the logs.
+
+The storefront had already been written for `number | null`. Every layer agreed
+except the annotation between them.
+
+**Rule:** when a service function's return value gains a `None`, grep the
+response model that serialises it in the same change — the type checker will not,
+because the handler returns a `dict`. And write the regression test through the
+response model, not the service dict: a test asserting on the dict passes while
+production 500s, which is exactly what the existing delivery tests did.
