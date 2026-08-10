@@ -152,11 +152,12 @@ the `friendly-name` argument.
 
 ## Why
 
-Three days of phone verification cost $4.04 with **zero** completed
-verifications. Firebase bills per SMS *sent*, not per verification finished, and
-UAE SMS is $0.09 — so that is roughly 45 billed sends (~75 including the free
-10/day).
+A $4.04 charge was reported as phone verification. **It was not** — measured
+afterwards, `SendVerificationCode` had run three times in twelve days. The charge
+is the `mm-backend` e2-micro VM, its 20 GB pd-ssd and its static IP in Doha,
+running since March on a billing account shared with three other projects.
 
+The audit still found real defects, and they are worth closing on exposure alone.
 The structural fault: `signInWithPhoneNumber` runs browser→Google directly, so
 the step that costs money is the one step nothing of ours sits in front of.
 Turnstile and the `10/minute` limiter guard `/auth/verify-phone`, which runs

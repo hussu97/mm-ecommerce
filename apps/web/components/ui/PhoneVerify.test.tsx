@@ -5,10 +5,13 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
  * These tests are about money.
  *
  * Every assertion below is a claim about how many times `signInWithPhoneNumber`
- * is allowed to run, because each run is a billed SMS. The component shipped for
- * three days with an unthrottled "Resend code" and no check for an existing
- * proof, and cost $4.04 across ~45 messages without completing a single
- * verification. What is tested here is the absence of that.
+ * is allowed to run, because each run is a billed SMS — $0.09 to a UAE number.
+ *
+ * The component shipped with an unthrottled "Resend code", no ceiling, and no
+ * check for a proof already on file. Little was spent through it in practice
+ * (three sends in twelve days, measured), so these tests guard an exposure
+ * rather than commemorate a loss: nothing here should ever be relaxed because
+ * "the bill looks fine".
  */
 
 const signInWithPhoneNumber = vi.fn();

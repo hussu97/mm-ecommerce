@@ -25,11 +25,15 @@ import { Icon } from '@/components/ui/Icon';
  *
  * **Every send costs money.** `signInWithPhoneNumber` goes browser→Google, so
  * our server is not in the path and cannot rate limit it; Firebase bills per SMS
- * *sent*, whether or not the code is ever typed back. Three days of this
- * component with no cooldown on "Resend code" and no check for an existing proof
- * cost $4.04 across ~45 billed messages and produced no completed verification
- * at all. The guards below are all there is between a customer's index finger
- * and the bill: ask before paying, one send per minute, and a ceiling.
+ * *sent* — $0.09 to a UAE number — whether or not the code is ever typed back.
+ * The guards below are all there is between a customer's index finger and the
+ * bill: ask before paying, one send per minute, and a ceiling.
+ *
+ * They were added while chasing a charge that turned out to be a VM, and they
+ * are worth keeping anyway. Measured at the time: three `SendVerificationCode`
+ * calls in twelve days, so nothing had actually been overspent — but "Resend
+ * code" had no cooldown and no ceiling, and the checkout never asked whether the
+ * number was already proved, so the exposure was one impatient customer wide.
  *
  * They are honest-user guards, not a security control. Anything driving Google's
  * REST endpoint with the public API key skips this file entirely — the AE-only

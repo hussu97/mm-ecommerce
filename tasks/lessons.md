@@ -343,11 +343,28 @@ throwaway Postgres, and assert the columns and indexes are present after each
 upgrade and gone after the downgrade. Keep revision ids **≤32 characters** —
 prefer `NNN_two_or_three_words` and drop the conjunctions.
 
+## Price the suspect before rewriting it
+
+A $4.04 charge was reported as phone verification. I accepted the attribution,
+divided by the $0.09 UAE SMS rate, wrote "roughly 45 billed messages" into a
+commit message, a lesson and a changelog — and then measured. Cloud Monitoring
+said `SendVerificationCode` had run **three times in twelve days**. The $4.04 was
+a `e2-micro` VM with a 20 GB pd-ssd and a static IP in Doha, running since March,
+on a billing account shared with three other projects. Phone auth was ~$0.
+
+The arithmetic was fine. It was reasoning downward from a number to a mechanism,
+which produces a confident count out of an assumption. **Rule:** when a cost is
+attributed to a feature, count the underlying calls *before* touching code —
+`serviceruntime.googleapis.com/api/request_count` grouped by service, then by
+method, settles it in one query. Check which projects share the billing account.
+Never state a derived volume ("~45 messages") as if it were observed, and never
+write a number into a durable file that a single query could have confirmed.
+
 ## Put the guard in front of the step that spends money
 
-Phone verification cost $4.04 in three days and completed zero verifications.
-Nothing was broken in the sense a test could catch: every check the code makes,
-it makes correctly.
+Verification code had no cooldown, no ceiling, and never asked whether the number
+was already proved. Little had been spent through it — but the exposure was real
+and the shape is worth keeping.
 
 The fault was placement. `signInWithPhoneNumber` runs browser→Google, so the
 paid step never touches our server — and both our controls, Turnstile and a
