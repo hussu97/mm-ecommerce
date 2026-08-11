@@ -215,7 +215,13 @@ function MapContent({ lat, lng, onChange, placeholder, height = '200px' }: Locat
         mapId={process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID}
         disableDefaultUI
         zoomControl
-        gestureHandling="cooperative"
+        // Single-finger pan, like the Google Maps app. "cooperative" reserves
+        // one-finger drags for page scroll and shows the "use two fingers"
+        // overlay, which reads as a broken map to customers adjusting a pin.
+        // The cost is that a one-finger swipe starting on the map pans instead
+        // of scrolling the form — acceptable, since the map is a bounded strip
+        // and the rest of the form scrolls normally.
+        gestureHandling="greedy"
         onClick={handleMapClick}
       >
         {position && (
