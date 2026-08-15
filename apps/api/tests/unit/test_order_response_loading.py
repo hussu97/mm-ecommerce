@@ -59,6 +59,11 @@ def _order(**overrides) -> Order:
         "vat_rate": Decimal("0.05"),
         "vat_amount": Decimal("0.17"),
         "total_excl_vat": Decimal("3.33"),
+        # Every column, per the docstring — a detached instance treats anything
+        # it was not given as unloaded, and the whole point of these tests is
+        # that `items` is the only thing missing.
+        "refunded_amount": Decimal("0"),
+        "refunded_at": None,
         "status": OrderStatusEnum.DELIVERED,
         "promo_code_used": None,
         "shipping_address_snapshot": None,

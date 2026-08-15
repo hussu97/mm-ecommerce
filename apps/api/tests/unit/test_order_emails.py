@@ -56,6 +56,7 @@ def _order(
     payment_id: str | None = "pi_test",
     payment_method: str | None = "stripe",
     source: str | None = "online",
+    refunded_amount: float = 0.0,
     **stamps,
 ) -> OrderResponse:
     return OrderResponse(
@@ -80,6 +81,7 @@ def _order(
         payment_method=payment_method,
         payment_provider="stripe",
         payment_id=payment_id,
+        refunded_amount=refunded_amount,
         vat_rate=0.05,
         vat_amount=11.43,
         total_excl_vat=228.57,
@@ -159,11 +161,16 @@ def sent(monkeypatch):
         (OrderStatusEnum.DELIVERED, "delivered"),
         (OrderStatusEnum.CANCELLED, "cancelled"),
         (OrderStatusEnum.PAYMENT_FAILED, "payment_failed"),
-        (OrderStatusEnum.REFUNDED, "refunded"),
         # Deliberately silent: the checkout page itself answers `created`, and a
         # dispute is a conversation with a bank rather than with a customer.
         (OrderStatusEnum.CREATED, None),
         (OrderStatusEnum.DISPUTED, None),
+        # And `refunded` is silent now too. The refund is announced inside the
+        # cancellation or the undelivered notice — the moment the customer
+        # actually wants to know — so a second email when the status later
+        # settles would be the same news twice, arriving after they have already
+        # written in to ask where their money is.
+        (OrderStatusEnum.REFUNDED, None),
     ],
 )
 async def test_every_status_sends_exactly_the_email_it_earns(status, expected, sent):
@@ -588,3 +595,53 @@ async def test_the_note_is_written_in_arabic_for_an_arabic_order(sent):
     await email_service.notify_status_change(order)
     assert "رابط تتبع مباشر" in body(sent[0])
     assert "text you a live tracking link" not in body(sent[0])
+
+
+# ── the refund, inside the email that carries the bad news ────────────────────
+#
+# There is no "refund processed" email any more. These assert the three states
+# the merged block has, because the difference between them is what a customer
+# checks against a bank statement.
+
+
+async def test_a_cancelled_order_names_the_refund_it_actually_sent(sent):
+    await email_service.notify_status_change(
+        _order(status=OrderStatusEnum.CANCELLED, refunded_amount=225.0)
+    )
+    html = body(sent[0])
+    assert "225" in html, "the figure has to be checkable against a statement"
+    assert "delivery charge isn't included" in html, "why it is not the total"
+
+
+async def test_an_undelivered_order_says_the_same_thing(sent):
+    await email_service.notify_status_change(
+        _order(status=OrderStatusEnum.UNDELIVERED, refunded_amount=225.0)
+    )
+    html = body(sent[0])
+    assert "225" in html
+    assert "delivery charge isn't included" in html
+
+
+async def test_a_paid_order_we_could_not_refund_promises_without_a_figure(sent):
+    """
+    The gateway would not take it. Saying "we've sent AED 0 back" would be
+    worse than useless, and saying nothing leaves them wondering.
+    """
+    await email_service.notify_status_change(
+        _order(status=OrderStatusEnum.CANCELLED, refunded_amount=0.0)
+    )
+    html = body(sent[0])
+    assert "returning your payment" in html
+    assert "delivery charge isn't included" not in html
+
+
+async def test_an_unpaid_cancellation_promises_nothing_at_all(sent):
+    """
+    Cancelled out of `created` — no money was ever taken. Telling somebody a
+    refund is coming generates a support email a week later.
+    """
+    await email_service.notify_status_change(
+        _order(status=OrderStatusEnum.CANCELLED, payment_id=None, refunded_amount=0.0)
+    )
+    html = body(sent[0])
+    assert "returning your payment" not in html

@@ -788,9 +788,36 @@ async def send_order_delivered(order: OrderResponse) -> None:
     )
 
 
+def _refund_context(order: OrderResponse) -> dict[str, Any]:
+    """
+    What to say about the money, for the two emails that carry bad news.
+
+    Three states and they are genuinely different to somebody holding a bank
+    statement:
+
+    * a **figure we have sent** — named, so it can be checked, and qualified so
+      that "why is it less than I paid" is answered before it is asked;
+    * a **promise**, when the order was paid for but the gateway would not take
+      the refund. Says the outcome without inventing a number;
+    * **nothing**, when nothing was ever charged. Telling somebody a refund is
+      coming when no money was taken generates a support email a week later.
+
+    `was_paid` keeps its old meaning: a card order that got as far as a payment
+    handle. An order cancelled out of `created` or `payment_failed` never
+    charged anybody.
+    """
+    return {
+        "refund_amount": _money(order.refunded_amount)
+        if order.refunded_amount
+        else None,
+        "was_paid": bool(order.payment_id) and order.payment_method != "cod",
+    }
+
+
 async def send_order_undelivered(order: OrderResponse) -> None:
     await _send_order_email(
         order,
+        **_refund_context(order),
         template="order_undelivered.html",
         subject=_subject("undelivered.subject", order),
     )
@@ -817,11 +844,7 @@ async def send_order_cancelled(order: OrderResponse) -> None:
         order,
         template="order_cancelled.html",
         subject=_subject("cancelled.subject", order),
-        # A card order that reached `confirmed` was paid for; one cancelled out
-        # of `created` or `payment_failed` never was. Telling somebody a refund
-        # is coming when no money was taken is the kind of thing that generates
-        # a support email a week later.
-        was_paid=bool(order.payment_id) and order.payment_method != "cod",
+        **_refund_context(order),
     )
 
 
@@ -836,7 +859,18 @@ _EMAIL_FOR_STATUS = {
     "undelivered": send_order_undelivered,
     "cancelled": send_order_cancelled,
     "payment_failed": send_payment_failed,
-    "refunded": send_refund_notification,
+    # `refunded` is deliberately absent, and `send_refund_notification` is
+    # deliberately still here.
+    #
+    # The refund is now told inside the cancellation or the undelivered notice —
+    # the moment the customer actually wants to know about it. Sending a second
+    # email when the status later reaches `refunded` would be the same news
+    # twice, and the second one always lands after they have already written in
+    # to ask where their money is.
+    #
+    # The function survives because a refund made by hand in a gateway dashboard
+    # against an order that was never cancelled here still has nothing else to
+    # announce it. Nothing calls it automatically.
 }
 
 

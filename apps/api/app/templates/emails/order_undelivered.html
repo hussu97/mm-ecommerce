@@ -37,6 +37,20 @@
 
 {{ parts.alert(t('undelivered.next_label'), t('undelivered.next_body')) }}
 
+{#
+  Same block as the cancellation, for the same reason and in the same words.
+
+  A failed handover used to end in "somebody will arrange another attempt", and
+  the shop's answer now is that it does not: `undelivered` is an ending, the
+  money goes back, and saying so here is the difference between a customer who
+  knows where they stand and one who waits for a van that is not coming.
+#}
+{% if refund_amount %}
+{{ parts.alert(t('refund.label'), t('refund.issued', amount=refund_amount) ~ ' ' ~ t('refund.fees_kept')) }}
+{% elif was_paid %}
+{{ parts.alert(t('refund.label'), t('refund.pending')) }}
+{% endif %}
+
 {{ parts.address_card(address, address_line, recipient_name) }}
 {{ parts.order_summary(items, totals) }}
 {{ parts.button(tracking_url, t('undelivered.cta')) }}

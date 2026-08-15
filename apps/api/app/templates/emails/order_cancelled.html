@@ -26,8 +26,22 @@
 {{ parts.alert(t('cancelled.why_label'), order.admin_notes) }}
 {% endif %}
 
-{% if was_paid %}
-{{ parts.alert(t('cancelled.refund_label'), t('cancelled.refund_body')) }}
+{#
+  The refund lives here rather than in an email of its own.
+
+  There used to be a separate "refund processed" message. Two emails about one
+  event is two chances to worry, and the second always arrived after the
+  customer had already written in to ask where their money was. The cancellation
+  is the moment they want the answer, so the answer is in it.
+
+  Three states, and the difference matters to somebody reading a bank statement:
+  a figure we have actually sent, a promise when the gateway would not take it,
+  and silence when nothing was ever charged.
+#}
+{% if refund_amount %}
+{{ parts.alert(t('refund.label'), t('refund.issued', amount=refund_amount) ~ ' ' ~ t('refund.fees_kept')) }}
+{% elif was_paid %}
+{{ parts.alert(t('refund.label'), t('refund.pending')) }}
 {% endif %}
 
 {{ parts.order_summary(items, totals) }}

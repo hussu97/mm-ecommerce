@@ -215,6 +215,32 @@ STRINGS: dict[str, dict[str, str]] = {
             "Any payment already taken is being returned to the card you paid "
             "with. Banks usually take five to ten working days to show it."
         ),
+        # ── the refund, said inside the email that carries the bad news ───────
+        #
+        # There is no separate "your refund has been processed" email any more.
+        # Two messages about one event is two chances to worry, and the second
+        # one always arrives after the customer has already emailed to ask.
+        #
+        # `refund.issued` names the figure, because "any payment taken" is true
+        # and useless — the customer wants to check it against their statement.
+        "refund.label": "Your refund",
+        "refund.issued": (
+            "We've sent {amount} back to the card you paid with. Banks usually "
+            "take five to ten working days to show it."
+        ),
+        # Said plainly rather than buried, because it is the line that stops a
+        # "you refunded the wrong amount" email: the number on the statement is
+        # deliberately not the order total.
+        "refund.fees_kept": (
+            "That is the value of the items. The delivery charge isn't included "
+            "— the driver had already been booked."
+        ),
+        # When we could not reach the gateway. Promises the outcome without
+        # naming a figure we have not actually sent.
+        "refund.pending": (
+            "We're returning your payment to the card you paid with. If it "
+            "hasn't reached you within ten working days, tell us."
+        ),
         "cancelled.cta": "Back to the shop",
         "cancelled.footnote": (
             "If this wasn't expected, tell us — we would rather hear about it "
@@ -455,6 +481,18 @@ STRINGS: dict[str, dict[str, str]] = {
         "cancelled.refund_body": (
             "أي مبلغ تم دفعه سيُعاد إلى البطاقة التي دفعت بها. تستغرق البنوك "
             "عادةً من خمسة إلى عشرة أيام عمل حتى يظهر المبلغ."
+        ),
+        "refund.label": "المبلغ المُعاد",
+        "refund.issued": (
+            "أعدنا {amount} إلى البطاقة التي دفعت بها. تستغرق البنوك عادةً من "
+            "خمسة إلى عشرة أيام عمل حتى يظهر المبلغ."
+        ),
+        "refund.fees_kept": (
+            "هذه قيمة المنتجات. رسوم التوصيل غير مشمولة — فقد تم حجز السائق بالفعل."
+        ),
+        "refund.pending": (
+            "نعيد مبلغ الدفع إلى البطاقة التي دفعت بها. إن لم يصلك خلال عشرة "
+            "أيام عمل، أخبرنا."
         ),
         "cancelled.cta": "العودة إلى المتجر",
         "cancelled.footnote": (

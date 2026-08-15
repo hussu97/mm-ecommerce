@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.models.order import DeliveryMethodEnum, OrderStatusEnum
 
@@ -110,6 +110,19 @@ class OrderResponse(BaseModel):
     payment_method: str | None
     payment_provider: str | None
     payment_id: str | None
+    #: How much has been sent back to the card, in the order's currency. Zero on
+    #: everything that has not been refunded, which is almost every order.
+    #:
+    #: On the response because the cancelled and undelivered emails read it: the
+    #: customer is told the actual figure that left our account rather than a
+    #: promise that "any payment taken is being returned", which was true and
+    #: unhelpfully vague.
+    #:
+    #: Coerced from None below: the column is NOT NULL with a default, so a row
+    #: read from the database always has a number, but an Order built in memory
+    #: and not yet flushed reads None — and the confirmation email is rendered
+    #: from exactly such an object, inside the same request that created it.
+    refunded_amount: float = 0
     vat_rate: float
     vat_amount: float
     total_excl_vat: float
@@ -162,6 +175,19 @@ class OrderResponse(BaseModel):
     #: undelivered and was re-dispatched should show the dispatch that is
     #: actually happening, not the one that failed.
     status_history: list[OrderStatusStamp] = []
+
+    @field_validator("refunded_amount", mode="before")
+    @classmethod
+    def _no_refund_is_zero(cls, value: Any) -> Any:
+        """
+        None means nothing was refunded, not "invalid".
+
+        The column is NOT NULL with a default, so a row read back from the
+        database always carries a number. An `Order` built in memory and not yet
+        flushed does not — and the confirmation email is rendered from exactly
+        such an object, inside the same request that created it.
+        """
+        return 0 if value is None else value
 
 
 class OrderListResponse(BaseModel):
