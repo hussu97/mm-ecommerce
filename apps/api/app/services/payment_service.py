@@ -1030,6 +1030,32 @@ async def refund_order(
         )
         return Decimal("0")
 
+    # ── The retry-safety invariant. Read before touching anything above. ──
+    #
+    # This gateway call happens *inside* the caller's open transaction, and the
+    # writes below it (`refunded_amount`, `refund_id`) are only flushed — they
+    # commit with the request. So the dangerous window is real: the gateway can
+    # move the money and the transaction can then roll back, leaving the
+    # database with no record that it did.
+    #
+    # What makes that window survivable is that a retry reconstructs the *same*
+    # request bit-for-bit, so the gateway's idempotency dedupes it:
+    #
+    #   * `refundable_amount` reads only columns the rollback restored —
+    #     `total`, the two fees, `refunded_amount` — so `requested` recomputes
+    #     to the identical figure. This is the load-bearing part: the very
+    #     rollback that lost our record also rewound every input to the key.
+    #   * `_refund_key` derives from order number + that amount and nothing
+    #     else. No timestamp, no uuid4, no attempt counter.
+    #
+    # Recording the attempt durably *before* the call — the properly designed
+    # outbox shape — needs somewhere to put it, and neither `order_payments`
+    # nor anything else has a pending-refund column today; inventing one is a
+    # migration this fix deliberately avoids. Until that exists, the invariant
+    # above is the safety. Breaking it looks innocent: seeding the key with
+    # anything non-deterministic, mutating `refunded_amount` before this call,
+    # or letting `requested` depend on state this same transaction changed
+    # would each turn a retried rollback into a second, real refund.
     try:
         result = await gateway.refund(
             payment_id=attempt.payment_id,

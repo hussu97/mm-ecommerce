@@ -1,8 +1,34 @@
+"""
+Every email the shop sends, and the one policy for sending them.
+
+**The policy: inline-await through the funnel — never `BackgroundTasks`.**
+
+* **Inline-await.** A caller `await`s the send before returning its response.
+  FastAPI's `BackgroundTasks` run after the response on whatever process served
+  it, and on Cloud Run / serverless that process can be frozen or reaped the
+  moment the response goes out — the task is silently dropped and nobody is
+  told. An awaited send costs the request one Resend round-trip (pushed to a
+  thread, so the event loop keeps serving) and can never be dropped without a
+  trace.
+* **Through the funnel, which never raises.** Every send ends in `_send`, and
+  every public coroutine here catches its own rendering failures. A typo in a
+  Jinja template must cost an email, not an order — no caller needs a
+  `try/except` around a send, and awaiting one inside a transaction is safe.
+* **Best-effort, journalled, and watched.** Because sends never raise, the
+  journal is the truth: every attempt lands in `email_logs` as
+  sent/failed/skipped via `_log`, on a session of its own so the row survives
+  whatever the caller's transaction does. There is no automatic resend — the
+  table stores no payload, and a password-reset token or an order snapshot
+  cannot be honestly reconstructed after the fact — so `report_failed_sends`
+  makes failure loud instead: the retention loop calls it hourly and it logs
+  an error whenever the last day's journal contains failures.
+"""
+
 from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -12,6 +38,7 @@ from zoneinfo import ZoneInfo
 import css_inline
 import resend
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from sqlalchemy import func, select
 
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
@@ -33,6 +60,7 @@ __all__ = [
     "send_order_packed",
     "send_order_undelivered",
     "maps_url",
+    "report_failed_sends",
     "send_owner_order_notification",
     "send_password_reset",
     "send_payment_failed",
@@ -951,6 +979,31 @@ async def notify_order(db, order) -> str | None:
 # ─── User emails ──────────────────────────────────────────────────────────────
 
 
+async def _send_user_email(
+    template: str, email: str, subject: str, *, locale: str, **context
+) -> None:
+    """
+    `_send_order_email` for the emails that have no order behind them.
+
+    The same funnel guarantee, restated because these are awaited inline from
+    auth endpoints: a Jinja error here must be journalled as a failed email,
+    not become a 500 on a registration that already created the account.
+    Before this wrapper the render ran bare, which was survivable only because
+    `BackgroundTasks` hid the exception after the response — the policy at the
+    top of this file removes that hiding place, so the funnel has to actually
+    never raise.
+    """
+    try:
+        html = _render(template, recipient_email=email, locale=locale, **context)
+        result = await asyncio.to_thread(_send, email, subject, html)
+    except Exception as exc:
+        logger.error(
+            "%s render/send failed for %s: %s", template, email, exc, exc_info=True
+        )
+        result = {"status": "failed", "resend_id": None, "error": str(exc)}
+    await _log(template.removesuffix(".html"), email, subject, result)
+
+
 async def send_welcome(email: str, locale: str = "en") -> None:
     """
     Welcome. In the language they signed up in.
@@ -960,10 +1013,7 @@ async def send_welcome(email: str, locale: str = "en") -> None:
     must not fail over a missing parameter.
     """
     t = translator(locale)
-    subject = t("welcome.subject")
-    html = _render("welcome.html", recipient_email=email, locale=locale)
-    result = await asyncio.to_thread(_send, email, subject, html)
-    await _log("welcome", email, subject, result)
+    await _send_user_email("welcome.html", email, t("welcome.subject"), locale=locale)
 
 
 async def send_password_reset(email: str, reset_token: str, locale: str = "en") -> None:
@@ -971,12 +1021,57 @@ async def send_password_reset(email: str, reset_token: str, locale: str = "en") 
     reset_link = (
         f"{settings.WEB_URL.rstrip('/')}/{locale}/reset-password?token={reset_token}"
     )
-    subject = f"{t('reset.subject')} — Melting Moments"
-    html = _render(
+    await _send_user_email(
         "password_reset.html",
-        recipient_email=email,
+        email,
+        f"{t('reset.subject')} — Melting Moments",
         locale=locale,
         reset_link=reset_link,
     )
-    result = await asyncio.to_thread(_send, email, subject, html)
-    await _log("password_reset", email, subject, result)
+
+
+# ─── Watching the journal ─────────────────────────────────────────────────────
+
+
+async def report_failed_sends(db, now: datetime | None = None) -> int:
+    """
+    Make a quiet outage loud. Returns how many sends failed in the last day.
+
+    Monitoring, deliberately not a resend, because this journal cannot support
+    an honest one:
+
+    * `email_logs` stores no payload. An order email could be rebuilt from its
+      `order_number`, but a password reset cannot — the token was minted in the
+      request and never stored — and rebuilding "most" templates means a sweep
+      whose behaviour depends on which email failed.
+    * There is no attempts column and no claimed/retrying status, so a resend
+      that failed again would be picked up every hour forever, and a resend
+      that succeeded would race the row's status update: nothing makes
+      "failed → resent" atomic, and the failure mode of that race is the same
+      customer getting the same email twice. A missed email embarrasses us
+      once; a double refund notification generates a support thread.
+
+    So the sweep only counts and shouts. `logger.error` is the alerting
+    channel this deployment actually watches, and one line an hour naming the
+    templates is enough for a person to notice a Resend outage the day it
+    happens rather than in a table nobody reads. Takes the caller's session —
+    it writes nothing, so it has no need of its own.
+    """
+    cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=1)
+    rows = (
+        await db.execute(
+            select(EmailLog.template, func.count())
+            .where(EmailLog.status == "failed", EmailLog.sent_at >= cutoff)
+            .group_by(EmailLog.template)
+        )
+    ).all()
+    total = sum(count for _, count in rows)
+    if total:
+        logger.error(
+            "%d email send(s) failed in the last 24h (%s) — these were never "
+            "delivered and will not be retried; check email_logs and the "
+            "Resend dashboard",
+            total,
+            ", ".join(f"{template}: {count}" for template, count in rows),
+        )
+    return total

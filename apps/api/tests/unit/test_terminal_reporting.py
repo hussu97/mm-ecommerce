@@ -165,15 +165,28 @@ def test_the_header_figures_are_the_sum_of_the_rows():
 
 
 @pytest.mark.asyncio
-async def test_a_device_that_talks_to_us_is_recorded_as_seen():
+async def test_a_device_that_talks_to_us_is_recorded_as_seen(monkeypatch):
     """
     `last_seen_at` was written only by pairing and by the launch heartbeat, so
     five minutes into a shift every dashboard called the till offline — while it
     was ringing up sales. Any authenticated request now counts as being seen.
+
+    The durable write goes through the dedicated-session stamp, and the request
+    session is never committed: this runs inside an auth dependency, and a
+    dependency that commits the request session makes whatever the request had
+    written so far permanent as a side effect of bookkeeping.
     """
     from app.api.v1 import devices as devices_api
 
+    stamped = []
+
+    async def _record_stamp(device_id, now):
+        stamped.append((device_id, now))
+
+    monkeypatch.setattr(devices_api, "_stamp_last_seen", _record_stamp)
+
     device = SimpleNamespace(
+        id=uuid.uuid4(),
         status="used",
         last_seen_at=utcnow() - timedelta(hours=3),
         token_hash="hashed",
@@ -184,11 +197,12 @@ async def test_a_device_that_talks_to_us_is_recorded_as_seen():
 
     assert resolved is device
     assert (utcnow() - resolved.last_seen_at).total_seconds() < 5
-    assert db.commits == 1
+    assert [device_id for device_id, _ in stamped] == [device.id]
+    assert db.commits == 0, "an auth dependency must never commit the request session"
 
 
 @pytest.mark.asyncio
-async def test_a_busy_till_does_not_write_a_row_per_request():
+async def test_a_busy_till_does_not_write_a_row_per_request(monkeypatch):
     """
     Throttled to one write a minute per device — a terminal mid-service issues a
     request per tap, and stamping every one of them would turn a read path into
@@ -196,14 +210,51 @@ async def test_a_busy_till_does_not_write_a_row_per_request():
     """
     from app.api.v1 import devices as devices_api
 
+    stamped = []
+
+    async def _record_stamp(device_id, now):
+        stamped.append(device_id)
+
+    monkeypatch.setattr(devices_api, "_stamp_last_seen", _record_stamp)
+
     seen = utcnow() - timedelta(seconds=5)
-    device = SimpleNamespace(status="used", last_seen_at=seen, token_hash="hashed")
+    device = SimpleNamespace(
+        id=uuid.uuid4(), status="used", last_seen_at=seen, token_hash="hashed"
+    )
     db = _StubDB(device)
 
     await devices_api.authenticate_device(db, "a-token")
 
     assert device.last_seen_at == seen
+    assert stamped == []
     assert db.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_a_failed_seen_stamp_does_not_fail_the_sale(monkeypatch):
+    """
+    The stamp is bookkeeping for a dashboard. A database hiccup writing it must
+    not 401 a till mid-service — the device authenticated; that is the answer.
+    """
+    from app.api.v1 import devices as devices_api
+
+    class _ExplodingFactory:
+        def __call__(self):
+            raise RuntimeError("no database for you")
+
+    monkeypatch.setattr(devices_api, "AsyncSessionFactory", _ExplodingFactory())
+
+    device = SimpleNamespace(
+        id=uuid.uuid4(),
+        status="used",
+        last_seen_at=None,
+        token_hash="hashed",
+    )
+    db = _StubDB(device)
+
+    resolved = await devices_api.authenticate_device(db, "a-token")
+
+    assert resolved is device
 
 
 def test_the_refresh_window_is_inside_the_offline_threshold():

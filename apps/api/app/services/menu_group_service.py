@@ -192,7 +192,12 @@ async def create(db: AsyncSession, data: dict) -> MenuGroup:
     db.add(group)
     await db.flush()
     await _set_products(db, group, data.get("product_ids"))
-    await db.commit()
+    # Flush, not commit. The request-scoped `get_db` dependency owns the
+    # commit; a service that commits mid-request turns everything the router
+    # did before it into a fait accompli that a later failure in the same
+    # request can no longer roll back. The re-read below runs inside the same
+    # transaction, so it sees the flushed rows just the same.
+    await db.flush()
     return await get(db, group.id)
 
 
@@ -218,7 +223,8 @@ async def update(db: AsyncSession, group_id: uuid.UUID, data: dict) -> MenuGroup
     if "product_ids" in data:
         await _set_products(db, group, data["product_ids"])
 
-    await db.commit()
+    # Flush, not commit — see `create`. The request commits once, at the end.
+    await db.flush()
     return await get(db, group_id)
 
 
@@ -300,4 +306,5 @@ async def delete(db: AsyncSession, group_id: uuid.UUID) -> None:
     for node in doomed:
         node.deleted_at = stamp
         node.is_active = False
-    await db.commit()
+    # Flush, not commit — see `create`. The request commits once, at the end.
+    await db.flush()

@@ -10,10 +10,11 @@ from datetime import timedelta
 
 from fastapi import APIRouter, Depends, Header, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.database import AsyncSessionFactory
 from app.core.deps import get_admin_user, get_current_active_user, get_db
 from app.core.exceptions import ConflictError, UnauthorizedError
 from app.models import (
@@ -63,6 +64,33 @@ def _generate_pairing_code() -> str:
 SEEN_REFRESH_SECONDS = 60
 
 
+async def _stamp_last_seen(device_id: uuid.UUID, now) -> None:
+    """
+    Write `last_seen_at` on a session of its own, and never complain.
+
+    Its own session because this runs inside an auth *dependency*, and a
+    dependency that commits the request session commits whatever the request
+    had written so far — half a state change, made permanent by a bookkeeping
+    stamp. The convention is that services flush and the request commits
+    exactly once; a side-fact like "this terminal spoke to us" goes on a
+    dedicated short-lived session, the same shape as `email_service._log`
+    and the webhook `Recorder`, so it also survives if the request later
+    rolls back — the terminal did speak to us, whatever its request did.
+
+    Best-effort by design: a till whose stamp cannot be written is still a
+    till that authenticated, and failing its sale over a dashboard freshness
+    column would invert what matters.
+    """
+    try:
+        async with AsyncSessionFactory() as session:
+            await session.execute(
+                update(Device).where(Device.id == device_id).values(last_seen_at=now)
+            )
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001 — see the docstring
+        logger.warning("Could not stamp last_seen_at for device %s: %s", device_id, exc)
+
+
 async def authenticate_device(db: AsyncSession, token: str | None) -> Device:
     """
     Resolve the `X-Device-Token` header to a paired device, and record that we
@@ -108,8 +136,13 @@ async def authenticate_device(db: AsyncSession, token: str | None) -> Device:
         device.last_seen_at is None
         or (now - device.last_seen_at).total_seconds() >= SEEN_REFRESH_SECONDS
     ):
+        # The in-memory copy is refreshed too, so the throttle above and
+        # anything else this request reads off the row agree with what was
+        # just written. The durable write goes through `_stamp_last_seen` —
+        # never `db.commit()` here, which used to commit the whole request
+        # session from inside an auth dependency.
         device.last_seen_at = now
-        await db.commit()
+        await _stamp_last_seen(device.id, now)
 
     return device
 

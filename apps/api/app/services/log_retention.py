@@ -21,6 +21,14 @@ one worker in the deployment is ever inside one, and a loop in the app's own
 lifespan, because this stack has no cron and nothing that survives the
 container. It ticks hourly rather than by the minute: the point is that the
 tables stay bounded, and being an hour late to delete a row costs nothing.
+
+It also carries the failed-email watch. `email_logs` journals every send, but a
+journal nobody reads is where a Resend outage goes to be permanent — so while
+this sweep is already holding the lock and a session over that table, it asks
+`email_service.report_failed_sends` to shout about the last day's failures.
+Riding this loop rather than owning one keeps it to exactly one alert an hour
+across the whole deployment. Why it alerts instead of resending is documented
+on the function itself.
 """
 
 from __future__ import annotations
@@ -37,6 +45,7 @@ from app.models.audit_log import AuditLog
 from app.models.email_log import EmailLog
 from app.models.webhook_event import WebhookEvent
 from app.models.webhook_log import WebhookLog
+from app.services import email_service
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +92,14 @@ async def sweep_once(now: datetime | None = None) -> dict[str, int]:
                 ),
             }
             await session.commit()
+            # Under the same lock, so one worker shouts once an hour rather
+            # than every worker shouting at once. Failure to count must not
+            # break the purge that just committed — the retention guarantee
+            # and the alerting are independent jobs sharing a ride.
+            try:
+                await email_service.report_failed_sends(session, now)
+            except Exception:  # noqa: BLE001 — the watch must not kill the sweep
+                logger.exception("Failed-email watch errored; purge unaffected")
             return {table: count for table, count in removed.items() if count}
         finally:
             # Released explicitly rather than left to the connection closing: a

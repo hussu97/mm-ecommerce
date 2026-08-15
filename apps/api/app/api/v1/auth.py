@@ -10,7 +10,6 @@ from urllib.parse import urlparse
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     Query,
     Request,
@@ -319,7 +318,6 @@ async def register(
     request: Request,
     response: Response,
     body: UserCreate,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
     await _require_human(request, body.turnstile_token)
@@ -341,9 +339,13 @@ async def register(
     await db.flush()
     await db.refresh(user)
 
-    background_tasks.add_task(
-        email_service.send_welcome, user.email, normalise_locale(body.locale)
-    )
+    # Awaited inline, per the policy in `email_service`'s module docstring:
+    # a BackgroundTask runs after the response, and on serverless the process
+    # can be frozen the moment the response goes out — the welcome email was
+    # this route's silent-drop candidate. The funnel never raises and pushes
+    # the network call to a thread, so this costs one Resend round-trip and
+    # cannot fail the registration.
+    await email_service.send_welcome(user.email, normalise_locale(body.locale))
     token_resp = await _make_token_response(user, db)
     _set_auth_cookies(response, token_resp.access_token, token_resp.refresh_token)
     return token_resp
@@ -868,7 +870,6 @@ async def update_me(
 async def forgot_password(
     request: Request,
     body: PasswordResetRequest,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_optional_user),
 ) -> dict:
@@ -890,8 +891,16 @@ async def forgot_password(
     # Always return 200 to avoid email enumeration
     if user and not user.is_guest:
         reset_token = create_password_reset_token(str(user.id), user.email)
-        background_tasks.add_task(
-            email_service.send_password_reset,
+        # Awaited inline — see `email_service`'s module docstring. This is the
+        # one email whose silent loss is indistinguishable from the enumeration
+        # 200 below: the user sees the same "check your inbox" either way, so a
+        # dropped BackgroundTask here was undiagnosable by design. The funnel
+        # never raises. Known trade: the existing-account branch now carries a
+        # Resend round-trip the unknown-address branch does not, a timing tell
+        # this endpoint accepts — the 5/minute limit above throttles anyone
+        # trying to read it at scale, and a lost reset email locks a real
+        # customer out today.
+        await email_service.send_password_reset(
             user.email,
             reset_token,
             normalise_locale(body.locale),

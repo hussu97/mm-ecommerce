@@ -86,3 +86,19 @@ def test_reordering_products_rewrites_display_order():
 def test_unknown_products_are_rejected_not_ignored():
     source = inspect.getsource(menu_group_service._set_products)
     assert "No such product" in source
+
+
+def test_the_service_flushes_and_lets_the_request_commit():
+    """
+    The transaction convention: services flush, the request-scoped `get_db`
+    commits exactly once at the end. This service used to commit mid-request
+    from `create`, `update` and `delete`, which made everything the router had
+    already written permanent before the request finished — a later failure in
+    the same request could no longer roll anything back.
+    """
+    source = inspect.getsource(menu_group_service)
+    assert "db.commit()" not in source, "services flush; only the request commits"
+    for writer in ("create", "update", "delete"):
+        assert "await db.flush()" in inspect.getsource(
+            getattr(menu_group_service, writer)
+        )
