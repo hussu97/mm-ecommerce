@@ -53,6 +53,7 @@ from app.models.order import Order
 from app.services.providers import checkout_urls
 from app.services.providers.base import (
     GatewayEvent,
+    GatewayRefund,
     GatewaySession,
     GatewayUnavailableError,
     PaymentEventType,
@@ -339,6 +340,106 @@ class ZiinaProvider(PaymentGatewayProvider):
             raise BadRequestError("Invalid webhook signature")
 
     # ── operational helpers ───────────────────────────────────────────────────
+
+    async def refund(
+        self,
+        *,
+        payment_id: str,
+        amount: Decimal,
+        idempotency_key: str,
+        test_mode: bool = False,
+    ) -> GatewayRefund:
+        """
+        Refund part or all of a Ziina payment intent.
+
+        `POST /refund`, documented at docs.ziina.com/api-reference/refund/create.
+        Needs the `write_refunds` scope on the token — a key minted only for
+        charging will 403 here, which is a configuration problem and reads as
+        one rather than as a gateway outage.
+
+        **The idempotency key is the refund's own `id`.** Ziina takes a
+        client-generated UUID as the primary key of the refund, which is a
+        stronger guarantee than a header: the same id asked for twice is the
+        same row on their side, not a second refund that happens to match. The
+        caller derives it from the order and the amount, so a retry after a
+        dropped connection cannot pay the customer twice.
+
+        Amount is in minor units, matching `create_session` — Ziina's "base
+        units" are fils for AED.
+        """
+        if not settings.ZIINA_API_KEY:
+            raise BadRequestError("Ziina is not configured in this environment")
+
+        payload: dict[str, Any] = {
+            "id": idempotency_key,
+            "payment_intent_id": payment_id,
+            "amount": int(amount * 100),
+            "currency_code": "AED",
+            "test": bool(test_mode or settings.ZIINA_TEST_MODE),
+        }
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=settings.ZIINA_TIMEOUT_SECONDS
+            ) as client:
+                response = await client.post(
+                    f"{self._base_url()}/refund",
+                    json=payload,
+                    headers=self._headers(),
+                )
+        except httpx.HTTPError as exc:
+            logger.error("Ziina unreachable issuing refund: %s", exc)
+            raise GatewayUnavailableError(f"Ziina unreachable: {exc}") from exc
+
+        if response.status_code in _UNAVAILABLE_STATUSES:
+            logger.error(
+                "Ziina returned %s issuing a refund: %s",
+                response.status_code,
+                response.text[:500],
+            )
+            raise GatewayUnavailableError(
+                f"Ziina error {response.status_code}: {response.text[:200]}"
+            )
+
+        if response.status_code >= 400:
+            detail = _error_message(response)
+            logger.error(
+                "Ziina refused a refund for %s: %s %s",
+                payment_id,
+                response.status_code,
+                detail,
+            )
+            raise BadRequestError(f"Refund failed: {detail}")
+
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise GatewayUnavailableError(
+                "Ziina returned a refund that was not JSON"
+            ) from exc
+
+        raw_status = str(body.get("status") or "")
+        if raw_status == "failed":
+            # A 200 carrying a failure. Their `error` object says why, and this
+            # is a refusal rather than an outage — retrying sends the same
+            # request to the same answer.
+            error = body.get("error") or {}
+            raise BadRequestError(
+                f"Ziina declined the refund: {error.get('message') or 'no reason given'}"
+            )
+
+        amount_minor = body.get("amount")
+        return GatewayRefund(
+            refund_id=str(body.get("id") or idempotency_key),
+            amount=(
+                Decimal(amount_minor) / 100 if amount_minor is not None else amount
+            ),
+            # Their three statuses are the ones this application uses, so there
+            # is nothing to translate — `pending` included, which is a success:
+            # a refund that is still moving is not a refund to issue again.
+            status=raw_status or "pending",
+            raw_status=raw_status or None,
+        )
 
     async def register_webhook(self, url: str, secret: str) -> dict:
         """

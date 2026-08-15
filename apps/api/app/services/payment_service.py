@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
+from app.models.base import utcnow
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.payment_transaction import (
@@ -886,6 +887,144 @@ async def _handle_dispute(order: Order, event: GatewayEvent) -> None:
         order.payment_provider,
         event.payment_id,
     )
+
+
+def refundable_amount(order: Order) -> Decimal:
+    """
+    What the customer gets back: what they bought, and none of the fees.
+
+    The shop's rule, and it is a commercial one rather than an arithmetic one.
+    The delivery fee bought a van that was booked and — on an undelivered order —
+    usually already drove; the low-order fee bought the same thing. Handing
+    those back means paying twice for a journey that happened. So the refund is
+    the goods at the price actually charged for them: subtotal less whatever
+    discount was applied, which is exactly `total` minus the fees.
+
+    Reads `total` rather than recomputing from `subtotal - discount`, because
+    `total` is what the card was charged and any drift between the two would
+    show up as a refund the customer disputes. Whatever is left after taking the
+    fees off it is, by construction, the money that bought cake.
+
+    Never more than is left to refund, so a second call after a partial refund
+    made in a dashboard cannot overdraw the charge.
+    """
+    total = Decimal(str(order.total or 0))
+    fees = Decimal(str(order.delivery_fee or 0)) + Decimal(
+        str(order.low_order_fee or 0)
+    )
+    goods = max(total - fees, Decimal("0"))
+    already = Decimal(str(order.refunded_amount or 0))
+    return max(min(goods, total - already), Decimal("0"))
+
+
+def _refund_key(order: Order, amount: Decimal) -> str:
+    """
+    A stable name for "this refund", so asking twice is asking once.
+
+    Derived from the order and the amount rather than randomly, because the
+    whole point is that two independent callers — an admin click and the retry
+    behind it, a webhook and a status transition — produce the *same* key and
+    therefore the same refund. A random key would make each of them a new one.
+
+    Both gateways accept it: Stripe as its idempotency header, Ziina as the
+    refund's own client-generated primary key.
+    """
+    return f"refund-{order.order_number}-{amount:.2f}"
+
+
+async def refund_order(
+    db: AsyncSession,
+    order: Order,
+    *,
+    amount: Decimal | None = None,
+) -> Decimal:
+    """
+    Send money back for an order that is not going to arrive.
+
+    Returns what was refunded, or zero when there was nothing to do — which is
+    the ordinary answer for a cash order, an unpaid one, or one already
+    refunded, and is not a failure in any of those cases.
+
+    **Called automatically when an order is cancelled or marked undelivered.**
+    That is the shop's decision and it is the right one for a business that
+    takes payment up front: the alternative is a second manual step that gets
+    forgotten, and the failure mode of forgetting is a customer who paid for a
+    cake they never got. The cost of the decision is that money moves on a
+    status change, which is why the idempotency below is not optional.
+
+    Deliberately quiet on failure. A gateway that is unreachable must not
+    prevent an order being cancelled — the cancellation is a fact about the
+    kitchen, the refund is a fact about a bank, and holding the first hostage to
+    the second leaves the shop unable to stop making a cake. The failure is
+    logged and the order carries `refunded_amount = 0`, which is what the
+    admin's refund list reads.
+    """
+    if order.payment_method != CARD:
+        return Decimal("0")
+
+    attempt = _settled_attempt(order)
+    if attempt is None or not attempt.payment_id:
+        # Nothing was ever charged through a gateway we can call back. A cash
+        # order, or a card attempt that never reached a payment handle.
+        return Decimal("0")
+    if attempt.refund_id:
+        # Already refunded through here. The amount is on the order.
+        return Decimal("0")
+
+    payable = refundable_amount(order)
+    requested = payable if amount is None else min(amount, payable)
+    if requested <= 0:
+        return Decimal("0")
+
+    gateway = payment_gateway_router.PROVIDERS.get(attempt.gateway)
+    if gateway is None:
+        logger.error(
+            "Order %s was paid on %s, which this build cannot refund",
+            order.order_number,
+            attempt.gateway,
+        )
+        return Decimal("0")
+
+    try:
+        result = await gateway.refund(
+            payment_id=attempt.payment_id,
+            amount=requested,
+            idempotency_key=_refund_key(order, requested),
+        )
+    except Exception:  # noqa: BLE001 — see the docstring
+        logger.exception(
+            "Could not refund %s for order %s; it needs a person",
+            requested,
+            order.order_number,
+        )
+        return Decimal("0")
+
+    order.refunded_amount = Decimal(str(order.refunded_amount or 0)) + result.amount
+    order.refunded_at = order.refunded_at or utcnow()
+    attempt.refund_id = result.refund_id
+    logger.info(
+        "Refunded %s %s for %s (%s, %s)",
+        result.amount,
+        order.currency or "AED",
+        order.order_number,
+        result.refund_id,
+        result.status,
+    )
+    return result.amount
+
+
+def _settled_attempt(order: Order) -> PaymentTransaction | None:
+    """
+    The attempt that actually took the money.
+
+    `payment_transactions` holds one row per try, and a customer who abandoned a
+    card screen twice before paying leaves three. Only the settled one has a
+    handle worth refunding against.
+    """
+    for attempt in order.payment_transactions or []:
+        if attempt.is_settled and attempt.payment_id:
+            return attempt
+    return None
 
 
 async def get_status(

@@ -1303,12 +1303,41 @@ async def update_status(
                     .execution_options(synchronize_session=False)
                 )
 
+    # An order that is not going to arrive, that was paid for by card, gets the
+    # money back without anybody pressing anything else.
+    #
+    # Both endings, because they are the same fact to a customer: the cake is
+    # not coming. Automatic rather than a second admin step, because the second
+    # step is the one that gets forgotten and the cost of forgetting it is
+    # somebody who paid for nothing. The fees stay — see
+    # `payment_service.refundable_amount` — since the van was booked and, on an
+    # undelivered order, usually already drove.
+    #
+    # Never allowed to fail the transition. Cancelling is a fact about the
+    # kitchen and refunding is a fact about a bank; holding the first hostage to
+    # the second would leave a shop unable to stop making a cake because Stripe
+    # was slow. `refund_order` swallows its own failures and returns zero, and
+    # the order then shows as unrefunded for a person to deal with.
+    if new_status in _REFUNDABLE_ENDINGS:
+        from app.services import payment_service
+
+        await payment_service.refund_order(db, order)
+
     await db.flush()
     await db.refresh(order)
 
     stmt = select(Order).options(*_order_load_options()).where(Order.id == order.id)
     result = await db.execute(stmt)
     return await to_response(db, result.scalar_one())
+
+
+#: The two ways an order stops being deliverable with the customer's money still
+#: in our account. `refunded` and `disputed` are not here: by the time an order
+#: reaches either, the money has already moved.
+_REFUNDABLE_ENDINGS = {
+    OrderStatusEnum.CANCELLED,
+    OrderStatusEnum.UNDELIVERED,
+}
 
 
 async def get_all_admin(

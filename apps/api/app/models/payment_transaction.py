@@ -105,6 +105,10 @@ class PaymentTransaction(Base, UUIDMixin, TimestampMixin):
     #: and disputes arrive quoting. Stripe fills this in only at confirmation;
     #: Ziina has it from the start.
     payment_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: The gateway's handle for the *refund*, when one has been issued against
+    #: this attempt. Distinct from `payment_id`, which identifies the charge —
+    #: a dashboard conversation about money going back quotes this one.
+    refund_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
     status: Mapped[str] = mapped_column(
         String(20),

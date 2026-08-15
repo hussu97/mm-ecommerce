@@ -130,6 +130,21 @@ class Order(Base, UUIDMixin, TimestampMixin):
         Numeric(10, 2), nullable=False, default=0
     )
     total: Mapped[Any] = mapped_column(Numeric(10, 2), nullable=False)
+    #: How much of `total` has been sent back to the card.
+    #:
+    #: Not a boolean, because a partial refund is the normal case: the shop
+    #: refunds what the customer bought and keeps the fees, since the van was
+    #: booked and often already drove. It is also the guard against refunding
+    #: twice — the one failure in this area that costs real money — so it is
+    #: written in the same transaction as the gateway call that caused it.
+    refunded_amount: Mapped[Any] = mapped_column(
+        Numeric(10, 2), nullable=False, default=0, server_default="0"
+    )
+    #: When the first refund was *issued*, which is not when it landed. Card
+    #: refunds sit `pending` at the processor for days.
+    refunded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     status: Mapped[OrderStatusEnum] = mapped_column(
         Enum(
             OrderStatusEnum,

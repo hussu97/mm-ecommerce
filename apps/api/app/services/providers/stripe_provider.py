@@ -14,6 +14,7 @@ from app.models.order import Order
 from app.services.providers import checkout_urls
 from app.services.providers.base import (
     GatewayEvent,
+    GatewayRefund,
     GatewaySession,
     GatewayUnavailableError,
     PaymentEventType,
@@ -201,6 +202,58 @@ class StripeProvider(PaymentGatewayProvider):
             raw_status=getattr(session, "status", None),
         )
 
+    async def refund(
+        self,
+        *,
+        payment_id: str,
+        amount: Decimal,
+        idempotency_key: str,
+        test_mode: bool = False,
+    ) -> GatewayRefund:
+        """
+        Refund part or all of a Payment Intent.
+
+        `test_mode` is ignored for the same reason `create_session` ignores it:
+        the secret key decides live-versus-test, and a per-call flag would only
+        appear to switch an environment it cannot switch.
+
+        The idempotency key is Stripe's own header, so a second call with the
+        same key returns the *first* refund rather than making another. That
+        matters more here than anywhere else in this file — the caller is a
+        status transition reachable from an admin click, a webhook and a retry
+        sweep, and without this the third of those pays the customer twice.
+
+        `pending` is a success. Card refunds settle over days, and treating
+        anything but `succeeded` as failure would have the shop refund again.
+        """
+        self._configure()
+        try:
+            refund = stripe.Refund.create(
+                payment_intent=payment_id,
+                amount=int(amount * 100),
+                idempotency_key=idempotency_key,
+            )
+        except APIConnectionError as exc:
+            # The processor, not the request. The caller may try again — and
+            # will, with the same key, so a refund that actually went through
+            # before the connection dropped is not duplicated.
+            raise GatewayUnavailableError(f"Stripe was unreachable: {exc}") from exc
+        except StripeError as exc:
+            # Everything else is the request: already refunded, more than was
+            # captured, a payment intent that never succeeded. Retrying does not
+            # fix any of them.
+            raise BadRequestError(f"Stripe refused the refund: {exc}") from exc
+
+        raw_status = str(refund.get("status") or "")
+        return GatewayRefund(
+            refund_id=str(refund.get("id") or ""),
+            # Stripe answers in minor units, and answers with what it actually
+            # did rather than what was asked for.
+            amount=Decimal(refund.get("amount") or 0) / 100,
+            status=_REFUND_STATUSES.get(raw_status, "pending"),
+            raw_status=raw_status,
+        )
+
     def parse_webhook(self, payload: bytes, headers: Mapping[str, str]) -> GatewayEvent:
         """
         Verify a Stripe webhook and translate it into a `GatewayEvent`.
@@ -340,6 +393,20 @@ def _header(headers: Mapping[str, str], name: str) -> str | None:
         if key.lower() == lowered:
             return value
     return None
+
+
+#: Stripe's refund statuses onto the three this application uses, which are
+#: Ziina's — chosen because they are the smaller, plainer set and because a
+#: refund only ever needs to answer "did it work, is it still going, or did it
+#: fail". `requires_action` is rare (a few bank rails) and is a pending refund
+#: from the shop's point of view: nobody here can take the action.
+_REFUND_STATUSES = {
+    "succeeded": "completed",
+    "pending": "pending",
+    "requires_action": "pending",
+    "failed": "failed",
+    "canceled": "failed",
+}
 
 
 # Module-level singleton — imported by the gateway registry

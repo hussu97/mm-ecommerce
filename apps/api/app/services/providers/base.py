@@ -81,6 +81,27 @@ class GatewaySession:
 
 
 @dataclass(frozen=True)
+class GatewayRefund:
+    """Money sent back, as the gateway acknowledged it."""
+
+    #: The gateway's handle for the refund itself, not the payment. Stored so a
+    #: second attempt can be recognised and so a dashboard conversation has a
+    #: number in it.
+    refund_id: str
+    #: What was actually sent back, in the order's currency. Read from the
+    #: gateway's reply rather than echoed from the request: a processor is
+    #: entitled to refund less than asked, and believing our own number would
+    #: leave the books saying something the bank does not.
+    amount: Decimal
+    #: `pending`, `completed` or `failed` — Ziina's three, which Stripe's
+    #: statuses are mapped onto. A refund is frequently not instant, so
+    #: `pending` is a success here and the webhook settles it later.
+    status: str
+    #: The gateway's own word, kept for the log.
+    raw_status: str | None = None
+
+
+@dataclass(frozen=True)
 class GatewayEvent:
     """One webhook, said in this application's words."""
 
@@ -177,3 +198,29 @@ class PaymentGatewayProvider(ABC):
         processor still becomes a sentence the customer can act on.
         """
         return None
+
+    async def refund(
+        self,
+        *,
+        payment_id: str,
+        amount: Decimal,
+        idempotency_key: str,
+        test_mode: bool = False,
+    ) -> GatewayRefund:
+        """
+        Send *amount* back to the card that paid `payment_id`.
+
+        `idempotency_key` is not optional and not decoration. This is called from
+        a status transition that a webhook, a retry or two admins on two laptops
+        can all reach, and the failure it prevents is paying a customer twice.
+        Both gateways take one — Stripe as a header, Ziina as the refund's own
+        client-generated `id` — so the key is derived from the order and the
+        amount rather than randomly, and the same refund asked for twice is one
+        refund.
+
+        Raises `GatewayUnavailableError` when the processor is at fault and the
+        caller may try again, and `BadRequestError` when the request is wrong in
+        a way retrying will not fix — an already-refunded charge, an amount
+        larger than the payment.
+        """
+        raise NotImplementedError(f"{self.code} cannot issue refunds")
