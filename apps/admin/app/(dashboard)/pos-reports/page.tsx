@@ -18,7 +18,7 @@ import type {
 } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Input, Select, Spinner, TabBar } from '@/components/ui';
-import { money } from '@/components/pos/ResourcePage';
+import { formatCurrency } from '@/lib/utils';
 
 type TabKey =
   | 'sales'
@@ -233,8 +233,8 @@ function BreakdownTable({ rows, unitLabel }: { rows: SalesBreakdownRow[]; unitLa
             <tr key={r.key} className="border-b border-gray-100 last:border-0">
               <td className="px-3 py-2 font-medium">{r.label}</td>
               <td className="px-3 py-2 text-right">{r.quantity ?? r.orders ?? 0}</td>
-              <td className="px-3 py-2 text-right text-gray-500">{money(r.discounts)}</td>
-              <td className="px-3 py-2 text-right">{money(r.net_sales)}</td>
+              <td className="px-3 py-2 text-right text-gray-500">{formatCurrency(r.discounts)}</td>
+              <td className="px-3 py-2 text-right">{formatCurrency(r.net_sales)}</td>
             </tr>
           ))}
         </tbody>
@@ -259,16 +259,16 @@ function SalesTab({ window }: { window: Window }) {
       <Panel loading={summary.loading} error={summary.error}>
         {summary.data && (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat label="Net sales" value={money(summary.data.net_sales)} />
+            <Stat label="Net sales" value={formatCurrency(summary.data.net_sales)} />
             <Stat label="Orders" value={String(summary.data.orders_count)} />
-            <Stat label="Average order" value={money(summary.data.average_order_value)} />
-            <Stat label="VAT collected" value={money(summary.data.taxes)} />
-            <Stat label="Discounts" value={money(summary.data.discounts)} />
-            <Stat label="Charges" value={money(summary.data.charges)} />
-            <Stat label="Returns" value={money(summary.data.returns)} />
+            <Stat label="Average order" value={formatCurrency(summary.data.average_order_value)} />
+            <Stat label="VAT collected" value={formatCurrency(summary.data.taxes)} />
+            <Stat label="Discounts" value={formatCurrency(summary.data.discounts)} />
+            <Stat label="Charges" value={formatCurrency(summary.data.charges)} />
+            <Stat label="Returns" value={formatCurrency(summary.data.returns)} />
             <Stat
               label="Voided"
-              value={money(summary.data.voided_value)}
+              value={formatCurrency(summary.data.voided_value)}
               hint={`${summary.data.voided_orders} order(s)`}
             />
           </div>
@@ -348,10 +348,10 @@ function PaymentsTab({ window }: { window: Window }) {
                 <td className="px-3 py-2 font-medium">{r.name}</td>
                 <td className="px-3 py-2 capitalize text-gray-500">{r.type.replace('_', ' ')}</td>
                 <td className="px-3 py-2 text-right">{r.transactions}</td>
-                <td className="px-3 py-2 text-right">{money(r.amount)}</td>
-                <td className="px-3 py-2 text-right text-gray-500">{money(r.refunds)}</td>
-                <td className="px-3 py-2 text-right font-medium">{money(r.net)}</td>
-                <td className="px-3 py-2 text-right">{money(r.tips)}</td>
+                <td className="px-3 py-2 text-right">{formatCurrency(r.amount)}</td>
+                <td className="px-3 py-2 text-right text-gray-500">{formatCurrency(r.refunds)}</td>
+                <td className="px-3 py-2 text-right font-medium">{formatCurrency(r.net)}</td>
+                <td className="px-3 py-2 text-right">{formatCurrency(r.tips)}</td>
               </tr>
             ))}
           </tbody>
@@ -384,8 +384,8 @@ function TaxesTab({ window }: { window: Window }) {
               <tr key={`${r.name}-${r.rate}`} className="border-b border-gray-100 last:border-0">
                 <td className="px-3 py-2 font-medium">{r.name}</td>
                 <td className="px-3 py-2 text-right">{r.rate_percent}%</td>
-                <td className="px-3 py-2 text-right">{money(r.taxable_amount)}</td>
-                <td className="px-3 py-2 text-right font-medium">{money(r.tax_amount)}</td>
+                <td className="px-3 py-2 text-right">{formatCurrency(r.taxable_amount)}</td>
+                <td className="px-3 py-2 text-right font-medium">{formatCurrency(r.tax_amount)}</td>
               </tr>
             ))}
           </tbody>
@@ -437,9 +437,9 @@ function MenuTab({ window }: { window: Window }) {
                 <tr key={r.key} className="border-b border-gray-100 last:border-0">
                   <td className="px-3 py-2 font-medium">{r.label}</td>
                   <td className="px-3 py-2 text-right">{r.quantity ?? 0}</td>
-                  <td className="px-3 py-2 text-right">{money(r.net_sales)}</td>
-                  <td className="px-3 py-2 text-right text-gray-500">{money(r.cost)}</td>
-                  <td className="px-3 py-2 text-right">{money(r.margin)}</td>
+                  <td className="px-3 py-2 text-right">{formatCurrency(r.net_sales)}</td>
+                  <td className="px-3 py-2 text-right text-gray-500">{formatCurrency(r.cost)}</td>
+                  <td className="px-3 py-2 text-right">{formatCurrency(r.margin)}</td>
                   <td className="px-3 py-2 text-right">{(r.margin_percent * 100).toFixed(1)}%</td>
                   <td className="px-3 py-2">
                     <Badge variant={style.variant}>{style.label}</Badge>
@@ -469,9 +469,9 @@ function InventoryTab({ window, branchId }: { window: Window; branchId: string }
       <Panel loading={cogs.loading} error={cogs.error}>
         {cogs.data && (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat label="Cost of goods" value={money(cogs.data.cost_of_goods)} />
-            <Stat label="Net sales (excl. VAT)" value={money(cogs.data.net_sales_excl_tax)} />
-            <Stat label="Gross margin" value={money(cogs.data.gross_margin)} />
+            <Stat label="Cost of goods" value={formatCurrency(cogs.data.cost_of_goods)} />
+            <Stat label="Net sales (excl. VAT)" value={formatCurrency(cogs.data.net_sales_excl_tax)} />
+            <Stat label="Gross margin" value={formatCurrency(cogs.data.gross_margin)} />
             <Stat label="Margin %" value={`${cogs.data.gross_margin_percent}%`} />
           </div>
         )}
@@ -482,7 +482,7 @@ function InventoryTab({ window, branchId }: { window: Window; branchId: string }
           <>
             <div className="mb-4 grid gap-3 sm:grid-cols-3">
               <Stat label="Items tracked" value={String(valuation.data.items_tracked)} />
-              <Stat label="Stock value" value={money(valuation.data.total_value)} />
+              <Stat label="Stock value" value={formatCurrency(valuation.data.total_value)} />
               <Stat
                 label="Below minimum"
                 value={String(valuation.data.below_minimum_count)}
@@ -615,8 +615,8 @@ function BranchesTrendTab({ window }: { window: Window }) {
           r.branch,
           r.business_date,
           r.orders,
-          money(r.net_sales),
-          money(r.average_order_value),
+          formatCurrency(r.net_sales),
+          formatCurrency(r.average_order_value),
         ])}
       />
     </Panel>
@@ -640,8 +640,8 @@ function TableUtilizationTab({ window }: { window: Window }) {
           r.turns,
           r.covers,
           r.average_minutes,
-          money(r.net_sales),
-          money(r.sales_per_seat),
+          formatCurrency(r.net_sales),
+          formatCurrency(r.sales_per_seat),
         ])}
       />
     </Panel>
@@ -658,7 +658,7 @@ function SuppliersTab({ window }: { window: Window }) {
     <Panel loading={loading} error={error} empty={!data?.length}>
       <ReportTable
         head={['Supplier', 'Purchase orders', 'Total spend']}
-        rows={(data ?? []).map((r) => [r.supplier, r.purchase_orders, money(r.total_spend)])}
+        rows={(data ?? []).map((r) => [r.supplier, r.purchase_orders, formatCurrency(r.total_spend)])}
       />
     </Panel>
   );

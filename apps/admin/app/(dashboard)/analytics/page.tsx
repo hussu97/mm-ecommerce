@@ -9,6 +9,7 @@ import type {
   TopProduct, TrafficData,
 } from '@/lib/types';
 import { formatCurrency } from '@/lib/utils';
+import { BRAND } from '@/lib/brand';
 
 // Lazy-load recharts to avoid SSR issues
 const LineChart = dynamic(() => import('recharts').then(m => m.LineChart), { ssr: false });
@@ -26,9 +27,12 @@ const ResponsiveContainer = dynamic(() => import('recharts').then(m => m.Respons
 const Legend = dynamic(() => import('recharts').then(m => m.Legend), { ssr: false });
 
 // ─── Brand colors ─────────────────────────────────────────────────────────────
-const PRIMARY = '#8a5a64';
-const SECONDARY = '#d6acab';
-const TERTIARY = '#dfbdc1';
+// From the shared BRAND constant (`lib/brand.ts`), which mirrors the `@theme`
+// tokens in `app/globals.css` — recharts takes colours as props, not classes.
+const PRIMARY = BRAND.primary;
+const SECONDARY = BRAND.secondary;
+const TERTIARY = BRAND.tertiary;
+// Two extra tints for pie slices beyond the three brand tokens.
 const PIE_COLORS = [PRIMARY, SECONDARY, '#c4958f', '#e8c9c7'];
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
@@ -86,6 +90,29 @@ function Empty({ message = 'No data for this period.' }: { message?: string }) {
   return <p className="text-xs text-gray-400 font-body text-center py-8">{message}</p>;
 }
 
+// ─── Per-section error note ───────────────────────────────────────────────────
+
+/**
+ * One card's endpoint failed; the other nine cards are still standing.
+ *
+ * The dashboard used to fire all ten endpoints through a single `Promise.all`
+ * with one catch, so one flaky query blanked every chart on the screen. Each
+ * section now fails alone, in place, keeping the layout.
+ */
+/** One key per endpoint the dashboard draws from; each fails independently. */
+type SectionKey =
+  | 'overview' | 'revenue' | 'orders' | 'topProducts' | 'funnel'
+  | 'traffic' | 'customers' | 'breakdown' | 'zones' | 'promos';
+
+function SectionError({ message }: { message: string }) {
+  return (
+    <div className="flex items-center justify-center gap-2 py-8">
+      <span className="material-icons text-[16px] text-red-400">error_outline</span>
+      <p className="text-xs text-red-500 font-body">Couldn&rsquo;t load this section. {message}</p>
+    </div>
+  );
+}
+
 // ─── Page ────────────────────────────────────────────────────────────────────
 import { LoadError } from '@/components/ui';
 
@@ -106,40 +133,61 @@ export default function AnalyticsPage() {
   const [promos, setPromos] = useState<PromoPerformance[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [sectionErrors, setSectionErrors] = useState<Partial<Record<SectionKey, string>>>({});
   const [exporting, setExporting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError('');
-    try {
-      const params = { start_date: startDate, end_date: endDate };
-      const [ov, rev, oc, tp, fn, tr, cu, bd, em, pr] = await Promise.all([
-        analyticsApi.overview(params),
-        analyticsApi.revenue(params),
-        analyticsApi.ordersChart(params),
-        analyticsApi.topProducts(params),
-        analyticsApi.funnel(params),
-        analyticsApi.traffic(params),
-        analyticsApi.customers(params),
-        analyticsApi.revenueBreakdown(params),
-        analyticsApi.zones(params),
-        analyticsApi.promos(params),
-      ]);
-      setOverview(ov);
-      setRevenue(rev);
-      setOrdersChart(oc);
-      setTopProducts(tp);
-      setFunnel(fn);
-      setTraffic(tr);
-      setCustomers(cu);
-      setBreakdown(bd);
-      setZones(em);
-      setPromos(pr);
-    } catch (err) {
-      setLoadError((err as Error).message);
-    } finally {
-      setLoading(false);
+    const params = { start_date: startDate, end_date: endDate };
+    // Settled individually, not `Promise.all`: ten endpoints share this screen
+    // and one flaky query used to blank all of them. A failed section clears
+    // its own data (no stale range mixing) and records its error for the
+    // in-place note; the other nine render normally.
+    const [ov, rev, oc, tp, fn, tr, cu, bd, zn, pr] = await Promise.allSettled([
+      analyticsApi.overview(params),
+      analyticsApi.revenue(params),
+      analyticsApi.ordersChart(params),
+      analyticsApi.topProducts(params),
+      analyticsApi.funnel(params),
+      analyticsApi.traffic(params),
+      analyticsApi.customers(params),
+      analyticsApi.revenueBreakdown(params),
+      analyticsApi.zones(params),
+      analyticsApi.promos(params),
+    ]);
+
+    const errs: Partial<Record<SectionKey, string>> = {};
+    function take<T>(
+      result: PromiseSettledResult<T>,
+      key: SectionKey,
+      apply: (value: T) => void,
+      fallback: T,
+    ) {
+      if (result.status === 'fulfilled') {
+        apply(result.value);
+      } else {
+        errs[key] = (result.reason as Error).message;
+        apply(fallback);
+      }
     }
+
+    take(ov, 'overview', setOverview, null);
+    take(rev, 'revenue', setRevenue, []);
+    take(oc, 'orders', setOrdersChart, []);
+    take(tp, 'topProducts', setTopProducts, []);
+    take(fn, 'funnel', setFunnel, null);
+    take(tr, 'traffic', setTraffic, null);
+    take(cu, 'customers', setCustomers, null);
+    take(bd, 'breakdown', setBreakdown, null);
+    take(zn, 'zones', setZones, []);
+    take(pr, 'promos', setPromos, []);
+
+    setSectionErrors(errs);
+    // Only when every endpoint failed is the dashboard genuinely down — that
+    // still deserves the full-width banner rather than ten identical notes.
+    setLoadError(Object.keys(errs).length === 10 ? (Object.values(errs)[0] ?? '') : '');
+    setLoading(false);
   }, [startDate, endDate]);
 
   useEffect(() => { load(); }, [load]);
@@ -256,6 +304,11 @@ export default function AnalyticsPage() {
           )}
 
           {/* Row A — Traffic KPIs */}
+          {sectionErrors.traffic && (
+            <div className="bg-white border border-gray-200 mb-6">
+              <SectionError message={sectionErrors.traffic} />
+            </div>
+          )}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
             <MetricCard
               label="Visitors"
@@ -277,6 +330,11 @@ export default function AnalyticsPage() {
           </div>
 
           {/* Row B — Order KPIs */}
+          {sectionErrors.overview && (
+            <div className="bg-white border border-gray-200 mb-6">
+              <SectionError message={sectionErrors.overview} />
+            </div>
+          )}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
             <MetricCard
               label="Revenue"
@@ -302,7 +360,9 @@ export default function AnalyticsPage() {
           {/* Row C — Visitor Trend + Revenue Over Time */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
             <Section title="Visitor Trend">
-              {!traffic?.configured ? (
+              {sectionErrors.traffic ? (
+                <SectionError message={sectionErrors.traffic} />
+              ) : !traffic?.configured ? (
                 <Empty message="Configure Umami to see visitor trend." />
               ) : traffic.pageviews_chart.length === 0 ? (
                 <Empty />
@@ -335,7 +395,9 @@ export default function AnalyticsPage() {
             </Section>
 
             <Section title="Revenue Over Time">
-              {revenue.length === 0 ? (
+              {sectionErrors.revenue ? (
+                <SectionError message={sectionErrors.revenue} />
+              ) : revenue.length === 0 ? (
                 <Empty />
               ) : (
                 <ResponsiveContainer width="100%" height={220}>
@@ -372,7 +434,9 @@ export default function AnalyticsPage() {
           {/* Row D — Orders Over Time + Orders by Status */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
             <Section title="Orders Over Time">
-              {ordersChart.length === 0 ? (
+              {sectionErrors.orders ? (
+                <SectionError message={sectionErrors.orders} />
+              ) : ordersChart.length === 0 ? (
                 <Empty />
               ) : (
                 <ResponsiveContainer width="100%" height={220}>
@@ -399,7 +463,9 @@ export default function AnalyticsPage() {
             </Section>
 
             <Section title="Orders by Status">
-              {funnelPieData.length === 0 ? (
+              {sectionErrors.funnel ? (
+                <SectionError message={sectionErrors.funnel} />
+              ) : funnelPieData.length === 0 ? (
                 <Empty />
               ) : (
                 <div>
@@ -441,7 +507,9 @@ export default function AnalyticsPage() {
           {/* Row E — Revenue by Delivery Method + Payment Method */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
             <Section title="Revenue by Delivery Method">
-              {!breakdown?.by_delivery_method.length ? (
+              {sectionErrors.breakdown ? (
+                <SectionError message={sectionErrors.breakdown} />
+              ) : !breakdown?.by_delivery_method.length ? (
                 <Empty />
               ) : (
                 <ResponsiveContainer width="100%" height={breakdown.by_delivery_method.length * 52 + 20}>
@@ -468,7 +536,9 @@ export default function AnalyticsPage() {
             {/* What the customer chose. Stable no matter which processor is
                 carrying the card estate this week. */}
             <Section title="Revenue by Payment Method">
-              {!breakdown?.by_payment_method.length ? (
+              {sectionErrors.breakdown ? (
+                <SectionError message={sectionErrors.breakdown} />
+              ) : !breakdown?.by_payment_method.length ? (
                 <Empty />
               ) : (
                 <ResponsiveContainer width="100%" height={breakdown.by_payment_method.length * 52 + 20}>
@@ -528,7 +598,9 @@ export default function AnalyticsPage() {
           {/* Row F — Sales by Delivery Zone + Customer Type */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
             <Section title="Sales by Delivery Zone">
-              {topZonesData.length === 0 ? (
+              {sectionErrors.zones ? (
+                <SectionError message={sectionErrors.zones} />
+              ) : topZonesData.length === 0 ? (
                 <Empty />
               ) : (
                 <ResponsiveContainer width="100%" height={topZonesData.length * 52 + 20}>
@@ -553,7 +625,9 @@ export default function AnalyticsPage() {
             </Section>
 
             <Section title="Customer Type">
-              {customerPieData.length === 0 ? (
+              {sectionErrors.customers ? (
+                <SectionError message={sectionErrors.customers} />
+              ) : customerPieData.length === 0 ? (
                 <Empty />
               ) : (
                 <div>
@@ -597,7 +671,9 @@ export default function AnalyticsPage() {
           {/* Row G — Top Products + Top Pages */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
             <Section title="Top Products by Revenue">
-              {topProducts.length === 0 ? (
+              {sectionErrors.topProducts ? (
+                <SectionError message={sectionErrors.topProducts} />
+              ) : topProducts.length === 0 ? (
                 <Empty />
               ) : (
                 <table className="w-full text-xs font-body">
@@ -625,7 +701,9 @@ export default function AnalyticsPage() {
             </Section>
 
             <Section title="Top Pages">
-              {!traffic?.configured ? (
+              {sectionErrors.traffic ? (
+                <SectionError message={sectionErrors.traffic} />
+              ) : !traffic?.configured ? (
                 <Empty message="Configure Umami to see top pages." />
               ) : traffic.top_pages.length === 0 ? (
                 <Empty />
@@ -657,7 +735,9 @@ export default function AnalyticsPage() {
               Umami and still be invisible everywhere the shop actually looks. */}
           <div className="mb-6">
           <Section title="Storefront Events">
-            {!traffic?.configured ? (
+            {sectionErrors.traffic ? (
+              <SectionError message={sectionErrors.traffic} />
+            ) : !traffic?.configured ? (
               <Empty message="Configure Umami to see storefront events." />
             ) : traffic.events.length === 0 ? (
               <Empty message="No events recorded in this period." />
@@ -684,7 +764,9 @@ export default function AnalyticsPage() {
 
           {/* Row H — Promo Performance (full width) */}
           <Section title="Promo Code Performance">
-            {promos.length === 0 ? (
+            {sectionErrors.promos ? (
+              <SectionError message={sectionErrors.promos} />
+            ) : promos.length === 0 ? (
               <Empty message="No promo codes used in this period." />
             ) : (
               <table className="w-full text-xs font-body">

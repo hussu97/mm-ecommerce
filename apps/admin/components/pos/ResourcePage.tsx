@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError } from '@/lib/api';
-import { Badge, Button, Input, Select, Spinner } from '@/components/ui';
+import { Badge, Button, Input, Pagination, Select, Spinner } from '@/components/ui';
 import { cn } from '@/lib/utils';
 
 /**
@@ -58,6 +58,12 @@ export interface ResourcePageProps<T extends { id: string }> {
   /** Extra controls rendered next to the "New" button. */
   toolbar?: React.ReactNode;
   rowActions?: (row: T, reload: () => void) => React.ReactNode;
+  /**
+   * Client-side pagination via the shared `Pagination` component (`load` still
+   * fetches everything in one call). Off by default — most of these lists are
+   * a dozen configuration rows — switch it on for the unbounded ones.
+   */
+  paginated?: boolean;
 }
 
 export function ResourcePage<T extends { id: string }>({
@@ -74,11 +80,14 @@ export function ResourcePage<T extends { id: string }>({
   emptyMessage = 'Nothing here yet.',
   toolbar,
   rowActions,
+  paginated = false,
 }: ResourcePageProps<T>) {
   const [rows, setRows] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(50);
 
   const [editing, setEditing] = useState<T | null>(null);
   const [creating, setCreating] = useState(false);
@@ -110,6 +119,15 @@ export function ResourcePage<T extends { id: string }>({
       searchKeys.some((key) => String(row[key] ?? '').toLowerCase().includes(needle)),
     );
   }, [rows, search, searchKeys]);
+
+  // A search that shrinks the result set below the current page would show an
+  // empty table with rows still there — land back on the first page instead.
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
+
+  const pages = Math.max(1, Math.ceil(visible.length / perPage));
+  const pageRows = paginated ? visible.slice((page - 1) * perPage, page * perPage) : visible;
 
   function openCreate() {
     setForm({ ...defaults });
@@ -240,7 +258,7 @@ export function ResourcePage<T extends { id: string }>({
               </tr>
             </thead>
             <tbody>
-              {visible.map((row) => (
+              {pageRows.map((row) => (
                 <tr key={row.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
                   {columns.map((c) => (
                     <td key={c.header} className={cn('px-3 py-2 align-middle', c.className)}>
@@ -275,6 +293,18 @@ export function ResourcePage<T extends { id: string }>({
             </tbody>
           </table>
         </div>
+      )}
+
+      {paginated && !loading && visible.length > 0 && (
+        <Pagination
+          page={page}
+          pages={pages}
+          total={visible.length}
+          perPage={perPage}
+          onPageChange={setPage}
+          onPerPageChange={setPerPage}
+          label={title.toLowerCase()}
+        />
       )}
 
       {formOpen && (
@@ -369,7 +399,7 @@ function FormField({
           type="checkbox"
           checked={Boolean(value)}
           onChange={(e) => onChange(e.target.checked)}
-          className="h-4 w-4 accent-[color:var(--color-primary)]"
+          className="h-4 w-4 accent-primary"
         />
         <span>{field.label}</span>
         {field.helper && <span className="text-xs text-gray-400">— {field.helper}</span>}
@@ -423,7 +453,6 @@ export function StatusBadge({ active }: { active: boolean }) {
   return <Badge variant={active ? 'success' : 'neutral'}>{active ? 'Active' : 'Inactive'}</Badge>;
 }
 
-export function money(value: number | string | null | undefined, symbol = 'AED'): string {
-  const n = Number(value ?? 0);
-  return `${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${symbol}`;
-}
+// `money()` used to live here, printing "1,234.50 AED" while the rest of the
+// console printed "AED 1234.50". There is one formatter now — `formatCurrency`
+// in `lib/utils.ts` — and the POS screens accept its shape.

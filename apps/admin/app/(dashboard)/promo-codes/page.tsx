@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { promoApi, bulkApi, ApiError } from '@/lib/api';
 import type { PromoCode } from '@/lib/types';
 import { Button, Input, Pagination, Select, TabBar, LoadError} from '@/components/ui';
+import { useConfirm, useToast } from '@/components/ui/feedback';
+import { useApiList } from '@/hooks/useApiList';
 import { formatCurrency, formatDate } from '@/lib/utils';
 
 const DISCOUNT_TYPE_OPTIONS = [
@@ -42,9 +44,8 @@ const EMPTY_FORM: FormState = {
 };
 
 export default function PromoCodesPage() {
-  const [codes, setCodes] = useState<PromoCode[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState('');
+  const toast = useToast();
+  const confirm = useConfirm();
   const [activeTab, setActiveTab] = useState<'active' | 'inactive'>('active');
   const [showForm, setShowForm] = useState(false);
   const [editingCode, setEditingCode] = useState<PromoCode | null>(null);
@@ -54,25 +55,14 @@ export default function PromoCodesPage() {
   const [actionCode, setActionCode] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulking, setBulking] = useState(false);
-  const [page, setPage] = useState(1);
-  const [perPage, setPerPage] = useState(50);
 
-  useEffect(() => {
-    load();
-  }, []);
-
-  async function load() {
-    setLoading(true);
-    setLoadError('');
-    try {
-      const res = await promoApi.list(true);
-      setCodes(res);
-    } catch (err) {
-      setLoadError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }
+  // Client-side pagination: `/promo-codes` returns the whole list in one call
+  // and the tab filter + slicing below happen locally.
+  const fetchCodes = useCallback(() => promoApi.list(true), []);
+  const {
+    items: codes, page, perPage, setPage, setPerPage,
+    loading, loadError, refetch,
+  } = useApiList<PromoCode>({ paginate: 'client', fetch: fetchCodes });
 
   const filteredCodes = codes.filter(c =>
     activeTab === 'active' ? c.is_active : !c.is_active
@@ -142,13 +132,12 @@ export default function PromoCodesPage() {
     };
     try {
       if (editingCode) {
-        const updated = await promoApi.update(editingCode.code, payload);
-        setCodes(prev => prev.map(c => c.code === editingCode.code ? updated : c));
+        await promoApi.update(editingCode.code, payload);
       } else {
-        const created = await promoApi.create(payload);
-        setCodes(prev => [created, ...prev]);
+        await promoApi.create(payload);
       }
       closeForm();
+      await refetch();
     } catch (err) {
       setFormError((err as Error).message);
     } finally {
@@ -181,24 +170,29 @@ export default function PromoCodesPage() {
     setBulking(true);
     try {
       await bulkApi.updateStatus('promo-codes', Array.from(selectedIds), is_active);
-      await load();
+      await refetch();
       setSelectedIds(new Set());
       setPage(1);
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : 'Bulk action failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Bulk action failed.');
     } finally {
       setBulking(false);
     }
   }
 
   async function handleDeactivate(code: string) {
-    if (!confirm(`Deactivate promo code "${code}"? It will move to the Inactive tab.`)) return;
+    if (!(await confirm({
+      title: 'Deactivate promo code',
+      message: `Deactivate promo code "${code}"? It will move to the Inactive tab.`,
+      confirmLabel: 'Deactivate',
+      danger: true,
+    }))) return;
     setActionCode(code);
     try {
       await promoApi.delete(code);
-      setCodes(prev => prev.map(c => c.code === code ? { ...c, is_active: false } : c));
+      await refetch();
     } catch (err) {
-      alert((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setActionCode(null);
     }
@@ -207,10 +201,10 @@ export default function PromoCodesPage() {
   async function handleRestore(code: string) {
     setActionCode(code);
     try {
-      const updated = await promoApi.update(code, { is_active: true });
-      setCodes(prev => prev.map(c => c.code === code ? updated : c));
+      await promoApi.update(code, { is_active: true });
+      await refetch();
     } catch (err) {
-      alert((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setActionCode(null);
     }
@@ -221,7 +215,7 @@ export default function PromoCodesPage() {
 
   return (
     <div>
-      <LoadError message={loadError} onRetry={load} />
+      <LoadError message={loadError} onRetry={refetch} />
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>

@@ -49,6 +49,16 @@ describe('formatCurrency', () => {
   it('formats string input', () => {
     expect(formatCurrency('50')).toBe('AED 50.00');
   });
+
+  it('groups thousands', () => {
+    expect(formatCurrency(1234.5)).toBe('AED 1,234.50');
+    expect(formatCurrency(1000000)).toBe('AED 1,000,000.00');
+  });
+
+  it('treats null and undefined as zero (the shape money() accepted)', () => {
+    expect(formatCurrency(null)).toBe('AED 0.00');
+    expect(formatCurrency(undefined)).toBe('AED 0.00');
+  });
 });
 
 describe('formatDate', () => {

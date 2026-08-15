@@ -8,6 +8,7 @@ import type { Category, Modifier, Product, SalesChannel } from '@/lib/types';
 import { SALES_CHANNELS } from '@/lib/types';
 import { SalesChannelPicker } from '@/components/products/SalesChannels';
 import { Button, Input, Select, Textarea } from '@/components/ui';
+import { useConfirm, useToast } from '@/components/ui/feedback';
 import { TranslationFields } from '@/components/TranslationFields';
 import { useLanguages } from '@/hooks/useLanguages';
 import { slugify } from '@/lib/utils';
@@ -20,6 +21,8 @@ export function ProductForm({ product }: Props) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { languages } = useLanguages();
+  const toast = useToast();
+  const confirm = useConfirm();
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [form, setForm] = useState({
@@ -543,13 +546,18 @@ export function ProductForm({ product }: Props) {
                       size="sm"
                       loading={unlinkingId === pm.modifier_id}
                       onClick={async () => {
-                        if (!confirm(`Unlink "${pm.modifier.name}" from this product?`)) return;
+                        if (!(await confirm({
+                          title: 'Unlink modifier',
+                          message: `Unlink "${pm.modifier.name}" from this product?`,
+                          confirmLabel: 'Unlink',
+                          danger: true,
+                        }))) return;
                         setUnlinkingId(pm.modifier_id);
                         try {
                           const updated = await productsApi.unlinkModifier(product.slug, pm.modifier_id);
                           setCurrentProduct(updated);
                         } catch (err) {
-                          alert(err instanceof ApiError ? err.message : 'Failed to unlink.');
+                          toast.error(err instanceof ApiError ? err.message : 'Failed to unlink.');
                         } finally {
                           setUnlinkingId(null);
                         }

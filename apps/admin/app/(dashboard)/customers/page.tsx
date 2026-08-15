@@ -1,57 +1,38 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { customersApi } from '@/lib/api';
 import type { CustomerSummary } from '@/lib/types';
 import { Button, Input, Pagination, LoadError} from '@/components/ui';
+import { useApiList } from '@/hooks/useApiList';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { formatCurrency, formatDate } from '@/lib/utils';
 
 export default function CustomersPage() {
   const router = useRouter();
-  const [customers, setCustomers] = useState<CustomerSummary[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [pages, setPages] = useState(1);
-  const [perPage, setPerPage] = useState(50);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debouncedSearch = useDebouncedValue(search);
 
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => setDebouncedSearch(search), 350);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [search]);
-
-  useEffect(() => { setPage(1); }, [debouncedSearch]);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setLoadError('');
-    try {
-      const res = await customersApi.list({
+  // Server-side pagination: `/users/admin/all` pages and searches in SQL.
+  const fetchCustomers = useCallback(
+    (page: number, perPage: number) =>
+      customersApi.list({
         search: debouncedSearch || undefined,
         page,
         per_page: perPage,
-      });
-      setCustomers(res.items);
-      setTotal(res.total);
-      setPages(res.pages);
-    } catch (err) {
-      setLoadError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [debouncedSearch, page, perPage]);
+      }),
+    [debouncedSearch],
+  );
 
-  useEffect(() => { load(); }, [load]);
+  const {
+    items: customers, total, pages, page, perPage, setPage, setPerPage,
+    loading, loadError, refetch,
+  } = useApiList<CustomerSummary>({ paginate: 'server', fetch: fetchCustomers });
 
   return (
     <div>
-      <LoadError message={loadError} onRetry={load} />
+      <LoadError message={loadError} onRetry={refetch} />
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>

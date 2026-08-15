@@ -6,7 +6,8 @@ import Link from 'next/link';
 import { ordersApi, ApiError } from '@/lib/api';
 import type { LalamoveQuote, Order, OrderDelivery, OrderEconomics, OrderStatus } from '@/lib/types';
 import { Badge, Button } from '@/components/ui';
-import { cn, formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
+import { useConfirm, useToast } from '@/components/ui/feedback';
+import { cn, formatCurrency, formatDateTime } from '@/lib/utils';
 
 /**
  * Orders that are not going anywhere, whatever the delivery row still says.
@@ -93,6 +94,8 @@ const STATUS_VARIANT: Record<OrderStatus, 'warning' | 'info' | 'success' | 'dang
 };
 
 export default function OrderDetailPage() {
+  const toast = useToast();
+  const confirmDialog = useConfirm();
   const { orderNumber } = useParams<{ orderNumber: string }>();
   const [order, setOrder] = useState<Order | null>(null);
   const [delivery, setDelivery] = useState<OrderDelivery | null>(null);
@@ -145,26 +148,34 @@ export default function OrderDetailPage() {
     // Cancelling goes through on the first click — it is the one status the
     // counter changes while the customer is still on the phone. Every other
     // move still asks.
-    if (newStatus !== 'cancelled' && !confirm(`Set order to "${STATUS_LABEL[newStatus]}"?`)) return;
+    if (newStatus !== 'cancelled' && !(await confirmDialog({
+      title: 'Change status',
+      message: `Set order to "${STATUS_LABEL[newStatus]}"?`,
+      confirmLabel: 'Change status',
+    }))) return;
     setActionLoading(true);
     try {
       const updated = await ordersApi.updateStatus(orderNumber, newStatus, notes || undefined);
       setOrder(updated);
       loadDelivery();
     } catch (err) {
-      alert((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setActionLoading(false);
     }
   }
 
   async function redispatch() {
-    if (!confirm('Book the courier again for this order?')) return;
+    if (!(await confirmDialog({
+      title: 'Book courier again',
+      message: 'Book the courier again for this order?',
+      confirmLabel: 'Book courier',
+    }))) return;
     setActionLoading(true);
     try {
       setDelivery(await ordersApi.dispatchDelivery(orderNumber));
     } catch (err) {
-      alert((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setActionLoading(false);
     }
@@ -176,7 +187,7 @@ export default function OrderDetailPage() {
     try {
       setQuote(await ordersApi.quoteLalamove(orderNumber));
     } catch (err) {
-      alert((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setActionLoading(false);
     }
@@ -201,7 +212,7 @@ export default function OrderDetailPage() {
         setQuote(fresh.quote);
         setQuoteExpired(true);
       } else {
-        alert((err as Error).message);
+        toast.error((err as Error).message);
         setQuote(null);
       }
     } finally {
@@ -219,7 +230,7 @@ export default function OrderDetailPage() {
       // refresh look like it did nothing.
       setOrder(fresh);
     } catch (err) {
-      alert((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setActionLoading(false);
     }
@@ -231,8 +242,9 @@ export default function OrderDetailPage() {
     try {
       const updated = await ordersApi.updateStatus(orderNumber, order.status, notes);
       setOrder(updated);
+      toast.success('Notes saved.');
     } catch (err) {
-      alert((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setActionLoading(false);
     }
@@ -591,11 +603,11 @@ const DELIVERED_STATUSES = new Set(['COMPLETED', 'delivered']);
 /**
  * The one decision this whole flow exists for: is this delivery worth the fee.
  *
- * A dialog rather than the `window.confirm` every other action on this page
- * uses, because the answer depends on four numbers and a sentence cannot carry
- * them legibly. It is local to this file — the admin has no modal component and
- * inventing a shared one for a single caller would be guessing at the second
- * caller's requirements.
+ * A bespoke dialog rather than the shared `useConfirm` every other action on
+ * this page uses, because the answer depends on four numbers and a sentence
+ * cannot carry them legibly. It stays local to this file — the shared confirm
+ * takes a message, and stretching it to render arbitrary quote tables for a
+ * single caller would be guessing at the second caller's requirements.
  */
 function AssignLalamoveDialog({
   quote,

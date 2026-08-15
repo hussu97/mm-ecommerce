@@ -16,13 +16,15 @@
  * half full of dashes.
  */
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ordersApi, exportApi } from '@/lib/api';
 import { branchesApi } from '@/lib/pos-api';
 import type { Branch } from '@/lib/pos-types';
 import type { Order, OrderStatus } from '@/lib/types';
 import { Badge, Button, Input, Pagination, Select, TabBar, LoadError} from '@/components/ui';
+import { useApiList } from '@/hooks/useApiList';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { formatCurrency, formatDate } from '@/lib/utils';
 
 const STATUS_OPTIONS = [
@@ -69,23 +71,16 @@ export default function OrdersPage() {
   const router = useRouter();
   const params = useSearchParams();
 
-  const [orders, setOrders] = useState<Order[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [pages, setPages] = useState(1);
-  const [perPage, setPerPage] = useState(50);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [branchId, setBranchId] = useState('');
+  const [exportError, setExportError] = useState('');
   // Deep-linkable, so the old /pos-orders bookmark can land here on the right tab.
   const [channel, setChannel] = useState<Channel>(
     (params.get('channel') as Channel) || '',
   );
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search);
 
   useEffect(() => {
     void branchesApi
@@ -94,49 +89,32 @@ export default function OrdersPage() {
       .catch(() => setBranches([]));
   }, []);
 
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => setDebouncedSearch(search), 350);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [search]);
-
-  useEffect(() => {
-    setPage(1);
-  }, [debouncedSearch, statusFilter, channel, branchId]);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setLoadError('');
-    try {
-      const res = await ordersApi.listAll({
+  // Server-side pagination: `/orders/admin/all` pages and filters in SQL, and
+  // the hook resets to page 1 whenever a filter changes this fetcher.
+  const fetchOrders = useCallback(
+    (page: number, perPage: number) =>
+      ordersApi.listAll({
         search: debouncedSearch || undefined,
         status: statusFilter || undefined,
         channel: channel || undefined,
         branch_id: branchId || undefined,
         page,
         per_page: perPage,
-      });
-      setOrders(res.items);
-      setTotal(res.total);
-      setPages(res.pages);
-    } catch (err) {
-      setLoadError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [debouncedSearch, statusFilter, channel, branchId, page, perPage]);
+      }),
+    [debouncedSearch, statusFilter, channel, branchId],
+  );
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const {
+    items: orders, total, pages, page, perPage, setPage, setPerPage,
+    loading, loadError, refetch,
+  } = useApiList<Order>({ paginate: 'server', fetch: fetchOrders });
 
   async function exportCsv() {
+    setExportError('');
     try {
       await exportApi.exportOrders({ status: statusFilter || undefined });
     } catch (err) {
-      setLoadError((err as Error).message);
+      setExportError((err as Error).message);
     }
   }
 
@@ -147,7 +125,7 @@ export default function OrdersPage() {
 
   return (
     <div>
-      <LoadError message={loadError} onRetry={load} />
+      <LoadError message={loadError || exportError} onRetry={refetch} />
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="font-display text-2xl text-gray-800">Orders</h1>

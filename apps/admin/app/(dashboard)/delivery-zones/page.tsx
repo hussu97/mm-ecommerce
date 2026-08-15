@@ -15,6 +15,7 @@ import type {
   FulfilmentProvider,
 } from '@/lib/types';
 import { Badge, Button, Input, Select, Spinner, TabBar } from '@/components/ui';
+import { useConfirm, useToast } from '@/components/ui/feedback';
 import { BatchWindows } from '@/components/delivery/BatchWindows';
 import { ZoneMap } from '@/components/delivery/ZoneMap';
 import { cn, formatCurrency, formatDate } from '@/lib/utils';
@@ -50,6 +51,8 @@ const PRICING_OPTIONS = [
 ];
 
 export default function DeliveryZonesPage() {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [versions, setVersions] = useState<DeliveryMapVersion[]>([]);
   const [settings, setSettings] = useState<DeliverySettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -98,7 +101,7 @@ export default function DeliveryZonesPage() {
       await action();
       await load();
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : String(err));
+      toast.error(err instanceof ApiError ? err.message : String(err));
     } finally {
       setBusy(false);
     }
@@ -107,7 +110,7 @@ export default function DeliveryZonesPage() {
   async function createDraft(sourceId: string) {
     const name = draftName.trim();
     if (!name) {
-      alert('Give the draft a name so it can be told apart from the live map.');
+      toast.error('Give the draft a name so it can be told apart from the live map.');
       return;
     }
     await run(async () => {
@@ -173,10 +176,13 @@ export default function DeliveryZonesPage() {
         <RunsTab
           batches={batches}
           busy={busy}
-          onDispatch={id =>
-            confirm('Send this run to the courier now?') &&
-            run(() => deliveryZonesApi.dispatchBatch(id))
-          }
+          onDispatch={async id => {
+            if (await confirm({
+              title: 'Dispatch run',
+              message: 'Send this run to the courier now?',
+              confirmLabel: 'Dispatch',
+            })) void run(() => deliveryZonesApi.dispatchBatch(id));
+          }}
         />
       )}
 
@@ -200,15 +206,21 @@ export default function DeliveryZonesPage() {
             onToggle={() => setOpenId(openId === version.id ? null : version.id)}
             onDraftNameChange={setDraftName}
             onCopy={() => createDraft(version.id)}
-            onPublish={() =>
-              confirm(
-                `Publish "${version.name}"? Every new order is priced from it immediately.`,
-              ) && run(() => deliveryZonesApi.publish(version.id))
-            }
-            onDelete={() =>
-              confirm(`Delete the draft "${version.name}"?`) &&
-              run(() => deliveryZonesApi.deleteVersion(version.id))
-            }
+            onPublish={async () => {
+              if (await confirm({
+                title: 'Publish map',
+                message: `Publish "${version.name}"? Every new order is priced from it immediately.`,
+                confirmLabel: 'Publish',
+              })) void run(() => deliveryZonesApi.publish(version.id));
+            }}
+            onDelete={async () => {
+              if (await confirm({
+                title: 'Delete draft',
+                message: `Delete the draft "${version.name}"?`,
+                confirmLabel: 'Delete',
+                danger: true,
+              })) void run(() => deliveryZonesApi.deleteVersion(version.id));
+            }}
             onZoneChange={(zoneId, data) =>
               run(() => deliveryZonesApi.updateZone(zoneId, data))
             }
@@ -776,6 +788,7 @@ function SettingsCard({
   busy: boolean;
   onSave: (data: { pickup_fee?: number }) => void;
 }) {
+  const toast = useToast();
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<Record<string, string>>({
     pickup_fee: String(settings.pickup_fee),
@@ -823,7 +836,7 @@ function SettingsCard({
       }
       const value = Number(raw);
       if (!Number.isFinite(value) || value < 0) {
-        alert('Every amount has to be a number, and none of them can be negative.');
+        toast.error('Every amount has to be a number, and none of them can be negative.');
         return;
       }
       parsed[field.key] = value;

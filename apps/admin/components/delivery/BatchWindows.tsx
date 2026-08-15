@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { deliveryZonesApi, ApiError } from '@/lib/api';
 import type { BatchWindow, BatchWindowWrite } from '@/lib/types';
 import { Button, Spinner } from '@/components/ui';
+import { useConfirm } from '@/components/ui/feedback';
 
 /**
  * When a group's zones travel together.
@@ -37,6 +38,7 @@ interface Props {
 }
 
 export function BatchWindows({ groupId, zoneName }: Props) {
+  const confirm = useConfirm();
   const [windows, setWindows] = useState<BatchWindow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -111,10 +113,14 @@ export function BatchWindows({ groupId, zoneName }: Props) {
               window={w}
               busy={busy}
               onSave={data => run(() => deliveryZonesApi.updateWindow(w.id, data))}
-              onDelete={() =>
-                confirm(`Remove "${w.label}"? Orders waiting on it are rescheduled.`) &&
-                run(() => deliveryZonesApi.deleteWindow(w.id))
-              }
+              onDelete={async () => {
+                if (await confirm({
+                  title: 'Remove slot',
+                  message: `Remove "${w.label}"? Orders waiting on it are rescheduled.`,
+                  confirmLabel: 'Remove',
+                  danger: true,
+                })) void run(() => deliveryZonesApi.deleteWindow(w.id));
+              }}
             />
           ))}
           {!windows.length && !draft && (

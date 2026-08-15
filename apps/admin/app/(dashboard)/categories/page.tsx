@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { categoriesApi, uploadsApi, bulkApi, ApiError } from '@/lib/api';
 import type { Category } from '@/lib/types';
-import { Button, Input, Pagination, TabBar, Textarea } from '@/components/ui';
+import { Button, Input, LoadError, Pagination, TabBar, Textarea } from '@/components/ui';
+import { useConfirm, useToast } from '@/components/ui/feedback';
+import { useApiList } from '@/hooks/useApiList';
 import { TranslationFields } from '@/components/TranslationFields';
 import { useLanguages } from '@/hooks/useLanguages';
 
@@ -11,11 +13,9 @@ const BLANK = { name: '', slug: '', description: '', image_url: '', display_orde
 
 export default function CategoriesPage() {
   const { languages } = useLanguages();
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [loading, setLoading] = useState(true);
+  const toast = useToast();
+  const confirm = useConfirm();
   const [activeTab, setActiveTab] = useState<'active' | 'inactive'>('active');
-  const [page, setPage] = useState(1);
-  const [perPage, setPerPage] = useState(50);
   const [showForm, setShowForm] = useState(false);
   const [editSlug, setEditSlug] = useState<string | null>(null);
   const [form, setForm] = useState(BLANK);
@@ -30,11 +30,17 @@ export default function CategoriesPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulking, setBulking] = useState(false);
 
-  useEffect(() => {
-    categoriesApi.list(true)
-      .then(cats => setCategories([...cats].sort((a, b) => a.display_order - b.display_order)))
-      .finally(() => setLoading(false));
-  }, []);
+  // Client-side pagination: `/categories` returns the whole list in one call;
+  // the tab filter, search and slicing below happen locally.
+  const fetchCategories = useCallback(
+    () => categoriesApi.list(true)
+      .then(cats => [...cats].sort((a, b) => a.display_order - b.display_order)),
+    [],
+  );
+  const {
+    items: categories, page, perPage, setPage, setPerPage,
+    loading, loadError, refetch,
+  } = useApiList<Category>({ paginate: 'client', fetch: fetchCategories });
 
   const q = search.trim().toLowerCase();
   const filteredCategories = categories.filter(c =>
@@ -127,15 +133,12 @@ export default function CategoriesPage() {
         display_order: form.display_order,
       };
       if (editSlug) {
-        const updated = await categoriesApi.update(editSlug, data);
-        setCategories(prev =>
-          [...prev.map(c => c.slug === editSlug ? updated : c)].sort((a, b) => a.display_order - b.display_order)
-        );
+        await categoriesApi.update(editSlug, data);
       } else {
-        const created = await categoriesApi.create(data);
-        setCategories(prev => [...prev, created].sort((a, b) => a.display_order - b.display_order));
+        await categoriesApi.create(data);
       }
       closeForm();
+      await refetch();
     } catch (err) {
       setApiError(err instanceof ApiError ? err.message : 'Failed to save category.');
     } finally {
@@ -144,14 +147,19 @@ export default function CategoriesPage() {
   }
 
   async function handleDeactivate(slug: string, name: string) {
-    if (!confirm(`Deactivate "${name}"? It will move to the Inactive tab.`)) return;
+    if (!(await confirm({
+      title: 'Deactivate category',
+      message: `Deactivate "${name}"? It will move to the Inactive tab.`,
+      confirmLabel: 'Deactivate',
+      danger: true,
+    }))) return;
     setActionSlug(slug);
     try {
       await categoriesApi.delete(slug);
-      setCategories(prev => prev.map(c => c.slug === slug ? { ...c, is_active: false } : c));
+      await refetch();
       setPage(1);
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : 'Deactivate failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Deactivate failed.');
     } finally {
       setActionSlug(null);
     }
@@ -160,11 +168,11 @@ export default function CategoriesPage() {
   async function handleRestore(slug: string) {
     setActionSlug(slug);
     try {
-      const updated = await categoriesApi.update(slug, { is_active: true });
-      setCategories(prev => prev.map(c => c.slug === slug ? updated : c));
+      await categoriesApi.update(slug, { is_active: true });
+      await refetch();
       setPage(1);
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : 'Restore failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Restore failed.');
     } finally {
       setActionSlug(null);
     }
@@ -181,20 +189,13 @@ export default function CategoriesPage() {
     setReorderingSlug(slug);
 
     try {
-      const [updatedTarget, updatedSwap] = await Promise.all([
+      await Promise.all([
         categoriesApi.update(target.slug, { display_order: swapped.display_order }),
         categoriesApi.update(swapped.slug, { display_order: target.display_order }),
       ]);
-      setCategories(prev => {
-        const next = prev.map(c => {
-          if (c.slug === updatedTarget.slug) return updatedTarget;
-          if (c.slug === updatedSwap.slug) return updatedSwap;
-          return c;
-        });
-        return [...next].sort((a, b) => a.display_order - b.display_order);
-      });
-    } catch {
-      // ignore
+      await refetch();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Reorder failed.');
     } finally {
       setReorderingSlug(null);
     }
@@ -225,12 +226,11 @@ export default function CategoriesPage() {
     setBulking(true);
     try {
       await bulkApi.updateStatus('categories', Array.from(selectedIds), is_active);
-      const cats = await categoriesApi.list(true);
-      setCategories([...cats].sort((a, b) => a.display_order - b.display_order));
+      await refetch();
       setSelectedIds(new Set());
       setPage(1);
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : 'Bulk action failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Bulk action failed.');
     } finally {
       setBulking(false);
     }
@@ -241,6 +241,7 @@ export default function CategoriesPage() {
 
   return (
     <div>
+      <LoadError message={loadError} onRetry={refetch} />
       <div className="flex items-center justify-between mb-6">
         <h1 className="font-display text-2xl text-gray-800">Categories</h1>
         {!showForm && (

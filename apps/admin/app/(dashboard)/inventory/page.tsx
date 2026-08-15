@@ -11,7 +11,8 @@ import type {
 } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Select, Spinner, TabBar } from '@/components/ui';
-import { ResourcePage, StatusBadge, money } from '@/components/pos/ResourcePage';
+import { ResourcePage, StatusBadge } from '@/components/pos/ResourcePage';
+import { formatCurrency } from '@/lib/utils';
 
 type TabKey = 'items' | 'levels' | 'suppliers' | 'categories';
 
@@ -53,6 +54,10 @@ function ItemsTab() {
     <ResourcePage<InventoryItem>
       title="Inventory Items"
       description="Raw materials and tracked goods. Items are bought in a storage unit and consumed in an ingredient unit."
+      // The one ResourcePage list with no natural ceiling — every ingredient
+      // ever bought lands here — so it pages where its siblings (a dozen
+      // taxes, a handful of branches) do not.
+      paginated
       load={load}
       create={(d) => inventoryApi.createItem(d)}
       update={(id, d) => inventoryApi.updateItem(id, d)}
@@ -83,7 +88,7 @@ function ItemsTab() {
             </span>
           ),
         },
-        { header: 'Cost', render: (i) => money(i.cost) },
+        { header: 'Cost', render: (i) => formatCurrency(i.cost) },
         { header: 'Min', render: (i) => Number(i.minimum_level) },
         { header: 'Par', render: (i) => Number(i.par_level) },
         { header: 'Status', render: (i) => <StatusBadge active={i.is_active && !i.deleted_at} /> },
@@ -182,7 +187,7 @@ function LevelsTab() {
           <p className="text-[11px] uppercase tracking-widest text-gray-400 font-body">
             Stock value
           </p>
-          <p className="font-display text-lg text-primary">{money(totalValue)}</p>
+          <p className="font-display text-lg text-primary">{formatCurrency(totalValue)}</p>
         </div>
       </div>
 
@@ -228,7 +233,7 @@ function LevelsTab() {
                   <td className="px-3 py-2 text-right text-gray-500">{Number(l.minimum_level ?? 0)}</td>
                   <td className="px-3 py-2 text-right text-gray-500">{Number(l.par_level ?? 0)}</td>
                   <td className="px-3 py-2 text-right">{Number(l.average_cost).toFixed(4)}</td>
-                  <td className="px-3 py-2 text-right">{money(l.total_value ?? 0)}</td>
+                  <td className="px-3 py-2 text-right">{formatCurrency(l.total_value ?? 0)}</td>
                   <td className="px-3 py-2">
                     {l.is_below_minimum ? <Badge variant="danger">Reorder</Badge> : null}
                   </td>

@@ -17,7 +17,16 @@ import type {
   PublicKeyCredentialRequestOptionsJSON,
 } from '@simplewebauthn/browser';
 
-export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+/**
+ * Where the API lives, from the browser's point of view.
+ *
+ * Relative by default, so requests ride the same-origin rewrite in
+ * `next.config.ts` (`/api/v1/:path*` → the backend) and the auth cookies stay
+ * first-party — the same pattern the storefront uses. The old absolute
+ * `http://localhost:8000` fallback went cross-origin in dev while the rewrite
+ * sat unused. Production sets `NEXT_PUBLIC_API_URL` explicitly.
+ */
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
 // ─── Error ────────────────────────────────────────────────────────────────────
 
@@ -43,20 +52,42 @@ export class ApiError extends Error {
 
 // ─── Refresh access token ─────────────────────────────────────────────────────
 
-async function refreshAccessToken(): Promise<boolean> {
-  const res = await fetch(`${API_BASE}/auth/refresh`, {
+/**
+ * One refresh at a time, shared by every caller.
+ *
+ * When a page fires several requests and the access token has just expired,
+ * all of them 401 together. Each used to start its own refresh — the POS
+ * bindings even kept a second private copy of this function — and two racing
+ * refreshes can rotate the cookie out from under each other, logging the
+ * admin out for no reason. Concurrent 401s now await the same in-flight call.
+ */
+let refreshInFlight: Promise<boolean> | null = null;
+
+function refreshAccessToken(): Promise<boolean> {
+  refreshInFlight ??= fetch(`${API_BASE}/auth/refresh`, {
     method: 'POST',
     cache: 'no-store',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
     body: JSON.stringify({}),
-  });
-  return res.ok;
+  })
+    .then(res => res.ok)
+    .finally(() => {
+      refreshInFlight = null;
+    });
+  return refreshInFlight;
 }
 
 // ─── Core fetch ───────────────────────────────────────────────────────────────
 
-async function request<T>(path: string, options: RequestInit = {}, _retry = true): Promise<T> {
+/**
+ * The one fetch wrapper for the whole console — the ecommerce bindings below
+ * and the POS bindings in `pos-api.ts` all go through it. Cookie auth, one
+ * 401 refresh-and-retry, and error unwrapping that keeps a structured
+ * `detail` intact (an object stringified into a message reads as
+ * "[object Object]", which is what the POS side's private copy used to show).
+ */
+export async function request<T>(path: string, options: RequestInit = {}, _retry = true): Promise<T> {
   const isFormData = options.body instanceof FormData;
 
   const headers: Record<string, string> = {
@@ -88,14 +119,42 @@ async function request<T>(path: string, options: RequestInit = {}, _retry = true
   return res.json() as Promise<T>;
 }
 
-const api = {
+// A missing payload is sent as `{}` rather than as no body at all: some POS
+// endpoints declare a body model whose fields are all optional, and those
+// accept an empty object where they would reject an absent body.
+export const api = {
   get:    <T>(path: string)                         => request<T>(path),
-  post:   <T>(path: string, data?: unknown)         => request<T>(path, { method: 'POST', body: JSON.stringify(data) }),
-  put:    <T>(path: string, data?: unknown)         => request<T>(path, { method: 'PUT', body: JSON.stringify(data) }),
-  patch:  <T>(path: string, data?: unknown)         => request<T>(path, { method: 'PATCH', body: JSON.stringify(data) }),
+  post:   <T>(path: string, data?: unknown)         => request<T>(path, { method: 'POST', body: JSON.stringify(data ?? {}) }),
+  put:    <T>(path: string, data?: unknown)         => request<T>(path, { method: 'PUT', body: JSON.stringify(data ?? {}) }),
+  patch:  <T>(path: string, data?: unknown)         => request<T>(path, { method: 'PATCH', body: JSON.stringify(data ?? {}) }),
   delete: <T>(path: string)                         => request<T>(path, { method: 'DELETE' }),
   upload: <T>(path: string, formData: FormData)     => request<T>(path, { method: 'POST', body: formData }),
 };
+
+// ─── Query strings ────────────────────────────────────────────────────────────
+
+/**
+ * The one query-string builder, shared with `pos-api.ts`.
+ *
+ * `undefined`, `null` and `''` all mean "don't send the filter" — an empty
+ * string in a select is "All", not a value the API should see. `false` IS
+ * sent: `is_active=false` is the Inactive tab, not the absence of a filter.
+ * Arrays repeat the key (`category=a&category=b`), which is how FastAPI reads
+ * a multi-value query param.
+ */
+export function buildQs(
+  params?: Record<string, string | number | boolean | string[] | undefined | null>,
+): string {
+  if (!params) return '';
+  const search = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v === undefined || v === null || v === '') continue;
+    if (Array.isArray(v)) v.forEach(item => search.append(k, String(item)));
+    else search.set(k, String(v));
+  }
+  const out = search.toString();
+  return out ? `?${out}` : '';
+}
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
@@ -175,20 +234,8 @@ export const productsApi = {
    * opposite direction: without this the console could only see the 39
    * web-visible products and had no way to reach the 92 sold only at the till.
    */
-  list: (params?: { search?: string; category?: string[]; page?: number; per_page?: number; include_inactive?: boolean; is_active?: boolean; sort?: string; channel?: 'web' | 'pos' | 'all' }) => {
-    if (!params) return api.get<ProductListResponse>('/products?channel=all');
-    const p = new URLSearchParams();
-    p.set('channel', params.channel ?? 'all');
-    if (params.search) p.set('search', params.search);
-    params.category?.forEach(c => p.append('category', c));
-    if (params.page !== undefined) p.set('page', String(params.page));
-    if (params.per_page !== undefined) p.set('per_page', String(params.per_page));
-    if (params.include_inactive !== undefined) p.set('include_inactive', String(params.include_inactive));
-    if (params.is_active !== undefined) p.set('is_active', String(params.is_active));
-    if (params.sort) p.set('sort', params.sort);
-    const qs = p.toString();
-    return api.get<ProductListResponse>(`/products${qs ? '?' + qs : ''}`);
-  },
+  list: (params?: { search?: string; category?: string[]; page?: number; per_page?: number; include_inactive?: boolean; is_active?: boolean; sort?: string; channel?: 'web' | 'pos' | 'all' }) =>
+    api.get<ProductListResponse>(`/products${buildQs({ ...params, channel: params?.channel ?? 'all' })}`),
   get: (slug: string) => api.get<Product>(`/products/${slug}`),
   create: (data: object) => api.post<Product>('/products', data),
   update: (slug: string, data: object) => api.put<Product>(`/products/${slug}`, data),
@@ -237,16 +284,7 @@ export const ordersApi = {
     branch_id?: string;
     page?: number;
     per_page?: number;
-  }) => {
-    const qs = params
-      ? '?' + new URLSearchParams(
-          Object.entries(params)
-            .filter(([, v]) => v !== undefined && v !== '')
-            .map(([k, v]) => [k, String(v)])
-        ).toString()
-      : '';
-    return api.get<PaginatedOrders>(`/orders/admin/all${qs}`);
-  },
+  }) => api.get<PaginatedOrders>(`/orders/admin/all${buildQs(params)}`),
   get: (orderNumber: string) => api.get<Order>(`/orders/${orderNumber}`),
   updateStatus: (orderNumber: string, status: string, admin_notes?: string) =>
     api.put<Order>(`/orders/${orderNumber}/status`, { status, admin_notes }),
@@ -358,13 +396,6 @@ export const deliveryZonesApi = {
 
 type DateParams = { start_date?: string; end_date?: string; group_by?: string };
 
-function buildQs(params?: Record<string, string | number | undefined>): string {
-  if (!params) return '';
-  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== '');
-  if (!entries.length) return '';
-  return '?' + new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString();
-}
-
 export const analyticsApi = {
   overview: (params?: { start_date?: string; end_date?: string }) =>
     api.get<AnalyticsOverview>(`/analytics/overview${buildQs(params)}`),
@@ -447,12 +478,7 @@ export const exportApi = {
     URL.revokeObjectURL(url);
   },
   exportOrders: async (params?: { start_date?: string; end_date?: string; status?: string }) => {
-    const qs = params
-      ? '?' + new URLSearchParams(
-          Object.entries(params).filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => [k, String(v)])
-        ).toString()
-      : '';
-    const res = await fetch(`${API_BASE}/export/orders${qs}`, { credentials: 'include' });
+    const res = await fetch(`${API_BASE}/export/orders${buildQs(params)}`, { credentials: 'include' });
     if (!res.ok) throw new ApiError(res.status, `Export failed: HTTP ${res.status}`);
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
@@ -495,8 +521,6 @@ export const cmsApi = {
   updateLocale: (slug: string, locale: string, content: Record<string, unknown>) =>
     api.put<CmsPage>(`/cms/pages/${slug}/${locale}`, { content }),
 };
-
-// ─── Email Logs ───────────────────────────────────────────────────────────────
 
 // ─── Email Logs ───────────────────────────────────────────────────────────────
 

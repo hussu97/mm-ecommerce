@@ -1,9 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { languagesApi, translationsApi } from '@/lib/api';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import type { Language } from '@/lib/types';
 import { Button, Input, Select, Spinner } from '@/components/ui';
+import { useToast } from '@/components/ui/feedback';
 
 const NAMESPACES = [
   'common', 'nav', 'home', 'product', 'category', 'cart', 'checkout',
@@ -14,6 +16,7 @@ const NAMESPACES = [
 type TranslationMap = Record<string, Record<string, string>>; // locale -> key -> value
 
 export default function TranslationsPage() {
+  const toast = useToast();
   const [languages, setLanguages] = useState<Language[]>([]);
   const [namespace, setNamespace] = useState('');
   const [allTranslations, setAllTranslations] = useState<TranslationMap>({});
@@ -21,15 +24,7 @@ export default function TranslationsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [toast, setToast] = useState('');
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-
-  // Debounced search
-  useEffect(() => {
-    debounceRef.current = setTimeout(() => setDebouncedSearch(search), 250);
-    return () => clearTimeout(debounceRef.current);
-  }, [search]);
+  const debouncedSearch = useDebouncedValue(search, 250);
 
   // Fetch languages once
   useEffect(() => {
@@ -113,7 +108,6 @@ export default function TranslationsPage() {
 
   async function handleSave() {
     setSaving(true);
-    setToast('');
     try {
       const promises: Promise<unknown>[] = [];
       for (const [locale, map] of Object.entries(edits)) {
@@ -140,11 +134,9 @@ export default function TranslationsPage() {
       }
       await Promise.all(promises);
       await fetchTranslations();
-      setToast('Saved successfully.');
-      setTimeout(() => setToast(''), 3000);
+      toast.success('Saved successfully.');
     } catch {
-      setToast('Save failed. Please try again.');
-      setTimeout(() => setToast(''), 4000);
+      toast.error('Save failed. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -183,13 +175,6 @@ export default function TranslationsPage() {
           />
         </div>
       </div>
-
-      {/* Toast */}
-      {toast && (
-        <div className={`text-xs px-3 py-2 mb-4 border ${toast.includes('failed') ? 'bg-red-50 border-red-200 text-red-600' : 'bg-green-50 border-green-200 text-green-700'}`}>
-          {toast}
-        </div>
-      )}
 
       {/* Table */}
       {loading ? (

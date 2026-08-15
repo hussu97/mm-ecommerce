@@ -7,50 +7,49 @@ import { productsApi, categoriesApi, bulkApi } from '@/lib/api';
 import type { Category, Product, SalesChannel } from '@/lib/types';
 import { ChannelBadges } from '@/components/products/SalesChannels';
 import { Badge, Button, Input, MultiSelect, Pagination, TabBar, LoadError} from '@/components/ui';
+import { useConfirm, useToast } from '@/components/ui/feedback';
+import { useApiList } from '@/hooks/useApiList';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { formatCurrency } from '@/lib/utils';
 
 export default function ProductsPage() {
-  const [products, setProducts] = useState<Product[]>([]);
+  const toast = useToast();
+  const confirm = useConfirm();
   const [categories, setCategories] = useState<Category[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [pages, setPages] = useState(1);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<'active' | 'inactive'>('active');
-  const [perPage, setPerPage] = useState(50);
   const [tabCounts, setTabCounts] = useState<{ active?: number; inactive?: number }>({});
   const [actionSlug, setActionSlug] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulking, setBulking] = useState(false);
+  // This page used to fire a request per keystroke with nothing dropping the
+  // stale responses; the debounce plus the hook's sequence guard fix both.
+  const debouncedSearch = useDebouncedValue(search);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setLoadError('');
-    try {
+  // Server-side pagination: `/products` pages, searches and filters in SQL.
+  const fetchProducts = useCallback(
+    (page: number, perPage: number) => {
       const base = {
-        search: search || undefined,
+        search: debouncedSearch || undefined,
         category: categoryFilter.length > 0 ? categoryFilter : undefined,
         sort: 'category',
         page,
         per_page: perPage,
       };
-      const params = activeTab === 'active'
-        ? { ...base, is_active: true }
-        : { ...base, include_inactive: true, is_active: false };
-      const res = await productsApi.list(params);
-      setProducts(res.items);
-      setTotal(res.total);
-      setPages(res.pages);
-      setTabCounts(prev => ({ ...prev, [activeTab]: res.total }));
-    } catch (err) {
-      setLoadError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [search, categoryFilter, page, perPage, activeTab]);
+      return productsApi.list(
+        activeTab === 'active'
+          ? { ...base, is_active: true }
+          : { ...base, include_inactive: true, is_active: false },
+      );
+    },
+    [debouncedSearch, categoryFilter, activeTab],
+  );
+
+  const {
+    items: products, total, pages, page, perPage, setPage, setPerPage,
+    loading, loadError, refetch,
+  } = useApiList<Product>({ paginate: 'server', fetch: fetchProducts });
 
   // Load categories + pre-fetch inactive count on mount
   useEffect(() => {
@@ -60,25 +59,31 @@ export default function ProductsPage() {
       .catch(() => {});
   }, []);
 
+  // The tab badge shows the last total the open tab reported. Only written
+  // once a load settles, so a half-finished tab switch cannot stamp the old
+  // tab's count onto the new one.
   useEffect(() => {
-    setPage(1);
-  }, [search, categoryFilter, activeTab]);
+    if (!loading && !loadError) setTabCounts(prev => ({ ...prev, [activeTab]: total }));
+  }, [loading, loadError, total, activeTab]);
 
+  // A different filter set means a different result set: drop the selection.
   useEffect(() => {
-    load();
     setSelectedIds(new Set());
-  }, [load]);
+  }, [fetchProducts]);
 
   async function handleDeactivate(slug: string, name: string) {
-    if (!confirm(`Deactivate "${name}"? It will move to the Inactive tab.`)) return;
+    if (!(await confirm({
+      title: 'Deactivate product',
+      message: `Deactivate "${name}"? It will move to the Inactive tab.`,
+      confirmLabel: 'Deactivate',
+      danger: true,
+    }))) return;
     setActionSlug(slug);
     try {
       await productsApi.delete(slug);
-      setProducts(prev => prev.filter(p => p.slug !== slug));
-      setTotal(t => t - 1);
-      setTabCounts(prev => ({ ...prev, active: (prev.active ?? 1) - 1 }));
+      await refetch();
     } catch (err) {
-      alert((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setActionSlug(null);
     }
@@ -88,11 +93,9 @@ export default function ProductsPage() {
     setActionSlug(slug);
     try {
       await productsApi.update(slug, { is_active: true });
-      setProducts(prev => prev.filter(p => p.slug !== slug));
-      setTotal(t => t - 1);
-      setTabCounts(prev => ({ ...prev, inactive: (prev.inactive ?? 1) - 1 }));
+      await refetch();
     } catch (err) {
-      alert((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setActionSlug(null);
     }
@@ -118,9 +121,9 @@ export default function ProductsPage() {
     setBulking(true);
     try {
       await bulkApi.updateStatus('products', Array.from(selectedIds), is_active);
-      await load();
+      await refetch();
     } catch (err) {
-      alert((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setBulking(false);
     }
@@ -136,9 +139,9 @@ export default function ProductsPage() {
     setBulking(true);
     try {
       await bulkApi.updateVisibility(Array.from(selectedIds), channel, visible);
-      await load();
+      await refetch();
     } catch (err) {
-      alert((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setBulking(false);
     }
@@ -148,7 +151,7 @@ export default function ProductsPage() {
 
   return (
     <div>
-      <LoadError message={loadError} onRetry={load} />
+      <LoadError message={loadError} onRetry={refetch} />
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>

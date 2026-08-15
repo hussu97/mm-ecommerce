@@ -11,8 +11,21 @@ export function slugify(text: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
-export function formatCurrency(amount: number | string): string {
-  return `AED ${Number(amount).toFixed(2)}`;
+/**
+ * The one money formatter for the whole console: "AED 1,234.50".
+ *
+ * Locale-grouped via `Intl.NumberFormat` so four-digit totals stop reading as
+ * "AED 12345.00". This replaced a second formatter (`money()` in the POS
+ * `ResourcePage`) that printed "12,345.00 AED" — adjacent screens showed the
+ * same dirham in two different shapes, so the POS side now shows this one.
+ */
+const AED = new Intl.NumberFormat('en-AE', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+export function formatCurrency(amount: number | string | null | undefined): string {
+  return `AED ${AED.format(Number(amount ?? 0))}`;
 }
 
 /**

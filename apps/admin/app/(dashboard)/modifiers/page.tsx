@@ -4,6 +4,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { modifiersApi, bulkApi, ApiError } from '@/lib/api';
 import type { Modifier, ModifierOption } from '@/lib/types';
 import { Badge, Button, Input, Pagination, TabBar, LoadError} from '@/components/ui';
+import { useConfirm, useToast } from '@/components/ui/feedback';
 import { TranslationFields } from '@/components/TranslationFields';
 import { useLanguages } from '@/hooks/useLanguages';
 
@@ -12,6 +13,8 @@ const BLANK_OPTION = { name: '', sku: '', price: '0', calories: '', is_active: t
 
 export default function ModifiersPage() {
   const { languages } = useLanguages();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [modifiers, setModifiers] = useState<Modifier[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -136,14 +139,19 @@ export default function ModifiersPage() {
   }
 
   async function handleDeactivate(id: string, name: string) {
-    if (!confirm(`Deactivate modifier "${name}"? It will move to the Inactive tab.`)) return;
+    if (!(await confirm({
+      title: 'Deactivate modifier',
+      message: `Deactivate modifier "${name}"? It will move to the Inactive tab.`,
+      confirmLabel: 'Deactivate',
+      danger: true,
+    }))) return;
     setActionId(id);
     try {
       await modifiersApi.delete(id);
       setModifiers(prev => prev.map(m => m.id === id ? { ...m, is_active: false } : m));
       if (expandedId === id) setExpandedId(null);
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : 'Deactivate failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Deactivate failed.');
     } finally {
       setActionId(null);
     }
@@ -155,7 +163,7 @@ export default function ModifiersPage() {
       const updated = await modifiersApi.update(id, { is_active: true });
       setModifiers(prev => prev.map(m => m.id === id ? updated : m));
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : 'Restore failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Restore failed.');
     } finally {
       setActionId(null);
     }
@@ -190,7 +198,7 @@ export default function ModifiersPage() {
       setSelectedIds(new Set());
       setPage(1);
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : 'Bulk action failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Bulk action failed.');
     } finally {
       setBulking(false);
     }
@@ -255,20 +263,25 @@ export default function ModifiersPage() {
       setModifiers(prev => prev.map(m => m.id === modifierId ? updated : m));
       setEditingOptionId(null);
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : 'Update failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Update failed.');
     } finally {
       setSavingEditOption(false);
     }
   }
 
   async function handleDeactivateOption(modifierId: string, optionId: string, name: string) {
-    if (!confirm(`Deactivate option "${name}"?`)) return;
+    if (!(await confirm({
+      title: 'Deactivate option',
+      message: `Deactivate option "${name}"?`,
+      confirmLabel: 'Deactivate',
+      danger: true,
+    }))) return;
     setDeletingOptionId(optionId);
     try {
       const updated = await modifiersApi.deleteOption(modifierId, optionId);
       setModifiers(prev => prev.map(m => m.id === modifierId ? updated : m));
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : 'Deactivate failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Deactivate failed.');
     } finally {
       setDeletingOptionId(null);
     }

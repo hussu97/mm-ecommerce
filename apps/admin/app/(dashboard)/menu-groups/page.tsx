@@ -14,11 +14,16 @@ import { menuGroupsApi, productsApi, ApiError } from '@/lib/api';
 import type { MenuGroupNode } from '@/lib/api';
 import type { Product } from '@/lib/types';
 import { Button, Input } from '@/components/ui';
+import { useConfirm } from '@/components/ui/feedback';
 
 const BLANK = { name: '', name_localized: '', parent_id: null as string | null, is_active: true };
 
-/** The API rejects anything above 100 outright, so page rather than ask for more. */
-const CATALOGUE_PAGE_SIZE = 100;
+/**
+ * The API caps `per_page` at 2000 (it was 100 when this page was written), so
+ * one request covers today's catalogue — the loop below only matters if the
+ * catalogue ever outgrows a single page.
+ */
+const CATALOGUE_PAGE_SIZE = 2000;
 
 /** Flattened, depth-annotated, for the parent picker. */
 function flatten(nodes: MenuGroupNode[], depth = 0): { node: MenuGroupNode; depth: number }[] {
@@ -31,6 +36,7 @@ function subtreeIds(node: MenuGroupNode): string[] {
 }
 
 export default function MenuGroupsPage() {
+  const confirm = useConfirm();
   const [tree, setTree] = useState<MenuGroupNode[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,9 +53,10 @@ export default function MenuGroupsPage() {
   /**
    * The whole catalogue, a page at a time.
    *
-   * The API caps `per_page` at 100 and returns 422 above it, so asking for
+   * The API returns 422 for a `per_page` above its cap, so asking for
    * everything in one request fails outright rather than returning a short
    * page — which is how a group editor ends up with no products to pick from.
+   * Paging by the cap stays correct whatever the catalogue grows to.
    */
   const loadEveryProduct = useCallback(async () => {
     const all: Product[] = [];
@@ -138,7 +145,12 @@ export default function MenuGroupsPage() {
     const warning = count
       ? `Switching "${node.name}" off also hides ${count} group${count > 1 ? 's' : ''} nested inside it. Continue?`
       : null;
-    if (node.is_active && warning && !confirm(warning)) return;
+    if (node.is_active && warning && !(await confirm({
+      title: 'Hide nested groups too',
+      message: warning,
+      confirmLabel: 'Switch off',
+      danger: true,
+    }))) return;
     try {
       await menuGroupsApi.update(node.id, { is_active: !node.is_active });
     } catch (e) {
@@ -150,7 +162,12 @@ export default function MenuGroupsPage() {
   async function remove(node: MenuGroupNode) {
     const count = subtreeIds(node).length - 1;
     const extra = count ? ` and ${count} group${count > 1 ? 's' : ''} nested inside it` : '';
-    if (!confirm(`Delete "${node.name}"${extra}?`)) return;
+    if (!(await confirm({
+      title: 'Delete group',
+      message: `Delete "${node.name}"${extra}?`,
+      confirmLabel: 'Delete',
+      danger: true,
+    }))) return;
     try {
       await menuGroupsApi.delete(node.id);
     } catch (e) {

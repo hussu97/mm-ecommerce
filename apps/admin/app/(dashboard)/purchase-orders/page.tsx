@@ -11,7 +11,8 @@ import type {
 } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Button, Input, Select, Spinner } from '@/components/ui';
-import { Modal, money } from '@/components/pos/ResourcePage';
+import { Modal } from '@/components/pos/ResourcePage';
+import { formatCurrency } from '@/lib/utils';
 
 const STATUS_VARIANT: Record<
   PurchaseOrderStatus,
@@ -125,7 +126,7 @@ export default function PurchaseOrdersPage() {
                   </td>
                   <td className="px-3 py-2 font-medium">{po.supplier_name ?? '—'}</td>
                   <td className="px-3 py-2 text-right">{po.items.length}</td>
-                  <td className="px-3 py-2 text-right">{money(po.total_cost)}</td>
+                  <td className="px-3 py-2 text-right">{formatCurrency(po.total_cost)}</td>
                   <td className="px-3 py-2 text-xs text-gray-500">{po.delivery_date ?? '—'}</td>
                   <td className="px-3 py-2">
                     <Badge variant={STATUS_VARIANT[po.status]}>
@@ -325,7 +326,7 @@ function CreateOrder({
                 />
               </td>
               <td className="py-2 text-right">
-                {money(Number(line.quantity || 0) * Number(line.unit_cost || 0))}
+                {formatCurrency(Number(line.quantity || 0) * Number(line.unit_cost || 0))}
               </td>
               <td className="py-2 text-right">
                 {lines.length > 1 && (
@@ -350,7 +351,7 @@ function CreateOrder({
         >
           Add line
         </Button>
-        <p className="font-display text-lg text-primary">{money(total)}</p>
+        <p className="font-display text-lg text-primary">{formatCurrency(total)}</p>
       </div>
 
       {error && <p className="mt-3 text-xs text-red-600 font-body">{error}</p>}

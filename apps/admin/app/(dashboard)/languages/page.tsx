@@ -1,18 +1,18 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { languagesApi, ApiError } from '@/lib/api';
 import type { Language } from '@/lib/types';
-import { Button, Input, Badge, Spinner, Pagination } from '@/components/ui';
+import { Button, Input, Badge, LoadError, Spinner, Pagination } from '@/components/ui';
+import { useConfirm, useToast } from '@/components/ui/feedback';
+import { useApiList } from '@/hooks/useApiList';
 
 type FormData = { code: string; name: string; native_name: string; direction: 'ltr' | 'rtl'; is_active: boolean };
 const BLANK: FormData = { code: '', name: '', native_name: '', direction: 'ltr', is_active: true };
 
 export default function LanguagesPage() {
-  const [languages, setLanguages] = useState<Language[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(1);
-  const [perPage, setPerPage] = useState(50);
+  const toast = useToast();
+  const confirm = useConfirm();
   const [showForm, setShowForm] = useState(false);
   const [editCode, setEditCode] = useState<string | null>(null);
   const [form, setForm] = useState<FormData>(BLANK);
@@ -21,11 +21,17 @@ export default function LanguagesPage() {
   const [actionCode, setActionCode] = useState<string | null>(null);
   const [apiError, setApiError] = useState('');
 
-  useEffect(() => {
-    languagesApi.listAll()
-      .then(langs => setLanguages([...langs].sort((a, b) => a.display_order - b.display_order)))
-      .finally(() => setLoading(false));
-  }, []);
+  // Client-side pagination: the language list is a handful of rows returned in
+  // one call and sliced locally.
+  const fetchLanguages = useCallback(
+    () => languagesApi.listAll()
+      .then(langs => [...langs].sort((a, b) => a.display_order - b.display_order)),
+    [],
+  );
+  const {
+    items: languages, page, perPage, setPage, setPerPage,
+    loading, loadError, refetch,
+  } = useApiList<Language>({ paginate: 'client', fetch: fetchLanguages });
 
   const totalPages = Math.max(1, Math.ceil(languages.length / perPage));
   const paginated = languages.slice((page - 1) * perPage, page * perPage);
@@ -73,13 +79,12 @@ export default function LanguagesPage() {
         is_active: form.is_active,
       };
       if (editCode) {
-        const updated = await languagesApi.update(editCode, data);
-        setLanguages(prev => [...prev.map(l => l.code === editCode ? updated : l)].sort((a, b) => a.display_order - b.display_order));
+        await languagesApi.update(editCode, data);
       } else {
-        const created = await languagesApi.create(data);
-        setLanguages(prev => [...prev, created].sort((a, b) => a.display_order - b.display_order));
+        await languagesApi.create(data);
       }
       closeForm();
+      await refetch();
     } catch (err) {
       setApiError(err instanceof ApiError ? err.message : 'Failed to save language.');
     } finally {
@@ -88,14 +93,19 @@ export default function LanguagesPage() {
   }
 
   async function handleDelete(code: string, name: string) {
-    if (!confirm(`Delete language "${name}"? This cannot be undone.`)) return;
+    if (!(await confirm({
+      title: 'Delete language',
+      message: `Delete language "${name}"? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    }))) return;
     setActionCode(code);
     try {
       await languagesApi.delete(code);
-      setLanguages(prev => prev.filter(l => l.code !== code));
+      await refetch();
       setPage(1);
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : 'Delete failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Delete failed.');
     } finally {
       setActionCode(null);
     }
@@ -103,6 +113,7 @@ export default function LanguagesPage() {
 
   return (
     <div>
+      <LoadError message={loadError} onRetry={refetch} />
       <div className="flex items-center justify-between mb-6">
         <h1 className="font-display text-2xl text-gray-800">Languages</h1>
         {!showForm && (
