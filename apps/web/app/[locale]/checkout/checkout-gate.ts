@@ -33,6 +33,7 @@ export type CheckoutGate =
   | { kind: 'pickup_branch' }
   | { kind: 'address' }
   | { kind: 'unserviceable' }
+  | { kind: 'items_unavailable' }
   | { kind: 'address_contact' }
   | { kind: 'verify_phone' }
   | { kind: 'contact' }
@@ -72,6 +73,20 @@ export interface CheckoutGateInput {
    */
   hasPin: boolean;
   unserviceable: boolean;
+  /**
+   * Basket lines the branch serving this address has run out of.
+   *
+   * Zero on an ordinary day, which is every day at most branches. Non-zero when
+   * a shop has taken something off sale — or, more often, when the customer has
+   * just changed their address and moved the order to a different kitchen after
+   * filling the basket from a catalogue that had no branch in it yet.
+   *
+   * A count rather than the lines themselves: this module decides *whether* the
+   * button may submit, and the sentences beside each line are the summary's
+   * job. `POST /orders` refuses the same basket regardless, so this is the
+   * courtesy and that is the guarantee.
+   */
+  unavailableCount: number;
   firstName: string;
   phone: string;
   /** `isValidPhone(phone)`. Passed in so this module owes nothing to libphonenumber. */
@@ -148,6 +163,16 @@ export function resolveCheckoutGate(input: CheckoutGateInput): CheckoutGate {
       return { kind: 'address_contact' };
     }
   }
+
+  // Before anything else that is merely unfinished, because this one is not
+  // the customer's omission — it is a basket that cannot be made. Asked here
+  // rather than earlier because the answer depends on the branch, and the
+  // branch depends on the address (or, for collection, the chosen store) that
+  // the block above has just established.
+  //
+  // Letting them fill in a phone number and an email first, and refusing at the
+  // button, is the shape this replaces.
+  if (input.unavailableCount > 0) return { kind: 'items_unavailable' };
 
   // After the address is complete, and before anything else: the verification
   // panel is in the address modal, and telling somebody to prove a number they
@@ -236,6 +261,16 @@ const BEHAVIOUR: Record<CheckoutGate['kind'], GateBehaviour> = {
     labelFallback: 'Choose another address',
     action: { kind: 'address' },
     errorField: 'unserviceable',
+  },
+  items_unavailable: {
+    // Pressable, and it scrolls to the lines rather than doing nothing. A dead
+    // button here would be the worst of both: the customer can see a total, has
+    // finished the form, and has no idea which of eight cakes is the problem.
+    disabled: false,
+    labelKey: 'checkout.update_basket',
+    labelFallback: 'Update your basket',
+    action: { kind: 'reveal', field: 'unavailableItems' },
+    errorField: 'unavailableItems',
   },
   address_contact: {
     disabled: false,

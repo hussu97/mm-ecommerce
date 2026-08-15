@@ -25,6 +25,7 @@ import {
 } from './checkout-gate';
 import { AddressModal, formatAddress, type AddressDraft } from './components/AddressModal';
 import { OrderSummary } from './components/OrderSummary';
+import { UnavailableItems } from './components/UnavailableItems';
 import { PickupBranchPicker } from './components/PickupBranchPicker';
 import { ChoiceRow, Section } from './components/Section';
 import { UnserviceableNotice } from './components/UnserviceableNotice';
@@ -429,6 +430,13 @@ function CheckoutContent() {
   // free delivery and not a zero: it is an address we cannot serve.
   const hasPin = form.locationLat !== null && form.locationLng !== null;
   const unserviceable = isDelivery && !retryOrder && quote?.serviceable === false;
+  // What the branch serving this pin has run out of. Empty on an ordinary day.
+  //
+  // Never on a retry: that order is already written, its lines are already
+  // claimed, and what it needs is paying for rather than editing. Offering to
+  // remove an item from a basket that no longer governs it would be a button
+  // that changes nothing the customer is about to pay.
+  const unavailableItems = retryOrder ? [] : (preview?.unavailable_items ?? []);
   const baseFee = quote?.base_fee ?? null;
   // The delivery *option's* price, which the delivery row shows even while
   // collection is selected — the preview prices the pin either way, exactly as
@@ -846,6 +854,7 @@ function CheckoutContent() {
     addressLine1: form.addressLine1,
     hasPin,
     unserviceable: Boolean(unserviceable),
+    unavailableCount: unavailableItems.length,
     firstName: form.firstName,
     phone: form.phone,
     phoneValid: isValidPhone(form.phone),
@@ -1228,6 +1237,11 @@ function CheckoutContent() {
 
       {/* 5 — What they are buying, priced by the server. */}
       <Section label={t('checkout.order_summary')}>
+        {/* Above the lines rather than below them: it is the reason the button
+            will not submit, and a customer who has to scroll past their whole
+            basket to find out why has already read the total twice. */}
+        <UnavailableItems items={unavailableItems} cart={cart} t={t} />
+
         <OrderSummary
           cart={cart}
           retryOrder={retryOrder}

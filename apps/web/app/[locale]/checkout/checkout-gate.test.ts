@@ -25,6 +25,7 @@ const READY: CheckoutGateInput = {
   addressLine1: 'Villa 12, Al Barsha',
   hasPin: true,
   unserviceable: false,
+  unavailableCount: 0,
   firstName: 'Fatema',
   phone: '+971501234567',
   phoneValid: true,
@@ -80,6 +81,41 @@ describe('resolveCheckoutGate — every state', () => {
 
   it('unserviceable when the pin is outside every zone', () => {
     expect(gate({ unserviceable: true })).toBe('unserviceable');
+  });
+
+  it('items_unavailable when the branch serving this pin has run out', () => {
+    expect(gate({ unavailableCount: 1 })).toBe('items_unavailable');
+  });
+
+  it('asks for the address before naming what that address cannot get', () => {
+    // The branch comes from the pin, so a basket judged against no address is
+    // judging against no branch. Complaining about stock before there is a shop
+    // to be out of it would be a sentence nobody can act on.
+    expect(gate({ unavailableCount: 1, hasPin: false })).toBe('address');
+    expect(gate({ unavailableCount: 1, unserviceable: true })).toBe('unserviceable');
+  });
+
+  it('stops on unavailable items before asking for anything merely unfinished', () => {
+    // A basket that cannot be made is not the customer's omission, and letting
+    // them type a phone number and an email first only to refuse at the button
+    // is the shape this replaces.
+    expect(gate({ unavailableCount: 1, email: '' })).toBe('items_unavailable');
+    expect(gate({ unavailableCount: 1, verificationOutstanding: true })).toBe(
+      'items_unavailable',
+    );
+    expect(gate({ unavailableCount: 1, pricing: true })).toBe('items_unavailable');
+  });
+
+  it('collection is judged on stock too', () => {
+    // A chosen store can be out of something just as a delivery branch can, and
+    // the customer is about to drive to it.
+    expect(gate({ unavailableCount: 1 }, READY_PICKUP)).toBe('items_unavailable');
+  });
+
+  it('an unpaid order is past the point of editing the basket', () => {
+    // Its lines are already written and already claimed; what it needs is
+    // paying for. Offering to remove something would change nothing it owes.
+    expect(gate({ unavailableCount: 1, hasUnpaidOrder: true })).toBe('pay_now');
   });
 
   it('address_contact when the address has no name or no usable phone', () => {
@@ -169,7 +205,7 @@ describe('resolveCheckoutGate — priority order', () => {
     expect(
       gate(
         {
-          addressLine1: 'Villa 12', hasPin: true, unserviceable: false,
+          addressLine1: 'Villa 12', hasPin: true, unserviceable: false, unavailableCount: 0,
           firstName: 'Fatema', phone: '+971501234567', phoneValid: true,
         },
         form,
@@ -178,7 +214,7 @@ describe('resolveCheckoutGate — priority order', () => {
     expect(
       gate(
         {
-          addressLine1: 'Villa 12', hasPin: true, unserviceable: false,
+          addressLine1: 'Villa 12', hasPin: true, unserviceable: false, unavailableCount: 0,
           firstName: 'Fatema', phone: '+971501234567', phoneValid: true,
           verificationOutstanding: false,
         },
@@ -188,7 +224,7 @@ describe('resolveCheckoutGate — priority order', () => {
     expect(
       gate(
         {
-          addressLine1: 'Villa 12', hasPin: true, unserviceable: false,
+          addressLine1: 'Villa 12', hasPin: true, unserviceable: false, unavailableCount: 0,
           firstName: 'Fatema', phone: '+971501234567', phoneValid: true,
           verificationOutstanding: false, email: 'fatema@example.ae',
         },
@@ -198,7 +234,7 @@ describe('resolveCheckoutGate — priority order', () => {
     expect(
       gate(
         {
-          addressLine1: 'Villa 12', hasPin: true, unserviceable: false,
+          addressLine1: 'Villa 12', hasPin: true, unserviceable: false, unavailableCount: 0,
           firstName: 'Fatema', phone: '+971501234567', phoneValid: true,
           verificationOutstanding: false, email: 'fatema@example.ae',
           pricing: false,

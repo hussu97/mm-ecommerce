@@ -652,6 +652,36 @@ export interface OrderPreview {
   /** Null when no code was sent. Present and invalid when one was refused. */
   promo: OrderPreviewPromo | null;
   delivery: DeliveryQuote;
+  /**
+   * Basket lines the branch serving this address has run out of.
+   *
+   * Empty on an ordinary day. The catalogue cannot filter these out while the
+   * customer browses — there is no address yet, so no branch, and a product is
+   * hidden from browsing only when *every* branch is out of it — so this is
+   * where a stockout at one shop first becomes visible. It is also what a
+   * changed address produces: editing the pin at the checkout can move the
+   * order to a different kitchen after the basket was filled.
+   *
+   * `POST /orders` refuses the same basket with
+   * `code = "items_unavailable_at_branch"`. This is the courtesy; that is the
+   * guarantee.
+   */
+  unavailable_items: UnavailableItem[];
+}
+
+/** One basket line the branch serving this address cannot make. */
+export interface UnavailableItem {
+  product_id: string;
+  product_name: string;
+  /**
+   * The sentence to show beside the line, written server-side because it
+   * depends on why — a filling that ran out reads differently from a cake no
+   * branch here makes, and only one of them the customer can fix by choosing
+   * again.
+   */
+  reason: string;
+  /** The specific options that are out, where that is the cause. */
+  unavailable_options: string[];
 }
 
 /**

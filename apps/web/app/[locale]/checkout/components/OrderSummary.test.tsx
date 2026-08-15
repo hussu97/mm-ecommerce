@@ -103,6 +103,7 @@ function previewOf(overrides: Partial<OrderPreview> = {}): OrderPreview {
     total: 55,
     promo: null,
     delivery: quoteOf(),
+    unavailable_items: [],
     ...overrides,
   };
 }
