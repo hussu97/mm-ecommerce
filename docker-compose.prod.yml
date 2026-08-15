@@ -270,18 +270,29 @@ services:
       LALAMOVE_WEBHOOK_PATH: ${LALAMOVE_WEBHOOK_PATH:-/api/v1/webhooks/lalamove}
       LALAMOVE_TIMEOUT_SECONDS: ${LALAMOVE_TIMEOUT_SECONDS:-8}
       LALAMOVE_QUOTE_CACHE_SECONDS: ${LALAMOVE_QUOTE_CACHE_SECONDS:-120}
+      # Byte-for-byte the same defaults as the `api` block above, and that is a
+      # requirement rather than tidiness. Two of these are prices — NOON_SEND_BASE
+      # and NOON_SEND_BULKY_BASE are fares in dirhams, not URLs, whatever the
+      # names suggest — and DETOUR_FACTOR and SURGE_AED feed the same quote. A
+      # register quoting on different numbers from the storefront would sell the
+      # same delivery at two prices depending on which door the order came
+      # through, and nothing would fail to make anyone look.
+      #
+      # An empty default is not neutral here either: `${NOON_SEND_BASE:-}` passes
+      # "" to a float field, and pydantic refuses it at import, so the container
+      # never boots. That is what took the register down on this deploy.
       NOON_SEND_API_KEY: ${NOON_SEND_API_KEY:-}
-      NOON_SEND_CLIENT_CODE: ${NOON_SEND_CLIENT_CODE:-}
-      NOON_SEND_ENV: ${NOON_SEND_ENV:-production}
-      NOON_SEND_BASE: ${NOON_SEND_BASE:-}
-      NOON_SEND_BULKY_BASE: ${NOON_SEND_BULKY_BASE:-}
-      NOON_SEND_LOCALE: ${NOON_SEND_LOCALE:-en-AE}
-      NOON_SEND_TIMEOUT_SECONDS: ${NOON_SEND_TIMEOUT_SECONDS:-8}
-      NOON_SEND_MAX_DISTANCE_M: ${NOON_SEND_MAX_DISTANCE_M:-20000}
-      NOON_SEND_DETOUR_FACTOR: ${NOON_SEND_DETOUR_FACTOR:-1.35}
-      NOON_SEND_SURGE_AED: ${NOON_SEND_SURGE_AED:-0}
       NOON_SEND_WEBHOOK_API_KEY: ${NOON_SEND_WEBHOOK_API_KEY:-}
-      NOON_SEND_ENFORCE_WEBHOOK_KEY: ${NOON_SEND_ENFORCE_WEBHOOK_KEY:-true}
+      NOON_SEND_ENFORCE_WEBHOOK_KEY: ${NOON_SEND_ENFORCE_WEBHOOK_KEY:-false}
+      NOON_SEND_ENV: ${NOON_SEND_ENV:-production}
+      NOON_SEND_LOCALE: ${NOON_SEND_LOCALE:-en-ae}
+      NOON_SEND_CLIENT_CODE: ${NOON_SEND_CLIENT_CODE:-noon_food}
+      NOON_SEND_MAX_DISTANCE_M: ${NOON_SEND_MAX_DISTANCE_M:-20000}
+      NOON_SEND_DETOUR_FACTOR: ${NOON_SEND_DETOUR_FACTOR:-1.49}
+      NOON_SEND_TIMEOUT_SECONDS: ${NOON_SEND_TIMEOUT_SECONDS:-8}
+      NOON_SEND_BASE: ${NOON_SEND_BASE:-12}
+      NOON_SEND_BULKY_BASE: ${NOON_SEND_BULKY_BASE:-25}
+      NOON_SEND_SURGE_AED: ${NOON_SEND_SURGE_AED:-1}
       # Deliberately absent: BATCH_DISPATCHER_ENABLED. That starts the
       # background loop that sweeps batches out, and a second copy of it in this
       # container would race the storefront's over the same rows. The register

@@ -18,10 +18,13 @@ So the checklist is enforced here rather than remembered.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 import yaml
+
+from pydantic import TypeAdapter
 
 from app.core.config import Settings
 
@@ -211,3 +214,83 @@ def test_the_register_does_not_run_the_batch_sweeper():
     """
     pos_env = _load_compose()["services"]["pos-api"]["environment"]
     assert "BATCH_DISPATCHER_ENABLED" not in pos_env
+
+
+def _default_of(expression: str) -> str | None:
+    """The `X` out of `${VAR:-X}`, or None if the entry has no default."""
+    m = re.fullmatch(r"\$\{[A-Z0-9_]+:-(.*)\}", str(expression).strip())
+    return m.group(1) if m else None
+
+
+def test_both_services_agree_on_courier_configuration():
+    """
+    Every courier variable must carry the *same* default in both services.
+
+    Four of these are arithmetic — NOON_SEND_BASE and NOON_SEND_BULKY_BASE are
+    fares in dirhams whatever their names suggest, and DETOUR_FACTOR and
+    SURGE_AED feed the same quote. A register quoting on different numbers from
+    the storefront sells one delivery at two prices depending which door the
+    order came through, and nothing errors to make anyone look.
+
+    Written as a comparison rather than a list of expected values so a future
+    change to the storefront's pricing cannot drift from the register's by
+    being made in only one place.
+    """
+    compose = _load_compose()
+    api_env = compose["services"]["api"]["environment"]
+    pos_env = compose["services"]["pos-api"]["environment"]
+
+    shared = [
+        k for k in api_env if k.startswith(("LALAMOVE_", "NOON_SEND_")) and k in pos_env
+    ]
+    assert shared, "no courier variables reach the register at all"
+
+    mismatched = {
+        k: (api_env[k], pos_env[k]) for k in shared if api_env[k] != pos_env[k]
+    }
+    assert not mismatched, (
+        "the register and the storefront disagree on courier configuration: "
+        f"{mismatched}"
+    )
+
+
+def test_no_compose_default_is_a_value_its_setting_cannot_parse():
+    """
+    An empty default is not neutral.
+
+    `${NOON_SEND_BASE:-}` passes "" to a `float` field; pydantic refuses it
+    while building `Settings`, which happens at import, so the container does
+    not start at all. That took the register down in production — a variable
+    added to make a feature work instead removed the whole service, because
+    the name read like a URL and the field was a fare.
+
+    Scoped to the plain numeric and boolean settings. Those are the ones with
+    no decoder and no before-validator between the environment and the field,
+    so what compose writes is what pydantic must parse — and they are the whole
+    class this went wrong in. Lists and strings are left alone: several parse
+    "" or "*" through their own validators, legally and for years.
+    """
+    compose = _load_compose()
+    failures = []
+
+    for service in ("api", "pos-api"):
+        env = compose["services"][service]["environment"]
+        for key, expression in env.items():
+            field = Settings.model_fields.get(key)
+            if field is None or field.annotation not in (int, float, bool):
+                continue
+            default = _default_of(expression)
+            if default is None:
+                continue
+            try:
+                TypeAdapter(field.annotation).validate_python(default)
+            except Exception as exc:  # noqa: BLE001 - reporting, not handling
+                failures.append(
+                    f"{service}.{key} defaults to {default!r}, which is not a "
+                    f"valid {field.annotation.__name__}: {type(exc).__name__}"
+                )
+
+    assert not failures, (
+        "a compose default cannot be parsed by its setting, so the container "
+        "will fail to start:\n  " + "\n  ".join(failures)
+    )
