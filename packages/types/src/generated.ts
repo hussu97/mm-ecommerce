@@ -3409,6 +3409,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orders/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Order
+         * @description The exact totals an order placed right now would be written with.
+         *
+         *     The checkout renders this and computes nothing. It used to derive the grand
+         *     total twice in one file from different inputs, mirror the small-basket fee
+         *     rule in TypeScript, and print a VAT line from a formula that ignored both
+         *     fees — four numbers a browser had to keep in step with a server it could not
+         *     see, on the one screen where a disagreement is money.
+         *
+         *     Same inputs as `POST /orders`, minus everything that is about writing a row.
+         *     Never refuses for a state the customer can still fix: an unserviceable pin,
+         *     a coupon that stopped applying and a basket still loading are all answers
+         *     here, and refusals belong on the pay button.
+         *
+         *     Public, like the quote it replaces: a guest is priced from the session
+         *     basket and a signed-in customer from theirs.
+         */
+        post: operations["preview_order_api_v1_orders_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orders/track": {
         parameters: {
             query?: never;
@@ -9927,6 +9961,94 @@ export interface components {
             tendered: string;
             /** Tips */
             tips: string;
+        };
+        /**
+         * OrderPreviewPromo
+         * @description What the server makes of the code on this basket.
+         *
+         *     Carried on the preview rather than left to a second round trip because the
+         *     discount is part of the total: a screen that renders a server total and a
+         *     client discount can print two figures that do not subtract to each other.
+         */
+        OrderPreviewPromo: {
+            /** Code */
+            code: string;
+            /**
+             * Discount Amount
+             * @default 0
+             */
+            discount_amount: number;
+            /** Message */
+            message?: string | null;
+            /**
+             * Phone Verified
+             * @default true
+             */
+            phone_verified: boolean;
+            /**
+             * Requires Phone Verification
+             * @default false
+             */
+            requires_phone_verification: boolean;
+            /** Valid */
+            valid: boolean;
+        };
+        /**
+         * OrderPreviewRequest
+         * @description Everything the checkout knows, which is deliberately less than an order.
+         *
+         *     Flat coordinates rather than an `AddressCreate`, because a form being filled
+         *     in does not have a valid address yet — a customer who has dropped a pin but
+         *     not typed their surname still needs a total on screen. The pin is all that
+         *     prices a delivery anyway.
+         */
+        OrderPreviewRequest: {
+            /** Address */
+            address?: string | null;
+            delivery_method: components["schemas"]["DeliveryMethodEnum"];
+            /** Email */
+            email?: string | null;
+            /** Latitude */
+            latitude?: number | string | null;
+            /** Longitude */
+            longitude?: number | string | null;
+            /** Phone */
+            phone?: string | null;
+            /** Promo Code */
+            promo_code?: string | null;
+            /** Session Id */
+            session_id?: string | null;
+        };
+        /**
+         * OrderPreviewResponse
+         * @description The exact totals an order placed right now would carry.
+         *
+         *     Read it as a receipt that has not happened yet. Every field is final except
+         *     where `serviceable` or `delivery_fee` says otherwise.
+         */
+        OrderPreviewResponse: {
+            /** @description Fee, free-delivery countdown and arrival estimate for this pin. */
+            delivery: components["schemas"]["DeliveryQuoteResponse"];
+            /** Delivery Fee */
+            delivery_fee?: number | null;
+            /** Discount Amount */
+            discount_amount: number;
+            /**
+             * Low Order Fee
+             * @default 0
+             */
+            low_order_fee: number;
+            promo?: components["schemas"]["OrderPreviewPromo"] | null;
+            /** Subtotal */
+            subtotal: number;
+            /** Total */
+            total: number;
+            /** Total Excl Vat */
+            total_excl_vat: number;
+            /** Vat Amount */
+            vat_amount: number;
+            /** Vat Rate */
+            vat_rate: number;
         };
         /** OrderResponse */
         OrderResponse: {
@@ -21632,6 +21754,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PaginatedOrders"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_order_api_v1_orders_preview_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Session-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrderPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderPreviewResponse"];
                 };
             };
             /** @description Validation Error */

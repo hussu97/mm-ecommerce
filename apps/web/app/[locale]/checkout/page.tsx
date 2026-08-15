@@ -1,12 +1,10 @@
 'use client';
 
-import Image from 'next/image';
 import Link from 'next/link';
 import { Suspense, useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { useCart } from '@/lib/cart-context';
 import {
-  authApi, ordersApi, paymentsApi, addressesApi, branchesApi, deliveryApi,
+  ordersApi, paymentsApi, branchesApi, deliveryApi,
   getSessionId,
 } from '@/lib/api';
 import { toPaymentMethod, toWireMethod, type PaymentMethod } from '@/lib/types';
@@ -14,85 +12,26 @@ import { useAuth } from '@/lib/auth-context';
 import { accountEmailOf, ensureCheckoutAuth } from '@/lib/checkout-auth';
 import { Button } from '@/components/ui/Button';
 import { SpeedBadge } from '@/components/product/DeliveryEstimate';
-import { InfoTip } from '@/components/ui/InfoTip';
 import { Input } from '@/components/ui/Input';
 import { PhoneInput, isValidPhone } from '@/components/ui/PhoneInput';
 import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
-import { localizedField } from '@/lib/i18n/entity';
 import { analytics, failureReason } from '@/lib/analytics';
-import { DEFAULT_ADDRESS_LABEL, guestAddresses } from '@/lib/guest-addresses';
-import { AddressModal, formatAddress, toDraft, type AddressDraft } from './components/AddressModal';
+import { DEFAULT_ADDRESS_LABEL } from '@/lib/guest-addresses';
+import { AddressModal, formatAddress, type AddressDraft } from './components/AddressModal';
+import { OrderSummary } from './components/OrderSummary';
+import { PickupBranchPicker } from './components/PickupBranchPicker';
+import { ChoiceRow, Section } from './components/Section';
+import { UnserviceableNotice } from './components/UnserviceableNotice';
 import { PromoCodeStep } from './components/PromoCodeStep';
+import { clearCheckoutSession, useCheckoutForm } from './hooks/useCheckoutForm';
+import { useOrderPreview } from './hooks/useOrderPreview';
+import { usePhoneVerification } from './hooks/usePhoneVerification';
+import { useRetryOrder } from './hooks/useRetryOrder';
 import { usePromoRevalidation } from '@/lib/use-promo-validation';
-import type { Address, Cart, CartItem, DeliveryRates, DeliveryQuote, PickupBranch } from '@/lib/types';
+import type { DeliveryRates, PickupBranch } from '@/lib/types';
 import { Icon } from '@/components/ui/Icon';
-
-// ─── Session persistence ──────────────────────────────────────────────────────
-
-const SESSION_KEY = 'mm_checkout';
-
-function saveToSession(data: object) {
-  try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(data)); } catch { /* noop */ }
-}
-function loadFromSession(): Record<string, unknown> | null {
-  try { const s = sessionStorage.getItem(SESSION_KEY); return s ? JSON.parse(s) : null; } catch { return null; }
-}
-function clearCheckoutSession() {
-  try { sessionStorage.removeItem(SESSION_KEY); } catch { /* noop */ }
-}
-
-// ─── Form state ───────────────────────────────────────────────────────────────
-
-interface CheckoutForm {
-  email: string;
-  firstName: string;
-  lastName: string;
-  phone: string;
-  addressLine1: string;
-  addressLine2: string;
-  unitNumber: string;
-  addressLabel: string;
-  locationLat: number | null;
-  locationLng: number | null;
-  selectedAddressId: string; // '' = new address
-  deliveryMethod: 'delivery' | 'pickup';
-  /** Which branch to collect from. Empty until one is chosen; pickup only. */
-  pickupBranchId: string;
-  paymentMethod: PaymentMethod;
-  promoCode: string;
-  promoDiscount: number;
-  promoMessage: string;
-  /**
-   * Whether the applied code still owes us a proved mobile number.
-   *
-   * Travels with the code rather than being worked out here, because the code
-   * can arrive from either of two places — typed into the panel below, or
-   * applied in the basket and carried over in `mm_checkout` — and only the one
-   * that validated it heard the answer. Recomputing it here would mean a third
-   * round trip that says what we already know.
-   *
-   * A stale `true` costs nothing: the gate also asks whether this number is
-   * verified, and a verified number clears it. A stale `false` is caught by the
-   * server at order creation, which refuses in its own words — see
-   * `handleSubmit`.
-   */
-  promoNeedsVerify: boolean;
-  notes: string;
-}
-
-const INITIAL_FORM: CheckoutForm = {
-  email: '', firstName: '', lastName: '', phone: '',
-  addressLine1: '', addressLine2: '', unitNumber: '', addressLabel: DEFAULT_ADDRESS_LABEL,
-  locationLat: null, locationLng: null,
-  selectedAddressId: '',
-  deliveryMethod: 'delivery',
-  pickupBranchId: '',
-  paymentMethod: 'card',
-  promoCode: '', promoDiscount: 0, promoMessage: '', promoNeedsVerify: false,
-  notes: '',
-};
 
 /**
  * Cash only works when the customer comes to the counter, so it is offered for
@@ -106,45 +45,6 @@ const INITIAL_FORM: CheckoutForm = {
  */
 function paymentOptionsFor(method: 'delivery' | 'pickup'): PaymentMethod[] {
   return method === 'pickup' ? ['cod', 'card'] : ['card'];
-}
-
-// ─── The small-basket fee ─────────────────────────────────────────────────────
-
-/**
- * What this basket will be charged as a small-order fee.
- *
- * The amount and the threshold are **not** in this file. They live in
- * `delivery_settings`, are editable in the admin, and arrive over
- * `/delivery/rates`. They were briefly constants here, and that is a commercial
- * number in two places — which is a number that eventually disagrees with what
- * the server actually charges, on the one screen where that disagreement is
- * visible to the customer.
- *
- * With no rates yet there is no fee, because there is no honest amount to name.
- * The line simply does not render until the numbers arrive.
- *
- * Mirrors `low_order_fee_for` on the server, including the two things about it
- * that are easy to get wrong. It is judged on the basket **before** any
- * discount, so applying a coupon can never conjure the fee into existence — an
- * acquisition offer that hands back a 15-dirham surcharge is an offer fighting
- * itself. And it never applies to collection: handing a box across a counter
- * costs us nothing, so a fee there would have no cost behind it.
- *
- * The threshold is inclusive: a basket of exactly the threshold still pays.
- */
-export function lowOrderFeeFor(
-  subtotal: number,
-  method: 'delivery' | 'pickup',
-  rates: { low_order_fee: number; low_order_threshold: number | null } | null,
-): number {
-  if (method === 'pickup') return 0;
-  // An empty basket is not a small order, it is a basket that cannot be
-  // ordered. Charging it would put a fee on a page that is about to redirect.
-  if (subtotal <= 0) return 0;
-  // No rates yet, or the fee switched off. A null threshold is not a threshold
-  // of zero — treating it as one would charge every basket in the shop.
-  if (!rates || rates.low_order_threshold === null) return 0;
-  return subtotal <= rates.low_order_threshold ? rates.low_order_fee : 0;
 }
 
 // ─── Validation ───────────────────────────────────────────────────────────────
@@ -168,77 +68,6 @@ function focusFirstError(field: string) {
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     el.querySelector<HTMLElement>('input, select, textarea')?.focus({ preventScroll: true });
   });
-}
-
-// ─── Section chrome ───────────────────────────────────────────────────────────
-
-/**
- * Sections are set off by a hairline and a quiet caption rather than a display
- * heading and a rule each. Six full headings turned a form of about a dozen
- * fields into a page with no visible end.
- */
-function Section({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <section className="py-5 border-t border-gray-100 first:border-t-0 first:pt-0">
-      <h2 className="font-body text-[11px] uppercase tracking-[0.2em] text-gray-400 mb-3">
-        {label}
-      </h2>
-      {children}
-    </section>
-  );
-}
-
-/**
- * The one thing on this page that stops an order.
- *
- * A pin the courier will not quote has no price, and a checkout that quietly
- * shows a fee anyway sells a delivery nobody is going to make. So it says so —
- * and, because "we cannot deliver here" is useless on its own, it says it next
- * to the two things that actually resolve it: move the pin, or collect.
- *
- * Amber rather than red. Nothing has gone wrong and nothing was lost; this
- * address simply is not one of the ones that works.
- */
-function UnserviceableNotice({
-  onChangeAddress, onSwitchToPickup, t,
-}: {
-  onChangeAddress: () => void;
-  onSwitchToPickup: () => void;
-  t: (k: string, p?: Record<string, string | number>) => string;
-}) {
-  return (
-    <div
-      role="alert"
-      data-field="unserviceable"
-      className="mt-3 border border-amber-300 bg-amber-50/70 rounded-sm px-3.5 py-3"
-    >
-      <div className="flex gap-2.5">
-        <Icon name="wrong_location" className="text-xl text-amber-600 shrink-0" />
-        <div className="min-w-0">
-          <p className="font-body text-sm text-amber-900">{t('checkout.unserviceable_title')}</p>
-          <p className="font-body text-xs text-amber-800/80 mt-1 leading-relaxed">
-            {t('checkout.unserviceable_body')}
-          </p>
-          <div className="flex flex-wrap gap-2 mt-3">
-            <button
-              type="button"
-              onClick={onChangeAddress}
-              className="font-body text-xs px-3 py-1.5 border border-amber-400 text-amber-900 rounded-sm hover:bg-amber-100 transition-colors"
-            >
-              {t('checkout.unserviceable_change')}
-            </button>
-            <button
-              type="button"
-              onClick={onSwitchToPickup}
-              className="font-body text-xs px-3 py-1.5 text-amber-800 underline underline-offset-2 hover:text-amber-900 transition-colors"
-            >
-              {t('checkout.unserviceable_pickup')}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 /**
@@ -288,339 +117,37 @@ function formatEstimate(
   return t('checkout.delivery_by_time', { day, time });
 }
 
-/** One tappable choice: icon, label, and what it costs. */
-function ChoiceRow({
-  selected, onSelect, icon, title, subtitle, trailing,
-}: {
-  selected: boolean;
-  onSelect: () => void;
-  icon: string;
-  title: string;
-  subtitle?: string;
-  trailing: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      aria-pressed={selected}
-      className={`w-full flex items-center gap-3 px-3.5 py-3 border rounded-sm text-start transition-colors ${
-        selected ? 'border-primary bg-primary/5' : 'border-gray-200 hover:border-primary/40'
-      }`}
-    >
-      <Icon name={icon} className={`text-xl ${selected ? 'text-primary' : 'text-gray-400'}`} />
-      <span className="flex-1 min-w-0">
-        <span className="block font-body text-sm text-gray-800">{title}</span>
-        {subtitle && <span className="block font-body text-xs text-gray-400 mt-0.5">{subtitle}</span>}
-      </span>
-      <span className="font-body text-sm shrink-0">{trailing}</span>
-    </button>
-  );
-}
-
-/**
- * Which counter to collect from.
- *
- * A pickup order is a promise to walk into a specific shop, so the shop is part
- * of the order rather than something resolved afterwards — before this, the API
- * picked the first branch that could take the job and the customer was shown
- * one hardcoded pin that had no connection to it.
- *
- * Rendered even when there is only one branch. A single row that names the
- * place, its city and a map link is the answer to "where am I going", and
- * hiding it because there was no choice to make is what left people asking.
- */
-function PickupBranchPicker({
-  branches, selectedId, onSelect, error, locale, t,
-}: {
-  branches: PickupBranch[];
-  selectedId: string;
-  onSelect: (id: string) => void;
-  error?: string;
-  locale: string;
-  t: (k: string, p?: Record<string, string | number>) => string;
-}) {
-  if (branches.length === 0) {
-    return (
-      <p className="font-body text-sm text-gray-500">{t('checkout.pickup_branch_unavailable')}</p>
-    );
-  }
-
-  const isAr = locale === 'ar';
-
-  return (
-    <div data-field="pickupBranch" data-field-error={error ? 'true' : undefined}>
-      <p className="font-body text-xs text-gray-400 mb-2">{t('checkout.pickup_branch_hint')}</p>
-      <div className="space-y-2">
-        {branches.map((branch) => {
-          const selected = branch.id === selectedId;
-          const name = (isAr && branch.name_ar) || branch.name;
-          const address = (isAr && branch.address_ar) || branch.address;
-          const city = (isAr && branch.city_ar) || branch.city;
-          return (
-            <div
-              key={branch.id}
-              className={`border rounded-sm transition-colors ${
-                selected ? 'border-primary bg-primary/5'
-                  : error ? 'border-red-400' : 'border-gray-200 hover:border-primary/40'
-              }`}
-            >
-              <button
-                type="button"
-                onClick={() => onSelect(branch.id)}
-                aria-pressed={selected}
-                className="w-full flex items-start gap-3 px-3.5 py-3 text-start"
-              >
-                <Icon
-                  name={selected ? 'radio_button_checked' : 'radio_button_unchecked'}
-                  className={`text-xl mt-0.5 ${selected ? 'text-primary' : 'text-gray-400'}`}
-                />
-                <span className="flex-1 min-w-0">
-                  <span className="block font-body text-sm text-gray-800">{name}</span>
-                  {address && (
-                    <span className="block font-body text-xs text-gray-500 mt-0.5">{address}</span>
-                  )}
-                  <span className="block font-body text-xs text-gray-400 mt-0.5">
-                    {[city, `${branch.opening_from} – ${branch.opening_to}`].filter(Boolean).join(' · ')}
-                  </span>
-                </span>
-              </button>
-              {branch.maps_url && (
-                <a
-                  href={branch.maps_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mx-3.5 mb-3 inline-flex items-center gap-1.5 font-body text-xs text-primary hover:underline"
-                >
-                  <Icon name="place" className="text-sm" />
-                  {t('checkout.branch_directions')}
-                </a>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      {error && <p className="mt-1.5 text-xs text-red-500 font-body">{error}</p>}
-    </div>
-  );
-}
-
-// ─── Order summary ────────────────────────────────────────────────────────────
-
-export function OrderSummary({
-  cart, retryOrder, discount, promoCode, deliveryFee, lowOrderFee, baseFee, freeApplied,
-  lowOrderThreshold, lowOrderFeeAmount,
-  freeAvailable, hasPin, remainingForFree, deliveryMethod, unserviceable, locale, t,
-}: {
-  cart: Cart | null;
-  retryOrder: import('@/lib/types').Order | null;
-  discount: number;
-  promoCode: string;
-  /** Null while the fee is unknown — no pin yet, or nowhere we can deliver. */
-  deliveryFee: number | null;
-  /** The small-basket surcharge, zero on anything that does not attract one. */
-  lowOrderFee: number;
-  /**
-   * The live threshold and amount, so the explanation quotes the numbers the
-   * server actually charges on. Passed in rather than imported: a constant read
-   * here would be a second definition, and the one that drifts.
-   */
-  lowOrderThreshold: number;
-  lowOrderFeeAmount: number;
-  /** What delivery would have cost — struck through once it is waived. */
-  baseFee: number;
-  freeApplied: boolean;
-  /** Whether free delivery can reach this address at all. */
-  freeAvailable: boolean;
-  /** True once a pin exists, so "not in this area" is a fact and not a guess. */
-  hasPin: boolean;
-  remainingForFree: number;
-  deliveryMethod: 'delivery' | 'pickup';
-  /** Nothing can be delivered to this pin, so there is no total to commit to. */
-  unserviceable: boolean;
-  locale: string;
-  t: (k: string, p?: Record<string, string | number>) => string;
-}) {
-  const subtotal = retryOrder ? Number(retryOrder.subtotal) : (cart?.subtotal ?? 0);
-  const knownFee = deliveryFee ?? 0;
-  const total = retryOrder
-    ? Number(retryOrder.total)
-    : Math.max(0, subtotal + knownFee + lowOrderFee - discount);
-  // What it takes to get *past* the threshold, not up to it: the threshold is
-  // inclusive, so a basket sitting exactly on it still pays. Spending the round
-  // number this line would otherwise print and finding the fee still there is
-  // the one way this sentence can lie, so it costs a fils to make it true.
-  const remainingToClearFee = Math.max(0, lowOrderThreshold - subtotal + 0.01);
-
-  const rows = retryOrder
-    ? retryOrder.items.map((i) => ({
-        id: i.id,
-        name: localizedField({ translations: i.product_translations }, 'name', i.product_name, locale),
-        options: '',
-        qty: i.quantity,
-        image: null as string | null,
-        amount: Number(i.total_price),
-      }))
-    : (cart?.items ?? []).map((i: CartItem) => ({
-        id: i.id,
-        name: localizedField({ translations: i.product_translations }, 'name', i.product_name ?? '', locale),
-        options: (i.selected_options ?? [])
-          .map((o) => localizedField({ translations: o.option_translations }, 'name', o.option_name, locale))
-          .join(', '),
-        qty: i.quantity,
-        image: i.product_image,
-        amount: i.line_total ?? (i.unit_price ?? 0) * i.quantity,
-      }));
-
-  return (
-    <div className="space-y-3">
-      <ul className="space-y-2.5">
-        {rows.map((r) => (
-          <li key={r.id} className="flex gap-3 items-center">
-            <div className="relative w-10 h-10 rounded-sm overflow-hidden bg-gray-100 shrink-0">
-              {r.image ? (
-                <Image src={r.image} alt={r.name} fill sizes="40px" className="object-cover" />
-              ) : (
-                <div className="w-full h-full bg-secondary/20" />
-              )}
-              <span className="absolute -top-1 -end-1 w-4 h-4 rounded-full bg-primary text-white text-[10px] flex items-center justify-center font-body">
-                {r.qty}
-              </span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="font-body text-sm text-gray-800 truncate">{r.name}</p>
-              {r.options && <p className="font-body text-xs text-gray-400 truncate">{r.options}</p>}
-            </div>
-            <p className="font-body text-sm text-gray-700 shrink-0">{r.amount.toFixed(2)} AED</p>
-          </li>
-        ))}
-      </ul>
-
-      <div className="pt-3 border-t border-gray-100 space-y-1.5 font-body text-sm">
-        <div className="flex justify-between text-gray-500">
-          <span>{t('common.subtotal')}</span>
-          <span className="text-gray-700">{subtotal.toFixed(2)} AED</span>
-        </div>
-        {discount > 0 && (
-          <div className="flex justify-between text-green-700">
-            <span>{t('common.discount')}{promoCode ? ` (${promoCode})` : ''}</span>
-            <span>-{discount.toFixed(2)} AED</span>
-          </div>
-        )}
-        <div>
-          <div className="flex justify-between text-gray-500">
-            <span>{deliveryMethod === 'pickup' ? t('checkout.store_pickup') : t('common.delivery')}</span>
-            {/* Striking the real fee through, rather than just printing "Free",
-                shows the customer the number they no longer owe. */}
-            {deliveryMethod === 'delivery' && unserviceable ? (
-              <span className="text-amber-700">{t('checkout.unserviceable_short')}</span>
-            ) : deliveryMethod === 'delivery' && deliveryFee === null ? (
-              // Not free, and not a number we are willing to guess at yet.
-              <span className="text-gray-400">{t('checkout.fee_from_address')}</span>
-            ) : deliveryMethod === 'delivery' && freeApplied && baseFee > 0 ? (
-              <span className="flex items-center gap-2">
-                <span className="text-gray-400 line-through">{baseFee.toFixed(2)} AED</span>
-                <span className="text-green-600 font-medium">{t('common.free')}</span>
-              </span>
-            ) : (
-              <span className={knownFee === 0 ? 'text-green-600' : 'text-gray-700'}>
-                {knownFee === 0 ? t('common.free') : `${knownFee.toFixed(2)} AED`}
-              </span>
-            )}
-          </div>
-          {/* Three different things to say about one offer: it is not coming
-              here, you are this far from it, or you have it. Saying the second
-              to someone in the first case is the failure worth avoiding. */}
-          {deliveryMethod === 'delivery' && !unserviceable && !freeAvailable && hasPin && (
-            <p className="mt-1 font-body text-xs text-gray-400">
-              {t('checkout.free_delivery_not_in_area')}
-            </p>
-          )}
-          {deliveryMethod === 'delivery' && !unserviceable && freeAvailable && !freeApplied && remainingForFree > 0 && (
-            <p className="mt-1 font-body text-xs text-secondary">
-              {t(hasPin ? 'checkout.free_delivery_upsell' : 'checkout.free_delivery_upsell_areas', {
-                amount: remainingForFree.toFixed(2),
-              })}
-            </p>
-          )}
-          {deliveryMethod === 'delivery' && !unserviceable && freeApplied && (
-            <p className="mt-1 font-body text-xs text-green-600">
-              {t('checkout.free_delivery_qualified')}
-            </p>
-          )}
-        </div>
-
-        {/* The small-basket fee — and only when there is one.
-            Deliberately unlike the delivery line above, which stays put and
-            reads "Free" once it is waived. Delivery is a thing the customer
-            expects to be charged for, so showing it at zero is worth something:
-            it is a saving they can see. This is a surcharge, and a surcharge
-            printed at 0.00 AED is not reassurance, it is the shop reminding
-            somebody who spent enough that it charges small orders for the
-            privilege. Once it does not apply, it is not a line at all. */}
-        {lowOrderFee > 0 && (
-          <div>
-            <div className="flex justify-between text-gray-500">
-              <span className="flex items-center gap-1">
-                {t('checkout.low_order_fee')}
-                <InfoTip label={t('checkout.low_order_fee_what_is_this')}>
-                  {t('checkout.low_order_fee_info', {
-                    threshold: lowOrderThreshold,
-                    fee: lowOrderFeeAmount,
-                    remaining: remainingToClearFee.toFixed(2),
-                  })}
-                </InfoTip>
-              </span>
-              <span className="text-gray-700">{lowOrderFee.toFixed(2)} AED</span>
-            </div>
-            {/* The way out, next to the charge. Not offered on an order that is
-                already written — there is nothing left to add to it. */}
-            {!retryOrder && (
-              <p className="mt-1 font-body text-xs text-secondary">
-                {t('checkout.low_order_fee_remaining', { amount: remainingToClearFee.toFixed(2) })}
-              </p>
-            )}
-          </div>
-        )}
-
-        <div className="flex justify-between pt-2 mt-1 border-t border-gray-100 font-medium text-base">
-          <span className="text-gray-800">{t('common.total')}</span>
-          {/* No deliverable address means no total. Printing the basket on its
-              own here reads as the price of the order, and it is the one line
-              on the page a customer takes at face value. */}
-          {deliveryMethod === 'delivery' && unserviceable ? (
-            <span className="text-gray-400">&mdash;</span>
-          ) : (
-            <span className="text-primary">{total.toFixed(2)} AED</span>
-          )}
-        </div>
-        <p className="text-[11px] text-gray-400 text-end">
-          VAT included (5%) · {((subtotal - discount) * 5 / 105).toFixed(2)} AED
-        </p>
-      </div>
-    </div>
-  );
-}
-
 // ─── Checkout ─────────────────────────────────────────────────────────────────
 
+/**
+ * The form, and nothing else.
+ *
+ * What used to be here and is not any more: the money. This screen computed the
+ * grand total twice from different inputs, mirrored the server's small-basket
+ * fee rule in TypeScript, and printed a VAT line from a formula that ignored
+ * both fees. All four now arrive from `POST /orders/preview` — the same
+ * calculation the order is written from — and this component renders them. See
+ * `hooks/useOrderPreview.ts`.
+ *
+ * What is left is composition: four hooks holding the state that has a lifetime
+ * (the form and its `sessionStorage` copy, the phone verification, the returned
+ * unpaid order, the preview), and the sections that draw it.
+ */
 function CheckoutContent() {
-  const searchParams = useSearchParams();
   const { cart, refreshCart, cartLoaded, cartError } = useCart();
   const { addToast } = useToast();
   const { t, locale } = useTranslation();
   const { user } = useAuth();
 
-  const [form, setForm] = useState<CheckoutForm>(INITIAL_FORM);
-  const [savedAddresses, setSavedAddresses] = useState<Address[]>([]);
+  const { form, onChange, savedAddresses, setSavedAddresses } = useCheckoutForm(user);
+  const { retryOrder, setRetryOrder, restoring: restoringOrder } = useRetryOrder(addToast, t);
+  const { verifiedPhone, setVerifiedPhone } = usePhoneVerification(form.phone);
+
   const [submitting, setSubmitting] = useState(false);
-  const [retryOrder, setRetryOrder] = useState<import('@/lib/types').Order | null>(null);
   const [deliveryRates, setDeliveryRates] = useState<DeliveryRates | null>(null);
-  const [restoringOrder, setRestoringOrder] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [addressOpen, setAddressOpen] = useState(false);
   const [showExtras, setShowExtras] = useState(false);
-  const [quote, setQuote] = useState<DeliveryQuote | null>(null);
   const [pickupBranches, setPickupBranches] = useState<PickupBranch[]>([]);
 
   const isDelivery = form.deliveryMethod === 'delivery';
@@ -648,31 +175,6 @@ function CheckoutContent() {
     [accountEmail, form.email, form.phone, form.deliveryMethod],
   );
 
-  // The number most recently proved. Held here rather than inside the address
-  // form because two things need it — the form, to stop offering an SMS for a
-  // number already proved, and the pay button, to know whether the discount is
-  // safe — and a second copy is a second chance for them to disagree.
-  const [verifiedPhone, setVerifiedPhone] = useState<string | null>(null);
-
-  // Ask whether this number is *already* proved before offering to prove it. A
-  // verification belongs to the handset, not to the order it was first typed
-  // on, so a returning customer must not sit through a second SMS. Debounced,
-  // because it watches a field being typed into.
-  useEffect(() => {
-    const phone = form.phone.trim();
-    if (!phone || !isValidPhone(phone) || verifiedPhone === phone) return;
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      authApi
-        .phoneVerified(phone)
-        .then((r) => { if (!cancelled && r.verified) setVerifiedPhone(phone); })
-        // A failed check must never block an order. The server asks the same
-        // question again at order creation, and that answer is the binding one.
-        .catch(() => { /* offer the button */ });
-    }, 400);
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [form.phone, verifiedPhone]);
-
   /**
    * Is this order being held up by an unproved number?
    *
@@ -692,38 +194,11 @@ function CheckoutContent() {
     ? form.paymentMethod
     : paymentOptions[0];
 
-  // Restore from sessionStorage + handle a cancelled payment coming back.
   useEffect(() => {
-    const stored = loadFromSession();
-    if (stored) {
-      setForm((prev) => ({ ...prev, ...INITIAL_FORM, ...(stored as Partial<CheckoutForm>) }));
-    }
-
-    const returnOrder = searchParams.get('order_number');
-    if (searchParams.get('step') === 'payment' && returnOrder) {
-      setRestoringOrder(true);
-      // An order exists and has not been paid for. This is the most expensive
-      // thing that happens on the site and until now it was invisible: the
-      // customer got a warning toast, the order sat unpaid, and nothing
-      // anywhere counted it. Fired before the lookup, so a lookup that also
-      // fails does not hide the cancellation underneath it.
-      analytics.paymentCancelled({ order_number: returnOrder });
-      ordersApi.get(returnOrder)
-        .then((order) => {
-          setRetryOrder(order);
-          addToast(t('checkout.payment_cancelled'), 'warning');
-        })
-        .catch(() => addToast(t('checkout.payment_cancelled'), 'warning'))
-        // The cart was emptied when the order was created, so until this settles
-        // the page must not decide the basket is empty and discard the order the
-        // customer came back to pay for.
-        .finally(() => setRestoringOrder(false));
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    deliveryApi.getRates().then(setDeliveryRates).catch(() => { /* the quote carries the numbers */ });
+    // Only for the small-basket fee's explanation, which quotes the threshold
+    // and the amount. The fee that is actually *charged* comes back on the
+    // preview; these two are the copy around it.
+    deliveryApi.getRates().then(setDeliveryRates).catch(() => { /* the line simply omits them */ });
   }, []);
 
   // Loaded up front rather than when collection is chosen, so the list is
@@ -733,137 +208,46 @@ function CheckoutContent() {
     let cancelled = false;
     branchesApi
       .pickupPoints()
-      .then((list) => {
-        if (cancelled) return;
-        setPickupBranches(list);
-        // One branch is not a choice, so it is made. Two or more is, and is
-        // left blank on purpose: preselecting one is how somebody drives to
-        // the wrong city.
-        if (list.length === 1) {
-          setForm((prev) => (prev.pickupBranchId ? prev : { ...prev, pickupBranchId: list[0].id }));
-        }
-      })
+      .then((list) => { if (!cancelled) setPickupBranches(list); })
       .catch(() => { /* the picker says so, and delivery is unaffected */ });
     return () => { cancelled = true; };
   }, []);
 
-  // The address book: the API when signed in, localStorage when not. Either way
-  // a returning customer lands on a filled-in address rather than a blank form.
-  useEffect(() => {
-    let cancelled = false;
-
-    const preselect = (list: Address[]) => {
-      if (cancelled) return;
-      setSavedAddresses(list);
-      const preferred = list.find((a) => a.is_default) ?? list[0];
-      if (!preferred) return;
-      setForm((prev) => {
-        if (prev.selectedAddressId !== '' || prev.addressLine1) return prev;
-        const d = toDraft(preferred);
-        const next = {
-          ...prev,
-          selectedAddressId: d.id,
-          addressLabel: d.label,
-          firstName: d.firstName,
-          lastName: d.lastName,
-          phone: prev.phone || d.phone,
-          addressLine1: d.addressLine1,
-          addressLine2: d.addressLine2,
-          unitNumber: d.unitNumber,
-          locationLat: d.latitude,
-          locationLng: d.longitude,
-        };
-        saveToSession(next);
-        return next;
-      });
-    };
-
-    if (user) {
-      addressesApi.list().then(preselect).catch(() => { /* none yet */ });
-    } else {
-      preselect(guestAddresses.list());
-    }
-
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
-
-  const onChange = useCallback((patch: Partial<CheckoutForm>) => {
-    setForm((prev) => {
-      const next = { ...prev, ...patch };
-      saveToSession(next);
-      return next;
-    });
-  }, []);
+  // One branch is not a choice, so it is made. Two or more is, and is left
+  // blank on purpose: preselecting one is how somebody drives to the wrong
+  // city.
+  //
+  // Derived at render rather than written into the form by an effect. The form
+  // is the record of what the customer chose and is persisted as such; a value
+  // nobody picked has no business surviving a trip to the payment gateway, and
+  // the effect that used to put it there wrote to the form from inside a
+  // response handler for no gain.
+  const pickupBranchId =
+    form.pickupBranchId || (pickupBranches.length === 1 ? pickupBranches[0].id : '');
 
   const clearError = useCallback((key: string) => {
     setErrors((prev) => { const next = { ...prev }; delete next[key]; return next; });
   }, []);
 
   const subtotal = cart?.subtotal ?? 0;
-  const effectiveSubtotal = Math.max(0, subtotal - form.promoDiscount);
-  // The zone's own number, or nothing. There is no national threshold to fall
-  // back on any more — one number was simultaneously too high for a bike run
-  // inside Sharjah and too low for a car to Jebel Ali — so before a pin
-  // resolves, the countdown simply does not appear.
-  const freeThreshold = quote?.free_threshold ?? null;
-  // The server decides this, not the basket. Free delivery only reaches the
-  // zones we price ourselves, so "big enough order" is a necessary condition
-  // and not a sufficient one — working it out here from the subtotal alone
-  // would promise it to every address in the country.
-  const freeApplied = quote?.free_delivery_applied ?? false;
-  // Undefined until the first quote lands. Assumed available so the upsell is
-  // not suppressed on a cold page; the copy for that state says "in selected
-  // areas", which is exactly what we know at that point.
-  const freeAvailable = quote?.free_delivery_available ?? true;
-  // The question every shopper actually has. Only ever rendered from what the
-  // server sent — the schedule that produces it is not something the browser
-  // can or should reconstruct.
-  const arrival =
-    isDelivery && !retryOrder && quote?.delivery_estimate
-      ? formatEstimate(quote.delivery_estimate, locale, t)
-      : '';
 
-  // Priced off the pin against the active zone map. Close to the kitchen that is
-  // a published flat fee; beyond it, the courier's own price for this exact
-  // trip. Which means the number is not knowable before the pin is, so until
-  // then there is no fee on screen rather than a placeholder we would have to
-  // take back — a total that rises after the customer has read it is the worse
-  // surprise. It also means the pin can have no price at all, which is not a
-  // free delivery and not a zero: it is an address we cannot serve.
-  const hasPin = form.locationLat !== null && form.locationLng !== null;
-  const unserviceable = isDelivery && !retryOrder && quote?.serviceable === false;
-  const baseFee = quote?.base_fee ?? null;
-  const homeDeliveryFee = unserviceable ? null : (quote?.delivery_fee ?? null);
-  const knowsFee = homeDeliveryFee !== null;
-  const remainingForFree =
-    freeThreshold === null ? 0 : Math.max(0, freeThreshold - effectiveSubtotal);
-
-  const deliveryFee = retryOrder
-    ? Number(retryOrder.delivery_fee)
-    : form.deliveryMethod === 'pickup'
-      ? (deliveryRates?.pickup_fee ?? 0)
-      : homeDeliveryFee;
-  // Read off an order that already exists, worked out for one that does not.
-  // A customer returning to pay owes what their order was priced at, not what
-  // today's settings would charge for the same basket.
-  const lowOrderFee = retryOrder
-    ? Number(retryOrder.low_order_fee ?? 0)
-    : lowOrderFeeFor(subtotal, form.deliveryMethod, deliveryRates);
-  const total = retryOrder
-    ? Number(retryOrder.total)
-    : Math.max(0, subtotal + (deliveryFee ?? 0) + lowOrderFee - form.promoDiscount);
-
-  // Keep `form.promoDiscount` — the number the pay button quotes — equal to
-  // what the order will actually be written with. This runs for as long as the
-  // page does, not just while the promo fold-out is open: the discount was
-  // applied on the basket page against that page's subtotal and an email-only
-  // identity, and the basket can go on changing in another tab while this form
-  // is being filled in. Disabled for a returned unpaid order, whose promo is
-  // already priced into an order that exists (and while one is still being
-  // looked up); disabled too until the basket has actually loaded — before
-  // that `subtotal` reads 0, and re-checking a real discount against a basket
-  // we have not seen yet would take it off for a reason that was never true.
+  // Keep `form.promoDiscount` — the number the pay button was quoted against —
+  // equal to what the order will actually be written with. This runs for as
+  // long as the page does, not just while the promo fold-out is open: the
+  // discount was applied on the basket page against that page's subtotal and an
+  // email-only identity, and the basket can go on changing in another tab while
+  // this form is being filled in. Disabled for a returned unpaid order, whose
+  // promo is already priced into an order that exists (and while one is still
+  // being looked up); disabled too until the basket has actually loaded —
+  // before that `subtotal` reads 0, and re-checking a real discount against a
+  // basket we have not seen yet would take it off for a reason that was never
+  // true.
+  //
+  // It survives the preview endpoint, which now returns the authoritative
+  // discount and would make a *displayed* number redundant. What it does that
+  // the preview does not is act: it takes a refused code off the form, tells
+  // the customer why, and carries the phone-gate flag the address panel needs.
+  // The preview reports; this decides.
   usePromoRevalidation({
     code: form.promoCode,
     discount: form.promoDiscount,
@@ -897,45 +281,72 @@ function CheckoutContent() {
     },
   });
 
-  // Re-price whenever the pin or the basket changes, so what is on screen is
-  // what the order will be written with.
-  //
-  // Debounced, because `addressLine1` is in the dependency list and a customer
-  // typing "Villa 12, Al Barsha" fired one quote per keystroke — each of which
-  // can reach the courier's live pricing API. The delay is short enough that
-  // the fee still lands while they are reading the line they just typed, and
-  // the cleanup cancels the pending timer, so only the last edit is priced.
-  useEffect(() => {
-    if (retryOrder) return;
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      deliveryApi
-        .quote(effectiveSubtotal, form.locationLat, form.locationLng, form.addressLine1)
-        .then((q) => {
-          if (cancelled) return;
-          setQuote(q);
-          // What this pin was actually priced at. Nothing recorded so far said
-          // what customers are being quoted, how often free delivery lands, or
-          // how often the answer is "nowhere near us" — and delivery pricing is
-          // the lever this shop pulls most often. Only quotes with a pin behind
-          // them: a quote for a blank address is the same answer every time and
-          // would drown the real ones.
-          if (form.locationLat !== null && form.locationLng !== null) {
-            analytics.deliveryQuote({
-              serviceable: q.serviceable !== false,
-              delivery_fee: q.delivery_fee ?? undefined,
-              base_fee: q.base_fee ?? undefined,
-              free_applied: q.free_delivery_applied,
-              free_available: q.free_delivery_available,
-              free_threshold: q.free_threshold ?? undefined,
-              subtotal: effectiveSubtotal,
-            });
-          }
-        })
-        .catch(() => { /* leave the previous quote in place */ });
-    }, 400);
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [effectiveSubtotal, form.locationLat, form.locationLng, form.addressLine1, retryOrder]);
+  // Every figure on this screen, priced by the server. Re-asked whenever any
+  // input to it moves — the basket, the pin, the method, the coupon, the
+  // identity the coupon is judged against — and debounced, because half of
+  // those are fields being typed into.
+  const preview = useOrderPreview({
+    enabled: !retryOrder && !restoringOrder && cartLoaded,
+    deliveryMethod: form.deliveryMethod,
+    latitude: form.locationLat,
+    longitude: form.locationLng,
+    address: form.addressLine1,
+    // The code the order will actually send, so the preview prices what the
+    // button will submit. A typed-but-unapplied code is not on the basket.
+    promoCode: form.promoDiscount > 0 ? form.promoCode : '',
+    email: promoIdentity.email,
+    phone: promoIdentity.phone,
+    subtotal,
+    itemCount: cart?.items.length ?? 0,
+  });
+
+  // Read off the preview's delivery block, which was priced in the same call as
+  // the total — so the fee on this line and the fee inside that total are one
+  // number rather than two that have to agree.
+  const quote = preview?.delivery ?? null;
+  const freeThreshold = quote?.free_threshold ?? null;
+  // The server decides this, not the basket. Free delivery only reaches the
+  // zones we price ourselves, so "big enough order" is a necessary condition
+  // and not a sufficient one — working it out here from the subtotal alone
+  // would promise it to every address in the country.
+  const freeApplied = quote?.free_delivery_applied ?? false;
+  // Undefined until the first preview lands. Assumed available so the upsell is
+  // not suppressed on a cold page; the copy for that state says "in selected
+  // areas", which is exactly what we know at that point.
+  const freeAvailable = quote?.free_delivery_available ?? true;
+  const remainingForFree = quote?.remaining_for_free ?? 0;
+  // The question every shopper actually has. Only ever rendered from what the
+  // server sent — the schedule that produces it is not something the browser
+  // can or should reconstruct.
+  const arrival =
+    isDelivery && !retryOrder && quote?.delivery_estimate
+      ? formatEstimate(quote.delivery_estimate, locale, t)
+      : '';
+
+  // Priced off the pin against the active zone map. Close to the kitchen that is
+  // a published flat fee; beyond it, the courier's own price for this exact
+  // trip. Which means the number is not knowable before the pin is, so until
+  // then there is no fee on screen rather than a placeholder we would have to
+  // take back — a total that rises after the customer has read it is the worse
+  // surprise. It also means the pin can have no price at all, which is not a
+  // free delivery and not a zero: it is an address we cannot serve.
+  const hasPin = form.locationLat !== null && form.locationLng !== null;
+  const unserviceable = isDelivery && !retryOrder && quote?.serviceable === false;
+  const baseFee = quote?.base_fee ?? null;
+  // The delivery *option's* price, which the delivery row shows even while
+  // collection is selected — the preview prices the pin either way, exactly as
+  // the quote it replaced did.
+  const homeDeliveryFee = unserviceable ? null : (quote?.delivery_fee ?? null);
+  const knowsFee = homeDeliveryFee !== null;
+
+  // The one number the button quotes, and it is the server's. Before the first
+  // preview lands it falls back to the basket's own subtotal — not a
+  // calculation, just the figure this screen has always shown on its first
+  // paint, when no fee, surcharge or discount was known yet either.
+  const total = retryOrder ? Number(retryOrder.total) : (preview?.total ?? subtotal);
+  const lowOrderFee = retryOrder
+    ? Number(retryOrder.low_order_fee ?? 0)
+    : (preview?.low_order_fee ?? 0);
 
   /**
    * The three states worth a goal of their own, each fired once per checkout.
@@ -960,13 +371,17 @@ function CheckoutContent() {
     }
     if (freeApplied && !seenFreeUnlocked.current && freeThreshold !== null) {
       seenFreeUnlocked.current = true;
-      analytics.freeDeliveryUnlocked({ threshold: freeThreshold, subtotal: effectiveSubtotal, surface: 'checkout' });
+      analytics.freeDeliveryUnlocked({
+        threshold: freeThreshold,
+        subtotal: preview ? preview.subtotal - preview.discount_amount : subtotal,
+        surface: 'checkout',
+      });
     }
     if (lowOrderFee > 0 && !seenLowOrderFee.current && !retryOrder) {
       seenLowOrderFee.current = true;
       analytics.lowOrderFeeApplied({ fee: lowOrderFee, subtotal });
     }
-  }, [unserviceable, freeApplied, freeThreshold, lowOrderFee, subtotal, effectiveSubtotal, cart, retryOrder]);
+  }, [unserviceable, freeApplied, freeThreshold, lowOrderFee, subtotal, preview, cart, retryOrder]);
 
   /**
    * Arriving at the checkout at all, with the basket that arrived with them.
@@ -996,7 +411,6 @@ function CheckoutContent() {
     loadFailureReported.current = true;
     analytics.checkoutLoadFailed();
   }, [cartError]);
-
 
   const currentDraft: AddressDraft = {
     id: form.selectedAddressId,
@@ -1028,7 +442,18 @@ function CheckoutContent() {
     ['address', 'firstName', 'lastName', 'phone'].forEach(clearError);
   };
 
-  const handleSubmit = useCallback(async () => {
+  /**
+   * No `useCallback`, and deliberately.
+   *
+   * This was memoized by hand against a seventeen-entry dependency array — one
+   * entry per thing the checkout knows — which is a list nobody can keep
+   * correct and which the React Compiler could not preserve anyway: several of
+   * those values are now passed to components in other files, so it cannot
+   * prove they are not mutated and skips compiling the whole component. The
+   * compiler memoizes this for us, correctly, from what the function actually
+   * reads.
+   */
+  const handleSubmit = async () => {
     if (!retryOrder) {
       const found: Record<string, string> = {};
       // Email is only checked when something was typed: a typo is caught, a
@@ -1061,7 +486,7 @@ function CheckoutContent() {
         // Only when there is a list to choose from. If the branches could not be
         // loaded the order still goes through and the API resolves one, because
         // losing a paid sale to a failed GET is the worse trade.
-        if (pickupBranches.length > 0 && !form.pickupBranchId) {
+        if (pickupBranches.length > 0 && !pickupBranchId) {
           found.pickupBranch = t('checkout.pickup_branch_required');
         }
       }
@@ -1126,7 +551,7 @@ function CheckoutContent() {
                 longitude: form.locationLng ?? undefined,
               }
             : undefined,
-          pickup_branch_id: isDelivery ? undefined : form.pickupBranchId || undefined,
+          pickup_branch_id: isDelivery ? undefined : pickupBranchId || undefined,
           // Stamped on the order, and every email about it is written in it.
           locale,
           promo_code: form.promoDiscount > 0 ? form.promoCode : undefined,
@@ -1159,11 +584,15 @@ function CheckoutContent() {
       if (session.confirmed) {
         const orderEmail =
           createdOrder?.email ?? retryOrder?.email ?? accountEmail ?? form.email.trim().toLowerCase();
-        window.location.href =
-          `/${locale}/checkout/confirmation?order_number=${orderNumber}&email=${encodeURIComponent(orderEmail)}`;
+        // `assign` rather than writing `location.href`. Same navigation; the
+        // assignment reads as mutating a value from outside the component,
+        // which the React Compiler refuses in a function it is compiling.
+        window.location.assign(
+          `/${locale}/checkout/confirmation?order_number=${orderNumber}&email=${encodeURIComponent(orderEmail)}`,
+        );
         return;
       }
-      window.location.href = session.checkout_url!;
+      window.location.assign(session.checkout_url!);
     } catch (err) {
       // Keep a created order so payment can be retried without a cart.
       if (createdOrder) setRetryOrder(createdOrder);
@@ -1205,14 +634,17 @@ function CheckoutContent() {
       // state that offers the fix rather than leaving a toast in front of a
       // button that will keep failing.
       if (stage === 'create_order' && /verify your mobile number/i.test(message)) {
-        setForm((f) => ({ ...f, promoNeedsVerify: true }));
+        // Through `onChange` rather than a bare `setForm`, so the flag survives
+        // the trip to the gateway like every other field on this form. It used
+        // to be the one write that skipped the `sessionStorage` copy.
+        onChange({ promoNeedsVerify: true });
         setErrors({ verifyPhone: t('checkout.verify_phone_required') });
         focusFirstError('verifyPhone');
       }
       addToast(message, 'error');
       setSubmitting(false);
     }
-  }, [form, cart, retryOrder, user, accountEmail, locale, addToast, refreshCart, t, paymentMethod, isDelivery, unserviceable, pickupBranches, total, verificationOutstanding]);
+  };
 
   // ── Non-form states ────────────────────────────────────────────────────────
 
@@ -1331,7 +763,7 @@ function CheckoutContent() {
         <Section label={t('checkout.pickup_branch')}>
           <PickupBranchPicker
             branches={pickupBranches}
-            selectedId={form.pickupBranchId}
+            selectedId={pickupBranchId}
             onSelect={(id) => {
               const branch = pickupBranches.find((b) => b.id === id);
               if (branch) analytics.pickupBranchSelected({ branch_name: branch.name });
@@ -1533,22 +965,15 @@ function CheckoutContent() {
         </div>
       </Section>
 
-      {/* 5 — What they are buying. */}
+      {/* 5 — What they are buying, priced by the server. */}
       <Section label={t('checkout.order_summary')}>
         <OrderSummary
           cart={cart}
           retryOrder={retryOrder}
-          discount={retryOrder ? Number(retryOrder.discount_amount) : form.promoDiscount}
-          promoCode={retryOrder?.promo_code_used ?? form.promoCode}
-          deliveryFee={deliveryFee}
-          lowOrderFee={lowOrderFee}
+          preview={preview}
           lowOrderThreshold={deliveryRates?.low_order_threshold ?? 0}
           lowOrderFeeAmount={deliveryRates?.low_order_fee ?? 0}
-          baseFee={baseFee ?? 0}
-          freeApplied={freeApplied}
-          freeAvailable={freeAvailable}
           hasPin={hasPin}
-          remainingForFree={remainingForFree}
           deliveryMethod={form.deliveryMethod}
           unserviceable={Boolean(unserviceable)}
           locale={locale}

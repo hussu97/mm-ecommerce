@@ -605,6 +605,55 @@ export interface DeliveryQuote {
   serviceable: boolean;
 }
 
+// ─── Order preview ────────────────────────────────────────────────────────────
+
+/** What the server makes of the code on this basket, from `POST /orders/preview`. */
+export interface OrderPreviewPromo {
+  code: string;
+  valid: boolean;
+  /** The server's own reason for a refusal. Shown verbatim; null when it gave none. */
+  message: string | null;
+  discount_amount: number;
+  requires_phone_verification: boolean;
+  phone_verified: boolean;
+}
+
+/**
+ * The exact totals an order placed right now would be written with.
+ *
+ * The checkout renders this and computes nothing. It used to derive the grand
+ * total twice in one file from different inputs, mirror the server's
+ * small-basket fee rule in TypeScript, and print a VAT line from
+ * `(subtotal - discount) * 5 / 105` that ignored both fees — so the "VAT
+ * included" figure was not 5/105 of the total printed directly above it. Four
+ * numbers a browser kept in step with a server it could not see, on the one
+ * screen where a disagreement is money.
+ *
+ * The delivery block rides along rather than coming from `POST /delivery/quote`
+ * as a second call: both are priced from one `delivery_service.price`, which
+ * reaches a courier's live pricing API in the outer zones. Two calls meant two
+ * quotes for one basket.
+ */
+export interface OrderPreview {
+  subtotal: number;
+  discount_amount: number;
+  /**
+   * Null when there is no fee to name — nowhere we can deliver to, or no pin
+   * dropped yet. `total` then excludes delivery, which is what this screen has
+   * always shown while the address is still being typed.
+   */
+  delivery_fee: number | null;
+  low_order_fee: number;
+  vat_rate: number;
+  /** On the goods alone. Both fees sit outside it, per UAE rules. */
+  vat_amount: number;
+  total_excl_vat: number;
+  total: number;
+  /** Null when no code was sent. Present and invalid when one was refused. */
+  promo: OrderPreviewPromo | null;
+  delivery: DeliveryQuote;
+}
+
 /**
  * What delivery looks like at a point, before there is a basket.
  *

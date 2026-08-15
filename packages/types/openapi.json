@@ -11738,6 +11738,219 @@
         "title": "OrderPaymentResponse",
         "type": "object"
       },
+      "OrderPreviewPromo": {
+        "description": "What the server makes of the code on this basket.\n\nCarried on the preview rather than left to a second round trip because the\ndiscount is part of the total: a screen that renders a server total and a\nclient discount can print two figures that do not subtract to each other.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "discount_amount": {
+            "default": 0.0,
+            "title": "Discount Amount",
+            "type": "number"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "phone_verified": {
+            "default": true,
+            "title": "Phone Verified",
+            "type": "boolean"
+          },
+          "requires_phone_verification": {
+            "default": false,
+            "title": "Requires Phone Verification",
+            "type": "boolean"
+          },
+          "valid": {
+            "title": "Valid",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "valid"
+        ],
+        "title": "OrderPreviewPromo",
+        "type": "object"
+      },
+      "OrderPreviewRequest": {
+        "description": "Everything the checkout knows, which is deliberately less than an order.\n\nFlat coordinates rather than an `AddressCreate`, because a form being filled\nin does not have a valid address yet \u2014 a customer who has dropped a pin but\nnot typed their surname still needs a total on screen. The pin is all that\nprices a delivery anyway.",
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "delivery_method": {
+            "$ref": "#/components/schemas/DeliveryMethodEnum"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "latitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latitude"
+          },
+          "longitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Longitude"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "promo_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promo Code"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          }
+        },
+        "required": [
+          "delivery_method"
+        ],
+        "title": "OrderPreviewRequest",
+        "type": "object"
+      },
+      "OrderPreviewResponse": {
+        "description": "The exact totals an order placed right now would carry.\n\nRead it as a receipt that has not happened yet. Every field is final except\nwhere `serviceable` or `delivery_fee` says otherwise.",
+        "properties": {
+          "delivery": {
+            "$ref": "#/components/schemas/DeliveryQuoteResponse",
+            "description": "Fee, free-delivery countdown and arrival estimate for this pin."
+          },
+          "delivery_fee": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Fee"
+          },
+          "discount_amount": {
+            "title": "Discount Amount",
+            "type": "number"
+          },
+          "low_order_fee": {
+            "default": 0.0,
+            "title": "Low Order Fee",
+            "type": "number"
+          },
+          "promo": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OrderPreviewPromo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "subtotal": {
+            "title": "Subtotal",
+            "type": "number"
+          },
+          "total": {
+            "title": "Total",
+            "type": "number"
+          },
+          "total_excl_vat": {
+            "title": "Total Excl Vat",
+            "type": "number"
+          },
+          "vat_amount": {
+            "title": "Vat Amount",
+            "type": "number"
+          },
+          "vat_rate": {
+            "title": "Vat Rate",
+            "type": "number"
+          }
+        },
+        "required": [
+          "subtotal",
+          "discount_amount",
+          "vat_rate",
+          "vat_amount",
+          "total_excl_vat",
+          "total",
+          "delivery"
+        ],
+        "title": "OrderPreviewResponse",
+        "type": "object"
+      },
       "OrderResponse": {
         "properties": {
           "admin_notes": {
@@ -36869,6 +37082,71 @@
           }
         ],
         "summary": "List All Orders",
+        "tags": [
+          "Orders"
+        ]
+      }
+    },
+    "/api/v1/orders/preview": {
+      "post": {
+        "description": "The exact totals an order placed right now would be written with.\n\nThe checkout renders this and computes nothing. It used to derive the grand\ntotal twice in one file from different inputs, mirror the small-basket fee\nrule in TypeScript, and print a VAT line from a formula that ignored both\nfees \u2014 four numbers a browser had to keep in step with a server it could not\nsee, on the one screen where a disagreement is money.\n\nSame inputs as `POST /orders`, minus everything that is about writing a row.\nNever refuses for a state the customer can still fix: an unserviceable pin,\na coupon that stopped applying and a basket still loading are all answers\nhere, and refusals belong on the pay button.\n\nPublic, like the quote it replaces: a guest is priced from the session\nbasket and a signed-in customer from theirs.",
+        "operationId": "preview_order_api_v1_orders_preview_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Session-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Session-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Preview Order",
         "tags": [
           "Orders"
         ]

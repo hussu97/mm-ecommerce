@@ -15,7 +15,7 @@
 import 'client-only';
 
 import { analytics, normalisePath } from './analytics';
-import { AdvertisedPromo, Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, PaymentMethod, toWireMethod, DeliveryRates, DeliveryQuote, DeliveryArea, PickupBranch, TrackResult } from './types';
+import { AdvertisedPromo, Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, PaymentMethod, toWireMethod, DeliveryRates, DeliveryQuote, DeliveryArea, OrderPreview, PickupBranch, TrackResult } from './types';
 import { API_BASE } from './api-base';
 
 export { API_BASE };
@@ -313,6 +313,30 @@ export const addressesApi = {
 
 export const ordersApi = {
   create: (data: OrderCreate) => api.post<Order>('/orders', data),
+  /**
+   * The exact totals an order placed right now would carry — the checkout's
+   * only source of money.
+   *
+   * It replaces the `deliveryApi.quote` call the checkout used to make, rather
+   * than sitting beside it: the delivery figures come back in `preview.delivery`
+   * from the same server-side pricing the total came from. Two calls would mean
+   * two courier quotes for one basket, and two chances to show a fee that was
+   * never charged.
+   *
+   * Public. A guest is priced from the session basket, exactly like the quote
+   * it replaces.
+   */
+  preview: (data: {
+    delivery_method: 'delivery' | 'pickup';
+    latitude?: number | null;
+    longitude?: number | null;
+    address?: string | null;
+    promo_code?: string | null;
+    session_id?: string | null;
+    /** Identity, for the coupon only — see `promoApi.validate`. */
+    email?: string | null;
+    phone?: string | null;
+  }) => api.post<OrderPreview>('/orders/preview', data),
   list: (page = 1) =>
     api.get<{ items: Order[]; total: number; page: number; pages: number }>(`/orders?page=${page}`),
   get: (orderNumber: string, email?: string) =>

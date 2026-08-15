@@ -1,5 +1,18 @@
 # Architecture & System-Design Audit — August 2026
 
+> **Status: remediated.** Every P0, P1 and P2 item below, and most of P3, was
+> implemented over 2026-08-15 — see `tasks/todo.md` for the commit-by-commit
+> record and the decisions taken where the audit's recommendation was refined
+> in contact with the code. The findings are kept in full, in their original
+> wording, because the *reasoning* is what stops the same drift returning; the
+> conventions they produced now live at the top of `CLAUDE.md`.
+>
+> Three things this audit did not predict, found while fixing it:
+> `alembic downgrade base` had been broken for months (four revisions restored
+> dropped columns without their indexes or keys); the sixth copy of the
+> permission helper was dead code enforcing nothing; and cancelling a counter
+> sale from the console restocked ingredients it had never claimed.
+
 **Scope:** full-repo audit of `apps/api` (FastAPI + SQLAlchemy async), `apps/web` (Next.js 15 storefront), `apps/admin` (Next.js 15 dashboard), `packages/*`, DB models (48 files) and the Alembic chain (96 revisions). Conducted by five parallel deep-read audits (backend architecture, DB layer, storefront, admin, cross-app contracts).
 
 **Why this audit exists:** the codebase has grown a lot of functionality, and changes — especially AI-assisted ones — increasingly go wrong because data flows and state changes don't follow consistent patterns. This document identifies the root causes and lays out a prioritized remediation plan.

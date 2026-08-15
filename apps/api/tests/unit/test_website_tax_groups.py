@@ -17,7 +17,7 @@ import uuid
 from decimal import Decimal
 
 
-from app.services import order_service
+from app.services import order_service, pos_pricing
 
 
 class _Tax:
@@ -100,7 +100,12 @@ async def test_the_arithmetic_matches_what_the_constant_used_to_produce():
     via_groups = await order_service.tax_breakdown(
         _db(), lines=[(STANDARD, Decimal("100.00"))], discount_amount=Decimal("0")
     )
-    via_constant, _ = order_service._vat_of(Decimal("100.00"))
+    # What the flat-rate path did, written out rather than called: the function
+    # that used to hold it is gone, because the groups are the only place the
+    # rate is read from now. This is the arithmetic it performed.
+    _, via_constant = pos_pricing.split_inclusive_tax(
+        Decimal("100.00"), order_service.VAT_RATE
+    )
     assert via_groups.total == via_constant
 
 

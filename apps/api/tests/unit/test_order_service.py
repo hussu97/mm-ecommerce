@@ -323,8 +323,8 @@ def _db_for_create(
     Mock DB wired for create_order (no promo — patch promo service separately).
     Execute call order:
       1. cart lookup
-      2. [extra_results — e.g. one stock decrement per stock-tracked product]
-      3. tax group lookup (one per distinct group in the basket)
+      2. tax group lookup (one per distinct group in the basket)
+      3. [extra_results — e.g. one stock decrement per stock-tracked product]
       4. _generate_order_number (numeric max of today's sequence)
       5. select CartItems for deletion
       6. final Order reload
@@ -334,6 +334,12 @@ def _db_for_create(
     group, which exercises the fallback — a line with no resolvable tax is
     charged the standard rate rather than sold VAT-free — and is why the VAT
     assertions below still read 5%.
+
+    It moved ahead of the stock claim when the two pricing paths were unified:
+    the VAT used to be worked out twice on the way to one order — once from a
+    flat rate before the claim, once from the tax groups at the insert — and is
+    now computed once, with everything else, before anything is claimed for an
+    order that might still be refused.
     """
     db = AsyncMock()
     db.add = MagicMock()
@@ -344,8 +350,8 @@ def _db_for_create(
         side_effect=_sequenced(
             [
                 _result(scalar_one_or_none=cart),
-                *(extra_results or []),
                 _result(scalars_unique_one_or_none=None),
+                *(extra_results or []),
                 _result(scalar_one_or_none=last_order_seq),
                 _result(scalars_all=cart_items or []),
                 _result(scalar_one=final_order),
@@ -1070,8 +1076,13 @@ class TestCreateOrderStock:
 
         await create_order(db, _pickup_data(), user_id=None)
 
-        decrement = db.execute.call_args_list[1][0][0]
-        assert "stock_quantity" in str(decrement)
+        # Found rather than indexed. It used to be the second query and is now
+        # the third — the order is priced in full, tax lookup included, before
+        # anything is claimed for it — and a test that pins the *position* of a
+        # statement fails every time a query is added anywhere above it while
+        # saying nothing about the thing it was written to check.
+        statements = [str(call[0][0]) for call in db.execute.call_args_list]
+        assert any("stock_quantity" in statement for statement in statements)
 
     async def test_out_of_stock_product_fails_the_order(self):
         product = _product(is_stock_product=True, stock_quantity=1)

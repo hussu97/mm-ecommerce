@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Header, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +27,7 @@ from app.schemas.order import (
     OrderResponse,
     OrderStatusUpdate,
 )
+from app.schemas.order_preview import OrderPreviewRequest, OrderPreviewResponse
 from fastapi import Request
 
 from app.core.cache import cache_delete_pattern
@@ -168,6 +169,39 @@ async def create_order(
     )
     await cache_delete_pattern("analytics:*")
     return order
+
+
+@router.post("/preview", response_model=OrderPreviewResponse)
+async def preview_order(
+    data: OrderPreviewRequest,
+    x_session_id: str | None = Header(None, alias="X-Session-Id"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_optional_user),
+):
+    """
+    The exact totals an order placed right now would be written with.
+
+    The checkout renders this and computes nothing. It used to derive the grand
+    total twice in one file from different inputs, mirror the small-basket fee
+    rule in TypeScript, and print a VAT line from a formula that ignored both
+    fees — four numbers a browser had to keep in step with a server it could not
+    see, on the one screen where a disagreement is money.
+
+    Same inputs as `POST /orders`, minus everything that is about writing a row.
+    Never refuses for a state the customer can still fix: an unserviceable pin,
+    a coupon that stopped applying and a basket still loading are all answers
+    here, and refusals belong on the pay button.
+
+    Public, like the quote it replaces: a guest is priced from the session
+    basket and a signed-in customer from theirs.
+    """
+    return await order_service.preview_order(
+        db,
+        data,
+        current_user.id if current_user else None,
+        fallback_email=current_user.email if current_user else None,
+        session_id=None if current_user else x_session_id,
+    )
 
 
 @router.get("", response_model=PaginatedOrders)

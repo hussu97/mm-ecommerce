@@ -1,3 +1,40 @@
+## System Design Conventions (the canon — copy THESE patterns, not a neighbouring file's)
+
+Every rule here exists because the codebase once had 2–5 coexisting variants of
+the convention and agents copied the wrong one (see
+`docs/architecture-audit-2026-08.md`). When touching code that predates a rule,
+migrate it opportunistically.
+
+1. **Order status**: only `app/services/order_lifecycle.transition()` may assign
+   `Order.status`. It validates against `VALID_TRANSITIONS` and carries the
+   consequences (refund, restock, register void, publish, dispatch). An AST test
+   (`test_order_lifecycle_guard.py`) fails on new direct assignments.
+2. **Transactions**: services `flush()`; the request-scoped `get_db` dependency
+   commits. Never `commit()` in a service or dependency. Side-writes that must
+   survive a rollback (logs, `last_seen_at` stamps) go on a dedicated session,
+   like `webhook_log_service.Recorder`.
+3. **Errors**: raise `AppError` subclasses (`app/core/exceptions.py`) from
+   routers and services. `HTTPException` only where a comment explains why.
+4. **Permissions**: route dependencies via the `require("perm.name")` factory —
+   never a hand-rolled first-statement check.
+5. **Emails/push**: inline-await through the never-raise `email_service` funnel
+   (journalled to `email_log`). No `BackgroundTasks` — dropped on serverless.
+6. **DB statuses**: internal lifecycle columns are `String` + CHECK constraint
+   (values spelled out in the migration and mirrored in `__table_args__`).
+   Provider-verbatim columns (courier words) stay unconstrained by design.
+   Native PG enums are legacy — do not add new ones.
+7. **Migrations**: schema + structural backfills only. Content edits (CMS copy,
+   seed corrections) live in `scripts/`. Revision ids ≤32 chars.
+8. **TypeScript contracts**: generated, never hand-written. `packages/types` is
+   built from the API's OpenAPI document (`python -m scripts.export_openapi`
+   then `pnpm --filter @mm/types generate`); CI fails on drift. Change a
+   Pydantic schema ⇒ regenerate in the same commit.
+9. **Frontend fetch**: web uses `lib/api-client.ts` (browser) /
+   `lib/api-server.ts` (RSC) — never raw `fetch` to the API. Admin uses the one
+   `request()` in `lib/api.ts` (pos-api.ts is bindings only).
+10. **Money math**: computed server-side. The client renders what the API
+    quotes; a client-side formula mirroring a server one is a bug.
+
 ## Workflow Orchestration
 
 ### 1. Plan Mode Default

@@ -430,6 +430,30 @@ async def quote(
     user_id: uuid.UUID | None = None,
     email: str | None = None,
 ) -> dict:
+    """What delivery would cost to this point. See `quote_priced`."""
+    payload, _ = await quote_priced(
+        db,
+        subtotal,
+        latitude=latitude,
+        longitude=longitude,
+        cart=cart,
+        address=address,
+        user_id=user_id,
+        email=email,
+    )
+    return payload
+
+
+async def quote_priced(
+    db: AsyncSession,
+    subtotal: Decimal,
+    latitude: Decimal | float | None = None,
+    longitude: Decimal | float | None = None,
+    cart: Cart | None = None,
+    address: str | None = None,
+    user_id: uuid.UUID | None = None,
+    email: str | None = None,
+) -> tuple[dict, DeliveryPrice]:
     """
     What delivery would cost to this point, for the checkout to show live.
 
@@ -446,6 +470,13 @@ async def quote(
     `delivery_estimate` answers the question every shopper actually has, which
     is not "how much" but "when". It is only present once there is a pin,
     because before then there is no schedule to read it off.
+
+    Returns the payload **and** the `DeliveryPrice` it was built from, because
+    `POST /orders/preview` needs both and must not ask twice: `price()` reaches
+    a courier's live pricing API in the dynamic zones, so a second call is a
+    second quote — a real risk of showing one number and charging another, on
+    top of doubling what the busiest screen on the site costs us. `quote()` is
+    the thin wrapper for callers that only want the payload.
     """
     settings = await get_settings(db)
     priced = await price(
@@ -486,7 +517,7 @@ async def quote(
         else None
     )
 
-    return {
+    payload = {
         "delivery_fee": float(fee) if fee is not None else None,
         # What it would have cost, so the summary can strike it through and
         # show the customer the saving they just earned.
@@ -529,6 +560,7 @@ async def quote(
             else None
         ),
     }
+    return payload, priced
 
 
 async def get_delivery_rates(db: AsyncSession) -> dict:

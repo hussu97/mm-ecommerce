@@ -23,8 +23,8 @@ import pytest
 
 from app.models.delivery_settings import DeliverySettings
 from app.models.order import DeliveryMethodEnum
-from app.services import order_service
-from app.services.order_service import low_order_fee_for
+from app.services import order_pricing
+from app.services.order_pricing import low_order_fee_for
 
 SETTINGS = DeliverySettings(
     pickup_fee=Decimal("0.00"),
@@ -34,6 +34,34 @@ SETTINGS = DeliverySettings(
 
 DELIVERY = DeliveryMethodEnum.DELIVERY
 PICKUP = DeliveryMethodEnum.PICKUP
+
+#: A basket with no tax group on it. `tax_breakdown` charges the standard rate
+#: for one rather than selling it VAT-free, so these read 5% without needing a
+#: tax table behind them — and `_resolve_tax` short-circuits on a null group,
+#: so the mock session below is never actually queried.
+NO_GROUP = None
+
+
+async def _totals(subtotal, discount, *, method=DELIVERY, fee=Decimal("0.00")):
+    """Price a one-line basket, with the pin's price stubbed to `fee`."""
+    priced = SimpleNamespace(
+        serviceable=True, fee=fee, zone=None, estimate=None, error=None
+    )
+    with patch.object(
+        order_pricing.delivery_service,
+        "get_settings",
+        new=AsyncMock(return_value=SETTINGS),
+    ):
+        return await order_pricing.compute_order_totals(
+            AsyncMock(),
+            lines=[(NO_GROUP, subtotal)],
+            delivery_method=method,
+            discount_amount=discount,
+            latitude=Decimal("25.33"),
+            longitude=Decimal("55.37"),
+            address="somewhere",
+            priced=priced,
+        )
 
 
 # ── the threshold ─────────────────────────────────────────────────────────────
@@ -70,6 +98,16 @@ def test_a_null_threshold_disables_the_fee():
     assert low_order_fee_for(Decimal("10.00"), DELIVERY, off) == Decimal("0.00")
 
 
+def test_an_empty_basket_is_not_a_small_order():
+    """
+    It is a basket that cannot be ordered. The rule came off the checkout when
+    the client-side mirror of this function was deleted: `/orders/preview` fires
+    while the basket is still loading, and quoting a 15-dirham surcharge against
+    a subtotal of zero puts a fee on a page that is about to redirect.
+    """
+    assert low_order_fee_for(Decimal("0.00"), DELIVERY, SETTINGS) == Decimal("0.00")
+
+
 # ── the discount interaction, which is the whole design decision ──────────────
 
 
@@ -83,32 +121,7 @@ async def test_a_coupon_cannot_create_the_fee():
     applied a coupon. The fee is judged on the gross basket for exactly this
     reason, and this is the case that would catch anyone switching it.
     """
-    subtotal = Decimal("40.00")
-    discount = Decimal("6.00")
-
-    data = SimpleNamespace(
-        delivery_method=DELIVERY,
-        shipping_address=SimpleNamespace(
-            latitude=25.33, longitude=55.37, address_line_1="somewhere"
-        ),
-    )
-    priced = SimpleNamespace(
-        serviceable=True, fee=Decimal("0.00"), zone=None, estimate=None
-    )
-
-    with (
-        patch.object(
-            order_service.delivery_service,
-            "get_settings",
-            new=AsyncMock(return_value=SETTINGS),
-        ),
-        patch.object(
-            order_service.delivery_service, "price", new=AsyncMock(return_value=priced)
-        ),
-    ):
-        totals = await order_service._compute_order_totals(
-            data, subtotal, discount, AsyncMock()
-        )
+    totals = await _totals(Decimal("40.00"), Decimal("6.00"))
 
     assert totals.low_order_fee == Decimal("0.00")
     # 40 - 6 + 0 delivery + 0 fee
@@ -123,29 +136,7 @@ async def test_the_fee_sits_outside_vat_exactly_as_delivery_does():
     VAT is on goods. A 30-dirham basket pays VAT on 30, not on 30 + 15 + delivery.
     """
     subtotal = Decimal("30.00")
-    data = SimpleNamespace(
-        delivery_method=DELIVERY,
-        shipping_address=SimpleNamespace(
-            latitude=25.33, longitude=55.37, address_line_1="somewhere"
-        ),
-    )
-    priced = SimpleNamespace(
-        serviceable=True, fee=Decimal("20.00"), zone=None, estimate=None
-    )
-
-    with (
-        patch.object(
-            order_service.delivery_service,
-            "get_settings",
-            new=AsyncMock(return_value=SETTINGS),
-        ),
-        patch.object(
-            order_service.delivery_service, "price", new=AsyncMock(return_value=priced)
-        ),
-    ):
-        totals = await order_service._compute_order_totals(
-            data, subtotal, Decimal("0.00"), AsyncMock()
-        )
+    totals = await _totals(subtotal, Decimal("0.00"), fee=Decimal("20.00"))
 
     assert totals.low_order_fee == Decimal("15.00")
     assert totals.total == Decimal("65.00")  # 30 goods + 20 delivery + 15 fee

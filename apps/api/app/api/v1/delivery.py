@@ -11,6 +11,14 @@ from app.core.deps import get_db, get_optional_user
 from app.core.limiter import limiter
 from app.models.order import DeliveryMethodEnum
 from app.models.user import User
+
+# Moved to `schemas` when `POST /orders/preview` started answering the same
+# shape; re-exported here because this is where they have always been imported
+# from. See `app/schemas/delivery.py`.
+from app.schemas.delivery import (  # noqa: F401
+    DeliveryEstimateResponse,
+    DeliveryQuoteResponse,
+)
 from app.services import cart_service, delivery_service, delivery_zone_service
 
 router = APIRouter()
@@ -31,12 +39,6 @@ class DeliveryQuoteRequest(BaseModel):
     #: is taken against the same place the driver would be sent to — and, where
     #: the fee is that estimate, against the place it is charged for.
     address: str | None = None
-
-
-class DeliveryEstimateResponse(BaseModel):
-    #: ISO 8601, on the shop's clock.
-    at: str
-    precision: str
 
 
 class DeliveryAreaResponse(BaseModel):
@@ -70,44 +72,6 @@ class DeliveryAreaResponse(BaseModel):
     #: genuinely is three, and collapsing them would make the near zones wear
     #: the far zones' promise.
     speed: str = "next_day"
-
-
-class DeliveryQuoteResponse(BaseModel):
-    #: Null until there is something to price — no pin yet, or a pin nothing can
-    #: be delivered to. `serviceable` is what tells the two apart.
-    delivery_fee: float | None = None
-    base_fee: float | None = None
-    free_delivery_applied: bool
-    #: Whether free delivery reaches this pin at all. False in the areas priced
-    #: from a live courier quote — there is no fee of ours to waive there, only
-    #: a bill that arrives whatever the basket is worth.
-    free_delivery_available: bool = True
-    #: The basket that earns free delivery *at this pin*. Thresholds vary by
-    #: zone, so this is the zone's own number wherever one has resolved.
-    #:
-    #: **Null before a pin exists.** Thresholds stopped being national when the
-    #: outer zones went fixed-fee — every zone answers for itself now, so with no
-    #: pin there is genuinely no figure to name. This field was left as a
-    #: required `float` when `price()` changed, and since FastAPI validates the
-    #: response, a quote with no pin raised `ResponseValidationError` and the
-    #: checkout got a 500 on its very first call. The storefront had already
-    #: been written for `number | null`; only this line disagreed.
-    free_threshold: float | None = None
-    #: True when there is no resolved zone behind the threshold above — i.e. no
-    #: pin has been dropped, and `free_threshold` is therefore null. Copy driven
-    #: by it must stay hedged until it turns false. Defaulted so an older client
-    #: that does not read it behaves exactly as before.
-    free_threshold_provisional: bool = False
-    remaining_for_free: float
-    zone_name: str | None = None
-    in_known_zone: bool
-    #: When the order should arrive, and how precisely. `precision` is "time"
-    #: where the schedule is ours to read and "day" where it is not. Null until
-    #: there is a pin to read it from.
-    delivery_estimate: DeliveryEstimateResponse | None = None
-    #: False when we cannot deliver to this pin at all. The checkout says so and
-    #: refuses to submit; the API refuses the order too, so the two agree.
-    serviceable: bool = True
 
 
 class DeliveryCalculateResponse(BaseModel):
