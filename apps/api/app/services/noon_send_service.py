@@ -58,7 +58,12 @@ from app.models.order_delivery import (
     OrderDelivery,
 )
 from app.models.webhook_event import WebhookEvent
-from app.services import address_format, courier_reference, email_service
+from app.services import (
+    address_format,
+    courier_reference,
+    email_service,
+    order_lifecycle,
+)
 from app.services.lalamove_service import (
     Estimate,
     PickupPoint,
@@ -991,35 +996,19 @@ async def _advance_order(
     order = await _order_of(db, delivery)
     if order is None:
         return
-    # Refunded, disputed and cancelled orders are settled. A late courier update
-    # must not resurrect one.
-    if order.status in {
-        OrderStatusEnum.CANCELLED,
-        OrderStatusEnum.REFUNDED,
-        OrderStatusEnum.DISPUTED,
-        target,
-    }:
-        return
-    # `undelivered` is in the list because a second rider collecting is exactly
-    # how a failed handover is meant to end: the box goes back on the shelf, a
-    # new task is created, and its `picked_up` has to be allowed to move the
-    # order forward again. Without it a re-dispatched order would sit reading
-    # "we couldn't deliver" all the way to the customer's door.
-    if target == OrderStatusEnum.OUT_FOR_DELIVERY and order.status not in {
-        OrderStatusEnum.CONFIRMED,
-        OrderStatusEnum.PACKED,
-        OrderStatusEnum.UNDELIVERED,
-    }:
-        return
-    # A parcel that never left cannot come back undelivered. Only a rider who
-    # actually collected it can fail to hand it over, so this refuses a push
-    # that would mark an order undelivered before anyone picked it up.
-    if target == OrderStatusEnum.UNDELIVERED and order.status not in {
-        OrderStatusEnum.PACKED,
-        OrderStatusEnum.OUT_FOR_DELIVERY,
-    }:
-        return
 
+    # One rulebook, not a private copy of it. This guard used to be hand-rolled
+    # here — and had drifted: it still allowed `undelivered` back out to
+    # `out_for_delivery` after the shop decided (see the map's own note) that
+    # `undelivered` is an ending, not a detour. The map also refuses stale news
+    # about settled orders and a parcel "coming back undelivered" before anyone
+    # picked it up, which the old guard spelled out by hand.
+    #
+    # Going through `transition` is also what closes MM-level gap this module
+    # shipped with: a courier marking an order undelivered now triggers the
+    # same automatic refund an admin's click always did — previously the email
+    # below promised a refund nothing had initiated.
+    #
     # The courier's own word for what happened goes in the note, so the history
     # records `picked_up` next to `out_for_delivery` rather than only our
     # translation of it.
@@ -1029,7 +1018,9 @@ async def _advance_order(
         note=delivery.courier_status,
         at=at,
     ):
-        order.status = target
+        moved = await order_lifecycle.transition(db, order, target, on_invalid="skip")
+    if not moved:
+        return
     # The customer hears about it from here, not from the admin screen. These
     # transitions only ever happen because a courier said so, so this is the
     # only place that knows they happened — and "out for delivery" is the email

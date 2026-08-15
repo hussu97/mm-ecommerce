@@ -24,7 +24,7 @@ import pytest
 
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.models.pos_order import OrderSourceEnum, OrderTypeEnum, PosOrderStatusEnum
-from app.services import order_service, pos_order_service
+from app.services import order_lifecycle, pos_order_service
 
 
 BRANCH = SimpleNamespace(
@@ -173,7 +173,9 @@ def test_only_an_open_check_is_voided_by_a_cancellation():
     state, so a new `PosOrderStatusEnum` member has to be classified here rather
     than defaulting to "leave it open".
     """
-    open_now = order_service._OPEN_ON_THE_REGISTER
+    # The set lives with the cancellation consequence that reads it, in
+    # `order_lifecycle` — the one module allowed to move `Order.status`.
+    open_now = order_lifecycle._OPEN_ON_THE_REGISTER
 
     assert open_now == {
         PosOrderStatusEnum.DRAFT.value,

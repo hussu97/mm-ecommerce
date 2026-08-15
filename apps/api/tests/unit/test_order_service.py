@@ -166,12 +166,16 @@ def mock_fulfilment():
             "app.services.order_service.lalamove_service.cancel_delivery",
             new_callable=AsyncMock,
         ),
+        # Patched on the module itself: the dispatch calls moved into
+        # `order_lifecycle._consequences`, which imports `batching_service`
+        # lazily, so there is no `order_service.batching_service` attribute to
+        # route through any more.
         patch(
-            "app.services.order_service.batching_service.assign_or_dispatch",
+            "app.services.batching_service.assign_or_dispatch",
             new_callable=AsyncMock,
         ),
         patch(
-            "app.services.order_service.batching_service.cancel_assignment",
+            "app.services.batching_service.cancel_assignment",
             new_callable=AsyncMock,
         ),
         # Every customer-facing response now carries "when does this arrive",

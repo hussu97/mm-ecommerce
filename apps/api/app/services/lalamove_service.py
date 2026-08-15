@@ -51,7 +51,12 @@ from app.models.order_delivery import (
     OrderDelivery,
 )
 from app.models.webhook_event import WebhookEvent
-from app.services import address_format, courier_reference, email_service
+from app.services import (
+    address_format,
+    courier_reference,
+    email_service,
+    order_lifecycle,
+)
 from app.services.delivery_zone_service import Zone
 from app.services.providers.lalamove_provider import LalamoveError, provider
 
@@ -1332,21 +1337,14 @@ async def _advance_order(
     )
     if order is None:
         return
-    # Refunded, disputed and cancelled orders are settled. A late courier
-    # update must not resurrect one.
-    if order.status in {
-        OrderStatusEnum.CANCELLED,
-        OrderStatusEnum.REFUNDED,
-        OrderStatusEnum.DISPUTED,
-        target,
-    }:
-        return
-    if target == OrderStatusEnum.OUT_FOR_DELIVERY and order.status not in {
-        OrderStatusEnum.CONFIRMED,
-        OrderStatusEnum.PACKED,
-    }:
-        return
 
+    # One rulebook, not a private copy of it. The guards that used to live here
+    # — settled orders stay settled, `out_for_delivery` only from a state that
+    # could plausibly hand a box to a rider — are the map's own rules, enforced
+    # where every other writer gets them. Going through `transition` also means
+    # the consequences of a status are the same whoever reports it, whichever
+    # statuses this courier's map grows next.
+    #
     # The courier's own word for what happened goes in the note, so the history
     # records `PICKED_UP` next to `out_for_delivery` rather than only our
     # translation of it.
@@ -1356,7 +1354,9 @@ async def _advance_order(
         note=delivery.courier_status,
         at=at,
     ):
-        order.status = target
+        moved = await order_lifecycle.transition(db, order, target, on_invalid="skip")
+    if not moved:
+        return
     # The customer hears about it from here, not from the admin screen. These
     # two transitions only ever happen because a courier said so, so this is the
     # only place that knows they happened — and "out for delivery" is the email

@@ -52,6 +52,7 @@ from app.services import (
     business_day_service,
     inventory_service,
     modifier_rules,
+    order_lifecycle,
     pos_pricing,
     till_service,
 )
@@ -297,7 +298,7 @@ async def open_order(
         subtotal=Decimal("0"),
         discount_amount=Decimal("0"),
         total=Decimal("0"),
-        status="created",
+        status=OrderStatusEnum.CREATED,
         is_pos=True,
         branch_id=branch.id,
         table_id=table_id,
@@ -1154,13 +1155,21 @@ async def close_order(db: AsyncSession, *, order: Order, user: User) -> Order:
         raise ConflictError(f"Order still has {order.balance_due} outstanding")
 
     order.pos_status = PosOrderStatusEnum.CLOSED.value
+    # A counter sale lives at `created` until the till settles it; closing is
+    # its confirmation. `on_invalid="skip"` covers the other thing a register
+    # closes: an online order being handed over, which is already `confirmed`
+    # — or already `packed`, which closing must not walk backwards. This used
+    # to force-write `"confirmed"` from any state at all, which is exactly the
+    # regression the skip refuses.
     with acting_as(
         StatusSourceEnum.POS.value,
         actor_id=user.id,
         actor_label=user.email,
         note="check closed",
     ):
-        order.status = "confirmed"
+        await order_lifecycle.transition(
+            db, order, OrderStatusEnum.CONFIRMED, on_invalid="skip"
+        )
     order.closer_id = user.id
     order.closed_at = utcnow()
     for item in order.items:
@@ -1193,14 +1202,28 @@ async def void_order(
     if _net_paid(order) != 0:
         raise ConflictError("This order has payments — refund them before voiding")
 
+    # The register-side ending first, so `transition`'s own pairing (which
+    # voids any check still open) finds the work already done.
     order.pos_status = PosOrderStatusEnum.VOID.value
+    # Cancelling through the lifecycle brings the cancellation's consequences
+    # with it: an attached online order gets its claimed stock back and its
+    # card payment refunded — both of which voiding at the till used to skip.
+    # A pure counter sale is untouched by either (it claimed no stock, and
+    # `_net_paid` above guarantees there is nothing to refund).
+    #
+    # `on_invalid="skip"`: the map does not let a packed order be cancelled —
+    # that is the console's call, with a refund conversation attached — so a
+    # till voiding one ends the *check* while the web order keeps its status
+    # for an admin to settle.
     with acting_as(
         StatusSourceEnum.POS.value,
         actor_id=user.id,
         actor_label=user.email,
         note="check voided",
     ):
-        order.status = "cancelled"
+        await order_lifecycle.transition(
+            db, order, OrderStatusEnum.CANCELLED, on_invalid="skip"
+        )
     order.voided_at = utcnow()
     order.void_reason_id = reason_id
     order.closer_id = user.id
@@ -1288,17 +1311,28 @@ async def join_orders(
         raise ConflictError("Join before either check takes a payment")
     if source.branch_id != target.branch_id:
         raise BadRequestError("Checks are at different branches")
+    # A website order's lines carry things a join would quietly break: the
+    # stock they claimed at checkout, the payment session opened against their
+    # total, and the emails keyed to their order number. Moving them onto
+    # another check leaves all three pointing at a cancelled shell.
+    if OrderSourceEnum.ONLINE.value in (source.source, target.source):
+        raise ConflictError("Website orders cannot be joined to another check")
 
     for item in list(source.items):
         item.order_id = target.id
     source.pos_status = PosOrderStatusEnum.JOINED.value
+    # The guards above keep the cancellation's consequences inert here: no
+    # payments means nothing to refund, and only counter sales can be joined,
+    # so there is no checkout-claimed stock to release.
     with acting_as(
         StatusSourceEnum.POS.value,
         actor_id=user.id,
         actor_label=user.email,
         note=f"joined into {target.order_number}",
     ):
-        source.status = "cancelled"
+        await order_lifecycle.transition(
+            db, source, OrderStatusEnum.CANCELLED, on_invalid="skip"
+        )
     source.original_order_id = target.id
     source.closer_id = user.id
     source.closed_at = utcnow()

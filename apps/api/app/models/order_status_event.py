@@ -13,14 +13,20 @@ database that could have filled them.
 exactly one place — the admin status endpoint — so a courier webhook or a
 register marking an order packed left no trace at all.
 
-**Coverage here is structural rather than remembered.** `Order.status` is
-assigned from thirteen places and only two of them go through
-`order_service.update_status`; the rest write the column directly, and three do
-it with a raw string. A recorder each of those has to call is a recorder that is
-already incomplete, and would go further out of date with the next writer. So
-the transition is captured by a SQLAlchemy attribute listener, which cannot be
-bypassed by assigning the column, and the rows are materialised in
-`before_flush` where there is a session to add them to.
+**Coverage here is structural rather than remembered.** When this recorder was
+built, `Order.status` was assigned from thirteen places and only two of them
+went through `order_service.update_status`; the rest wrote the column directly,
+and three did it with a raw string. A recorder each of those has to call is a
+recorder that is already incomplete, and would go further out of date with the
+next writer. So the transition is captured by a SQLAlchemy attribute listener,
+which cannot be bypassed by assigning the column, and the rows are materialised
+in `before_flush` where there is a session to add them to.
+
+The writers have since been herded through one door —
+`order_lifecycle.transition()` validates every move and carries its
+consequences — but the listener deliberately stays. It is the guarantee that
+holds even if a fourteenth writer appears, and `order_lifecycle` leans on the
+same mechanism to warn when one does.
 
 What the listener cannot know is *who*. That comes from a `ContextVar` the few
 entry points that do know set around their work — the admin endpoint, the
@@ -212,8 +218,10 @@ def _value_of(status: Any) -> str | None:
     """
     The stored string, whether the caller used the enum or a bare word.
 
-    Three call sites in `pos_order_service` assign `"confirmed"` and
-    `"cancelled"` as literals, so this cannot assume an enum member.
+    Three call sites in `pos_order_service` used to assign `"confirmed"` and
+    `"cancelled"` as literals. They now go through `order_lifecycle.transition`
+    and pass enum members, but this stays literal-tolerant: the column accepts
+    a string, so a future writer may hand one over again.
 
     The two tests are narrow on purpose. When there is no previous value to
     report — a brand-new order, or a column the session never loaded —

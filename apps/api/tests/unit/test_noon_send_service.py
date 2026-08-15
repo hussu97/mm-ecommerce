@@ -244,7 +244,9 @@ async def test_delivered_closes_the_order():
 
 
 @pytest.mark.asyncio
-async def test_undelivered_moves_the_order_and_flags_a_human():
+async def test_undelivered_moves_the_order_flags_a_human_and_starts_the_refund(
+    monkeypatch,
+):
     """
     A rider who could not hand the parcel over is a problem for the shop, not a
     cancellation for the customer — but it is not `out_for_delivery` either.
@@ -252,9 +254,25 @@ async def test_undelivered_moves_the_order_and_flags_a_human():
     It used to be. The order stayed where it was and only the delivery row knew,
     so MM-20260805-006 read "on the way" for hours after noon Send reported that
     nobody was bringing it. The status moves now; the flag stays, because
-    somebody still has to decide between a second attempt and a refund.
+    somebody still has to decide what the shop says to the customer.
+
+    The refund assertion is the newest fact here, and the most expensive one to
+    lose: `undelivered` used to trigger the automatic refund only when an admin
+    clicked it — the courier's own webhook skipped it while the email it sent
+    promised the money back. Routed through `order_lifecycle.transition`, the
+    rider's push starts the same refund the click always did.
     """
-    order = SimpleNamespace(id=uuid.uuid4(), status=OrderStatusEnum.OUT_FOR_DELIVERY)
+    from app.services import payment_service
+
+    refunded: list[Order] = []
+
+    async def _record_refund(db, order):
+        refunded.append(order)
+        return Decimal("0")
+
+    monkeypatch.setattr(payment_service, "refund_order", _record_refund)
+
+    order = _order(OrderStatusEnum.OUT_FOR_DELIVERY)
     delivery = _delivery(courier_status="picked_up")
     await noon_send_service.apply_webhook(
         _FakeDb(order), _push("undelivered", NOW + timedelta(hours=1)), delivery
@@ -262,28 +280,44 @@ async def test_undelivered_moves_the_order_and_flags_a_human():
     assert order.status == OrderStatusEnum.UNDELIVERED
     assert delivery.needs_attention
     assert "re-dispatch" in delivery.last_error
+    assert refunded == [order]
 
 
 @pytest.mark.asyncio
 async def test_a_parcel_nobody_collected_cannot_come_back_undelivered():
     """Only a rider who actually took the box can fail to hand it over."""
-    order = SimpleNamespace(id=uuid.uuid4(), status=OrderStatusEnum.CONFIRMED)
+    order = _order(OrderStatusEnum.CONFIRMED)
     delivery = _delivery(courier_status="assigned")
     await noon_send_service.apply_webhook(
         _FakeDb(order), _push("undelivered", NOW + timedelta(hours=1)), delivery
     )
     assert order.status == OrderStatusEnum.CONFIRMED
+    assert not pending_events(order)
 
 
 @pytest.mark.asyncio
-async def test_a_second_rider_can_pick_up_an_undelivered_order():
-    """A failed handover is a detour. Re-dispatch has to be able to leave it."""
-    order = SimpleNamespace(id=uuid.uuid4(), status=OrderStatusEnum.UNDELIVERED)
+async def test_a_second_rider_cannot_reopen_an_undelivered_order():
+    """
+    `undelivered` is an ending, not a detour — what follows is a refund
+    conversation, not another van.
+
+    This test used to assert the opposite: this service kept a private
+    allowance letting a re-dispatched rider's `picked_up` pull the order back
+    to `out_for_delivery`, written before the shop decided undelivered orders
+    are written off (and months after the map had said so — the two rulebooks
+    had drifted). With the refund now firing the moment `undelivered` lands,
+    reopening the journey afterwards would send a second rider out with a cake
+    the customer is being repaid for. One rulebook: the courier's push is
+    refused, the parcel stays written off, and re-serving the customer is a
+    new order.
+    """
+    order = _order(OrderStatusEnum.UNDELIVERED)
     delivery = _delivery(courier_status="assigned")
     await noon_send_service.apply_webhook(
         _FakeDb(order), _push("picked_up", NOW + timedelta(hours=2)), delivery
     )
-    assert order.status == OrderStatusEnum.OUT_FOR_DELIVERY
+    assert order.status == OrderStatusEnum.UNDELIVERED
+    assert not pending_events(order)
 
 
 @pytest.mark.asyncio
@@ -302,12 +336,13 @@ async def test_a_late_push_cannot_rewind_a_delivered_order():
 @pytest.mark.asyncio
 async def test_a_settled_order_is_not_reopened():
     """A push arriving after a refund must not mark the order delivered."""
-    order = SimpleNamespace(id=uuid.uuid4(), status=OrderStatusEnum.REFUNDED)
+    order = _order(OrderStatusEnum.REFUNDED)
     delivery = _delivery(courier_status="picked_up")
     await noon_send_service.apply_webhook(
         _FakeDb(order), _push("delivered", NOW + timedelta(hours=2)), delivery
     )
     assert order.status == OrderStatusEnum.REFUNDED
+    assert not pending_events(order)
 
 
 def test_a_replay_produces_the_same_dedup_key():

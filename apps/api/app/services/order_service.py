@@ -28,7 +28,7 @@ from app.models.delivery_settings import DeliverySettings
 from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
 from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.product import Product
-from app.models.pos_order import OrderSourceEnum, OrderTax, PosOrderStatusEnum
+from app.models.pos_order import OrderSourceEnum, OrderTax
 from app.models.promo_code import PromoCode
 from app.models.user import User
 from app.schemas.fulfilment import FulfilmentResponse
@@ -39,20 +39,24 @@ from app.schemas.order import (
     OrderStatusStamp,
 )
 from app.services import (
-    batching_service,
     cart_service,
-    courier_service,
     delivery_promise,
     delivery_service,
     email_service,
     fulfilment_service,
     lalamove_service,
+    order_lifecycle,
     payment_methods,
     pos_order_service,
     pos_pricing,
     promo_code_service,
     push_service,
 )
+
+# Re-exported for the callers and tests that have always found it here. The
+# map itself, and the machinery that enforces it, live in `order_lifecycle` —
+# the one module allowed to assign `Order.status`.
+from app.services.order_lifecycle import VALID_TRANSITIONS
 from app.services.storefront_visibility import is_website_product_visible
 from app.services.delivery_zone_service import Zone
 
@@ -82,81 +86,6 @@ def _escape_like(s: str) -> str:
 #: separately in `_vat_of` and in the order-persisting path, so a rate change
 #: would have had to be found twice.
 VAT_RATE = Decimal("0.05")
-
-
-# Valid status transitions
-VALID_TRANSITIONS: dict[OrderStatusEnum, set[OrderStatusEnum]] = {
-    OrderStatusEnum.CREATED: {
-        OrderStatusEnum.CONFIRMED,
-        OrderStatusEnum.CANCELLED,
-        OrderStatusEnum.PAYMENT_FAILED,
-    },
-    OrderStatusEnum.PAYMENT_FAILED: {
-        OrderStatusEnum.CANCELLED,
-        OrderStatusEnum.CONFIRMED,
-    },
-    OrderStatusEnum.CONFIRMED: {
-        OrderStatusEnum.PACKED,
-        OrderStatusEnum.CANCELLED,
-        OrderStatusEnum.REFUNDED,
-        OrderStatusEnum.DISPUTED,
-    },
-    OrderStatusEnum.PACKED: {
-        OrderStatusEnum.OUT_FOR_DELIVERY,
-        # A third-party zone has no courier reporting back, so the shop marks
-        # the order delivered itself and never passes through the middle state.
-        OrderStatusEnum.DELIVERED,
-        # A driver can also fail to hand it over on a run we never saw start.
-        OrderStatusEnum.UNDELIVERED,
-        OrderStatusEnum.REFUNDED,
-        OrderStatusEnum.DISPUTED,
-    },
-    # A courier that rejects, expires or cancels a booking does not cancel the
-    # order — it is paid for and boxed. The delivery row records the failure and
-    # an admin re-dispatches or refunds, which is why cancelling is still not
-    # reachable from here.
-    OrderStatusEnum.OUT_FOR_DELIVERY: {
-        OrderStatusEnum.DELIVERED,
-        OrderStatusEnum.UNDELIVERED,
-        OrderStatusEnum.REFUNDED,
-        OrderStatusEnum.DISPUTED,
-    },
-    # An ending, not a detour. This used to lead back into the journey —
-    # `packed` again, then `out_for_delivery` when a new rider collected — on
-    # the reasoning that the cake exists and is paid for, so the usual answer is
-    # a second attempt.
-    #
-    # The shop's answer is that it is not. `undelivered` is what a person writes
-    # down when a handover has definitively failed; it is cancellation after the
-    # box was made, and treating it as recoverable meant a driver could be sent
-    # again for something already written off, automatically, by a sweep. What
-    # follows is a refund conversation, not another van.
-    #
-    # Only the two money outcomes remain, and they are the same two `cancelled`
-    # now carries. Neither returns the order to fulfilment: they record what
-    # happened to the payment for an order that is not going anywhere.
-    OrderStatusEnum.UNDELIVERED: {
-        OrderStatusEnum.REFUNDED,
-        OrderStatusEnum.DISPUTED,
-    },
-    OrderStatusEnum.DELIVERED: {
-        OrderStatusEnum.REFUNDED,
-        OrderStatusEnum.DISPUTED,
-    },
-    # Cancelled is an ending, and stays one. The two money outcomes are new:
-    # until refunds existed there was nothing to record and `set()` was honest,
-    # but a cancelled order is the single most likely thing to be refunded and
-    # the status had no way to say so. Neither of these puts it back in the
-    # kitchen.
-    OrderStatusEnum.CANCELLED: {
-        OrderStatusEnum.REFUNDED,
-        OrderStatusEnum.DISPUTED,
-    },
-    # Terminal. Reached by a refund we issue or a gateway webhook; nothing
-    # leaves.
-    OrderStatusEnum.REFUNDED: set(),
-    OrderStatusEnum.DISPUTED: set(),
-}
 
 
 def _order_load_options():
@@ -659,18 +588,6 @@ def _vat_of(taxable: Decimal) -> tuple[Decimal, Decimal]:
         vat,
         net,
     )
-
-
-#: Register states a cancellation still has to close. `closed`, `void`,
-#: `joined` and the rest are already finished, and a cancellation arriving after
-#: them must not reopen or relabel what the till already settled.
-_OPEN_ON_THE_REGISTER = frozenset(
-    {
-        PosOrderStatusEnum.DRAFT.value,
-        PosOrderStatusEnum.PENDING.value,
-        PosOrderStatusEnum.ACTIVE.value,
-    }
-)
 
 
 #: The languages the shop writes in. Anything else becomes English.
@@ -1232,16 +1149,14 @@ async def create_order(
         _is_cash_on_delivery(data) and order.status == OrderStatusEnum.CREATED
     )
     if confirmed_as_cash:
+        # 10. Confirming is also what puts it on a register and tells the
+        #    kitchen — `transition` publishes on the way through, so a counter
+        #    hears about a website order when it has been paid for. A card
+        #    order stays `created` here and is confirmed (and published) by the
+        #    payment webhook instead; see `publish_to_register` for what used
+        #    to happen here and why it moved.
         with acting_as(StatusSourceEnum.CHECKOUT.value, note="cash on collection"):
-            order.status = OrderStatusEnum.CONFIRMED
-
-    # 10. And only now put it on a register and tell the kitchen — a counter
-    #    hears about a website order when it has been paid for. A card order
-    #    reaches this in `created` and is published by the payment webhook
-    #    instead; see `publish_to_register` for what used to happen here and
-    #    why it moved.
-    if order.status == OrderStatusEnum.CONFIRMED:
-        await publish_to_register(db, order, branch)
+            await order_lifecycle.transition(db, order, OrderStatusEnum.CONFIRMED)
 
     stmt = select(Order).options(*_order_load_options()).where(Order.id == order.id)
     result = await db.execute(stmt)
@@ -1410,86 +1325,23 @@ async def update_status(
     if not order:
         raise NotFoundError(f"Order '{order_number}' not found")
 
-    allowed = VALID_TRANSITIONS.get(order.status, set())
-    if new_status not in allowed:
+    # Validation, the write, and everything the write implies — the refund, the
+    # restock, the register void, the courier cancellation — all live in
+    # `order_lifecycle.transition`, where they fire identically for the admin,
+    # a webhook, the checkout and the till. This function is the admin-shaped
+    # doorway to it: look up by number, carry the notes, answer with the
+    # response model.
+    moved = await order_lifecycle.transition(db, order, new_status)
+    if not moved:
+        # Already there. `transition` treats that as a quiet no-op, which is
+        # right for a webhook repeating itself and wrong for a person: an admin
+        # asking for a move that cannot happen has always been told so.
         raise BadRequestError(
             f"Cannot transition order from '{order.status}' to '{new_status}'. "
-            f"Allowed: {[s.value for s in allowed] or 'none (terminal state)'}"
+            "The order is already in that status."
         )
-
-    order.status = new_status
     if admin_notes is not None:
         order.admin_notes = admin_notes
-
-    # Confirming by hand is a confirmation like any other — a bank transfer
-    # reconciled in the morning, or a declined card the customer paid another
-    # way. The register hears about the order the moment the money is
-    # acknowledged, whichever route acknowledged it.
-    if new_status == OrderStatusEnum.CONFIRMED:
-        await publish_to_register(db, order)
-
-    # The backstop, not the trigger. Acceptance on the register is what calls a
-    # driver now — early enough that the drive overlaps the prep rather than
-    # queueing behind it. But not every order is accepted on a register: a
-    # branch with no terminal receiving online orders has no acceptance event at
-    # all, and an admin marking such an order packed in the console must still
-    # get a van to the door. `assign_or_dispatch` returns untouched on anything
-    # already batched or already booked, so on the ordinary path this is free.
-    # Nothing happens for a third-party zone, exactly as before.
-    if new_status == OrderStatusEnum.PACKED:
-        await batching_service.assign_or_dispatch(db, order)
-    elif new_status == OrderStatusEnum.CANCELLED:
-        delivery = await lalamove_service.get_delivery(db, order.id)
-        if delivery is not None:
-            # Off the run first, so a batch that is now empty does not go out
-            # to collect nothing.
-            await batching_service.cancel_assignment(db, delivery)
-        await courier_service.cancel(db, order)
-
-    # A cancelled order releases the stock it claimed at creation.
-    if new_status == OrderStatusEnum.CANCELLED:
-        # And closes on the register, if it ever reached one. Without this the
-        # check stays open on the iPad forever: the cashier sees a live order
-        # for a cancelled sale, can still add items to it, and it still counts
-        # towards the day. Production already has cashier orders sitting
-        # `cancelled` with `pos_status = active` from exactly this.
-        #
-        # Void rather than closed — closed means paid and finished, and this was
-        # neither.
-        if order.pos_status in _OPEN_ON_THE_REGISTER:
-            order.pos_status = PosOrderStatusEnum.VOID.value
-
-        for item in order.items:
-            if item.product_id:
-                await db.execute(
-                    sql_update(Product)
-                    .where(
-                        Product.id == item.product_id,
-                        Product.is_stock_product.is_(True),
-                    )
-                    .values(stock_quantity=Product.stock_quantity + item.quantity)
-                    .execution_options(synchronize_session=False)
-                )
-
-    # An order that is not going to arrive, that was paid for by card, gets the
-    # money back without anybody pressing anything else.
-    #
-    # Both endings, because they are the same fact to a customer: the cake is
-    # not coming. Automatic rather than a second admin step, because the second
-    # step is the one that gets forgotten and the cost of forgetting it is
-    # somebody who paid for nothing. The fees stay — see
-    # `payment_service.refundable_amount` — since the van was booked and, on an
-    # undelivered order, usually already drove.
-    #
-    # Never allowed to fail the transition. Cancelling is a fact about the
-    # kitchen and refunding is a fact about a bank; holding the first hostage to
-    # the second would leave a shop unable to stop making a cake because Stripe
-    # was slow. `refund_order` swallows its own failures and returns zero, and
-    # the order then shows as unrefunded for a person to deal with.
-    if new_status in _REFUNDABLE_ENDINGS:
-        from app.services import payment_service
-
-        await payment_service.refund_order(db, order)
 
     await db.flush()
     await db.refresh(order)
@@ -1497,15 +1349,6 @@ async def update_status(
     stmt = select(Order).options(*_order_load_options()).where(Order.id == order.id)
     result = await db.execute(stmt)
     return await to_response(db, result.scalar_one())
-
-
-#: The two ways an order stops being deliverable with the customer's money still
-#: in our account. `refunded` and `disputed` are not here: by the time an order
-#: reaches either, the money has already moved.
-_REFUNDABLE_ENDINGS = {
-    OrderStatusEnum.CANCELLED,
-    OrderStatusEnum.UNDELIVERED,
-}
 
 
 async def get_all_admin(

@@ -34,7 +34,12 @@ from app.models.payment_transaction import (
     PaymentTransactionStatusEnum,
 )
 from app.models.webhook_event import WebhookEvent
-from app.services import email_service, order_service, payment_gateway_router
+from app.services import (
+    email_service,
+    order_lifecycle,
+    order_service,
+    payment_gateway_router,
+)
 from app.services.payment_methods import CARD, COD, normalise_method
 from app.services.providers.base import (
     GatewayEvent,
@@ -53,10 +58,12 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-#: The statuses a successful payment may legitimately move an order out
-#: of. Everything else is either already done or deliberately finished, and a
-#: webhook must not walk it backwards — see `_handle_payment_succeeded`.
-_CONFIRMABLE_FROM = {
+#: The money endings a gateway may report on an order the map never expected
+#: there. A dashboard refund can land on an order that never confirmed, and a
+#: chargeback can arrive after anything. The gateway's ledger is the authority
+#: on where the money went, so these widen where a `refunded`/`disputed` move
+#: may *start* — never where an order may otherwise go.
+_MONEY_FACTS_FROM = {
     OrderStatusEnum.CREATED,
     OrderStatusEnum.PAYMENT_FAILED,
 }
@@ -218,7 +225,7 @@ async def create_session(
 
     # Allow retry: reset payment_failed orders back to created
     if order.status == OrderStatusEnum.PAYMENT_FAILED:
-        order.status = OrderStatusEnum.CREATED
+        await order_lifecycle.transition(db, order, OrderStatusEnum.CREATED)
         await db.flush()
 
     # Idempotency: if already has a confirmed payment, reject
@@ -232,8 +239,8 @@ async def create_session(
         else order.total
     )
     if order_total <= Decimal("0.00"):
-        order.status = OrderStatusEnum.CONFIRMED
-        await order_service.publish_to_register(db, order)
+        # `transition` publishes to the register on the way through.
+        await order_lifecycle.transition(db, order, OrderStatusEnum.CONFIRMED)
         await db.flush()
         order_response = await order_service.to_response(db, order)
         await email_service.send_order_confirmation(order_response)
@@ -262,14 +269,20 @@ async def create_session(
         # must not mail the customer a second time. This branch remains for a
         # cash order that reached `created` some other way.
         already_confirmed = order.status == OrderStatusEnum.CONFIRMED
-        order.status = OrderStatusEnum.CONFIRMED
+        if not already_confirmed:
+            # Confirms and publishes in one move. An order that has gone past
+            # `confirmed` — packed, out the door — is not a thing a payment
+            # session may walk backwards, and `transition` now says so instead
+            # of silently rewriting it.
+            await order_lifecycle.transition(db, order, OrderStatusEnum.CONFIRMED)
         order.payment_method = COD
         order.payment_provider = COD
         order.payment_id = None
-        # Same reasoning as the email below: the usual path has already done
-        # this, and `publish_to_register` no-ops on a second call — but a cash
-        # order that reached `created` some other way has to reach a counter.
-        await order_service.publish_to_register(db, order)
+        if already_confirmed:
+            # The usual path has already published, and `publish_to_register`
+            # no-ops on a second call — but a cash order that reached
+            # `confirmed` without a check number still has to reach a counter.
+            await order_service.publish_to_register(db, order)
         await db.flush()
         if not already_confirmed:
             order_response = await order_service.to_response(db, order)
@@ -589,7 +602,7 @@ async def _apply_event(db: AsyncSession, gateway: str, event: GatewayEvent) -> d
         elif event.event_type is PaymentEventType.REFUNDED:
             await _handle_refund(db, order, event)
         elif event.event_type is PaymentEventType.DISPUTED:
-            await _handle_dispute(order, event)
+            await _handle_dispute(db, order, event)
 
     return {
         "applied": True,
@@ -721,7 +734,7 @@ async def _handle_payment_succeeded(
     # may since have been sold twice. Gateways genuinely do deliver these —
     # a customer pays on a tab left open after the shop cancelled — so it is
     # recorded loudly for a human to refund rather than silently applied.
-    if order.status not in _CONFIRMABLE_FROM:
+    if not order_lifecycle.can_transition(order.status, OrderStatusEnum.CONFIRMED):
         if payment_id:
             order.payment_id = payment_id
         logger.critical(
@@ -737,13 +750,12 @@ async def _handle_payment_succeeded(
 
     if payment_id:
         order.payment_id = payment_id
-    order.status = OrderStatusEnum.CONFIRMED
-
-    # The money has landed, so now the shop is told. This is the moment a card
-    # order becomes work: before it, the customer had only opened a payment
-    # page, and a kitchen that had already been shouted at about it would be
-    # baking against a charge that might never be made.
-    await order_service.publish_to_register(db, order)
+    # The money has landed, so now the shop is told: `transition` publishes to
+    # the register on the way through. This is the moment a card order becomes
+    # work — before it, the customer had only opened a payment page, and a
+    # kitchen that had already been shouted at about it would be baking against
+    # a charge that might never be made.
+    await order_lifecycle.transition(db, order, OrderStatusEnum.CONFIRMED)
 
     order_response = await order_service.to_response(db, order)
 
@@ -768,7 +780,9 @@ async def _handle_payment_succeeded(
 async def _handle_payment_failed(
     db: AsyncSession, order: Order, event: GatewayEvent
 ) -> None:
-    if order.status != OrderStatusEnum.CREATED:
+    if not await order_lifecycle.transition(
+        db, order, OrderStatusEnum.PAYMENT_FAILED, on_invalid="skip"
+    ):
         logger.info(
             "Payment failed event ignored — order %s already in status %s",
             order.order_number,
@@ -776,7 +790,6 @@ async def _handle_payment_failed(
         )
         return
 
-    order.status = OrderStatusEnum.PAYMENT_FAILED
     order_response = await order_service.to_response(db, order)
 
     logger.warning(
@@ -843,7 +856,16 @@ async def _handle_refund(db: AsyncSession, order: Order, event: GatewayEvent) ->
         )
         return
 
-    order.status = OrderStatusEnum.REFUNDED
+    # `disputed` is in the widening too: a refund issued to settle a
+    # chargeback still means the money went back, and that is the fact the
+    # order should end on.
+    await order_lifecycle.transition(
+        db,
+        order,
+        OrderStatusEnum.REFUNDED,
+        extra_from=_MONEY_FACTS_FROM | {OrderStatusEnum.DISPUTED},
+        on_invalid="skip",
+    )
     order_response = await order_service.to_response(db, order)
 
     logger.info(
@@ -887,12 +909,22 @@ def _is_full_refund(order: Order, event: GatewayEvent) -> bool:
     return True
 
 
-async def _handle_dispute(order: Order, event: GatewayEvent) -> None:
+async def _handle_dispute(db: AsyncSession, order: Order, event: GatewayEvent) -> None:
     """
     Chargeback filed — mark order as DISPUTED and log CRITICAL so it surfaces
     in monitoring. No customer email — this requires manual admin review.
+
+    A chargeback can arrive after anything, including a refund the map calls
+    terminal — the bank does not consult our state machine — so the widening
+    covers every status a dispute has ever landed on.
     """
-    order.status = OrderStatusEnum.DISPUTED
+    await order_lifecycle.transition(
+        db,
+        order,
+        OrderStatusEnum.DISPUTED,
+        extra_from=_MONEY_FACTS_FROM | {OrderStatusEnum.REFUNDED},
+        on_invalid="skip",
+    )
     logger.critical(
         "CHARGEBACK FILED: order=%s gateway=%s payment=%s "
         "— immediate manual review required",
