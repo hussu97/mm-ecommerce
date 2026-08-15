@@ -168,6 +168,12 @@ class Order(Base, UUIDMixin, TimestampMixin):
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     admin_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Whoever else's number this order is also known by — an aggregator's or a
+    #: marketplace's own reference. Free text and not a foreign key to anything:
+    #: it is a string somebody else owns, and its only job is to be printed on
+    #: the ticket and read back to them over a phone. Null on everything the
+    #: website takes directly, which today is everything.
+    external_reference: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
     #: When the checkout told this customer their order would arrive.
     #:

@@ -87,6 +87,15 @@ function DevicesTab({
               '—'
             ),
         },
+        {
+          header: 'Online orders',
+          render: (d) =>
+            d.auto_accept_online_orders ? (
+              <Badge variant="info">Auto-accept</Badge>
+            ) : (
+              <span className="text-xs text-gray-500">Needs accepting</span>
+            ),
+        },
         { header: 'App', render: (d) => d.app_version ?? '—' },
       ]}
       fields={[
@@ -105,6 +114,14 @@ function DevicesTab({
           ],
         },
         { name: 'branch_id', label: 'Branch', type: 'select', required: true, options: branchOptions },
+        {
+          name: 'auto_accept_online_orders',
+          label: 'Auto-accept website orders',
+          type: 'checkbox',
+          helper:
+            'Takes website orders and prints them without anyone pressing Accept. '
+            + 'For a kitchen with nobody watching the iPad — leave off for a counter terminal.',
+        },
       ]}
       rowActions={(row, reload) => <PairingActions device={row} onDone={reload} />}
     />

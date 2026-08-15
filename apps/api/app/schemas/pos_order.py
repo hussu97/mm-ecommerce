@@ -225,6 +225,9 @@ class PosOrderResponse(ORMModel):
     customer_phone: str | None
     notes: str | None
     kitchen_notes: str | None
+    #: Whoever else's number this order is also known by, printed on the ticket
+    #: when set. Null on everything the website takes directly.
+    external_reference: str | None = None
     #: Where a website order is going, flattened for the ticket. Null for a
     #: counter order, which has nowhere to go but the counter.
     delivery_address: str | None = None
