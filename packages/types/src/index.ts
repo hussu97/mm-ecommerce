@@ -1,33 +1,44 @@
-// Shared TypeScript types — expanded in Prompt 2+
+/**
+ * Shared TypeScript types — generated from the API, not transcribed from it.
+ *
+ * This package used to be thirty lines of hand-written guesses, and the
+ * guesses were wrong: `OrderStatus` had four of the API's ten values,
+ * `PaymentProvider` named gateways the shop had never shipped, and nothing
+ * imported any of it — which made it a trap rather than a source. An agent (or
+ * an engineer) told "shared types live in @mm/types" would faithfully copy a
+ * contract months out of date.
+ *
+ * Now the flow is mechanical:
+ *
+ *   apps/api schemas ──(python -m scripts.export_openapi)──▶ openapi.json
+ *   openapi.json ──(pnpm --filter @mm/types generate)──▶ src/generated.ts
+ *
+ * CI checks both hops for freshness, so a Pydantic change that skips this
+ * package fails the build instead of shipping as drift. `generated.ts` is the
+ * whole contract (`paths`, `components`, `operations`); this file curates the
+ * names the apps actually reach for.
+ */
 
-export type RegionCode =
-  | "dubai"
-  | "sharjah"
-  | "ajman"
-  | "abu_dhabi"
-  | "fujairah"
-  | "ras_al_khaimah"
-  | "umm_al_quwain"
-  | "al_ain"
-  | "rest_of_uae";
+import type { components, operations, paths } from "./generated";
 
-export type OrderStatus = "created" | "confirmed" | "packed" | "cancelled";
+export type { components, operations, paths };
 
-export type DeliveryMethod = "delivery" | "pickup";
+/** Every response/request schema, by its Pydantic name. */
+export type Schemas = components["schemas"];
 
-export type PaymentProvider = "stripe" | "tabby" | "tamara";
+// ── the enums that used to drift ──────────────────────────────────────────────
 
-export type DiscountType = "percentage" | "fixed";
+export type OrderStatus = Schemas["OrderStatusEnum"];
+export type DeliveryMethod = Schemas["DeliveryMethodEnum"];
 
-export interface ApiResponse<T> {
-  data: T;
-  message?: string;
-}
+// ── the core entities ─────────────────────────────────────────────────────────
 
-export interface PaginatedResponse<T> {
-  items: T[];
-  total: number;
-  page: number;
-  page_size: number;
-  total_pages: number;
-}
+export type Order = Schemas["OrderResponse"];
+export type OrderListItem = Schemas["OrderListResponse"];
+export type Product = Schemas["ProductResponse"];
+export type Category = Schemas["CategoryResponse"];
+export type Cart = Schemas["CartResponse"];
+export type Address = Schemas["AddressResponse"];
+export type AddressCreate = Schemas["AddressCreate"];
+export type PromoCode = Schemas["PromoCodeResponse"];
+export type Fulfilment = Schemas["FulfilmentResponse"];

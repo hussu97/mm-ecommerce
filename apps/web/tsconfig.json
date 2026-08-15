@@ -26,11 +26,8 @@
       "@/*": [
         "./*"
       ],
-      "@mm/config": [
-        "../../packages/config/src/delivery.ts"
-      ],
-      "@mm/config/delivery": [
-        "../../packages/config/src/delivery.ts"
+      "@mm/types": [
+        "../../packages/types/src/index.ts"
       ]
     }
   },

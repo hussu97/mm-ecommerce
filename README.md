@@ -23,8 +23,9 @@ melting-moments-cakes/
 │   ├── admin/        Next.js 15 admin panel (App Router, TypeScript)
 │   └── api/          FastAPI + SQLAlchemy 2.0 async backend (Python 3.12)
 ├── packages/
-│   ├── ui/           @mm/ui  — shared React component library
-│   ├── types/        @mm/types — shared TypeScript type definitions
+│   ├── types/        @mm/types — TypeScript contract, generated from the API's
+│   │                 OpenAPI document (never hand-edit src/generated.ts; see
+│   │                 apps/api/scripts/export_openapi.py)
 │   └── config/       @mm/config — shared ESLint + TypeScript configs
 ├── docker-compose.yml        Local dev (Postgres, API, Web, Admin)
 ├── docker-compose.prod.yml   Production overrides

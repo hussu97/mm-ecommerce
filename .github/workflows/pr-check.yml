@@ -76,6 +76,14 @@ jobs:
       - name: Lint
         run: pnpm --filter web lint
 
+      # Second hop of the shared-types contract: openapi.json (checked against
+      # the live schemas by the Python job) must match src/generated.ts. Runs
+      # here because any packages/** change routes through this job's filter.
+      - name: Shared types freshness & tests
+        run: |
+          pnpm --filter @mm/types run check:fresh
+          pnpm --filter @mm/types test
+
       - name: Test
         run: pnpm --filter web test
 
@@ -187,3 +195,13 @@ jobs:
         run: |
           cd apps/api
           pytest tests/ --tb=short --cov=app --cov-report=term-missing
+
+      # The shared TypeScript types are generated from this app's OpenAPI
+      # document. A schema change that skips regeneration ships as silent
+      # contract drift — the exact failure the 2026-08 audit catalogued — so it
+      # fails here instead. The Node half (`@mm/types check:fresh`) guards the
+      # second hop, openapi.json -> generated.ts.
+      - name: Shared types freshness
+        run: |
+          cd apps/api
+          python -m scripts.export_openapi --check

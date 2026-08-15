@@ -1,53 +1,38 @@
-import { describe, it, expectTypeOf } from 'vitest';
-import type {
-  RegionCode,
-  OrderStatus,
-  DeliveryMethod,
-  PaymentProvider,
-  DiscountType,
-  ApiResponse,
-  PaginatedResponse,
-} from './index';
+import { describe, it, expect, expectTypeOf } from "vitest";
+import type { AddressCreate, Order, OrderStatus } from "./index";
 
-describe('Type definitions', () => {
-  it('RegionCode accepts valid values', () => {
-    const r: RegionCode = 'dubai';
-    expectTypeOf(r).toEqualTypeOf<RegionCode>();
+/**
+ * These pin the exact drifts the hand-written era shipped. Each one was a real
+ * mismatch found in the 2026-08 architecture audit; if a regeneration ever
+ * loses them again, the contract moved and somebody should look at why.
+ */
+describe("generated contract", () => {
+  it("OrderStatus carries all ten API values, not the four the old copy had", () => {
+    const all: OrderStatus[] = [
+      "created",
+      "confirmed",
+      "packed",
+      "out_for_delivery",
+      "delivered",
+      "undelivered",
+      "cancelled",
+      "payment_failed",
+      "refunded",
+      "disputed",
+    ];
+    expect(all).toHaveLength(10);
   });
 
-  it('OrderStatus accepts all valid values', () => {
-    const statuses: OrderStatus[] = ['created', 'confirmed', 'packed', 'cancelled'];
-    expectTypeOf(statuses).toEqualTypeOf<OrderStatus[]>();
+  it("an order exposes the fields the admin's copy was missing", () => {
+    expectTypeOf<Order>().toHaveProperty("low_order_fee");
+    expectTypeOf<Order>().toHaveProperty("email_has_account");
+    expectTypeOf<Order>().toHaveProperty("locale");
   });
 
-  it('DeliveryMethod accepts valid values', () => {
-    const m: DeliveryMethod = 'delivery';
-    expectTypeOf(m).toEqualTypeOf<DeliveryMethod>();
-  });
-
-  it('PaymentProvider accepts valid values', () => {
-    const p: PaymentProvider = 'stripe';
-    expectTypeOf(p).toEqualTypeOf<PaymentProvider>();
-  });
-
-  it('DiscountType accepts valid values', () => {
-    const d: DiscountType = 'percentage';
-    expectTypeOf(d).toEqualTypeOf<DiscountType>();
-  });
-
-  it('ApiResponse is generic over data type', () => {
-    const res: ApiResponse<string> = { data: 'hello' };
-    expectTypeOf(res.data).toEqualTypeOf<string>();
-  });
-
-  it('PaginatedResponse has required fields', () => {
-    const paged: PaginatedResponse<number> = {
-      items: [1, 2, 3],
-      total: 3,
-      page: 1,
-      page_size: 10,
-      total_pages: 1,
-    };
-    expectTypeOf(paged.items).toEqualTypeOf<number[]>();
+  it("an address pin is required, as zone pricing demands", () => {
+    // The web app's hand-written copy made these optional, inviting 422s (or
+    // a "fix" that would have broken zone pricing). Pydantic requires them.
+    expectTypeOf<AddressCreate["latitude"]>().not.toEqualTypeOf<undefined>();
+    expectTypeOf<AddressCreate["longitude"]>().not.toEqualTypeOf<undefined>();
   });
 });
