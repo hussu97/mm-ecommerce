@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.order import Order
 from app.models.order_delivery import OrderDelivery
 from app.models.payment_gateway import PaymentGateway
+from app.services.order_pricing import VAT_RATE
 
 logger = logging.getLogger(__name__)
 
@@ -118,12 +119,26 @@ def processing_fee(
     both processors charge today. A missing row is a seeding problem rather than
     a free transaction, and showing a fee of zero would flatter every order on
     the screen.
+
+    **VAT is charged on the fee, and the shop pays it.** A processor's fee is a
+    service sold to the shop, so the invoice is the fee plus 5% on top of it —
+    the screen was reporting the fee before tax and quietly overstating what
+    every card order nets by that 5%. On a 54-dirham order the difference is 13
+    fils; across a year of them it is the sort of number that makes a margin
+    report disagree with a bank statement for reasons nobody can find.
+
+    This is the shop's own VAT rate, the same one the order's prices are
+    inclusive of, so it is read from `order_pricing` rather than written out a
+    second time here. Note the direction: the order's VAT is *inclusive* — it
+    is already inside the price the customer paid — while this one is *added*,
+    because the fee is quoted before tax.
     """
     if charged <= 0:
         return _ZERO, False
     percent = _money(gateway.fee_percent) if gateway else Decimal("2.9")
     fixed = _money(gateway.fee_fixed) if gateway else Decimal("1")
-    return _round(charged * _as_fraction(percent) + fixed), True
+    before_tax = charged * _as_fraction(percent) + fixed
+    return _round(before_tax * (Decimal("1") + VAT_RATE)), True
 
 
 def _as_fraction(percent: Decimal) -> Decimal:

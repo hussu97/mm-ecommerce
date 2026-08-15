@@ -36,11 +36,28 @@ def _economics(
 # ── the fee ───────────────────────────────────────────────────────────────────
 
 
-def test_the_fee_is_the_gateway_rate_plus_the_fixed_part():
+def test_the_fee_is_the_gateway_rate_plus_the_fixed_part_plus_vat():
+    """2.9% of 100 + 1 = 3.90 before tax, and the shop pays 5% on top of it."""
     gateway = SimpleNamespace(fee_percent=Decimal("2.9"), fee_fixed=Decimal("1"))
     fee, estimated = processing_fee(Decimal("100.00"), gateway)
-    assert fee == Decimal("3.90")
+    assert fee == Decimal("4.10")
     assert estimated is True
+
+
+def test_the_fee_carries_vat_because_the_processor_invoices_the_shop():
+    """
+    The screen used to report the fee before tax, which overstated what every
+    card order nets by 5% of it. The order this was noticed on: 54.00 charged,
+    24.00 to the courier, and a processing line reading 2.57 when the invoice
+    says 2.69 — so the shop's net was 27.43 on screen and 27.31 in the bank.
+
+    Distinct from the VAT on the order itself, which is *inclusive* — already
+    inside what the customer paid. A processor quotes before tax and adds it.
+    """
+    fee, _ = processing_fee(Decimal("54.00"), None)
+    assert fee == Decimal("2.69")
+    before_tax = Decimal("54.00") * Decimal("0.029") + Decimal("1")
+    assert fee > before_tax
 
 
 def test_a_gateway_we_cannot_find_still_charges_the_going_rate():
@@ -49,14 +66,15 @@ def test_a_gateway_we_cannot_find_still_charges_the_going_rate():
     would flatter every order on the screen.
     """
     fee, estimated = processing_fee(Decimal("100.00"), None)
-    assert fee == Decimal("3.90")
+    assert fee == Decimal("4.10")
     assert estimated is True
 
 
 def test_a_renegotiated_rate_is_an_edit_and_not_a_deploy():
     gateway = SimpleNamespace(fee_percent=Decimal("2.4"), fee_fixed=Decimal("0.50"))
     fee, _ = processing_fee(Decimal("100.00"), gateway)
-    assert fee == Decimal("2.90")
+    # 2.4% of 100 + 0.50 = 2.90, and 5% on top.
+    assert fee == Decimal("3.05")
 
 
 def test_nothing_charged_costs_nothing_to_process():
