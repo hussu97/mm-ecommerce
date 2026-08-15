@@ -200,13 +200,30 @@ async def _generate_order_number(db: AsyncSession) -> str:
 # ── Private helpers for create_order ──────────────────────────────────────────
 
 
-async def _locate_cart(
+def _priceable_cart_options():
+    """
+    Everything pricing a basket touches, loaded up front.
+
+    `_compute_item_totals` reads each line's product, and
+    `is_website_product_visible` reads that product's category. A lazy load
+    inside async SQLAlchemy is not a slow query, it is a `MissingGreenlet` — so
+    this is a correctness requirement rather than a performance one, and it is
+    written once because both the order and its preview need exactly it.
+    """
+    return [
+        selectinload(Cart.items)
+        .joinedload(CartItem.product)
+        .joinedload(Product.category)
+    ]
+
+
+async def find_priceable_cart(
     db: AsyncSession,
     user_id: uuid.UUID | None,
     session_id: str | None,
-) -> Cart:
+) -> Cart | None:
     """
-    Find the active cart for this user or session.
+    The basket this request belongs to, loaded ready to price, or nothing.
 
     Priority: user_id cart → session_id cart (fallback).
 
@@ -214,20 +231,17 @@ async def _locate_cart(
     guest JWT just before submitting the order, so ``user_id`` is set in the
     token but the cart was built using ``session_id``.  Without the fallback
     the lookup would return nothing and raise "Cart is empty".
-    """
-    if not user_id and not session_id:
-        raise BadRequestError("session_id is required for guest checkout")
 
+    Answers `None` rather than refusing, because "there is nothing in the
+    basket yet" is an ordinary state for `preview_order` and a fatal one for
+    `create_order`; see `_locate_cart` for the second.
+    """
     cart: Cart | None = None
 
     if user_id:
         result = await db.execute(
             select(Cart)
-            .options(
-                selectinload(Cart.items)
-                .joinedload(CartItem.product)
-                .joinedload(Product.category)
-            )
+            .options(*_priceable_cart_options())
             .where(Cart.user_id == user_id)
         )
         cart = result.scalar_one_or_none()
@@ -236,17 +250,26 @@ async def _locate_cart(
     if (not cart or not cart.items) and session_id:
         result = await db.execute(
             select(Cart)
-            .options(
-                selectinload(Cart.items)
-                .joinedload(CartItem.product)
-                .joinedload(Product.category)
-            )
+            .options(*_priceable_cart_options())
             .where(Cart.session_id == session_id)
         )
         session_cart = result.scalar_one_or_none()
         if session_cart and session_cart.items:
             cart = session_cart
 
+    return cart
+
+
+async def _locate_cart(
+    db: AsyncSession,
+    user_id: uuid.UUID | None,
+    session_id: str | None,
+) -> Cart:
+    """The basket, or a refusal. An order cannot be written without one."""
+    if not user_id and not session_id:
+        raise BadRequestError("session_id is required for guest checkout")
+
+    cart = await find_priceable_cart(db, user_id, session_id)
     if not cart or not cart.items:
         raise BadRequestError("Cart is empty")
 
@@ -1018,14 +1041,13 @@ async def preview_order(
     worse than a checkout showing a total with a warning next to it. The refusals
     live on the pay button, where they can be acted on.
     """
-    cart = await cart_service.find_cart(db, user_id, data.session_id or session_id)
+    # The same lookup and the same eager loading `create_order` does — not
+    # `cart_service.find_cart`, which selects the row on its own and would leave
+    # every product behind a lazy load this cannot perform.
+    cart = await find_priceable_cart(db, user_id, data.session_id or session_id)
 
     items_data: list[dict] = []
     if cart is not None and cart.items:
-        # Items are needed with their products; `find_cart` selects the row
-        # alone, so the relationship is loaded here rather than lazily — a lazy
-        # load inside async SQLAlchemy is a `MissingGreenlet`, not a slow query.
-        await db.refresh(cart, ["items"])
         items_data, _ = _compute_item_totals(cart, strict=False)
 
     lines = _tax_lines_of(items_data)

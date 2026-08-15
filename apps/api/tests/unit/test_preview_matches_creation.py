@@ -225,7 +225,7 @@ async def _preview(cart):
     # path is stubbed above.
     db.execute = AsyncMock(side_effect=_script([_result()]))
     with patch(
-        "app.services.order_service.cart_service.find_cart",
+        "app.services.order_service.find_priceable_cart",
         new=AsyncMock(return_value=cart),
     ):
         return await order_service.preview_order(

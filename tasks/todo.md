@@ -64,6 +64,50 @@ Fixed along the way (found during the refactor, kept to the same patterns):
 - Map additions, documented in place: PAYMENT_FAILED→CREATED (retry), CONFIRMED→
   OUT_FOR_DELIVERY and CONFIRMED→DELIVERED (courier collected before packing stamped).
 
-Deferred (documented in docs/architecture-audit-2026-08.md): P1 codegen, preview
-endpoint, fetch-client consolidation; escalating the ungated-write warning to a raise
-once the log stays quiet.
+## P1 / P2 / P3 sweep — complete
+
+Everything the audit raised above P3-hygiene is done. In commit order:
+
+- **Shared types generated** (P1-1, P1-5): `@mm/types` is built from the API's OpenAPI
+  document; two CI gates (Python-side `export_openapi --check`, Node-side
+  `check:fresh`) fail on drift. Dead `@mm/ui` stub and the repudiated
+  `packages/config/src/delivery.ts` deleted; both apps carry real `workspace:*` deps.
+- **Transactions & email** (P2-2, P2-4): duplicate `get_db` deleted, service commits
+  replaced with flushes, device `last_seen_at` moved to its own session; one inline-await
+  email policy with an hourly failed-send alarm (monitor, not resend — `email_logs` has
+  no payload to replay and no claimable status, so a resender would double-send).
+- **Routers** (P2-3, P2-8): `require()` dependency factory replaced five copied helpers;
+  zero bare `HTTPException` left in six routers, wire shape proven byte-identical.
+- **DB vocabulary** (P1-3, P3-2/3/4/5/8): migrations 099–103 — status CHECKs on 10
+  columns, `business_date` format guards, `updated_at` on `order_items`/`promo_codes`,
+  `ix_order_items_product_id`, soft-delete consistency on 22 tables; `lazy="selectin"`
+  dropped from the four Order collections (audit found every reader already loads them).
+- **Admin** (P1-4, P2-5, P2-6): one request layer, `useApiList`/`useDebouncedValue`,
+  41 `alert()`/`confirm()` sites replaced with styled dialogs, analytics on
+  `allSettled` so one dead endpoint no longer blanks the dashboard.
+- **Web** (P1-4, P3-10/12/13/16): `api-client`/`api-server` split behind
+  `client-only`/`server-only`, shared `interpolate()`, cache tags/TTLs centralised,
+  `formatPrice` adopted, `DEFAULT_ADDRESS_LABEL` unified.
+- **Purchase orders & identity** (P2-1, P3-1/6/7/9): PO state machine moved out of the
+  router into `inventory_service` mirroring `order_lifecycle`; `phonenumbers` now
+  validates server-side (six impossible-number formats newly rejected, every real UAE
+  format preserved); `OptionSnapshot` schema validates both wire dialects;
+  `reference_integrity` checks UUID-array scoping at the `crud_service` chokepoint.
+- **Money** (P1-2, P2-7): `POST /orders/preview` returns the totals the order will be
+  written with; checkout renders them instead of re-deriving (the `*5/105` VAT line,
+  the mirrored `lowOrderFeeFor` and the two divergent grand totals are gone).
+  `page.tsx` 1,621 → 1,090 lines with four hooks and four components extracted.
+
+Found and fixed along the way, not in the audit:
+- `alembic downgrade base` had been broken for months: four revisions restored dropped
+  columns without the indexes/keys Postgres removed with them, and `024` dropped an
+  index it never created. Full up/down/up now verified; `test_migration_chain.py`
+  pins the structure (and caught that migrations use two `down_revision` spellings).
+- The sixth `_require` copy in `marketing.py` was **dead code** — every route there is
+  gated by `build_crud_router`, so it read as protection and enforced nothing.
+- Cancelling a counter sale from the console restocked ingredients it never claimed.
+- POS `close_order` could walk a packed online order back to `confirmed`.
+
+Still open, deliberately: escalating the ungated-status-write warning to a raise once
+the log stays quiet; join tables for the UUID-array columns (service validation landed
+instead); `business_date` as a real `Date` (format CHECK landed instead).
