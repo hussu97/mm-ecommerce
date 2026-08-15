@@ -34,7 +34,13 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, TimestampMixin, UUIDMixin
+from .base import (
+    Base,
+    TimestampMixin,
+    UUIDMixin,
+    business_date_format,
+    status_vocabulary,
+)
 
 
 class OrderTypeEnum(str, enum.Enum):
@@ -105,6 +111,8 @@ class OrderPayment(Base, UUIDMixin, TimestampMixin):
             unique=True,
             postgresql_where=text("idempotency_key IS NOT NULL"),
         ),
+        # Migration 100: the Z-report groups tenders by this string.
+        business_date_format("order_payments"),
     )
 
     order_id: Mapped[uuid.UUID] = mapped_column(
@@ -272,6 +280,15 @@ class OrderTax(Base, UUIDMixin, TimestampMixin):
         return f"<OrderTax {self.name} {self.amount}>"
 
 
+# Above `KitchenTicket`, which spells its CHECK constraint from it.
+class KitchenTicketStatusEnum(str, enum.Enum):
+    NEW = "new"
+    IN_PROGRESS = "in_progress"
+    READY = "ready"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
 class KitchenTicket(Base, UUIDMixin, TimestampMixin):
     """
     A batch of lines sent to one kitchen station.
@@ -281,6 +298,11 @@ class KitchenTicket(Base, UUIDMixin, TimestampMixin):
     """
 
     __tablename__ = "kitchen_tickets"
+    __table_args__ = (
+        # Migration 099: a ticket with an unspellable status is one no kitchen
+        # display queue will ever show again.
+        status_vocabulary("kitchen_tickets", "status", KitchenTicketStatusEnum),
+    )
 
     order_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -364,11 +386,3 @@ class KitchenTicketItem(Base, UUIDMixin, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<KitchenTicketItem {self.product_name} x{self.quantity}>"
-
-
-class KitchenTicketStatusEnum(str, enum.Enum):
-    NEW = "new"
-    IN_PROGRESS = "in_progress"
-    READY = "ready"
-    COMPLETED = "completed"
-    CANCELLED = "cancelled"

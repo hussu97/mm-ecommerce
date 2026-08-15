@@ -22,7 +22,13 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, TimestampMixin, UUIDMixin
+from .base import (
+    Base,
+    TimestampMixin,
+    UUIDMixin,
+    business_date_format,
+    status_vocabulary,
+)
 
 
 class TransferOrderStatusEnum(str, enum.Enum):
@@ -43,6 +49,12 @@ class TransferOrderStatusEnum(str, enum.Enum):
 
 class TransferOrder(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "transfer_orders"
+    __table_args__ = (
+        # Migration 099.
+        status_vocabulary("transfer_orders", "status", TransferOrderStatusEnum),
+        # Migration 100.
+        business_date_format("transfer_orders"),
+    )
 
     reference: Mapped[str] = mapped_column(
         String(50), unique=True, nullable=False, index=True

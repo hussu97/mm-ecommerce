@@ -19,7 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, TimestampMixin, UUIDMixin
+from .base import Base, TimestampMixin, UUIDMixin, status_vocabulary
 
 if TYPE_CHECKING:
     from .delivery_polygon import DeliveryPolygon
@@ -214,6 +214,11 @@ class DeliveryBatch(Base, UUIDMixin, TimestampMixin):
     """
 
     __tablename__ = "delivery_batches"
+    __table_args__ = (
+        # Migration 099. Our own lifecycle only — `courier_status` below is
+        # the provider's verbatim word and stays unconstrained by design.
+        status_vocabulary("delivery_batches", "status", BatchStatusEnum),
+    )
 
     #: Which group's schedule opened this run. Together with `dispatch_at` it
     #: *is* the run's identity — two groups closing a slot on the same minute now

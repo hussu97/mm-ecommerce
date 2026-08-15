@@ -19,7 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, TimestampMixin, UUIDMixin
+from .base import Base, TimestampMixin, UUIDMixin, business_date_format
 
 if TYPE_CHECKING:
     from .device import Device
@@ -239,6 +239,9 @@ class BranchBusinessDay(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "branch_business_days"
     __table_args__ = (
         UniqueConstraint("branch_id", "business_date", name="uq_branch_business_date"),
+        # Migration 100: everything stamped with a business_date joins back to
+        # this table through exact string equality.
+        business_date_format("branch_business_days"),
     )
 
     branch_id: Mapped[uuid.UUID] = mapped_column(

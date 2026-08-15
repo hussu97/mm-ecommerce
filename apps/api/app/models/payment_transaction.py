@@ -29,7 +29,7 @@ from sqlalchemy import ForeignKey, Index, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, TimestampMixin, UUIDMixin
+from .base import Base, TimestampMixin, UUIDMixin, status_vocabulary
 
 __all__ = ["PaymentTransaction", "PaymentTransactionStatusEnum"]
 
@@ -84,6 +84,11 @@ class PaymentTransaction(Base, UUIDMixin, TimestampMixin):
             "payment_id",
             unique=True,
             postgresql_where=text("payment_id IS NOT NULL"),
+        ),
+        # Migration 099. Our normalised vocabulary only — the gateway's own
+        # word lives unconstrained in `raw_status`, by design.
+        status_vocabulary(
+            "payment_transactions", "status", PaymentTransactionStatusEnum
         ),
     )
 

@@ -1191,17 +1191,19 @@ async def _send_confirmation_emails(order: OrderResponse) -> None:
 
 def _list_row_load_options():
     """
-    Turn off the eager loads a list row does not use.
+    Pin the four POS collections to empty on list rows.
 
-    `Order.payments`, `order_charges`, `order_discounts` and `order_taxes` are
-    all `lazy="selectin"` on the model, which is right for reading one order and
-    wasteful for listing them: each adds a query per page, and `OrderListResponse`
-    reads none of them. On a 2000-row page — which the console offers — that was
-    four extra round trips fetching rows nobody looked at.
+    They used to be `lazy="selectin"` on the model and this was the escape
+    hatch: four extra queries per page, fetching rows `OrderListResponse` never
+    reads. The model is lazy by default now, so no query fires either way and
+    the performance job here is done.
 
-    `noload` rather than `raiseload`: these rows are handed to a response model
-    that never touches the collections, and a future field that does should get
-    an empty list rather than an exception in production.
+    Kept as a guardrail rather than deleted. The lazy default answers a
+    forgotten access with `MissingGreenlet`, and these rows are handed to a
+    response model maintained far from this query — a future field that touches
+    a collection should degrade to an empty list on the console's order list,
+    not a 500 across every page of it. `noload` states that choice where the
+    query is built.
     """
     return [
         noload(Order.payments),

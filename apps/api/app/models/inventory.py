@@ -34,7 +34,13 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, TimestampMixin, UUIDMixin
+from .base import (
+    Base,
+    TimestampMixin,
+    UUIDMixin,
+    business_date_format,
+    status_vocabulary,
+)
 
 if TYPE_CHECKING:
     from .branch import Branch
@@ -369,6 +375,13 @@ class InventoryTransaction(Base, UUIDMixin, TimestampMixin):
     """
 
     __tablename__ = "inventory_transactions"
+    __table_args__ = (
+        # Migration 099: `is_posted` — and with it whether stock has actually
+        # moved — hangs off this string.
+        status_vocabulary("inventory_transactions", "status", TransactionStatusEnum),
+        # Migration 100.
+        business_date_format("inventory_transactions"),
+    )
 
     reference: Mapped[str] = mapped_column(
         String(50), unique=True, nullable=False, index=True
@@ -516,6 +529,12 @@ class PurchaseOrder(Base, UUIDMixin, TimestampMixin):
     """
 
     __tablename__ = "purchase_orders"
+    __table_args__ = (
+        # Migration 099.
+        status_vocabulary("purchase_orders", "status", PurchaseOrderStatusEnum),
+        # Migration 100.
+        business_date_format("purchase_orders"),
+    )
 
     reference: Mapped[str] = mapped_column(
         String(50), unique=True, nullable=False, index=True

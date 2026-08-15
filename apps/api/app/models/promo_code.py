@@ -15,7 +15,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .base import Base, UUIDMixin, utcnow
+from .base import Base, TimestampMixin, UUIDMixin
 
 
 class DiscountTypeEnum(str, enum.Enum):
@@ -23,7 +23,11 @@ class DiscountTypeEnum(str, enum.Enum):
     FIXED = "fixed"
 
 
-class PromoCode(Base, UUIDMixin):
+class PromoCode(Base, UUIDMixin, TimestampMixin):
+    # `TimestampMixin` (migration 101) replaces the hand-rolled `created_at`
+    # this table carried, and adds the `updated_at` it lacked: a coupon's
+    # ceiling, expiry and active flag are all edited in place, and "when did
+    # this code last change" had no answer.
     __tablename__ = "promo_codes"
     __table_args__ = (
         CheckConstraint("discount_value > 0", name="ck_promo_discount_positive"),
@@ -106,9 +110,6 @@ class PromoCode(Base, UUIDMixin):
     )
     valid_until: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, nullable=False
     )
 
     def __repr__(self) -> str:

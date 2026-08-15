@@ -386,12 +386,14 @@ async def outstanding_balance(db: AsyncSession, order: Order) -> Decimal:
     """
     What is still owed on this order, asked for rather than read off the object.
 
-    `Order.amount_paid` walks `order.payments`, which is a relationship. It is
-    `lazy="selectin"` so it is already loaded whenever the order came out of a
-    query — but `dispatch_order` is called from four places and only has to meet
-    one order that did not, and a lazy load from inside async SQLAlchemy is not
-    a wrong number, it is a `MissingGreenlet` and a failed dispatch. Summing in
-    SQL is one query and cannot be surprised.
+    `Order.amount_paid` walks `order.payments`, which is a relationship — and
+    since that relationship stopped being `lazy="selectin"`, one that is loaded
+    only when the query that fetched the order asked for it. `dispatch_order`
+    is called from four places and only has to meet one order that did not ask,
+    and a lazy load from inside async SQLAlchemy is not a wrong number, it is a
+    `MissingGreenlet` and a failed dispatch. Summing in SQL is one query and
+    cannot be surprised — which is why this was already the right shape while
+    the eager load was still hiding the problem.
     """
     paid = (
         await db.execute(

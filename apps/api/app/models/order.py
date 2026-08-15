@@ -22,7 +22,14 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, TimestampMixin, UUIDMixin
+from .base import (
+    Base,
+    TimestampMixin,
+    UUIDMixin,
+    business_date_format,
+    status_vocabulary,
+)
+from .pos_order import OrderItemStatusEnum, PosOrderStatusEnum
 
 if TYPE_CHECKING:
     from .branch import Branch
@@ -83,6 +90,11 @@ class Order(Base, UUIDMixin, TimestampMixin):
                 "AND business_date IS NOT NULL"
             ),
         ),
+        # Migration 099: a typo'd pos_status vanishes from every WHERE clause
+        # that feeds a register; the CHECK makes it an error instead.
+        status_vocabulary("orders", "pos_status", PosOrderStatusEnum, nullable=True),
+        # Migration 100: check numbers, tills and Z-reports join on this string.
+        business_date_format("orders"),
     )
 
     order_number: Mapped[str] = mapped_column(
@@ -318,8 +330,16 @@ class Order(Base, UUIDMixin, TimestampMixin):
     items: Mapped[list[OrderItem]] = relationship(
         "OrderItem", back_populates="order", cascade="all, delete-orphan"
     )
+    #: The register's tender ledger. Lazy by default like everything else on
+    #: this model: the four POS collections here were `lazy="selectin"` for a
+    #: while, which meant four extra queries on every order fetched anywhere —
+    #: including 2000-row console pages that read none of them — and an escape
+    #: hatch of `noload()`s in `order_service` to switch it back off. Callers
+    #: that serialise them (`pos_order_service.get_order`, the POS routes' load
+    #: options) say `selectinload` explicitly, and a forgotten one is a loud
+    #: `MissingGreenlet`, not a quiet N+1 — see `branch` above.
     payments: Mapped[list[OrderPayment]] = relationship(
-        "OrderPayment", cascade="all, delete-orphan", lazy="selectin"
+        "OrderPayment", cascade="all, delete-orphan"
     )
     #: Every attempt to take money for this order online, one row per gateway
     #: session. Distinct from `payments` above, which is the register's tender
@@ -332,13 +352,13 @@ class Order(Base, UUIDMixin, TimestampMixin):
         order_by="PaymentTransaction.created_at",
     )
     order_charges: Mapped[list[OrderCharge]] = relationship(
-        "OrderCharge", cascade="all, delete-orphan", lazy="selectin"
+        "OrderCharge", cascade="all, delete-orphan"
     )
     order_discounts: Mapped[list[OrderDiscount]] = relationship(
-        "OrderDiscount", cascade="all, delete-orphan", lazy="selectin"
+        "OrderDiscount", cascade="all, delete-orphan"
     )
     order_taxes: Mapped[list[OrderTax]] = relationship(
-        "OrderTax", cascade="all, delete-orphan", lazy="selectin"
+        "OrderTax", cascade="all, delete-orphan"
     )
     #: How this order reaches the customer, and what the courier charged us.
     #: Admin-facing only — never serialised into a storefront response.
@@ -361,6 +381,11 @@ class Order(Base, UUIDMixin, TimestampMixin):
         order_by="OrderStatusEvent.at",
     )
 
+    #: Walks `payments`, so the caller must have loaded it (`selectinload`) —
+    #: on an unloaded async instance this raises `MissingGreenlet`, which is
+    #: the loud failure the lazy default exists to give. A caller that cannot
+    #: guarantee the load sums in SQL instead, like
+    #: `noon_send_service.outstanding_balance`.
     @property
     def amount_paid(self) -> Decimal:
         return sum((p.signed_amount for p in self.payments), start=Decimal("0"))
@@ -373,8 +398,20 @@ class Order(Base, UUIDMixin, TimestampMixin):
         return f"<Order {self.order_number}>"
 
 
-class OrderItem(Base, UUIDMixin):
+class OrderItem(Base, UUIDMixin, TimestampMixin):
+    # `TimestampMixin` arrived with migration 101. Lines are edited in place —
+    # voided, partly returned, re-priced by a recalculation — and nothing
+    # recorded when. `created_at` is backfilled from `added_at` where the
+    # register stamped one and from the parent order's `created_at` where it
+    # did not; `added_at` stays, because "when the cashier added it to the
+    # check" and "when the row was written" are different claims and the
+    # receipts rely on the first.
     __tablename__ = "order_items"
+    __table_args__ = (
+        # Migration 099. NULL on storefront lines, same as the order's
+        # pos_status.
+        status_vocabulary("order_items", "status", OrderItemStatusEnum, nullable=True),
+    )
 
     order_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),

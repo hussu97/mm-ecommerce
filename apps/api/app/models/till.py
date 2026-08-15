@@ -10,7 +10,13 @@ from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, TimestampMixin, UUIDMixin
+from .base import (
+    Base,
+    TimestampMixin,
+    UUIDMixin,
+    business_date_format,
+    status_vocabulary,
+)
 
 if TYPE_CHECKING:
     from .user import User
@@ -39,6 +45,13 @@ class Till(Base, UUIDMixin, TimestampMixin):
     """
 
     __tablename__ = "tills"
+    __table_args__ = (
+        # Migration 099: `is_open` and the day's reconciliation both hang off
+        # this string being exactly one of two words.
+        status_vocabulary("tills", "status", TillStatusEnum),
+        # Migration 100.
+        business_date_format("tills"),
+    )
 
     branch_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),

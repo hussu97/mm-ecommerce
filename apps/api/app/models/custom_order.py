@@ -39,7 +39,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .base import Base, TimestampMixin, UUIDMixin
+from .base import Base, TimestampMixin, UUIDMixin, status_vocabulary
 
 
 class CustomOrderSourceEnum(str, enum.Enum):
@@ -85,6 +85,9 @@ class CustomOrder(Base, UUIDMixin, TimestampMixin):
         # The calendar's only query: "what is booked on this date". Everything
         # else — admin lists, a customer's history — is rarer than this.
         Index("ix_custom_orders_due_date_status", "due_date", "status"),
+        # Migration 099: a typo'd status here is a slot the capacity check
+        # either never releases or never counts.
+        status_vocabulary("custom_orders", "status", CustomOrderStatusEnum),
     )
 
     #: The date the cake is wanted. Not nullable: a custom order with no date is

@@ -266,6 +266,10 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
     previous_courier_order_ids: Mapped[Any] = mapped_column(
         JSONB, nullable=False, server_default="[]"
     )
+    #: The provider's word, verbatim, and deliberately *not* CHECK-constrained
+    #: (migration 099 constrains internal lifecycles only): this column records
+    #: somebody else's vocabulary, and Lalamove inventing a status must degrade
+    #: to an unknown string in a column, never a rejected webhook.
     courier_status: Mapped[str | None] = mapped_column(
         String(30), nullable=True, index=True
     )
