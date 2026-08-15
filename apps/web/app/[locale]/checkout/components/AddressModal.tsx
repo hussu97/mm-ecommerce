@@ -10,7 +10,7 @@ import { PhoneVerify } from '@/components/ui/PhoneVerify';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { analytics, failureReason } from '@/lib/analytics';
 import { addressesApi } from '@/lib/api';
-import { guestAddresses } from '@/lib/guest-addresses';
+import { DEFAULT_ADDRESS_LABEL, guestAddresses } from '@/lib/guest-addresses';
 import { reverseGeocode } from '@/lib/geocode';
 import type { Address } from '@/lib/types';
 import { Icon } from '@/components/ui/Icon';
@@ -34,7 +34,7 @@ export interface AddressDraft {
 }
 
 const EMPTY: AddressDraft = {
-  id: '', label: 'Home', firstName: '', lastName: '', phone: '',
+  id: '', label: DEFAULT_ADDRESS_LABEL, firstName: '', lastName: '', phone: '',
   addressLine1: '', addressLine2: '', unitNumber: '',
   latitude: null, longitude: null,
 };
@@ -192,7 +192,7 @@ export function AddressModal({
 
     setSaving(true);
     const payload = {
-      label: draft.label || 'Home',
+      label: draft.label || DEFAULT_ADDRESS_LABEL,
       first_name: draft.firstName.trim(),
       last_name: draft.lastName.trim(),
       phone: draft.phone.trim(),

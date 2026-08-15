@@ -1,6 +1,7 @@
 import type { MetadataRoute } from 'next';
 
-import { RSC_API_BASE } from '@/lib/api';
+import { RSC_API_BASE } from '@/lib/api-server';
+import { FEED_TTL } from '@/lib/cache-policy';
 import type { BlogPostListResponse, ProductListResponse } from '@/lib/types';
 
 const BASE = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
@@ -41,7 +42,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   try {
     const res = await fetch(`${RSC_API_BASE}/categories`, {
-      next: { revalidate: 3600 },
+      next: { revalidate: FEED_TTL },
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return entries;
@@ -66,7 +67,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     while (hasMore) {
       const prodRes = await fetch(
         `${RSC_API_BASE}/products?per_page=100&page=${page}&is_active=true`,
-        { next: { revalidate: 3600 }, signal: AbortSignal.timeout(5000) },
+        { next: { revalidate: FEED_TTL }, signal: AbortSignal.timeout(5000) },
       );
       if (!prodRes.ok) break;
 
@@ -94,7 +95,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     while (blogHasMore) {
       const blogRes = await fetch(
         `${RSC_API_BASE}/blog/public?locale=en&per_page=50&page=${blogPage}`,
-        { next: { revalidate: 3600 }, signal: AbortSignal.timeout(5000) },
+        { next: { revalidate: FEED_TTL }, signal: AbortSignal.timeout(5000) },
       );
       if (!blogRes.ok) break;
 

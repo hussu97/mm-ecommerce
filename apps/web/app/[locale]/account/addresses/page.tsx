@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { analytics, failureReason } from '@/lib/analytics';
 import { addressesApi, authApi, ApiError } from '@/lib/api';
+import { DEFAULT_ADDRESS_LABEL } from '@/lib/guest-addresses';
 import { Address, AddressCreate } from '@/lib/types';
 import { Input } from '@/components/ui/Input';
 import { PhoneInput, isValidPhone } from '@/components/ui/PhoneInput';
@@ -39,7 +40,7 @@ const LocationPicker = dynamic(
  * checkout: the map leads, then the address, then who receives it.
  */
 const BLANK_FORM: AddressCreate = {
-  label: 'Home',
+  label: DEFAULT_ADDRESS_LABEL,
   first_name: '',
   last_name: '',
   phone: '',

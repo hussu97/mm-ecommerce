@@ -1,4 +1,5 @@
-import { RSC_API_BASE } from '@/lib/api';
+import { RSC_API_BASE } from '@/lib/api-server';
+import { FEED_TTL } from '@/lib/cache-policy';
 import type { ProductListResponse, Category } from '@/lib/types';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
@@ -9,7 +10,7 @@ export async function GET() {
   try {
     // Fetch categories
     const catRes = await fetch(`${RSC_API_BASE}/categories`, {
-      next: { revalidate: 3600 },
+      next: { revalidate: FEED_TTL },
       signal: AbortSignal.timeout(5000),
     });
 
@@ -32,7 +33,7 @@ export async function GET() {
     while (hasMore) {
       const res = await fetch(
         `${RSC_API_BASE}/products?per_page=100&page=${page}&is_active=true`,
-        { next: { revalidate: 3600 }, signal: AbortSignal.timeout(5000) },
+        { next: { revalidate: FEED_TTL }, signal: AbortSignal.timeout(5000) },
       );
       if (!res.ok) break;
 

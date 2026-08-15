@@ -3,6 +3,7 @@
 import Image from 'next/image';
 import { useEffect, useState } from 'react';
 import { productsApi } from '@/lib/api';
+import { formatPrice } from '@/lib/utils';
 import { analytics, failureReason } from '@/lib/analytics';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
@@ -106,7 +107,7 @@ export function CartAddonTray({ inCart, onAdd }: CartAddonTrayProps) {
                 {localizedField(product, 'name', product.name, locale)}
               </p>
               <p className="font-body text-xs text-gray-500 mt-auto" dir="ltr">
-                {product.base_price.toFixed(2)} AED
+                {formatPrice(product.base_price, locale)}
               </p>
               <button
                 onClick={() => handleAdd(product)}

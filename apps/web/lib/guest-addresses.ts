@@ -17,6 +17,19 @@ import type { Address } from './types';
 
 const KEY = 'mm_guest_addresses';
 
+/**
+ * What an address is called when the customer leaves the label blank.
+ *
+ * One constant because it was seven hand-typed `'Home'`s — here, the address
+ * modal, the checkout form and its order payloads, the confirmation page, the
+ * account address book — and a drifted copy would split a customer's book
+ * into "Home" and whatever the drift said. Deliberately not
+ * translated: the label is data, stored on the address and echoed back by the
+ * API, so an Arabic session writing a localized default would create a second
+ * default-looking label the English session does not recognise as its own.
+ */
+export const DEFAULT_ADDRESS_LABEL = 'Home';
+
 function read(): Address[] {
   if (typeof window === 'undefined') return [];
   try {
@@ -57,7 +70,7 @@ function toAddress(input: GuestAddressInput, id: string): Address {
   return {
     id,
     user_id: '',
-    label: input.label?.trim() || 'Home',
+    label: input.label?.trim() || DEFAULT_ADDRESS_LABEL,
     first_name: input.first_name,
     last_name: input.last_name,
     phone: input.phone,

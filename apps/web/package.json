@@ -18,11 +18,13 @@
     "@sentry/nextjs": "^10.42.0",
     "@vercel/speed-insights": "^2.0.0",
     "@vis.gl/react-google-maps": "^1.7.1",
+    "client-only": "^0.0.1",
     "firebase": "^12.17.1",
     "libphonenumber-js": "^1.13.10",
     "next": "^16.0.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.5",

@@ -5,6 +5,7 @@ import Image from 'next/image';
 import { useCart } from '@/lib/cart-context';
 import { useToast } from '@/components/ui';
 import { ApiError } from '@/lib/api';
+import { formatPrice } from '@/lib/utils';
 import { analytics, failureReason } from '@/lib/analytics';
 import { ModifierSelector, SelectedOption } from './ModifierSelector';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
@@ -133,7 +134,7 @@ export function ModifierModal({ product, onClose }: Props) {
               </button>
             </div>
             <span className="ml-auto font-body font-medium text-primary text-base">
-              {(totalPrice * qty).toFixed(2)} AED
+              {formatPrice(totalPrice * qty, locale)}
             </span>
           </div>
 

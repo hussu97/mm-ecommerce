@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { cmsApi } from '@/lib/api';
+import { cmsApi } from '@/lib/api-server';
 import { ContactLink } from '@/components/analytics/ContactLink';
 import { FaqAccordion } from './FaqAccordion';
 import { Breadcrumb } from '@/components/ui';

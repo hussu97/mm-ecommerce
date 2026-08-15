@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { ProductListResponse } from '@/lib/types';
-import { RSC_API_BASE } from '@/lib/api';
+import { RSC_API_BASE } from '@/lib/api-server';
 import { ProductGrid } from '@/components/category/ProductGrid';
 import { SearchTracker } from '@/components/analytics/SearchTracker';
 import { getTranslations, createT } from '@/lib/i18n/server';

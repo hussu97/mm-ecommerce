@@ -8,7 +8,7 @@ import { CategoryTracker } from '@/components/analytics/CategoryTracker';
 import { Breadcrumb } from '@/components/ui';
 import { localizedField } from '@/lib/i18n/entity';
 import { getTranslations, createT } from '@/lib/i18n/server';
-import { RSC_API_BASE } from '@/lib/api';
+import { RSC_API_BASE } from '@/lib/api-server';
 import { CACHE_TAGS, CONTENT_TTL } from '@/lib/cache-policy';
 import { SortSelect } from '@/components/category/SortSelect';
 import {

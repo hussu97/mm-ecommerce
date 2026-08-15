@@ -1,6 +1,6 @@
 import { Fragment } from 'react';
 import type { Metadata } from 'next';
-import { cmsApi, RSC_API_BASE } from '@/lib/api';
+import { cmsApi, RSC_API_BASE } from '@/lib/api-server';
 // The same request-scoped fetch the locale layout uses for the nav bar, so one
 // homepage render asks the API for the category list once rather than twice.
 import { getCategories } from '@/lib/catalogue';

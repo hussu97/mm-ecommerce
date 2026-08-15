@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Image from 'next/image';
 import Link from 'next/link';
-import { cmsApi } from '@/lib/api';
+import { cmsApi } from '@/lib/api-server';
 import { Breadcrumb } from '@/components/ui';
 import { BUSINESS_ID, FOUNDER, FOUNDER_ID } from '@/lib/schema';
 import { Icon } from '@/components/ui/Icon';

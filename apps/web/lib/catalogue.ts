@@ -1,6 +1,6 @@
 import { cache } from 'react';
 
-import { RSC_API_BASE } from '@/lib/api';
+import { RSC_API_BASE } from '@/lib/api-server';
 import { CACHE_TAGS, CONTENT_TTL, HAS_REMOTE_API } from '@/lib/cache-policy';
 import type { Category } from '@/lib/types';
 

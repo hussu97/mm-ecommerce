@@ -17,6 +17,9 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, '.'),
+      // See the comment in the stub: `server-only` throws outside a
+      // `react-server` resolver, which Vitest is not.
+      'server-only': path.resolve(__dirname, 'vitest.server-only-stub.ts'),
     },
   },
 });

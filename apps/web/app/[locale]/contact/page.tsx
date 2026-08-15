@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { cmsApi } from '@/lib/api';
+import { cmsApi } from '@/lib/api-server';
 import { Breadcrumb } from '@/components/ui';
 import { ContactLink } from '@/components/analytics/ContactLink';
 import { BAKERY_BASE, BUSINESS_ID, OG_IMAGE } from '@/lib/schema';

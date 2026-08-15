@@ -22,7 +22,7 @@ import { useToast } from '@/components/ui/Toast';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
 import { analytics, failureReason } from '@/lib/analytics';
-import { guestAddresses } from '@/lib/guest-addresses';
+import { DEFAULT_ADDRESS_LABEL, guestAddresses } from '@/lib/guest-addresses';
 import { AddressModal, formatAddress, toDraft, type AddressDraft } from './components/AddressModal';
 import { PromoCodeStep } from './components/PromoCodeStep';
 import { usePromoRevalidation } from '@/lib/use-promo-validation';
@@ -84,7 +84,7 @@ interface CheckoutForm {
 
 const INITIAL_FORM: CheckoutForm = {
   email: '', firstName: '', lastName: '', phone: '',
-  addressLine1: '', addressLine2: '', unitNumber: '', addressLabel: 'Home',
+  addressLine1: '', addressLine2: '', unitNumber: '', addressLabel: DEFAULT_ADDRESS_LABEL,
   locationLat: null, locationLng: null,
   selectedAddressId: '',
   deliveryMethod: 'delivery',
@@ -1000,7 +1000,7 @@ function CheckoutContent() {
 
   const currentDraft: AddressDraft = {
     id: form.selectedAddressId,
-    label: form.addressLabel || 'Home',
+    label: form.addressLabel || DEFAULT_ADDRESS_LABEL,
     firstName: form.firstName,
     lastName: form.lastName,
     phone: form.phone,
@@ -1115,7 +1115,7 @@ function CheckoutContent() {
           delivery_method: form.deliveryMethod,
           shipping_address: isDelivery
             ? {
-                label: form.addressLabel || 'Home',
+                label: form.addressLabel || DEFAULT_ADDRESS_LABEL,
                 first_name: form.firstName,
                 last_name: form.lastName,
                 phone: form.phone,

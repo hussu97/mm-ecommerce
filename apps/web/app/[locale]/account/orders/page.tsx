@@ -5,10 +5,11 @@ import Link from 'next/link';
 import { ordersApi } from '@/lib/api';
 import { Order, OrderStatus } from '@/lib/types';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { formatPrice } from '@/lib/utils';
 import { Icon } from '@/components/ui/Icon';
 
 export default function OrdersPage() {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -94,7 +95,7 @@ export default function OrdersPage() {
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
                   <span className="text-sm font-medium text-gray-800 font-body">
-                    AED {Number(order.total).toFixed(2)}
+                    {formatPrice(order.total, locale)}
                   </span>
                   <Icon name="chevron_right" className="text-gray-300 group-hover:text-primary transition-colors text-[18px]" />
                 </div>

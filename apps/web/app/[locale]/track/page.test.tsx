@@ -93,7 +93,8 @@ describe('TrackPage', () => {
     // which is what stopped an Arabic reader seeing the word "Confirmed".
     expect(await screen.findByText('Confirmed')).toBeInTheDocument();
     expect(screen.getByText('Store Pickup')).toBeInTheDocument();
-    expect(screen.getByText('AED 265.00')).toBeInTheDocument();
+    // formatPrice's canonical shape — amount first, code after (P3-13).
+    expect(screen.getByText('265.00 AED')).toBeInTheDocument();
   });
 
   it('shows the estimate, the timeline and the live-tracking link once there is one', async () => {

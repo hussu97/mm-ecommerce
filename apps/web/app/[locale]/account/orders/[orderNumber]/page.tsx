@@ -7,6 +7,7 @@ import { ordersApi } from '@/lib/api';
 import { Order, OrderStatus } from '@/lib/types';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
+import { formatPrice } from '@/lib/utils';
 import { FulfilmentPanel } from '@/components/order/FulfilmentPanel';
 import { Icon } from '@/components/ui/Icon';
 
@@ -137,9 +138,9 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
                 )}
               </div>
               <div className="text-right">
-                <p className="text-sm font-body text-gray-800">AED {Number(item.total_price).toFixed(2)}</p>
+                <p className="text-sm font-body text-gray-800">{formatPrice(item.total_price, locale)}</p>
                 <p className="text-xs text-gray-400 font-body">
-                  {item.quantity} × AED {Number(item.unit_price).toFixed(2)}
+                  {item.quantity} × {formatPrice(item.unit_price, locale)}
                 </p>
               </div>
             </div>
@@ -152,17 +153,17 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
         <h2 className="text-xs font-body uppercase tracking-widest text-gray-500 mb-3">{t('order.summary')}</h2>
         <div className="flex justify-between text-sm font-body text-gray-600">
           <span>{t('common.subtotal')}</span>
-          <span>AED {Number(order.subtotal).toFixed(2)}</span>
+          <span>{formatPrice(order.subtotal, locale)}</span>
         </div>
         {Number(order.discount_amount) > 0 && (
           <div className="flex justify-between text-sm font-body text-green-600">
             <span>{t('common.discount')} {order.promo_code_used ? `(${order.promo_code_used})` : ''}</span>
-            <span>− AED {Number(order.discount_amount).toFixed(2)}</span>
+            <span>−{formatPrice(order.discount_amount, locale)}</span>
           </div>
         )}
         <div className="flex justify-between text-sm font-body text-gray-600">
           <span>{isPickup ? t('order.store_pickup') : t('common.delivery')}</span>
-          <span>{Number(order.delivery_fee) === 0 ? t('common.free') : `AED ${Number(order.delivery_fee).toFixed(2)}`}</span>
+          <span>{Number(order.delivery_fee) === 0 ? t('common.free') : formatPrice(order.delivery_fee, locale)}</span>
         </div>
         {/* Named on the order history too, not just at the moment of paying.
             This is the page somebody opens when they are querying a charge
@@ -171,16 +172,16 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
         {Number(order.low_order_fee ?? 0) > 0 && (
           <div className="flex justify-between text-sm font-body text-gray-600">
             <span>{t('checkout.low_order_fee')}</span>
-            <span>AED {Number(order.low_order_fee).toFixed(2)}</span>
+            <span>{formatPrice(order.low_order_fee ?? 0, locale)}</span>
           </div>
         )}
         <div className="flex justify-between text-sm font-semibold font-body text-gray-900 pt-2 border-t border-gray-100">
           <span>{t('common.total')}</span>
-          <span>AED {Number(order.total).toFixed(2)}</span>
+          <span>{formatPrice(order.total, locale)}</span>
         </div>
         <div className="flex justify-between text-xs font-body text-gray-400 mt-1">
           <span>VAT included (5%)</span>
-          <span>AED {Number(order.vat_amount).toFixed(2)}</span>
+          <span>{formatPrice(order.vat_amount, locale)}</span>
         </div>
       </div>
 

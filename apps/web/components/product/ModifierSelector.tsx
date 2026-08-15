@@ -5,6 +5,7 @@ import { analytics } from '@/lib/analytics';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
 import { isModifierPriced } from '@/lib/pricing';
+import { formatPrice } from '@/lib/utils';
 import type { Product, ProductModifier } from '@/lib/types';
 
 export interface SelectedOption {
@@ -70,7 +71,7 @@ function ModifierGroup({
   // When the product has no base price the option price IS the price, so a
   // "+" turns "From 40.00 AED" into something that reads like 80.
   const priceLabel = (price: number) =>
-    `${absolutePrices ? '' : '+'}${Number(price).toFixed(2)} AED`;
+    `${absolutePrices ? '' : '+'}${formatPrice(price, locale)}`;
 
   return (
     <div className="space-y-2">

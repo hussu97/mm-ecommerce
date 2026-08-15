@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { RSC_API_BASE } from './api';
+import { RSC_API_BASE } from './api-server';
 
 /**
  * A relative `API_BASE` in server-side code does not throw — in a static
@@ -32,10 +32,11 @@ function isClientFile(source: string): boolean {
 }
 
 /**
- * `lib/api.ts` defines both bases and wraps the browser-side client, so it uses
- * the relative one on purpose. It is the one file allowed to.
+ * `lib/api-client.ts` is the browser half of the API layer, so it uses the
+ * relative base on purpose. It is the one file allowed to — and its
+ * `client-only` marker means the server can never import it by accident.
  */
-const ALLOWED = new Set(['lib/api.ts']);
+const ALLOWED = new Set(['lib/api-client.ts']);
 
 describe('server-side fetches', () => {
   it('never build a URL from the relative API_BASE', () => {

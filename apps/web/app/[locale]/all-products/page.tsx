@@ -5,7 +5,7 @@ import { ProductGrid } from '@/components/category/ProductGrid';
 import { Breadcrumb } from '@/components/ui';
 import { getTranslations, createT } from '@/lib/i18n/server';
 import { localizedField } from '@/lib/i18n/entity';
-import { RSC_API_BASE } from '@/lib/api';
+import { RSC_API_BASE } from '@/lib/api-server';
 import { CACHE_TAGS, CONTENT_TTL } from '@/lib/cache-policy';
 import { getActiveCategories } from '@/lib/catalogue';
 import { OG_IMAGE } from '@/lib/schema';

@@ -7,6 +7,7 @@ import { ApiError, trackApi } from '@/lib/api';
 import type { OrderStatus, TrackResult } from '@/lib/types';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { analytics, failureReason } from '@/lib/analytics';
+import { formatPrice } from '@/lib/utils';
 import { FulfilmentPanel } from '@/components/order/FulfilmentPanel';
 
 const STATUS_VARIANT: Record<OrderStatus, string> = {
@@ -32,7 +33,7 @@ function getDeeplinkForm() {
 }
 
 export default function TrackPage() {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const deeplinkAttempted = useRef(false);
 
   const [form, setForm] = useState(getDeeplinkForm);
@@ -177,7 +178,7 @@ export default function TrackPage() {
                 {Number.isFinite(Number(result.total)) && (
                 <div className="flex justify-between items-center">
                   <dt className="text-xs font-body uppercase tracking-widest text-gray-400">{t('track.total')}</dt>
-                  <dd className="text-sm font-body text-gray-700">AED {Number(result.total).toFixed(2)}</dd>
+                  <dd className="text-sm font-body text-gray-700">{formatPrice(result.total, locale)}</dd>
                 </div>
                 )}
                 <div className="flex justify-between items-center">

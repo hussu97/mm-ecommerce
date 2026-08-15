@@ -1,4 +1,4 @@
-import { RSC_API_BASE } from '@/lib/api';
+import { RSC_API_BASE } from '@/lib/api-server';
 import { CACHE_TAGS, CONTENT_TTL } from '@/lib/cache-policy';
 import { fetchJson } from '@/lib/fetch-json';
 import type { AdvertisedPromo } from '@/lib/types';

@@ -10,6 +10,7 @@ import { ModifierSelector, SelectedOption } from '@/components/product/ModifierS
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
 import { computeFromPrice, isModifierPriced } from '@/lib/pricing';
+import { formatPrice } from '@/lib/utils';
 import type { Product } from '@/lib/types';
 
 export function ProductDetailATC({ product }: { product: Product }) {
@@ -89,7 +90,7 @@ export function ProductDetailATC({ product }: { product: Product }) {
         {hasModifiers && !isValid && (
           <span className="text-base font-normal text-gray-400 mr-1">{t('product.from')}</span>
         )}
-        {(hasModifiers && !isValid ? minPrice : Number(totalPrice)).toFixed(2)} AED
+        {formatPrice(hasModifiers && !isValid ? minPrice : totalPrice, locale)}
       </span>
 
       {/* Directly under the price, where a customer deciding to buy is already

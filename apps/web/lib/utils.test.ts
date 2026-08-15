@@ -52,4 +52,27 @@ describe('formatPrice', () => {
   it('formats zero', () => {
     expect(formatPrice(0)).toBe('0.00 AED');
   });
+
+  it('defaults to the English shape when no locale is passed', () => {
+    expect(formatPrice(12)).toBe(formatPrice(12, 'en'));
+  });
+
+  it('keeps Latin digits and the AED code in Arabic, with the RTL mark Intl places', () => {
+    const price = formatPrice(12, 'ar');
+    // The exact string: U+200F (right-to-left mark) + amount + code. Asserted
+    // loosely on the mark's position so an ICU update that moves invisible
+    // marks does not read as a pricing bug.
+    expect(price).toContain('12.00');
+    expect(price).toContain('AED');
+    expect(price).not.toMatch(/[٠-٩]/); // no Eastern Arabic digits
+  });
+
+  it('does not group thousands in either locale, matching the en shape', () => {
+    expect(formatPrice(1000000)).toBe('1000000.00 AED');
+    expect(formatPrice(1000000, 'ar')).toContain('1000000.00');
+  });
+
+  it('falls back to the English shape for a locale it has never heard of', () => {
+    expect(formatPrice(5, 'fr')).toBe('5.00 AED');
+  });
 });

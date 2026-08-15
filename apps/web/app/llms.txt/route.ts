@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { RSC_API_BASE } from '@/lib/api';
+import { RSC_API_BASE } from '@/lib/api-server';
+import { FEED_TTL } from '@/lib/cache-policy';
 import { getFeaturedPromo, offerSentence } from '@/lib/offer';
 import type { Category } from '@/lib/types';
 
@@ -16,7 +17,7 @@ export async function GET() {
 
   let categories: Category[] = [];
   try {
-    const res = await fetch(`${RSC_API_BASE}/categories`, { next: { revalidate: 3600 } });
+    const res = await fetch(`${RSC_API_BASE}/categories`, { next: { revalidate: FEED_TTL } });
     if (res.ok) categories = await res.json();
   } catch {
     // continue with empty categories

@@ -11,6 +11,8 @@ import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { useAuth } from '@/lib/auth-context';
 import { CreateAccountNudge } from './CreateAccountNudge';
 import { localizedField } from '@/lib/i18n/entity';
+import { formatPrice } from '@/lib/utils';
+import { DEFAULT_ADDRESS_LABEL } from '@/lib/guest-addresses';
 import type { Order } from '@/lib/types';
 import { Icon } from '@/components/ui/Icon';
 
@@ -27,7 +29,7 @@ function addressFromOrder(order: Order): import('@/lib/types').AddressCreate | n
   if (!a || !a.address_line_1) return null;
   const num = (v: unknown) => (v === null || v === undefined || v === '' ? null : Number(v));
   return {
-    label: (a.label as string) || 'Home',
+    label: (a.label as string) || DEFAULT_ADDRESS_LABEL,
     first_name: (a.first_name as string) || '',
     last_name: (a.last_name as string) || '',
     phone: (a.phone as string) || '',
@@ -146,7 +148,7 @@ function ConfirmationContent() {
                   : `× ${item.quantity}`}
               </p>
             </div>
-            <p className="font-body text-sm text-gray-700">{Number(item.total_price).toFixed(2)} AED</p>
+            <p className="font-body text-sm text-gray-700">{formatPrice(item.total_price, locale)}</p>
           </div>
         ))}
       </div>
@@ -155,12 +157,12 @@ function ConfirmationContent() {
       <div className="space-y-2 font-body text-sm mb-6 px-1">
         <div className="flex justify-between">
           <span className="text-gray-500">{t('common.subtotal')}</span>
-          <span>{Number(order.subtotal).toFixed(2)} AED</span>
+          <span>{formatPrice(order.subtotal, locale)}</span>
         </div>
         {Number(order.discount_amount) > 0 && (
           <div className="flex justify-between text-green-700">
             <span>{t('common.discount')}{order.promo_code_used ? ` (${order.promo_code_used})` : ''}</span>
-            <span>-{Number(order.discount_amount).toFixed(2)} AED</span>
+            <span>-{formatPrice(order.discount_amount, locale)}</span>
           </div>
         )}
         <div className="flex justify-between">
@@ -168,7 +170,7 @@ function ConfirmationContent() {
             {order.delivery_method === 'pickup' ? t('checkout.store_pickup') : t('common.delivery')}
           </span>
           <span className={Number(order.delivery_fee) === 0 ? 'text-green-600' : ''}>
-            {Number(order.delivery_fee) === 0 ? t('common.free') : `${Number(order.delivery_fee).toFixed(2)} AED`}
+            {Number(order.delivery_fee) === 0 ? t('common.free') : formatPrice(order.delivery_fee, locale)}
           </span>
         </div>
         {/* The small-basket fee, on the one screen a customer checks the
@@ -180,7 +182,7 @@ function ConfirmationContent() {
         {Number(order.low_order_fee ?? 0) > 0 && (
           <div className="flex justify-between">
             <span className="text-gray-500">{t('checkout.low_order_fee')}</span>
-            <span>{Number(order.low_order_fee).toFixed(2)} AED</span>
+            <span>{formatPrice(order.low_order_fee ?? 0, locale)}</span>
           </div>
         )}
         <div className="h-px bg-gray-200" />
@@ -197,11 +199,11 @@ function ConfirmationContent() {
               ? t('confirmation.total_due')
               : t('confirmation.total_paid')}
           </span>
-          <span className="text-primary">{Number(order.total).toFixed(2)} AED</span>
+          <span className="text-primary">{formatPrice(order.total, locale)}</span>
         </div>
         <div className="flex justify-between text-xs text-gray-400 pt-1">
           <span>VAT included (5%)</span>
-          <span>{Number(order.vat_amount).toFixed(2)} AED</span>
+          <span>{formatPrice(order.vat_amount, locale)}</span>
         </div>
       </div>
 

@@ -2,6 +2,8 @@
 
 import { createContext, useContext, useCallback, useEffect, type ReactNode } from "react";
 
+import { interpolate } from "./interpolate";
+
 interface TranslationContextValue {
   locale: string;
   direction: "ltr" | "rtl";
@@ -33,15 +35,8 @@ export function TranslationProvider({
   }, [locale, direction]);
 
   const t = useCallback(
-    (key: string, params?: Record<string, string | number>): string => {
-      let value = translations[key] ?? key;
-      if (params) {
-        for (const [k, v] of Object.entries(params)) {
-          value = value.replace(`{${k}}`, String(v));
-        }
-      }
-      return value;
-    },
+    (key: string, params?: Record<string, string | number>): string =>
+      interpolate(translations[key] ?? key, params),
     [translations]
   );
 

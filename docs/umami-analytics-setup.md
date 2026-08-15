@@ -125,7 +125,7 @@ the dashboard recorded a quiet day.
 | `phone_verify_send_failed` | surface, reason (rate_limited\|unavailable) | phase 4 | PhoneVerify.tsx — an SMS that never arrived |
 | `phone_verify_failed` | surface | phase 4 | PhoneVerify.tsx — a code that did not match |
 | `order_track_failed` | reason | phase 4 | track/page.tsx — a customer who cannot see their order, whose next step is WhatsApp |
-| `api_error` | status, endpoint (normalised), method | phase 4 | **`lib/api.ts` — one hook covering every endpoint, present and future.** `status: 0` means the request never arrived. **401 is never reported** — see below |
+| `api_error` | status, endpoint (normalised), method | phase 4 | **`lib/api-client.ts` (formerly `lib/api.ts`) — one hook covering every endpoint, present and future.** `status: 0` means the request never arrived. **401 is never reported** — see below |
 | `app_error` | digest, path | phase 4 | app/error.tsx — the "Something Went Wrong" screen. Sentry has the stack; this has the journey |
 | `page_not_found` | path, referrer | phase 4 | NotFoundTracker.tsx — the referrer is what makes it actionable |
 

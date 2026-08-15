@@ -10,6 +10,7 @@ import { localizedField } from '@/lib/i18n/entity';
 import { withFallback } from '@/lib/i18n/fallback';
 import { analytics, type ProductList } from '@/lib/analytics';
 import { computeFromPrice } from '@/lib/pricing';
+import { formatPrice } from '@/lib/utils';
 import type { Product } from '@/lib/types';
 import { Icon } from '@/components/ui/Icon';
 
@@ -124,7 +125,7 @@ export function ProductCard({
 
           {/* Price */}
           <span className="font-body text-sm sm:text-base font-medium text-primary">
-            {hasModifiers ? `${t('product.from')} ` : ''}{fromPrice.toFixed(2)} AED
+            {hasModifiers ? `${t('product.from')} ` : ''}{formatPrice(fromPrice, locale)}
           </span>
 
           {/* Where it lands and how fast, read from the shared location

@@ -1,8 +1,9 @@
 import { cache } from "react";
 
 import type { Language } from "@/lib/types";
-import { RSC_API_BASE } from "@/lib/api";
-import { CONTENT_TTL, HAS_REMOTE_API } from "@/lib/cache-policy";
+import { RSC_API_BASE } from "@/lib/api-server";
+import { CACHE_TAGS, CONTENT_TTL, HAS_REMOTE_API, LANGUAGES_TTL } from "@/lib/cache-policy";
+import { interpolate } from "./interpolate";
 
 /**
  * Every UI string for one language.
@@ -49,7 +50,7 @@ export const getTranslations = cache(
   async (locale: string): Promise<Record<string, string>> => {
     try {
       const res = await fetch(`${RSC_API_BASE}/i18n/translations/${locale}`, {
-        next: { revalidate: CONTENT_TTL, tags: ['i18n'] },
+        next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.i18n] },
         signal: AbortSignal.timeout(8000),
       });
       if (!res.ok) {
@@ -72,7 +73,7 @@ export const getTranslations = cache(
 export const getLanguages = cache(async (): Promise<Language[]> => {
   try {
     const res = await fetch(`${RSC_API_BASE}/i18n/languages`, {
-      next: { revalidate: 300, tags: ['i18n'] },
+      next: { revalidate: LANGUAGES_TTL, tags: [CACHE_TAGS.i18n] },
       signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return [];
@@ -84,12 +85,6 @@ export const getLanguages = cache(async (): Promise<Language[]> => {
 
 export function createT(translations: Record<string, string>) {
   return function t(key: string, params?: Record<string, string | number>): string {
-    let value = translations[key] ?? key;
-    if (params) {
-      for (const [k, v] of Object.entries(params)) {
-        value = value.replace(`{${k}}`, String(v));
-      }
-    }
-    return value;
+    return interpolate(translations[key] ?? key, params);
   };
 }

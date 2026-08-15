@@ -7,8 +7,8 @@ import { RecentlyViewedProducts } from '@/components/product/RecentlyViewedProdu
 import type { Product, ProductListResponse, ProductModifier } from '@/lib/types';
 import { localizedField } from '@/lib/i18n/entity';
 import { getTranslations, createT } from '@/lib/i18n/server';
-import { RSC_API_BASE } from '@/lib/api';
-import { CACHE_TAGS, CONTENT_TTL } from '@/lib/cache-policy';
+import { RSC_API_BASE } from '@/lib/api-server';
+import { CACHE_TAGS, CONTENT_TTL, FEED_TTL } from '@/lib/cache-policy';
 import {
   BRAND,
   PRODUCT_BRAND,
@@ -93,7 +93,7 @@ const FALLBACK_DELIVERY_FEE = 50;
 async function getDefaultDeliveryFee(): Promise<number> {
   try {
     const res = await fetch(`${RSC_API_BASE}/delivery/rates`, {
-      next: { revalidate: 3600 },
+      next: { revalidate: FEED_TTL },
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return FALLBACK_DELIVERY_FEE;

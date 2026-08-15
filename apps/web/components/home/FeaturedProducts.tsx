@@ -7,6 +7,7 @@ import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { analytics } from '@/lib/analytics';
 import { localizedField } from '@/lib/i18n/entity';
 import { computeFromPrice } from '@/lib/pricing';
+import { formatPrice } from '@/lib/utils';
 import { AddToCartControl } from '@/components/product/AddToCartControl';
 import { DeliveryEstimate } from '@/components/product/DeliveryEstimate';
 import { ProductBadge } from '@/components/product/ProductBadge';
@@ -91,7 +92,7 @@ function ProductCard({
         </Link>
         <div className="h-px bg-secondary/40" />
         <span className="font-body text-sm font-medium text-primary">
-          {hasModifiers ? `${t('product.from')} ` : ''}{price.toFixed(2)} AED
+          {hasModifiers ? `${t('product.from')} ` : ''}{formatPrice(price, locale)}
         </span>
         {/* This rail has its own card rather than reusing `ProductCard`, which
             is why it was the one product surface with no delivery promise on

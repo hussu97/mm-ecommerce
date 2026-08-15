@@ -8,6 +8,7 @@ import { ensureSessionId } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { accountEmailOf, ensureCheckoutAuth } from '@/lib/checkout-auth';
 import { analytics, failureReason } from '@/lib/analytics';
+import { formatPrice } from '@/lib/utils';
 import { usePromoValidation } from '@/lib/use-promo-validation';
 import { Button } from '@/components/ui/Button';
 import { Breadcrumb } from '@/components/ui/Breadcrumb';
@@ -239,7 +240,23 @@ export default function CartPage() {
             // pay button into a prompt rather than a refusal.
             promoNeedsVerify: appliedPromo.needsVerify,
           }));
-        } catch { /* noop */ }
+        } catch {
+          // sessionStorage refused the write — private mode, full quota. The
+          // checkout still works, but the discount the customer is looking at
+          // right now will not be on it, and the navigation on the next line
+          // discards this page before any toast could be read. So the one
+          // thing this can honestly do is put the failure on the dashboard:
+          // it used to be `/* noop */`, which made "applied discounts
+          // sometimes vanish at checkout" unreproducible by design. The
+          // checkout's own promo panel remains the customer's way back —
+          // re-applying the code there validates server-side and does not
+          // depend on sessionStorage.
+          analytics.promoFailed({
+            code: appliedPromo.code,
+            reason: 'session_write_failed',
+            surface: 'cart',
+          });
+        }
       }
       // Named with its locale. `/checkout` is not a route — the proxy answers
       // it with a redirect, which puts a second document load between the
@@ -368,7 +385,7 @@ export default function CartPage() {
                     </div>
 
                     <p className="font-body text-xs text-gray-400">
-                      {unitPrice.toFixed(2)} AED each
+                      {formatPrice(unitPrice, locale)} each
                     </p>
 
                     {/*
@@ -391,7 +408,7 @@ export default function CartPage() {
                         disabled={isLoading}
                       />
                       <p className="font-body font-semibold text-sm text-gray-900">
-                        {lineTotal.toFixed(2)} AED
+                        {formatPrice(lineTotal, locale)}
                       </p>
                     </div>
                   </div>
@@ -411,13 +428,13 @@ export default function CartPage() {
               <div className="space-y-2 text-sm font-body">
                 <div className="flex justify-between">
                   <span className="text-gray-500">{t('cart.subtotal')}</span>
-                  <span className="text-gray-900">{subtotal.toFixed(2)} AED</span>
+                  <span className="text-gray-900">{formatPrice(subtotal, locale)}</span>
                 </div>
 
                 {appliedPromo && (
                   <div className="flex justify-between text-green-700">
                     <span>{t('cart.discount')} ({appliedPromo.code})</span>
-                    <span>-{appliedPromo.discount.toFixed(2)} AED</span>
+                    <span>-{formatPrice(appliedPromo.discount, locale)}</span>
                   </div>
                 )}
 
@@ -438,7 +455,7 @@ export default function CartPage() {
               {/* Total */}
               <div className="flex justify-between font-body font-semibold text-base">
                 <span className="text-gray-700">{t('cart.total')}</span>
-                <span className="text-primary">{total.toFixed(2)} AED</span>
+                <span className="text-primary">{formatPrice(total, locale)}</span>
               </div>
 
               {/* The offer, before the box that assumes you already know a code.

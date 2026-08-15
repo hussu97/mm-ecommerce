@@ -27,6 +27,35 @@
 export const CONTENT_TTL = 60;
 
 /**
+ * How long the machine-read surfaces may serve a stale copy: sitemaps, the
+ * llms.txt feeds, and the delivery-rate figure baked into product JSON-LD.
+ *
+ * An hour, not `CONTENT_TTL`'s minute, because the reader is a crawler rather
+ * than a customer: nobody is standing in front of a sitemap waiting for an
+ * admin edit to show up, and these endpoints fan out into paginated fetches of
+ * the whole catalogue — a short TTL multiplies that cost for an audience that
+ * revisits daily at best.
+ *
+ * (Route-segment `export const revalidate` lines quote the same number as a
+ * literal — Next requires segment config to be statically analyzable, so they
+ * cannot import this constant. This is the number they mirror.)
+ */
+export const FEED_TTL = 3600;
+
+/**
+ * Blog content. Posts are published, not live-edited, so minutes-stale is
+ * invisible; five of them keeps the per-request cost negligible while an
+ * editorial fix still lands the same coffee break it was made in.
+ */
+export const BLOG_TTL = 300;
+
+/**
+ * The language list. New languages ship with releases, not admin edits — the
+ * slowest-moving content the storefront fetches, and the safest to hold.
+ */
+export const LANGUAGES_TTL = 300;
+
+/**
  * Whether this build or runtime has a real API behind it.
  *
  * `NEXT_PUBLIC_API_URL` is an absolute URL wherever there is one to talk to —
