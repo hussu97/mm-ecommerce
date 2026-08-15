@@ -76,6 +76,20 @@ class Device(Base, UUIDMixin, TimestampMixin):
     receives_online_orders: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false", default=False
     )
+    #: Take those orders without waiting for somebody to press Accept.
+    #:
+    #: For a kitchen-only site with nobody watching the iPad, the press carries
+    #: no information — nobody is deciding whether to take an order that is
+    #: already paid for, they are being interrupted to confirm one. With this on
+    #: the terminal accepts and prints by itself.
+    #:
+    #: Separate from `receives_online_orders` on purpose: *show me the branch's
+    #: online orders* and *wait for a human before taking one* are different
+    #: questions, and showing-and-waiting is what a counter iPad should keep
+    #: doing.
+    auto_accept_online_orders: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
     category_ids: Mapped[list[uuid.UUID]] = mapped_column(
         ARRAY(UUID(as_uuid=True)), nullable=False, default=list, server_default="{}"
     )

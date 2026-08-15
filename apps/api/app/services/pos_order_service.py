@@ -149,6 +149,10 @@ async def get_order(db: AsyncSession, order_id: uuid.UUID) -> Order:
             selectinload(Order.order_charges),
             selectinload(Order.order_discounts),
             selectinload(Order.order_taxes),
+            # The register prints the courier and the delivery zone, and the
+            # POS response is assembled outside the greenlet that could lazily
+            # fetch them.
+            selectinload(Order.delivery),
         )
         # Without this the identity map hands back the order with whatever
         # collections it was first loaded with, so a line added moments ago is

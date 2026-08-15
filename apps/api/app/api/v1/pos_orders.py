@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -61,6 +61,22 @@ def _serialise(order: Order) -> PosOrderResponse:
     payload.amount_paid = order.amount_paid
     payload.balance_due = order.balance_due
     payload.delivery_address = address_format.one_line(order.shipping_address_snapshot)
+    # Flattened off the delivery row for the same reason as the address: the
+    # register prints a receipt, not an object graph, and the counter needs the
+    # courier and the zone on the paper. `provider` is the live answer rather
+    # than `original_provider` — the receipt has to name whoever is actually
+    # coming, not who the map said would come at checkout.
+    #
+    # Guarded on the relationship actually being loaded. Every query that feeds
+    # this eager-loads it, but `_serialise` is called from two dozen places and
+    # a future one that forgets would otherwise raise MissingGreenlet at
+    # attribute access — turning a missing courier name into a 500 on the
+    # receipt path. Nulls are the right degradation here; a receipt without the
+    # zone still prints.
+    if "delivery" not in inspect(order).unloaded and order.delivery is not None:
+        payload.delivery_provider = order.delivery.provider
+        payload.delivery_zone_name = order.delivery.zone_name
+        payload.courier_reference = order.delivery.courier_reference
     # Written out rather than left to the enum's `str` base, so the register
     # reads `"packed"` and never `"OrderStatusEnum.PACKED"`.
     payload.status = order.status.value if order.status is not None else None
@@ -138,6 +154,10 @@ async def list_orders(
             selectinload(Order.order_charges),
             selectinload(Order.order_discounts),
             selectinload(Order.order_taxes),
+            # Eager: `_serialise` reads the courier and zone off this, and a
+            # lazy load inside an async request raises MissingGreenlet rather
+            # than quietly issuing a second query.
+            selectinload(Order.delivery),
         )
         .order_by(Order.opened_at.desc().nullslast(), Order.created_at.desc())
         .limit(limit)
@@ -516,6 +536,7 @@ async def dispatch_board(
         selectinload(Order.order_charges),
         selectinload(Order.order_discounts),
         selectinload(Order.order_taxes),
+        selectinload(Order.delivery),
     ).order_by(Order.opened_at.asc().nullslast())
     orders = list((await db.execute(stmt)).scalars().unique().all())
     return [_serialise(o) for o in orders]
@@ -587,6 +608,10 @@ async def open_checks(
             selectinload(Order.order_charges),
             selectinload(Order.order_discounts),
             selectinload(Order.order_taxes),
+            # Eager: `_serialise` reads the courier and zone off this, and a
+            # lazy load inside an async request raises MissingGreenlet rather
+            # than quietly issuing a second query.
+            selectinload(Order.delivery),
         )
         .order_by(Order.opened_at)
     )
