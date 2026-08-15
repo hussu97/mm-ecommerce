@@ -8,6 +8,24 @@ export interface User {
   created_at: string;
 }
 
+/**
+ * What `/auth/login`, `/auth/register` and the passkey login answer with.
+ *
+ * The two token fields are real and nothing here reads them: the console
+ * authenticates by httpOnly cookie, which `_set_auth_cookies` sets from these
+ * same values server-side before the body is serialised. They are declared
+ * because the API sends them, not because a caller wants them — a type that
+ * quietly omits a field the wire carries is the drift this codebase spent an
+ * audit removing.
+ *
+ * Worth a separate look: because they are in the body, the tokens are also in
+ * JavaScript's reach, which is most of what the httpOnly cookie was chosen to
+ * prevent. Dropping them from the response of the three cookie-based endpoints
+ * would cost nothing here or in the storefront — neither reads them — but the
+ * register's bearer flow needs its own token in its own body, so this is a
+ * change to the web/admin endpoints only, and one to make deliberately rather
+ * than in passing.
+ */
 export interface TokenResponse {
   access_token: string;
   refresh_token: string;

@@ -30,7 +30,6 @@ from app.schemas.order import (
 from app.schemas.order_preview import OrderPreviewRequest, OrderPreviewResponse
 from fastapi import Request
 
-from app.core.cache import cache_delete_pattern
 from app.core.exceptions import (
     BadGatewayError,
     BadRequestError,
@@ -167,7 +166,21 @@ async def create_order(
     order = await order_service.create_order(
         db, data, user_id, fallback_email=current_user.email if current_user else None
     )
-    await cache_delete_pattern("analytics:*")
+    # No `cache_delete_pattern("analytics:*")` here any more, deliberately.
+    #
+    # It used to run on this one line and nowhere else, which made the console's
+    # figures look like they were kept fresh when they were not: a payment
+    # webhook confirming an order, an admin moving one, a refund and every
+    # counter sale all move the same numbers and busted nothing. So the
+    # dashboard was current only for the one event out of five that happened to
+    # pass through this handler — and a reader who knew about this line would
+    # trust the other four.
+    #
+    # Analytics is TTL-only, by design: `_ANALYTICS_TTL` is five minutes, which
+    # is the right answer for margin figures nobody reads to the second, and it
+    # is the same answer for every writer. Adding a bust to the other four
+    # paths would mean a Redis keyspace scan on every sale at the till to save
+    # a dashboard five minutes.
     return order
 
 
