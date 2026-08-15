@@ -244,6 +244,16 @@ class PosOrderResponse(ORMModel):
     #: The seven-digit number a driver can read back down a phone. Null on a
     #: third-party zone that never meets an integrated courier.
     courier_reference: str | None = None
+    #: Who is carrying it and how to reach them, once a courier has assigned
+    #: somebody. Null until then, and null forever on a third-party zone where
+    #: no integration reports a driver.
+    #:
+    #: On the register's payload — not just the admin's — because the counter is
+    #: where somebody stands holding a box when a driver walks in, and "is this
+    #: the right rider for this bag" is a question asked at the counter and
+    #: nowhere else. It was answerable only on a laptop.
+    driver_name: str | None = None
+    driver_phone: str | None = None
     #: Whether a terminal set to accept by itself is allowed to accept *this*
     #: order by itself.
     #:

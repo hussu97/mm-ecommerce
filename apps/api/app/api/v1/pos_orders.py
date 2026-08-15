@@ -110,6 +110,8 @@ def _serialise(order: Order) -> PosOrderResponse:
         payload.delivery_provider = order.delivery.provider
         payload.delivery_zone_name = order.delivery.zone_name
         payload.courier_reference = order.delivery.courier_reference
+        payload.driver_name = order.delivery.driver_name
+        payload.driver_phone = order.delivery.driver_phone
     # Same guard, same reason. A hint for the terminal, not the enforcement —
     # `accept_order` asks the question again with the branch definitely loaded,
     # so a payload that could not resolve the hours costs a 409 and an alarm
@@ -748,6 +750,61 @@ async def accept_order(
         )
 
     return _serialise(await pos_order_service.get_order(db, order_id))
+
+
+@router.post("/{order_id}/handed-over", response_model=PosOrderResponse)
+async def mark_handed_over(
+    order_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """
+    The box is in a driver's hands. Said by whoever handed it over.
+
+    **For the zones nobody reports back on.** A Lalamove or noon Send order
+    reaches `out_for_delivery` on its own, when the courier's webhook says the
+    rider collected — nothing at the counter has to say it, and this endpoint is
+    not how it gets there. A third-party zone has no integration at all: a van
+    somebody already uses turns up, a person hands over a bag, and until now the
+    only thing that could record that was an admin on a laptop marking the whole
+    order delivered — which skipped the state entirely and told the customer it
+    had arrived when it had only left.
+
+    Gated on `packed` by the transition table, which is the honest precondition:
+    a box that is not finished cannot be handed to anybody.
+
+    Idempotent, like `accept` and `packed`, because two people will press it.
+    """
+    await _require_permission(user, "pos.register.access")
+    order = await _load(db, order_id)
+
+    if order.status == OrderStatusEnum.OUT_FOR_DELIVERY:
+        return _serialise(order)
+    if OrderStatusEnum.OUT_FOR_DELIVERY not in order_service.VALID_TRANSITIONS.get(
+        order.status, set()
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"An order that is {order.status.value} cannot be handed over.",
+        )
+
+    with acting_as(
+        StatusSourceEnum.POS.value,
+        actor_id=user.id,
+        actor_label=user.email,
+        note="handed to the driver at the counter",
+    ):
+        await order_service.update_status(
+            db, order.order_number, OrderStatusEnum.OUT_FOR_DELIVERY
+        )
+
+    # The email that says it is on its way, with whatever tracking exists. Same
+    # reasoning as `mark_packed`: inline and awaited, because a background task
+    # can be dropped on a restart and this is the message the customer is
+    # waiting for.
+    reloaded = await _load(db, order_id)
+    await email_service.notify_order(db, reloaded)
+    return _serialise(reloaded)
 
 
 @router.post("/{order_id}/packed", response_model=PosOrderResponse)
