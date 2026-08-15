@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError
 from app.models.base import Base, utcnow
+from app.services import reference_integrity
 
 ModelT = TypeVar("ModelT", bound=Base)
 
@@ -145,6 +146,11 @@ async def create(
     )
     if extra:
         payload.update(extra)
+    # The `UUID[]` columns Postgres cannot put a foreign key on. This is the one
+    # door all of their writes pass through — three of the five entities that
+    # have them are built by `build_crud_router` and have no hand-written
+    # handler to put the check in. See `reference_integrity`.
+    await reference_integrity.check(db, model, payload)
     entity = model(**payload)  # type: ignore[call-arg]
     db.add(entity)
     await _flush(db, model.__name__)
@@ -166,6 +172,7 @@ async def update(
     )
     if extra:
         payload.update(extra)
+    await reference_integrity.check(db, type(entity), payload)
     for field, value in payload.items():
         setattr(entity, field, value)
     await _flush(db, type(entity).__name__)

@@ -12,6 +12,10 @@ history.
 
 from __future__ import annotations
 
+import pytest
+
+from app.core.exceptions import BadRequestError
+from app.schemas.option_snapshot import OptionSnapshot
 from app.services import option_snapshot
 
 
@@ -121,3 +125,90 @@ class TestForRegister:
         rows = [{"name": "Ferrero", "price": "not a number"}]
 
         assert option_snapshot.for_register(rows)[0]["price"] == 0.0
+
+
+class TestBothDialectsNormaliseToOneShape:
+    """
+    The contract itself, as `schemas/option_snapshot.OptionSnapshot`.
+
+    The column had two wire dialects and no model — `list[Any]` in the cart and
+    order schemas, `list` in the POS one. One model read by both boundaries is
+    what makes "these are the same row written twice" a checkable statement
+    rather than a comment.
+    """
+
+    WEBSITE = {
+        "modifier_id": "22222222-2222-2222-2222-222222222222",
+        "modifier_name": "Flavour",
+        "option_id": "11111111-1111-1111-1111-111111111111",
+        "modifier_option_id": "11111111-1111-1111-1111-111111111111",
+        "option_name": "Fudge",
+        "option_price": 3.5,
+        "quantity": 2,
+        "charged_total": 3.5,
+    }
+    COUNTER = {
+        "modifier_id": "22222222-2222-2222-2222-222222222222",
+        "modifier_name": "Flavour",
+        "modifier_option_id": "11111111-1111-1111-1111-111111111111",
+        "name": "Fudge",
+        "price": 3.5,
+        "quantity": 2,
+    }
+
+    def test_the_two_dialects_land_on_the_same_row(self):
+        """Not "similar": identical. Anything less is the register's bug again,
+        one field further down."""
+        assert (
+            OptionSnapshot.model_validate(self.WEBSITE).model_dump()
+            == OptionSnapshot.model_validate(self.COUNTER).model_dump()
+        )
+
+    def test_the_extra_keys_each_dialect_carries_are_not_lost_on_write(self):
+        """
+        `charged_total` and the translation maps are ignored by the model and
+        must survive the write guard untouched — the storefront prices a basket
+        off `charged_total`, so a guard that normalised on the way in would
+        quietly reprice every cart.
+        """
+        rows = [dict(self.WEBSITE)]
+        assert option_snapshot.validated(rows) == [self.WEBSITE]
+
+    def test_a_service_may_hand_it_uuids_rather_than_strings(self):
+        """Ids come out of a service as `uuid.UUID` and out of JSONB as `str`.
+        Every reader of these fields wants text."""
+        import uuid
+
+        option_id = uuid.uuid4()
+        row = {"name": "Fudge", "modifier_option_id": option_id}
+
+        assert OptionSnapshot.model_validate(row).modifier_option_id == str(option_id)
+
+
+class TestValidatedIsTheLoudBoundary:
+    def test_a_well_formed_batch_passes_through_unchanged(self):
+        rows = [{"name": "Ferrero", "price": 4.0, "quantity": 1}]
+
+        assert option_snapshot.validated(rows) is rows
+
+    def test_a_row_that_names_nothing_is_refused_rather_than_stored(self):
+        """
+        The read boundary drops such a row so one bad option cannot blank a
+        branch's order queue. The write boundary must not: a row no reader can
+        decode is a bug in a writer, and storing it quietly is how it is found
+        six months later by the branch whose queue went blank.
+        """
+        with pytest.raises(BadRequestError) as raised:
+            option_snapshot.validated([{"price": 4.0, "quantity": 1}])
+        assert "cannot be stored" in raised.value.detail
+
+    def test_the_message_names_the_offending_row(self):
+        """A tripwire that does not say what tripped it is a 400 somebody has
+        to reproduce."""
+        with pytest.raises(BadRequestError) as raised:
+            option_snapshot.validated([{"name": "Ferrero"}, "not a dict"])
+        assert "Option 1" in raised.value.detail
+
+    def test_nothing_at_all_is_allowed(self):
+        """A line with no modifiers is the ordinary case, not a malformed one."""
+        assert option_snapshot.validated([]) == []

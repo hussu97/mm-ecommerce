@@ -52,6 +52,7 @@ from app.services import (
     business_day_service,
     inventory_service,
     modifier_rules,
+    option_snapshot,
     order_lifecycle,
     pos_pricing,
     till_service,
@@ -495,20 +496,28 @@ async def add_item(
             if o.get("modifier_option_id")
         ],
     )
-    options = [
-        {
-            "modifier_option_id": str(choice.option_id),
-            "modifier_id": str(choice.modifier_id),
-            "modifier_name": choice.modifier_name,
-            "name": choice.option_name,
-            "sku": choice.option_sku,
-            # Per unit, so a receipt can print "2 × Ferrero  +8.00" without
-            # having to divide, and `quantity` is what the kitchen reads.
-            "price": float(money(choice.unit_price)),
-            "quantity": choice.quantity,
-        }
-        for choice in resolved
-    ]
+    # Checked against `schemas/option_snapshot.OptionSnapshot` before it is
+    # stored — the counter dialect of the one column with two of them. A
+    # tripwire rather than a filter (every row is built from
+    # `modifier_rules.resolve`), placed where the row is made, because a row
+    # that no reader can decode takes a whole response down rather than one
+    # line of it.
+    options = option_snapshot.validated(
+        [
+            {
+                "modifier_option_id": str(choice.option_id),
+                "modifier_id": str(choice.modifier_id),
+                "modifier_name": choice.modifier_name,
+                "name": choice.option_name,
+                "sku": choice.option_sku,
+                # Per unit, so a receipt can print "2 × Ferrero  +8.00" without
+                # having to divide, and `quantity` is what the kitchen reads.
+                "price": float(money(choice.unit_price)),
+                "quantity": choice.quantity,
+            }
+            for choice in resolved
+        ]
+    )
     options_price = money(
         sum((choice.charged_total for choice in resolved), Decimal("0"))
     )

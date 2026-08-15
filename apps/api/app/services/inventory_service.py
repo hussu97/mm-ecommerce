@@ -12,18 +12,33 @@ Costing is **weighted average**, recomputed on every receipt:
 Issues leave the average untouched and simply reduce quantity, so the value of
 what remains is unchanged by a sale — which is what a moving-average system
 should do.
+
+This module also owns the **purchase-order state machine** (below). It used to
+live inline in `api/v1/inventory.py`, four endpoints each opening with its own
+`if status != …` and then assigning the column by hand — while the order state
+machine was a service (`order_lifecycle`) and the transfer state machine was
+another (`transfer_service`). Three homes for one pattern is how they drift, and
+`order_lifecycle` exists precisely because the order one already had: five sets
+of rules, one of which quietly skipped the refund.
 """
 
 from __future__ import annotations
 
+import logging
 import uuid
+from dataclasses import dataclass
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
+from app.core.exceptions import (
+    BadRequestError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+)
 from app.models.base import utcnow
 from app.models.branch import Branch
 from app.models.business_settings import BusinessSettings
@@ -46,14 +61,21 @@ from app.models.user import User
 from app.services import business_day_service
 
 __all__ = [
+    "PURCHASE_ORDER_MOVES",
     "adjust_level",
+    "allowed_purchase_order_transitions",
+    "assert_can_transition_purchase_order",
+    "can_transition_purchase_order",
     "default_warehouse",
     "deplete_for_order",
     "level_for",
     "next_reference",
     "post_transaction",
     "receive_purchase_order",
+    "transition_purchase_order",
 ]
+
+logger = logging.getLogger(__name__)
 
 QUANTITY = Decimal("0.0001")
 COST = Decimal("0.000001")
@@ -313,6 +335,242 @@ async def adjust_level(
     return await post_transaction(db, transaction=transaction, user=user)
 
 
+# ─── Purchase-order lifecycle ─────────────────────────────────────────────────
+#
+# The state machine used to be spread across four endpoints in
+# `api/v1/inventory.py`: each opened with its own `if purchase_order.status !=
+# …: raise ConflictError(…)` and then assigned the column and stamped an actor
+# by hand. Nothing named the shape of the machine, so the only way to answer
+# "what can a declined order do next?" was to read four handlers and hope there
+# was no fifth writer. There nearly was — `receive_purchase_order` here already
+# was one, using a different guard and a different message.
+#
+# Same treatment as `order_lifecycle`: one map, one function that validates,
+# assigns and carries the consequences. The router keeps auth and schema
+# mapping and stops keeping rules.
+
+
+@dataclass(frozen=True)
+class _Move:
+    """
+    One arrival state, and what it takes to get there.
+
+    `refusal` is a template rather than a generated sentence because these
+    messages predate the extraction and reach a person in the console. A
+    refactor that promises identical behaviour includes identical words, so
+    each is the endpoint's own wording, moved rather than rewritten.
+    """
+
+    sources: frozenset[PurchaseOrderStatusEnum]
+    refusal: str
+    #: Whoever raised the order may not be the one to wave it through.
+    separation_of_duties: bool = False
+
+
+#: The whole machine. Statuses not named here are terminal.
+#:
+#: `declined` is an ending on purpose: there is no route back to `draft`,
+#: because the shop's answer to a rejected order is a new one rather than a
+#: quietly re-edited copy of the one somebody already refused. `closed` is the
+#: other ending — stock has moved and the books have it.
+PURCHASE_ORDER_MOVES: dict[PurchaseOrderStatusEnum, _Move] = {
+    PurchaseOrderStatusEnum.PENDING: _Move(
+        sources=frozenset({PurchaseOrderStatusEnum.DRAFT}),
+        refusal="Only draft orders can be submitted (this is {status})",
+    ),
+    PurchaseOrderStatusEnum.APPROVED: _Move(
+        sources=frozenset({PurchaseOrderStatusEnum.PENDING}),
+        refusal="Only submitted orders can be approved",
+        separation_of_duties=True,
+    ),
+    PurchaseOrderStatusEnum.DECLINED: _Move(
+        sources=frozenset({PurchaseOrderStatusEnum.PENDING}),
+        refusal="Only submitted orders can be declined",
+    ),
+    # Receiving reaches one of two states from the same two sources: a short
+    # delivery leaves the order partially received and a complete one closes
+    # it. Which of the two is decided by what actually arrived, not by the
+    # caller — see `receive_purchase_order`.
+    PurchaseOrderStatusEnum.PARTIALLY_RECEIVED: _Move(
+        sources=frozenset(
+            {
+                PurchaseOrderStatusEnum.APPROVED,
+                PurchaseOrderStatusEnum.PARTIALLY_RECEIVED,
+            }
+        ),
+        refusal="Purchase order is {status}; only approved orders can be received",
+    ),
+    PurchaseOrderStatusEnum.CLOSED: _Move(
+        sources=frozenset(
+            {
+                PurchaseOrderStatusEnum.APPROVED,
+                PurchaseOrderStatusEnum.PARTIALLY_RECEIVED,
+            }
+        ),
+        refusal="Purchase order is {status}; only approved orders can be received",
+    ),
+}
+
+
+def _po_status(value) -> PurchaseOrderStatusEnum | None:
+    """The enum for a column that stores its value as a string."""
+    if isinstance(value, PurchaseOrderStatusEnum):
+        return value
+    try:
+        return PurchaseOrderStatusEnum(value)
+    except ValueError:
+        return None
+
+
+def allowed_purchase_order_transitions(
+    current: PurchaseOrderStatusEnum | str,
+) -> set[PurchaseOrderStatusEnum]:
+    """Everywhere a purchase order in *current* may go. Empty means terminal."""
+    status = _po_status(current)
+    return {
+        target
+        for target, move in PURCHASE_ORDER_MOVES.items()
+        if status in move.sources
+    }
+
+
+def can_transition_purchase_order(
+    current: PurchaseOrderStatusEnum | str, new: PurchaseOrderStatusEnum
+) -> bool:
+    """Whether the map allows moving from *current* to *new*."""
+    move = PURCHASE_ORDER_MOVES.get(new)
+    return move is not None and _po_status(current) in move.sources
+
+
+def assert_can_transition_purchase_order(
+    purchase_order: PurchaseOrder,
+    new_status: PurchaseOrderStatusEnum,
+    *,
+    user: User | None = None,
+) -> None:
+    """
+    Raise unless this move is legal for this order and this person.
+
+    Public because `receive_purchase_order` has to ask *before* it does the
+    work: the status it ends on is computed from what arrived, so the guard
+    cannot wait for the assignment. Everything else gets this for free by
+    calling `transition_purchase_order`.
+    """
+    move = PURCHASE_ORDER_MOVES.get(new_status)
+    if move is None:
+        raise ConflictError(f"'{new_status.value}' is not a state an order moves to")
+
+    if _po_status(purchase_order.status) not in move.sources:
+        raise ConflictError(move.refusal.format(status=purchase_order.status))
+
+    # Separation of duties: whoever raised the order cannot approve their own.
+    # A rule about the transition rather than about the endpoint — which is
+    # what it was, and why it only ever ran on one of the ways in.
+    if (
+        move.separation_of_duties
+        and user is not None
+        and purchase_order.submitter_id == user.id
+        and not user.is_admin
+    ):
+        raise ForbiddenError("A purchase order must be approved by someone else")
+
+
+#: Set while `transition_purchase_order` is the one assigning the column. A
+#: plain flag rather than the ContextVar `order_lifecycle` uses: purchase-order
+#: transitions are console actions on a single row with no await between the
+#: set and the reset, so there is no interleaving for two requests to confuse.
+_PO_GATED = False
+
+
+@event.listens_for(PurchaseOrder.status, "set", active_history=True)
+def _warn_on_ungated_po_write(target: PurchaseOrder, value, oldvalue, _initiator):
+    """
+    A status write that did not come through `transition_purchase_order`.
+
+    The twin of `order_lifecycle._warn_on_ungated_write`, and for the same
+    reason: the machine was spread across four handlers once and the only thing
+    stopping it happening again is noticing. A warning rather than a raise —
+    the writers this extraction knows about all go through the gate, and the
+    ones it does not know about are the ones a raise would turn from a logged
+    inconsistency into a broken request. Creation writes (no previous value)
+    stay free: building an order in a state is not a transition.
+    """
+    if _PO_GATED:
+        return
+    old = getattr(oldvalue, "value", oldvalue)
+    new = getattr(value, "value", value)
+    if not isinstance(old, str) or not isinstance(new, str) or old == new:
+        return
+    logger.warning(
+        "PurchaseOrder.status written outside inventory_service."
+        "transition_purchase_order(): %s %s -> %s. The write stands, but its "
+        "validation and consequences were skipped.",
+        getattr(target, "reference", target.id),
+        old,
+        new,
+    )
+
+
+async def transition_purchase_order(
+    db: AsyncSession,
+    purchase_order: PurchaseOrder,
+    new_status: PurchaseOrderStatusEnum,
+    *,
+    user: User,
+) -> bool:
+    """
+    Move a purchase order to *new_status*, with everything that move implies.
+
+    Returns whether anything moved. `False` means it was already there — which
+    is the ordinary answer for a second partial receipt, and not an error.
+
+    No flush and no commit beyond what the consequences need: services flush,
+    the request commits.
+    """
+    global _PO_GATED
+
+    if _po_status(purchase_order.status) == new_status:
+        return False
+
+    assert_can_transition_purchase_order(purchase_order, new_status, user=user)
+
+    _PO_GATED = True
+    try:
+        purchase_order.status = new_status.value
+    finally:
+        _PO_GATED = False
+
+    _purchase_order_consequences(purchase_order, new_status, user)
+    return True
+
+
+def _purchase_order_consequences(
+    purchase_order: PurchaseOrder, new_status: PurchaseOrderStatusEnum, user: User
+) -> None:
+    """
+    What arriving at a status makes happen, whoever brought the order there.
+
+    Only the audit stamps, for now — the one consequence with real weight
+    (stock arriving) belongs to `receive_purchase_order`, because it is
+    computed from the delivery rather than implied by the status. Keyed off the
+    transition all the same, so a second way to submit or approve an order
+    cannot ship without the trail.
+
+    Note the asymmetry in the declined case: `approver_id` is stamped and no
+    timestamp is, because `purchase_orders` has `approved_at` and no
+    `declined_at`. Preserved rather than fixed here — inventing a column is a
+    migration, and this extraction promises identical behaviour.
+    """
+    if new_status == PurchaseOrderStatusEnum.PENDING:
+        purchase_order.submitter_id = user.id
+        purchase_order.submitted_at = utcnow()
+    elif new_status == PurchaseOrderStatusEnum.APPROVED:
+        purchase_order.approver_id = user.id
+        purchase_order.approved_at = utcnow()
+    elif new_status == PurchaseOrderStatusEnum.DECLINED:
+        purchase_order.approver_id = user.id
+
+
 async def receive_purchase_order(
     db: AsyncSession,
     *,
@@ -325,14 +583,15 @@ async def receive_purchase_order(
 
     `received` maps purchase-order-item id to the quantity actually delivered,
     so a short delivery leaves the PO partially received rather than closed.
+
+    The one move whose consequence runs *before* the assignment: which state the
+    order lands in is computed from what arrived, so the stock has to be posted
+    first. The guard is therefore asked up front, against the same map, so a
+    declined order cannot get as far as moving stock and then be refused.
     """
-    if purchase_order.status not in (
-        PurchaseOrderStatusEnum.APPROVED.value,
-        PurchaseOrderStatusEnum.PARTIALLY_RECEIVED.value,
-    ):
-        raise ConflictError(
-            f"Purchase order is {purchase_order.status}; only approved orders can be received"
-        )
+    assert_can_transition_purchase_order(
+        purchase_order, PurchaseOrderStatusEnum.PARTIALLY_RECEIVED
+    )
 
     branch = await db.get(Branch, purchase_order.branch_id)
     if branch is None:
@@ -386,10 +645,13 @@ async def receive_purchase_order(
     await db.refresh(transaction)
     posted = await post_transaction(db, transaction=transaction, user=user)
 
-    purchase_order.status = (
-        PurchaseOrderStatusEnum.CLOSED.value
+    await transition_purchase_order(
+        db,
+        purchase_order,
+        PurchaseOrderStatusEnum.CLOSED
         if purchase_order.is_fully_received
-        else PurchaseOrderStatusEnum.PARTIALLY_RECEIVED.value
+        else PurchaseOrderStatusEnum.PARTIALLY_RECEIVED,
+        user=user,
     )
     await db.flush()
     return posted

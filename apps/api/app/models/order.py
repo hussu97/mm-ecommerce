@@ -185,6 +185,21 @@ class Order(Base, UUIDMixin, TimestampMixin):
     #: is the full history; this is the shortcut every existing reader already
     #: uses, kept in step with the latest row.
     payment_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: A **fraction**: `0.0500` is 5%. Multiply by it directly.
+    #:
+    #: The codebase holds two conventions for the same idea, in columns that
+    #: look alike and are four characters apart in the reader's eye:
+    #:
+    #:     *_rate     — a fraction.   orders.vat_rate = 0.05, taxes.rate
+    #:     *_percent  — a percentage. payment_gateways.fee_percent = 2.9
+    #:
+    #: Both are defensible in isolation — a tax rate is a multiplier, a
+    #: processor's fee is quoted in the contract as "2.9%" — and both are now
+    #: written into thousands of rows, so unifying them is a migration plus a
+    #: recalculation of historic economics rather than an edit. The convention
+    #: is therefore the *suffix*, and it is load-bearing: reading one of these
+    #: as the other is a 20x error in either direction, silently. Anything
+    #: named `_percent` gets a `/ 100`; anything named `_rate` does not.
     vat_rate: Mapped[Any] = mapped_column(
         Numeric(5, 4), nullable=False, default=Decimal("0.0500")
     )

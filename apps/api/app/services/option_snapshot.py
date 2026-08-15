@@ -21,23 +21,23 @@ empty queue and an empty history.
 
 So the register's read boundary normalises. One function, applied where the POS
 payload is built, and nothing downstream of it has to know there were ever two.
+
+The shape itself now lives in `schemas/option_snapshot.OptionSnapshot` — the
+column had two dialects and no contract, which is the worst combination for the
+one blob in the codebase that most needed one. Both functions here are that
+model; they differ only in what they do with a row it refuses.
 """
 
 from __future__ import annotations
 
-from decimal import Decimal, InvalidOperation
 from typing import Any
 
-__all__ = ["for_register"]
+from pydantic import ValidationError
 
+from app.core.exceptions import BadRequestError
+from app.schemas.option_snapshot import OptionSnapshot
 
-def _decimal(value: Any) -> Decimal:
-    if value is None:
-        return Decimal("0")
-    try:
-        return Decimal(str(value))
-    except (InvalidOperation, ValueError, TypeError):
-        return Decimal("0")
+__all__ = ["for_register", "validated"]
 
 
 def _one(row: Any) -> dict[str, Any] | None:
@@ -49,36 +49,10 @@ def _one(row: Any) -> dict[str, Any] | None:
     ticket, and a ticket that says the wrong thing is how a customer gets the
     wrong cake.
     """
-    if not isinstance(row, dict):
+    try:
+        return OptionSnapshot.model_validate(row).model_dump()
+    except ValidationError:
         return None
-
-    # The counter shape uses `name`; the website's uses `option_name`. Neither
-    # is a fallback for the other — whichever is present is the option's name.
-    name = row.get("name") or row.get("option_name")
-    if not name:
-        return None
-
-    # Per unit, both sides. `charged_total` is deliberately *not* used here:
-    # it is the line total after the group's free allowance, and the register
-    # multiplies by quantity itself.
-    price = row.get("price")
-    if price is None:
-        price = row.get("option_price")
-
-    # The website wrote `option_id` before `modifier_option_id` existed.
-    option_id = row.get("modifier_option_id") or row.get("option_id")
-
-    return {
-        "modifier_option_id": str(option_id) if option_id else None,
-        "modifier_id": (str(row["modifier_id"]) if row.get("modifier_id") else None),
-        "modifier_name": row.get("modifier_name"),
-        "name": str(name),
-        "sku": row.get("sku") or row.get("option_sku"),
-        "price": float(_decimal(price)),
-        # Rows written before quantities existed repeated the option instead
-        # and carry no key. One is what they meant.
-        "quantity": int(row.get("quantity") or 1),
-    }
 
 
 def for_register(rows: Any) -> list[dict[str, Any]]:
@@ -86,3 +60,31 @@ def for_register(rows: Any) -> list[dict[str, Any]]:
     if not isinstance(rows, list):
         return []
     return [option for option in (_one(row) for row in rows) if option is not None]
+
+
+def validated(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    The same contract, enforced loudly, for the moment a snapshot is written.
+
+    Returns *rows unchanged*, deliberately. This is a tripwire, not a
+    conversion: the two dialects are what the historic data and the live readers
+    already hold, so normalising on write would silently change what the
+    storefront prices a basket from. What it guarantees is that whatever goes
+    into the column can come back out of it — which is exactly the guarantee the
+    register discovered it did not have.
+
+    A failure here means a writer built a row that no reader can decode. That is
+    a bug in this codebase rather than bad input from a customer (both writers
+    build from `modifier_rules.resolve`), so it should surface at the point of
+    the write with the row in the message, instead of being stored and found
+    months later by a branch whose order queue has gone blank.
+    """
+    for index, row in enumerate(rows or []):
+        try:
+            OptionSnapshot.model_validate(row)
+        except ValidationError as exc:
+            raise BadRequestError(
+                f"Option {index} on this line cannot be stored: {row!r} "
+                f"({exc.error_count()} problem(s))"
+            ) from exc
+    return rows

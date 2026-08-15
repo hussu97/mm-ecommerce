@@ -11,7 +11,9 @@ demanded permission can be asserted without string-matching its source.
 
 from __future__ import annotations
 
+import re
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -67,3 +69,54 @@ async def test_ensure_is_the_same_check_in_imperative_form():
     ensure(_user("pos.discounts.open"), "pos.discounts.open")  # does not raise
     with pytest.raises(ForbiddenError):
         ensure(_user(), "pos.discounts.open")
+
+
+#: Splits a module into its top-level `def`/`async def` blocks, so a helper can
+#: be judged on its own body rather than on the file's.
+_TOP_LEVEL_DEF = re.compile(r"^(?:async )?def (\w+)\(", re.MULTILINE)
+
+
+def _private_permission_helpers(source: str) -> list[str]:
+    """
+    Private functions that decide a permission and refuse — i.e. copies of
+    `_require`.
+
+    Recognised by what the helper *does*, not what it is called: it asks
+    `user.can(...)` and raises `ForbiddenError`. That deliberately spares the
+    neighbours a name match would catch — `tills._assert_can_touch` (ownership,
+    not the permission catalogue) and `staff._validate_permissions` (checks that
+    a permission string exists at all).
+    """
+    matches = list(_TOP_LEVEL_DEF.finditer(source))
+    offenders = []
+    for index, match in enumerate(matches):
+        name = match.group(1)
+        if not name.startswith("_"):
+            continue
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(source)
+        body = source[match.end() : end]
+        if ".can(" in body and "ForbiddenError" in body:
+            offenders.append(name)
+    return offenders
+
+
+async def test_no_router_keeps_a_private_copy_of_the_permission_check():
+    """
+    The point of `app.core.permissions` is that there is one definition.
+
+    Five routers held a copy of `_require` when this module was written, and a
+    sixth was found afterwards in `marketing.py` — where nothing had ever called
+    it, so the file looked gated and was not. A grep is the only thing that
+    catches the seventh, so the grep lives here rather than in a reviewer's
+    memory: a new private helper fails this test naming the file it is in.
+    """
+    routers = Path(__file__).resolve().parents[2] / "app" / "api" / "v1"
+    offenders = {
+        path.name: helpers
+        for path in sorted(routers.glob("*.py"))
+        if (helpers := _private_permission_helpers(path.read_text()))
+    }
+    assert offenders == {}, (
+        f"{offenders} define their own permission helper. Import `require`/"
+        f"`ensure` from app.core.permissions instead."
+    )

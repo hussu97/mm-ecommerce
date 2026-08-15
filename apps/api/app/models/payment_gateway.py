@@ -121,9 +121,16 @@ class PaymentGateway(Base, UUIDMixin, TimestampMixin):
     # charge is on its balance transaction, which does not exist until the charge
     # settles — so the rate is what the order screen can show the minute an order
     # lands, and the actual fee replaces it later where we have it.
+    #
+    # A **percentage**, not a fraction: `2.9` means 2.9%, so a reader divides by
+    # 100. Its near-twin `orders.vat_rate` holds `0.0500` for 5% and a reader
+    # does not — the convention is the suffix (`_percent` vs `_rate`) and it is
+    # spelled out in full there. Confusing the two is a 100x error that looks
+    # like a plausible number in both directions.
     fee_percent: Mapped[Any] = mapped_column(
         Numeric(5, 3), nullable=False, default=2.9, server_default="2.9"
     )
+    #: Absolute currency, not a rate of any kind: AED 1 per transaction.
     fee_fixed: Mapped[Any] = mapped_column(
         Numeric(10, 2), nullable=False, default=1, server_default="1"
     )

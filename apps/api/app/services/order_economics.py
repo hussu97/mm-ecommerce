@@ -123,7 +123,22 @@ def processing_fee(
         return _ZERO, False
     percent = _money(gateway.fee_percent) if gateway else Decimal("2.9")
     fixed = _money(gateway.fee_fixed) if gateway else Decimal("1")
-    return _round(charged * percent / 100 + fixed), True
+    return _round(charged * _as_fraction(percent) + fixed), True
+
+
+def _as_fraction(percent: Decimal) -> Decimal:
+    """
+    A `_percent` column turned into something you can multiply by.
+
+    Named rather than an inline `/ 100` because the codebase carries both
+    conventions in columns that look alike: `payment_gateways.fee_percent` is
+    `2.9` and `orders.vat_rate` is `0.0500`, and the only thing distinguishing
+    them is the suffix (see the note on `Order.vat_rate`). A bare `/ 100` beside
+    a rate multiplication is exactly where the wrong one gets copied — and both
+    mistakes produce a plausible-looking number, off by 100x, on a screen the
+    shop reads its margins from.
+    """
+    return percent / 100
 
 
 async def for_order(db: AsyncSession, order: Order) -> OrderEconomics:

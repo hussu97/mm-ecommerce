@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.deps import get_admin_user, get_current_active_user, get_db
-from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError
+from app.core.exceptions import BadRequestError, ConflictError
 from app.core.permissions import ensure, require
 from app.models import (
     Branch,
@@ -32,7 +32,6 @@ from app.models import (
     TransactionStatusEnum,
     Warehouse,
 )
-from app.models.base import utcnow
 from app.models.user import User
 from app.schemas.inventory import (
     CloseCountRequest,
@@ -659,20 +658,27 @@ async def update_purchase_order(
     return await _serialise_po(db, await _load_po(db, po_id))
 
 
+# The three state changes below are one line each, and that is the point of
+# them. They used to open with their own `if status != …` and then assign the
+# column, stamp an actor and stamp a timestamp by hand — a state machine living
+# in a router, while the order's lived in `order_lifecycle` and the transfer's
+# in `transfer_service`. The rules, the wording of the refusals and the
+# separation-of-duties check now all live in `inventory_service`; what is left
+# here is auth, the id, and the response.
+
+
 @purchase_orders_router.post("/{po_id}/submit", response_model=PurchaseOrderResponse)
 async def submit_purchase_order(
     po_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.purchase_orders.submit")),
 ):
-    purchase_order = await _load_po(db, po_id)
-    if purchase_order.status != PurchaseOrderStatusEnum.DRAFT.value:
-        raise ConflictError(
-            f"Only draft orders can be submitted (this is {purchase_order.status})"
-        )
-    purchase_order.status = PurchaseOrderStatusEnum.PENDING.value
-    purchase_order.submitter_id = user.id
-    purchase_order.submitted_at = utcnow()
+    await inventory_service.transition_purchase_order(
+        db,
+        await _load_po(db, po_id),
+        PurchaseOrderStatusEnum.PENDING,
+        user=user,
+    )
     await db.flush()
     return await _serialise_po(db, await _load_po(db, po_id))
 
@@ -683,15 +689,12 @@ async def approve_purchase_order(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.purchase_orders.approve")),
 ):
-    purchase_order = await _load_po(db, po_id)
-    if purchase_order.status != PurchaseOrderStatusEnum.PENDING.value:
-        raise ConflictError("Only submitted orders can be approved")
-    # Separation of duties: whoever raised the order cannot approve their own.
-    if purchase_order.submitter_id == user.id and not user.is_admin:
-        raise ForbiddenError("A purchase order must be approved by someone else")
-    purchase_order.status = PurchaseOrderStatusEnum.APPROVED.value
-    purchase_order.approver_id = user.id
-    purchase_order.approved_at = utcnow()
+    await inventory_service.transition_purchase_order(
+        db,
+        await _load_po(db, po_id),
+        PurchaseOrderStatusEnum.APPROVED,
+        user=user,
+    )
     await db.flush()
     return await _serialise_po(db, await _load_po(db, po_id))
 
@@ -702,11 +705,12 @@ async def decline_purchase_order(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.purchase_orders.approve")),
 ):
-    purchase_order = await _load_po(db, po_id)
-    if purchase_order.status != PurchaseOrderStatusEnum.PENDING.value:
-        raise ConflictError("Only submitted orders can be declined")
-    purchase_order.status = PurchaseOrderStatusEnum.DECLINED.value
-    purchase_order.approver_id = user.id
+    await inventory_service.transition_purchase_order(
+        db,
+        await _load_po(db, po_id),
+        PurchaseOrderStatusEnum.DECLINED,
+        user=user,
+    )
     await db.flush()
     return await _serialise_po(db, await _load_po(db, po_id))
 

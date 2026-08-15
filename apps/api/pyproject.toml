@@ -31,6 +31,12 @@ dependencies = [
     "webauthn>=2.5.0",
     # Re-encodes admin image uploads before they reach R2 (app/core/images.py).
     "pillow>=11.0.0",
+    # Validates phone numbers server-side (app/core/phone.py). The Python port
+    # of Google's libphonenumber, carrying the same metadata the storefront's
+    # `PhoneInput` already runs — so the untrusted side of the wire stops being
+    # the lenient one. Phone is the promo-abuse identity; "eight or more
+    # digits", which is what the hand-rolled check amounted to, was not a check.
+    "phonenumbers>=9.0.0",
 ]
 
 [project.optional-dependencies]

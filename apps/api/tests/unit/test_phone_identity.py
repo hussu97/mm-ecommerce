@@ -48,6 +48,104 @@ def test_nonsense_is_dropped_rather_than_guessed_at(raw):
     assert normalise_phone(raw) == ""
 
 
+# ── the switch to `phonenumbers` ──────────────────────────────────────────────
+#
+# `normalise_phone` used to be length arithmetic: `+` and eight characters was
+# a phone number, eight-to-ten bare digits was a UAE one. The storefront was
+# running libphonenumber-js against the same box, which put the stricter check
+# on the side of the wire we do not control. These two blocks are the contract
+# of the replacement: everything the shop actually receives still normalises,
+# and the things that only ever passed because the old rule was arithmetic no
+# longer do.
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        # Every mobile prefix the UAE assigns, in the shape a form receives it.
+        ("0501234567", "+971501234567"),
+        ("0521234567", "+971521234567"),
+        ("0541234567", "+971541234567"),
+        ("0551234567", "+971551234567"),
+        ("0561234567", "+971561234567"),
+        ("0581234567", "+971581234567"),
+        # Written internationally, in every punctuation people use.
+        ("+971 50 123 4567", "+971501234567"),
+        ("+971 (50) 123-4567", "+971501234567"),
+        ("971-50-123-4567", "+971501234567"),
+        ("00971 50 123 4567", "+971501234567"),
+        # The `(0)` that people carry over from a national spelling.
+        ("+971(0)501234567", "+971501234567"),
+        # Bare national, no leading zero — what a customer types when the form
+        # already shows a +971 prefix.
+        ("501234567", "+971501234567"),
+        # Landlines. `seed_pos_demo` gives a branch `04 445 1555`, and
+        # `lalamove_service` hands a branch's phone straight to the courier.
+        ("04 445 1555", "+97144451555"),
+        ("+97144451555", "+97144451555"),
+        ("026123456", "+97126123456"),
+        # A 600 service number, as `test_lalamove_reassignment` uses.
+        ("+971600500500", "+971600500500"),
+        # Not everyone ordering a cake in Dubai holds a UAE number.
+        ("+919876543210", "+919876543210"),
+        ("+966501234567", "+966501234567"),
+        ("+447911123456", "+447911123456"),
+        ("+14155552671", "+14155552671"),
+        # Arabic-Indic digits, which an Arabic keyboard produces and the old
+        # `isdigit()` cleaning happened to survive. It still does.
+        ("٠٥٠١٢٣٤٥٦٧", "+971501234567"),
+        # Junk around a real number. The old rule threw away everything that was
+        # not a digit, so a stored `0501234567 (Ali)` still reached a driver;
+        # the second pass keeps that true.
+        ("0501234567 (Ali)", "+971501234567"),
+        ("abc0501234567xyz", "+971501234567"),
+    ],
+)
+def test_every_format_the_shop_receives_still_normalises(raw, expected):
+    assert normalise_phone(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw,was",
+    [
+        # The headline case. Eight characters after a `+` was the whole test,
+        # so this impossible number was an identity — and identities are what
+        # the new-customer coupon is counted against.
+        ("+12345678", "+12345678"),
+        # A UAE mobile one digit short, and one digit long. Both are the shape
+        # of a typo, and the old rule passed the first and invented a country
+        # code for the second.
+        ("+97150123456", "+97150123456"),
+        ("05012345678", "+9715012345678"),
+        # Two numbers in one box — a note, not a number. The old rule
+        # concatenated them into a single 20-digit "identity".
+        ("050 123 4567 / 055 765 4321", "+5012345670557654321"),
+        # `00` is an international prefix, not a spare pair of digits: this is
+        # a landline with the prefix and no country code, which is not a number
+        # anybody can dial.
+        ("0044451555", "+97144451555"),
+    ],
+)
+def test_what_only_ever_passed_because_the_old_rule_was_arithmetic_is_refused(raw, was):
+    """
+    Deliberate rejections, each one previously an accepted "identity".
+
+    `was` is what the old function returned, recorded here so the change is
+    legible in the test rather than only in a commit message.
+    """
+    assert was, "the old function accepted this — that is the point of the case"
+    assert normalise_phone(raw) == ""
+
+
+def test_an_extension_is_dropped_rather_than_appended_to_the_number():
+    """
+    Not a rejection but a correction. `+971-50-123-4567 ext 9` used to come out
+    as `+9715012345679`, which is not a handset — the extension was glued onto
+    the subscriber number and the result was an identity belonging to nobody.
+    """
+    assert normalise_phone("+971-50-123-4567 ext 9") == "+971501234567"
+
+
 def test_identities_include_the_string_as_given():
     """
     Rows written at the counter before this normalisation existed hold whatever

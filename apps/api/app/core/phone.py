@@ -21,15 +21,43 @@ no identity: it merges two customers.
 Lifted out of `lalamove_service`, where it lived because the courier's API
 demanded E.164. Same function, same rules, now in the one place the rest of the
 codebase can reach without importing a courier.
+
+**The check used to be length arithmetic** — anything starting with `+` and
+eight characters long was a phone number, and any bare run of eight to ten
+digits became a UAE one. `+12345678` passed. Meanwhile the storefront's
+`PhoneInput` runs libphonenumber-js and rejects it, which put the *stricter*
+check on the side of the wire we do not control: a browser is a courtesy, the
+API is the door. For a value whose entire job is to be an identity that costs
+something to fake, "eight or more digits" is not a check — it is eight
+keystrokes and a fresh discount.
+
+So this delegates to `phonenumbers`, the Python port of Google's libphonenumber
+and the same metadata the storefront uses. `is_valid_number` means the number
+matches a real numbering plan for its country — an assigned prefix and the
+right length — not merely that it looks numeric.
 """
 
 from __future__ import annotations
 
+import phonenumbers
+
 __all__ = ["normalise_phone", "phone_identities"]
 
 #: The UAE, because that is who orders. A bare national number with no country
-#: information is read as one of ours.
-_DEFAULT_COUNTRY_CODE = "971"
+#: information is read as one of ours — `0501234567` and `04 445 1555` are the
+#: two shapes the shop actually receives.
+_DEFAULT_REGION = "AE"
+
+
+def _parsed(candidate: str) -> str:
+    """E.164 for *candidate* if it is a real number, `""` otherwise."""
+    try:
+        number = phonenumbers.parse(candidate, _DEFAULT_REGION)
+    except phonenumbers.NumberParseException:
+        return ""
+    if not phonenumbers.is_valid_number(number):
+        return ""
+    return phonenumbers.format_number(number, phonenumbers.PhoneNumberFormat.E164)
 
 
 def normalise_phone(raw: str | None) -> str:
@@ -37,23 +65,33 @@ def normalise_phone(raw: str | None) -> str:
     E.164, or nothing.
 
     Accepts what people actually type: spaces, dashes, brackets, a leading zero,
-    an international prefix written as `00`. Returns `""` for anything left that
-    cannot be read as a phone number.
+    an international prefix written as `00`, the `(0)` some people put in an
+    international number, and Arabic-Indic digits. Returns `""` for anything
+    left that cannot be read as a *valid* phone number.
+
+    Two passes, because the previous implementation was tolerant of surrounding
+    junk in a way that mattered: it kept the digits and threw the rest away, so
+    a stored number like `0501234567 (Ali)` still reached a courier. The strict
+    parse is tried first; failing that, the string is reduced to its digits (and
+    a leading `+`) and tried again. Validity is demanded either way, so the
+    fallback restores the old tolerance without restoring the old credulity —
+    `abc0501234567xyz` still normalises, `+12345678` no longer does.
     """
     if not raw:
         return ""
-    digits = "".join(ch for ch in raw if ch.isdigit() or ch == "+")
-    if digits.startswith("+"):
-        return digits if len(digits) >= 8 else ""
-    if digits.startswith("00"):
-        digits = digits[2:]
-    if digits.startswith(_DEFAULT_COUNTRY_CODE):
-        return f"+{digits}"
-    if digits.startswith("0"):
-        digits = digits[1:]
-    if 8 <= len(digits) <= 10:
-        return f"+{_DEFAULT_COUNTRY_CODE}{digits}"
-    return f"+{digits}" if len(digits) >= 10 else ""
+
+    direct = _parsed(raw)
+    if direct:
+        return direct
+
+    # The old cleaning rule, reused only as a second chance. `+` is kept
+    # wherever it appears for the same reason it was: a number typed as
+    # `+971 (0)50…` has already been handled above, and one typed with stray
+    # characters around it is still telling us its country.
+    reduced = "".join(ch for ch in raw if ch.isdigit() or ch == "+")
+    if reduced and reduced != raw.strip():
+        return _parsed(reduced)
+    return ""
 
 
 def phone_identities(raw: str | None) -> list[str]:

@@ -40,6 +40,9 @@ class Tax(Base, UUIDMixin, TimestampMixin):
         JSONB, nullable=False, server_default="{}"
     )
     # Stored as a fraction (0.0500 == 5%) to match the existing Order.vat_rate.
+    # `_rate` = fraction, `_percent` = percentage — the convention is spelled
+    # out in full on `Order.vat_rate`, beside the column it is easiest to
+    # confuse this one with (`payment_gateways.fee_percent`, which is 2.9).
     rate: Mapped[Any] = mapped_column(Numeric(6, 4), nullable=False)
     type: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default=TaxTypeEnum.INCLUSIVE.value

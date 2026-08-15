@@ -17,7 +17,7 @@ from app.schemas.cart import (
     CartResponse,
     SelectedOption,
 )
-from app.services import modifier_rules
+from app.services import modifier_rules, option_snapshot
 from app.services.storefront_visibility import (
     is_website_product_visible,
     website_product_visibility_clause,
@@ -208,30 +208,38 @@ async def _build_options_snapshot(
             ],
         )
 
-    return [
-        {
-            "modifier_id": str(choice.modifier_id),
-            "modifier_name": choice.modifier_name,
-            "modifier_translations": choice.modifier_translations,
-            "option_id": str(choice.option_id),
-            # The same id under the name the order pipeline and the inventory
-            # depletion look for. Web orders used to carry only `option_id`,
-            # so an option with its own recipe never moved any stock.
-            "modifier_option_id": str(choice.option_id),
-            "option_name": choice.option_name,
-            "option_translations": choice.option_translations,
-            # Per unit. Lines written before quantities existed repeated the
-            # option instead, and have no `quantity` key — reading it as 1
-            # keeps those baskets priced exactly as they were.
-            "option_price": float(choice.unit_price),
-            "quantity": choice.quantity,
-            #: What the line is actually charged for this option, after the
-            #: group's free allowance. Stored rather than recomputed so a
-            #: basket priced under one set of rules keeps its price.
-            "charged_total": float(choice.charged_total),
-        }
-        for choice in resolved
-    ]
+    # Checked against `schemas/option_snapshot.OptionSnapshot` before it is
+    # stored. Every row here is built from `modifier_rules.resolve`, so this is
+    # a tripwire rather than a filter — but this column is the one blob with two
+    # wire dialects, and the register has already been taken down once by a row
+    # it could not decode. The guard is where the row is made.
+    return option_snapshot.validated(
+        [
+            {
+                "modifier_id": str(choice.modifier_id),
+                "modifier_name": choice.modifier_name,
+                "modifier_translations": choice.modifier_translations,
+                "option_id": str(choice.option_id),
+                # The same id under the name the order pipeline and the
+                # inventory depletion look for. Web orders used to carry only
+                # `option_id`, so an option with its own recipe never moved any
+                # stock.
+                "modifier_option_id": str(choice.option_id),
+                "option_name": choice.option_name,
+                "option_translations": choice.option_translations,
+                # Per unit. Lines written before quantities existed repeated the
+                # option instead, and have no `quantity` key — reading it as 1
+                # keeps those baskets priced exactly as they were.
+                "option_price": float(choice.unit_price),
+                "quantity": choice.quantity,
+                #: What the line is actually charged for this option, after the
+                #: group's free allowance. Stored rather than recomputed so a
+                #: basket priced under one set of rules keeps its price.
+                "charged_total": float(choice.charged_total),
+            }
+            for choice in resolved
+        ]
+    )
 
 
 def _options_key(

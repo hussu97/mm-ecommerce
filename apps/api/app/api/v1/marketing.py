@@ -9,13 +9,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.exceptions import ForbiddenError
 from app.models import (
     Discount,
     Promotion,
     TimedEvent,
 )
-from app.models.user import User
 
 from .pos_config import build_crud_router
 
@@ -27,9 +25,19 @@ class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-def _require(user: User, permission: str) -> None:
-    if not user.can(permission):
-        raise ForbiddenError(f"You do not have permission to {permission}")
+# A sixth copy of the `_require(user, permission)` helper used to sit here, and
+# it was the strangest of the six: nothing in this file ever called it. Every
+# route below is built by `build_crud_router`, which gates reads on
+# `get_current_active_user` and writes on `get_admin_user` — so the copy was a
+# permission check that looked like protection and enforced nothing.
+#
+# That is the failure mode `app.core.permissions` exists to end. A check written
+# out imperatively per router can be forgotten (`pos_orders.add_item` shipped as
+# a hole for exactly that reason) or, as here, written and never wired up, and
+# neither shows up in a grep for "which routes demand what". The five live
+# copies became `require(...)`/`ensure(...)`; this dead one is simply gone.
+# Should these three entities ever need finer gating than "admin", they take a
+# `Depends(require("marketing.<thing>"))` like everybody else.
 
 
 # ─── Discounts ────────────────────────────────────────────────────────────────

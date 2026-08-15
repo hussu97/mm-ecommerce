@@ -108,6 +108,24 @@ async def load_transfer_order(db: AsyncSession, order_id: uuid.UUID) -> Transfer
 
 
 # ─── Request workflow ─────────────────────────────────────────────────────────
+#
+# Left in this shape deliberately, having been compared against the other two
+# state machines when the purchase-order one was pulled out of its router.
+#
+# `order_lifecycle` and `inventory_service`'s purchase-order machine are both a
+# declarative map: a transfer's is not, because a transfer's state is not in its
+# status column alone. `send_transfer` moves stock and does **not** change
+# `status` — an accepted order stays accepted and grows a `sent_transaction_id`;
+# `receive_transfer` gates on that id, not on the status, and only then closes
+# the order. The composite is real rather than an oversight: it is what lets a
+# transfer be simultaneously "accepted" and "on a van", which is the state the
+# whole design exists to make visible.
+#
+# A `status -> status` map cannot express "may send if accepted and not already
+# sent", so forcing one here would either lose the two link columns or turn them
+# into two more statuses that mean less than the columns do. The guards below
+# stay imperative, but they stay in a *service* — which was the actual complaint:
+# three homes for the pattern, one of them a router.
 
 
 async def submit_transfer_order(
