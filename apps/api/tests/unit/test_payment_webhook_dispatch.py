@@ -44,6 +44,11 @@ def order():
         payment_method="card",
         payment_id="pi_ziina_1",
         payment_transactions=[],
+        # A refund webhook now records how much went back, whoever issued it —
+        # including a refund made by hand in a gateway dashboard, which used to
+        # move the status and leave these untouched.
+        refunded_amount=Decimal("0"),
+        refunded_at=None,
         # A confirmation now also puts the order on its branch's register, so
         # the stub carries the columns that path reads. Publishing itself is
         # stubbed in `wired` — it is the same call whichever gateway sent the

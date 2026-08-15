@@ -807,6 +807,19 @@ async def _handle_refund(db: AsyncSession, order: Order, event: GatewayEvent) ->
     customer by email that their money was on its way back. A partial is now
     recorded and reported, and the order keeps the status it had.
     """
+    # Whatever else this webhook means, it means money went back — and the
+    # gateway's figure is the authority on how much, whoever issued it.
+    #
+    # Written for partials too, which is the case this used to lose entirely: a
+    # refund made by hand in a Stripe dashboard moved the status and left
+    # `refunded_amount` at zero, so the admin screen and the customer's email
+    # both said nothing had been returned while the bank disagreed. It is also
+    # what stops `refund_order` sending a second refund on top of a dashboard
+    # one — `refundable_amount` subtracts it.
+    if event.amount_refunded is not None:
+        order.refunded_amount = Decimal(event.amount_refunded) / 100
+        order.refunded_at = order.refunded_at or utcnow()
+
     is_full = _is_full_refund(order, event)
 
     if not is_full:
