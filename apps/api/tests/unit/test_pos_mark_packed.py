@@ -18,11 +18,12 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import inspect
+
 import pytest
-from fastapi import HTTPException
 
 from app.api.v1 import pos_orders
-from app.core.exceptions import ForbiddenError
+from app.core.exceptions import ConflictError, ForbiddenError
 from app.models.order import OrderStatusEnum
 
 pytestmark = pytest.mark.asyncio
@@ -132,7 +133,7 @@ async def test_an_order_that_cannot_be_packed_is_refused(monkeypatch, wiring, st
     order = _order(status)
     monkeypatch.setattr(pos_orders, "_load", AsyncMock(return_value=order))
 
-    with pytest.raises(HTTPException) as raised:
+    with pytest.raises(ConflictError) as raised:
         await pos_orders.mark_packed(
             order.id, db=object(), user=_user("pos.register.access")
         )
@@ -143,17 +144,21 @@ async def test_an_order_that_cannot_be_packed_is_refused(monkeypatch, wiring, st
     notify.assert_not_awaited()
 
 
-async def test_it_takes_the_same_permission_as_the_register(monkeypatch, wiring):
+async def test_it_takes_the_same_permission_as_the_register():
     """
     `pos.register.access` — whoever may take the order may say it is finished.
     A separate permission would mean a shop that had not thought to grant it
     silently went back to needing a laptop.
+
+    The check lives in the route's signature now (`Depends(require(...))`), so
+    the test reads it off the declared dependency and exercises the dependency
+    itself — a direct call to the handler no longer passes through the gate.
     """
-    order = _order(OrderStatusEnum.CONFIRMED)
-    monkeypatch.setattr(pos_orders, "_load", AsyncMock(return_value=order))
+    dep = inspect.signature(pos_orders.mark_packed).parameters["user"].default
+    assert dep.dependency.permission == "pos.register.access"
 
     with pytest.raises(ForbiddenError):
-        await pos_orders.mark_packed(order.id, db=object(), user=_user("orders.read"))
+        await dep.dependency(_user("orders.read"))
 
 
 @pytest.mark.asyncio(loop_scope="function")

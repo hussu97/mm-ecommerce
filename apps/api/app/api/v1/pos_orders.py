@@ -5,13 +5,14 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, Query, status
 from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.deps import get_current_active_user, get_db
-from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
+from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
+from app.core.permissions import ensure, require
 from app.models import (
     Branch,
     KitchenTicket,
@@ -136,11 +137,6 @@ def _serialise(order: Order) -> PosOrderResponse:
     return payload
 
 
-async def _require_permission(user: User, permission: str) -> None:
-    if not user.can(permission):
-        raise ForbiddenError(f"You do not have permission to {permission}")
-
-
 async def _load(db: AsyncSession, order_id: uuid.UUID) -> Order:
     return await pos_order_service.get_order(db, order_id)
 
@@ -169,9 +165,8 @@ async def list_orders(
     open_only: bool = False,
     limit: int = Query(50, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("orders.read")),
 ):
-    await _require_permission(user, "orders.read")
     # An unpaid storefront order is not on this list. See
     # `pos_order_service.paid_for_clause` — the counter is told about a website
     # order when the money lands, not when the checkout page was opened.
@@ -201,9 +196,8 @@ async def list_orders(
 async def open_order(
     data: OpenOrderRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("pos.register.access")),
 ):
-    await _require_permission(user, "pos.register.access")
     branch = await crud_service.get_or_404(db, Branch, data.branch_id)
     till = await _resolve_till(db, data.till_id)
     order = await pos_order_service.open_order(
@@ -229,9 +223,8 @@ async def open_order(
 async def get_order(
     order_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("orders.read")),
 ):
-    await _require_permission(user, "orders.read")
     return _serialise(await _load(db, order_id))
 
 
@@ -240,15 +233,17 @@ async def add_item(
     order_id: uuid.UUID,
     data: AddItemRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    # This route is why the gate is a declared dependency and not a first
+    # statement somebody remembers to write: it only ever checked the
+    # open-price case, so any authenticated active user could add priced lines
+    # to any check they could name the id of.
+    user: User = Depends(require("pos.register.access")),
 ):
-    # Every other mutating route on this order gates first; this one only ever
-    # checked the open-price case, so any authenticated active user could add
-    # priced lines to any check they could name the id of.
-    await _require_permission(user, "pos.register.access")
     order = await _load(db, order_id)
     if data.unit_price is not None:
-        await _require_permission(user, "pos.products.open_price")
+        # Imperative because it is conditional: whether a *second* permission
+        # applies depends on the body, which no static dependency can read.
+        ensure(user, "pos.products.open_price")
     await pos_order_service.add_item(
         db,
         order=order,
@@ -270,9 +265,8 @@ async def void_item(
     item_id: uuid.UUID,
     data: VoidItemRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("pos.products.void")),
 ):
-    await _require_permission(user, "pos.products.void")
     order = await _load(db, order_id)
     order = await pos_order_service.void_item(
         db, order=order, item_id=item_id, user=user, reason_id=data.reason_id
@@ -286,9 +280,8 @@ async def return_item(
     item_id: uuid.UUID,
     data: ReturnItemRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("pos.orders.return")),
 ):
-    await _require_permission(user, "pos.orders.return")
     order = await _load(db, order_id)
     order = await pos_order_service.return_item(
         db,
@@ -308,7 +301,10 @@ async def apply_discount(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_active_user),
 ):
-    await _require_permission(
+    # Imperative rather than a `require(...)` dependency: which permission this
+    # takes depends on the body — an open discount is typed in, a predefined
+    # one is picked from a list — and a static dependency cannot read the body.
+    ensure(
         user,
         "pos.discounts.open" if data.source == "open" else "pos.discounts.predefined",
     )
@@ -332,9 +328,8 @@ async def remove_discount(
     order_id: uuid.UUID,
     discount_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("pos.discounts.open")),
 ):
-    await _require_permission(user, "pos.discounts.open")
     order = await _load(db, order_id)
     order = await pos_order_service.remove_discount(
         db, order=order, discount_id=discount_id
@@ -349,8 +344,10 @@ async def apply_charge(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_active_user),
 ):
+    # Imperative because it is conditional: a predefined charge takes no
+    # permission at all, and only the body says which kind this is.
     if data.charge_id is None:
-        await _require_permission(user, "pos.charges.open")
+        ensure(user, "pos.charges.open")
     order = await _load(db, order_id)
     order = await pos_order_service.apply_charge(
         db,
@@ -368,7 +365,7 @@ async def send_to_kitchen(
     order_id: uuid.UUID,
     course_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("pos.kitchen.send_before_payment")),
 ):
     """
     Fire the check to the kitchen.
@@ -377,7 +374,6 @@ async def send_to_kitchen(
     table has finished them. Omit it and everything outstanding goes at once,
     which is what a takeaway wants.
     """
-    await _require_permission(user, "pos.kitchen.send_before_payment")
     order = await _load(db, order_id)
     tickets = await pos_order_service.send_to_kitchen(
         db, order=order, course_id=course_id
@@ -390,7 +386,7 @@ async def record_payment(
     order_id: uuid.UUID,
     data: PaymentRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("pos.payment.perform")),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
     """
@@ -401,9 +397,11 @@ async def record_payment(
     here because the register's pay sequence is three calls over a 15-second
     timeout and the cashier cannot tell a lost response from a lost payment.
     """
-    await _require_permission(user, "pos.payment.perform")
     if data.is_refund:
-        await _require_permission(user, "pos.payment.refund")
+        # Imperative because it is conditional: refunds take a second
+        # permission on top of `pos.payment.perform`, and only the body says
+        # whether money is going out rather than in.
+        ensure(user, "pos.payment.refund")
     order = await _load(db, order_id)
     till = await _resolve_till(db, data.till_id, order)
     await pos_order_service.record_payment(
@@ -426,9 +424,8 @@ async def record_payment(
 async def close_order(
     order_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("pos.payment.perform")),
 ):
-    await _require_permission(user, "pos.payment.perform")
     order = await _load(db, order_id)
     return _serialise(await pos_order_service.close_order(db, order=order, user=user))
 
@@ -438,9 +435,8 @@ async def void_order(
     order_id: uuid.UUID,
     data: VoidOrderRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("pos.orders.void")),
 ):
-    await _require_permission(user, "pos.orders.void")
     order = await _load(db, order_id)
     return _serialise(
         await pos_order_service.void_order(
@@ -454,10 +450,9 @@ async def split_order(
     order_id: uuid.UUID,
     data: SplitOrderRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("pos.orders.split")),
 ):
     """Move lines onto a second check so a table can pay separately."""
-    await _require_permission(user, "pos.orders.split")
     order = await _load(db, order_id)
     original, split = await pos_order_service.split_order(
         db, order=order, user=user, item_ids=data.item_ids
@@ -470,10 +465,9 @@ async def join_orders(
     order_id: uuid.UUID,
     data: JoinOrderRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("pos.orders.join")),
 ):
     """Absorb another open check into this one."""
-    await _require_permission(user, "pos.orders.join")
     target = await _load(db, order_id)
     source = await _load(db, data.source_order_id)
     return _serialise(
@@ -486,10 +480,9 @@ async def change_table(
     order_id: uuid.UUID,
     data: ChangeTableRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("pos.tables.change_owner")),
 ):
     """Move an open check to a different table."""
-    await _require_permission(user, "pos.tables.change_owner")
     order = await _load(db, order_id)
     return _serialise(
         await pos_order_service.change_table(db, order=order, table_id=data.table_id)
@@ -501,7 +494,7 @@ async def assign_driver(
     order_id: uuid.UUID,
     data: AssignDriverRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("pos.driver.act_as")),
 ):
     """
     Put a delivery order on a driver, or take it back off one.
@@ -509,7 +502,6 @@ async def assign_driver(
     Only delivery orders can be dispatched; assigning a driver to a takeaway
     would put it on a dispatch board it should never appear on.
     """
-    await _require_permission(user, "pos.driver.act_as")
     order = await _load(db, order_id)
     if order.order_type != "delivery":
         raise BadRequestError("Only a delivery order can be given to a driver")
@@ -527,10 +519,9 @@ async def schedule_order(
     order_id: uuid.UUID,
     data: ScheduleOrderRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("pos.register.access")),
 ):
     """Set when an ahead order is wanted — a cake for 4pm tomorrow."""
-    await _require_permission(user, "pos.register.access")
     order = await _load(db, order_id)
     order.due_at = data.due_at
     await db.flush()
@@ -542,7 +533,7 @@ async def dispatch_board(
     branch_id: uuid.UUID | None = None,
     unassigned_only: bool = False,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("orders.read")),
 ):
     """
     Open delivery orders, oldest first — the driver dispatch queue.
@@ -550,7 +541,6 @@ async def dispatch_board(
     Declared before nothing else claims `/dispatch`, and ordered by when the
     order was opened because the longest-waiting customer goes out first.
     """
-    await _require_permission(user, "orders.read")
     stmt = select(Order).where(
         Order.is_pos.is_(True),
         Order.order_type == "delivery",
@@ -577,10 +567,9 @@ async def dispatch_board(
 async def park_order(
     order_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("pos.register.access")),
 ):
     """Set a check aside so the till is free for the next customer."""
-    await _require_permission(user, "pos.register.access")
     order = await _load(db, order_id)
     return _serialise(await pos_order_service.park_order(db, order=order))
 
@@ -589,10 +578,9 @@ async def park_order(
 async def resume_order(
     order_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("pos.register.access")),
 ):
     """Bring a parked check back to the register."""
-    await _require_permission(user, "pos.register.access")
     order = await _load(db, order_id)
     return _serialise(await pos_order_service.resume_order(db, order=order))
 
@@ -621,10 +609,9 @@ async def _serialise_ticket(
 async def open_checks(
     branch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("orders.read")),
 ):
     """Every check still open at a branch — the POS floor/tab view."""
-    await _require_permission(user, "orders.read")
     stmt = (
         select(Order)
         .where(
@@ -665,7 +652,7 @@ async def accept_order(
         ),
     ),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("pos.register.access")),
 ):
     """
     Take a waiting online order onto the register, and call the driver.
@@ -698,7 +685,6 @@ async def accept_order(
     the second one should not get an error for being slower. `assign_or_dispatch`
     is idempotent for the same reason, so the second press books nothing twice.
     """
-    await _require_permission(user, "pos.register.access")
     order = await pos_order_service.get_order(db, order_id)
 
     if order.pos_status == PosOrderStatusEnum.ACTIVE.value:
@@ -710,19 +696,13 @@ async def accept_order(
         payload.already_accepted = True
         return payload
     if order.pos_status != PosOrderStatusEnum.PENDING.value:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Order is {order.pos_status} and cannot be accepted.",
-        )
+        raise ConflictError(f"Order is {order.pos_status} and cannot be accepted.")
     # Accepting is what turns a website order into an open check the kitchen
     # works from, so it must not be reachable for one nobody has paid for. The
     # list no longer offers these, but a device holding a stale row — or one
     # replaying a queued action after the payment failed — still can ask.
     if not pos_order_service.is_paid_for(order):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "This order has not been paid for yet.",
-        )
+        raise ConflictError("This order has not been paid for yet.")
     # The terminal's setting is a permission, not an instruction. An order
     # placed while the shop was shut is accepted by a person or not at all —
     # accepting now prints a ticket and calls a driver, and doing both for a
@@ -730,10 +710,9 @@ async def accept_order(
     # certainly loaded, rather than trusting the hint in the payload.
     branch = await db.get(Branch, order.branch_id) if order.branch_id else None
     if auto and not pos_order_service.may_auto_accept(order, branch):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
+        raise ConflictError(
             "This order was placed outside the branch's opening hours and has "
-            "to be accepted by a person.",
+            "to be accepted by a person."
         )
 
     order.pos_status = PosOrderStatusEnum.ACTIVE.value
@@ -762,7 +741,7 @@ async def accept_order(
 async def mark_handed_over(
     order_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("pos.register.access")),
 ):
     """
     The box is in a driver's hands. Said by whoever handed it over.
@@ -781,7 +760,6 @@ async def mark_handed_over(
 
     Idempotent, like `accept` and `packed`, because two people will press it.
     """
-    await _require_permission(user, "pos.register.access")
     order = await _load(db, order_id)
 
     if order.status == OrderStatusEnum.OUT_FOR_DELIVERY:
@@ -789,9 +767,8 @@ async def mark_handed_over(
     if OrderStatusEnum.OUT_FOR_DELIVERY not in order_service.VALID_TRANSITIONS.get(
         order.status, set()
     ):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"An order that is {order.status.value} cannot be handed over.",
+        raise ConflictError(
+            f"An order that is {order.status.value} cannot be handed over."
         )
 
     with acting_as(
@@ -817,7 +794,7 @@ async def mark_handed_over(
 async def mark_packed(
     order_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("pos.register.access")),
 ):
     """
     The box is finished. Said by whoever finished it.
@@ -838,7 +815,6 @@ async def mark_packed(
 
     Idempotent for the same reason `accept` is: two people will press it.
     """
-    await _require_permission(user, "pos.register.access")
     order = await _load(db, order_id)
 
     if order.status == OrderStatusEnum.PACKED:
@@ -846,9 +822,8 @@ async def mark_packed(
     if OrderStatusEnum.PACKED not in order_service.VALID_TRANSITIONS.get(
         order.status, set()
     ):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"An order that is {order.status.value} cannot be marked packed.",
+        raise ConflictError(
+            f"An order that is {order.status.value} cannot be marked packed."
         )
 
     # By order number, because that is what `update_status` takes — it reloads

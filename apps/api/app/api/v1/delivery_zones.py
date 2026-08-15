@@ -18,13 +18,14 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.deps import get_admin_user, get_db
+from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.models.branch import Branch
 from app.models.courier import Courier
 from app.models.delivery_batch import (
@@ -350,7 +351,7 @@ async def _load_version(
     )
     version = result.scalars().first()
     if version is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Delivery map not found")
+        raise NotFoundError("Delivery map not found")
     return version
 
 
@@ -448,7 +449,7 @@ async def get_polygon_geometry(
     )
     polygon = result.scalars().first()
     if polygon is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Zone not found")
+        raise NotFoundError("Zone not found")
     return {
         "name": polygon.name,
         "delivery_fee": float(polygon.delivery_fee),
@@ -478,8 +479,7 @@ async def create_version(
     if source_id is None:
         active = await delivery_zone_service.get_active_version(db)
         if active is None:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
+            raise BadRequestError(
                 "There is no map to copy. Publish one first.",
             )
         source_id = active.id
@@ -572,10 +572,9 @@ async def update_polygon(
     )
     polygon = result.scalars().first()
     if polygon is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Zone not found")
+        raise NotFoundError("Zone not found")
     if polygon.version.is_active:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
+        raise ConflictError(
             "This map is live. Copy it to a draft, edit the draft, then publish it.",
         )
 
@@ -598,8 +597,7 @@ async def update_polygon(
     if data.pricing_mode is not None:
         modes = {m.value for m in DeliveryPricingEnum}
         if data.pricing_mode not in modes:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
+            raise BadRequestError(
                 f"Unknown pricing mode '{data.pricing_mode}'. "
                 f"Choose one of: {', '.join(sorted(modes))}",
             )
@@ -617,8 +615,7 @@ async def update_polygon(
     if data.fulfilment_provider is not None:
         allowed = {p.value for p in FulfilmentProviderEnum}
         if data.fulfilment_provider not in allowed:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
+            raise BadRequestError(
                 f"Unknown courier '{data.fulfilment_provider}'. "
                 f"Choose one of: {', '.join(sorted(allowed))}",
             )
@@ -626,8 +623,7 @@ async def update_polygon(
     if data.branch_id is not None:
         branch = await db.get(Branch, data.branch_id)
         if branch is None or branch.deleted_at is not None:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
+            raise BadRequestError(
                 "That branch does not exist, so nothing could bake this zone.",
             )
         polygon.branch_id = data.branch_id
@@ -676,8 +672,7 @@ async def activate_version(
     """
     version = await _load_version(db, version_id)
     if not version.polygons:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
+        raise BadRequestError(
             "This map has no zones. Publishing it would price every address at "
             "the default fee.",
         )
@@ -718,8 +713,7 @@ async def delete_version(
     """Throw away a draft. The live map cannot be deleted."""
     version = await _load_version(db, version_id)
     if version.is_active:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
+        raise ConflictError(
             "This map is live. Publish another one before deleting it.",
         )
     await audit_service.log_action(
@@ -775,14 +769,14 @@ async def zone_summary(
 async def _load_polygon(db: AsyncSession, polygon_id: uuid.UUID) -> DeliveryPolygon:
     polygon = await db.get(DeliveryPolygon, polygon_id)
     if polygon is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Zone not found")
+        raise NotFoundError("Zone not found")
     return polygon
 
 
 async def _load_group(db: AsyncSession, group_id: uuid.UUID) -> DeliveryBatchGroup:
     group = await db.get(DeliveryBatchGroup, group_id)
     if group is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Batch group not found")
+        raise NotFoundError("Batch group not found")
     return group
 
 
@@ -802,8 +796,7 @@ def _reject_overlaps(windows: list[DeliveryBatchWindow]) -> None:
     if clash is None:
         return
     first, second = clash
-    raise HTTPException(
-        status.HTTP_409_CONFLICT,
+    raise ConflictError(
         f'"{first.label}" and "{second.label}" both cover the same time. '
         "Two batches claiming one minute makes it a coin toss which run an "
         "order joins.",
@@ -883,8 +876,7 @@ async def create_batch_window(
         await db.execute(select(Courier).where(Courier.code == group.courier_code))
     ).scalar_one_or_none()
     if courier is None or not courier.supports_batching:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
+        raise BadRequestError(
             f"'{group.name}' books {group.courier_code}, which cannot carry "
             "several of our orders in one booking — so it has no run to share.",
         )
@@ -926,7 +918,7 @@ async def update_batch_window(
     """
     window = await db.get(DeliveryBatchWindow, window_id)
     if window is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Batch window not found")
+        raise NotFoundError("Batch window not found")
 
     before = BatchWindowResponse.of(window).model_dump()
     for field, value in data.model_dump().items():
@@ -961,7 +953,7 @@ async def delete_batch_window(
     """
     window = await db.get(DeliveryBatchWindow, window_id)
     if window is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Batch window not found")
+        raise NotFoundError("Batch window not found")
 
     group_id = window.group_id
     label = window.label
@@ -1056,9 +1048,9 @@ async def dispatch_batch_now(
     """
     batch = await db.get(DeliveryBatch, batch_id)
     if batch is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Batch not found")
+        raise NotFoundError("Batch not found")
     if batch.status == BatchStatusEnum.DISPATCHED.value and not batch.next_attempt_at:
-        raise HTTPException(status.HTTP_409_CONFLICT, "This run has already gone out.")
+        raise ConflictError("This run has already gone out.")
 
     batch.attempt_count = 0
     await batching_service.dispatch_batch(db, batch)

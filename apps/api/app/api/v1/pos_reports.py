@@ -7,17 +7,13 @@ import uuid
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, get_db
-from app.core.exceptions import BadRequestError, ForbiddenError
+from app.core.deps import get_db
+from app.core.exceptions import BadRequestError
+from app.core.permissions import require
 from app.models.user import User
 from app.services import pos_reports_service
 
 router = APIRouter()
-
-
-def _require(user: User, permission: str) -> None:
-    if not user.can(permission):
-        raise ForbiddenError(f"You do not have permission to {permission}")
 
 
 class _Window:
@@ -48,9 +44,8 @@ class _Window:
 async def sales_summary(
     window: _Window = Depends(),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("reports.sales")),
 ):
-    _require(user, "reports.sales")
     return await pos_reports_service.sales_summary(db, **window.kwargs)
 
 
@@ -60,7 +55,7 @@ async def sales_by(
     limit: int = Query(100, ge=1, le=1000),
     window: _Window = Depends(),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("reports.sales")),
 ):
     """
     Sales grouped by any supported dimension.
@@ -68,7 +63,6 @@ async def sales_by(
     The allowed set comes from the service rather than a literal repeated
     here, so adding a dimension cannot leave the route rejecting it.
     """
-    _require(user, "reports.sales")
     if dimension not in pos_reports_service.SUPPORTED_DIMENSIONS:
         raise BadRequestError(
             f"Unsupported dimension '{dimension}'. Try one of: "
@@ -83,9 +77,8 @@ async def sales_by(
 async def payments(
     window: _Window = Depends(),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("reports.sales")),
 ):
-    _require(user, "reports.sales")
     return await pos_reports_service.payments_report(db, **window.kwargs)
 
 
@@ -93,10 +86,9 @@ async def payments(
 async def taxes(
     window: _Window = Depends(),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("reports.other")),
 ):
     """VAT return input: taxable base and tax collected per rate."""
-    _require(user, "reports.other")
     return await pos_reports_service.tax_report(db, **window.kwargs)
 
 
@@ -105,9 +97,8 @@ async def voids_and_returns(
     limit: int = Query(200, ge=1, le=1000),
     window: _Window = Depends(),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("reports.other")),
 ):
-    _require(user, "reports.other")
     return await pos_reports_service.voids_and_returns(db, limit=limit, **window.kwargs)
 
 
@@ -115,9 +106,8 @@ async def voids_and_returns(
 async def tills(
     window: _Window = Depends(),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("reports.other")),
 ):
-    _require(user, "reports.other")
     return await pos_reports_service.tills_report(db, **window.kwargs)
 
 
@@ -125,9 +115,8 @@ async def tills(
 async def drawer_operations(
     window: _Window = Depends(),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("reports.other")),
 ):
-    _require(user, "reports.other")
     return await pos_reports_service.drawer_operations_report(db, **window.kwargs)
 
 
@@ -135,10 +124,9 @@ async def drawer_operations(
 async def inventory_valuation(
     branch_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("reports.inventory_levels")),
 ):
     """Stock value on hand plus everything below its reorder point."""
-    _require(user, "reports.inventory_levels")
     return await pos_reports_service.inventory_valuation(db, branch_id=branch_id)
 
 
@@ -146,9 +134,8 @@ async def inventory_valuation(
 async def cost_of_goods(
     window: _Window = Depends(),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("reports.cost_analysis")),
 ):
-    _require(user, "reports.cost_analysis")
     return await pos_reports_service.cost_of_goods(db, **window.kwargs)
 
 
@@ -157,10 +144,9 @@ async def menu_engineering(
     limit: int = Query(200, ge=1, le=1000),
     window: _Window = Depends(),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("reports.menu_cost")),
 ):
     """Star / plough-horse / puzzle / dog classification by volume and margin."""
-    _require(user, "reports.menu_cost")
     return await pos_reports_service.menu_engineering(db, limit=limit, **window.kwargs)
 
 
@@ -168,10 +154,9 @@ async def menu_engineering(
 async def speed_of_service(
     window: _Window = Depends(),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("reports.other")),
 ):
     """Kitchen acknowledge, prep and total times over the window."""
-    _require(user, "reports.other")
     return await pos_reports_service.speed_of_service(db, **window.kwargs)
 
 
@@ -179,10 +164,9 @@ async def speed_of_service(
 async def branches_trend(
     window: _Window = Depends(),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("reports.sales")),
 ):
     """Sales per branch per business day."""
-    _require(user, "reports.sales")
     return await pos_reports_service.branches_trend(db, **window.kwargs)
 
 
@@ -190,10 +174,9 @@ async def branches_trend(
 async def table_utilization(
     window: _Window = Depends(),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("reports.other")),
 ):
     """Covers, turns, dwell time and sales per seat, for dine-in only."""
-    _require(user, "reports.other")
     return await pos_reports_service.table_utilization(db, **window.kwargs)
 
 
@@ -202,10 +185,9 @@ async def suppliers_analysis(
     date_from: str | None = None,
     date_to: str | None = None,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("reports.cost_analysis")),
 ):
     """Purchase-order count and spend per supplier."""
-    _require(user, "reports.cost_analysis")
     return await pos_reports_service.suppliers_analysis(
         db, date_from=date_from, date_to=date_to
     )
@@ -215,10 +197,9 @@ async def suppliers_analysis(
 async def cost_adjustment_history(
     window: _Window = Depends(),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("reports.cost_adjustment_history")),
 ):
     """Stock write-offs and revaluations, newest first."""
-    _require(user, "reports.cost_adjustment_history")
     return await pos_reports_service.cost_adjustment_history(db, **window.kwargs)
 
 
@@ -226,10 +207,9 @@ async def cost_adjustment_history(
 async def purchase_orders_report(
     window: _Window = Depends(),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("reports.cost_analysis")),
 ):
     """Purchase orders with ordered, received and outstanding value."""
-    _require(user, "reports.cost_analysis")
     return await pos_reports_service.purchase_orders_report(db, **window.kwargs)
 
 
@@ -237,10 +217,9 @@ async def purchase_orders_report(
 async def transfers_report(
     window: _Window = Depends(),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("reports.cost_analysis")),
 ):
     """Stock moved between branches, both legs."""
-    _require(user, "reports.cost_analysis")
     return await pos_reports_service.transfers_report(db, **window.kwargs)
 
 
@@ -249,10 +228,9 @@ async def sales_predictions(
     days_ahead: int = Query(7, ge=1, le=30),
     branch_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    _: User = Depends(require("reports.sales")),
 ):
     """Forecast the coming days from each weekday's own history."""
-    _require(user, "reports.sales")
     return await pos_reports_service.sales_predictions(
         db, branch_id=branch_id, days_ahead=days_ahead
     )

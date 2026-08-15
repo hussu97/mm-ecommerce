@@ -10,7 +10,6 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     File,
-    HTTPException,
     Query,
     UploadFile,
     status,
@@ -18,6 +17,7 @@ from fastapi import (
 from pydantic import BaseModel
 
 from app.core.config import settings
+from app.core.exceptions import BadGatewayError, BadRequestError
 from app.core.deps import get_admin_user
 from app.core.images import extension_for, optimize_image
 from app.models.user import User
@@ -59,17 +59,15 @@ async def upload_image(
     # Validate content type
     content_type = file.content_type or ""
     if content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid file type '{content_type}'. Allowed: jpeg, png, webp",
+        raise BadRequestError(
+            f"Invalid file type '{content_type}'. Allowed: jpeg, png, webp"
         )
 
     # Read and validate size
     contents = await file.read()
     if len(contents) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"File too large. Maximum size is {MAX_FILE_SIZE // (1024 * 1024)} MB",
+        raise BadRequestError(
+            f"File too large. Maximum size is {MAX_FILE_SIZE // (1024 * 1024)} MB"
         )
 
     # Downscale and re-encode before it ever reaches the bucket. A camera-roll
@@ -94,10 +92,7 @@ async def upload_image(
             CacheControl="public, max-age=31536000",
         )
     except (BotoCoreError, ClientError) as e:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to upload image: {str(e)}",
-        )
+        raise BadGatewayError(f"Failed to upload image: {str(e)}")
 
     public_url = f"{settings.CLOUDFLARE_R2_PUBLIC_URL.rstrip('/')}/{key}"
 
@@ -127,7 +122,4 @@ async def delete_image(
         client = _get_r2_client()
         client.delete_object(Bucket=settings.CLOUDFLARE_R2_BUCKET, Key=object_key)
     except (BotoCoreError, ClientError) as e:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to delete image: {str(e)}",
-        )
+        raise BadGatewayError(f"Failed to delete image: {str(e)}")

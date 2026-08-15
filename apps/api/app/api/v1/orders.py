@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +30,13 @@ from app.schemas.order import (
 from fastapi import Request
 
 from app.core.cache import cache_delete_pattern
+from app.core.exceptions import (
+    BadGatewayError,
+    BadRequestError,
+    ConflictError,
+    NotFoundError,
+    ServiceUnavailableError,
+)
 from app.core.limiter import limiter
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.services import (
@@ -232,10 +239,9 @@ _SETTLED_STATUSES = {
 
 def _assert_still_going_somewhere(order: Order, verb: str) -> None:
     if order.status in _SETTLED_STATUSES:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
+        raise ConflictError(
             f"An order that is {order.status.value} cannot be {verb} — it is "
-            "not going anywhere. Refund it if the customer is owed money.",
+            "not going anywhere. Refund it if the customer is owed money."
         )
 
 
@@ -260,17 +266,16 @@ async def refresh_order_delivery(
         .first()
     )
     if order is None:
-        raise HTTPException(404, f"Order '{order_number}' not found")
+        raise NotFoundError(f"Order '{order_number}' not found")
     _assert_still_going_somewhere(order, "checked")
 
     delivery = await lalamove_service.get_delivery(db, order.id)
     if delivery is None:
-        raise HTTPException(404, f"No delivery recorded for order '{order_number}'")
+        raise NotFoundError(f"No delivery recorded for order '{order_number}'")
     if delivery.provider != FulfilmentProviderEnum.NOON_SEND.value:
-        raise HTTPException(
-            400,
+        raise BadRequestError(
             "Only noon Send needs asking — Lalamove pushes its own updates and "
-            "retries them for a day.",
+            "retries them for a day."
         )
 
     return OrderDeliveryResponse.of(
@@ -329,7 +334,7 @@ async def track_order(
     )
     order = (await db.execute(stmt)).scalar_one_or_none()
     if not order:
-        raise HTTPException(404, "Order not found. Check your order number and email.")
+        raise NotFoundError("Order not found. Check your order number and email.")
     return TrackOrderResponse(
         order_number=order.order_number,
         status=order.status.value,
@@ -423,7 +428,7 @@ async def _load_delivery(db: AsyncSession, order_number: str) -> OrderDelivery:
     )
     delivery = result.scalars().first()
     if delivery is None:
-        raise HTTPException(404, f"No delivery recorded for order '{order_number}'")
+        raise NotFoundError(f"No delivery recorded for order '{order_number}'")
     return delivery
 
 
@@ -497,12 +502,12 @@ async def dispatch_order_delivery(
     result = await db.execute(select(Order).where(Order.order_number == order_number))
     order = result.scalars().first()
     if order is None:
-        raise HTTPException(404, f"Order '{order_number}' not found")
+        raise NotFoundError(f"Order '{order_number}' not found")
     _assert_still_going_somewhere(order, "dispatched")
 
     delivery = await courier_service.dispatch(db, order)
     if delivery is None:
-        raise HTTPException(404, f"No delivery recorded for order '{order_number}'")
+        raise NotFoundError(f"No delivery recorded for order '{order_number}'")
 
     await audit_service.log_action(
         db,
@@ -557,7 +562,7 @@ async def _load_order(db: AsyncSession, order_number: str) -> Order:
         .first()
     )
     if order is None:
-        raise HTTPException(404, f"Order '{order_number}' not found")
+        raise NotFoundError(f"Order '{order_number}' not found")
     return order
 
 
@@ -594,25 +599,17 @@ def _assert_assignable(order: Order, delivery: OrderDelivery) -> None:
     By the time we get here it has been sent.
     """
     if order.status != OrderStatusEnum.PACKED:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
+        raise ConflictError(
             f"An order that is {order.status.value} cannot be assigned to a "
-            "courier — only a packed one can.",
+            "courier — only a packed one can."
         )
     if delivery.provider != FulfilmentProviderEnum.THIRD_PARTY.value:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"This order is already carried by {delivery.provider}.",
-        )
+        raise ConflictError(f"This order is already carried by {delivery.provider}.")
     if delivery.courier_order_id:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "This order already has a courier booking.",
-        )
+        raise ConflictError("This order already has a courier booking.")
     if not lalamove_service.is_enabled():
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "The courier is not configured, so this order cannot be assigned to it.",
+        raise ServiceUnavailableError(
+            "The courier is not configured, so this order cannot be assigned to it."
         )
 
 
@@ -639,7 +636,7 @@ async def quote_lalamove_for_order(
     if quote is None:
         # 502 rather than 500: this is the courier declining or unreachable, and
         # the message is written for the admin reading it, not for a log.
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, error or "No price available")
+        raise BadGatewayError(error or "No price available")
     return _quote_response(quote, delivery)
 
 
@@ -682,15 +679,20 @@ async def assign_order_to_lalamove(
 
     quote, error = await lalamove_service.quote_for_order(db, order)
     if quote is None:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, error or "No price available")
+        raise BadGatewayError(error or "No price available")
 
     # The quotation moves on every call, so this cannot compare ids and expect a
     # match — it compares what was agreed against what is available now. Same
     # price, book it; different price, show the new one and ask again.
+    #
+    # These two 409s carry a structured body — the dialog reads `message` and
+    # `quote` out of `detail` — which is what `AppError.payload` exists for:
+    # the payload takes the `detail` slot on the wire, exactly as the dict
+    # passed to `HTTPException(detail=...)` did before.
     if quote.estimate.quotation_id != data.quotation_id:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            detail={
+        raise ConflictError(
+            "The quoted price has expired.",
+            payload={
                 "message": (
                     "The quoted price has expired. Here is the current one — "
                     "confirm again to book."
@@ -703,9 +705,9 @@ async def assign_order_to_lalamove(
         delivery = await lalamove_service.assign_and_dispatch(db, order, quote=quote)
     except lalamove_service.QuotationExpired:
         # It lapsed between our quote and the booking. Nothing was written.
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            detail={
+        raise ConflictError(
+            "The quoted price expired before the booking.",
+            payload={
                 "message": "The quoted price expired before the booking. Try again.",
             },
         ) from None
@@ -737,7 +739,7 @@ async def assign_order_to_lalamove(
         # The provider has been put back, so the order is still deliverable by
         # hand. Reported as a failure rather than returned as a success with an
         # error field the UI might not read.
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, delivery.last_error)
+        raise BadGatewayError(delivery.last_error)
     return OrderDeliveryResponse.of(
         delivery, await fulfilment_service.reached_at(db, order)
     )

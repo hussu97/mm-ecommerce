@@ -17,12 +17,13 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_admin_user, get_db
+from app.core.exceptions import NotFoundError
 from app.models.user import User
 from app.models.webhook_log import WebhookLog
 
@@ -168,5 +169,5 @@ async def get_webhook_log(
     """One request with its bodies, exactly as they arrived."""
     row = await db.get(WebhookLog, log_id)
     if row is None:
-        raise HTTPException(404, "No such webhook log")
+        raise NotFoundError("No such webhook log")
     return WebhookLogDetail.model_validate(row)

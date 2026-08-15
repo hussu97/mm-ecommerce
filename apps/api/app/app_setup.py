@@ -241,7 +241,14 @@ def configure(
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
-        body: dict[str, str] = {"detail": exc.detail}
+        # `detail` is the message, unless the error carries a structured
+        # `payload` — then the payload takes the slot, exactly as a dict passed
+        # to `HTTPException(detail=...)` used to. Same key, same
+        # string-or-object contract, so no client can tell the dialects apart.
+        # See `AppError.payload`.
+        body: dict[str, object] = {
+            "detail": exc.payload if exc.payload is not None else exc.detail
+        }
         # Only when the error carries one, so every existing response keeps the
         # exact shape it had. See `AppError.code`.
         if exc.code:

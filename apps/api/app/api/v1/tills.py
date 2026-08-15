@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_active_user, get_db
 from app.core.exceptions import ConflictError, ForbiddenError
+from app.core.permissions import require
 from app.models import Branch, Till
 from app.models.user import User
 from app.schemas.pos import (
@@ -171,7 +172,14 @@ async def cash_spot_check(
     till_id: uuid.UUID,
     data: SpotCheckRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    # The message predates the `require` factory and is kept verbatim — the
+    # register shows it to the cashier, and a refactor must not reword it.
+    user: User = Depends(
+        require(
+            "pos.spot_check",
+            message="You do not have permission to run a cash spot check",
+        )
+    ),
 ):
     """
     Count the drawer mid-shift without closing it.
@@ -181,9 +189,6 @@ async def cash_spot_check(
     audit trail and on the Z report's movement list, but does not itself move
     any cash — the expected balance is unchanged by having been looked at.
     """
-    if not user.can("pos.spot_check"):
-        raise ForbiddenError("You do not have permission to run a cash spot check")
-
     till = await till_service.require_till(db, till_id)
     if till.status != "open":
         raise ConflictError("This till is already closed")

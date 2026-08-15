@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -151,9 +151,13 @@ async def process_gateway_webhook(
                 db, gateway, payload, request.headers
             )
         except NotFoundError as e:
+            # Re-raised as itself: the shared AppError handler renders the same
+            # {"detail": ...} body and status the old HTTPException carried —
+            # the except clause exists to journal the failure, not to translate
+            # it into a second error dialect.
             recorder.http_status = 404
             recorder.finish(error=str(e))
-            raise HTTPException(status_code=404, detail=str(e)) from e
+            raise
         except BadRequestError as e:
             # The signature is the only thing checked before the body is read,
             # so a rejection that mentions it is an authentication failure and
@@ -166,7 +170,7 @@ async def process_gateway_webhook(
             recorder.http_status = 400
             recorder.finish(error=str(e))
             logger.warning("Rejected %s webhook: %s", gateway, e)
-            raise HTTPException(status_code=400, detail=str(e)) from e
+            raise
         except Exception as e:
             # CRITICAL, not ERROR: a payment event we failed to apply is money
             # that moved without the order knowing.
