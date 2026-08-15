@@ -25,6 +25,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
+    from .branch import Branch
     from .order_delivery import OrderDelivery
     from .order_status_event import OrderStatusEvent
     from .payment_transaction import PaymentTransaction
@@ -289,6 +290,16 @@ class Order(Base, UUIDMixin, TimestampMixin):
     user: Mapped[User | None] = relationship(
         "User", back_populates="orders", foreign_keys=[user_id]
     )
+    #: The kitchen this order belongs to. Read for its trading hours, which is
+    #: what decides whether a terminal may accept the order by itself.
+    #:
+    #: No `back_populates`: `Branch.orders` would be a collection nothing reads
+    #: and everything would have to maintain. Lazy by default and deliberately
+    #: so — an async lazy load raises `MissingGreenlet` rather than quietly
+    #: issuing a query, which is the behaviour that makes a forgotten
+    #: `selectinload` loud instead of slow. The one reader guards on
+    #: `inspect(order).unloaded`.
+    branch: Mapped[Branch] = relationship("Branch", viewonly=True)
     items: Mapped[list[OrderItem]] = relationship(
         "OrderItem", back_populates="order", cascade="all, delete-orphan"
     )

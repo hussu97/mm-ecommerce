@@ -59,6 +59,35 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _list_load_options():
+    """
+    Everything `_serialise` reads off a relationship, eager-loaded.
+
+    A named function rather than five lines inside the endpoint so a test can
+    build the same query without a database. It is not decoration: a wrong
+    attribute name here raises only when SQLAlchemy resolves the option against
+    the mapper — at request time, on the endpoint that feeds both the order
+    history and the register's incoming-order poll. `selectinload(Order.branch)`
+    shipped once with no `branch` relationship on the model and took both out
+    with a 500 until it was noticed, which is what
+    `test_pos_order_list_query.py` now prevents.
+    """
+    return (
+        selectinload(Order.items),
+        selectinload(Order.payments),
+        selectinload(Order.order_charges),
+        selectinload(Order.order_discounts),
+        selectinload(Order.order_taxes),
+        # `_serialise` reads the courier and zone off this, and a lazy load
+        # inside an async request raises MissingGreenlet rather than quietly
+        # issuing a second query.
+        selectinload(Order.delivery),
+        # The branch's trading hours decide whether a terminal may accept an
+        # order by itself.
+        selectinload(Order.branch),
+    )
+
+
 def _serialise(order: Order) -> PosOrderResponse:
     payload = PosOrderResponse.model_validate(order)
     payload.customer_id = order.user_id
@@ -158,21 +187,7 @@ async def list_orders(
     if open_only:
         stmt = stmt.where(Order.pos_status.in_(sorted(pos_order_service.OPEN_STATUSES)))
     stmt = (
-        stmt.options(
-            selectinload(Order.items),
-            selectinload(Order.payments),
-            selectinload(Order.order_charges),
-            selectinload(Order.order_discounts),
-            selectinload(Order.order_taxes),
-            # Eager: `_serialise` reads the courier and zone off this, and a
-            # lazy load inside an async request raises MissingGreenlet rather
-            # than quietly issuing a second query.
-            selectinload(Order.delivery),
-            # Eager for the same reason: the branch's trading hours decide
-            # whether a terminal may accept an order by itself, and this list is
-            # the only thing the incoming-orders queue reads.
-            selectinload(Order.branch),
-        )
+        stmt.options(*_list_load_options())
         .order_by(Order.opened_at.desc().nullslast(), Order.created_at.desc())
         .limit(limit)
     )
