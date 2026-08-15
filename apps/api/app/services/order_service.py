@@ -28,7 +28,7 @@ from app.models.delivery_settings import DeliverySettings
 from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
 from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.product import Product
-from app.models.pos_order import OrderSourceEnum, PosOrderStatusEnum
+from app.models.pos_order import OrderSourceEnum, OrderTax, PosOrderStatusEnum
 from app.models.promo_code import PromoCode
 from app.models.user import User
 from app.schemas.fulfilment import FulfilmentResponse
@@ -364,6 +364,13 @@ def _compute_item_totals(cart: Cart) -> tuple[list[dict], Decimal]:
                 "total_price": line_total,
                 "selected_options_snapshot": selected_options,
                 "personalisation_note": note,
+                # Carried out of here so the tax breakdown can be built from the
+                # same lines the order is built from, rather than re-reading
+                # every product a second time. Popped before the row is written
+                # — `order_items` has no such column, and the group is a
+                # property of the product, not of a line that happened to sell
+                # it on a Tuesday.
+                "_tax_group_id": getattr(product, "tax_group_id", None),
             }
         )
 
@@ -508,6 +515,128 @@ async def _compute_order_totals(
         vat_amount=vat_amount,
         total_excl_vat=total_excl_vat,
         zone=priced.zone,
+    )
+
+
+@dataclass(frozen=True)
+class TaxBreakdown:
+    """The VAT on an order, per rate, the way an invoice has to show it."""
+
+    #: One entry per distinct tax group in the basket, ready for `order_taxes`.
+    lines: list[pos_pricing.TaxLine]
+    #: Their sum, for `orders.vat_amount`.
+    total: Decimal
+    #: The rate to stamp on `orders.vat_rate`. The basket's single rate where
+    #: there is one; otherwise the blended effective rate, because that column
+    #: is one number and a mixed basket does not have one.
+    rate: Decimal
+
+
+async def tax_breakdown(
+    db: AsyncSession,
+    *,
+    lines: list[tuple[uuid.UUID | None, Decimal]],
+    discount_amount: Decimal,
+) -> TaxBreakdown:
+    """
+    Split an order's goods into tax rows, using each product's own tax group.
+
+    **The website used to apply a flat 5% and write no rows at all.** It read a
+    module constant, so a zero-rated product would have been charged VAT, a
+    change of rate meant a deploy, and `order_taxes` was empty for every
+    storefront order — which is why a website receipt printed no VAT breakdown
+    while a counter receipt printed one from the same table. Tax groups were
+    never counter-specific; only the code that read them was.
+
+    The arithmetic is unchanged for today's catalogue, and deliberately so: every
+    active product sits in one 5% inclusive group, so this computes exactly what
+    the constant did. What changes is that it will keep being right when one of
+    them does not.
+
+    `lines` is `(tax_group_id, gross)` per order line — gross being what the
+    customer pays for that line, tax included, before any order-level discount.
+
+    **The discount is spread pro rata**, which only matters once rates differ:
+    knocking AED 20 off a basket of one standard and one zero-rated item has to
+    reduce the taxable base of the standard line by its share and no more, or
+    the shop pays VAT on money it never received.
+    """
+    gross_total = sum((gross for _, gross in lines), Decimal("0"))
+    if gross_total <= 0:
+        return TaxBreakdown(lines=[], total=Decimal("0"), rate=VAT_RATE)
+
+    # Group first, then discount, so a basket with four lines on one rate
+    # produces one invoice row rather than four.
+    by_group: dict[uuid.UUID | None, Decimal] = {}
+    for tax_group_id, gross in lines:
+        by_group[tax_group_id] = by_group.get(tax_group_id, Decimal("0")) + gross
+
+    rows: list[pos_pricing.TaxLine] = []
+    total = Decimal("0")
+    for tax_group_id, gross in by_group.items():
+        rate, name, tax_id, inclusive = await pos_order_service._resolve_tax(
+            db, tax_group_id
+        )
+        # **A product with no tax group falls back to the standard rate, and
+        # that is a deliberate difference from the counter**, which reads a
+        # missing group as "No tax".
+        #
+        # The two channels are not in the same position. A counter product with
+        # no group is rung up by somebody who can see the total; a storefront
+        # price is advertised VAT-inclusive to the public, and a product that
+        # slipped through without a group would quietly sell VAT-free at the
+        # advertised price — leaving the shop owing the 5% it never collected,
+        # silently, until an audit. A missing group is a configuration gap, not
+        # an exemption. Genuine zero-rating is a group with a zero-rate tax in
+        # it, which this honours.
+        #
+        # Every one of the 130 active products is in a group today, so this is a
+        # guard rather than a path.
+        # Keyed on `tax_id` rather than on the group being null, because that is
+        # what separates the two cases `_resolve_tax` reports identically: a
+        # product with nothing configured, and a group deliberately holding a
+        # zero-rate tax. The second has an identifiable tax behind it and is
+        # honoured; the first is the gap.
+        if tax_id is None:
+            logger.warning(
+                "Storefront line with no resolvable tax (group=%s); charging the "
+                "standard rate rather than selling it VAT-free.",
+                tax_group_id,
+            )
+            rate, name, tax_id, inclusive = VAT_RATE, "VAT", None, True
+        share = gross / gross_total
+        taxable = pos_pricing.money(gross - discount_amount * share)
+        if rate <= 0 or taxable <= 0:
+            continue
+        # Inclusive is the UAE default and what every group here is set to. An
+        # exclusive group would mean the rate is added on top, which the
+        # storefront's prices are not written for — so it is refused loudly
+        # rather than silently under-charged.
+        if not inclusive:
+            logger.error(
+                "Tax group %s is exclusive; the storefront prices inclusively. "
+                "Treating it as inclusive rather than under-charging.",
+                tax_group_id,
+            )
+        net, tax = pos_pricing.split_inclusive_tax(taxable, rate)
+        rows.append(
+            pos_pricing.TaxLine(
+                tax_id=tax_id,
+                name=name,
+                rate=rate,
+                taxable_amount=net,
+                amount=tax,
+            )
+        )
+        total += tax
+
+    taxable_total = pos_pricing.money(gross_total - discount_amount)
+    effective = (total / (taxable_total - total)) if taxable_total > total else VAT_RATE
+    return TaxBreakdown(
+        lines=rows,
+        total=pos_pricing.money(total),
+        # One row's rate where the basket has one; the blended rate otherwise.
+        rate=rows[0].rate if len(rows) == 1 else pos_pricing.money(effective),
     )
 
 
@@ -811,6 +940,23 @@ async def _persist_order(
         given = (data.shipping_address.phone or "").strip()
         contact_phone = normalise_phone(given) or given or None
 
+    # The VAT, from each product's own tax group rather than a module constant.
+    #
+    # Identical arithmetic for today's catalogue — every active product is in one
+    # 5% inclusive group — and the point is what happens when one of them is not:
+    # a zero-rated line stops being charged VAT, a rate change becomes an edit,
+    # and `order_taxes` finally gets rows for a storefront order, which is why a
+    # website receipt printed no VAT breakdown while a counter receipt printed
+    # one from the same table.
+    taxes = await tax_breakdown(
+        db,
+        lines=[
+            (item.get("_tax_group_id"), Decimal(str(item["total_price"])))
+            for item in items_data
+        ],
+        discount_amount=discount_amount,
+    )
+
     order = Order(
         order_number=await _generate_order_number(db),
         user_id=user_id,
@@ -823,8 +969,8 @@ async def _persist_order(
         subtotal=subtotal,
         discount_amount=discount_amount,
         total=total,
-        vat_rate=VAT_RATE,
-        vat_amount=vat_amount,
+        vat_rate=taxes.rate,
+        vat_amount=taxes.total,
         total_excl_vat=total_excl_vat,
         status=OrderStatusEnum.CREATED,
         # Which channel rang this up, stamped at creation and not later.
@@ -866,7 +1012,29 @@ async def _persist_order(
             order.order_number = await _generate_order_number(db)
 
     for item in items_data:
-        db.add(OrderItem(order_id=order.id, **item))
+        # `_tax_group_id` rode along so the breakdown could be built from the
+        # same lines; `order_items` has no such column.
+        db.add(
+            OrderItem(
+                order_id=order.id,
+                **{k: v for k, v in item.items() if not k.startswith("_")},
+            )
+        )
+
+    # The invoice's tax rows, one per distinct rate. Written here rather than
+    # derived on read, because a tax group can be edited tomorrow and an invoice
+    # has to keep saying what was actually charged today.
+    for line in taxes.lines:
+        db.add(
+            OrderTax(
+                order_id=order.id,
+                tax_id=uuid.UUID(line.tax_id) if line.tax_id else None,
+                name=line.name,
+                rate=line.rate,
+                taxable_amount=line.taxable_amount,
+                amount=line.amount,
+            )
+        )
 
     # Atomic promo-use increment
     if promo_obj:

@@ -290,13 +290,19 @@ def _order_mock(
 
 
 def _result(
-    scalar_one_or_none=None, scalar_one=None, scalars_all: list | None = None
+    scalar_one_or_none=None,
+    scalar_one=None,
+    scalars_all: list | None = None,
+    scalars_unique_one_or_none=None,
 ) -> MagicMock:
     r = MagicMock()
     r.scalar_one_or_none.return_value = scalar_one_or_none
     r.scalar_one.return_value = scalar_one
     scalars = MagicMock()
     scalars.all.return_value = scalars_all or []
+    # `.scalars().unique().one_or_none()` — the shape `_resolve_tax` reads a tax
+    # group through.
+    scalars.unique.return_value.one_or_none.return_value = scalars_unique_one_or_none
     r.scalars.return_value = scalars
     return r
 
@@ -314,9 +320,16 @@ def _db_for_create(
     Execute call order:
       1. cart lookup
       2. [extra_results — e.g. one stock decrement per stock-tracked product]
-      3. _generate_order_number (numeric max of today's sequence)
-      4. select CartItems for deletion
-      5. final Order reload
+      3. tax group lookup (one per distinct group in the basket)
+      4. _generate_order_number (numeric max of today's sequence)
+      5. select CartItems for deletion
+      6. final Order reload
+
+    The tax lookup is new: the storefront prices from each product's own tax
+    group now rather than from a module constant. These fixtures return no
+    group, which exercises the fallback — a line with no resolvable tax is
+    charged the standard rate rather than sold VAT-free — and is why the VAT
+    assertions below still read 5%.
     """
     db = AsyncMock()
     db.add = MagicMock()
@@ -328,6 +341,7 @@ def _db_for_create(
             [
                 _result(scalar_one_or_none=cart),
                 *(extra_results or []),
+                _result(scalars_unique_one_or_none=None),
                 _result(scalar_one_or_none=last_order_seq),
                 _result(scalars_all=cart_items or []),
                 _result(scalar_one=final_order),
