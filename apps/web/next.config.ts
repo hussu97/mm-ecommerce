@@ -96,7 +96,13 @@ const nextConfig: NextConfig = {
               "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com https://maps.googleapis.com https://*.clarity.ms",
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "font-src 'self' https://fonts.gstatic.com data:",
-              "img-src 'self' data: blob: https://*.r2.cloudflarestorage.com https://pub-*.r2.dev https://storage.googleapis.com https://media.meltingmomentscakes.com https://maps.googleapis.com https://maps.gstatic.com https://*.googleusercontent.com https://*.clarity.ms https://c.bing.com",
+              // `*.r2.dev`, not `pub-*.r2.dev`: a CSP wildcard has to be a whole
+              // leftmost label, so the partial-label form is not a narrower rule
+              // — it is a syntax error, and the browser discards that source
+              // outright. It said so in the console on every page load, and the
+              // day this policy stops being report-only it would have blocked
+              // every R2-hosted image on the site.
+              "img-src 'self' data: blob: https://*.r2.cloudflarestorage.com https://*.r2.dev https://storage.googleapis.com https://media.meltingmomentscakes.com https://maps.googleapis.com https://maps.gstatic.com https://*.googleusercontent.com https://*.clarity.ms https://c.bing.com",
               "connect-src 'self' https://api.meltingmomentscakes.com https://cloud.umami.is https://maps.googleapis.com https://*.ingest.sentry.io https://*.ingest.de.sentry.io https://*.clarity.ms https://c.bing.com",
               "frame-src https://challenges.cloudflare.com",
               "frame-ancestors 'none'",
