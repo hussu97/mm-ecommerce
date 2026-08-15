@@ -242,6 +242,8 @@ export interface Order {
   payment_method: string | null;
   payment_provider: string | null;
   payment_id: string | null;
+  /** How much has been sent back to the card. Zero on almost every order. */
+  refunded_amount: number;
   notes: string | null;
   admin_notes: string | null;
   created_at: string;
@@ -837,4 +839,26 @@ export interface PaymentGatewayUpdate {
   min_amount?: number | null;
   max_amount?: number | null;
   test_mode?: boolean;
+}
+
+/**
+ * What the shop kept on one order. **Admin only.**
+ *
+ * Its own type rather than fields on `Order`, mirroring the API: what a courier
+ * cost and what a processor keeps are not the customer's business, and the
+ * separation is what keeps that structural rather than a rule to remember.
+ */
+export interface OrderEconomics {
+  charged: number;
+  items_value: number;
+  /** Null on a third-party zone — nobody invoices us per order there. */
+  courier_cost: number | null;
+  processing_fee: number;
+  /** Whether the fee is the gateway's rate or its invoice. */
+  processing_fee_is_estimated: boolean;
+  refunded: number;
+  net: number;
+  /** Null when the base is zero — a full-discount order has no percentage. */
+  margin_on_charged: number | null;
+  margin_on_items: number | null;
 }

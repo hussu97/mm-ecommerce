@@ -22,6 +22,7 @@ from app.models.user import User
 from app.schemas.fulfilment import FulfilmentResponse
 from app.schemas.order import (
     OrderCreate,
+    OrderEconomicsResponse,
     OrderListResponse,
     OrderResponse,
     OrderStatusUpdate,
@@ -34,6 +35,7 @@ from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.services import (
     audit_service,
     courier_service,
+    order_economics,
     email_service,
     fulfilment_service,
     lalamove_service,
@@ -423,6 +425,45 @@ async def _load_delivery(db: AsyncSession, order_number: str) -> OrderDelivery:
     if delivery is None:
         raise HTTPException(404, f"No delivery recorded for order '{order_number}'")
     return delivery
+
+
+@router.get("/{order_number}/economics", response_model=OrderEconomicsResponse)
+async def get_order_economics(
+    order_number: str,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    """
+    What the shop kept on this order.
+
+    Admin-only, and its own endpoint rather than fields on the order: what a
+    courier cost and what a processor keeps are not the customer's business, and
+    a separate route is what keeps that a property of the API rather than a rule
+    somebody has to remember when adding a field.
+    """
+    order = await _load_order(db, order_number)
+    result = await order_economics.for_order(db, order)
+    return OrderEconomicsResponse(
+        charged=float(result.charged),
+        items_value=float(result.items_value),
+        courier_cost=(
+            float(result.courier_cost) if result.courier_cost is not None else None
+        ),
+        processing_fee=float(result.processing_fee),
+        processing_fee_is_estimated=result.processing_fee_is_estimated,
+        refunded=float(result.refunded),
+        net=float(result.net),
+        margin_on_charged=(
+            float(result.margin_on_charged)
+            if result.margin_on_charged is not None
+            else None
+        ),
+        margin_on_items=(
+            float(result.margin_on_items)
+            if result.margin_on_items is not None
+            else None
+        ),
+    )
 
 
 @router.get("/{order_number}/delivery", response_model=OrderDeliveryResponse)

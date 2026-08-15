@@ -109,6 +109,25 @@ class PaymentGateway(Base, UUIDMixin, TimestampMixin):
     #: The largest total, where one applies. Null means no ceiling.
     max_amount: Mapped[Any | None] = mapped_column(Numeric(10, 2), nullable=True)
 
+    # ── what the processor keeps ──────────────────────────────────────────────
+    #
+    # Both currently charge 2.9% + AED 1, which is why those are the defaults,
+    # but they are a commercial term rather than a constant: rates move with
+    # volume and a renegotiation should be an edit in the console, not a deploy.
+    # Per gateway rather than one setting, because the whole point of having two
+    # is that they can differ.
+    #
+    # This is an *estimate*, and the admin says so. The real figure for a Stripe
+    # charge is on its balance transaction, which does not exist until the charge
+    # settles — so the rate is what the order screen can show the minute an order
+    # lands, and the actual fee replaces it later where we have it.
+    fee_percent: Mapped[Any] = mapped_column(
+        Numeric(5, 3), nullable=False, default=2.9, server_default="2.9"
+    )
+    fee_fixed: Mapped[Any] = mapped_column(
+        Numeric(10, 2), nullable=False, default=1, server_default="1"
+    )
+
     #: Whether sessions are created against the gateway's sandbox.
     #:
     #: Ziina takes this per payment intent (`test: true`) rather than per key,

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { ordersApi, ApiError } from '@/lib/api';
-import type { LalamoveQuote, Order, OrderDelivery, OrderStatus } from '@/lib/types';
+import type { LalamoveQuote, Order, OrderDelivery, OrderEconomics, OrderStatus } from '@/lib/types';
 import { Badge, Button } from '@/components/ui';
 import { cn, formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
 
@@ -96,6 +96,9 @@ export default function OrderDetailPage() {
   const { orderNumber } = useParams<{ orderNumber: string }>();
   const [order, setOrder] = useState<Order | null>(null);
   const [delivery, setDelivery] = useState<OrderDelivery | null>(null);
+  // What the shop kept. Admin-only and its own request, so a screen that fails
+  // to load it still shows the order — the economics are context, not the page.
+  const [economics, setEconomics] = useState<OrderEconomics | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [notes, setNotes] = useState('');
@@ -129,6 +132,13 @@ export default function OrderDetailPage() {
   }, [orderNumber, isDeliveryOrder]);
 
   useEffect(() => { loadDelivery(); }, [loadDelivery]);
+
+  // Reloaded alongside the order rather than once: a refund, a re-dispatch or a
+  // courier finally invoicing all move the net, and a stale figure here is
+  // worse than none — somebody would price against it.
+  useEffect(() => {
+    ordersApi.getEconomics(orderNumber).then(setEconomics).catch(() => setEconomics(null));
+  }, [orderNumber, order?.status, order?.refunded_amount, delivery?.cost_total]);
 
   async function updateStatus(newStatus: OrderStatus) {
     if (!order) return;
@@ -530,6 +540,7 @@ export default function OrderDetailPage() {
             <span>VAT included (5%)</span><span>{formatCurrency(order.vat_amount)}</span>
           </div>
         </div>
+        {economics && <NetPayment economics={economics} />}
       </div>
 
       {/* Admin Notes */}
@@ -907,6 +918,75 @@ function DeliveryPanel({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * What the shop actually kept, under the customer's totals.
+ *
+ * The block above says what was charged. This says what survived it — the van,
+ * the processor, and anything sent back — because that is the number that
+ * decides whether the order was worth taking, and until now working it out
+ * meant opening a Stripe dashboard in another tab.
+ *
+ * **Two percentages, deliberately.** Against the total including fees, it says
+ * how much of everything the customer handed over survives, which is the number
+ * for deciding whether to run free delivery at all. Against the items alone, it
+ * says what the cake earns once delivery is stripped out, which is the number
+ * for pricing the cake. On a free-delivery order the two diverge sharply, and
+ * showing only one invites the other to be guessed at.
+ */
+function NetPayment({ economics }: { economics: OrderEconomics }) {
+  const negative = economics.net < 0;
+  return (
+    <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 space-y-1.5">
+      <p className="text-[11px] font-body uppercase tracking-widest text-gray-400">
+        What we keep
+      </p>
+      {economics.courier_cost !== null ? (
+        <div className="flex justify-between text-xs font-body text-gray-500">
+          <span>Courier cost</span>
+          <span>-{formatCurrency(economics.courier_cost)}</span>
+        </div>
+      ) : (
+        /* A third-party zone bills nothing per order. Saying "not itemised"
+           rather than showing zero, because a third party's van is not free —
+           it is just not on this order's books. */
+        <div className="flex justify-between text-xs font-body text-gray-400">
+          <span>Courier cost</span><span>Not itemised</span>
+        </div>
+      )}
+      <div className="flex justify-between text-xs font-body text-gray-500">
+        <span>
+          Payment processing
+          {economics.processing_fee_is_estimated && (
+            <span className="text-gray-400"> (est.)</span>
+          )}
+        </span>
+        <span>-{formatCurrency(economics.processing_fee)}</span>
+      </div>
+      {economics.refunded > 0 && (
+        <div className="flex justify-between text-xs font-body text-red-600">
+          <span>Refunded</span><span>-{formatCurrency(economics.refunded)}</span>
+        </div>
+      )}
+      <div
+        className={cn(
+          'flex justify-between text-sm font-body font-medium pt-1 border-t border-gray-200',
+          negative ? 'text-red-600' : 'text-gray-800'
+        )}
+      >
+        <span>Net</span><span>{formatCurrency(economics.net)}</span>
+      </div>
+      <div className="flex justify-between text-[11px] font-body text-gray-400">
+        <span>of total charged</span>
+        <span>{economics.margin_on_charged !== null ? `${economics.margin_on_charged.toFixed(1)}%` : '—'}</span>
+      </div>
+      <div className="flex justify-between text-[11px] font-body text-gray-400">
+        <span>of items value</span>
+        <span>{economics.margin_on_items !== null ? `${economics.margin_on_items.toFixed(1)}%` : '—'}</span>
+      </div>
     </div>
   );
 }

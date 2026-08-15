@@ -5,7 +5,7 @@ import type {
   PaginatedCustomers, PaginatedEmailLogs, PaginatedOrders, Product, ProductListResponse,
   PromoCode, PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
   TrafficData, UploadResponse, User, DeliverySettings, SalesChannel,
-  DeliveryMapVersion, DeliveryPricingMode, DeliveryZone, DeliveryZoneSummary, FulfilmentProvider, OrderDelivery,
+  DeliveryMapVersion, DeliveryPricingMode, DeliveryZone, DeliveryZoneSummary, FulfilmentProvider, OrderDelivery, OrderEconomics,
   BatchGroup,
   BatchWindow, BatchWindowWrite, DeliveryBatch, DeliveryZoneMap,
   PaginatedWebhookLogs, WebhookLogDetail, WebhookLogFacets,
@@ -253,6 +253,9 @@ export const ordersApi = {
   /** Fulfilment detail. 404s for pickup orders and anything placed before this existed. */
   getDelivery: (orderNumber: string) =>
     api.get<OrderDelivery>(`/orders/${orderNumber}/delivery`),
+  /** What the shop kept: courier cost, processing fee, net and the margins. */
+  getEconomics: (orderNumber: string) =>
+    api.get<OrderEconomics>(`/orders/${orderNumber}/economics`),
   /** Book the courier again after a failed or abandoned dispatch. */
   dispatchDelivery: (orderNumber: string) =>
     api.post<OrderDelivery>(`/orders/${orderNumber}/delivery/dispatch`),

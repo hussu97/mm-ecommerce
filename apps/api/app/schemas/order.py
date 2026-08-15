@@ -226,3 +226,37 @@ class OrderListResponse(BaseModel):
     customer_name: str | None = None
     delivery_fee: float | None = None
     low_order_fee: float | None = None
+
+
+class OrderEconomicsResponse(BaseModel):
+    """
+    What the shop kept on one order, for the admin who has to decide whether the
+    order was worth taking.
+
+    Admin-only and deliberately its own response rather than fields on
+    `OrderResponse`: what a courier cost us and what a processor keeps are not
+    the customer's business, and the separation is what keeps that a property of
+    the type rather than a rule somebody has to remember — the same reasoning
+    that keeps `OrderDeliveryResponse` out of the customer's payload.
+    """
+
+    #: What the customer paid, fees included.
+    charged: float
+    #: What they paid for goods — `charged` less delivery and low-order fees.
+    items_value: float
+    #: What the courier cost, where one was booked and has told us. Null on a
+    #: third-party zone: nobody invoices us per order there, which is a real
+    #: "we do not know" rather than a zero.
+    courier_cost: float | None
+    processing_fee: float
+    #: Whether `processing_fee` is the gateway's published rate or its invoice.
+    #: Stripe's real figure lives on the balance transaction and does not exist
+    #: until the charge settles.
+    processing_fee_is_estimated: bool
+    refunded: float
+    net: float
+    #: Net as a share of everything the customer handed over, and of the goods
+    #: alone. Null when the base is zero — a full-discount order has no
+    #: percentage, and 0 would read as "we kept none of it".
+    margin_on_charged: float | None
+    margin_on_items: float | None
