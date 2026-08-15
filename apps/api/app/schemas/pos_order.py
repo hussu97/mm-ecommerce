@@ -254,6 +254,16 @@ class PosOrderResponse(ORMModel):
     #: nowhere else. It was answerable only on a laptop.
     driver_name: str | None = None
     driver_phone: str | None = None
+    #: Whether the accept call that returned this payload is the one that did
+    #: it, or whether somebody else had already taken the order.
+    #:
+    #: Only ever meaningful on the response to `POST /accept`, which is
+    #: idempotent — a second terminal pressing Accept gets the order back and a
+    #: success, because failing it would be a lie. But *printing* is not
+    #: idempotent, and every terminal at a branch now sees every online order:
+    #: without this, two auto-accepting iPads race, both succeed, and the shop
+    #: gets two receipts and two kitchen dockets for one cake.
+    already_accepted: bool = False
     #: Whether a terminal set to accept by itself is allowed to accept *this*
     #: order by itself.
     #:

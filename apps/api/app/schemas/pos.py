@@ -533,7 +533,6 @@ class DeviceCreate(BaseModel):
     branch_id: UUID
     category_ids: list[UUID] = Field(default_factory=list)
     #: Online orders for this branch land on this terminal.
-    receives_online_orders: bool = False
     #: Take them without waiting for somebody to press Accept — for a
     #: kitchen-only site where nobody is watching the iPad.
     auto_accept_online_orders: bool = False
@@ -547,7 +546,6 @@ class DeviceUpdate(BaseModel):
     status: Literal["available", "used", "disabled"] | None = None
     category_ids: list[UUID] | None = None
     #: Online orders for this branch land on this terminal.
-    receives_online_orders: bool = False
     #: Take them without waiting for somebody to press Accept — for a
     #: kitchen-only site where nobody is watching the iPad.
     auto_accept_online_orders: bool = False
@@ -568,7 +566,6 @@ class DeviceResponse(ORMModel):
     model_identifier: str | None
     category_ids: list[UUID]
     #: Online orders for this branch land on this terminal.
-    receives_online_orders: bool = False
     #: Take them without waiting for somebody to press Accept — for a
     #: kitchen-only site where nobody is watching the iPad.
     auto_accept_online_orders: bool = False

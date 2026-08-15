@@ -72,21 +72,23 @@ class Device(Base, UUIDMixin, TimestampMixin):
     os_version: Mapped[str | None] = mapped_column(String(30), nullable=True)
     model_identifier: Mapped[str | None] = mapped_column(String(60), nullable=True)
 
-    #: This terminal is where online orders for the branch land.
-    receives_online_orders: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="false", default=False
-    )
-    #: Take those orders without waiting for somebody to press Accept.
+    #: Take the branch's online orders without waiting for somebody to press
+    #: Accept.
     #:
     #: For a kitchen-only site with nobody watching the iPad, the press carries
     #: no information — nobody is deciding whether to take an order that is
     #: already paid for, they are being interrupted to confirm one. With this on
     #: the terminal accepts and prints by itself.
     #:
-    #: Separate from `receives_online_orders` on purpose: *show me the branch's
-    #: online orders* and *wait for a human before taking one* are different
-    #: questions, and showing-and-waiting is what a counter iPad should keep
-    #: doing.
+    #: **Which terminals see an order is not a per-device question.** It used to
+    #: have a `receives_online_orders` column beside this one, distinguishing
+    #: *show me the branch's online orders* from *wait for a human before taking
+    #: one*. Nothing ever read it — no query, no service, no line of Swift — so a
+    #: terminal switched off received them anyway, and the setting quietly lied
+    #: for as long as it existed. The shop's answer is that the branch decides
+    #: (`branches.receives_online_orders`) and every terminal at that branch
+    #: sees the order; this flag remains, because *who presses Accept* really is
+    #: a property of the individual iPad on the counter.
     auto_accept_online_orders: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false", default=False
     )

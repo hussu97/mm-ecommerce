@@ -702,7 +702,13 @@ async def accept_order(
     order = await pos_order_service.get_order(db, order_id)
 
     if order.pos_status == PosOrderStatusEnum.ACTIVE.value:
-        return _serialise(order)
+        # Somebody got here first — another terminal at this branch, or the same
+        # cashier pressing twice. Still a success: refusing would be a lie about
+        # an order that is on the register. The flag is what stops the caller
+        # printing a second receipt for it.
+        payload = _serialise(order)
+        payload.already_accepted = True
+        return payload
     if order.pos_status != PosOrderStatusEnum.PENDING.value:
         raise HTTPException(
             status.HTTP_409_CONFLICT,

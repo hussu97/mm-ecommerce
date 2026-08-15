@@ -180,8 +180,6 @@ export interface Device {
   last_seen_at: string | null;
   app_version: string | null;
   model_identifier: string | null;
-  /** Online orders for the branch land on this terminal. */
-  receives_online_orders: boolean;
   /**
    * Takes those orders and prints them without anyone pressing Accept. For a
    * kitchen with nobody watching the iPad; a counter terminal leaves it off.
