@@ -406,6 +406,13 @@ export const deliveryApi = {
    * What delivery costs to a specific point. Priced against the active zone
    * map, so the figure on screen is the one the order gets written with.
    *
+   * **Nothing in the storefront calls this any more.** The checkout was its
+   * only caller and now uses `ordersApi.preview`, which returns this same
+   * answer inside a fully priced order — one call to the courier instead of
+   * two, and no chance of the delivery line and the total disagreeing. Kept
+   * because `POST /delivery/quote` is still served and still the right thing
+   * for a surface that wants the fee without an order behind it.
+   *
    * `address` is the pin's formatted address. It is not used to price anything
    * — the pin already did that — it travels so the server can record what the
    * same trip would cost to fulfil, against the same place a driver would be

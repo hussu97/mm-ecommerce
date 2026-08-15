@@ -13,6 +13,14 @@ three separate formulas on the checkout screen). There is one now —
 `order_pricing.compute_order_totals` — and this file is what says so out loud,
 on the hardest basket the shop can produce: a coupon, a zone-priced delivery
 fee, and the small-basket surcharge, all at once.
+
+The session here is a mock, which is the standing weakness of this suite: it
+cannot catch a lazy load that would raise `MissingGreenlet` in production. The
+same five comparisons were run once against a migrated throwaway Postgres with
+the real zone map and the seeded `MM15` and `FREESHIP` coupons — 105 flat, 35
+with the surcharge, and both again with each coupon — and every field agreed.
+That is a manual check by nature (it needs a database), so it is recorded here
+rather than pretended at.
 """
 
 from __future__ import annotations
