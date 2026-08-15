@@ -101,12 +101,22 @@ def downgrade() -> None:
     op.add_column("addresses", sa.Column("region", sa.String(length=30), nullable=True))
     op.add_column(
         "orders",
-        sa.Column(
-            "region_id",
-            UUID(as_uuid=True),
-            sa.ForeignKey("regions.id", ondelete="SET NULL"),
-            nullable=True,
-        ),
+        sa.Column("region_id", UUID(as_uuid=True), nullable=True),
+    )
+    # The index and the foreign key that went when the column did, restored
+    # under the names `042` gave them — an inline `ForeignKey` here would let
+    # Postgres pick `orders_region_id_fkey` instead, and `042`'s downgrade
+    # drops `fk_orders_region_id` by name. Both omissions stranded `alembic
+    # downgrade base` at this revision, the same trap `088` had for
+    # `ix_delivery_batches_polygon_id`.
+    op.create_index("ix_orders_region_id", "orders", ["region_id"])
+    op.create_foreign_key(
+        "fk_orders_region_id",
+        "orders",
+        "regions",
+        ["region_id"],
+        ["id"],
+        ondelete="SET NULL",
     )
 
     op.create_table(

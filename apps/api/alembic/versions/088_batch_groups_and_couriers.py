@@ -326,6 +326,22 @@ def downgrade() -> None:
     op.alter_column("delivery_batches", "polygon_id", nullable=False)
     op.alter_column("delivery_batch_windows", "polygon_id", nullable=False)
 
+    # And the indexes that went with those columns. Dropping a column takes its
+    # indexes with it silently, so putting the column back is only half of
+    # putting it back: without these, `052`'s own downgrade — which drops both
+    # by name — fails on an index that no longer exists, and `alembic downgrade
+    # base` cannot walk past this revision. Found by running the full down path
+    # on a throwaway database; a downgrade nobody has exercised is a downgrade
+    # nobody can trust in the one hour it is needed.
+    op.create_index(
+        "ix_delivery_batches_polygon_id", "delivery_batches", ["polygon_id"]
+    )
+    op.create_index(
+        "ix_delivery_batch_windows_polygon_id",
+        "delivery_batch_windows",
+        ["polygon_id"],
+    )
+
     op.drop_index("ix_delivery_batches_group_id", table_name="delivery_batches")
     op.drop_index(
         "ix_delivery_batch_windows_group_id", table_name="delivery_batch_windows"

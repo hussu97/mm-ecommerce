@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import inspect
 import pathlib
+import re
 
 from app.api.v1 import products as products_api
 from app.services import product_service
@@ -29,9 +30,18 @@ def test_the_api_still_defaults_to_the_website():
 
 
 def test_the_admin_client_asks_for_every_channel():
+    """
+    The console's product list must send `channel=all`, however it is spelled.
+
+    Asserted on the defaulting expression rather than on a finished query
+    string: the client builds its query through `buildQs` now, so the literal
+    `'/products?channel=all'` this used to look for no longer appears anywhere
+    even though the behaviour is unchanged. What matters — and what breaks the
+    "POS only" badge when it goes — is that a caller who names no channel still
+    gets every one of them.
+    """
     client = (ADMIN / "lib/api.ts").read_text()
-    assert "params.channel ?? 'all'" in client
-    assert "'/products?channel=all'" in client, "the no-argument path too"
+    assert "channel: params?.channel ?? 'all'" in client
 
 
 def test_a_staff_viewer_can_open_any_product():
@@ -56,10 +66,22 @@ def test_the_admin_variant_does_not_filter_by_channel():
 
 def test_the_menu_group_editor_pages_the_catalogue():
     """
-    It asked for per_page=1000; the API caps at 100 and 422s above it, so the
-    editor loaded nothing and sat on its spinner.
+    It asked for per_page=1000 when the API capped at 100, got a 422, and sat
+    on its spinner having loaded nothing.
+
+    The cap has since risen to 2000, so the page size is read off the API's own
+    limit rather than pinned to a number here — a test asserting `= 100` would
+    now be asserting the editor makes twenty requests where one would do. What
+    still has to hold is that the page never asks for more than the API allows,
+    and that a refusal is shown rather than swallowed.
     """
     page = (ADMIN / "app/(dashboard)/menu-groups/page.tsx").read_text()
-    assert "CATALOGUE_PAGE_SIZE = 100" in page
-    assert "per_page: 1000" not in page
-    assert "setLoadError" in page, "a failed load must say so, not hang"
+    cap = inspect.getsource(products_api.list_products)
+    assert "le=2000" in cap, "the API's cap moved; the editor's page size follows it"
+
+    sizes = re.findall(r"CATALOGUE_PAGE_SIZE\s*=\s*(\d+)", page)
+    assert sizes, "the editor must declare its page size in one place"
+    assert int(sizes[0]) <= 2000, "asking above the cap is a 422 and a dead spinner"
+    assert "setLoadError" in page or "loadError" in page, (
+        "a failed load must say so, not hang"
+    )

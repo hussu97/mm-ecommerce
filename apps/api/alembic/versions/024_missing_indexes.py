@@ -46,6 +46,14 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS ix_refresh_tokens_active")
-    op.execute("DROP INDEX IF EXISTS ix_refresh_tokens_user_id")
     op.execute("DROP INDEX IF EXISTS ix_cart_items_cart_product")
     op.execute("DROP INDEX IF EXISTS ix_carts_session_id")
+    # `ix_refresh_tokens_user_id` is deliberately NOT dropped here. `002`
+    # created it and drops it on its own way down; this revision only ever
+    # said `CREATE INDEX IF NOT EXISTS`, which on any database that ran `002`
+    # created nothing at all. Dropping it anyway destroyed an index this
+    # revision does not own, and `002`'s downgrade then failed on an index
+    # that was no longer there — stranding `alembic downgrade base`.
+    #
+    # An `IF NOT EXISTS` create belongs with a downgrade that leaves the
+    # object alone; the asymmetry is the bug.

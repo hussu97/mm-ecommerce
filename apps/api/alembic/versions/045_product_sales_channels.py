@@ -127,6 +127,9 @@ def downgrade() -> None:
             "is_pos_visible", sa.Boolean(), nullable=False, server_default=sa.true()
         ),
     )
+    # And the index dropping the column took with it. `040` drops this by name
+    # on its own way down, so without it `alembic downgrade base` stops here.
+    op.create_index("ix_products_is_web_visible", "products", ["is_web_visible"])
     op.execute(
         """
         UPDATE products
