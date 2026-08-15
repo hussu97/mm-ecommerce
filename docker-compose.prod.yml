@@ -245,6 +245,48 @@ services:
       POS_CORS_ORIGINS: ${POS_CORS_ORIGINS:-}
       POS_ALLOWED_HOSTS: ${POS_ALLOWED_HOSTS:-*}
       POS_REQUIRE_POS_HOST: ${POS_REQUIRE_POS_HOST:-false}
+      # The register books couriers. `POST /pos/orders/{id}/packed` is the event
+      # the whole delivery chain hangs off — it assigns the batch, books the
+      # driver and emails the customer — and it is served by *this* container,
+      # not the storefront one.
+      #
+      # Without these, `lalamove_service.is_enabled()` is False here and every
+      # order packed at the counter fell back to "Courier is not configured;
+      # dispatch this order by hand", while the identical order dispatched from
+      # the admin console booked a driver perfectly. Same code, same database,
+      # different container — which is exactly why that error read as a polygon
+      # problem and was not one.
+      #
+      # Item 5 of CLAUDE.md's secret checklist, and the second time: noon Send
+      # went inert in production on 2026-08-05 for this reason. Guarded now by
+      # `test_the_register_can_book_a_courier`.
+      LALAMOVE_API_KEY: ${LALAMOVE_API_KEY:-}
+      LALAMOVE_API_SECRET: ${LALAMOVE_API_SECRET:-}
+      LALAMOVE_ENV: ${LALAMOVE_ENV:-production}
+      LALAMOVE_MARKET: ${LALAMOVE_MARKET:-AE}
+      LALAMOVE_LANGUAGE: ${LALAMOVE_LANGUAGE:-en_AE}
+      LALAMOVE_SERVICE_TYPE: ${LALAMOVE_SERVICE_TYPE:-CAR}
+      LALAMOVE_SPECIAL_REQUESTS: ${LALAMOVE_SPECIAL_REQUESTS:-}
+      LALAMOVE_WEBHOOK_PATH: ${LALAMOVE_WEBHOOK_PATH:-/api/v1/webhooks/lalamove}
+      LALAMOVE_TIMEOUT_SECONDS: ${LALAMOVE_TIMEOUT_SECONDS:-8}
+      LALAMOVE_QUOTE_CACHE_SECONDS: ${LALAMOVE_QUOTE_CACHE_SECONDS:-120}
+      NOON_SEND_API_KEY: ${NOON_SEND_API_KEY:-}
+      NOON_SEND_CLIENT_CODE: ${NOON_SEND_CLIENT_CODE:-}
+      NOON_SEND_ENV: ${NOON_SEND_ENV:-production}
+      NOON_SEND_BASE: ${NOON_SEND_BASE:-}
+      NOON_SEND_BULKY_BASE: ${NOON_SEND_BULKY_BASE:-}
+      NOON_SEND_LOCALE: ${NOON_SEND_LOCALE:-en-AE}
+      NOON_SEND_TIMEOUT_SECONDS: ${NOON_SEND_TIMEOUT_SECONDS:-8}
+      NOON_SEND_MAX_DISTANCE_M: ${NOON_SEND_MAX_DISTANCE_M:-20000}
+      NOON_SEND_DETOUR_FACTOR: ${NOON_SEND_DETOUR_FACTOR:-1.35}
+      NOON_SEND_SURGE_AED: ${NOON_SEND_SURGE_AED:-0}
+      NOON_SEND_WEBHOOK_API_KEY: ${NOON_SEND_WEBHOOK_API_KEY:-}
+      NOON_SEND_ENFORCE_WEBHOOK_KEY: ${NOON_SEND_ENFORCE_WEBHOOK_KEY:-true}
+      # Deliberately absent: BATCH_DISPATCHER_ENABLED. That starts the
+      # background loop that sweeps batches out, and a second copy of it in this
+      # container would race the storefront's over the same rows. The register
+      # books the courier for the order in front of it; it does not run the
+      # sweeper.
       # The register API answers `/devices/push-token`, so it needs the same
       # credentials the storefront one uses to send with.
       APNS_KEY_P8: ${APNS_KEY_P8:-}

@@ -167,3 +167,47 @@ def test_no_default_here_charges_money_the_code_does_not(api_env):
     one in `Settings`, and this one cost five dirhams a delivery.
     """
     assert "DOOR_TO_DOOR" not in api_env["LALAMOVE_SPECIAL_REQUESTS"]
+
+
+def test_the_register_can_book_a_courier():
+    """
+    `POST /pos/orders/{id}/packed` is served by `pos-api`, and packing is what
+    books the driver. Without the courier credentials in *this* container,
+    `lalamove_service.is_enabled()` is False and every order packed at the
+    counter falls back to "Courier is not configured; dispatch this order by
+    hand" — while the same order dispatched from the admin console books
+    normally, because that runs in `api`.
+
+    The symptom is indistinguishable from a misconfigured delivery polygon,
+    which is what it was mistaken for. This is the third time a variable that
+    reached `api` and not `pos-api` has silently disabled a feature in
+    production, so it is asserted rather than remembered.
+    """
+    pos_env = _load_compose()["services"]["pos-api"]["environment"]
+
+    for key in (
+        "LALAMOVE_API_KEY",
+        "LALAMOVE_API_SECRET",
+        "LALAMOVE_ENV",
+        "LALAMOVE_MARKET",
+        "NOON_SEND_API_KEY",
+        "NOON_SEND_CLIENT_CODE",
+        "NOON_SEND_ENV",
+    ):
+        assert key in pos_env, (
+            f"{key} never reaches the register, so an order packed at the "
+            "counter cannot book a courier"
+        )
+
+
+def test_the_register_does_not_run_the_batch_sweeper():
+    """
+    The one courier-adjacent variable `pos-api` must *not* get.
+
+    `BATCH_DISPATCHER_ENABLED` starts a background loop that sweeps due batches
+    out to couriers. A second copy of it in the register container would race
+    the storefront's over the same rows, and the losing side of that race is a
+    second driver booked for one cake.
+    """
+    pos_env = _load_compose()["services"]["pos-api"]["environment"]
+    assert "BATCH_DISPATCHER_ENABLED" not in pos_env
