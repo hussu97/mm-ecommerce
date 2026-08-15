@@ -101,9 +101,18 @@ Nobody presses it any more, so something has to.
   send, and `PICKED_UP` later moves it to `out_for_delivery`. The webhook guard
   already accepts that transition from `confirmed` *or* `packed`, so an order
   that never passed through `packed` is not stranded either way.
-* **Third-party zones** — stamped when the last kitchen ticket for the order is
-  completed. That is the shop physically finishing the box, which is what the
-  word meant when a person was pressing it.
+* **Third-party zones** — *not stamped.* The plan said "when the last kitchen
+  ticket is completed", and that event does not exist: `KitchenTicketStatusEnum`
+  has a `completed` case and nothing anywhere ever writes it. `send_to_kitchen`
+  creates tickets at `new` and no endpoint moves them. Building a kitchen-display
+  completion flow to harvest one timestamp is a different feature.
+
+  So a third-party order keeps its button, and only a third-party order does.
+  Nothing else in the system knows when that box is finished — no API call goes
+  out, no courier reports back — and the "on its way" email has to mean
+  something. `PosOrder.canMarkPacked` now also requires
+  `deliveryPartner?.booksItself != true`, which is where the button disappears
+  for Lalamove and noon Send and stays for the rest.
 * `POST /pos/orders/{id}/packed` stays and keeps working. It is what a register
   in the wild will call until every iPad has updated, and removing an endpoint
   that live devices still hold is how a shop loses a day.
@@ -189,6 +198,69 @@ printed in the box at the top**. So:
 - [ ] tests: retry ladder, accept-triggers-dispatch, receipt line, alarm floor
 - [ ] `swift test`; both app targets build
 
+## Added after the plan was agreed
+
+**Auto-accept needs the shop to have been open.** Raised once the driver call
+moved to acceptance, and it belongs to that move: accepting now prints a ticket
+and books a van in one act, so a website order placed at 03:00 on a site that
+sells overnight would put a rider at a dark shutter within fifteen minutes.
+
+The device flag is therefore a *permission*, not an instruction, and
+`pos_order_service.may_auto_accept` is the second condition on it. It reads the
+**placement** time against the branch's `opening_from`/`opening_to`, not the
+current time — an order placed at 03:00 and still waiting when the shop opens at
+09:00 is not something to take silently either, and a rule that flipped under a
+terminal at closing time would be worse than none.
+
+Decided server-side, in two places on purpose:
+
+* `PosOrderResponse.may_auto_accept` is a **hint**, so a terminal does not
+  pointlessly attempt an accept it will be refused.
+* `POST /accept?auto=true` is the **enforcement**, asked again with the branch
+  certainly loaded. A payload that could not resolve the hours costs a 409 and
+  an alarm, never a driver at a shut shop.
+
+Those orders stay in `waiting`, where the alarm now rings, and
+`IncomingOrdersModel.needsAPerson` opens the sheet for them even on an
+auto-accepting till — the one kind of terminal with nobody standing at it.
+
 ## Review
 
-_(filled in when the work lands)_
+Everything in Work is done bar the two items that turned out not to exist as
+planned (see the third-party note above). 1312 API tests and 210 kit tests pass;
+both app targets build.
+
+**Three things worth knowing that the plan did not.**
+
+`INFOPLIST_FILE` had to point at `Config/MMPosPad-Info.plist`, not
+`MMPosPad/Info.plist`. `MMPosPad/` is a synchronized folder group, so every file
+in it joins the target automatically — the plist was copied in as a *resource*
+as well as consumed as the plist, and the build died on "Multiple commands
+produce .../MMPos.app/Info.plist". `Config/` is in no synchronized group, which
+is now its only job. Verified against the built binary rather than the setting:
+`UIBackgroundModes` is `[remote-notification, audio]` in
+`MMPos.app/Info.plist`, and `CFBundleDisplayName` is still the generated
+"MM POS", so the merge works both ways.
+
+`PosOrder.mayAutoAccept` is a `var`, and that is load-bearing. Written as
+`let mayAutoAccept: Bool? = nil` it compiles, warns quietly, and is **silently
+skipped by the synthesised decoder** — the field would have arrived from the API
+and been dropped, and every order would have read as auto-acceptable including
+the 03:00 ones. Exactly the bug this feature was added to prevent, hidden inside
+the feature.
+
+The push handler had to become **awaited** end to end — `onOrderEvent`,
+`handle`, `onAutoAccepted`, `printTicket`. iOS suspends the app the moment
+`didReceiveRemoteNotification` returns, so the old fire-and-forget `Task { }`
+would have handed control back before the bytes reached the printer and the
+receipt would have appeared whenever somebody next picked the iPad up.
+
+**Not covered, and deliberate.** The five-minute floor makes an auto-accepted
+order unsilenceable by the app for five minutes; only a person pressing Silence
+overrides it. There is still no prep-time setting, so a Lalamove driver called at
+acceptance may wait through the whole bake. Both are the answers given when
+asked; both will be visible in the shop before they are visible in a log.
+
+The `audio` background mode is the piece most likely to draw a question at App
+Store review. It is there so the alarm survives the app being backgrounded, which
+is the case a counter iPad is in most of the day.

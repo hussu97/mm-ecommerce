@@ -147,18 +147,35 @@ async def _send_to_branch(
     return delivered
 
 
-def _alert(title: str, body: str, *, sound: str, extra: dict) -> dict:
-    return {
-        "aps": {
-            "alert": {"title": title, "body": body},
-            "sound": sound,
-            # Cuts through a Focus mode. An order arriving is the one thing a
-            # counter iPad exists to be told about, and "time-sensitive" is what
-            # iOS calls exactly that.
-            "interruption-level": "time-sensitive",
-        },
-        **extra,
+def _alert(
+    title: str,
+    body: str,
+    *,
+    sound: str,
+    extra: dict,
+    wake_the_app: bool = False,
+) -> dict:
+    aps: dict = {
+        "alert": {"title": title, "body": body},
+        "sound": sound,
+        # Cuts through a Focus mode. An order arriving is the one thing a
+        # counter iPad exists to be told about, and "time-sensitive" is what
+        # iOS calls exactly that.
+        "interruption-level": "time-sensitive",
     }
+    if wake_the_app:
+        # Runs the app's background handler as well as showing the banner, which
+        # is what lets a backgrounded iPad fetch the order and put it on the
+        # printer instead of waiting to be picked up. Needs the
+        # `remote-notification` background mode in the receiving app — see
+        # `MMPosPad/Info.plist` — and does nothing at all without it.
+        #
+        # Alongside the alert rather than instead of it. A push that is *only*
+        # `content-available` is throttled by iOS at its own discretion and is
+        # not shown to anybody; the alarm cannot be built on something the
+        # system is free to deliver in an hour.
+        aps["content-available"] = 1
+    return {"aps": aps, **extra}
 
 
 async def notify_order_placed(db: AsyncSession, order: Order) -> int:
@@ -189,6 +206,11 @@ async def notify_order_placed(db: AsyncSession, order: Order) -> int:
             # cashier accepts the order.
             "requires_acknowledgement": True,
         },
+        # The one push worth waking a suspended app for. A terminal set to accept
+        # by itself does the accept and the print inside the handler this
+        # enables, so a receipt reaches the kitchen whether or not anybody has
+        # the app open.
+        wake_the_app=True,
     )
     sent = await _send_to_branch(
         db,
