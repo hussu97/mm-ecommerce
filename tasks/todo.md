@@ -50,12 +50,11 @@ job having run. A sweep tidies rows; it is not what makes the rule true.
       refuses with `items_unavailable_at_branch`.
 - [x] 6. POS API: `/pos/availability` — list, set product, set option.
 - [x] 7. POS apps: "Website stock" in the kit, verified on both simulators.
-- [ ] 8. **Web: checkout resolution screen.** The API half is done and the
-      contract is generated (`UnavailableItem`); the checkout does not read it
-      yet, so today an unavailable basket is stopped at the pay button by the
-      409 rather than guided before it.
-- [ ] 9. Admin: surface the same state read-only.
-- [ ] 10. Deploy.
+- [x] 8. Web: checkout resolution screen — `items_unavailable` gate state plus
+      `UnavailableItems`, which names each line and removes it by product.
+- [ ] 9. Admin: surface the same state read-only. Not built; the console can
+      still set availability through the endpoint it always had.
+- [x] 10. Deployed to production 2026-08-15.
 
 ## Review
 
@@ -69,14 +68,17 @@ two admin endpoints and a docstring promising an end-of-day restore that nothing
 implemented. `pos.products.availability` likewise already existed, which is why
 this needed no new role.
 
-**Not done, and why it matters.** Item 8. The server refuses an unavailable
-basket, so nothing can be *sold* that a branch cannot make — the guarantee
-holds. What is missing is the courtesy: a customer who changes their address at
-the checkout and moves the order to a branch without their filling gets a
-refusal at the pay button instead of being shown which line to change. Until
-that ships, prefer marking items out with `include_options` off so whole
-products (which read clearly in the refusal) are the common case.
+**Shipped.** Migration `104` ran against production in the deploy's "Deploy to
+GCP VM" step; `/pos/availability` answers 401 rather than 404, and
+`POST /orders/preview` returns `unavailable_items` on the live API. The
+catalogue still lists 35 products and 6 categories, which is the check that
+mattered: the hide-everywhere clause is the one thing in here that could have
+emptied a storefront.
 
-**Deployment deliberately not run.** The feature is inert until somebody marks
-something out — no rows means no behaviour change — but shipping the refusal
-without the screen that resolves it is a worse checkout than shipping neither.
+**Not verified end to end on production.** Marking something out needs a device
+token paired against the live register, and the act itself takes a real product
+off sale for real customers. Every layer was driven against a stub and against a
+local database instead. The first live stockout is worth watching: mark one item
+at one branch, confirm the site still lists it (one branch out of several is not
+"out everywhere"), then confirm a basket for that branch's address shows the
+panel.
