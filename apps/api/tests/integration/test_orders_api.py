@@ -128,6 +128,33 @@ class TestOrdersEndpoints:
         response = await client.post("/api/v1/orders", json={})
         assert response.status_code == 422
 
+    async def test_a_checkout_posted_without_an_email_is_refused_readably(self, client):
+        """
+        The deployment hazard of making email required: a browser holding the
+        previous bundle posts a complete, valid checkout with no `email` in it,
+        and gets a 422 it never expected.
+
+        Asserted on the wire rather than on the schema because the shape is the
+        point. The storefront's client reads `detail`, and when `detail` is a
+        list it joins the `msg` of each entry into the toast — so what lands in
+        front of the customer is exactly this string, and "Field required" is
+        not an instruction anybody can follow.
+        """
+        response = await client.post(
+            "/api/v1/orders",
+            json={
+                "delivery_method": "pickup",
+                "payment_method": "card",
+                "session_id": "sess_stale_bundle",
+            },
+        )
+
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert [e["msg"] for e in detail] == [
+            "Please enter your email address — your order confirmation is sent to it."
+        ]
+
     async def test_list_my_orders_without_auth_returns_401(self, client):
         response = await client.get("/api/v1/orders")
         assert response.status_code == 401

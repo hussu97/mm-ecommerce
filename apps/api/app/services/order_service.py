@@ -638,9 +638,24 @@ async def _persist_order(
     single tax rate in it.
     """
     # `orders.email` is not nullable and is what every downstream lookup keys
-    # on. When the customer declines to give one we fall back to the session's
-    # own address, which for a guest is the generated `…@guest.local` the auth
-    # layer already mints — a value the mailer knows not to write to.
+    # on. `OrderCreate.email` is now required, so on the storefront path
+    # `data.email` always wins and the fallback never fires.
+    #
+    # The fallback stays anyway, and not out of nostalgia. It is the signed-in
+    # caller's own account address, so it is a *better* value than a failure for
+    # anything that reaches here without a checkout body behind it, and the
+    # column below cannot take a null. The identically-named argument on
+    # `preview_order` is unambiguously still load-bearing — `OrderPreviewRequest`
+    # keeps email optional by design, because a form being filled in has to be
+    # priced before it is finished — and removing this one would leave the two
+    # sides of the "preview and creation must agree" pair reading from different
+    # identities. Two tokens is the whole cost.
+    #
+    # What it no longer does is stand in for a customer who declined to give an
+    # address. That case used to land here as the generated `…@guest.local` the
+    # auth layer mints — an address the mailer knows not to write to, so those
+    # orders were confirmed to nobody, which is the second reason email became
+    # required. The schema refuses them now, before this line is reached.
     order_email = data.email or fallback_email
     if not order_email:
         raise BadRequestError("An email address or an active session is required")
@@ -766,7 +781,12 @@ async def _persist_order(
                 .execution_options(synchronize_session=False)
             )
             if not result.scalar_one_or_none():
-                raise BadRequestError("Promo code has reached its usage limit")
+                # The same sentence `validate` uses for a spent campaign — this
+                # is that refusal, arriving a few milliseconds later because
+                # somebody else took the last one between validation and write.
+                # A customer who loses the race should not get different words
+                # from one who was simply too late.
+                raise BadRequestError("This code has been fully claimed")
         else:
             await db.execute(
                 sql_update(PromoCode)
@@ -870,13 +890,20 @@ async def create_order(
         if not validation.valid:
             # Told apart from every other refusal because it is the only one the
             # customer can still fix from the checkout — the address form has
-            # the button. A generic "Promo code: ..." toast sends them looking
-            # for a problem with the code instead.
+            # the button, and the wording names it.
             if validation.requires_phone_verification and not validation.phone_verified:
                 raise BadRequestError(
                     "Verify your mobile number to use this code on a delivery order"
                 )
-            raise BadRequestError(f"Promo code: {validation.message}")
+            # Verbatim, with no prefix. Every one of these used to be shipped as
+            # `Promo code: {message}`, which produced "Promo code: Promo code is
+            # not active" in the toast and, worse, gave nine different refusals
+            # one indistinguishable opening — the customer read the prefix,
+            # concluded they had mistyped, and retyped a code that was expired,
+            # spent, or not for them. `validate` now writes each refusal as the
+            # sentence the customer should read, and each one names the code
+            # itself, so there is nothing left for a prefix to add.
+            raise BadRequestError(validation.message)
         discount_amount = validation.discount_amount
         promo_obj = await promo_code_service.get_promo(db, data.promo_code)
         # The English spelling, whichever one was typed. Two codes naming one

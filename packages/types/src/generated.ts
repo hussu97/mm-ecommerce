@@ -9752,8 +9752,11 @@ export interface components {
         /** OrderCreate */
         OrderCreate: {
             delivery_method: components["schemas"]["DeliveryMethodEnum"];
-            /** Email */
-            email?: string | null;
+            /**
+             * Email
+             * Format: email
+             */
+            email: string;
             /** Locale */
             locale?: string | null;
             /** Notes */

@@ -1245,6 +1245,44 @@ class TestCreateOrderWithPromo:
         with pytest.raises(BadRequestError, match="[Pp]romo"):
             await create_order(db, _pickup_data(promo_code="BADCODE"), user_id=None)
 
+    @pytest.mark.parametrize(
+        "refusal",
+        [
+            "We don't recognise that code — check the spelling and try again",
+            "This code has expired",
+            "This code has been fully claimed",
+            "This code is for new customers only",
+            "Add AED 50 more to your basket to use this code",
+        ],
+    )
+    @patch("app.services.order_service.promo_code_service.validate")
+    @patch("app.services.order_service.promo_code_service.get_promo")
+    async def test_the_refusal_reaches_the_customer_word_for_word(
+        self, mock_get_promo, mock_validate, refusal
+    ):
+        """
+        No prefix, no rewording, no second opinion.
+
+        These used to be raised as `Promo code: {message}`, which produced
+        "Promo code: Promo code is not active" and gave every refusal the same
+        opening — so a customer read the prefix, assumed a typo, and retyped a
+        code that had expired. `promo_code_service.validate` writes the sentence
+        the customer should read; this is the only thing between it and them,
+        and the one thing it must not do is add to it.
+        """
+        mock_validate.return_value = PromoCodeValidateResponse(
+            valid=False, message=refusal
+        )
+
+        cart = _cart(items=[_cart_item(_product("100.00"))])
+        db = AsyncMock()
+        db.execute = AsyncMock(return_value=_result(scalar_one_or_none=cart))
+
+        with pytest.raises(BadRequestError) as exc:
+            await create_order(db, _pickup_data(promo_code="SAVE15"), user_id=None)
+
+        assert exc.value.detail == refusal
+
     @patch("app.services.order_service.promo_code_service.validate")
     @patch("app.services.order_service.promo_code_service.get_promo")
     async def test_the_delivery_method_reaches_the_gate(

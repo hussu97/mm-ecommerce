@@ -4,7 +4,15 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    field_validator,
+    model_validator,
+)
+from pydantic_core import PydanticCustomError
 
 from app.models.order import DeliveryMethodEnum, OrderStatusEnum
 
@@ -38,10 +46,24 @@ class OrderItemResponse(BaseModel):
 
 
 class OrderCreate(BaseModel):
-    # Optional: a phone number is enough to run a delivery. Email is only
-    # needed if the customer wants the confirmation in writing, so asking for
-    # it as a hard requirement cost more orders than it saved.
-    email: EmailStr | None = None
+    #: Where the confirmation goes, and half of who this customer is.
+    #:
+    #: This was optional, on the reasoning that a phone number is enough to run
+    #: a delivery and that demanding an address at checkout cost more orders
+    #: than it saved. That trade has been re-taken and reversed, for two
+    #: reasons the old rule could not answer:
+    #:
+    #: * every order gets written confirmation. An order the customer has no
+    #:   record of is one they ring the shop about, and the mailer refuses to
+    #:   write to the `…@guest.local` placeholder that stood in for a missing
+    #:   address — so "optional" meant "silently no confirmation".
+    #: * the new-customer coupon is refused on identity, and a missing email
+    #:   left the phone number as the only thing holding the rule up. Two
+    #:   identities are meaningfully harder to churn through than one.
+    #:
+    #: Required rather than defaulted, so a client that omits it is told so
+    #: instead of quietly buying a placeholder — see `_email_is_not_optional`.
+    email: EmailStr
     delivery_method: DeliveryMethodEnum
     shipping_address: AddressCreate | None = (
         None  # required if delivery_method == delivery
@@ -65,6 +87,38 @@ class OrderCreate(BaseModel):
     notes: str | None = None
     # Guest checkout: identify which cart to convert
     session_id: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _email_is_not_optional(cls, data: Any) -> Any:
+        """
+        Say *why* the order was refused, in words a customer can act on.
+
+        Email has only just become required, and a browser holding the previous
+        bundle still posts a complete checkout with no `email` key in it — or
+        with the null or empty string the old optional field accepted. Left to
+        Pydantic those are three different complaints ("Field required", "Input
+        should be a valid string", "value is not a valid email address"), and
+        the storefront's client joins the `msg` of each 422 entry straight into
+        the toast the customer reads. None of them names the field, and none of
+        them is an instruction anybody can follow.
+
+        There is no `RequestValidationError` handler to fix this centrally, and
+        adding one would re-word every 422 the API has ever returned. So this
+        one field states its own case: `PydanticCustomError` replaces the
+        message verbatim, with none of the "Value error, " prefix a plain
+        `ValueError` would carry, and the response stays the ordinary 422 shape
+        every client already understands.
+        """
+        if isinstance(data, dict):
+            given = data.get("email")
+            if given is None or (isinstance(given, str) and not given.strip()):
+                raise PydanticCustomError(
+                    "missing",
+                    "Please enter your email address — your order confirmation "
+                    "is sent to it.",
+                )
+        return data
 
 
 class OrderStatusUpdate(BaseModel):

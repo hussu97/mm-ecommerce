@@ -124,6 +124,19 @@ def _capture_db(count: int):
     return db
 
 
+def _asked_for(db) -> dict:
+    """
+    The values the count was actually looked up by.
+
+    Read off the compiled statement's bound parameters rather than by matching
+    SQL text: the question these tests ask is "which identities went into the
+    WHERE clause", and the parameters answer it without pinning the query's
+    spelling.
+    """
+    stmt = db.execute.await_args.args[0]
+    return dict(stmt.compile().params)
+
+
 async def test_no_identity_at_all_counts_nothing():
     """
     A guest who has typed neither an email nor a phone yet is not thereby a
@@ -153,6 +166,114 @@ async def test_any_single_identity_is_enough_to_count(identity):
     db = _capture_db(4)
     assert await promo_code_service.orders_placed_by(db, **identity) == 4
     db.execute.assert_awaited_once()
+
+
+# ── identity, now that every checkout carries a real email ────────────────────
+#
+# `OrderCreate.email` is required, so the email arm of the rule is loaded on
+# every web order rather than on the minority who volunteered an address. These
+# three are the cases the gate exists to tell apart.
+
+
+async def test_a_returning_customer_is_refused_on_their_email():
+    result = await _validate(
+        _promo(), placed=3, email="sara@example.com", phone="+971501234567"
+    )
+    assert result.valid is False
+    assert result.message == "This code is for new customers only"
+
+
+async def test_the_email_is_matched_case_and_whitespace_insensitively():
+    """
+    `Sara@Example.com ` and `sara@example.com` are one mailbox. Matching the raw
+    string would make the rule a formatting exercise — the same escape the phone
+    normalisation exists to close.
+    """
+    db = _capture_db(3)
+    await promo_code_service.orders_placed_by(
+        db, user_id=None, email="  Sara@Example.COM ", phone=None
+    )
+    assert _asked_for(db)["lower_1"] == "sara@example.com"
+
+
+async def test_the_same_person_under_a_new_email_is_still_caught_by_their_phone():
+    """
+    The escape a mandatory email does *not* close: addresses are free, and a
+    second one costs a customer nothing. The phone is what makes the rule hold
+    — it is on the order because a driver has to ring somebody, and both
+    spellings of it are searched so retyping the number differently is not an
+    escape either.
+    """
+    db = _capture_db(3)
+    await promo_code_service.orders_placed_by(
+        db, user_id=None, email="sara.second.address@example.com", phone="0501234567"
+    )
+
+    asked = _asked_for(db)
+    assert asked["lower_1"] == "sara.second.address@example.com"
+    assert set(asked["customer_phone_1"]) == {"+971501234567", "0501234567"}
+
+    # And the count that comes back refuses the coupon, whichever arm matched.
+    result = await _validate(
+        _promo(),
+        placed=3,
+        email="sara.second.address@example.com",
+        phone="0501234567",
+    )
+    assert result.valid is False
+
+
+async def test_a_genuine_first_time_customer_is_allowed():
+    result = await _validate(
+        _promo(), placed=0, email="new@example.com", phone="+971509999999"
+    )
+    assert result.valid is True
+    assert result.discount_amount == Decimal("15.00")
+
+
+# ── the placeholder addresses history is full of ──────────────────────────────
+
+
+async def test_a_guest_placeholder_is_never_an_identity():
+    """
+    Orders written while email was optional carry `guest-{8 hex}@guest.local`.
+    Eight hex characters collide, and a collision here seats one customer inside
+    another's history — a first-time buyer told they are not new. A placeholder
+    identifies nobody, so it is dropped rather than matched.
+    """
+    db = _capture_db(999)
+    assert (
+        await promo_code_service.orders_placed_by(
+            db, user_id=None, email="guest-1a2b3c4d@guest.local", phone=None
+        )
+        == 0
+    )
+    # No identity left, so no query at all — not a query that would have matched
+    # every other guest ever.
+    db.execute.assert_not_awaited()
+
+
+async def test_dropping_the_placeholder_does_not_drop_the_other_identities():
+    """It is the email arm that is unusable, not the order."""
+    db = _capture_db(2)
+    assert (
+        await promo_code_service.orders_placed_by(
+            db, user_id=None, email="GUEST-1A2B3C4D@guest.local", phone="+971501234567"
+        )
+        == 2
+    )
+    asked = _asked_for(db)
+    assert "lower_1" not in asked
+    assert set(asked["customer_phone_1"]) == {"+971501234567"}
+
+
+async def test_a_real_address_that_merely_mentions_guest_is_kept():
+    """The rule is the domain, not the word."""
+    db = _capture_db(1)
+    await promo_code_service.orders_placed_by(
+        db, user_id=None, email="myguest.local@gmail.com", phone=None
+    )
+    assert _asked_for(db)["lower_1"] == "myguest.local@gmail.com"
 
 
 # ── the two spellings are one coupon ──────────────────────────────────────────

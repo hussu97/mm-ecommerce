@@ -11004,16 +11004,9 @@
             "$ref": "#/components/schemas/DeliveryMethodEnum"
           },
           "email": {
-            "anyOf": [
-              {
-                "format": "email",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Email"
+            "format": "email",
+            "title": "Email",
+            "type": "string"
           },
           "locale": {
             "anyOf": [
@@ -11088,6 +11081,7 @@
           }
         },
         "required": [
+          "email",
           "delivery_method",
           "payment_method"
         ],

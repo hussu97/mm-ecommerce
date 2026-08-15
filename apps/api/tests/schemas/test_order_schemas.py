@@ -40,17 +40,68 @@ class TestOrderCreate:
                 payment_method="stripe",
             )
 
-    def test_email_optional(self):
+    def test_email_is_required(self):
         """
-        A phone number is enough to run a delivery, so the schema accepts an
-        order without an email. The service still refuses to write one with no
-        address at all — it falls back to the session's own (guest) email, and
-        raises when there is not even that.
+        Email used to be optional, on the reasoning that a phone number is
+        enough to run a delivery. It is required now: every order gets written
+        confirmation, and an order with no address was confirmed to nobody —
+        the mailer refuses the `…@guest.local` placeholder that stood in for it.
         """
-        order = OrderCreate(
-            delivery_method=DeliveryMethodEnum.PICKUP, payment_method="stripe"
+        with pytest.raises(ValidationError):
+            OrderCreate(
+                delivery_method=DeliveryMethodEnum.PICKUP, payment_method="stripe"
+            )
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {},
+            {"email": None},
+            {"email": ""},
+            {"email": "   "},
+        ],
+        ids=["absent", "null", "empty", "whitespace"],
+    )
+    def test_a_missing_email_says_what_to_do(self, payload):
+        """
+        The four shapes a browser holding yesterday's bundle can post, and one
+        sentence for all of them.
+
+        Pydantic's own words here are "Field required", "Input should be a valid
+        string" and "value is not a valid email address" depending on which of
+        these arrives — and the storefront's client joins those `msg` strings
+        straight into the toast the customer reads. None of them names the field
+        or says what to type.
+        """
+        with pytest.raises(ValidationError) as exc:
+            OrderCreate(
+                delivery_method=DeliveryMethodEnum.PICKUP,
+                payment_method="stripe",
+                **payload,
+            )
+
+        errors = exc.value.errors()
+        assert len(errors) == 1
+        assert errors[0]["msg"] == (
+            "Please enter your email address — your order confirmation is sent to it."
         )
-        assert order.email is None
+        # No "Value error, " in front of it, which a plain `ValueError` would
+        # have added — see `_email_is_not_optional`.
+        assert not errors[0]["msg"].startswith("Value error")
+
+    def test_a_typo_still_gets_pydantic_s_own_words(self):
+        """
+        The custom message covers *absent*, not *wrong*. "Not a valid email
+        address" is already the right thing to tell somebody who typed one.
+        """
+        with pytest.raises(ValidationError) as exc:
+            OrderCreate(
+                email="not-email",
+                delivery_method=DeliveryMethodEnum.PICKUP,
+                payment_method="stripe",
+            )
+        assert exc.value.errors()[0]["loc"] == ("email",)
+        assert "valid email address" in exc.value.errors()[0]["msg"]
 
 
 class TestOrderStatusUpdate:

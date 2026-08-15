@@ -53,6 +53,19 @@ def _calc_discount(promo: PromoCode, subtotal: Decimal) -> Decimal:
     return max(Decimal("0.00"), min(amount, subtotal))
 
 
+def _money(amount: Decimal) -> str:
+    """
+    A dirham figure as a customer would write it: `50`, not `50.00`.
+
+    Only ever used inside a refusal the customer reads. "Add AED 50.00 more"
+    reads like a system talking; the fils are noise unless there are any.
+    """
+    amount = amount.quantize(Decimal("0.01"))
+    return str(
+        amount.to_integral_value() if amount == amount.to_integral_value() else amount
+    )
+
+
 def normalise_code(code: str) -> str:
     """
     What the customer typed, reduced to what we match on.
@@ -85,6 +98,11 @@ async def find_by_code(db: AsyncSession, code: str) -> PromoCode | None:
     return result.scalar_one_or_none()
 
 
+#: The domain the auth layer mints a guest identity on — `guest-1a2b3c4d@guest.local`.
+#: Not a mailbox, not a name anybody chose, and never the same twice.
+_PLACEHOLDER_EMAIL_DOMAIN = "@guest.local"
+
+
 async def orders_placed_by(
     db: AsyncSession,
     *,
@@ -97,10 +115,30 @@ async def orders_placed_by(
 
     Three identities, OR'd, because no single one of them holds. The account is
     useless on its own: guest checkout mints a fresh `users` row per session, so
-    keying on `user_id` means every guest is a new customer forever. Email is
-    better but a guest without one gets a generated `…@guest.local`. Phone is the
-    one people reuse and the one they verify, and it is on the order because
-    somebody has to be called when the driver cannot find the door.
+    keying on `user_id` means every guest is a new customer forever. Email is now
+    always a real address at checkout — `OrderCreate.email` is required — and it
+    is the identity a customer is most likely to reuse across devices. Phone is
+    the one they verify, and it is on the order because somebody has to be called
+    when the driver cannot find the door.
+
+    A `…@guest.local` address is not an identity and is dropped before the query
+    is built. Historic orders carry them in this column: every order placed while
+    email was optional was written with the session's generated placeholder. Two
+    things follow, and only one of them is fixable.
+
+    * Fixable, and fixed here: those addresses must never match *each other*.
+      They are `guest-{8 hex}@guest.local`, and eight hex characters collide
+      often enough over a few hundred thousand guests to eventually seat one
+      customer inside another's order history — which for an acquisition coupon
+      means a genuine first-time buyer told they are not new. Dropping the
+      clause is exact, not heuristic: a placeholder identifies nobody, so it can
+      only ever produce a wrong answer.
+    * Not fixable: a customer whose 2025 orders are filed under a placeholder
+      looks new *by email* when they come back today under their real address.
+      Nothing in this column can join those two, and inventing a join would be
+      guessing. The phone is what catches them, which is exactly the case it was
+      added for — and it is the identity the same person is least likely to
+      change between visits.
 
     Cancelled orders do not count — an order that never happened is not a
     purchase. Everything else does, including orders still in flight. Counting
@@ -119,8 +157,9 @@ async def orders_placed_by(
     identities = []
     if user_id is not None:
         identities.append(Order.user_id == user_id)
-    if email:
-        identities.append(func.lower(Order.email) == email.strip().lower())
+    wanted_email = (email or "").strip().lower()
+    if wanted_email and not wanted_email.endswith(_PLACEHOLDER_EMAIL_DOMAIN):
+        identities.append(func.lower(Order.email) == wanted_email)
     spellings = phone_identities(phone)
     if spellings:
         identities.append(Order.customer_phone.in_(spellings))
@@ -173,6 +212,14 @@ async def validate(
     """
     Validate a promo code and return the discount amount (does NOT increment uses).
 
+    Every `message` on a refusal below is customer-facing prose, not a log line.
+    The basket renders it verbatim and `create_order` raises it verbatim, so
+    these strings *are* the copy — there is no second place where a reason code
+    is turned into English, and there deliberately isn't one: a mapping table in
+    the caller is how "Promo code: Promo code is not active" got shipped. Each
+    says what happened and, where there is one, what the customer can do about
+    it; short enough for a toast; no thresholds, ids or column names in them.
+
     The phone gate is the one rule here that is answered twice: reported while
     the customer is still shopping, enforced when the order is written.
 
@@ -194,25 +241,37 @@ async def validate(
     promo = await find_by_code(db, code)
 
     if not promo:
-        return PromoCodeValidateResponse(valid=False, message="Promo code not found")
+        return PromoCodeValidateResponse(
+            valid=False,
+            message="We don't recognise that code — check the spelling and try again",
+        )
 
     if not promo.is_active:
         return PromoCodeValidateResponse(
-            valid=False, message="Promo code is not active"
+            valid=False, message="This code is no longer available"
         )
 
     now = datetime.now(timezone.utc)
     if promo.valid_from and now < promo.valid_from:
+        # Not "not yet valid", which reads as a fault in what they typed. The
+        # date itself is deliberately left out: it is stored in UTC and the shop
+        # is four hours ahead, so an offer opening at 01:00 local would be
+        # announced with yesterday's date — a wrong fact is worse than a vague
+        # one in a message the customer cannot argue with.
         return PromoCodeValidateResponse(
-            valid=False, message="Promo code is not yet valid"
+            valid=False,
+            message="This code isn't active yet — try again once the offer opens",
         )
 
     if promo.valid_until and now > promo.valid_until:
-        return PromoCodeValidateResponse(valid=False, message="Promo code has expired")
+        return PromoCodeValidateResponse(valid=False, message="This code has expired")
 
     if promo.max_uses is not None and promo.current_uses >= promo.max_uses:
+        # The campaign ceiling, not this customer's. "Reached its usage limit"
+        # was ambiguous between the two and sent people looking for an old order
+        # of their own; there is nothing they did and nothing they can undo.
         return PromoCodeValidateResponse(
-            valid=False, message="Promo code has reached its usage limit"
+            valid=False, message="This code has been fully claimed"
         )
 
     # Whether this coupon carries the gate, and whether the number we were given
@@ -245,6 +304,11 @@ async def validate(
                 # Says what is true without saying how it was worked out. The
                 # customer does not need to know we matched them on a phone
                 # number, and telling them would be a hint about how to avoid it.
+                #
+                # The only refusal here with no "and here is what you can do"
+                # half, deliberately: there isn't one, and inventing a next step
+                # for a rule that has already decided would be a lie. Naming the
+                # rule plainly is the whole of the help available.
                 message="This code is for new customers only",
             )
 
@@ -253,13 +317,18 @@ async def validate(
         if used >= promo.max_uses_per_user:
             return PromoCodeValidateResponse(
                 valid=False,
-                message="You have already used this promo code",
+                message="You have already used this code",
             )
 
     if promo.min_order_amount and subtotal < promo.min_order_amount:
+        # The gap, not the threshold. "Minimum order amount of 150 AED required"
+        # made the customer find their own subtotal and subtract, on a screen
+        # where the number they need is one addition away — and it is the one
+        # refusal on this list they can clear without leaving the page.
+        shortfall = Decimal(str(promo.min_order_amount)) - subtotal
         return PromoCodeValidateResponse(
             valid=False,
-            message=f"Minimum order amount of {promo.min_order_amount} AED required",
+            message=f"Add AED {_money(shortfall)} more to your basket to use this code",
         )
 
     discount = _calc_discount(promo, subtotal)
