@@ -4,10 +4,11 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useCart } from '@/lib/cart-context';
-import { promoApi, ensureSessionId } from '@/lib/api';
+import { ensureSessionId } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { accountEmailOf, ensureCheckoutAuth } from '@/lib/checkout-auth';
 import { analytics, failureReason } from '@/lib/analytics';
+import { usePromoValidation } from '@/lib/use-promo-validation';
 import { Button } from '@/components/ui/Button';
 import { Breadcrumb } from '@/components/ui/Breadcrumb';
 import { Input } from '@/components/ui/Input';
@@ -21,7 +22,7 @@ import { NewCustomerCouponTray, type ApplyOutcome } from '@/components/promo/New
 import { CartAddonTray } from '@/components/cart/CartAddonTray';
 import { FreeDeliveryNudge } from '@/components/cart/FreeDeliveryNudge';
 import { PersonalisationField } from '@/components/cart/PersonalisationField';
-import { pendingVerification, needsPersonalisation, type Product } from '@/lib/types';
+import { needsPersonalisation, type Product } from '@/lib/types';
 import { Icon } from '@/components/ui/Icon';
 
 const PLACEHOLDER_IMAGE = '/images/logos/main_logo.png';
@@ -31,6 +32,7 @@ export default function CartPage() {
   const { cart, isLoading, cartLoaded, addItem, updateItem, updateNote, removeItem, mergeCart } = useCart();
   const { addToast } = useToast();
   const { user } = useAuth();
+  const { validateCode } = usePromoValidation('cart');
 
   const [promoCode, setPromoCode] = useState('');
   const [promoLoading, setPromoLoading] = useState(false);
@@ -153,71 +155,44 @@ export default function CartPage() {
    * the input shows it under the input.
    */
   const applyCode = useCallback(async (raw: string, fromTray = false): Promise<ApplyOutcome> => {
-    const code = raw.trim().toUpperCase();
-    if (!code) return { kind: 'applied' };
-
     setPromoError(null);
     setAppliedPromo(null);
 
-    try {
-      // The account's email, where there is one. The basket has no phone, no
-      // typed email and no chosen delivery method, so this is as much identity
-      // as this page can offer — and the coupon is re-validated at the checkout
-      // against the full set. A signed-in returning customer therefore finds
-      // out here rather than two screens later.
-      //
-      // No `delivery_method` on purpose: unsent means "not chosen", and the
-      // server answers that cautiously by reporting the phone gate as still
-      // outstanding. Reporting is all it does here — see `promo_code_service`.
-      const result = await promoApi.validate(code, subtotal, {
-        email: accountEmailOf(user),
-      });
-      if (!result.valid) {
-        analytics.promoFailed({
-          code,
-          // The server's own words, kept short enough to group on. Whether a
-          // coupon was refused for being expired, spent or not-for-you is the
-          // difference between a campaign that ended and one that is broken.
-          reason: (result.message ?? 'invalid').slice(0, 60),
-          surface: 'cart',
-          subtotal,
-          from_tray: fromTray,
-        });
-        return { kind: 'error', note: result.message ?? t('cart.invalid_promo') };
-      }
-
-      const discountAmount = Number(result.discount_amount);
-      const pending = pendingVerification(result);
-      setPromoCode(code);
-      setAppliedPromo({
-        code,
-        discount: discountAmount,
-        message: result.message ?? '',
-        needsVerify: pending,
-      });
-      analytics.promoApplied({
-        code,
-        discount: discountAmount,
-        surface: 'cart',
-        subtotal,
-        from_tray: fromTray,
-      });
-      addToast(t('cart.promo_applied', { code }), 'success');
-      // The code is on and the discount is real; what is left is an errand, and
-      // one that only a delivery order will actually be asked to run. Counted
-      // as an application rather than a failure, because that is what it is.
-      return { kind: pending ? 'pending' : 'applied' };
-    } catch (err) {
-      analytics.promoFailed({
-        code,
-        reason: failureReason(err),
-        surface: 'cart',
-        subtotal,
-        from_tray: fromTray,
-      });
+    // The account's email, where there is one. The basket has no phone, no
+    // typed email and no chosen delivery method, so this is as much identity
+    // as this page can offer — and the coupon is re-validated at the checkout
+    // against the full set. A signed-in returning customer therefore finds
+    // out here rather than two screens later.
+    //
+    // No `delivery_method` on purpose: unsent means "not chosen", and the
+    // server answers that cautiously by reporting the phone gate as still
+    // outstanding. Reporting is all it does here — see `promo_code_service`.
+    const outcome = await validateCode(raw, {
+      subtotal,
+      identity: { email: accountEmailOf(user) },
+      fromTray,
+    });
+    if (!outcome) return { kind: 'applied' };
+    if (outcome.kind === 'invalid') {
+      return { kind: 'error', note: outcome.message ?? t('cart.invalid_promo') };
+    }
+    if (outcome.kind === 'error') {
       return { kind: 'error', note: t('cart.promo_error') };
     }
-  }, [subtotal, user, addToast, t]);
+
+    setPromoCode(outcome.code);
+    setAppliedPromo({
+      code: outcome.code,
+      discount: outcome.discount,
+      message: outcome.message,
+      needsVerify: outcome.needsVerify,
+    });
+    addToast(t('cart.promo_applied', { code: outcome.code }), 'success');
+    // The code is on and the discount is real; what is left is an errand, and
+    // one that only a delivery order will actually be asked to run. Counted
+    // as an application rather than a failure, because that is what it is.
+    return { kind: outcome.needsVerify ? 'pending' : 'applied' };
+  }, [validateCode, subtotal, user, addToast, t]);
 
   const handleApplyPromo = useCallback(async () => {
     if (!promoCode.trim()) return;

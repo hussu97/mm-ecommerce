@@ -25,6 +25,7 @@ import { analytics, failureReason } from '@/lib/analytics';
 import { guestAddresses } from '@/lib/guest-addresses';
 import { AddressModal, formatAddress, toDraft, type AddressDraft } from './components/AddressModal';
 import { PromoCodeStep } from './components/PromoCodeStep';
+import { usePromoRevalidation } from '@/lib/use-promo-validation';
 import type { Address, Cart, CartItem, DeliveryRates, DeliveryQuote, PickupBranch } from '@/lib/types';
 import { Icon } from '@/components/ui/Icon';
 
@@ -852,6 +853,49 @@ function CheckoutContent() {
   const total = retryOrder
     ? Number(retryOrder.total)
     : Math.max(0, subtotal + (deliveryFee ?? 0) + lowOrderFee - form.promoDiscount);
+
+  // Keep `form.promoDiscount` — the number the pay button quotes — equal to
+  // what the order will actually be written with. This runs for as long as the
+  // page does, not just while the promo fold-out is open: the discount was
+  // applied on the basket page against that page's subtotal and an email-only
+  // identity, and the basket can go on changing in another tab while this form
+  // is being filled in. Disabled for a returned unpaid order, whose promo is
+  // already priced into an order that exists (and while one is still being
+  // looked up); disabled too until the basket has actually loaded — before
+  // that `subtotal` reads 0, and re-checking a real discount against a basket
+  // we have not seen yet would take it off for a reason that was never true.
+  usePromoRevalidation({
+    code: form.promoCode,
+    discount: form.promoDiscount,
+    subtotal,
+    identity: promoIdentity,
+    enabled: !retryOrder && !restoringOrder && cartLoaded && subtotal > 0,
+    fallbackReason: t('checkout.invalid_promo'),
+    onResult: (outcome) => {
+      if (outcome.kind === 'applied') {
+        // Usually a no-op; the case that matters is a capped percentage
+        // discount whose amount moved with the subtotal.
+        onChange({
+          promoCode: outcome.code,
+          promoDiscount: outcome.discount,
+          promoMessage: outcome.message,
+          promoNeedsVerify: outcome.needsVerify,
+        });
+      } else if (outcome.kind === 'invalid') {
+        // The code comes off, and the customer is told so — the fold-out that
+        // used to show this refusal may never have been opened, and a total
+        // that quietly grew is worse than a toast. The server's own reason
+        // where it gave one, because "no longer valid" without a why reads as
+        // a bug rather than a rule.
+        onChange({ promoCode: outcome.code, promoDiscount: 0, promoMessage: '', promoNeedsVerify: false });
+        addToast(outcome.message ?? t('checkout.invalid_promo'), 'warning');
+      }
+      // `error` (the request itself failed) deliberately changes nothing: the
+      // server re-validates at order creation regardless, and dropping a
+      // legitimate discount because one background request timed out is the
+      // worse of the two failures.
+    },
+  });
 
   // Re-price whenever the pin or the basket changes, so what is on screen is
   // what the order will be written with.

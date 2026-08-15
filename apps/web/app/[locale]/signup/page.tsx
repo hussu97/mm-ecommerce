@@ -7,15 +7,13 @@ import { useRouter } from 'next/navigation';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/lib/auth-context';
-import { useCart } from '@/lib/cart-context';
-import { ApiError, getSessionId } from '@/lib/api';
+import { ApiError } from '@/lib/api';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { analytics, failureReason } from '@/lib/analytics';
 
 export default function SignupPage() {
   const router = useRouter();
   const { register } = useAuth();
-  const { mergeCart } = useCart();
   const { t } = useTranslation();
 
   const [form, setForm] = useState({
@@ -52,8 +50,9 @@ export default function SignupPage() {
         turnstile_token: turnstileToken || undefined,
       });
       analytics.userSignup({ surface: 'signup' });
-      const sessionId = getSessionId();
-      if (sessionId) await mergeCart(sessionId).catch(() => {});
+      // No cart merge here: CartProvider watches the auth user and folds the
+      // guest basket in on every signed-out → signed-in transition, wherever
+      // it happens — see the effect in lib/cart-context.tsx.
       router.push('/account');
     } catch (err) {
       analytics.signupFailed({

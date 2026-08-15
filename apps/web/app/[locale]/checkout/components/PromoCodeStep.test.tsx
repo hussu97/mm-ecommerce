@@ -35,9 +35,13 @@ vi.mock('@/components/ui/Toast', () => ({
   useToast: () => ({ addToast: mocks.addToast }),
 }));
 
-vi.mock('@/lib/analytics', () => ({
-  analytics: { promoApplied: vi.fn(), promoFailed: vi.fn() },
-}));
+vi.mock('@/lib/analytics', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/analytics')>();
+  return {
+    ...actual,
+    analytics: { promoApplied: vi.fn(), promoFailed: vi.fn() },
+  };
+});
 
 // A build with the Firebase vars in it. Without them the component renders
 // nothing, which is the preview-deploy case the step falls back to copy for.
@@ -214,47 +218,12 @@ describe('PromoCodeStep', () => {
     expect(screen.queryByText(/send-code-to/)).not.toBeInTheDocument();
   });
 
-  it('re-checks an applied code when the identity changes under it', async () => {
-    // A customer applies the code, then types the phone number that turns out to
-    // have ordered three times before. The discount on the summary has to stop
-    // being real at that point, not at the pay button.
-    const { rerender } = render(
-      <PromoCodeStep
-        promoCode="WELCOME15"
-        promoDiscount={15}
-        promoMessage=""
-        subtotal={100}
-        identity={{ email: null, phone: null }}
-        onChange={vi.fn()}
-      />,
-    );
-
-    mocks.validate.mockResolvedValue({
-      valid: false,
-      discount_amount: 0,
-      message: 'This code is for new customers only',
-    });
-
-    rerender(
-      <PromoCodeStep
-        promoCode="WELCOME15"
-        promoDiscount={15}
-        promoMessage=""
-        subtotal={100}
-        identity={{ email: null, phone: '+971509999999' }}
-        onChange={vi.fn()}
-      />,
-    );
-
-    await waitFor(
-      () =>
-        expect(mocks.validate).toHaveBeenCalledWith('WELCOME15', 100, {
-          email: null,
-          phone: '+971509999999',
-        }),
-      { timeout: 2000 },
-    );
-  });
+  // The automatic re-check that used to live here — "re-checks an applied code
+  // when the identity changes under it" — moved to `usePromoRevalidation` in
+  // lib/use-promo-validation, and its tests moved with it. This panel is
+  // mounted only while the "add promo or note" fold-out is open, and a
+  // re-check that only runs while a fold-out is open is a re-check that mostly
+  // never runs. See use-promo-validation.test.tsx.
 
   it('never talks to the server when nothing is applied and nothing is typed', async () => {
     render(

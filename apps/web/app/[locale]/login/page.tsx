@@ -6,8 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/lib/auth-context';
-import { useCart } from '@/lib/cart-context';
-import { ApiError, getSessionId } from '@/lib/api';
+import { ApiError } from '@/lib/api';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { analytics, failureReason } from '@/lib/analytics';
 
@@ -15,7 +14,6 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { login } = useAuth();
-  const { mergeCart } = useCart();
   const { t } = useTranslation();
 
   const [form, setForm] = useState({ email: '', password: '' });
@@ -39,8 +37,10 @@ function LoginForm() {
     try {
       await login(form.email, form.password);
       analytics.userLogin();
-      const sessionId = getSessionId();
-      if (sessionId) await mergeCart(sessionId).catch(() => {});
+      // No cart merge here: CartProvider watches the auth user and folds the
+      // guest basket in on every signed-out → signed-in transition, wherever
+      // it happens. This page remembering to do it was the only reason it
+      // worked at all — see the effect in lib/cart-context.tsx.
       const redirect = searchParams.get('redirect') || '/account';
       router.push(redirect);
     } catch (err) {
