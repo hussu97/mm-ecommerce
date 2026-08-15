@@ -121,16 +121,21 @@ VALID_TRANSITIONS: dict[OrderStatusEnum, set[OrderStatusEnum]] = {
         OrderStatusEnum.REFUNDED,
         OrderStatusEnum.DISPUTED,
     },
-    # A failed handover is a detour, not an ending. The cake exists, it is paid
-    # for, and the usual answer is a second attempt — which is why this leads
-    # back into the journey rather than only out of it. `packed` is the way
-    # back: a re-dispatch starts from a box on a shelf, exactly as the first
-    # one did, and `OUT_FOR_DELIVERY` follows when the new rider collects.
+    # An ending, not a detour. This used to lead back into the journey —
+    # `packed` again, then `out_for_delivery` when a new rider collected — on
+    # the reasoning that the cake exists and is paid for, so the usual answer is
+    # a second attempt.
+    #
+    # The shop's answer is that it is not. `undelivered` is what a person writes
+    # down when a handover has definitively failed; it is cancellation after the
+    # box was made, and treating it as recoverable meant a driver could be sent
+    # again for something already written off, automatically, by a sweep. What
+    # follows is a refund conversation, not another van.
+    #
+    # Only the two money outcomes remain, and they are the same two `cancelled`
+    # now carries. Neither returns the order to fulfilment: they record what
+    # happened to the payment for an order that is not going anywhere.
     OrderStatusEnum.UNDELIVERED: {
-        OrderStatusEnum.PACKED,
-        OrderStatusEnum.OUT_FOR_DELIVERY,
-        OrderStatusEnum.DELIVERED,
-        OrderStatusEnum.CANCELLED,
         OrderStatusEnum.REFUNDED,
         OrderStatusEnum.DISPUTED,
     },
@@ -138,8 +143,17 @@ VALID_TRANSITIONS: dict[OrderStatusEnum, set[OrderStatusEnum]] = {
         OrderStatusEnum.REFUNDED,
         OrderStatusEnum.DISPUTED,
     },
-    OrderStatusEnum.CANCELLED: set(),
-    # Terminal states — set by Stripe webhooks only, no manual transitions out
+    # Cancelled is an ending, and stays one. The two money outcomes are new:
+    # until refunds existed there was nothing to record and `set()` was honest,
+    # but a cancelled order is the single most likely thing to be refunded and
+    # the status had no way to say so. Neither of these puts it back in the
+    # kitchen.
+    OrderStatusEnum.CANCELLED: {
+        OrderStatusEnum.REFUNDED,
+        OrderStatusEnum.DISPUTED,
+    },
+    # Terminal. Reached by a refund we issue or a gateway webhook; nothing
+    # leaves.
     OrderStatusEnum.REFUNDED: set(),
     OrderStatusEnum.DISPUTED: set(),
 }

@@ -212,6 +212,31 @@ async def list_all_orders(
     )
 
 
+#: Orders that are not going anywhere, whatever their delivery row still says.
+#:
+#: `cancelled` and `undelivered` are both endings — the second is cancellation
+#: after the box was made. `refunded` and `disputed` are what follows either.
+#: None of them may call a driver or ask a courier for an update, and the point
+#: of refusing here rather than only hiding the buttons is that hiding a control
+#: is not enforcement: the admin screen is one client, and a stale tab holding
+#: yesterday's order is a perfectly ordinary way to press it anyway.
+_SETTLED_STATUSES = {
+    OrderStatusEnum.CANCELLED,
+    OrderStatusEnum.UNDELIVERED,
+    OrderStatusEnum.REFUNDED,
+    OrderStatusEnum.DISPUTED,
+}
+
+
+def _assert_still_going_somewhere(order: Order, verb: str) -> None:
+    if order.status in _SETTLED_STATUSES:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"An order that is {order.status.value} cannot be {verb} — it is "
+            "not going anywhere. Refund it if the customer is owed money.",
+        )
+
+
 @router.post("/{order_number}/delivery/refresh", response_model=OrderDeliveryResponse)
 async def refresh_order_delivery(
     order_number: str,
@@ -234,6 +259,7 @@ async def refresh_order_delivery(
     )
     if order is None:
         raise HTTPException(404, f"Order '{order_number}' not found")
+    _assert_still_going_somewhere(order, "checked")
 
     delivery = await lalamove_service.get_delivery(db, order.id)
     if delivery is None:
@@ -431,6 +457,7 @@ async def dispatch_order_delivery(
     order = result.scalars().first()
     if order is None:
         raise HTTPException(404, f"Order '{order_number}' not found")
+    _assert_still_going_somewhere(order, "dispatched")
 
     delivery = await courier_service.dispatch(db, order)
     if delivery is None:

@@ -508,8 +508,37 @@ class TestStatusTransitionLogic:
         ):
             assert status not in packed_allowed
 
-    def test_cancelled_is_terminal(self):
-        assert VALID_TRANSITIONS[OrderStatusEnum.CANCELLED] == set()
+    def test_cancelled_never_goes_back_to_fulfilment(self):
+        """
+        Not `== set()` any more, and the difference is deliberate: a cancelled
+        order is the single most likely thing to be refunded, and until refunds
+        existed the status had no way to say so. What must never come back is
+        the kitchen — no `packed`, no `out_for_delivery`, no un-cancelling.
+        """
+        allowed = VALID_TRANSITIONS[OrderStatusEnum.CANCELLED]
+        assert allowed == {OrderStatusEnum.REFUNDED, OrderStatusEnum.DISPUTED}
+        for status in (
+            OrderStatusEnum.CREATED,
+            OrderStatusEnum.CONFIRMED,
+            OrderStatusEnum.PACKED,
+            OrderStatusEnum.OUT_FOR_DELIVERY,
+            OrderStatusEnum.DELIVERED,
+        ):
+            assert status not in allowed
+
+    def test_undelivered_is_an_ending_not_a_detour(self):
+        """
+        It used to lead back to `packed` for a second attempt. The shop's answer
+        is that a failed handover is cancellation after the box was made — what
+        follows is a refund conversation, not another van — and leaving the way
+        back open meant an unattended sweep could send one.
+        """
+        allowed = VALID_TRANSITIONS[OrderStatusEnum.UNDELIVERED]
+        assert allowed == {OrderStatusEnum.REFUNDED, OrderStatusEnum.DISPUTED}
+        assert OrderStatusEnum.CANCELLED not in allowed, (
+            "cancelling it again is not a thing"
+        )
+        assert OrderStatusEnum.PACKED not in allowed, "no second van"
 
     def test_refunded_is_terminal(self):
         assert VALID_TRANSITIONS[OrderStatusEnum.REFUNDED] == set()

@@ -694,10 +694,15 @@ async def retry_failed_dispatches(
 
 #: The statuses an order can be in and still want a driver. Anything else has
 #: either already travelled or stopped being a delivery.
+#:
+#: `undelivered` is deliberately **not** here. It reads like a state wanting
+#: another attempt — the cake exists and is paid for — and that is exactly the
+#: reasoning that would have a sweep send a second van, unattended, for an
+#: order somebody had already written off. A failed handover ends in a refund
+#: conversation, and a person starts it.
 _RETRYABLE_STATUSES = {
     OrderStatusEnum.CONFIRMED,
     OrderStatusEnum.PACKED,
-    OrderStatusEnum.UNDELIVERED,
 }
 
 

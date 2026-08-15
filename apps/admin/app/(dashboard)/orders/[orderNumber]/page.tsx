@@ -8,6 +8,16 @@ import type { LalamoveQuote, Order, OrderDelivery, OrderStatus } from '@/lib/typ
 import { Badge, Button } from '@/components/ui';
 import { cn, formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
 
+/**
+ * Orders that are not going anywhere, whatever the delivery row still says.
+ *
+ * `undelivered` belongs here and did not used to: it is cancellation after the
+ * box was made, and the API now treats it as an ending — no second van, no
+ * status check, only a refund conversation. Mirrors `_SETTLED_STATUSES` in
+ * `app/api/v1/orders.py`, which is what actually enforces it.
+ */
+const SETTLED_STATUSES: OrderStatus[] = ['cancelled', 'undelivered'];
+
 const STATUS_STEPS: OrderStatus[] = [
   'created',
   'confirmed',
@@ -449,6 +459,7 @@ export default function OrderDetailPage() {
           onRedispatch={redispatch}
           onAssignLalamove={quoteLalamove}
           canAssignLalamove={order.status === 'packed'}
+          isSettled={SETTLED_STATUSES.includes(order.status)}
           onRefresh={refreshCourier}
         />
       )}
@@ -694,6 +705,7 @@ function DeliveryPanel({
   onRefresh,
   onAssignLalamove,
   canAssignLalamove,
+  isSettled,
 }: {
   delivery: OrderDelivery;
   busy: boolean;
@@ -702,6 +714,19 @@ function DeliveryPanel({
   onAssignLalamove: () => void;
   /** Packed and nothing else — see `_assert_assignable` on the API side. */
   canAssignLalamove: boolean;
+  /**
+   * The order is not going anywhere: cancelled, undelivered, refunded or
+   * disputed. Every control that would call a driver or ask a courier for an
+   * update disappears.
+   *
+   * `undelivered` counts. It is cancellation after the box was made, and it
+   * used to offer Re-dispatch on the reasoning that the cake exists and is paid
+   * for — which is how a written-off order gets a second van sent to it.
+   *
+   * The API refuses these too, and that is the enforcement. This only stops the
+   * screen offering a button whose single possible outcome is a 409.
+   */
+  isSettled: boolean;
 }) {
   const cost = delivery.cost_total ?? delivery.quoted_cost;
   const isCourier = delivery.provider !== 'third_party';
@@ -859,7 +884,7 @@ function DeliveryPanel({
           {/* noon Send only. Lalamove pushes its own updates and retries them
               for a day, so the endpoint refuses it and a button here would be a
               400 waiting to happen. */}
-          {delivery.provider === 'noon_send' && delivery.courier_order_id && (
+          {!isSettled && delivery.provider === 'noon_send' && delivery.courier_order_id && (
             <Button size="sm" variant="ghost" onClick={onRefresh} disabled={busy}>
               <span className="material-icons text-[14px]">sync</span>
               Check status
@@ -868,13 +893,13 @@ function DeliveryPanel({
           {/* A third-party zone has no integration — somebody we already use
               collects the box. This is the escape hatch for the day that is not
               good enough: quote Lalamove, look at the number, and decide. */}
-          {!isCourier && canAssignLalamove && !delivery.courier_order_id && (
+          {!isSettled && !isCourier && canAssignLalamove && !delivery.courier_order_id && (
             <Button size="sm" variant="ghost" onClick={onAssignLalamove} disabled={busy}>
               <span className="material-icons text-[14px]">local_shipping</span>
               Assign to Lalamove
             </Button>
           )}
-          {isCourier && (
+          {isCourier && !isSettled && (
             <Button size="sm" variant="ghost" onClick={onRedispatch} disabled={busy}>
               <span className="material-icons text-[14px]">refresh</span>
               {delivery.courier_order_id ? 'Re-dispatch' : 'Dispatch now'}
