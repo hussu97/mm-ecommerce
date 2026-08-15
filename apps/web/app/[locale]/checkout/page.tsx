@@ -19,6 +19,10 @@ import { useToast } from '@/components/ui/Toast';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { analytics, failureReason } from '@/lib/analytics';
 import { DEFAULT_ADDRESS_LABEL } from '@/lib/guest-addresses';
+import { withFallback } from '@/lib/i18n/fallback';
+import {
+  checkoutGateBehaviour, checkoutGateLabel, isValidEmail, resolveCheckoutGate,
+} from './checkout-gate';
 import { AddressModal, formatAddress, type AddressDraft } from './components/AddressModal';
 import { OrderSummary } from './components/OrderSummary';
 import { PickupBranchPicker } from './components/PickupBranchPicker';
@@ -47,27 +51,68 @@ function paymentOptionsFor(method: 'delivery' | 'pickup'): PaymentMethod[] {
   return method === 'pickup' ? ['cod', 'card'] : ['card'];
 }
 
-// ─── Validation ───────────────────────────────────────────────────────────────
+// ─── Reaching a field ─────────────────────────────────────────────────────────
 
-function isValidEmail(email: string): boolean {
-  if (!email) return false;
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return false;
-  const domain = email.split('@')[1]?.toLowerCase() ?? '';
-  if (/\.(local|localhost|example|test|invalid|internal)$/.test(domain)) return false;
-  if (domain === 'localhost') return false;
-  return true;
-}
-
-/** Bring the first invalid field into view — the button sits below everything. */
-function focusFirstError(field: string) {
+/**
+ * Bring a section into view and put the cursor in it.
+ *
+ * The button sits below everything, and on a phone it is stuck to the bottom of
+ * the screen — so the thing it is complaining about is almost always somewhere
+ * the customer cannot see. Scrolling to it is not a nicety; without it the
+ * button appears to do nothing at all.
+ *
+ * Which input inside the section gets the cursor is chosen rather than assumed:
+ * the pickup contact section holds a name and a number, and landing on the name
+ * when the name is filled in and the number is not is the form pointing at the
+ * wrong half of its own complaint. First empty field, else the first field.
+ */
+function scrollToField(field: string) {
   requestAnimationFrame(() => {
     const el =
       document.querySelector<HTMLElement>(`[data-field="${field}"]`) ??
       document.querySelector<HTMLElement>('[data-field-error="true"]');
     if (!el) return;
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    el.querySelector<HTMLElement>('input, select, textarea')?.focus({ preventScroll: true });
+    const inputs = Array.from(
+      el.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(
+        'input, select, textarea',
+      ),
+    );
+    (inputs.find((i) => !i.value) ?? inputs[0])?.focus({ preventScroll: true });
   });
+}
+
+/** How long a nudged section stays lit. Long enough to find, short enough not to nag. */
+const HIGHLIGHT_MS = 1800;
+
+/**
+ * The vocabulary the API refuses a coupon in.
+ *
+ * `ApiError` carries a status and a sentence, and nothing machine-readable that
+ * says "this was about the code" — so the sentence is what there is to read.
+ * Every one of the server's coupon refusals is in here: not found, not active,
+ * not yet valid, expired, usage limit, new customers only, already used, and
+ * the minimum-order figure.
+ */
+const PROMO_REFUSAL = /promo|coupon|discount|this code|new customers|already used|minimum order/i;
+
+/**
+ * Is this refusal about the coupon on the basket?
+ *
+ * Asked only when there is a coupon to refuse, so a sold-out line or a zone
+ * rejection never gets printed against the promo field. Deliberately generous
+ * about which sentences count: showing a refusal next to the code when it was
+ * really about something else costs a customer one glance, while swallowing the
+ * one sentence that explains why their discount was rejected costs them the
+ * order.
+ */
+function isPromoRefusal(err: unknown, hasPromo: boolean): boolean {
+  if (!hasPromo || !err) return false;
+  const status = (err as { status?: number }).status;
+  // 400 is what `BadRequestError` becomes; 422 is the schema layer. A 500 or a
+  // dropped connection is not a rule being applied to this code.
+  if (typeof status === 'number' && status !== 400 && status !== 422) return false;
+  return err instanceof Error && PROMO_REFUSAL.test(err.message);
 }
 
 /**
@@ -149,6 +194,26 @@ function CheckoutContent() {
   const [addressOpen, setAddressOpen] = useState(false);
   const [showExtras, setShowExtras] = useState(false);
   const [pickupBranches, setPickupBranches] = useState<PickupBranch[]>([]);
+  /**
+   * The section the button just pointed at, lit for a moment.
+   *
+   * Deliberately not the red error state. Nothing is wrong with a field that
+   * has simply not been filled in yet, and painting it red for pressing the pay
+   * button early is the form scolding somebody for reading it in order. The
+   * ring says "here", fades, and leaves no trace; red is reserved for a value
+   * that was actually rejected.
+   */
+  const [highlight, setHighlight] = useState<string | null>(null);
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * Why `POST /orders` refused the coupon, when it did.
+   *
+   * Held separately from `errors` because it is not a field on this form that
+   * the customer typed wrong — it is the server's verdict on a code, and it has
+   * to survive long enough to be read next to that code once the fold-out has
+   * been opened for them.
+   */
+  const [promoRefusal, setPromoRefusal] = useState<string | null>(null);
 
   const isDelivery = form.deliveryMethod === 'delivery';
   // Where the receipt is already going, when there is an account to read it
@@ -229,6 +294,38 @@ function CheckoutContent() {
     setErrors((prev) => { const next = { ...prev }; delete next[key]; return next; });
   }, []);
 
+  /**
+   * Scroll to a section, light it up, and let go of it again.
+   *
+   * The one place both halves of "show me the problem" live: the button's own
+   * deflection and the validation pass's first failing field go through here,
+   * so a customer gets the same gesture whichever of the two spoke.
+   */
+  const revealField = useCallback((field: string) => {
+    scrollToField(field);
+    setHighlight(field);
+    if (highlightTimer.current) clearTimeout(highlightTimer.current);
+    highlightTimer.current = setTimeout(() => setHighlight(null), HIGHLIGHT_MS);
+  }, []);
+
+  // A timer that outlives the page would call `setHighlight` on nothing.
+  useEffect(() => () => { if (highlightTimer.current) clearTimeout(highlightTimer.current); }, []);
+
+  /**
+   * Take the customer to a coupon the server just refused.
+   *
+   * An effect rather than a call in the catch block, because the same failure
+   * opens the "add promo or note" fold-out — and a section that has not been
+   * rendered yet cannot be scrolled to. This runs after it has.
+   *
+   * Scroll only, no ring: the refusal itself lands in red, against the code,
+   * with `role="alert"` on it. Lighting the section up as well would be the
+   * second thing on screen shouting about the same sentence.
+   */
+  useEffect(() => {
+    if (promoRefusal) scrollToField('promo');
+  }, [promoRefusal]);
+
   const subtotal = cart?.subtotal ?? 0;
 
   // Keep `form.promoDiscount` — the number the pay button was quoted against —
@@ -285,7 +382,7 @@ function CheckoutContent() {
   // input to it moves — the basket, the pin, the method, the coupon, the
   // identity the coupon is judged against — and debounced, because half of
   // those are fields being typed into.
-  const preview = useOrderPreview({
+  const { preview, pricing: previewInFlight } = useOrderPreview({
     enabled: !retryOrder && !restoringOrder && cartLoaded,
     deliveryMethod: form.deliveryMethod,
     latitude: form.locationLat,
@@ -455,17 +552,25 @@ function CheckoutContent() {
    */
   const handleSubmit = async () => {
     if (!retryOrder) {
+      // Filled in the order the page is read, because `fields[0]` is what the
+      // customer is scrolled to. Email used to be checked first and sat at the
+      // top of this object, so a form missing both an address and an email
+      // scrolled past the address to complain about the email.
       const found: Record<string, string> = {};
-      // Email is only checked when something was typed: a typo is caught, a
-      // blank never blocks. Nothing to check at all when it came from the
-      // account rather than the keyboard.
-      if (!accountEmail && form.email.trim() && !isValidEmail(form.email)) {
-        found.email = t('checkout.valid_email_required');
-      }
 
       if (isDelivery) {
         if (!form.addressLine1.trim()) found.address = t('checkout.address_required');
-        else if (!form.firstName.trim() || !form.phone.trim() || !isValidPhone(form.phone)) {
+        // The pin, which nothing on this screen ever checked for. `OrderCreate`
+        // wants latitude and longitude, the courier cannot be asked to price a
+        // trip without them, and an address typed without touching the map got
+        // all the way to the payment page before anyone said so.
+        else if (!hasPin) {
+          found.address = withFallback(
+            t,
+            'checkout.address_pin_required',
+            'Please drop a pin on the map so we know where to deliver.',
+          );
+        } else if (!form.firstName.trim() || !form.phone.trim() || !isValidPhone(form.phone)) {
           found.address = t('checkout.address_contact_incomplete');
         } else if (unserviceable) {
           // The API refuses this too. Stopping here saves the customer a round
@@ -481,13 +586,31 @@ function CheckoutContent() {
           found.verifyPhone = t('checkout.verify_phone_required');
         }
       } else {
-        if (!form.firstName.trim()) found.firstName = t('checkout.first_name_required');
-        if (!form.phone.trim() || !isValidPhone(form.phone)) found.phone = t('checkout.valid_phone_required');
+        // Which counter, before who is collecting from it — that is the order
+        // the two sections appear in, and this object's order decides which one
+        // the customer is taken to.
+        //
         // Only when there is a list to choose from. If the branches could not be
         // loaded the order still goes through and the API resolves one, because
         // losing a paid sale to a failed GET is the worse trade.
         if (pickupBranches.length > 0 && !pickupBranchId) {
           found.pickupBranch = t('checkout.pickup_branch_required');
+        }
+        if (!form.firstName.trim()) found.firstName = t('checkout.first_name_required');
+        if (!form.phone.trim() || !isValidPhone(form.phone)) found.phone = t('checkout.valid_phone_required');
+      }
+
+      // Required now, not merely checked-if-typed. `OrderCreate` demands an
+      // email, so a blank one is no longer a customer who chose not to give us
+      // one — it is an order the API will refuse after the payment page. Blank
+      // and malformed are told apart because they are different mistakes and
+      // the fix for each is a different sentence. Nothing to check at all when
+      // the address came from the account rather than the keyboard.
+      if (!accountEmail) {
+        if (!form.email.trim()) {
+          found.email = withFallback(t, 'checkout.email_required', 'Email address is required');
+        } else if (!isValidEmail(form.email)) {
+          found.email = t('checkout.valid_email_required');
         }
       }
 
@@ -499,16 +622,23 @@ function CheckoutContent() {
           field: fields[0],
           // The whole set, not just the first. A form failing on one field is a
           // typo; the same three fields failing together is a form problem.
-          fields: fields.sort().join(','),
+          //
+          // Sorted on a *copy*. `Array.prototype.sort` sorts in place, so this
+          // used to reorder `fields` before the line below read it — and a
+          // collection missing both a branch and a name was scrolled to the
+          // name, because `firstName` sorts ahead of `pickupBranch`.
+          fields: [...fields].sort().join(','),
           error_count: fields.length,
           delivery_method: form.deliveryMethod,
         });
-        focusFirstError(fields[0]);
+        revealField(fields[0]);
         return;
       }
       setErrors({});
     }
 
+    // Last attempt's verdict on the coupon, cleared before this one asks again.
+    setPromoRefusal(null);
     setSubmitting(true);
     // Which half of this we got to, so a failure below can say whether the order
     // was ever written. The two are entirely different problems: nothing was
@@ -639,7 +769,21 @@ function CheckoutContent() {
         // to be the one write that skipped the `sessionStorage` copy.
         onChange({ promoNeedsVerify: true });
         setErrors({ verifyPhone: t('checkout.verify_phone_required') });
-        focusFirstError('verifyPhone');
+        revealField('verifyPhone');
+      } else if (stage === 'create_order' && isPromoRefusal(err, form.promoDiscount > 0)) {
+        // A coupon refused at the last step, said where the coupon is.
+        //
+        // The API answers each refusal specifically — "This code is for new
+        // customers only", "You have already used this promo code", a minimum
+        // order figure — and that sentence is the only thing that tells the
+        // customer what to do next. A toast is not enough on its own: it is
+        // gone in seconds, and the code it is about is folded away behind "add
+        // promo or note", which most customers never opened and which a
+        // customer who applied the code in the basket never had to. So the
+        // fold-out is opened for them and the refusal is printed against the
+        // code, next to the button that removes it.
+        setShowExtras(true);
+        setPromoRefusal(message);
       }
       addToast(message, 'error');
       setSubmitting(false);
@@ -684,10 +828,91 @@ function CheckoutContent() {
 
   // ── The page ───────────────────────────────────────────────────────────────
 
-  const placeOrderLabel = t('checkout.place_order', { total: total.toFixed(2) });
-  // Left clickable rather than disabled: a dead button explains nothing, and
-  // pressing it scrolls the explanation into view.
-  const blocked = Boolean(unserviceable);
+  /**
+   * What the button is for, right now — see `checkout-gate.ts`.
+   *
+   * One resolution, read by both render sites. The two used to carry the same
+   * hand-written ternary and the same `opacity-60`, which is two places for one
+   * decision to be changed in and, on a phone, the one of the two that is
+   * actually on screen.
+   */
+  const gate = resolveCheckoutGate({
+    submitting,
+    restoring: restoringOrder,
+    hasUnpaidOrder: Boolean(retryOrder),
+    deliveryMethod: form.deliveryMethod,
+    branchesLoaded: pickupBranches.length > 0,
+    pickupBranchId,
+    addressLine1: form.addressLine1,
+    hasPin,
+    unserviceable: Boolean(unserviceable),
+    firstName: form.firstName,
+    phone: form.phone,
+    phoneValid: isValidPhone(form.phone),
+    verificationOutstanding,
+    accountEmail,
+    email: form.email,
+    // Only while there is nothing usable to quote. A stale total beats a button
+    // that says "Calculating total…" every time a character is typed into the
+    // address line — see `OrderPreviewState.pricing`.
+    pricing: previewInFlight && preview === null,
+  });
+  const gateBehaviour = checkoutGateBehaviour(gate);
+  const gateLabel = checkoutGateLabel(gate, t, total);
+
+  /**
+   * Do what the button says, rather than validating and reporting.
+   *
+   * Three outcomes: submit, open the address modal, or take the customer to the
+   * section that is not finished. `handleSubmit` is still the one that decides
+   * whether the order is really allowed — this only decides which of the three
+   * a press means.
+   */
+  const onPlaceOrder = () => {
+    const { action, errorField } = gateBehaviour;
+    if (action.kind === 'submit') {
+      void handleSubmit();
+      return;
+    }
+    // The same event the validation pass fires, from the other half of the same
+    // decision. Without it every deflected press would be invisible and
+    // `checkout_error` would go quiet the moment the gate started catching
+    // things before the validation could — which would read, in the dashboard,
+    // as a checkout that stopped having problems.
+    if (errorField) {
+      analytics.checkoutError({
+        step: 1,
+        field: errorField,
+        fields: errorField,
+        error_count: 1,
+        delivery_method: form.deliveryMethod,
+      });
+    }
+    if (action.kind === 'address') {
+      setAddressOpen(true);
+      return;
+    }
+    revealField(action.field);
+  };
+
+  const placeOrderButton = (
+    <Button
+      variant="primary"
+      size="lg"
+      fullWidth
+      onClick={onPlaceOrder}
+      loading={submitting}
+      disabled={gateBehaviour.disabled}
+    >
+      {gateLabel}
+    </Button>
+  );
+
+  /** The momentary "it's this one" ring — never the red of a rejected value. */
+  const highlightRing = (field: string) =>
+    highlight === field
+      ? 'rounded-sm ring-2 ring-primary/70 ring-offset-4 ring-offset-white transition-shadow duration-300'
+      : 'transition-shadow duration-300';
 
   return (
     <div className="max-w-xl mx-auto px-4 py-8 sm:py-10">
@@ -761,26 +986,34 @@ function CheckoutContent() {
           the form, because it is part of the same decision. */}
       {!isDelivery && !retryOrder && (
         <Section label={t('checkout.pickup_branch')}>
-          <PickupBranchPicker
-            branches={pickupBranches}
-            selectedId={pickupBranchId}
-            onSelect={(id) => {
-              const branch = pickupBranches.find((b) => b.id === id);
-              if (branch) analytics.pickupBranchSelected({ branch_name: branch.name });
-              onChange({ pickupBranchId: id });
-              clearError('pickupBranch');
-            }}
-            error={errors.pickupBranch}
-            locale={locale}
-            t={t}
-          />
+          {/* The ring goes on the outside; `data-field` is inside the picker,
+              where the scroll needs it. */}
+          <div className={highlightRing('pickupBranch')}>
+            <PickupBranchPicker
+              branches={pickupBranches}
+              selectedId={pickupBranchId}
+              onSelect={(id) => {
+                const branch = pickupBranches.find((b) => b.id === id);
+                if (branch) analytics.pickupBranchSelected({ branch_name: branch.name });
+                onChange({ pickupBranchId: id });
+                clearError('pickupBranch');
+              }}
+              error={errors.pickupBranch}
+              locale={locale}
+              t={t}
+            />
+          </div>
         </Section>
       )}
 
       {/* 2 — Where it goes and who receives it. */}
       {isDelivery ? (
         <Section label={t('checkout.delivery_address')}>
-          <div data-field="address" data-field-error={errors.address ? 'true' : undefined}>
+          <div
+            data-field="address"
+            data-field-error={errors.address ? 'true' : undefined}
+            className={highlightRing('address')}
+          >
             <button
               type="button"
               onClick={() => setAddressOpen(true)}
@@ -856,7 +1089,10 @@ function CheckoutContent() {
         </Section>
       ) : (
         <Section label={t('checkout.contact_information')}>
-          <div className="space-y-3">
+          {/* Named as one field because it is one question. The button's
+              "Enter contact info" points here, at both halves of it, rather
+              than at whichever half happens to be empty. */}
+          <div data-field="contact" className={`space-y-3 ${highlightRing('contact')}`}>
             <div className="grid grid-cols-2 gap-3">
               <div data-field="firstName" data-field-error={errors.firstName ? 'true' : undefined}>
                 <Input
@@ -885,10 +1121,17 @@ function CheckoutContent() {
         </Section>
       )}
 
-      {/* 3 — Optional, and the last thing asked for. Signed in, it is not a
-             question at all: the account already has an address, and asking for
-             it again invites a second one that no order history will match. */}
-      <Section label={accountEmail ? t('checkout.email') : t('checkout.email_optional')}>
+      {/* 3 — The last thing asked for, and no longer optional.
+             `OrderCreate` requires it: an order with no address to send the
+             receipt to is one the customer cannot track, cannot be told about
+             when it is on its way, and cannot find again. So the "(optional)"
+             label and the hint under the field are both gone — an affordance
+             that says a field can be skipped, over a field that cannot, is
+             worse than no affordance at all.
+             Signed in, it is not a question: the account already has an
+             address, and asking for it again invites a second one that no order
+             history will match. */}
+      <Section label={t('checkout.email')}>
         {accountEmail ? (
           <div className="flex items-start gap-2.5 border border-gray-200 bg-gray-50 rounded-sm px-3 py-2.5">
             <Icon name="mark_email_read" className="text-base text-primary mt-0.5" />
@@ -900,15 +1143,33 @@ function CheckoutContent() {
             </div>
           </div>
         ) : (
-          <div data-field="email" data-field-error={errors.email ? 'true' : undefined}>
+          <div
+            data-field="email"
+            data-field-error={errors.email ? 'true' : undefined}
+            className={highlightRing('email')}
+          >
             <Input
               type="email"
-              aria-label={t('checkout.email_optional')}
+              // `required` rather than a marker in the label. No field on this
+              // form wears an asterisk — the form asks for what it needs and
+              // nothing else — so the way this one says it is mandatory is the
+              // way the browser and a screen reader both already understand.
+              required
+              aria-required="true"
+              aria-label={t('checkout.email')}
               placeholder={t('common.email_placeholder')}
               value={form.email}
               onChange={(e) => { onChange({ email: e.target.value }); clearError('email'); }}
               error={errors.email}
-              helper={errors.email ? undefined : t('checkout.email_optional_hint')}
+              helper={
+                errors.email
+                  ? undefined
+                  : withFallback(
+                      t,
+                      'checkout.email_required_hint',
+                      "We'll send your order confirmation and delivery updates here.",
+                    )
+              }
             />
           </div>
         )}
@@ -986,14 +1247,24 @@ function CheckoutContent() {
           <div className="mt-4">
             {showExtras ? (
               <div className="space-y-4 pt-1">
-                <PromoCodeStep
-                  promoCode={form.promoCode}
-                  promoDiscount={form.promoDiscount}
-                  promoMessage={form.promoMessage}
-                  subtotal={subtotal}
-                  identity={promoIdentity}
-                  onChange={(patch) => onChange(patch)}
-                />
+                {/* Named so a refusal that arrives from `POST /orders` can be
+                    scrolled to once this fold-out has been opened for it. */}
+                <div data-field="promo">
+                  <PromoCodeStep
+                    promoCode={form.promoCode}
+                    promoDiscount={form.promoDiscount}
+                    promoMessage={form.promoMessage}
+                    subtotal={subtotal}
+                    identity={promoIdentity}
+                    serverError={promoRefusal}
+                    onChange={(patch) => {
+                      // Any edit to the code makes the last verdict about a
+                      // different code.
+                      setPromoRefusal(null);
+                      onChange(patch);
+                    }}
+                  />
+                </div>
                 <textarea
                   value={form.notes}
                   onChange={(e) => onChange({ notes: e.target.value })}
@@ -1019,16 +1290,7 @@ function CheckoutContent() {
 
       {/* 6 — One button, and on a phone it never leaves the screen. */}
       <div className="hidden sm:block pt-2">
-        <Button
-          variant="primary"
-          size="lg"
-          fullWidth
-          onClick={handleSubmit}
-          loading={submitting}
-          className={blocked ? 'opacity-60' : undefined}
-        >
-          {blocked ? t('checkout.unserviceable_short') : placeOrderLabel}
-        </Button>
+        {placeOrderButton}
         <p className="mt-3 flex items-center justify-center gap-1.5 text-gray-400">
           <Icon name="lock" className="text-sm" />
           <span className="font-body text-xs">{t('checkout.security_note')}</span>
@@ -1045,16 +1307,7 @@ function CheckoutContent() {
           no second viewport for it to disagree with. `-mx-4` cancels the page
           gutter so it still spans edge to edge. */}
       <div className="sm:hidden sticky bottom-0 z-30 -mx-4 mt-4 bg-white/95 backdrop-blur border-t border-gray-100 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-        <Button
-          variant="primary"
-          size="lg"
-          fullWidth
-          onClick={handleSubmit}
-          loading={submitting}
-          className={blocked ? 'opacity-60' : undefined}
-        >
-          {blocked ? t('checkout.unserviceable_short') : placeOrderLabel}
-        </Button>
+        {placeOrderButton}
       </div>
 
       <AddressModal

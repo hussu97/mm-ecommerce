@@ -225,6 +225,44 @@ describe('PromoCodeStep', () => {
   // re-check that only runs while a fold-out is open is a re-check that mostly
   // never runs. See use-promo-validation.test.tsx.
 
+  /**
+   * The refusal that arrives after the customer has pressed pay.
+   *
+   * `POST /orders` judges the coupon one last time against the identity the
+   * order is actually written under, and it is allowed to disagree with the
+   * panel — a code can be spent in another tab, or the basket can fall under a
+   * minimum. Its sentence is the only thing that tells the customer what to do,
+   * and it used to reach them as a toast and nothing else: gone in seconds,
+   * about a code folded away behind a toggle they may never have opened.
+   */
+  describe('a refusal from order creation', () => {
+    it('prints the server sentence against an applied code', () => {
+      renderStep({
+        promoDiscount: 15,
+        promoMessage: '15 AED off',
+        serverError: 'This code is for first orders only',
+      });
+
+      expect(screen.getByRole('alert')).toHaveTextContent('This code is for first orders only');
+      // The applied-code chip cannot go on claiming a discount the server has
+      // just refused, one line above the sentence refusing it.
+      expect(screen.queryByText('15 AED off')).not.toBeInTheDocument();
+      // And the way out stays where it was.
+      expect(screen.getByLabelText('Remove')).toBeInTheDocument();
+    });
+
+    it('prints it under the entry field when the code is not applied', () => {
+      renderStep({ promoDiscount: 0, serverError: 'You have already used this promo code' });
+      expect(screen.getByRole('alert')).toHaveTextContent('You have already used this promo code');
+    });
+
+    it('says nothing when the server said nothing', () => {
+      renderStep({ promoDiscount: 15, promoMessage: '15 AED off' });
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(screen.getByText('15 AED off')).toBeInTheDocument();
+    });
+  });
+
   it('never talks to the server when nothing is applied and nothing is typed', async () => {
     render(
       <PromoCodeStep

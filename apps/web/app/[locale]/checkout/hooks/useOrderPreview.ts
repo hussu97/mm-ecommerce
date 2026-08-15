@@ -32,6 +32,23 @@ interface Options {
   itemCount: number;
 }
 
+export interface OrderPreviewState {
+  preview: OrderPreview | null;
+  /**
+   * A priced answer to the inputs as they stand right now is outstanding —
+   * queued behind the debounce, in the air, or not yet asked for.
+   *
+   * Exists for the place-order button, which says "Calculating total…" rather
+   * than quoting a figure it is about to correct. It is deliberately *not*
+   * enough on its own: paired with `preview === null` at the call site, so a
+   * customer editing an address that already has a total keeps reading that
+   * total instead of watching the button flicker on every keystroke.
+   *
+   * False once the request settles, whether it succeeded or failed.
+   */
+  pricing: boolean;
+}
+
 /**
  * The checkout's only source of money.
  *
@@ -56,8 +73,26 @@ interface Options {
 export function useOrderPreview({
   enabled, deliveryMethod, latitude, longitude, address,
   promoCode, email, phone, subtotal, itemCount,
-}: Options): OrderPreview | null {
+}: Options): OrderPreviewState {
   const [preview, setPreview] = useState<OrderPreview | null>(null);
+
+  /**
+   * Everything this preview would be asked for, as one comparable value.
+   *
+   * `pricing` is derived from it rather than flipped on by the effect: a hook
+   * that raises a flag at the top of its own effect has to re-render the tree
+   * to say something the render already knew, and cannot say it during the
+   * debounce at all — those 400ms are exactly when the button was still quoting
+   * a figure the customer had already invalidated by typing. Comparing the key
+   * that settled against the key we want makes the answer true from the first
+   * paint after the edit, and true on the very first render, with no effect
+   * involved.
+   */
+  const requestKey = JSON.stringify([
+    enabled, deliveryMethod, latitude, longitude, address,
+    promoCode, email, phone, subtotal, itemCount,
+  ]);
+  const [settledKey, setSettledKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (!enabled) return;
@@ -95,13 +130,20 @@ export function useOrderPreview({
             });
           }
         })
-        .catch(() => { /* leave the previous figures in place */ });
+        .catch(() => { /* leave the previous figures in place */ })
+        // Recorded on failure as well as on success: a request that will never
+        // land must not leave the button reading "Calculating total…" forever
+        // over figures the screen already has a usable fallback for. Only the
+        // request that is still the current one may say so — a stale response
+        // settling after another keystroke would otherwise mark the newer
+        // request's key as answered.
+        .finally(() => { if (!cancelled) setSettledKey(requestKey); });
     }, 400);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [
     enabled, deliveryMethod, latitude, longitude, address,
-    promoCode, email, phone, subtotal, itemCount,
+    promoCode, email, phone, subtotal, itemCount, requestKey,
   ]);
 
-  return preview;
+  return { preview, pricing: enabled && settledKey !== requestKey };
 }

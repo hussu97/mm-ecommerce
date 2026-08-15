@@ -357,6 +357,10 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "pickup_branch_unavailable", "Collection isn't available right now."),
     ("checkout", "branch_directions", "Directions"),
     ("common", "address", "Address"),
+    # Kept because a browser holding the previous bundle still asks for them.
+    # Nothing in the storefront reads either one since the address stopped being
+    # optional: the confirmation is sent to it, and it is the second identity
+    # behind the first-order coupon gate.
     ("checkout", "email_optional", "Email (optional)"),
     (
         "checkout",
@@ -364,6 +368,32 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
         "We'll send delivery updates for your order to this email.",
     ),
     ("checkout", "email", "Email"),
+    ("checkout", "email_required", "Email address is required"),
+    (
+        "checkout",
+        "email_required_hint",
+        "We'll send your order confirmation and delivery updates here.",
+    ),
+    (
+        "checkout",
+        "address_pin_required",
+        "Please drop a pin on the map so we know where to deliver.",
+    ),
+    # ── what the Place Order button says when something is still missing ──
+    # One label per unmet requirement, so the button names the next step
+    # instead of refusing a press and leaving the customer to hunt for the
+    # reason. Resolved in `checkout-gate.ts`, in the order the form reads.
+    ("checkout", "placing_order", "Placing order…"),
+    # `pay_now` is not here: it was seeded for the returned-unpaid-order flow
+    # long before this button had states, and it already names the figure.
+    ("checkout", "choose_store", "Choose a store"),
+    ("checkout", "set_address", "Set address"),
+    ("checkout", "choose_another_address", "Choose another address"),
+    ("checkout", "complete_address_details", "Complete address details"),
+    ("checkout", "verify_your_phone", "Verify your phone"),
+    ("checkout", "enter_contact_info", "Enter contact info"),
+    ("checkout", "enter_email_address", "Enter email address"),
+    ("checkout", "calculating_total", "Calculating total…"),
     (
         "checkout",
         "email_signed_in_hint",
@@ -1019,6 +1049,8 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "pickup_branch_unavailable", "الاستلام من المتجر غير متاح حالياً."),
     ("checkout", "branch_directions", "الاتجاهات"),
     ("common", "address", "العنوان"),
+    # See the note on the English pair: unread since the address stopped being
+    # optional, kept for browsers still holding the previous bundle.
     ("checkout", "email_optional", "البريد الإلكتروني (اختياري)"),
     (
         "checkout",
@@ -1026,6 +1058,28 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
         "سنرسل تحديثات توصيل طلبك إلى هذا البريد الإلكتروني.",
     ),
     ("checkout", "email", "البريد الإلكتروني"),
+    ("checkout", "email_required", "البريد الإلكتروني مطلوب"),
+    (
+        "checkout",
+        "email_required_hint",
+        "سنرسل تأكيد طلبك وتحديثات التوصيل إلى هذا البريد الإلكتروني.",
+    ),
+    (
+        "checkout",
+        "address_pin_required",
+        "يرجى تحديد موقعك على الخريطة لنعرف أين نوصل طلبك.",
+    ),
+    # ── ما يقوله زر تأكيد الطلب حين ينقص شيء ──
+    ("checkout", "placing_order", "جارٍ تأكيد الطلب…"),
+    # `pay_now` is already seeded above for the returned-unpaid-order flow.
+    ("checkout", "choose_store", "اختر الفرع"),
+    ("checkout", "set_address", "حدّد العنوان"),
+    ("checkout", "choose_another_address", "اختر عنواناً آخر"),
+    ("checkout", "complete_address_details", "أكمل بيانات العنوان"),
+    ("checkout", "verify_your_phone", "وثّق رقم هاتفك"),
+    ("checkout", "enter_contact_info", "أدخل بيانات التواصل"),
+    ("checkout", "enter_email_address", "أدخل البريد الإلكتروني"),
+    ("checkout", "calculating_total", "جارٍ حساب الإجمالي…"),
     (
         "checkout",
         "email_signed_in_hint",

@@ -24,6 +24,17 @@ interface PromoCodeStepProps {
    * about it from there.
    */
   identity?: PromoIdentity;
+  /**
+   * The reason `POST /orders` refused this code, in the server's own words.
+   *
+   * A refusal at order creation is the expensive one: the customer has filled
+   * in the whole form and pressed pay. The API now answers it specifically —
+   * "This code is for new customers only", "You have already used this promo
+   * code", a minimum-order figure — and that sentence is the only thing that
+   * tells them what to do next, so it is shown here, against the code and next
+   * to the button that removes it, as well as in the toast.
+   */
+  serverError?: string | null;
   onChange: (patch: {
     promoCode: string;
     promoDiscount: number;
@@ -43,7 +54,7 @@ interface PromoCodeStepProps {
  * open is a re-check that mostly never runs.
  */
 export function PromoCodeStep({
-  promoCode, promoDiscount, promoMessage, subtotal, identity, onChange,
+  promoCode, promoDiscount, promoMessage, subtotal, identity, serverError, onChange,
 }: PromoCodeStepProps) {
   const { t } = useTranslation();
   const { addToast } = useToast();
@@ -95,22 +106,51 @@ export function PromoCodeStep({
     setError(null);
   };
 
+  /**
+   * The server's refusal, said where the code is.
+   *
+   * `role="alert"` because it arrives after a press rather than as part of the
+   * page — it has to be announced, not waited to be found.
+   */
+  const refusal = serverError ? (
+    <p role="alert" className="mt-1.5 flex items-start gap-1.5 font-body text-xs text-red-600">
+      <Icon name="error" className="text-sm shrink-0" />
+      <span>{serverError}</span>
+    </p>
+  ) : null;
+
   if (promoDiscount > 0) {
     return (
-      <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-sm px-3 py-2 mb-4">
-        <div>
-          <p className="font-body text-xs font-medium text-green-800">{promoCode}</p>
-          {promoMessage && (
-            <p className="font-body text-xs text-green-600">{promoMessage}</p>
-          )}
-        </div>
-        <button
-          onClick={handleRemove}
-          className="text-green-400 hover:text-green-700 transition-colors"
-          aria-label={t('checkout.remove_promo')}
+      <div className="mb-4">
+        <div
+          className={`flex items-center justify-between rounded-sm px-3 py-2 ${
+            // A refused code is not an applied one, whatever the total still
+            // says. Leaving it green next to the sentence explaining why it
+            // will not work is the screen contradicting itself.
+            serverError
+              ? 'bg-red-50 border border-red-200'
+              : 'bg-green-50 border border-green-200'
+          }`}
         >
-          <Icon name="close" className="text-base" />
-        </button>
+          <div>
+            <p className={`font-body text-xs font-medium ${serverError ? 'text-red-800' : 'text-green-800'}`}>
+              {promoCode}
+            </p>
+            {promoMessage && !serverError && (
+              <p className="font-body text-xs text-green-600">{promoMessage}</p>
+            )}
+          </div>
+          <button
+            onClick={handleRemove}
+            className={`transition-colors ${
+              serverError ? 'text-red-400 hover:text-red-700' : 'text-green-400 hover:text-green-700'
+            }`}
+            aria-label={t('checkout.remove_promo')}
+          >
+            <Icon name="close" className="text-base" />
+          </button>
+        </div>
+        {refusal}
       </div>
     );
   }
@@ -141,6 +181,9 @@ export function PromoCodeStep({
           {t('checkout.apply')}
         </Button>
       </div>
+      {/* Only when the field is not already saying something of its own —
+          two red sentences about one code is one too many. */}
+      {!error && refusal}
 
       {/* No verification panel here any more, and deliberately none.
           It used to live at this spot because a refused code was the only
