@@ -228,6 +228,19 @@ class PosOrderResponse(ORMModel):
     #: Where a website order is going, flattened for the ticket. Null for a
     #: counter order, which has nowhere to go but the counter.
     delivery_address: str | None = None
+    #: Who is carrying it — `lalamove`, `noon_send` or `third_party`. The live
+    #: answer, so a third-party order an admin moved onto Lalamove reads as
+    #: Lalamove here. Printed on the receipt because the person boxing the order
+    #: has to know which driver to hand it to, and the counter has no other
+    #: sight of the dispatch decision.
+    delivery_provider: str | None = None
+    #: The delivery polygon that priced the order, by name. A snapshot taken at
+    #: checkout — the map is versioned and the zone may be redrawn tomorrow, so
+    #: this is what the order was actually sold against.
+    delivery_zone_name: str | None = None
+    #: The seven-digit number a driver can read back down a phone. Null on a
+    #: third-party zone that never meets an integrated courier.
+    courier_reference: str | None = None
 
     subtotal: Decimal
     discount_amount: Decimal
