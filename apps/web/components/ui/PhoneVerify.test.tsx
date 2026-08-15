@@ -256,7 +256,7 @@ describe('PhoneVerify — the number the code was sent to', () => {
     expect(onCodePending).toHaveBeenLastCalledWith(false);
 
     await sendOnce();
-    expect(onCodePending).toHaveBeenLastCalledWith(true);
+    await waitFor(() => expect(onCodePending).toHaveBeenLastCalledWith(true));
 
     fireEvent.click(screen.getByRole('button', { name: /change number/i }));
     await waitFor(() => expect(onCodePending).toHaveBeenLastCalledWith(false));
@@ -268,7 +268,13 @@ describe('PhoneVerify — the number the code was sent to', () => {
       <PhoneVerify phone={PHONE} onVerified={vi.fn()} onCodePending={onCodePending} />,
     );
     await sendOnce();
-    expect(onCodePending).toHaveBeenLastCalledWith(true);
+    // `waitFor`, not a bare assertion: `sendOnce` returns as soon as the code
+    // panel is in the DOM, and the callback that reports it is a passive
+    // effect. React applies the DOM mutation and flushes `useEffect` in two
+    // steps, so on a loaded machine the poll can land in between — which is
+    // exactly how this failed in CI while passing on every developer's laptop.
+    // The claim is unchanged: it must become true, and stay the last word.
+    await waitFor(() => expect(onCodePending).toHaveBeenLastCalledWith(true));
 
     // Otherwise the form is left with an input nothing will ever re-enable.
     unmount();
