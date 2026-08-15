@@ -49,6 +49,18 @@ async def sweep_once() -> list:
 
     Returns the batches dispatched, or nothing at all if another worker held
     the lock — which is a normal outcome, not a failure.
+
+    **Two kinds of work, one lock.** Runs whose window has closed, and single
+    orders whose retry has fallen due. They are swept together because they are
+    the same question asked of two tables — *is anything owed a driver right
+    now* — and because a second loop would need a second advisory lock, a second
+    tick and its own reason to exist. Retries run after batches: a batch going
+    out may itself be what clears an order's failure, and doing them in this
+    order means that order is already booked by the time its rung comes up.
+
+    Retries cannot stop batches. A failure in the retry sweep is logged and
+    swallowed here rather than allowed out, because the runs waiting on the next
+    tick are carrying cakes that are already paid for and boxed.
     """
     async with AsyncSessionFactory() as session:
         got_lock = await session.scalar(
@@ -59,6 +71,14 @@ async def sweep_once() -> list:
         try:
             dispatched = await batching_service.dispatch_due_batches(session)
             await session.commit()
+            try:
+                retried = await batching_service.retry_failed_dispatches(session)
+                await session.commit()
+                if retried:
+                    logger.info("Retried %s failed dispatch(es)", len(retried))
+            except Exception:  # noqa: BLE001 — never at the batches' expense
+                logger.exception("Retry sweep failed; batches were unaffected")
+                await session.rollback()
             return dispatched
         finally:
             # Released explicitly rather than left to the connection closing,

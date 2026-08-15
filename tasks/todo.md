@@ -1,219 +1,194 @@
-# Microsoft Clarity on the storefront — sessions, heatmaps and every event
+# The courier is called when the order is accepted, not when it is packed
 
 ## Why
 
-Umami answers *how many*. It cannot answer *why*. The conversion audit's open
-questions are all of the second kind — why 71% of add-to-carts never reach the
-basket, why `checkout_error` fires on `field: phone` more than anything else,
-what a customer does in the fifteen seconds before `delivery_unserviceable`.
-Clarity answers those with a recording and a heatmap, and it is free with no
-volume cap that this shop will reach.
+`MM-20260815-001` was packed at 11:21 on 15 Aug, sat with `batch_id` NULL and
+`last_error = "Courier is not configured; dispatch this order by hand"`, and
+nothing in the system was ever going to pick it up again. Two separate faults
+met on that one order, and both are fixed here.
 
-The point of the integration is not the tag. Pasting the tag takes one line and
-gives you anonymous recordings you have no way to find. The work is making the
-recordings **findable**: every one of the 66 storefront events reaching Clarity
-as a filterable event, the dimensions that matter reaching it as tags, and the
-sessions that went wrong being the ones Clarity keeps when it samples.
+**The first was a missing credential.** The order was packed from the register,
+and the `pos-api` container had no `LALAMOVE_*` variables — item 5 of the secret
+checklist, for the second time. `is_enabled()` was False, so
+`assign_or_dispatch` returned at its first guard, never looked at the zone's
+batch group, and fell through to the single-order path. Already fixed by
+`3657754` and deployed; not part of this change.
+
+**The second is that nothing retries a single dispatch.** `dispatch_due_batches`
+sweeps *batches*. An order that failed on the un-batched path is in no batch, so
+no sweep will ever see it. `assign_or_dispatch` runs on the `packed` transition
+and that transition has already happened. The order waits for a human to notice
+a red box on an admin screen — which is exactly what happened, for six hours.
+
+And behind both: **`packed` is the wrong trigger.** It is a person pressing a
+button to say something the system could work out, and until they press it no
+driver has been called. A kitchen with an iPad nobody is watching is a kitchen
+where every order waits for someone to walk over twice — once to accept, once to
+say it is boxed. The prep time is long enough to call the driver at the start of
+it, so that is where the call moves.
+
+## Decisions taken (asked and answered before writing this)
+
+| Question | Answer |
+|---|---|
+| Driver timing | **Book immediately on accept.** No scheduled orders, no prep-time setting. |
+| Batch cutoff | **Always join the window covering accept-time.** No ready-by check. |
+| Auto-accept scope | **Stays per terminal** (`devices.auto_accept_online_orders`). |
+| `packed` | **Auto-stamped, button dropped.** Status and tracker unchanged. |
 
 ## Design
 
-### One hook, not sixty-six call sites
+### 1. Retry, with the ladder that already exists
 
-`analytics.ts` already funnels every event through a single private `track()`.
-Clarity is mirrored from inside that function, so all 66 events — and every
-event added after this — reach both tools with no per-call-site work and no way
-for the two dashboards to drift apart on what happened.
+`delivery_batches` carries `attempt_count` / `next_attempt_at` / `last_error`
+and `RETRY_BACKOFF = (5m, 15m, 45m)`. `order_deliveries` carries only
+`last_error`. It gets the other two, with the same names and the same meaning,
+because a second vocabulary for "when do we try again" is how the two paths come
+to disagree about it.
 
-### The queue is the same problem twice
+* Migration `094` adds `dispatch_attempts INT NOT NULL DEFAULT 0` and
+  `next_attempt_at TIMESTAMPTZ NULL` to `order_deliveries`, indexed on
+  `next_attempt_at` — the sweep's only predicate.
+* `courier_service.dispatch` becomes the one place that records the outcome. It
+  already funnels both providers and the fallback; the provider modules keep
+  writing `last_error` and stay ignorant of retries.
+* A failure schedules the next rung and, on the last one, stops and leaves the
+  row for a human — the same two ending conditions as `_retry_at`, including
+  the kitchen-hours one. A booking made at 00:05 sends a driver to a dark shop.
+* A success clears `last_error`, `next_attempt_at` and the counter.
+* `batching_service.retry_failed_dispatches` selects deliveries that are due,
+  `FOR UPDATE SKIP LOCKED`, and re-enters `assign_or_dispatch` — not
+  `courier_service.dispatch`. Re-entering at the top means an order that failed
+  while the courier was misconfigured can *join a batch* once it is configured,
+  rather than being condemned to the single-order path by its first failure.
+* `batch_scheduler.sweep_once` calls it inside the advisory lock it already
+  holds. One sweep, one lock, two kinds of work.
 
-`analytics.ts` carries a poll-and-flush queue because the Umami script is
-`afterInteractive` and anything tracked on mount races it — a real bug that lost
-`order_completed` on slow connections. The Clarity tag has exactly the same
-shape and exactly the same race. Rather than copy forty subtle lines and their
-war story, the queue moves to `lib/deferred-dispatch.ts` and both use it. The
-existing analytics tests are the proof that the extraction is behaviour-neutral.
+**"Not configured" retries like anything else.** It is the failure most likely
+to be fixed by a deploy twenty minutes later, and this whole document exists
+because it was not retried.
 
-### What becomes a tag, and what does not
+### 2. Acceptance is the trigger
 
-Clarity tags are *filters over recordings*. A filter is only useful if it has
-few enough values to pick from a list, so the payload is not forwarded wholesale:
+`POST /pos/orders/{id}/accept` calls `batching_service.assign_or_dispatch` after
+flipping `pos_status` to `active`. That single call already contains every
+branch this needs:
 
-- **Allow-listed keys only** — `surface`, `reason`, `step`, `method`, `list`,
-  `creative`, … the low-cardinality dimensions you would actually filter on.
-- **Money is banded, not passed.** `total: 143.75` is a filter with one value
-  per order. `value_band: 100-200` is a filter you can use. One band tag,
-  derived from `total ?? subtotal ?? value`.
-- **`order_number` is passed**, high cardinality and all: it is the only join
-  key between a recording and a row in the admin, and "show me the session
-  behind this order" is the question the shop will ask most.
-- **Free text never goes.** No `query`, no `error_message`, no `title` typed by
-  a customer, no email, phone, address or coordinate.
+* **Third-party zone** → `books_itself` is False, returns untouched. There is no
+  driver to call, so acceptance does nothing but put the order on the register
+  and the paper. This is the "send it right away" case.
+* **Integrated zone, no batch group** → books a driver now.
+* **Integrated zone, in a group** → joins the run whose window covers *now*.
 
-### Which sessions survive sampling
+`dispatchable_at` now means *accepted*, not *packed*. The column keeps its name
+and its job — the moment a window is matched against — and its docstring is
+rewritten rather than the column renamed, because a rename buys nothing and
+breaks `reschedule_group`.
 
-Clarity keeps 100k recordings per project per day and samples above that. We are
-nowhere near it, but `upgrade` costs nothing and the rule is worth encoding:
-anything whose name reads as a failure (`*_failed`, `*_error`, `unavailable`,
-`unserviceable`, `not_found`, `cancelled`) upgrades the session, as do
-`order_completed`, `begin_checkout` and `view_checkout`. A pattern rather than a
-list, so a failure event added next month is prioritised without anyone
-remembering to add it here.
+**`packed` stays wired as a backstop, not removed.** Not every order is accepted
+on a register: a branch with no terminal receiving online orders has no
+acceptance event at all, and an admin marking such an order packed must still
+call a driver. `assign_or_dispatch` is idempotent — it returns early on an order
+already batched or already booked — so both triggers can coexist and the second
+one is free.
 
-### Privacy is not the default here
+### 3. `packed` stamps itself
 
-Umami is cookieless and stores no personal data. Clarity records the DOM. Input
-boxes and dropdowns are masked in every mode and email addresses and numbers are
-masked in the default Balanced mode — but a delivery address rendered as *text*,
-and a map with a pin on somebody's home, are neither. Those are masked
-explicitly with `data-clarity-mask`, in the six places the storefront renders
-them.
+Nobody presses it any more, so something has to.
 
-`identify` sends the user's opaque id and nothing else — never the email, never
-the `friendly-name` argument.
+* **Integrated couriers** — stamped when the booking succeeds. A driver has been
+  called for this box; the customer's "on its way" email is the honest thing to
+  send, and `PICKED_UP` later moves it to `out_for_delivery`. The webhook guard
+  already accepts that transition from `confirmed` *or* `packed`, so an order
+  that never passed through `packed` is not stranded either way.
+* **Third-party zones** — stamped when the last kitchen ticket for the order is
+  completed. That is the shop physically finishing the box, which is what the
+  word meant when a person was pressing it.
+* `POST /pos/orders/{id}/packed` stays and keeps working. It is what a register
+  in the wild will call until every iPad has updated, and removing an endpoint
+  that live devices still hold is how a shop loses a day.
 
-## Tasks
+The POS **button** goes. The endpoint does not.
 
-- [x] `lib/deferred-dispatch.ts` — extract the wait-for-script queue; bound it
-- [x] `lib/analytics.ts` — use it, and mirror every `track()` into Clarity
-- [x] `lib/clarity.ts` — typed client API, tag allow-list, value bands, upgrade rule
-- [x] `lib/clarity.test.ts` — 21 tests; extend `analytics.test.ts` for the mirror
-- [x] `components/analytics/ClarityIdentity.tsx` — identify on sign-in, in `providers.tsx`
-- [x] `app/[locale]/layout.tsx` — load the tag when the project id is set
-- [x] `data-clarity-mask` on the address, map, contact and account surfaces
-- [x] `next.config.ts` — CSP for `*.clarity.ms` and `c.bing.com`
-- [x] `.env.example`, `PRODUCTION.md`, `README.md` — `NEXT_PUBLIC_CLARITY_PROJECT_ID`
-- [x] `docs/microsoft-clarity-setup.md` — dashboard config, masking, troubleshooting
-- [x] `docs/umami-analytics-setup.md` — changelog row (CLAUDE.md rule 10)
-- [x] Verify: `pnpm --filter web test`, `lint`, `tsc`, and a real page load
+### 4. The alarm rings for five minutes, including on auto-accept
 
-## Review
+Today the alarm is suppressed entirely on an auto-accepting terminal, on the
+grounds that an alarm exists to fetch a person and there is nothing for them to
+do. That was wrong in the one way that matters: the kitchen still has to *make*
+the cake, and a receipt sliding silently out of a printer nobody is next to is
+an order nobody starts.
 
-### What shipped
+* Auto-accept no longer suppresses the tone.
+* A raised alarm has a floor of **five minutes**. Below that it cannot be
+  silenced by anything — an auto-accepted order has no Accept button to press,
+  so a silence that needs a person defeats the point.
+* After the floor: an auto-accepted order's alarm stops by itself; a manual one
+  keeps ringing until somebody accepts it, exactly as now.
+* **iPad only**, by explicit instruction. This breaks the consistency rule in
+  `mm-pos/CLAUDE.md`, so it breaks it *once*, in the shared kit, behind a named
+  `OrderAlert.isLoudTerminal` gate with the reason written next to it — rather
+  than by putting an `if` in `MMPosPad/`.
 
-| File | What |
+### 5. Printing while backgrounded (iPad only)
+
+The register is a shared iPad and it will not always be the frontmost app.
+Printing today needs the app awake, which means an order accepted while somebody
+is in Safari prints when they come back to it.
+
+* `MMPosPad` gets a **real `Info.plist`** with
+  `UIBackgroundModes = [remote-notification, audio]`. `GENERATE_INFOPLIST_FILE`
+  is turned off for that target only. The comment in `PushService` records that
+  `INFOPLIST_KEY_UIBackgroundModes` was tried and silently does nothing — this
+  is the fix it points at.
+* `push_service._alert` gains `"content-available": 1` on the order-placed push,
+  so iOS wakes the app to run the handler as well as showing the banner.
+* `PushAppDelegate` implements
+  `application(_:didReceiveRemoteNotification:fetchCompletionHandler:)`, which
+  fetches the branch's pending orders, auto-accepts and prints them if the
+  terminal is set to, and calls the completion handler. ~30 seconds of wall
+  clock, which a LAN ESC/POS write fits inside comfortably.
+* The `audio` mode is what lets the tone keep sounding once the app is not
+  frontmost. Without it iOS stops the session the moment it backgrounds and the
+  five-minute floor means nothing.
+
+### 6. One number on the paper
+
+Three lines print an identifier today and two of them are labelled things
+nobody asked for: `External Number:` on the receipt and the kitchen ticket, and
+`Courier ref:` in the delivery block.
+
+They collapse to **one line, labelled `Order number:`**, whose value is the
+first of `courierReference`, `externalReference`, `orderNumber` that exists —
+and which is **omitted entirely when the value is the order number already
+printed in the box at the top**. So:
+
+| Order | Prints |
 |---|---|
-| `lib/deferred-dispatch.ts` | new — the queue both trackers share, now bounded at 500 |
-| `lib/clarity.ts` | new — `event` / `set` / `upgrade` / `identify` / `consentv2`, plus the mirror rules |
-| `lib/clarity.test.ts` | new — 19 tests |
-| `lib/analytics.ts` | `track()` mirrors to Clarity; queue logic moved out |
-| `lib/analytics.test.ts` | +4 tests for the mirror, incl. "PII never becomes a tag" |
-| `components/analytics/ClarityIdentity.tsx` | new — identify on sign-in |
-| `app/providers.tsx` | mounts it inside `AuthProvider` |
-| `app/[locale]/layout.tsx` | the tag, gated on `NEXT_PUBLIC_CLARITY_PROJECT_ID` |
-| `next.config.ts` | CSP: `*.clarity.ms` on script/connect/img, `c.bing.com` on connect/img |
-| 6 page/component files | `data-clarity-mask="true"` on address, map and account PII |
-| `docs/microsoft-clarity-setup.md` | new — dashboard config, privacy, heatmap notes, troubleshooting |
-| `docs/umami-analytics-setup.md` | changelog row + a pointer at the top (CLAUDE.md rule 10) |
-| `.env.example`, `README.md`, `PRODUCTION.md` | the one new variable, documented in all three |
+| Lalamove / noon Send | `Order number: 4821907` (the reference the driver quotes) |
+| Talabat / Deliveroo | `Order number: 3825713004` (theirs) |
+| Third-party courier | nothing extra — the boxed `Order# MM-…` is the only number |
 
-### Verification
+## Work
 
-- `pnpm vitest run` — **342 passed, 34 files**, against a stashed baseline of
-  **319 / 33**. All 23 new tests are the Clarity ones; nothing existing changed
-  behaviour, which is what makes the queue extraction safe.
-- `tsc --noEmit` clean. `pnpm lint` reports 13 warnings and 0 errors, byte for
-  byte the same as the stashed baseline.
-- **Driven in a real browser** (Playwright/Chromium against `next dev`), which is
-  what caught that the unit tests cannot prove the wiring reaches the components:
-  - with the variable set, the document carries
-    `<script src="https://www.clarity.ms/tag/…">` and the browser requests it;
-  - a real storefront event travelled the whole path — `lib/api.ts` →
-    `analytics.apiError` → `track()` → `mirrorToClarity` → `window.clarity` —
-    arriving as `['event','api_error']`, `['set','status','500']`,
-    `['set','endpoint','/cart']`, `['set','method','GET']`,
-    `['upgrade','api_error']`. Tag allow-list, upgrade rule and ordering all
-    confirmed live rather than inferred;
-  - no CSP violation naming `clarity.ms` in the console.
-- **The off switch was verified against a page that actually rendered.** The
-  first attempt "proved" it on a server that was refusing connections — an empty
-  grep on an empty response, which is exactly the both-hypotheses-predict-it
-  observation in `tasks/lessons.md` (2026-08-06). Re-run properly: 56 KB served,
-  the Umami tag present as a control, and zero occurrences of `clarity`.
-
-### Known limits, recorded so they are not rediscovered as bugs
-
-- **The Clarity tag is not proxied through this origin, unlike Umami.** Clarity's
-  script hard-codes its own ingest hosts, so a first-party rewrite would serve
-  the file and still beacon to `clarity.ms`. Blocklists that carry
-  `||clarity.ms` therefore drop it, and mobile traffic behind a content blocker
-  will be under-represented. Umami stays the source of truth for counts;
-  Clarity is for *why*, on the sessions it does see.
-- **A recording is a sample, a count is not.** Never read a rate off Clarity.
-- **Masking changes take up to an hour** and are never retroactive.
-- **Consent** is not wired to a banner because the site has none. The API is
-  implemented (`clarity.consent()`); if EEA/UK traffic ever matters, turn cookie
-  consent on in the dashboard and call it from the banner — the note is in
-  `docs/microsoft-clarity-setup.md`.
-</content>
-
----
-
-# Firebase OTP: stop the SMS burn, and brand the message
-
-## Why
-
-A $4.04 charge was reported as phone verification. **It was not** — measured
-afterwards, `SendVerificationCode` had run three times in twelve days. The charge
-is the `mm-backend` e2-micro VM, its 20 GB pd-ssd and its static IP in Doha,
-running since March on a billing account shared with three other projects.
-
-The audit still found real defects, and they are worth closing on exposure alone.
-The structural fault: `signInWithPhoneNumber` runs browser→Google directly, so
-the step that costs money is the one step nothing of ours sits in front of.
-Turnstile and the `10/minute` limiter guard `/auth/verify-phone`, which runs
-*after* the SMS is already bought. `auth.py` says so itself: "Turnstile here
-guards our ledger rather than Google's SMS bill."
-
-## Tasks
-
-- [x] `PhoneVerify`: ask `/auth/phone-verified` **before** sending. The account
-      page already does this on the number; checkout never did, so a returning
-      customer paid for a duplicate SMS.
-- [x] `PhoneVerify`: 60s cooldown on resend, with the remaining seconds shown.
-      The button had no throttle at all — every click was $0.09.
-- [x] `PhoneVerify`: cap billed sends per mount, then stop offering the button.
-- [x] `PhoneVerify`: require the Turnstile solution *before* the send, not only
-      at the record step, so our bot check sits in front of the paid action.
-- [x] Unit tests for all four.
-- [x] Console steps for the operator (region policy, App Check, SMS Defense) and
-      the custom auth domain that fixes the SMS text.
-
-## Known limit of the code half
-
-A determined bot calls Google's REST endpoint with the public API key and never
-runs any of this. Client-side guards stop honest over-clicking and casual abuse,
-which is what a $4.04 three-day bill actually looks like. Only App Check, the
-AE-only region policy and reCAPTCHA SMS Defense are enforced by Google.
+- [ ] `094_delivery_dispatch_retry.py` — two columns, one index
+- [ ] `OrderDelivery.dispatch_attempts`, `.next_attempt_at`, `.is_awaiting_retry`
+- [ ] `courier_service.dispatch` records outcome and schedules the ladder
+- [ ] `batching_service.retry_failed_dispatches` + `_dispatch_retry_at`
+- [ ] `batch_scheduler.sweep_once` calls it under the existing lock
+- [ ] `accept_order` calls `assign_or_dispatch`
+- [ ] `dispatchable_at` docstring; `assign_or_dispatch` docstring
+- [ ] auto-stamp `packed` on booking success (integrated)
+- [ ] auto-stamp `packed` on last kitchen ticket completed (third party)
+- [ ] admin order screen: show retry state, not just `last_error`
+- [ ] `OrderAlert`: five-minute floor, `isLoudTerminal`, auto-accept rings
+- [ ] `IncomingOrdersModel`: drop the `if !autoAccept` suppression
+- [ ] drop "Mark packed" from both apps' incoming-orders UI
+- [ ] `MMPosPad/Info.plist` + background modes + `content-available`
+- [ ] `PushAppDelegate` background fetch-and-print
+- [ ] `ReceiptRenderer`: one `Order number:` line, receipt and kitchen ticket
+- [ ] tests: retry ladder, accept-triggers-dispatch, receipt line, alarm floor
+- [ ] `swift test`; both app targets build
 
 ## Review
 
-`PhoneVerify` now refuses to spend in four ways: it asks `/auth/phone-verified`
-before buying anything, holds a 60s cooldown between sends, stops at three, and
-will not send until Turnstile has answered. The cooldown is a **deadline**, not a
-ticking counter — a counter is subject to background-tab timer throttling, and
-this is precisely the panel a customer leaves to go and read an SMS, so a counter
-would still owe them 40 seconds on return.
-
-Two things surfaced while doing it. The already-verified check existed and was
-wired up on the account page only, so checkout had been paying twice for the same
-number. And `tsc` caught that a resend set `step` to `sending`, which fell out of
-the code-entry branch and replaced the customer's half-typed code box with the
-button they had just pressed; the branch now holds while a resend is in flight.
-
-## Verified
-
-`pnpm vitest run` — 34 files, 335 tests, all passing, 8 of them new and all
-about how many times `signInWithPhoneNumber` may run. `tsc --noEmit` clean.
-`pnpm lint` 0 errors (13 warnings, all pre-existing and elsewhere).
-
-**Not verified:** the live Firebase round trip, for the same reason as before —
-there are no Firebase env vars in this environment and `PhoneVerify` renders
-`null` without them by design. The cooldown, the ceiling, the pre-send check and
-the Turnstile gate are all proved against a mocked SDK; that the real SDK still
-sends is unchanged code and needs a deploy that has the vars to confirm.
-
-**Not fixed here — console-side, needs the account owner.** The code half only
-stops honest over-clicking; anything driving Google's REST endpoint with the
-public API key skips this file. Firebase App Check, the AE-only SMS region
-policy, and reCAPTCHA SMS Defense are the parts Google enforces. The custom auth
-domain that puts the brand in the SMS text is also console-side.
+_(filled in when the work lands)_

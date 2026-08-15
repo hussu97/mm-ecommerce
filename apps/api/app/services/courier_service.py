@@ -29,9 +29,12 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import trading_hours
+from app.models.branch import Branch
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import Order
 from app.models.order_delivery import OrderDelivery
@@ -93,11 +96,24 @@ async def dispatch(db: AsyncSession, order: Order) -> OrderDelivery | None:
     `last_error` and returned quietly rather than raised: the order is already
     paid for, and refusing to change its status because a courier is unreachable
     helps nobody.
+
+    **This is also the one place that records whether it worked.** The provider
+    modules write `last_error` and know nothing about retries; the ladder is
+    applied here, once, on the way out — so a rung cannot be skipped by whichever
+    of the two providers happened to answer, and the noon Send → Lalamove
+    fallback counts as the single attempt it is rather than two.
     """
     delivery = await lalamove_service.get_delivery(db, order.id)
     if delivery is None or not books_itself(delivery.provider):
         return delivery
 
+    return await _record_outcome(db, order, await _dispatch_once(db, order, delivery))
+
+
+async def _dispatch_once(
+    db: AsyncSession, order: Order, delivery: OrderDelivery
+) -> OrderDelivery | None:
+    """One attempt, on whichever courier ends up carrying it."""
     # The zone decides, and nothing else does. A `lalamove` zone is never
     # offered to noon Send — their fleet probably cannot reach it.
     if delivery.provider != NOON_SEND:
@@ -130,6 +146,113 @@ async def dispatch(db: AsyncSession, order: Order) -> OrderDelivery | None:
     )
     delivery.provider = LALAMOVE
     return await lalamove_service.dispatch_order(db, order)
+
+
+# ── retry ─────────────────────────────────────────────────────────────────────
+
+
+async def _record_outcome(
+    db: AsyncSession, order: Order, delivery: OrderDelivery | None
+) -> OrderDelivery | None:
+    """
+    Whether anything will happen to this order on its own, written down.
+
+    Called on the way out of every dispatch, including the ones that worked. A
+    success that did not clear the counter would have the next failure start
+    three rungs up the ladder and give up almost immediately.
+    """
+    if delivery is None:
+        return None
+
+    if delivery.courier_order_id and not delivery.last_error:
+        delivery.dispatch_attempts = 0
+        delivery.next_attempt_at = None
+        # A driver has been called for this box, which is the closest thing to
+        # "packed" that anybody now says out loud — the press that used to say
+        # it is gone from the register. Imported here rather than at the top:
+        # `order_service` imports this module.
+        from app.services import order_service
+
+        await order_service.stamp_packed(
+            db, order, note=f"{delivery.provider} booking accepted"
+        )
+        return delivery
+
+    if not delivery.last_error:
+        # Neither booked nor failed: the provider declined to act at all, which
+        # is what a re-dispatch of an order already out with a driver does.
+        # Nothing to schedule and nothing to clear.
+        return delivery
+
+    # The branch's own hours, not a default pair, because the whole point of the
+    # kitchen-hours cutoff is that this particular counter will be dark. A
+    # primary-key get rather than `resolve_pickup`: the zone's fallback logic is
+    # for deciding where a driver collects from, and all this needs is two
+    # strings off a row the session has usually already loaded.
+    branch = (
+        await db.get(Branch, order.branch_id)
+        if getattr(order, "branch_id", None)
+        else None
+    )
+    # `or 0` because the column default is applied by the database at INSERT: a
+    # delivery row built in memory and not yet flushed still reads None, and a
+    # dispatch can be attempted on one — the checkout writes the row and the
+    # register accepts the order inside the same request.
+    delivery.dispatch_attempts = (delivery.dispatch_attempts or 0) + 1
+    delivery.next_attempt_at = _retry_at(
+        delivery,
+        opens_at=branch.opening_from if branch else "00:00",
+        closes_at=branch.opening_to if branch else "23:59",
+    )
+    if delivery.next_attempt_at is None:
+        logger.warning(
+            "Dispatch for delivery %s failed after %s attempt(s) and needs a human: %s",
+            delivery.id,
+            delivery.dispatch_attempts,
+            delivery.last_error,
+        )
+    else:
+        logger.info(
+            "Dispatch for delivery %s failed (attempt %s); retrying at %s",
+            delivery.id,
+            delivery.dispatch_attempts,
+            delivery.next_attempt_at.isoformat(),
+        )
+    return delivery
+
+
+def _retry_at(
+    delivery: OrderDelivery,
+    *,
+    now: datetime | None = None,
+    opens_at: str = "00:00",
+    closes_at: str = "23:59",
+) -> datetime | None:
+    """
+    When to ask again, or None for "not on its own".
+
+    Two things end it, both borrowed from the batch ladder because they are the
+    same two facts. Running out of rungs, which means the failure has outlived
+    the kind of problem that fixes itself. And landing after the kitchen has
+    shut — the driver collects from a physical counter, and a booking made at
+    00:05 for something that failed at 23:00 sends somebody to a dark shop.
+
+    The ladder itself is `batching_service.RETRY_BACKOFF`, imported here rather
+    than copied: a second tuple that drifted by five minutes would be invisible
+    until somebody compared two orders that failed the same way. Imported
+    *inside the function* because `batching_service` imports this module at the
+    top of its own file, and closing that cycle at import time is a crash on
+    boot rather than a lint warning.
+    """
+    from app.services.batching_service import RETRY_BACKOFF as LADDER
+
+    if delivery.dispatch_attempts > len(LADDER):
+        return None
+    moment = now or datetime.now(timezone.utc)
+    when = moment + LADDER[delivery.dispatch_attempts - 1]
+    if not trading_hours.is_open(when, opens_at, closes_at):
+        return None
+    return when
 
 
 async def cancel(db: AsyncSession, order: Order) -> OrderDelivery | None:

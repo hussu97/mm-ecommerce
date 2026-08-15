@@ -244,6 +244,18 @@ class PosOrderResponse(ORMModel):
     #: The seven-digit number a driver can read back down a phone. Null on a
     #: third-party zone that never meets an integrated courier.
     courier_reference: str | None = None
+    #: Whether a terminal set to accept by itself is allowed to accept *this*
+    #: order by itself.
+    #:
+    #: False for an order placed while the shop was shut. Accepting is no longer
+    #: a formality — it prints the ticket and calls a driver — and doing either
+    #: at 03:00 for a website order somebody placed overnight sends a van to a
+    #: dark counter. Those wait for a person, on every terminal, however the
+    #: terminal is configured.
+    #:
+    #: The server decides rather than the app: the branch's hours live here, and
+    #: two iPads at one counter must not disagree about whether the shop is open.
+    may_auto_accept: bool = True
 
     subtotal: Decimal
     discount_amount: Decimal

@@ -109,6 +109,7 @@ __all__ = [
     "next_dispatch_at",
     "overlapping",
     "reschedule_group",
+    "retry_failed_dispatches",
 ]
 
 
@@ -281,11 +282,20 @@ async def assign_or_dispatch(
     db: AsyncSession, order: Order, *, moment: datetime | None = None
 ) -> OrderDelivery | None:
     """
-    The single entry point when an order becomes ready to leave.
+    The single entry point when an order becomes something to call a driver for.
 
     Either it joins a run that has not left yet, or it goes on its own right
     now. Third-party zones fall straight through and keep the manual flow they
     have always had.
+
+    **Called on acceptance, not on packing.** The register accepting an order —
+    by hand or by itself, on an auto-accepting terminal — is the shop committing
+    to make it, and that is early enough for the driver's travel to overlap the
+    prep instead of following it. `packed` still calls this as a backstop: a
+    branch with no terminal receiving online orders has no acceptance event at
+    all, and an admin marking such an order packed must still get a driver. Both
+    triggers are safe because this function is idempotent — an order already on
+    a run, or already booked, returns untouched at the guards below.
 
     Only Lalamove has runs to share. A multi-drop Lalamove order is one booking
     with fifteen stops; noon Send's equivalent is a different product with a
@@ -601,6 +611,96 @@ async def dispatch_due_batches(db: AsyncSession, *, limit: int = 20) -> list[uui
     return dispatched
 
 
+async def retry_failed_dispatches(
+    db: AsyncSession, *, limit: int = 20
+) -> list[uuid.UUID]:
+    """
+    Ask again for every order whose retry has fallen due.
+
+    The batch sweep above has always existed; this is its missing half. An order
+    that failed on the *un-batched* path is in no batch, so nothing in
+    `dispatch_due_batches` could ever see it — and the `packed` transition that
+    first tried it had already happened. Until this function it waited for a
+    human to notice a red box on an admin screen. MM-20260815-001 waited six
+    hours, on an error a deploy had fixed after twenty-six minutes.
+
+    **Re-entering at `assign_or_dispatch`, not `courier_service.dispatch`.** The
+    order's first attempt may have taken the single-order path only because the
+    courier was misconfigured at that moment — that guard sits above the batch
+    lookup. Retrying at the top means the fix puts the order on a shared run,
+    which is where its zone's schedule always said it belonged. Retrying at the
+    bottom would condemn it to travel alone because of a credential that is no
+    longer missing.
+
+    `moment` is pinned to the order's original `dispatchable_at` so a retry
+    matches the window the order actually entered the queue in, rather than
+    whatever window happens to be open an hour later.
+    """
+    now = datetime.now(timezone.utc)
+    due = (
+        (
+            await db.execute(
+                select(OrderDelivery)
+                .where(
+                    OrderDelivery.next_attempt_at.isnot(None),
+                    OrderDelivery.next_attempt_at <= now,
+                    OrderDelivery.courier_order_id.is_(None),
+                )
+                .order_by(OrderDelivery.next_attempt_at)
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    retried: list[uuid.UUID] = []
+    for delivery in due:
+        order = await db.get(Order, delivery.order_id)
+        if order is None:  # pragma: no cover — FK is RESTRICT
+            delivery.next_attempt_at = None
+            continue
+        # A settled order stops asking. The migration's backfill already bounds
+        # this, but an order refunded *between* two rungs would otherwise have a
+        # driver called for it, and a cake going out for a refunded order is
+        # worse than a late one.
+        if order.status not in _RETRYABLE_STATUSES:
+            logger.info(
+                "Order %s is %s; abandoning its retry",
+                order.order_number,
+                order.status.value,
+            )
+            delivery.next_attempt_at = None
+            await db.commit()
+            continue
+
+        # Cleared before the attempt, not after. `assign_or_dispatch` returns
+        # early on a delivery that joins a batch, and that path never reaches
+        # `_record_outcome` — leaving the old due time in place would have the
+        # sweep pick the same order up again on the next tick, forever.
+        delivery.next_attempt_at = None
+        try:
+            await assign_or_dispatch(db, order, moment=delivery.dispatchable_at or now)
+        except Exception:  # pragma: no cover — defensive
+            logger.exception(
+                "Retry for order %s blew up; it will be left for a human",
+                order.order_number,
+            )
+        await db.commit()
+        retried.append(delivery.id)
+    return retried
+
+
+#: The statuses an order can be in and still want a driver. Anything else has
+#: either already travelled or stopped being a delivery.
+_RETRYABLE_STATUSES = {
+    OrderStatusEnum.CONFIRMED,
+    OrderStatusEnum.PACKED,
+    OrderStatusEnum.UNDELIVERED,
+}
+
+
 async def dispatch_batch(db: AsyncSession, batch: DeliveryBatch) -> DeliveryBatch:
     """
     Book one run, route-optimised, and record what came back on every order in it.
@@ -864,6 +964,22 @@ async def _book_chunk(
             delivery.quoted_currency = estimate.currency if estimate else None
         delivery.last_error = None
         delivery.last_payload = booking
+        # The run has a driver, so every box on it is finished as far as anyone
+        # outside the shop is concerned — and nobody presses a button to say so
+        # any more. Same stamp the single-order path applies on its own booking;
+        # applied here too, because a batched order never passes through it.
+        delivery.dispatch_attempts = 0
+        delivery.next_attempt_at = None
+        order = await db.get(Order, delivery.order_id)
+        if order is not None:
+            # Imported here, not at the top: `order_service` imports this module
+            # to assign a batch, and closing that cycle at import time is a
+            # crash on boot rather than a lint warning.
+            from app.services import order_service
+
+            await order_service.stamp_packed(
+                db, order, note=f"batch {batch.window_label or batch.id} booked"
+            )
 
     logger.info(
         "Batch %s part %s/%s booked as %s (%s drops)",

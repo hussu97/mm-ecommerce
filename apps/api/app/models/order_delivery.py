@@ -224,10 +224,21 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
         nullable=True,
         index=True,
     )
-    #: When the box was ready to leave. This is the moment a window is matched
-    #: against — not the moment the order was placed, because a batch can only
-    #: carry what has actually been baked. Kept so that changing the schedule
-    #: can re-derive the answer for everything still waiting.
+    #: When the order became something a driver could be called for. This is the
+    #: moment a window is matched against, and it is now **acceptance**, not
+    #: packing.
+    #:
+    #: It used to be the moment the box was finished, because that was the only
+    #: event the shop published. Calling the driver then meant the prep time and
+    #: the driver's travel time ran end to end instead of overlapping, and the
+    #: press that produced the event was a person being interrupted to state
+    #: something the register already knew. Acceptance is the same fact early
+    #: enough to be useful: the kitchen has committed to making it.
+    #:
+    #: The column keeps its name rather than being renamed to `accepted_at` —
+    #: `reschedule_group` re-derives every waiting order's window from it, and
+    #: what that code needs is "the moment this order entered the queue",
+    #: which is exactly what it still holds.
     dispatchable_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -321,6 +332,31 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
     #: admin who has to decide what to do about it.
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # ── retry ─────────────────────────────────────────────────────────────────
+    #
+    # Deliberately the same two columns, with the same names and the same
+    # meaning, as `delivery_batches`. Both paths answer "when do we try this
+    # again"; giving each its own vocabulary is how they would come to answer it
+    # differently.
+    #
+    # Before these existed, a failure on the un-batched path was terminal in
+    # everything but name: `dispatch_due_batches` sweeps batches, an order that
+    # went alone is in no batch, and the `packed` transition that first tried it
+    # had already happened. It waited for somebody to notice a red box on an
+    # admin screen.
+    #
+    #: How many times a driver has been asked for and refused us. Zero on an
+    #: order that has never failed, which is almost all of them.
+    dispatch_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    #: When the sweep should try again, or null for "nothing will happen on its
+    #: own" — which covers both an order that never failed and one that has run
+    #: out of rungs and now needs a person.
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+
     order: Mapped[Order] = relationship("Order", back_populates="delivery")
     batch: Mapped[DeliveryBatch | None] = relationship(
         "DeliveryBatch", back_populates="deliveries"
@@ -341,8 +377,24 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
         return bool(self.batch_id) and not self.courier_order_id
 
     @property
+    def is_awaiting_retry(self) -> bool:
+        """The sweep will ask for a driver again without anybody doing anything."""
+        return self.next_attempt_at is not None and not self.courier_order_id
+
+    @property
     def needs_attention(self) -> bool:
-        """A paid, packed order with no one coming for it."""
+        """
+        A paid order with no one coming for it *and* nothing that will change that.
+
+        An order the sweep is still working through is not on this list. It has a
+        `last_error` — every attempt does — but a human acting on it would only
+        be racing the retry that is already scheduled, and a queue that fills up
+        with rows resolving themselves is a queue people stop reading. It
+        reappears the moment the ladder runs out, which is exactly when a person
+        is the only thing left.
+        """
+        if self.is_awaiting_retry:
+            return False
         return bool(self.last_error) or is_failed(self.provider, self.courier_status)
 
     def __repr__(self) -> str:

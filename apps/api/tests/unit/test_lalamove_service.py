@@ -45,6 +45,13 @@ class _FakeDb:
     async def execute(self, _stmt):
         return _FakeResult(self.order)
 
+    async def get(self, _model, _pk):
+        # A failed dispatch reads the branch to find out when the counter shuts,
+        # so that a retry is not scheduled into a dark shop. Nothing here has a
+        # branch; None is the "hours unknown, treat as always open" answer the
+        # service is written to accept.
+        return None
+
 
 def _delivery(**overrides) -> OrderDelivery:
     delivery = OrderDelivery(

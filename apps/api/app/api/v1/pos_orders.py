@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -45,12 +46,15 @@ from app.schemas.pos_order import (
 )
 from app.services import (
     address_format,
+    batching_service,
     crud_service,
     email_service,
     option_snapshot,
     order_service,
     pos_order_service,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -77,6 +81,12 @@ def _serialise(order: Order) -> PosOrderResponse:
         payload.delivery_provider = order.delivery.provider
         payload.delivery_zone_name = order.delivery.zone_name
         payload.courier_reference = order.delivery.courier_reference
+    # Same guard, same reason. A hint for the terminal, not the enforcement —
+    # `accept_order` asks the question again with the branch definitely loaded,
+    # so a payload that could not resolve the hours costs a 409 and an alarm
+    # rather than a driver at a shut shop.
+    if "branch" not in inspect(order).unloaded:
+        payload.may_auto_accept = pos_order_service.may_auto_accept(order, order.branch)
     # Written out rather than left to the enum's `str` base, so the register
     # reads `"packed"` and never `"OrderStatusEnum.PACKED"`.
     payload.status = order.status.value if order.status is not None else None
@@ -158,6 +168,10 @@ async def list_orders(
             # lazy load inside an async request raises MissingGreenlet rather
             # than quietly issuing a second query.
             selectinload(Order.delivery),
+            # Eager for the same reason: the branch's trading hours decide
+            # whether a terminal may accept an order by itself, and this list is
+            # the only thing the incoming-orders queue reads.
+            selectinload(Order.branch),
         )
         .order_by(Order.opened_at.desc().nullslast(), Order.created_at.desc())
         .limit(limit)
@@ -625,19 +639,47 @@ __all__ = ["kitchen_router", "router"]
 @router.post("/{order_id}/accept", response_model=PosOrderResponse)
 async def accept_order(
     order_id: uuid.UUID,
+    auto: bool = Query(
+        False,
+        description=(
+            "The terminal accepted this by itself rather than a person pressing "
+            "Accept. Refused for an order placed outside the branch's trading "
+            "hours, which needs a human however the terminal is configured."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_active_user),
 ):
     """
-    Take a waiting online order onto the register.
+    Take a waiting online order onto the register, and call the driver.
 
     This is the moment a cashier has *seen* the order: it moves `pending →
     active`, which is what silences the alert on every device at the branch and
-    what makes it an open check like any other. Everything after this point —
-    sending to the kitchen, marking it packed, printing — is the ordinary flow.
+    what makes it an open check like any other.
+
+    **It is also where the courier is booked.** That used to happen when
+    somebody said the box was packed, which made the prep time and the driver's
+    travel time run end to end instead of overlapping — the kitchen worked for
+    forty minutes and only then did anyone start looking for a van. The two are
+    parallel now: the ticket prints and the driver is called in the same breath,
+    and the prep is long enough to absorb the drive.
+
+    Each kind of zone takes care of itself inside `assign_or_dispatch`:
+
+    * **third party** — nothing to call, so nothing happens. The order goes onto
+      the register and the paper and the shop hands it over the way it always has.
+    * **integrated, no schedule** — a driver is booked now.
+    * **integrated, on a schedule** — it joins the run whose window covers this
+      moment, and leaves when that window closes.
+
+    Best-effort, and deliberately after the flush. A courier that is unreachable
+    must not 500 an acceptance and leave the order shouting on every iPad in the
+    branch: the delivery row records the failure, the sweep retries it on the
+    ladder, and the cashier gets the open check they pressed for.
 
     Idempotent, because two cashiers will press it at once on a busy counter and
-    the second one should not get an error for being slower.
+    the second one should not get an error for being slower. `assign_or_dispatch`
+    is idempotent for the same reason, so the second press books nothing twice.
     """
     await _require_permission(user, "pos.register.access")
     order = await pos_order_service.get_order(db, order_id)
@@ -658,6 +700,18 @@ async def accept_order(
             status.HTTP_409_CONFLICT,
             "This order has not been paid for yet.",
         )
+    # The terminal's setting is a permission, not an instruction. An order
+    # placed while the shop was shut is accepted by a person or not at all —
+    # accepting now prints a ticket and calls a driver, and doing both for a
+    # 03:00 order sends a van to a dark shutter. Asked here with the branch
+    # certainly loaded, rather than trusting the hint in the payload.
+    branch = await db.get(Branch, order.branch_id) if order.branch_id else None
+    if auto and not pos_order_service.may_auto_accept(order, branch):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This order was placed outside the branch's opening hours and has "
+            "to be accepted by a person.",
+        )
 
     order.pos_status = PosOrderStatusEnum.ACTIVE.value
     order.accepted_at = utcnow()
@@ -665,6 +719,19 @@ async def accept_order(
     # order has no creator until somebody claims it.
     order.creator_id = order.creator_id or user.id
     await db.flush()
+
+    try:
+        await batching_service.assign_or_dispatch(db, order, moment=order.accepted_at)
+    except Exception:  # noqa: BLE001 — a courier must not fail an acceptance
+        # A courier *refusal* never reaches here — it is written to the delivery
+        # row and scheduled on the ladder. This is the other kind: a bug, or the
+        # database going away mid-call. Nothing is scheduled for it, so it is
+        # logged loudly and the order shows on the admin's needs-a-human list.
+        logger.exception(
+            "Booking a courier for %s blew up on acceptance; it needs a person",
+            order.order_number,
+        )
+
     return _serialise(await pos_order_service.get_order(db, order_id))
 
 

@@ -28,6 +28,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.core.config import settings
+from app.models.order import OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
 from app.services import courier_service
 
@@ -36,6 +37,14 @@ def _order(**overrides):
     values = {
         "id": uuid.uuid4(),
         "order_number": "MM-1001",
+        # Already packed, which is what an order being dispatched used to be by
+        # definition and is still a state it can reach — an admin marking it so
+        # in the console is the backstop trigger. It matters here because a
+        # successful booking now stamps `packed` itself, and an order that is
+        # already there stops at the transition guard rather than reaching for a
+        # database this test does not have.
+        "status": OrderStatusEnum.PACKED,
+        "branch_id": None,
         "email": "customer@example.com",
         "user_id": uuid.uuid4(),
         "total": Decimal("185.00"),

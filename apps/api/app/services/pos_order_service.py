@@ -19,6 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core import trading_hours
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.models.base import utcnow
 from app.models.order_status_event import StatusSourceEnum, acting_as
@@ -68,6 +69,7 @@ __all__ = [
     "close_order",
     "get_order",
     "is_paid_for",
+    "may_auto_accept",
     "open_order",
     "paid_for_clause",
     "record_payment",
@@ -134,6 +136,47 @@ def paid_for_clause():
         Order.source != OrderSourceEnum.ONLINE.value,
         Order.status.notin_(UNPAID_ONLINE_STATUSES),
     )
+
+
+def may_auto_accept(order: Order, branch: Branch | None) -> bool:
+    """
+    Whether a terminal set to accept by itself may accept *this* order by itself.
+
+    Auto-accept stopped being a convenience the moment acceptance began calling
+    a driver. It now prints the ticket and books a van in one act — so an order
+    placed at 03:00, on a site that sells overnight for the next day, would have
+    a Lalamove rider at a dark shutter within fifteen minutes and a receipt on a
+    printer nobody is standing next to.
+
+    So the terminal's setting is a *permission*, not an instruction, and this is
+    the second condition on it: the order must have been placed while the branch
+    was trading. Anything else waits for a person, on every terminal, however
+    that terminal is configured — which is the behaviour every terminal had
+    before auto-accept existed, applied to exactly the orders that still need it.
+
+    **The placement time, not now.** An order placed at 03:00 and still sitting
+    there when the shop opens at 09:00 is not something to accept silently
+    either: nobody has looked at it, six hours have passed, and whether it can
+    still be made by the promised time is a judgement. The alarm rings, a person
+    decides. An order placed at 17:00 that somebody accepts at 17:30 was placed
+    in hours and stays eligible, which is what makes this stable rather than a
+    flag that flips under the terminal at closing time.
+
+    Counter orders are never in question: a cashier is ringing one up in person,
+    which is as accepted as an order gets.
+    """
+    if order.source != OrderSourceEnum.ONLINE.value:
+        return True
+    if branch is None:
+        # Hours unknown. Refusing would strand the order on a silent terminal;
+        # allowing it prints a ticket at a counter that is probably staffed,
+        # because a branch we cannot load is a database problem and not a shut
+        # shop. The alarm rings either way now, so somebody sees it.
+        return True
+    placed_at = order.created_at or order.opened_at
+    if placed_at is None:  # pragma: no cover — both columns are populated
+        return True
+    return trading_hours.is_open(placed_at, branch.opening_from, branch.opening_to)
 
 
 # ─── Loading ──────────────────────────────────────────────────────────────────

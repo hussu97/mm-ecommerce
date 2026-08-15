@@ -69,6 +69,7 @@ __all__ = [
     "get_for_notification",
     "get_user_orders",
     "publish_to_register",
+    "stamp_packed",
     "update_status",
 ]
 
@@ -653,6 +654,38 @@ async def resolve_branch(
     )
 
 
+async def stamp_packed(db: AsyncSession, order: Order, *, note: str) -> bool:
+    """
+    Say the box is finished, without anybody pressing a button to say it.
+
+    Nobody presses it any more. The register's Accept is what calls a driver
+    now, and a second press half an hour later to state a fact the system can
+    work out was the last piece of the flow that existed only because the
+    software could not tell. So the two things that *do* know say it instead:
+    a courier booking that succeeded, and a kitchen finishing its last ticket.
+
+    `packed` itself stays. It is what the customer's tracker draws, what the
+    "on its way" email hangs off, and what `out_for_delivery` transitions from.
+    Only the hand that used to set it is gone.
+
+    Returns whether it moved anything. False is the ordinary case on a second
+    call — an order already packed, already out for delivery, or cancelled
+    between the booking and this line — and is not a failure.
+
+    Deliberately routed through `update_status` rather than assigning the
+    column. That function owns the transition rules, the status event and the
+    mail; a second implementation here is how the register and the console would
+    come to disagree about what packing an order does. It calls
+    `assign_or_dispatch` on the way through, which returns untouched because
+    whatever called this has just booked the driver.
+    """
+    if OrderStatusEnum.PACKED not in VALID_TRANSITIONS.get(order.status, set()):
+        return False
+    with acting_as(StatusSourceEnum.SYSTEM.value, note=note):
+        await update_status(db, order.order_number, OrderStatusEnum.PACKED)
+    return True
+
+
 async def publish_to_register(
     db: AsyncSession, order: Order, branch: Branch | None = None
 ) -> None:
@@ -1213,11 +1246,14 @@ async def update_status(
     if new_status == OrderStatusEnum.CONFIRMED:
         await publish_to_register(db, order)
 
-    # Packed means the box is ready, which is the moment it can travel —
-    # earlier and a driver waits at the counter. Whether it leaves now or waits
-    # for the rest of its batch is the zone's schedule to decide. Nothing
-    # happens for a third-party zone: the call returns the record untouched and
-    # the flow stays the manual one it has always been.
+    # The backstop, not the trigger. Acceptance on the register is what calls a
+    # driver now — early enough that the drive overlaps the prep rather than
+    # queueing behind it. But not every order is accepted on a register: a
+    # branch with no terminal receiving online orders has no acceptance event at
+    # all, and an admin marking such an order packed in the console must still
+    # get a van to the door. `assign_or_dispatch` returns untouched on anything
+    # already batched or already booked, so on the ordinary path this is free.
+    # Nothing happens for a third-party zone, exactly as before.
     if new_status == OrderStatusEnum.PACKED:
         await batching_service.assign_or_dispatch(db, order)
     elif new_status == OrderStatusEnum.CANCELLED:
