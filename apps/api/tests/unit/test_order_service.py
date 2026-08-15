@@ -324,10 +324,18 @@ def _db_for_create(
     Execute call order:
       1. cart lookup
       2. tax group lookup (one per distinct group in the basket)
-      3. [extra_results — e.g. one stock decrement per stock-tracked product]
-      4. _generate_order_number (numeric max of today's sequence)
-      5. select CartItems for deletion
-      6. final Order reload
+      3. branch availability: products out here, then options out here
+      4. [extra_results — e.g. one stock decrement per stock-tracked product]
+      5. _generate_order_number (numeric max of today's sequence)
+      6. select CartItems for deletion
+      7. final Order reload
+
+    Step 3 is the branch stock check. It sits after the kitchen is resolved,
+    because until then there is no branch to ask about — the catalogue hides a
+    product only when *every* branch is out of it, so the per-branch answer can
+    only be given once the address has named one. Both fixtures return nothing,
+    which is the ordinary day: this branch is out of nothing and every basket
+    goes through.
 
     The tax lookup is new: the storefront prices from each product's own tax
     group now rather than from a module constant. These fixtures return no
@@ -351,6 +359,8 @@ def _db_for_create(
             [
                 _result(scalar_one_or_none=cart),
                 _result(scalars_unique_one_or_none=None),
+                _result(scalars_all=[]),  # nothing out of stock at this branch
+                _result(scalars_all=[]),  # nor any option
                 *(extra_results or []),
                 _result(scalar_one_or_none=last_order_seq),
                 _result(scalars_all=cart_items or []),

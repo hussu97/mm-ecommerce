@@ -10017,6 +10017,8 @@ export interface components {
             longitude?: number | string | null;
             /** Phone */
             phone?: string | null;
+            /** Pickup Branch Id */
+            pickup_branch_id?: string | null;
             /** Promo Code */
             promo_code?: string | null;
             /** Session Id */
@@ -10048,6 +10050,11 @@ export interface components {
             total: number;
             /** Total Excl Vat */
             total_excl_vat: number;
+            /**
+             * Unavailable Items
+             * @description Basket lines the branch serving this address cannot make.
+             */
+            unavailable_items?: components["schemas"]["UnavailableItem"][];
             /** Vat Amount */
             vat_amount: number;
             /** Vat Rate */
@@ -13730,6 +13737,25 @@ export interface components {
             key: string;
             /** Value */
             value: string;
+        };
+        /**
+         * UnavailableItem
+         * @description One basket line the branch serving this address cannot make.
+         *
+         *     Carried on the preview for the same reason the discount is: the checkout
+         *     already re-prices on every address change, and the branch is a product of
+         *     that address. A separate endpoint would mean a second round trip that could
+         *     answer for a different pin than the totals beside it were quoted for.
+         */
+        UnavailableItem: {
+            /** Product Id */
+            product_id: string;
+            /** Product Name */
+            product_name: string;
+            /** Reason */
+            reason: string;
+            /** Unavailable Options */
+            unavailable_options?: string[];
         };
         /** UploadResponse */
         UploadResponse: {

@@ -19,7 +19,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload, selectinload
 
-from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
+from app.core.exceptions import (
+    BadRequestError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+)
 from app.core.phone import normalise_phone
 from app.models.branch import Branch
 from app.models.cart import Cart, CartItem
@@ -42,8 +47,10 @@ from app.schemas.order_preview import (
     OrderPreviewPromo,
     OrderPreviewRequest,
     OrderPreviewResponse,
+    UnavailableItem,
 )
 from app.services import (
+    availability_service,
     cart_service,
     delivery_promise,
     delivery_service,
@@ -948,6 +955,27 @@ async def create_order(
             "We can't take online orders right now. Please try again shortly."
         )
 
+    # 5a. Can that kitchen actually make this basket?
+    #
+    #     Only answerable here: the catalogue hid nothing, because a product is
+    #     hidden from browsing only when *every* branch is out of it, and the
+    #     branch this order goes to was not known until the line above. The
+    #     shopper may also have changed the address at the checkout and moved
+    #     the order to a different kitchen after adding everything.
+    #
+    #     Refused with a code rather than a sentence so the web app can open the
+    #     resolution screen instead of showing a toast the customer cannot act
+    #     on. Checked again here even though that screen exists, because a
+    #     screen is a courtesy and this is the guarantee.
+    unavailable = await availability_service.unavailable_cart_lines(
+        db, cart=cart, branch_id=branch.id
+    )
+    if unavailable:
+        raise ConflictError(
+            "Some items aren't available at the branch serving this address",
+            code=availability_service.UNAVAILABLE_AT_BRANCH,
+        )
+
     # 5b. What the checkout told this customer, captured before the row is
     #     written so the order carries the promise rather than a later
     #     re-derivation of it.
@@ -1143,6 +1171,25 @@ async def preview_order(
         strict=False,
     )
 
+    # The kitchen this pin resolves to, and what it has run out of.
+    #
+    # `resolve_branch` is the same call `create_order` makes at step 5, from the
+    # same zone this pricing produced — so the branch the customer is warned
+    # about is the branch the order would actually go to. A preview reports;
+    # `create_order` is what refuses.
+    branch = await resolve_branch(
+        db,
+        totals.zone,
+        pickup_branch_id=(
+            data.pickup_branch_id
+            if data.delivery_method == DeliveryMethodEnum.PICKUP
+            else None
+        ),
+    )
+    unavailable = await availability_service.unavailable_cart_lines(
+        db, cart=cart, branch_id=branch.id if branch else None
+    )
+
     return OrderPreviewResponse(
         subtotal=float(totals.subtotal),
         discount_amount=float(totals.discount_amount),
@@ -1156,6 +1203,15 @@ async def preview_order(
         total=float(totals.total),
         promo=promo,
         delivery=DeliveryQuoteResponse(**quote_payload),
+        unavailable_items=[
+            UnavailableItem(
+                product_id=str(line.product_id),
+                product_name=line.product_name,
+                reason=line.reason,
+                unavailable_options=list(line.unavailable_option_names),
+            )
+            for line in unavailable
+        ],
     )
 
 

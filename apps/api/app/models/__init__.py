@@ -134,6 +134,7 @@ from .inventory import (  # noqa: F401
 )
 from .menu import (  # noqa: F401
     Allergen,
+    BranchModifierOption,
     BranchProduct,
     Combo,
     ComboItem,
@@ -325,6 +326,7 @@ __all__ = [
     "Allergen",
     "ProductAllergen",
     "BranchProduct",
+    "BranchModifierOption",
     "Combo",
     "ComboSize",
     "ComboItem",

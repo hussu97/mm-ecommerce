@@ -14,6 +14,7 @@ user, which a device token is not.
 
 from fastapi import APIRouter
 
+from .availability import router as availability_router
 from .branches import router as branches_router
 from .business_settings import router as business_settings_router
 from .categories import router as categories_router
@@ -59,6 +60,10 @@ pos_api_router.include_router(
 )
 pos_api_router.include_router(modifiers_router, prefix="/modifiers", tags=["Modifiers"])
 pos_api_router.include_router(menu_groups_router, prefix="/menu-groups", tags=["Menu"])
+# The *website* menu, which is a different list — see `availability.py`.
+pos_api_router.include_router(
+    availability_router, prefix="/pos/availability", tags=["Availability"]
+)
 pos_api_router.include_router(courses_router, prefix="/courses", tags=["Menu"])
 
 # ─── Selling ──────────────────────────────────────────────────────────────────

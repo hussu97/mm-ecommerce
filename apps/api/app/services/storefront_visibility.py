@@ -6,6 +6,7 @@ from sqlalchemy import or_
 
 from app.models.category import Category
 from app.models.product import WEB_CHANNEL, Product, sells_on
+from app.services import availability_service
 
 
 def active_website_category_clause():
@@ -17,11 +18,25 @@ def active_website_category_clause():
 
 
 def website_product_visibility_clause():
-    """The complete database predicate for a product a shopper can buy."""
+    """
+    The complete database predicate for a product a shopper can buy.
+
+    Includes the catalogue-wide half of branch availability: a product every
+    active branch has marked out is not buyable anywhere and so is not listed.
+    The *per-branch* half cannot live here — a shopper browsing has given us no
+    address and there is no branch to ask about yet — and is applied at the cart
+    and again at placement, where the delivery zone has named one.
+
+    Deliberately not "out at the nearest branch": hiding a cake from somebody
+    whose own shop has it on the shelf is a worse failure than offering one that
+    turns out to need a different branch, and the second is what the checkout
+    resolution screen exists to catch.
+    """
     return (
         Product.is_active.is_(True),
         sells_on(WEB_CHANNEL),
         active_website_category_clause(),
+        ~availability_service.out_at_every_branch_subquery(),
     )
 
 

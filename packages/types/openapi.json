@@ -11846,6 +11846,18 @@
             ],
             "title": "Phone"
           },
+          "pickup_branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pickup Branch Id"
+          },
           "promo_code": {
             "anyOf": [
               {
@@ -11923,6 +11935,14 @@
           "total_excl_vat": {
             "title": "Total Excl Vat",
             "type": "number"
+          },
+          "unavailable_items": {
+            "description": "Basket lines the branch serving this address cannot make.",
+            "items": {
+              "$ref": "#/components/schemas/UnavailableItem"
+            },
+            "title": "Unavailable Items",
+            "type": "array"
           },
           "vat_amount": {
             "title": "Vat Amount",
@@ -23028,6 +23048,37 @@
           "value"
         ],
         "title": "TranslationEntry",
+        "type": "object"
+      },
+      "UnavailableItem": {
+        "description": "One basket line the branch serving this address cannot make.\n\nCarried on the preview for the same reason the discount is: the checkout\nalready re-prices on every address change, and the branch is a product of\nthat address. A separate endpoint would mean a second round trip that could\nanswer for a different pin than the totals beside it were quoted for.",
+        "properties": {
+          "product_id": {
+            "title": "Product Id",
+            "type": "string"
+          },
+          "product_name": {
+            "title": "Product Name",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "unavailable_options": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unavailable Options",
+            "type": "array"
+          }
+        },
+        "required": [
+          "product_id",
+          "product_name",
+          "reason"
+        ],
+        "title": "UnavailableItem",
         "type": "object"
       },
       "UploadResponse": {

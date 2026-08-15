@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Integer,
@@ -181,9 +182,6 @@ class BranchProduct(Base, UUIDMixin, TimestampMixin):
     """
 
     __tablename__ = "branch_products"
-    __table_args__ = (
-        UniqueConstraint("branch_id", "product_id", name="uq_branch_product"),
-    )
 
     branch_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -201,13 +199,82 @@ class BranchProduct(Base, UUIDMixin, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"
     )
-    #: Cleared by "mark out of stock" on the terminal; restored at end of day.
+    #: Cleared by "mark out of stock" on the terminal.
+    #:
+    #: Never read on its own — `availability_service` pairs it with
+    #: `out_of_stock_until`, and a row whose moment has passed is available
+    #: again regardless of what this says.
     is_in_stock: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"
+    )
+    #: When it comes back, or null for "until somebody says so".
+    #:
+    #: Only meaningful while `is_in_stock` is false, which a CHECK enforces —
+    #: an available row that also claims a return time is two answers to one
+    #: question.
+    out_of_stock_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        UniqueConstraint("branch_id", "product_id", name="uq_branch_product"),
+        CheckConstraint(
+            "out_of_stock_until IS NULL OR is_in_stock = false",
+            name="ck_branch_products_until_only_when_out",
+        ),
     )
 
     def __repr__(self) -> str:
         return f"<BranchProduct branch={self.branch_id} product={self.product_id}>"
+
+
+class BranchModifierOption(Base, UUIDMixin, TimestampMixin):
+    """
+    Per-branch stock for one option of one modifier.
+
+    `BranchProduct` for an option, and deliberately the same two columns with
+    the same two meanings: a box of three is still sellable when the fudge runs
+    out, so the shop needs to say the fudge is gone without saying the box is.
+    One reader answers both — see `availability_service`.
+
+    Exception-only, like its sibling: no row means the option is offered here.
+    """
+
+    __tablename__ = "branch_modifier_options"
+    __table_args__ = (
+        UniqueConstraint(
+            "branch_id", "modifier_option_id", name="uq_branch_modifier_option"
+        ),
+        CheckConstraint(
+            "out_of_stock_until IS NULL OR is_in_stock = false",
+            name="ck_branch_modifier_options_until_only_when_out",
+        ),
+    )
+
+    branch_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("branches.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    modifier_option_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("modifier_options.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    is_in_stock: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true"
+    )
+    out_of_stock_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<BranchModifierOption branch={self.branch_id} "
+            f"option={self.modifier_option_id}>"
+        )
 
 
 # ─── Combos ───────────────────────────────────────────────────────────────────

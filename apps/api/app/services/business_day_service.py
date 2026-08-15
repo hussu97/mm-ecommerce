@@ -9,7 +9,7 @@ record therefore carries a `business_date` derived from the branch's
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -87,6 +87,28 @@ def business_date_for(branch: Branch, moment: datetime, tz: ZoneInfo) -> str:
 async def current_business_date(db: AsyncSession, branch: Branch) -> str:
     tz = await resolve_timezone(db)
     return business_date_for(branch, utcnow(), tz)
+
+
+def next_rollover(branch: Branch, moment: datetime, tz: ZoneInfo) -> datetime:
+    """
+    When `branch` stops trading the day `moment` falls in.
+
+    The counterpart to `business_date_for`: that one names the day, this one
+    says when it ends. Both read the same cut-off, so "until end of day" on the
+    terminal and the date an order books under can never mean different things.
+
+    Returned in UTC because it is stored and compared as an instant. A shop with
+    an 04:00 cut-off marking something out at 01:00 gets 04:00 *this* morning —
+    three hours away, not twenty-seven — because 01:00 is still yesterday's
+    trading day and yesterday's day ends at the next cut-off.
+    """
+    local = moment.astimezone(tz)
+    cutoff = _parse_cutoff(branch.business_day_start)
+    todays_cutoff = local.replace(hour=0, minute=0, second=0, microsecond=0) + cutoff
+    rollover = (
+        todays_cutoff if todays_cutoff > local else todays_cutoff + timedelta(days=1)
+    )
+    return rollover.astimezone(timezone.utc)
 
 
 async def get_or_open(

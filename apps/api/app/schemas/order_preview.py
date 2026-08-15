@@ -16,6 +16,7 @@ here are the figures the order gets — see `order_service.preview_order`.
 
 from __future__ import annotations
 
+import uuid
 from decimal import Decimal
 
 from pydantic import BaseModel, Field
@@ -53,6 +54,13 @@ class OrderPreviewRequest(BaseModel):
     email: str | None = None
     #: Likewise. The phone gate is reported here and enforced at order creation.
     phone: str | None = None
+    #: Collection only: the branch the customer said they are driving to.
+    #:
+    #: Optional, and unused by the totals — a pickup has no delivery fee to
+    #: vary. It is here so `unavailable_items` resolves the *same* kitchen
+    #: `create_order` will, rather than falling back to the default pickup
+    #: branch and reporting another shop's stock.
+    pickup_branch_id: uuid.UUID | None = None
 
 
 class OrderPreviewPromo(BaseModel):
@@ -76,6 +84,28 @@ class OrderPreviewPromo(BaseModel):
     #: `PromoCodeValidateResponse`, whose two fields these mirror.
     requires_phone_verification: bool = False
     phone_verified: bool = True
+
+
+class UnavailableItem(BaseModel):
+    """
+    One basket line the branch serving this address cannot make.
+
+    Carried on the preview for the same reason the discount is: the checkout
+    already re-prices on every address change, and the branch is a product of
+    that address. A separate endpoint would mean a second round trip that could
+    answer for a different pin than the totals beside it were quoted for.
+    """
+
+    product_id: str
+    product_name: str
+    #: The sentence to show beside the line. Written server-side because it
+    #: depends on *why* — a filling that ran out reads differently from a cake
+    #: no branch here makes, and only one of them the customer can fix by
+    #: choosing again.
+    reason: str
+    #: The specific options that are out, where that is the cause. Lets the
+    #: screen offer "choose another filling" rather than only "remove".
+    unavailable_options: list[str] = Field(default_factory=list)
 
 
 class OrderPreviewResponse(BaseModel):
@@ -116,4 +146,16 @@ class OrderPreviewResponse(BaseModel):
     #: chances to show a fee we did not charge.
     delivery: DeliveryQuoteResponse = Field(
         description="Fee, free-delivery countdown and arrival estimate for this pin."
+    )
+    #: Lines the branch serving this pin has run out of. Empty on an ordinary
+    #: day, which is every day at most branches — the checkout renders nothing
+    #: for an empty list and opens its resolution step for a non-empty one.
+    #:
+    #: `create_order` refuses the same basket with
+    #: `code = "items_unavailable_at_branch"`, so this is the courtesy and that
+    #: is the guarantee. A checkout that ignored this field would still be
+    #: stopped; it would just be stopped less kindly.
+    unavailable_items: list[UnavailableItem] = Field(
+        default_factory=list,
+        description="Basket lines the branch serving this address cannot make.",
     )
