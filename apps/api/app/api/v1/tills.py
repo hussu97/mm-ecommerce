@@ -78,6 +78,37 @@ async def open_till(
     user: User = Depends(get_current_active_user),
 ):
     branch = await crud_service.get_or_404(db, Branch, data.branch_id)
+
+    # A shift change on a shared terminal: the cashier who left this iPad open
+    # has their till closed on the count the incoming one just made, before that
+    # same count opens the new till. Audited separately from the open below —
+    # somebody else's shift was reconciled, and that is not something to leave
+    # only in the till row.
+    handed_over = await till_service.handover_on_device(
+        db,
+        device_id=data.device_id,
+        user=user,
+        counted=data.opening_amount,
+    )
+    if handed_over is not None:
+        await audit_service.log_action(
+            db,
+            action="UPDATE",
+            entity_type="till",
+            entity_id=str(handed_over.id),
+            entity_label=f"{branch.name} {handed_over.business_date}",
+            admin=user,
+            changes={
+                "closed": True,
+                "handover": True,
+                "closed_by_another_cashier": True,
+                "previous_user_id": str(handed_over.user_id),
+                "closing_amount": str(handed_over.closing_amount),
+                "variance": str(handed_over.variance),
+            },
+            request=request,
+        )
+
     till = await till_service.open_till(
         db,
         user=user,

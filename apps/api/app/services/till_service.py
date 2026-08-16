@@ -41,7 +41,9 @@ __all__ = [
     "close_till",
     "estimated_cash",
     "get_open_till",
+    "handover_on_device",
     "open_till",
+    "open_till_on_device",
 ]
 
 ZERO = Decimal("0.00")
@@ -60,6 +62,77 @@ async def get_open_till(
     if branch_id is not None:
         stmt = stmt.where(Till.branch_id == branch_id)
     return (await db.execute(stmt.order_by(Till.opened_at.desc()))).scalars().first()
+
+
+async def open_till_on_device(
+    db: AsyncSession, device_id: uuid.UUID | None
+) -> Till | None:
+    """The till open on this terminal, whoever it belongs to."""
+    if device_id is None:
+        return None
+    return (
+        (
+            await db.execute(
+                select(Till).where(
+                    Till.device_id == device_id,
+                    Till.status == TillStatusEnum.OPEN.value,
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+
+async def handover_on_device(
+    db: AsyncSession,
+    *,
+    device_id: uuid.UUID | None,
+    user: User,
+    counted: Decimal,
+) -> Till | None:
+    """
+    Hand a terminal from the cashier who left it open to the one signing in.
+
+    Returns the till it closed, or `None` when there was nothing to hand over.
+
+    A shop shares one iPad across a shift change, and the outgoing cashier does
+    not always close their till before going home. Until this existed that
+    stranded the terminal: `/tills/current` is scoped to the caller, so the
+    incoming cashier is shown "Open your till" with no till of their own, and
+    opening one was refused because the *device* already had one. They could not
+    reach the register to close the other person's either — Close till lives
+    behind an open till — so the counter iPad was dead until the original
+    cashier came back and signed in.
+
+    The drawer is counted exactly once at a handover, and that one count means
+    both things: it is what the outgoing till closed on, and what the incoming
+    one opens with. So the amount the new cashier types is passed straight
+    through as the old till's closing amount, which is what produces its
+    variance and its Z report — the handover is reconciled, not waved through.
+
+    Deliberately not gated on a permission or a business date. Whoever is
+    standing at the terminal with the drawer counted is the person who can say
+    what is in it, and a till left open across midnight is the same problem as
+    one left open across a shift. What it does *not* do is close over unsettled
+    checks: `close_till` refuses that without `pos.till.manage`, and its refusal
+    names the number of open checks, which is a far better place to be stuck
+    than a screen with no way forward.
+    """
+    outgoing = await open_till_on_device(db, device_id)
+    if outgoing is None or outgoing.user_id == user.id:
+        return None
+
+    return await close_till(
+        db,
+        till=outgoing,
+        closed_by=user,
+        closing_amount=counted,
+        notes=(
+            "Closed at handover by "
+            f"{user.display_name or user.email}, who counted the drawer."
+        ),
+    )
 
 
 async def open_till(
@@ -83,21 +156,12 @@ async def open_till(
             "You already have an open till. Close it before opening another."
         )
 
-    if device_id is not None:
-        device_conflict = (
-            (
-                await db.execute(
-                    select(Till).where(
-                        Till.device_id == device_id,
-                        Till.status == TillStatusEnum.OPEN.value,
-                    )
-                )
-            )
-            .scalars()
-            .first()
-        )
-        if device_conflict is not None:
-            raise ConflictError("This device already has an open till")
+    # A till still open on this terminal belongs to somebody else — the caller's
+    # own was caught above. `handover_on_device` is what clears it, and the
+    # endpoint runs that first so it can audit the close; this is the net that
+    # catches a caller who did not.
+    if await open_till_on_device(db, device_id) is not None:
+        raise ConflictError("This device already has an open till")
 
     day = await business_day_service.get_or_open(db, branch, opened_by=user)
 
