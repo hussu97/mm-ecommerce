@@ -265,7 +265,7 @@ async def void_item(
     item_id: uuid.UUID,
     data: VoidItemRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("pos.products.void")),
+    user: User = Depends(require("pos.orders.void")),
 ):
     order = await _load(db, order_id)
     order = await pos_order_service.void_item(
@@ -365,7 +365,7 @@ async def send_to_kitchen(
     order_id: uuid.UUID,
     course_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("pos.kitchen.send_before_payment")),
+    _: User = Depends(require("pos.kitchen.manage")),
 ):
     """
     Fire the check to the kitchen.
@@ -450,7 +450,7 @@ async def split_order(
     order_id: uuid.UUID,
     data: SplitOrderRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("pos.orders.split")),
+    user: User = Depends(require("pos.orders.split_join")),
 ):
     """Move lines onto a second check so a table can pay separately."""
     order = await _load(db, order_id)
@@ -465,7 +465,7 @@ async def join_orders(
     order_id: uuid.UUID,
     data: JoinOrderRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("pos.orders.join")),
+    user: User = Depends(require("pos.orders.split_join")),
 ):
     """Absorb another open check into this one."""
     target = await _load(db, order_id)
@@ -480,7 +480,7 @@ async def change_table(
     order_id: uuid.UUID,
     data: ChangeTableRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("pos.tables.change_owner")),
+    _: User = Depends(require("pos.orders.edit_others")),
 ):
     """Move an open check to a different table."""
     order = await _load(db, order_id)

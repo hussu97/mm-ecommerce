@@ -3937,9 +3937,10 @@ export interface paths {
          *     report the late half of a Friday night against Saturday and make every
          *     terminal look quiet.
          *
-         *     Read behind `dashboard.branches` rather than admin rights. The device list in
-         *     `/devices` is admin-only because it hands out pairing codes; nothing here
-         *     does, so a shift manager can see it without being able to pair anything.
+         *     Read behind `dashboard.access` rather than admin rights. The device list in
+         *     `/devices` needs `admin.devices.manage` because it hands out pairing codes;
+         *     nothing here does, so a shift manager can see it without being able to pair
+         *     anything.
          */
         get: operations["terminals_dashboard_api_v1_pos_dashboard_devices_get"];
         put?: never;

@@ -69,14 +69,14 @@ def test_a_shift_manager_can_read_it_without_admin_rights():
     credential no branch manager should hold.
     """
     source = operations.terminals_dashboard.__doc__ or ""
-    assert "dashboard.branches" in source
+    assert "dashboard.access" in source
 
     # And the guard is actually the one the docstring claims — declared as a
     # `require(...)` dependency in the route's signature.
     import inspect
 
     body = inspect.getsource(operations.terminals_dashboard)
-    assert 'require("dashboard.branches")' in body
+    assert 'require("dashboard.access")' in body
     assert "get_admin_user" not in body
 
 

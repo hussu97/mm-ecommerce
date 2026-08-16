@@ -473,3 +473,38 @@ differently. Any empty state, zero count or "not found" needs a loaded flag in
 its condition — absence of data is never on its own evidence of absence. When a
 context exposes both a mutation flag and a loaded flag, check which question each
 answers before reaching for one.
+
+## A permission that no route checks is a lie told to whoever ticks the box
+
+The role catalogue was the Foodics authority matrix copied whole: 108 slugs, 61
+of which no `require(...)`, `ensure(...)` or `.can(...)` in the codebase ever
+named. Some named features that were never built (allergens, timed events,
+count sheets) or had been deleted along with their tables (reservations, table
+layouts, price tags). The rest split rights nobody splits — two permissions for
+pressing print, four for reading a cost report.
+
+The granularity was the visible half. The invisible half was worse: `User.can()`
+short-circuits on `is_admin`, and 160 console routes asked only for
+`get_admin_user`, so every one of the 21 `admin.*` slugs was decorative. A role
+could be built, named "Back office", handed out, and change nothing about what
+its holder could reach. There was no way to grant the branches screen without
+also granting payment gateways, staff roles, data export and the audit log.
+
+**Rule:** a permission earns its place in a catalogue by being enforced on a
+route, and nothing else. When adding one, wire it in the same commit; when
+deleting a route, delete its slug and record where holders land. Enforce it with
+a test that reads the source for every slug — `test_permissions.py::
+test_every_permission_is_enforced_somewhere` — because a catalogue nobody can
+grep against drifts back into a wish list within a release.
+
+**Corollary, and the sharper trap:** the moment the role editor became delegable
+(`admin.users.manage` rather than `is_admin`), that single permission was worth
+all the others — write a role holding everything, or flip `is_super_admin`,
+assign it to yourself. Any permission that can *grant* permissions needs a
+downward-only bound (`assert_no_escalation`), or it is not one permission, it is
+the whole set.
+
+**Second corollary:** when consolidating a stored vocabulary, the old→new map is
+the deliverable, not a side note. It belongs next to the catalogue, duplicated
+into the migration that applies it (a migration must keep describing the
+database as it was), and compared by a test so the two copies cannot drift.

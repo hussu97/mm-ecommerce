@@ -22,8 +22,9 @@ from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_admin_user, get_current_active_user, get_db
+from app.core.deps import get_current_active_user, get_db
 from app.core.exceptions import BadRequestError, ConflictError
+from app.core.permissions import require
 from app.models import (
     Charge,
     KitchenFlow,
@@ -117,7 +118,7 @@ def build_crud_router(
         request: Request,
         data: create_schema,  # type: ignore[valid-type]
         db: AsyncSession = Depends(get_db),
-        admin: User = Depends(get_admin_user),
+        admin: User = Depends(require("admin.settings.manage")),
     ):
         entity = await crud_service.create(db, model, data)
         await audit_service.log_action(
@@ -146,7 +147,7 @@ def build_crud_router(
         item_id: uuid.UUID,
         data: update_schema,  # type: ignore[valid-type]
         db: AsyncSession = Depends(get_db),
-        admin: User = Depends(get_admin_user),
+        admin: User = Depends(require("admin.settings.manage")),
     ):
         entity = await crud_service.get_or_404(db, model, item_id)
         entity = await crud_service.update(db, entity, data)
@@ -167,7 +168,7 @@ def build_crud_router(
         request: Request,
         item_id: uuid.UUID,
         db: AsyncSession = Depends(get_db),
-        admin: User = Depends(get_admin_user),
+        admin: User = Depends(require("admin.settings.manage")),
     ):
         entity = await crud_service.get_or_404(db, model, item_id)
         label = _label(entity)
@@ -188,7 +189,7 @@ def build_crud_router(
         request: Request,
         item_id: uuid.UUID,
         db: AsyncSession = Depends(get_db),
-        admin: User = Depends(get_admin_user),
+        admin: User = Depends(require("admin.settings.manage")),
     ):
         entity = await crud_service.get_or_404(db, model, item_id, include_deleted=True)
         entity = await crud_service.restore(db, entity)
@@ -284,7 +285,7 @@ async def list_entity_tags(
     entity_type: str,
     entity_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.settings.manage")),
 ):
     """Tags currently attached to any taggable entity."""
     return await _entity_tags(db, entity_type, entity_id)
@@ -298,7 +299,7 @@ async def set_entity_tags(
     entity_id: uuid.UUID,
     data: TagAssignment,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.settings.manage")),
 ):
     """Replace the full tag set for an entity."""
     await db.execute(
@@ -352,7 +353,7 @@ async def _sync_group_taxes(
 async def list_tax_groups(
     include_deleted: bool = False,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.settings.manage")),
 ):
     groups = await crud_service.list_all(db, TaxGroup, include_deleted=include_deleted)
     return [_tax_group_response(g) for g in groups]
@@ -365,7 +366,7 @@ async def create_tax_group(
     request: Request,
     data: TaxGroupCreate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.settings.manage")),
 ):
     payload = data.model_dump(exclude={"tax_ids"}, exclude_unset=True)
     group = await crud_service.create(db, TaxGroup, payload)
@@ -390,7 +391,7 @@ async def create_tax_group(
 async def get_tax_group(
     group_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.settings.manage")),
 ):
     return _tax_group_response(await _load_tax_group(db, group_id))
 
@@ -401,7 +402,7 @@ async def update_tax_group(
     group_id: uuid.UUID,
     data: TaxGroupUpdate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.settings.manage")),
 ):
     group = await crud_service.get_or_404(db, TaxGroup, group_id)
     await crud_service.update(
@@ -429,7 +430,7 @@ async def delete_tax_group(
     request: Request,
     group_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.settings.manage")),
 ):
     group = await crud_service.get_or_404(db, TaxGroup, group_id)
     if group.is_default:
@@ -484,7 +485,7 @@ async def list_kitchen_flows(
     branch_id: uuid.UUID | None = None,
     include_deleted: bool = False,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.settings.manage")),
 ):
     filters = [KitchenFlow.branch_id == branch_id] if branch_id else []
     flows = await crud_service.list_all(
@@ -500,7 +501,7 @@ async def create_kitchen_flow(
     request: Request,
     data: KitchenFlowCreate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.settings.manage")),
 ):
     flow = await crud_service.create(
         db, KitchenFlow, data.model_dump(exclude={"category_ids"}, exclude_unset=True)
@@ -526,7 +527,7 @@ async def create_kitchen_flow(
 async def get_kitchen_flow(
     flow_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.settings.manage")),
 ):
     return _flow_response(
         await crud_service.get_or_404(db, KitchenFlow, flow_id, include_deleted=True)
@@ -539,7 +540,7 @@ async def update_kitchen_flow(
     flow_id: uuid.UUID,
     data: KitchenFlowUpdate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.settings.manage")),
 ):
     flow = await crud_service.get_or_404(db, KitchenFlow, flow_id)
     await crud_service.update(
@@ -568,7 +569,7 @@ async def delete_kitchen_flow(
     request: Request,
     flow_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.settings.manage")),
 ):
     flow = await crud_service.get_or_404(db, KitchenFlow, flow_id)
     label = flow.name

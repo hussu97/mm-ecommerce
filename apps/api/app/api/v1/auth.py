@@ -36,11 +36,11 @@ from webauthn.helpers.structs import (
 )
 
 from app.core.deps import (
-    get_admin_user,
     get_current_active_user,
     get_db,
     get_optional_user,
 )
+from app.core.permissions import require
 from app.core.exceptions import (
     BadRequestError,
     ConflictError,
@@ -437,7 +437,7 @@ async def admin_login_options(
 )
 async def passkey_registration_options(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(require("admin.users.manage")),
 ) -> PasskeyRegistrationOptionsResponse:
     if not _is_passkey_allowed(current_user):
         raise ForbiddenError("Passkeys are not available for this admin account")
@@ -484,7 +484,7 @@ async def passkey_registration_options(
 async def passkey_registration_verify(
     body: PasskeyRegistrationVerifyRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(require("admin.users.manage")),
 ) -> AdminPasskeyResponse:
     if not _is_passkey_allowed(current_user):
         raise ForbiddenError("Passkeys are not available for this admin account")
@@ -544,7 +544,7 @@ async def passkey_registration_verify(
 )
 async def list_admin_passkeys(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(require("admin.users.manage")),
 ) -> list[AdminPasskeyResponse]:
     if not _is_passkey_allowed(current_user):
         return []
@@ -581,7 +581,7 @@ async def list_admin_passkeys(
 async def delete_admin_passkey(
     passkey_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(require("admin.users.manage")),
 ) -> None:
     result = await db.execute(
         select(AdminPasskey).where(
@@ -1027,7 +1027,7 @@ async def logout(
 )
 async def cleanup_guests(
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("admin.users.manage")),
 ) -> dict:
     from app.models.cart import Cart
 

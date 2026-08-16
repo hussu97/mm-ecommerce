@@ -212,15 +212,13 @@ async def close_till(
 
     # A till closed over an unpaid check strands that sale: the money was never
     # taken, the drawer is counted without it, and the check stays open against
-    # a shift that has been reported and signed off. `pos.till.close_with_active_orders`
-    # was declared for exactly this and enforced nowhere, and the register only
+    # a shift that has been reported and signed off. `pos.till.manage` (then
+    # `pos.till.close_with_active_orders`) covers exactly this, and the register only
     # ever disabled the button for the one check on screen — so a split check,
     # which by construction leaves a half the cashier cannot see, was precisely
     # the case that slipped through.
     open_orders = await _open_order_count(db, till)
-    if open_orders and not (
-        closed_by.is_admin or closed_by.can("pos.till.close_with_active_orders")
-    ):
+    if open_orders and not (closed_by.is_admin or closed_by.can("pos.till.manage")):
         raise ConflictError(
             f"{open_orders} check(s) are still open on this till. "
             "Settle or void them first, or ask a manager to close over them."

@@ -8,7 +8,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_admin_user, get_db
+from app.core.deps import get_db
+from app.core.permissions import require
 from app.models.language import Language
 from app.models.order import OrderStatusEnum
 from app.models.user import User
@@ -40,7 +41,7 @@ async def export_orders(
     end_date: Optional[date] = Query(None),
     status: Optional[OrderStatusEnum] = Query(None),
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("admin.data.manage")),
 ):
     if start_date is None and end_date is None:
         end_date = business_day_service.shop_today()
@@ -52,7 +53,7 @@ async def export_orders(
 @router.get("/categories")
 async def export_categories(
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("admin.data.manage")),
 ):
     languages = await _get_language_codes(db)
     content = await export_service.export_categories(db, languages)
@@ -62,7 +63,7 @@ async def export_categories(
 @router.get("/products")
 async def export_products(
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("admin.data.manage")),
 ):
     languages = await _get_language_codes(db)
     content = await export_service.export_products(db, languages)
@@ -72,7 +73,7 @@ async def export_products(
 @router.get("/modifiers")
 async def export_modifiers(
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("admin.data.manage")),
 ):
     languages = await _get_language_codes(db)
     content = await export_service.export_modifiers(db, languages)
@@ -82,7 +83,7 @@ async def export_modifiers(
 @router.get("/modifier-options")
 async def export_modifier_options(
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("admin.data.manage")),
 ):
     languages = await _get_language_codes(db)
     content = await export_service.export_modifier_options(db, languages)
@@ -92,7 +93,7 @@ async def export_modifier_options(
 @router.get("/product-modifiers")
 async def export_product_modifiers(
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("admin.data.manage")),
 ):
     content = await export_service.export_product_modifiers(db)
     return _csv_response(content, "product_modifiers.csv")

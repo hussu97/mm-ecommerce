@@ -24,7 +24,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.deps import get_admin_user, get_db
+from app.core.deps import get_db
+from app.core.permissions import require
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.models.branch import Branch
 from app.models.courier import Courier
@@ -361,7 +362,7 @@ async def _load_version(
 @router.get("/versions", response_model=list[VersionResponse])
 async def list_versions(
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("delivery.manage")),
 ):
     """Every delivery map, newest first. The live one is flagged."""
     result = await db.execute(
@@ -379,7 +380,7 @@ async def zone_map(
     #: country, and it turns eight thousand points into a few hundred.
     tolerance: float = 0.005,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("delivery.manage")),
 ):
     """
     Every zone on a map, as drawable outlines with their fee and courier.
@@ -441,7 +442,7 @@ async def zone_map(
 async def get_polygon_geometry(
     polygon_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("delivery.manage")),
 ):
     """The GeoJSON outline of one zone, for drawing it on a map."""
     result = await db.execute(
@@ -467,7 +468,7 @@ async def create_version(
     data: VersionCreate,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("delivery.manage")),
 ):
     """
     Copy a map into a new draft.
@@ -556,7 +557,7 @@ async def update_polygon(
     data: PolygonUpdate,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("delivery.manage")),
 ):
     """
     Change a draft zone's fee, courier or precedence.
@@ -662,7 +663,7 @@ async def activate_version(
     version_id: uuid.UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("delivery.manage")),
 ):
     """
     Make this map the live one. Also how a rollback is done.
@@ -708,7 +709,7 @@ async def delete_version(
     version_id: uuid.UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("delivery.manage")),
 ):
     """Throw away a draft. The live map cannot be deleted."""
     version = await _load_version(db, version_id)
@@ -731,7 +732,7 @@ async def delete_version(
 @router.get("/summary", response_model=dict[str, Any])
 async def zone_summary(
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("delivery.manage")),
 ):
     """The live map at a glance, with the settings that apply to every zone."""
     version = await delivery_zone_service.get_active_version(db)
@@ -806,7 +807,7 @@ def _reject_overlaps(windows: list[DeliveryBatchWindow]) -> None:
 @router.get("/batch-groups", response_model=list[BatchGroupResponse])
 async def list_batch_groups(
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("delivery.manage")),
 ):
     """
     Every schedule, with the zones on it.
@@ -844,7 +845,7 @@ async def list_batch_groups(
 async def list_batch_windows(
     group_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("delivery.manage")),
 ):
     """When orders in this group travel together. All times are Dubai time."""
     await _load_group(db, group_id)
@@ -861,7 +862,7 @@ async def create_batch_window(
     data: BatchWindowWrite,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("delivery.manage")),
 ):
     """
     Add a slot to a group's schedule.
@@ -908,7 +909,7 @@ async def update_batch_window(
     data: BatchWindowWrite,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("delivery.manage")),
 ):
     """
     Move a slot, and move everything still waiting on it.
@@ -945,7 +946,7 @@ async def delete_batch_window(
     window_id: uuid.UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("delivery.manage")),
 ):
     """
     Remove a slot. Orders waiting on it are re-derived, and any that no longer
@@ -976,7 +977,7 @@ async def list_batches(
     status_filter: str | None = None,
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("delivery.manage")),
 ):
     """Runs waiting to leave and runs already gone, most imminent first."""
     stmt = (
@@ -1032,7 +1033,7 @@ async def dispatch_batch_now(
     batch_id: uuid.UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("delivery.manage")),
 ):
     """
     Send a run early, or retry one the courier refused.
@@ -1122,7 +1123,7 @@ class DeliverySettingsUpdate(BaseModel):
 @router.get("/settings", response_model=DeliverySettingsResponse)
 async def get_delivery_settings(
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("delivery.manage")),
 ):
     """
     The three delivery numbers that are not a property of any zone.
@@ -1140,7 +1141,7 @@ async def update_delivery_settings(
     data: DeliverySettingsUpdate,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("delivery.manage")),
 ):
     """Change them. Unlike a zone fee, these take effect immediately."""
     settings = await delivery_service.get_settings(db)

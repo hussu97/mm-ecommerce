@@ -112,7 +112,7 @@ plan.
 | Addresses + delivery zone | ✅ | pre-existing `Address`, `Region` |
 | Customer tags | ✅ | `Tag(type=customer)` |
 | Blacklist | ✅ | `User.is_blacklisted` + reason |
-| Customer insights permission split | ✅ | `customers.insights.read` |
+| Customer insights permission split | ➖ | Folded into `customers.read` — there is one customer screen, and spend is why you open it |
 
 ## 6. Marketing
 
@@ -133,7 +133,7 @@ plan.
 | Foodics capability | Status | Where |
 |---|---|---|
 | Branches | ✅ | `Branch` |
-| Users + roles (136-permission matrix) | ✅ | `Role`, verbatim catalogue |
+| Users + roles (136-permission matrix) | ✅ | `Role`; the catalogue was trimmed from the verbatim 108 to the 43 this codebase enforces (`105_consolidate_role_perms`) |
 | Devices (cashier/KDS/display/notifier) | ✅ | `Device` + pairing |
 | Printers + cash drawer | ✅ | `Printer` |
 | Taxes & tax groups | ✅ | `Tax`, `TaxGroup` |

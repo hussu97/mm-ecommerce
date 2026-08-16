@@ -124,7 +124,7 @@ async def drawer_operations(
 async def inventory_valuation(
     branch_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("reports.inventory_levels")),
+    _: User = Depends(require("reports.inventory")),
 ):
     """Stock value on hand plus everything below its reorder point."""
     return await pos_reports_service.inventory_valuation(db, branch_id=branch_id)
@@ -134,7 +134,7 @@ async def inventory_valuation(
 async def cost_of_goods(
     window: _Window = Depends(),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("reports.cost_analysis")),
+    _: User = Depends(require("reports.cost")),
 ):
     return await pos_reports_service.cost_of_goods(db, **window.kwargs)
 
@@ -144,7 +144,7 @@ async def menu_engineering(
     limit: int = Query(200, ge=1, le=1000),
     window: _Window = Depends(),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("reports.menu_cost")),
+    _: User = Depends(require("reports.cost")),
 ):
     """Star / plough-horse / puzzle / dog classification by volume and margin."""
     return await pos_reports_service.menu_engineering(db, limit=limit, **window.kwargs)
@@ -185,7 +185,7 @@ async def suppliers_analysis(
     date_from: str | None = None,
     date_to: str | None = None,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("reports.cost_analysis")),
+    _: User = Depends(require("reports.cost")),
 ):
     """Purchase-order count and spend per supplier."""
     return await pos_reports_service.suppliers_analysis(
@@ -197,7 +197,7 @@ async def suppliers_analysis(
 async def cost_adjustment_history(
     window: _Window = Depends(),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("reports.cost_adjustment_history")),
+    _: User = Depends(require("reports.cost")),
 ):
     """Stock write-offs and revaluations, newest first."""
     return await pos_reports_service.cost_adjustment_history(db, **window.kwargs)
@@ -207,7 +207,7 @@ async def cost_adjustment_history(
 async def purchase_orders_report(
     window: _Window = Depends(),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("reports.cost_analysis")),
+    _: User = Depends(require("reports.cost")),
 ):
     """Purchase orders with ordered, received and outstanding value."""
     return await pos_reports_service.purchase_orders_report(db, **window.kwargs)
@@ -217,7 +217,7 @@ async def purchase_orders_report(
 async def transfers_report(
     window: _Window = Depends(),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("reports.cost_analysis")),
+    _: User = Depends(require("reports.cost")),
 ):
     """Stock moved between branches, both legs."""
     return await pos_reports_service.transfers_report(db, **window.kwargs)

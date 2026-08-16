@@ -1,7 +1,8 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_admin_user, get_db
+from app.core.deps import get_db
+from app.core.permissions import require
 from app.models.user import User
 from app.schemas.cms import (
     CmsPageLocaleUpdate,
@@ -17,7 +18,7 @@ router = APIRouter()
 @router.get("/pages", response_model=list[CmsPageResponse])
 async def list_pages(
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("content.manage")),
 ):
     return await cms_service.list_pages(db)
 
@@ -26,7 +27,7 @@ async def list_pages(
 async def get_page(
     slug: str,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("content.manage")),
 ):
     return await cms_service.get_page_admin(db, slug)
 
@@ -37,7 +38,7 @@ async def update_page(
     data: CmsPageUpdate,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("content.manage")),
 ):
     page = await cms_service.update_page(db, slug, data.content)
     # A swapped hero or promo photograph is a brand-new image URL that no page
@@ -57,7 +58,7 @@ async def update_page_locale(
     data: CmsPageLocaleUpdate,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("content.manage")),
 ):
     page = await cms_service.update_page_locale(db, slug, locale, data.content)
     background_tasks.add_task(

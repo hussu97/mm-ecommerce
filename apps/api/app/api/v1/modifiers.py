@@ -5,7 +5,8 @@ import uuid
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_admin_user, get_db
+from app.core.deps import get_db
+from app.core.permissions import require
 from app.models.user import User
 from app.schemas.modifier import (
     ModifierCreate,
@@ -32,7 +33,7 @@ async def list_modifiers(
 async def create_modifier(
     data: ModifierCreate,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("catalogue.manage")),
 ):
     """Create a modifier (admin only)."""
     return await modifier_service.create(db, data)
@@ -49,7 +50,7 @@ async def update_modifier(
     modifier_id: uuid.UUID,
     data: ModifierUpdate,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("catalogue.manage")),
 ):
     """Update a modifier (admin only)."""
     return await modifier_service.update(db, modifier_id, data)
@@ -59,7 +60,7 @@ async def update_modifier(
 async def delete_modifier(
     modifier_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("catalogue.manage")),
 ):
     """Delete a modifier (admin only)."""
     await modifier_service.delete(db, modifier_id)
@@ -74,7 +75,7 @@ async def add_modifier_option(
     modifier_id: uuid.UUID,
     data: ModifierOptionCreate,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("catalogue.manage")),
 ):
     """Add an option to a modifier (admin only)."""
     return await modifier_service.add_option(db, modifier_id, data)
@@ -86,7 +87,7 @@ async def update_modifier_option(
     option_id: uuid.UUID,
     data: ModifierOptionUpdate,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("catalogue.manage")),
 ):
     """Update a modifier option (admin only)."""
     return await modifier_service.update_option(db, modifier_id, option_id, data)
@@ -100,7 +101,7 @@ async def delete_modifier_option(
     modifier_id: uuid.UUID,
     option_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("catalogue.manage")),
 ):
     """Delete a modifier option (admin only)."""
     return await modifier_service.delete_option(db, modifier_id, option_id)

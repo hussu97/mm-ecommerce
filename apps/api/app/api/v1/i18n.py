@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_admin_user, get_db
+from app.core.deps import get_db
+from app.core.permissions import require
 from app.models.user import User
 from app.schemas.i18n import (
     LanguageCreate,
@@ -22,7 +23,7 @@ async def list_languages(db: AsyncSession = Depends(get_db)):
 @router.get("/languages/all", response_model=list[LanguageResponse])
 async def list_all_languages(
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("content.manage")),
 ):
     return await i18n_service.get_all_languages(db)
 
@@ -36,7 +37,7 @@ async def get_translations(locale: str, db: AsyncSession = Depends(get_db)):
 async def create_language(
     data: LanguageCreate,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("content.manage")),
 ):
     return await i18n_service.create_language(db, data)
 
@@ -46,7 +47,7 @@ async def update_language(
     code: str,
     data: LanguageUpdate,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("content.manage")),
 ):
     return await i18n_service.update_language(db, code, data)
 
@@ -55,7 +56,7 @@ async def update_language(
 async def delete_language(
     code: str,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("content.manage")),
 ):
     await i18n_service.delete_language(db, code)
 
@@ -65,7 +66,7 @@ async def bulk_upsert_translations(
     locale: str,
     data: TranslationBulkUpsert,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("content.manage")),
 ):
     count = await i18n_service.bulk_upsert_translations(db, locale, data)
     return {"updated": count}

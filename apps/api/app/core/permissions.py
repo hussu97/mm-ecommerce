@@ -32,7 +32,7 @@ from app.core.deps import get_current_active_user
 from app.core.exceptions import ForbiddenError
 from app.models.user import User
 
-__all__ = ["ensure", "require"]
+__all__ = ["assert_no_escalation", "ensure", "require"]
 
 
 def ensure(user: User, permission: str, *, message: str | None = None) -> None:
@@ -65,3 +65,34 @@ def require(
     # demands without spelling the check out in source-string matching.
     _check.permission = permission  # type: ignore[attr-defined]
     return _check
+
+
+def assert_no_escalation(
+    actor: User,
+    *,
+    permissions: list[str] | None = None,
+    is_super_admin: bool = False,
+) -> None:
+    """Refuse to let *actor* hand out authority they do not themselves hold.
+
+    `admin.users.manage` is what lets a shift manager add a cashier without
+    being made a console admin. On its own it is also the only permission that
+    can mint every other one: write a role holding the lot, or flip
+    `is_super_admin`, assign it to yourself, and the grant you were given
+    becomes the grant you took. So the role editor is delegable, but only
+    downwards — a non-admin composes roles out of the permissions they already
+    have, and no others.
+
+    `is_admin` is unrestricted here for the same reason `User.can()`
+    short-circuits on it: that is the owner account, and it is what hands out
+    `admin.users.manage` in the first place.
+    """
+    if actor.is_admin:
+        return
+    if is_super_admin:
+        raise ForbiddenError("Only an admin can create a super-admin role")
+    beyond = sorted(p for p in (permissions or []) if not actor.can(p))
+    if beyond:
+        raise ForbiddenError(
+            "You cannot grant permissions you do not hold: " + ", ".join(beyond)
+        )

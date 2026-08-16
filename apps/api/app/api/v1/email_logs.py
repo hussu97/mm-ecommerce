@@ -8,7 +8,8 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_admin_user, get_db
+from app.core.deps import get_db
+from app.core.permissions import require
 from app.models.email_log import EmailLog
 from app.models.user import User
 
@@ -63,7 +64,7 @@ async def list_email_logs(
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("admin.logs.read")),
 ):
     """List email send history with filters (admin only)."""
     stmt = select(EmailLog)

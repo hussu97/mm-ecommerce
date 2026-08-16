@@ -14,12 +14,12 @@ from fastapi import Request
 
 from app.core.cache import cache_delete_pattern, cache_get, cache_set
 from app.core.deps import (
-    get_admin_user,
     get_current_active_user,
     get_db,
     get_optional_user,
 )
 from app.core.exceptions import ForbiddenError
+from app.core.permissions import require
 from app.models.menu import BranchProduct
 from app.models.user import User
 from app.schemas.product import (
@@ -181,7 +181,7 @@ async def create_product(
     request: Request,
     data: ProductCreate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("catalogue.manage")),
 ):
     """Create a new product (admin only)."""
     result = await product_service.create(db, data)
@@ -205,7 +205,7 @@ async def update_product(
     slug: str,
     data: ProductUpdate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("catalogue.manage")),
 ):
     """Update a product (admin only)."""
     result = await product_service.update(db, slug, data)
@@ -228,7 +228,7 @@ async def delete_product(
     request: Request,
     slug: str,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("catalogue.manage")),
 ):
     """Delete a product (admin only)."""
     await product_service.delete(db, slug)
@@ -254,7 +254,7 @@ async def link_modifier(
     slug: str,
     data: ProductModifierLink,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("catalogue.manage")),
 ):
     """Link a modifier to a product (admin only)."""
     return await product_service.link_modifier(db, slug, data)
@@ -265,7 +265,7 @@ async def unlink_modifier(
     slug: str,
     modifier_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("catalogue.manage")),
 ):
     """Unlink a modifier from a product (admin only)."""
     return await product_service.unlink_modifier(db, slug, modifier_id)

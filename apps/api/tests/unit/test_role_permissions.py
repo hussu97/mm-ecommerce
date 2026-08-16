@@ -28,9 +28,11 @@ def test_slugs_are_namespaced_and_lowercase():
 def test_catalogue_covers_the_expected_domains():
     assert set(PERMISSION_GROUPS) == {
         "Orders",
+        "Catalogue",
         "Customers",
         "Inventory",
-        "Menu",
+        "Marketing & content",
+        "Delivery",
         "Administration",
         "Reports",
         "Dashboard",

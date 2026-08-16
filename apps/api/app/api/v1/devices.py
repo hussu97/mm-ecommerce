@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
-from app.core.deps import get_admin_user, get_current_active_user, get_db
+from app.core.deps import get_current_active_user, get_db
+from app.core.permissions import require
 from app.core.exceptions import ConflictError, UnauthorizedError
 from app.models import (
     Branch,
@@ -183,7 +184,7 @@ async def list_devices(
     type: str | None = None,
     include_deleted: bool = False,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.devices.manage")),
 ):
     filters = []
     if branch_id:
@@ -200,7 +201,7 @@ async def create_device(
     request: Request,
     data: DeviceCreate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.devices.manage")),
 ):
     await crud_service.get_or_404(db, Branch, data.branch_id)
     if await crud_service.reference_taken(db, Device, "reference", data.reference):
@@ -223,7 +224,7 @@ async def create_device(
 async def get_device(
     device_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.devices.manage")),
 ):
     return await crud_service.get_or_404(db, Device, device_id, include_deleted=True)
 
@@ -234,7 +235,7 @@ async def update_device(
     device_id: uuid.UUID,
     data: DeviceUpdate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.devices.manage")),
 ):
     device = await crud_service.get_or_404(db, Device, device_id)
     if data.reference and await crud_service.reference_taken(
@@ -260,7 +261,7 @@ async def delete_device(
     request: Request,
     device_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.devices.manage")),
 ):
     device = await crud_service.get_or_404(db, Device, device_id)
     label = device.name
@@ -285,7 +286,7 @@ async def issue_pairing_code(
     request: Request,
     device_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.devices.manage")),
 ):
     """
     Mint a short-lived code the iPad types once to claim this device slot.
@@ -316,7 +317,7 @@ async def unpair_device(
     request: Request,
     device_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.devices.manage")),
 ):
     device = await crud_service.get_or_404(db, Device, device_id)
     device.token_hash = None
@@ -418,7 +419,7 @@ async def list_printers(
     role: str | None = None,
     include_deleted: bool = False,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.devices.manage")),
 ):
     filters = []
     if branch_id:
@@ -438,7 +439,7 @@ async def list_printers(
 async def create_printer(
     data: PrinterCreate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.devices.manage")),
 ):
     await crud_service.get_or_404(db, Branch, data.branch_id)
     printer = await crud_service.create(db, Printer, data)
@@ -451,7 +452,7 @@ async def create_printer(
 async def get_printer(
     printer_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.devices.manage")),
 ):
     return await crud_service.get_or_404(db, Printer, printer_id, include_deleted=True)
 
@@ -461,7 +462,7 @@ async def update_printer(
     printer_id: uuid.UUID,
     data: PrinterUpdate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.devices.manage")),
 ):
     printer = await crud_service.get_or_404(db, Printer, printer_id)
     printer = await crud_service.update(db, printer, data)
@@ -474,7 +475,7 @@ async def update_printer(
 async def delete_printer(
     printer_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.devices.manage")),
 ):
     printer = await crud_service.get_or_404(db, Printer, printer_id)
     await crud_service.soft_delete(db, printer)

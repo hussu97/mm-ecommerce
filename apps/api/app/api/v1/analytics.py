@@ -12,7 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import cache_get, cache_set, cache_delete_pattern  # noqa: F401
 from app.core.config import settings
-from app.core.deps import get_admin_user, get_db
+from app.core.deps import get_db
+from app.core.permissions import require
 from app.models.order import Order, OrderItem, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
 from app.models.user import User
@@ -193,7 +194,7 @@ async def get_overview(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("dashboard.access")),
 ):
     """Revenue, orders, customers, and growth vs prior period."""
     start, end = _date_range(start_date, end_date)
@@ -259,7 +260,7 @@ async def get_revenue(
     end_date: Optional[date] = Query(None),
     group_by: str = Query("day", pattern="^(day|week|month)$"),
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("reports.sales")),
 ):
     """Daily/weekly/monthly revenue totals."""
     start, end = _date_range(start_date, end_date)
@@ -307,7 +308,7 @@ async def get_orders_chart(
     end_date: Optional[date] = Query(None),
     group_by: str = Query("day", pattern="^(day|week|month)$"),
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("reports.sales")),
 ):
     """Daily/weekly/monthly order counts."""
     start, end = _date_range(start_date, end_date)
@@ -351,7 +352,7 @@ async def get_top_products(
     end_date: Optional[date] = Query(None),
     limit: int = Query(10, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("reports.sales")),
 ):
     """Top products by revenue."""
     start, end = _date_range(start_date, end_date)
@@ -402,7 +403,7 @@ async def get_funnel(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("reports.sales")),
 ):
     """Order counts by status (funnel)."""
     start, end = _date_range(start_date, end_date)
@@ -446,7 +447,7 @@ async def get_funnel(
 async def get_traffic(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("reports.sales")),
 ):
     """
     Traffic and custom events, read back from Umami Cloud.
@@ -625,7 +626,7 @@ async def get_customers(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("reports.sales")),
 ):
     """Customer type breakdown: registered vs guest, new vs returning."""
     start, end = _date_range(start_date, end_date)
@@ -761,7 +762,7 @@ async def get_revenue_breakdown(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("reports.sales")),
 ):
     """
     Revenue split by delivery method, by payment method, and by gateway.
@@ -865,7 +866,7 @@ async def get_zones(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("reports.sales")),
 ):
     """
     Sales by delivery zone.
@@ -918,7 +919,7 @@ async def get_promos(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("reports.sales")),
 ):
     """Promo code performance: uses, revenue driven, discount given."""
     start, end = _date_range(start_date, end_date)

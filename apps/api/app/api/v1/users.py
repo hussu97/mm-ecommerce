@@ -5,7 +5,8 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_admin_user, get_db
+from app.core.deps import get_db
+from app.core.permissions import require
 from app.models.admin_passkey import AdminPasskey
 from app.models.order import Order, OrderStatusEnum
 from app.models.user import User as UserModel
@@ -56,7 +57,7 @@ async def list_customers(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
-    _admin: UserModel = Depends(get_admin_user),
+    _admin: UserModel = Depends(require("customers.read")),
 ):
     """List registered (non-guest, non-admin) customers with order stats."""
     # Subquery: order count + total spent per user (excluding cancelled)
@@ -124,7 +125,7 @@ async def list_customers(
 @router.get("/admin/admin-users", response_model=list[AdminUserSummary])
 async def list_admin_users(
     db: AsyncSession = Depends(get_db),
-    _admin: UserModel = Depends(get_admin_user),
+    _admin: UserModel = Depends(require("customers.read")),
 ) -> list[AdminUserSummary]:
     """List admin users and passkey registration status."""
     passkey_counts = (

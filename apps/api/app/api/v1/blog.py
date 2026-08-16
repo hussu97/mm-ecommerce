@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_admin_user, get_db
+from app.core.deps import get_db
+from app.core.permissions import require
 from app.models.user import User
 from app.schemas.blog import (
     BlogPostCreate,
@@ -44,7 +45,7 @@ async def get_post_public(
 @router.get("/posts", response_model=list[BlogPostResponse])
 async def list_posts_admin(
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("content.manage")),
 ):
     return await blog_service.list_posts_admin(db)
 
@@ -53,7 +54,7 @@ async def list_posts_admin(
 async def get_post_admin(
     slug: str,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("content.manage")),
 ):
     return await blog_service.get_post_admin(db, slug)
 
@@ -62,7 +63,7 @@ async def get_post_admin(
 async def create_post(
     data: BlogPostCreate,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("content.manage")),
 ):
     return await blog_service.create_post(db, data)
 
@@ -72,7 +73,7 @@ async def update_post(
     slug: str,
     data: BlogPostUpdate,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("content.manage")),
 ):
     return await blog_service.update_post(db, slug, data)
 
@@ -83,6 +84,6 @@ async def update_post_locale(
     locale: str,
     data: BlogPostLocaleUpdate,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("content.manage")),
 ):
     return await blog_service.update_post_locale(db, slug, locale, data.content)

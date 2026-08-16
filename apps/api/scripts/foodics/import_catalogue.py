@@ -96,7 +96,8 @@ REASON_TYPE_BY_CODE = {
 CHARGE_TYPE_BY_CODE = {1: "fixed", 2: "percentage", 3: "open"}
 
 #: What a floor cashier can do without a supervisor standing next to them:
-#: ring an order up, take the money, print, and send to the kitchen.
+#: ring an order up, take the money, and send it to the kitchen. Printing is
+#: no longer a permission of its own — it was two slugs for pressing print.
 #:
 #: Everything that moves money the other way — voids, returns, open discounts,
 #: closing the till — is deliberately absent. Foodics draws the same line, and
@@ -104,29 +105,25 @@ CHARGE_TYPE_BY_CODE = {1: "fixed", 2: "percentage", 3: "open"}
 CASHIER_STAFF_PERMISSIONS = [
     "pos.register.access",
     "pos.payment.perform",
-    "pos.print.check",
-    "pos.print.receipt",
-    "pos.kitchen.send_before_payment",
-    "pos.orders.join",
-    "pos.orders.ahead",
+    "pos.kitchen.manage",
+    "pos.orders.split_join",
     "pos.discounts.predefined",
     "pos.products.availability",
-    "pos.orders.tags",
-    "menu.read",
+    "orders.manage",
+    "catalogue.read",
     "orders.read",
     "customers.read",
 ]
 
 #: A shift lead. Runs the register end to end, including the drawer and the
 #: end-of-day, but stays out of the back office (menu pricing, staff, taxes).
-CASHIER_PERMISSION_PREFIXES = ("pos.", "dashboard.general", "reports.sales")
+CASHIER_PERMISSION_PREFIXES = ("pos.", "dashboard.access", "reports.sales")
 CASHIER_EXTRA_PERMISSIONS = [
-    "menu.read",
-    "menu.items.hide",
-    "menu.items.out_of_stock",
+    "catalogue.read",
+    "catalogue.manage",
+    "pos.products.availability",
     "orders.read",
     "orders.manage",
-    "orders.tags.manage",
     "customers.read",
     "customers.manage",
     "reports.other",

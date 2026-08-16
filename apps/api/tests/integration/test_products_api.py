@@ -85,7 +85,7 @@ class TestProductsEndpoints:
 
     async def test_create_product_with_invalid_payload_returns_422(self, client):
         from app.main import app
-        from app.core.deps import get_admin_user
+        from app.core.deps import get_current_active_user
 
         mock_admin = MagicMock()
         mock_admin.is_admin = True
@@ -93,12 +93,12 @@ class TestProductsEndpoints:
         async def override_admin():
             return mock_admin
 
-        app.dependency_overrides[get_admin_user] = override_admin
+        app.dependency_overrides[get_current_active_user] = override_admin
         try:
             # Missing required fields (name, slug) → 422
             response = await client.post("/api/v1/products", json={})
         finally:
-            del app.dependency_overrides[get_admin_user]
+            del app.dependency_overrides[get_current_active_user]
 
         assert response.status_code == 422
 

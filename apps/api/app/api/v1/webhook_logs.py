@@ -22,8 +22,9 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_admin_user, get_db
+from app.core.deps import get_db
 from app.core.exceptions import NotFoundError
+from app.core.permissions import require
 from app.models.user import User
 from app.models.webhook_log import WebhookLog
 
@@ -88,7 +89,7 @@ async def list_webhook_logs(
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("admin.logs.read")),
 ) -> PaginatedWebhookLogs:
     """Every inbound webhook, newest first (admin only)."""
     stmt = select(WebhookLog)
@@ -137,7 +138,7 @@ async def list_webhook_logs(
 @router.get("/providers", response_model=dict)
 async def webhook_log_facets(
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("admin.logs.read")),
 ) -> dict:
     """
     The values actually present, so the filters offer real options.
@@ -164,7 +165,7 @@ async def webhook_log_facets(
 async def get_webhook_log(
     log_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("admin.logs.read")),
 ) -> WebhookLogDetail:
     """One request with its bodies, exactly as they arrived."""
     row = await db.get(WebhookLog, log_id)

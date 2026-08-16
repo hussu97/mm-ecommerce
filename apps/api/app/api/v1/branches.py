@@ -10,7 +10,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.deps import get_admin_user, get_current_active_user, get_db
+from app.core.deps import get_current_active_user, get_db
+from app.core.permissions import require
 from app.core.exceptions import ConflictError
 from app.models import (
     Branch,
@@ -89,7 +90,7 @@ async def create_branch(
     request: Request,
     data: BranchCreate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.branches.manage")),
 ):
     if await crud_service.reference_taken(db, Branch, "reference", data.reference):
         raise ConflictError(f"Branch reference '{data.reference}' is already in use")
@@ -122,7 +123,7 @@ async def update_branch(
     branch_id: uuid.UUID,
     data: BranchUpdate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.branches.manage")),
 ):
     branch = await crud_service.get_or_404(db, Branch, branch_id)
     if data.reference and await crud_service.reference_taken(
@@ -148,7 +149,7 @@ async def delete_branch(
     request: Request,
     branch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.branches.manage")),
 ):
     branch = await crud_service.get_or_404(db, Branch, branch_id)
 
@@ -191,7 +192,7 @@ async def list_business_days(
     branch_id: uuid.UUID,
     limit: int = 30,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.branches.manage")),
 ):
     stmt = (
         select(BranchBusinessDay)
@@ -206,7 +207,7 @@ async def list_business_days(
 async def get_current_business_day(
     branch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.branches.manage")),
 ):
     branch = await crud_service.get_or_404(db, Branch, branch_id)
     return await business_day_service.get_or_open(db, branch)
@@ -217,7 +218,7 @@ async def close_business_day(
     request: Request,
     branch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.branches.manage")),
 ):
     """End of day: freeze the Z-report totals for the branch's current trading day."""
     branch = await crud_service.get_or_404(db, Branch, branch_id)
@@ -242,7 +243,7 @@ async def close_business_day(
 async def list_sections(
     branch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.branches.manage")),
 ):
     sections = await crud_service.list_all(
         db,
@@ -271,7 +272,7 @@ async def create_section(
     branch_id: uuid.UUID,
     data: SectionCreate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.branches.manage")),
 ):
     await crud_service.get_or_404(db, Branch, branch_id)
     section = await crud_service.create(
@@ -285,7 +286,7 @@ async def update_section(
     section_id: uuid.UUID,
     data: SectionUpdate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.branches.manage")),
 ):
     section = await crud_service.get_or_404(db, Section, section_id)
     section = await crud_service.update(db, section, data)
@@ -296,7 +297,7 @@ async def update_section(
 async def delete_section(
     section_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.branches.manage")),
 ):
     section = await crud_service.get_or_404(db, Section, section_id)
     await crud_service.soft_delete(db, section)
@@ -309,7 +310,7 @@ async def delete_section(
 async def list_tables(
     section_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.branches.manage")),
 ):
     return await crud_service.list_all(
         db, PosTable, filters=[PosTable.section_id == section_id]
@@ -325,7 +326,7 @@ async def create_table(
     section_id: uuid.UUID,
     data: TableCreate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.branches.manage")),
 ):
     await crud_service.get_or_404(db, Section, section_id)
     return await crud_service.create(
@@ -338,7 +339,7 @@ async def update_table(
     table_id: uuid.UUID,
     data: TableUpdate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.branches.manage")),
 ):
     table = await crud_service.get_or_404(db, PosTable, table_id)
     return await crud_service.update(db, table, data)
@@ -348,7 +349,7 @@ async def update_table(
 async def delete_table(
     table_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.branches.manage")),
 ):
     table = await crud_service.get_or_404(db, PosTable, table_id)
     await crud_service.soft_delete(db, table)
@@ -361,7 +362,7 @@ async def delete_table(
 async def branch_device_count(
     branch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.branches.manage")),
 ):
     total = int(
         (

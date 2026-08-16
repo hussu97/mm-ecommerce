@@ -6,7 +6,8 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_admin_user, get_current_active_user, get_db
+from app.core.deps import get_current_active_user, get_db
+from app.core.permissions import require
 from app.models import BusinessSettings
 from app.models.user import User
 from app.schemas.pos import BusinessSettingsResponse, BusinessSettingsUpdate
@@ -53,7 +54,7 @@ async def update_settings(
     request: Request,
     data: BusinessSettingsUpdate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.settings.manage")),
 ):
     current = await get_or_create_settings(db)
     changes = data.model_dump(exclude_unset=True)

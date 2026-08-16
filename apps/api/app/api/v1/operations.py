@@ -141,7 +141,7 @@ async def list_transfer_orders(
     status_filter: str | None = Query(None, alias="status"),
     limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("inventory.transfer_orders.create")),
+    _: User = Depends(require("inventory.transfers.manage")),
 ):
     stmt = select(TransferOrder)
     if branch_id:
@@ -161,7 +161,7 @@ async def list_transfer_orders(
 async def create_transfer_order(
     data: TransferOrderCreate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.transfer_orders.create")),
+    user: User = Depends(require("inventory.transfers.manage")),
 ):
     if data.branch_id == data.source_branch_id:
         raise BadRequestError("A branch cannot transfer to itself")
@@ -211,7 +211,7 @@ async def create_transfer_order(
 async def submit_transfer(
     order_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.transfer_orders.submit")),
+    user: User = Depends(require("inventory.transfers.manage")),
 ):
     order = await transfer_service.load_transfer_order(db, order_id)
     await transfer_service.submit_transfer_order(db, order=order, user=user)
@@ -223,7 +223,7 @@ async def accept_transfer(
     order_id: uuid.UUID,
     data: AcceptTransfer,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.transfers.send_receive")),
+    user: User = Depends(require("inventory.transfers.manage")),
 ):
     """Accept a request, optionally granting less than was asked for."""
     order = await transfer_service.load_transfer_order(db, order_id)
@@ -240,7 +240,7 @@ async def accept_transfer(
 async def decline_transfer(
     order_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.transfers.send_receive")),
+    user: User = Depends(require("inventory.transfers.manage")),
 ):
     order = await transfer_service.load_transfer_order(db, order_id)
     await transfer_service.decline_transfer_order(db, order=order, user=user)
@@ -251,7 +251,7 @@ async def decline_transfer(
 async def send_transfer(
     order_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.transfers.send_receive")),
+    user: User = Depends(require("inventory.transfers.manage")),
 ):
     """Ship the goods — decrements the source location."""
     order = await transfer_service.load_transfer_order(db, order_id)
@@ -266,7 +266,7 @@ async def receive_transfer(
     order_id: uuid.UUID,
     data: AcceptTransfer,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.transfers.send_receive")),
+    user: User = Depends(require("inventory.transfers.manage")),
 ):
     """Book the goods in. A shortfall against what was sent stays visible."""
     order = await transfer_service.load_transfer_order(db, order_id)
@@ -302,7 +302,7 @@ class ProduceResponse(BaseModel):
 async def produce(
     data: ProduceRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.production.create")),
+    user: User = Depends(require("inventory.adjustments.manage")),
 ):
     """
     Produce a batch, consuming its bill of materials in the same step.
@@ -415,7 +415,7 @@ OFFLINE_AFTER_SECONDS = 300
 @dashboard_router.get("/branches", response_model=BranchesDashboard)
 async def branches_dashboard(
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("dashboard.branches")),
+    _: User = Depends(require("dashboard.access")),
 ):
     """
     The "what is happening right now" view: open checks, occupied tables, open
@@ -567,7 +567,7 @@ class TerminalsDashboard(BaseModel):
 async def terminals_dashboard(
     branch_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("dashboard.branches")),
+    _: User = Depends(require("dashboard.access")),
 ):
     """
     Every POS machine, one row each: is it online, whose shift is on it, and what
@@ -583,9 +583,10 @@ async def terminals_dashboard(
     report the late half of a Friday night against Saturday and make every
     terminal look quiet.
 
-    Read behind `dashboard.branches` rather than admin rights. The device list in
-    `/devices` is admin-only because it hands out pairing codes; nothing here
-    does, so a shift manager can see it without being able to pair anything.
+    Read behind `dashboard.access` rather than admin rights. The device list in
+    `/devices` needs `admin.devices.manage` because it hands out pairing codes;
+    nothing here does, so a shift manager can see it without being able to pair
+    anything.
     """
 
     branch_filters = [Branch.is_active.is_(True), Branch.deleted_at.is_(None)]
@@ -712,7 +713,7 @@ async def terminals_dashboard(
 async def inventory_dashboard(
     branch_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("dashboard.inventory")),
+    _: User = Depends(require("dashboard.access")),
 ):
     """Stock health at a glance: value on hand and what needs reordering."""
 

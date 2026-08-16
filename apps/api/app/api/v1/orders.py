@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.deps import (
-    get_admin_user,
     get_current_active_user,
     get_db,
     get_optional_user,
@@ -38,6 +37,7 @@ from app.core.exceptions import (
     ServiceUnavailableError,
 )
 from app.core.limiter import limiter
+from app.core.permissions import require
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.services import (
     audit_service,
@@ -250,7 +250,7 @@ async def list_all_orders(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("orders.read")),
 ):
     """Every order, from either channel (admin only)."""
     items, total = await order_service.get_all_admin(
@@ -296,7 +296,7 @@ def _assert_still_going_somewhere(order: Order, verb: str) -> None:
 async def refresh_order_delivery(
     order_number: str,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("orders.manage")),
 ):
     """
     Ask the courier where this order actually is.
@@ -420,7 +420,7 @@ async def update_order_status(
     order_number: str,
     data: OrderStatusUpdate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("orders.manage")),
 ):
     """Update order status with validated transitions (admin only). Triggers email notification."""
     old_order = await order_service.get_by_order_number(db, order_number, admin=True)
@@ -483,7 +483,7 @@ async def _load_delivery(db: AsyncSession, order_number: str) -> OrderDelivery:
 async def get_order_economics(
     order_number: str,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("orders.read")),
 ):
     """
     What the shop kept on this order.
@@ -522,7 +522,7 @@ async def get_order_economics(
 async def get_order_delivery(
     order_number: str,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("orders.read")),
 ):
     """Who is carrying this order, where it is, and what it cost us."""
     order = await _load_order(db, order_number)
@@ -537,7 +537,7 @@ async def dispatch_order_delivery(
     order_number: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("orders.manage")),
 ):
     """
     Book the courier again after a failed or abandoned dispatch.
@@ -666,7 +666,7 @@ def _assert_assignable(order: Order, delivery: OrderDelivery) -> None:
 async def quote_lalamove_for_order(
     order_number: str,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("orders.manage")),
 ):
     """
     What Lalamove would charge to carry this third-party order.
@@ -701,7 +701,7 @@ async def assign_order_to_lalamove(
     data: LalamoveAssignRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("orders.manage")),
 ):
     """
     Hand this packed third-party order to Lalamove, at the price just quoted.
@@ -814,7 +814,7 @@ class OrderStatusEventResponse(BaseModel):
 async def list_order_status_events(
     order_number: str,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("orders.read")),
 ):
     """Every status this order has been through, oldest first, and who moved it."""
     order = await _load_order(db, order_number)

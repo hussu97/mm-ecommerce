@@ -18,8 +18,8 @@ from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.exceptions import BadGatewayError, BadRequestError
-from app.core.deps import get_admin_user
 from app.core.images import extension_for, optimize_image
+from app.core.permissions import require
 from app.models.user import User
 from app.services import image_warm_service
 
@@ -53,7 +53,7 @@ async def upload_image(
     folder: str = Query(
         "products", description="R2 folder prefix (e.g. products, categories)"
     ),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("catalogue.manage")),
 ):
     """Upload an image to Cloudflare R2 (admin only). Returns public URL."""
     # Validate content type
@@ -108,7 +108,7 @@ async def upload_image(
 @router.delete("/image", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_image(
     key: str = Query(..., description="R2 object key or full public URL"),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("catalogue.manage")),
 ):
     """Delete an image from Cloudflare R2 by key or URL (admin only)."""
     # Accept either a full URL or a raw key

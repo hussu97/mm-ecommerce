@@ -87,7 +87,7 @@ class TestCategoriesEndpoints:
         assert response.status_code == 401
 
     async def test_create_category_with_invalid_payload_returns_422(self, client):
-        from app.core.deps import get_admin_user
+        from app.core.deps import get_current_active_user
         from app.main import app
 
         mock_admin = MagicMock()
@@ -96,11 +96,11 @@ class TestCategoriesEndpoints:
         async def override_admin():
             return mock_admin
 
-        app.dependency_overrides[get_admin_user] = override_admin
+        app.dependency_overrides[get_current_active_user] = override_admin
         try:
             response = await client.post("/api/v1/categories", json={})
         finally:
-            del app.dependency_overrides[get_admin_user]
+            del app.dependency_overrides[get_current_active_user]
 
         assert response.status_code == 422
 

@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.core.deps import get_admin_user
+from app.core.deps import get_current_active_user
 from app.models.payment_gateway import PaymentGateway
 from app.models.user import User
 
@@ -50,11 +50,11 @@ def admin_client(client):
     """The gateway screen is admin-only; the auth itself is tested elsewhere."""
     from app.main import app
 
-    app.dependency_overrides[get_admin_user] = lambda: User(
+    app.dependency_overrides[get_current_active_user] = lambda: User(
         email="admin@example.com", is_admin=True, is_active=True
     )
     yield client
-    app.dependency_overrides.pop(get_admin_user, None)
+    app.dependency_overrides.pop(get_current_active_user, None)
 
 
 @pytest.fixture

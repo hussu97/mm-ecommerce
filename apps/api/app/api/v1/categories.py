@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import cache_delete, cache_delete_pattern, cache_get, cache_set
-from app.core.deps import get_admin_user, get_db, get_optional_user
+from app.core.deps import get_db, get_optional_user
+from app.core.permissions import require
 from app.core.exceptions import ForbiddenError
 from app.models.user import User
 from app.schemas.category import CategoryCreate, CategoryResponse, CategoryUpdate
@@ -99,7 +100,7 @@ async def create_category(
     request: Request,
     data: CategoryCreate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("catalogue.manage")),
 ):
     """Create a new category (admin only)."""
     result = await category_service.create(db, data)
@@ -123,7 +124,7 @@ async def update_category(
     slug: str,
     data: CategoryUpdate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("catalogue.manage")),
 ):
     """Update a category (admin only)."""
     result = await category_service.update(db, slug, data)
@@ -146,7 +147,7 @@ async def delete_category(
     request: Request,
     slug: str,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("catalogue.manage")),
 ):
     """Delete a category (admin only). Fails if products are assigned."""
     await category_service.delete(db, slug)

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_admin_user, get_current_active_user, get_db
+from app.core.deps import get_current_active_user, get_db
 from app.core.exceptions import (
     BadRequestError,
     ConflictError,
@@ -18,6 +18,7 @@ from app.core.exceptions import (
 )
 from app.core.limiter import limiter
 from app.core.security import create_access_token, hash_password, verify_password
+from app.core.permissions import assert_no_escalation, require
 from app.models import (
     ALL_PERMISSIONS,
     PERMISSION_GROUPS,
@@ -52,7 +53,7 @@ PIN_TOKEN_MINUTES = 12 * 60
 
 
 @router.get("/permissions", response_model=PermissionCatalogue)
-async def list_permissions(_: User = Depends(get_admin_user)):
+async def list_permissions(_: User = Depends(require("admin.users.manage"))):
     """The full authority matrix, grouped for the role editor."""
     return PermissionCatalogue(
         groups={
@@ -76,6 +77,34 @@ def _validate_permissions(permissions: list[str]) -> None:
         raise BadRequestError(f"Unknown permissions: {', '.join(unknown)}")
 
 
+async def _assignable(
+    db: AsyncSession,
+    actor: User,
+    *,
+    role_id: uuid.UUID | None,
+    is_admin: bool | None,
+) -> None:
+    """The same downward-only rule, applied to putting a role on a person.
+
+    Composing a role you cannot hold is blocked by `assert_no_escalation`; handing an
+    existing one to yourself is the other half of the same door. So is
+    `is_admin`, which is the widest grant in the system and the one field that
+    makes every permission check moot.
+    """
+    if actor.is_admin:
+        return
+    if is_admin:
+        raise ForbiddenError("Only an admin can grant admin access")
+    if role_id is None:
+        return
+    role = await crud_service.get_or_404(db, Role, role_id)
+    assert_no_escalation(
+        actor,
+        permissions=list(role.permissions or []),
+        is_super_admin=role.is_super_admin,
+    )
+
+
 async def _role_response(db: AsyncSession, role: Role) -> RoleResponse:
     payload = RoleResponse.model_validate(role)
     payload.user_count = int(
@@ -92,7 +121,7 @@ async def _role_response(db: AsyncSession, role: Role) -> RoleResponse:
 async def list_roles(
     include_deleted: bool = False,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.users.manage")),
 ):
     roles = await crud_service.list_all(db, Role, include_deleted=include_deleted)
     return [await _role_response(db, r) for r in roles]
@@ -103,9 +132,12 @@ async def create_role(
     request: Request,
     data: RoleCreate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.users.manage")),
 ):
     _validate_permissions(data.permissions)
+    assert_no_escalation(
+        admin, permissions=data.permissions, is_super_admin=data.is_super_admin
+    )
     role = await crud_service.create(db, Role, data)
     await audit_service.log_action(
         db,
@@ -124,7 +156,7 @@ async def create_role(
 async def get_role(
     role_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.users.manage")),
 ):
     role = await crud_service.get_or_404(db, Role, role_id, include_deleted=True)
     return await _role_response(db, role)
@@ -136,11 +168,19 @@ async def update_role(
     role_id: uuid.UUID,
     data: RoleUpdate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.users.manage")),
 ):
     if data.permissions is not None:
         _validate_permissions(data.permissions)
     role = await crud_service.get_or_404(db, Role, role_id)
+    # Both sides of the edit are checked: the permissions being written, and
+    # the role as it stands — otherwise a non-admin could rename the owner's
+    # super-admin role, or strip a permission they cannot themselves grant back.
+    assert_no_escalation(
+        admin,
+        permissions=data.permissions,
+        is_super_admin=role.is_super_admin or bool(data.is_super_admin),
+    )
     role = await crud_service.update(db, role, data)
     await audit_service.log_action(
         db,
@@ -160,9 +200,10 @@ async def delete_role(
     request: Request,
     role_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.users.manage")),
 ):
     role = await crud_service.get_or_404(db, Role, role_id)
+    assert_no_escalation(admin, is_super_admin=role.is_super_admin)
     assigned = int(
         (
             await db.execute(
@@ -243,7 +284,7 @@ async def list_staff(
     branch_id: uuid.UUID | None = None,
     include_inactive: bool = True,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.users.manage")),
 ):
     stmt = select(User).where(User.is_staff.is_(True))
     if not include_inactive:
@@ -262,7 +303,7 @@ async def create_staff(
     request: Request,
     data: StaffCreate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.users.manage")),
 ):
     email = data.email.strip().lower()
     existing = (
@@ -278,6 +319,7 @@ async def create_staff(
 
     if data.role_id is not None:
         await crud_service.get_or_404(db, Role, data.role_id)
+    await _assignable(db, admin, role_id=data.role_id, is_admin=data.is_admin)
 
     user = User(
         email=email,
@@ -314,7 +356,7 @@ async def create_staff(
 async def staff_for_device(
     device_reference: str,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.users.manage")),
 ):
     """
     Staff assigned to the branch a given device belongs to.
@@ -363,7 +405,7 @@ async def my_session(
 async def get_staff(
     user_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.users.manage")),
 ):
     user = await crud_service.get_or_404(db, User, user_id)
     return await _staff_response(db, user)
@@ -375,7 +417,7 @@ async def update_staff(
     user_id: uuid.UUID,
     data: StaffUpdate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.users.manage")),
 ):
     user = await crud_service.get_or_404(db, User, user_id)
 
@@ -385,6 +427,9 @@ async def update_staff(
         raise ConflictError(f"Staff number '{data.staff_number}' is already in use")
     if data.role_id is not None:
         await crud_service.get_or_404(db, Role, data.role_id)
+    await _assignable(
+        db, admin, role_id=data.role_id, is_admin=getattr(data, "is_admin", None)
+    )
 
     payload = data.model_dump(
         exclude={"password", "pin", "branch_ids"}, exclude_unset=True
@@ -424,7 +469,7 @@ async def deactivate_staff(
     request: Request,
     user_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.users.manage")),
 ):
     """
     Staff are deactivated rather than deleted — their name must stay resolvable on

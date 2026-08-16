@@ -10,7 +10,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.deps import get_admin_user, get_current_active_user, get_db
+from app.core.deps import get_current_active_user, get_db
 from app.core.exceptions import BadRequestError, ConflictError
 from app.core.permissions import ensure, require
 from app.models import (
@@ -106,7 +106,7 @@ warehouses_router = APIRouter()
 async def list_warehouses(
     branch_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("inventory.read")),
 ):
     filters = [Warehouse.branch_id == branch_id] if branch_id else []
     return await crud_service.list_all(db, Warehouse, filters=filters)
@@ -118,7 +118,7 @@ async def list_warehouses(
 async def create_warehouse(
     data: WarehouseCreate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("inventory.manage")),
 ):
     await crud_service.get_or_404(db, Branch, data.branch_id)
     warehouse = await crud_service.create(db, Warehouse, data)
@@ -132,7 +132,7 @@ async def update_warehouse(
     warehouse_id: uuid.UUID,
     data: WarehouseUpdate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("inventory.manage")),
 ):
     warehouse = await crud_service.get_or_404(db, Warehouse, warehouse_id)
     warehouse = await crud_service.update(db, warehouse, data)
@@ -145,7 +145,7 @@ async def update_warehouse(
 async def delete_warehouse(
     warehouse_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("inventory.manage")),
 ):
     warehouse = await crud_service.get_or_404(db, Warehouse, warehouse_id)
     stock = (
@@ -191,7 +191,7 @@ async def list_items(
     category_id: uuid.UUID | None = None,
     include_inactive: bool = True,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("inventory.items.read")),
+    _: User = Depends(require("inventory.read")),
 ):
     filters = []
     if category_id:
@@ -213,7 +213,7 @@ async def create_item(
     request: Request,
     data: InventoryItemCreate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.items.manage")),
+    user: User = Depends(require("inventory.manage")),
 ):
     if await crud_service.reference_taken(db, InventoryItem, "sku", data.sku):
         raise ConflictError(f"SKU '{data.sku}' is already in use")
@@ -235,7 +235,7 @@ async def create_item(
 async def get_item(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("inventory.items.read")),
+    _: User = Depends(require("inventory.read")),
 ):
     return await crud_service.get_or_404(
         db, InventoryItem, item_id, include_deleted=True
@@ -248,7 +248,7 @@ async def update_item(
     item_id: uuid.UUID,
     data: InventoryItemUpdate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.items.manage")),
+    user: User = Depends(require("inventory.manage")),
 ):
     item = await crud_service.get_or_404(db, InventoryItem, item_id)
     if data.sku and await crud_service.reference_taken(
@@ -273,7 +273,7 @@ async def update_item(
 async def delete_item(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("inventory.items.manage")),
+    _: User = Depends(require("inventory.manage")),
 ):
     item = await crud_service.get_or_404(db, InventoryItem, item_id)
     await crud_service.soft_delete(db, item)
@@ -291,7 +291,7 @@ async def list_levels(
     below_minimum_only: bool = False,
     limit: int = Query(500, ge=1, le=5000),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("reports.inventory_levels")),
+    _: User = Depends(require("reports.inventory")),
 ):
     """The inventory levels report: what is on hand and what needs reordering."""
 
@@ -364,7 +364,7 @@ async def list_transactions(
     business_date: str | None = None,
     limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("reports.inventory_transactions")),
+    _: User = Depends(require("reports.inventory")),
 ):
     stmt = select(InventoryTransaction).options(
         selectinload(InventoryTransaction.items)
@@ -397,7 +397,7 @@ async def create_transaction(
     data: InventoryTransactionCreate,
     post: bool = Query(True, description="Post immediately, moving stock"),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.items.manage")),
+    user: User = Depends(require("inventory.manage")),
 ):
     branch = await crud_service.get_or_404(db, Branch, data.branch_id)
     business_date = await business_day_service.current_business_date(db, branch)
@@ -460,7 +460,7 @@ async def create_transaction(
 async def get_transaction(
     transaction_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("reports.inventory_transactions")),
+    _: User = Depends(require("reports.inventory")),
 ):
     transaction = await inventory_service.load_transaction(db, transaction_id)
     return _serialise_transaction(transaction, await _item_lookup(db, transaction))
@@ -472,7 +472,7 @@ async def get_transaction(
 async def post_transaction(
     transaction_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.items.manage")),
+    user: User = Depends(require("inventory.manage")),
 ):
     """Move the stock for a draft transaction."""
     transaction = await inventory_service.load_transaction(db, transaction_id)
@@ -487,7 +487,7 @@ async def post_transaction(
 async def adjust_quantity(
     data: QuantityAdjustmentRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.quantity_adjustment.create")),
+    user: User = Depends(require("inventory.adjustments.manage")),
 ):
     """Single-line signed adjustment — waste, breakage, or a correction."""
     branch = await crud_service.get_or_404(db, Branch, data.branch_id)
@@ -546,7 +546,7 @@ async def list_purchase_orders(
     status_filter: str | None = Query(None, alias="status"),
     limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("inventory.purchase_orders.view_approved")),
+    _: User = Depends(require("inventory.purchase_orders.manage")),
 ):
     stmt = select(PurchaseOrder).options(selectinload(PurchaseOrder.items))
     if branch_id:
@@ -566,7 +566,7 @@ async def list_purchase_orders(
 async def create_purchase_order(
     data: PurchaseOrderCreate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.purchase_orders.create")),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
 ):
     branch = await crud_service.get_or_404(db, Branch, data.branch_id)
     await crud_service.get_or_404(db, Supplier, data.supplier_id)
@@ -631,7 +631,7 @@ async def _replace_po_lines(
 async def get_purchase_order(
     po_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("inventory.purchase_orders.view_approved")),
+    _: User = Depends(require("inventory.purchase_orders.manage")),
 ):
     return await _serialise_po(db, await _load_po(db, po_id))
 
@@ -641,7 +641,7 @@ async def update_purchase_order(
     po_id: uuid.UUID,
     data: PurchaseOrderUpdate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("inventory.purchase_orders.create")),
+    _: User = Depends(require("inventory.purchase_orders.manage")),
 ):
     purchase_order = await _load_po(db, po_id)
     if purchase_order.status in (
@@ -671,7 +671,7 @@ async def update_purchase_order(
 async def submit_purchase_order(
     po_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.purchase_orders.submit")),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
 ):
     await inventory_service.transition_purchase_order(
         db,
@@ -722,7 +722,7 @@ async def receive_purchase_order(
     po_id: uuid.UUID,
     data: ReceivePurchaseOrderRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.purchasing.from_po")),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
 ):
     """Receive a delivery, in full or in part, moving stock in."""
     purchase_order = await _load_po(db, po_id)
@@ -747,7 +747,7 @@ async def list_supplier_items(
     # routes: `set_supplier_items` calls this as a plain function to build its
     # response, and a decorator dependency does not run on that path — the
     # check would silently vanish for exactly one caller.
-    ensure(user, "inventory.suppliers.read")
+    ensure(user, "inventory.read")
     stmt = select(SupplierItem).where(SupplierItem.supplier_id == supplier_id)
     return list((await db.execute(stmt)).scalars().all())
 
@@ -757,7 +757,7 @@ async def set_supplier_items(
     supplier_id: uuid.UUID,
     data: list[SupplierItemUpsert],
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.suppliers.manage")),
+    user: User = Depends(require("inventory.manage")),
 ):
     await crud_service.get_or_404(db, Supplier, supplier_id)
     await db.execute(
@@ -805,7 +805,7 @@ async def _recipe_response(db: AsyncSession, product_id: uuid.UUID) -> RecipeRes
 async def get_product_recipe(
     product_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("menu.ingredients.read")),
+    _: User = Depends(require("catalogue.recipes.read")),
 ):
     await crud_service.get_or_404(db, Product, product_id)
     return await _recipe_response(db, product_id)
@@ -816,7 +816,7 @@ async def set_product_recipe(
     product_id: uuid.UUID,
     data: RecipeUpsert,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("menu.ingredients.manage")),
+    _: User = Depends(require("catalogue.recipes.manage")),
 ):
     """Replace a product's recipe. Selling the product depletes these."""
     await crud_service.get_or_404(db, Product, product_id)
@@ -844,7 +844,7 @@ async def set_modifier_option_recipe(
     option_id: uuid.UUID,
     data: RecipeUpsert,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("menu.ingredients.manage")),
+    _: User = Depends(require("catalogue.recipes.manage")),
 ):
     await crud_service.get_or_404(db, ModifierOption, option_id)
     await db.execute(
@@ -881,7 +881,7 @@ __all__ = [
 async def record_waste(
     data: WasteRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.quantity_adjustment.create")),
+    user: User = Depends(require("inventory.adjustments.manage")),
 ):
     """
     Write off stock that went in the bin.
@@ -909,7 +909,7 @@ async def record_waste(
 async def adjust_cost(
     data: CostAdjustmentRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.cost_adjustment.create")),
+    user: User = Depends(require("inventory.adjustments.manage")),
 ):
     """Restate what stock on hand is worth, without moving any of it."""
     branch = await crud_service.get_or_404(db, Branch, data.branch_id)
@@ -933,7 +933,7 @@ counts_router = APIRouter()
 async def open_count(
     data: OpenCountRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.counts.create")),
+    user: User = Depends(require("inventory.adjustments.manage")),
 ):
     """
     Start a count, freezing what the system believes right now.
@@ -960,7 +960,7 @@ async def list_counts(
     status_filter: str | None = Query(None, alias="status"),
     limit: int = Query(50, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("inventory.counts.create")),
+    _: User = Depends(require("inventory.adjustments.manage")),
 ):
     """Open and completed counts — this is also the count-sheet list."""
     stmt = select(InventoryTransaction).where(
@@ -984,7 +984,7 @@ async def close_count(
     count_id: uuid.UUID,
     data: CloseCountRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.counts.submit")),
+    user: User = Depends(require("inventory.adjustments.manage")),
 ):
     """
     Post the count: write the variance to stock and report it line by line.

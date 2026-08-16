@@ -176,7 +176,7 @@ async def cash_spot_check(
     # register shows it to the cashier, and a refactor must not reword it.
     user: User = Depends(
         require(
-            "pos.spot_check",
+            "pos.till.manage",
             message="You do not have permission to run a cash spot check",
         )
     ),
@@ -245,7 +245,14 @@ async def create_drawer_operation(
     till_id: uuid.UUID,
     data: DrawerOperationCreate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    # Ownership and authority are different questions, and this route was only
+    # asking the first: `_assert_can_touch` says the till is yours, not that you
+    # may pay money out of it. A pay-out or a no-sale is the drawer opening
+    # outside a sale, which is why `pos.drawer.access` existed in the Foodics
+    # matrix — it was just never wired to anything. Cash sales are unaffected:
+    # they reach the ledger through `till_service` from the payment route, not
+    # through here.
+    user: User = Depends(require("pos.till.manage")),
 ):
     till = await till_service.require_till(db, till_id)
     _assert_can_touch(till, user)

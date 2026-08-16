@@ -28,8 +28,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_admin_user, get_db
+from app.core.deps import get_db
 from app.core.exceptions import BadRequestError, NotFoundError
+from app.core.permissions import require
 from app.models.payment_gateway import PaymentGateway
 from app.models.user import User
 from app.services import audit_service
@@ -93,7 +94,7 @@ def _to_response(row: PaymentGateway) -> PaymentGatewayResponse:
 @router.get("", response_model=list[PaymentGatewayResponse])
 async def list_gateways(
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("admin.payments.manage")),
 ):
     """Every card gateway, in the order the router would walk them."""
     rows = (
@@ -116,7 +117,7 @@ async def update_gateway(
     data: PaymentGatewayUpdate,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("admin.payments.manage")),
 ):
     """Change how — or whether — a gateway is used. Takes effect immediately."""
     row = (

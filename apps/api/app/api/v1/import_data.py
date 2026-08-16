@@ -6,7 +6,8 @@ import io
 from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_admin_user, get_db
+from app.core.deps import get_db
+from app.core.permissions import require
 from app.models.user import User
 from app.schemas.import_data import ImportResult
 from app.services import image_warm_service, import_service
@@ -26,7 +27,7 @@ async def import_categories(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("admin.data.manage")),
 ):
     """Import categories from Foodics CSV export."""
     rows = await _parse_csv(file)
@@ -40,7 +41,7 @@ async def import_products(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("admin.data.manage")),
 ):
     """Import products from Foodics CSV export."""
     rows = await _parse_csv(file)
@@ -55,7 +56,7 @@ async def import_products(
 async def import_modifiers(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("admin.data.manage")),
 ):
     """Import modifiers from Foodics CSV export."""
     rows = await _parse_csv(file)
@@ -66,7 +67,7 @@ async def import_modifiers(
 async def import_modifier_options(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("admin.data.manage")),
 ):
     """Import modifier options from Foodics CSV export."""
     rows = await _parse_csv(file)
@@ -77,7 +78,7 @@ async def import_modifier_options(
 async def import_product_modifiers(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("admin.data.manage")),
 ):
     """Import product-modifier assignments from Foodics CSV export."""
     rows = await _parse_csv(file)

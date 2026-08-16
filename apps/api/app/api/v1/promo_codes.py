@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_admin_user, get_db, get_optional_user
+from app.core.deps import get_db, get_optional_user
 from app.core.limiter import limiter
+from app.core.permissions import require
 from app.models.user import User
 from app.schemas.promo_code import (
     PromoCodeAdvertResponse,
@@ -86,7 +87,7 @@ async def featured_promo_code(
 async def list_promo_codes(
     include_inactive: bool = Query(False),
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("marketing.manage")),
 ):
     """List all promo codes (admin only)."""
     return await promo_code_service.get_all(db, include_inactive=include_inactive)
@@ -97,7 +98,7 @@ async def create_promo_code(
     request: Request,
     data: PromoCodeCreate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("marketing.manage")),
 ):
     """Create a new promo code (admin only)."""
     result = await promo_code_service.create(db, data)
@@ -120,7 +121,7 @@ async def update_promo_code(
     code: str,
     data: PromoCodeUpdate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("marketing.manage")),
 ):
     """Update a promo code (admin only)."""
     result = await promo_code_service.update(db, code, data)
@@ -142,7 +143,7 @@ async def delete_promo_code(
     request: Request,
     code: str,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("marketing.manage")),
 ):
     """Delete a promo code (admin only)."""
     await promo_code_service.delete(db, code)
@@ -167,7 +168,7 @@ async def create_promo_codes_bulk(
     request: Request,
     data: PromoCodeBulkCreate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("marketing.manage")),
 ):
     """
     Generate a batch of unique single-use coupons.

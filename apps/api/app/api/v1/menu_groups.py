@@ -14,7 +14,8 @@ import uuid
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_admin_user, get_current_active_user, get_db
+from app.core.deps import get_current_active_user, get_db
+from app.core.permissions import require
 from app.models import User
 from app.schemas.menu_group import (
     MenuGroupCreate,
@@ -67,7 +68,7 @@ async def get_group(
 async def create_group(
     data: MenuGroupCreate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("catalogue.manage")),
 ):
     group = await menu_group_service.create(db, data.model_dump())
     return _to_response(group)
@@ -78,7 +79,7 @@ async def update_group(
     group_id: uuid.UUID,
     data: MenuGroupUpdate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("catalogue.manage")),
 ):
     group = await menu_group_service.update(
         db, group_id, data.model_dump(exclude_unset=True)
@@ -90,7 +91,7 @@ async def update_group(
 async def delete_group(
     group_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    _: User = Depends(require("catalogue.manage")),
 ):
     """Removes the group and everything nested under it."""
     await menu_group_service.delete(db, group_id)

@@ -21,7 +21,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_admin_user, get_db
+from app.core.deps import get_db
+from app.core.permissions import require
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.core.limiter import limiter
 from app.models.custom_order import (
@@ -188,7 +189,7 @@ async def get_calendar(
     start: date,
     end: date,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("orders.custom.manage")),
 ):
     """The month view: every date in the window with what is booked on it."""
     if (end - start).days >= MAX_RANGE_DAYS:
@@ -234,7 +235,7 @@ async def create_custom_order(
     request: Request,
     data: CustomOrderCreate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("orders.custom.manage")),
 ):
     """Record an order that arrived somewhere this system cannot see."""
     payload = data.model_dump(exclude={"allow_past"})
@@ -259,7 +260,7 @@ async def list_custom_orders(
     upcoming_only: bool = Query(False),
     limit: int = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("orders.custom.manage")),
 ):
     stmt = select(CustomOrder)
     if status_filter:
@@ -284,7 +285,7 @@ async def update_custom_order(
     custom_order_id: uuid.UUID,
     data: CustomOrderUpdate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("orders.custom.manage")),
 ):
     custom_order = await _get_or_404(db, custom_order_id)
     changes = data.model_dump(exclude_unset=True)
@@ -324,7 +325,7 @@ async def update_status(
     custom_order_id: uuid.UUID,
     data: CustomOrderStatusUpdate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require("orders.custom.manage")),
 ):
     custom_order = await custom_order_service.set_status(
         db, custom_order_id, data.status
@@ -360,7 +361,7 @@ class BlackoutResponse(BaseModel):
 @admin_router.get("/blackouts", response_model=list[BlackoutResponse])
 async def list_blackouts(
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("orders.custom.manage")),
 ):
     rows = (
         (
@@ -380,7 +381,7 @@ async def list_blackouts(
 async def create_blackout(
     data: BlackoutCreate,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("orders.custom.manage")),
 ):
     """
     Close a date.
@@ -406,7 +407,7 @@ async def create_blackout(
 async def delete_blackout(
     blackout_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("orders.custom.manage")),
 ):
     blackout = await db.get(CustomOrderBlackout, blackout_id)
     if blackout is None:

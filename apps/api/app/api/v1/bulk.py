@@ -9,7 +9,8 @@ from sqlalchemy.dialects.postgresql import ARRAY, array
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import cache_delete_pattern
-from app.core.deps import get_admin_user, get_db
+from app.core.deps import get_db
+from app.core.permissions import require
 from app.core.exceptions import BadRequestError
 from app.models.category import Category
 from app.models.modifier import Modifier, ModifierOption
@@ -39,7 +40,7 @@ async def bulk_update_status(
     entity: str = Path(...),
     body: BulkStatusRequest = ...,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("catalogue.manage")),
 ):
     """Bulk activate or deactivate entities (admin only)."""
     model = _ENTITY_MAP.get(entity)
@@ -74,7 +75,7 @@ class BulkVisibilityRequest(BaseModel):
 async def bulk_update_visibility(
     body: BulkVisibilityRequest,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    _admin: User = Depends(require("catalogue.manage")),
 ):
     """
     Put products on the website or the register, or take them off.
