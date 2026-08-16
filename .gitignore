@@ -90,3 +90,6 @@ scripts/menu/*.html
 # production is quietly running without the variable.
 !.env.example
 !*.env.example
+
+# npm lockfile for the standalone marketing scripts (pnpm owns the workspace)
+scripts/marketing/package-lock.json

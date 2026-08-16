@@ -1,0 +1,9 @@
+{
+  "name": "mm-marketing-reel",
+  "private": true,
+  "description": "Standalone deps for the launch reel scripts. Deliberately outside the pnpm workspace (apps/*, packages/*) so installing them cannot touch pnpm-lock.yaml, which the deploy workflow treats as a production change.",
+  "type": "module",
+  "dependencies": {
+    "playwright-core": "^1.56.0"
+  }
+}
