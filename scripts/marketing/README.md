@@ -28,10 +28,10 @@ node scripts/marketing/render-reel-overlays.mjs
 ./scripts/marketing/build-reel.sh
 ```
 
-Result: `branding/marketing/melting-moments-launch-reel.mp4` (~15 MB, 26s).
+Result: `branding/marketing/melting-moments-launch-reel.mp4` (~13 MB, 21.9s).
 `branding/` is gitignored — the video is a build output, not a source asset.
 
-Intermediates (~560 MB of PNG frames) go to `$TMPDIR/mm-reel`; set `WORK` to
+Intermediates (~500 MB of PNG frames) go to `$TMPDIR/mm-reel`; set `WORK` to
 put them elsewhere, and `SITE` to film a staging URL instead of production.
 
 ## How it works
@@ -57,13 +57,12 @@ Two things that look like detours but aren't:
 |------|------|------|
 | 0.0–8.3s | Home hero + promo banner, into bestsellers | "Our new website **is live.**" |
 | 8.3–12.5s | Brownies category | "Brownies. Cookies. Cookie melts." |
-| 12.5–16.7s | Ferrero Brownies product page | "**Baked to order** in Sharjah." |
-| 16.7–20.4s | Cookie melts | "Delivered to all **7 Emirates.**" |
-| 4.3–21.8s | — | Persistent pill: *15% off your first 3 orders — NEW* |
-| 22.2–26.1s | End card | Logo, **15% OFF**, code **NEW**, domain |
+| 12.5–16.2s | Cookie melts | "Delivered to all **7 Emirates.**" |
+| 4.3–17.6s | — | Persistent pill: *15% off your first 3 orders — NEW* |
+| 18.0–21.9s | End card | Logo, **15% OFF**, code **NEW**, domain |
 
 Every claim in the copy is one the storefront already makes: the 15%/code NEW
-banner, "baked to order, never off a shelf", and delivery to all 7 Emirates.
+banner and delivery to all 7 Emirates.
 **Before posting, confirm the `NEW` promo code is actually live** — the site
 banner advertising it and a usable row in `promo_codes` are two different
 things, and the reel is only honest if both are true.

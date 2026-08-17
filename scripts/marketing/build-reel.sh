@@ -29,20 +29,17 @@ ffmpeg -y -loglevel error \
   -loop 1 -i "$WORK/ov/t1.png" \
   -loop 1 -i "$WORK/ov/t2.png" \
   -loop 1 -i "$WORK/ov/t3.png" \
-  -loop 1 -i "$WORK/ov/t4.png" \
   -loop 1 -i "$WORK/ov/pill.png" \
   -filter_complex "\
 [1]format=rgba,fade=in:st=0.5:d=0.5:alpha=1,fade=out:st=3.4:d=0.5:alpha=1[t1];\
 [2]format=rgba,fade=in:st=8.7:d=0.5:alpha=1,fade=out:st=11.6:d=0.5:alpha=1[t2];\
-[3]format=rgba,fade=in:st=13.0:d=0.5:alpha=1,fade=out:st=15.8:d=0.5:alpha=1[t3];\
-[4]format=rgba,fade=in:st=17.2:d=0.5:alpha=1,fade=out:st=19.8:d=0.5:alpha=1[t4];\
-[5]format=rgba,fade=in:st=4.3:d=0.5:alpha=1,fade=out:st=21.3:d=0.5:alpha=1[pill];\
+[3]format=rgba,fade=in:st=13.0:d=0.5:alpha=1,fade=out:st=15.6:d=0.5:alpha=1[t3];\
+[4]format=rgba,fade=in:st=4.3:d=0.5:alpha=1,fade=out:st=17.1:d=0.5:alpha=1[pill];\
 [0][t1]overlay=enable='between(t,0.5,3.9)'[v1];\
 [v1][t2]overlay=enable='between(t,8.7,12.1)'[v2];\
-[v2][t3]overlay=enable='between(t,13.0,16.3)'[v3];\
-[v3][t4]overlay=enable='between(t,17.2,20.3)'[v4];\
-[v4][pill]overlay=enable='between(t,4.3,21.8)',format=yuv420p[vout]" \
-  -map "[vout]" -t 22.2 -r 30 \
+[v2][t3]overlay=enable='between(t,13.0,16.1)'[v3];\
+[v3][pill]overlay=enable='between(t,4.3,17.6)',format=yuv420p[vout]" \
+  -map "[vout]" -t 18.0 -r 30 \
   -c:v libx264 -preset slow -crf 18 -profile:v high -level 4.0 "$WORK/base.mp4"
 
 # ── 2. end card, slow push-in ───────────────────────────────────────────
@@ -58,7 +55,7 @@ ffmpeg -y -loglevel error -loop 1 -i "$WORK/ov/endcard.png" \
 ffmpeg -y -loglevel error \
   -i "$WORK/base.mp4" -i "$WORK/end.mp4" \
   -f lavfi -t 30 -i anullsrc=channel_layout=stereo:sample_rate=48000 \
-  -filter_complex "[0:v][1:v]xfade=transition=fade:duration=0.6:offset=21.6,format=yuv420p[v]" \
+  -filter_complex "[0:v][1:v]xfade=transition=fade:duration=0.6:offset=17.4,format=yuv420p[v]" \
   -map "[v]" -map 2:a -shortest \
   -c:v libx264 -preset slow -crf 18 -profile:v high -level 4.0 \
   -c:a aac -b:a 128k -movflags +faststart "$OUT"

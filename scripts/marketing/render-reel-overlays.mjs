@@ -84,12 +84,6 @@ const cards = {
 
   t3: `<div class="stage"><div class="scrim"></div>
     <div class="lower">
-      <div class="eyebrow">Never off a shelf</div>
-      <div class="line"><b>Baked to order</b><br>in Sharjah.</div>
-    </div></div>`,
-
-  t4: `<div class="stage"><div class="scrim"></div>
-    <div class="lower">
       <div class="eyebrow">Order in minutes</div>
       <div class="line">Delivered to all<br><b>7 Emirates.</b></div>
     </div></div>`,

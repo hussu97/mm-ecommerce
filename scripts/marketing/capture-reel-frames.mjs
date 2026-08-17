@@ -104,21 +104,14 @@ await hold(page, 1.0);
 await scrollShot(page, 0, Math.min(1500, H - 640), 2.6);
 await hold(page, 0.6);
 
-// ── 3. A product page ───────────────────────────────────────────────────
-mark('product');
-await prime(page, `${BASE}/en/cat-brownies/ferrero-brownies`);
-await hold(page, 1.4);
-await scrollShot(page, 0, 460, 2.2); // stop short of the footer
-await hold(page, 0.6);
-
-// ── 4. Cookie melts ─────────────────────────────────────────────────────
+// ── 3. Cookie melts ─────────────────────────────────────────────────────
 mark('cookiemelt');
 H = await prime(page, `${BASE}/en/cat-cookiemelt`);
 await hold(page, 0.9);
 await scrollShot(page, 0, Math.min(1200, H - 640), 2.2);
 await hold(page, 0.6);
 
-// ── 5. Back to the promo banner to hand off to the end card ─────────────
+// ── 4. Back to the promo banner to hand off to the end card ─────────────
 mark('promo');
 await prime(page, `${BASE}/en`);
 await hold(page, 1.8);
