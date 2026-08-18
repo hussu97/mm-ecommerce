@@ -415,7 +415,7 @@ export default function ModifiersPage() {
                     <td className="px-4 py-2.5">
                       <button
                         onClick={() => setExpandedId(expandedId === m.id ? null : m.id)}
-                        className="text-gray-400 hover:text-primary transition-colors"
+                        className="inline-flex items-center justify-center min-h-11 min-w-11 md:min-h-0 md:min-w-0 text-gray-400 hover:text-primary transition-colors"
                       >
                         <span className="material-icons text-[16px]">
                           {expandedId === m.id ? 'expand_less' : 'expand_more'}

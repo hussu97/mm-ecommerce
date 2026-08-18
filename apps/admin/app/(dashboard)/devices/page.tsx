@@ -61,8 +61,8 @@ function DevicesTab({
       defaults={{ type: 'cashier' }}
       emptyMessage="No terminals registered yet."
       columns={[
-        { header: 'Name', render: (d) => <span className="font-medium">{d.name}</span> },
-        { header: 'Reference', render: (d) => <code className="text-xs text-gray-500">{d.reference}</code> },
+        { header: 'Name', priority: 'primary', render: (d) => <span className="font-medium">{d.name}</span> },
+        { header: 'Reference', priority: 'secondary', render: (d) => <code className="text-xs text-gray-500">{d.reference}</code> },
         { header: 'Type', render: (d) => <span className="capitalize">{d.type.replace('_', ' ')}</span> },
         { header: 'Branch', render: (d) => branchName(d.branch_id) },
         {
@@ -162,7 +162,7 @@ function PairingActions({ device, onDone }: { device: Device; onDone: () => void
       <button
         onClick={issue}
         disabled={busy}
-        className="text-xs text-primary hover:underline font-body disabled:opacity-50"
+        className="inline-flex items-center min-h-11 min-w-11 md:min-h-0 md:min-w-0 text-xs text-primary hover:underline font-body disabled:opacity-50"
       >
         Pair
       </button>
@@ -170,7 +170,7 @@ function PairingActions({ device, onDone }: { device: Device; onDone: () => void
         <button
           onClick={unpair}
           disabled={busy}
-          className="text-xs text-gray-500 hover:underline font-body disabled:opacity-50"
+          className="inline-flex items-center min-h-11 min-w-11 md:min-h-0 md:min-w-0 text-xs text-gray-500 hover:underline font-body disabled:opacity-50"
         >
           Unpair
         </button>
@@ -236,7 +236,7 @@ function PrintersTab({
       }}
       emptyMessage="No printers configured."
       columns={[
-        { header: 'Name', render: (p) => <span className="font-medium">{p.name}</span> },
+        { header: 'Name', priority: 'primary', render: (p) => <span className="font-medium">{p.name}</span> },
         { header: 'Branch', render: (p) => branchName(p.branch_id) },
         { header: 'Role', render: (p) => <span className="capitalize">{p.role}</span> },
         {

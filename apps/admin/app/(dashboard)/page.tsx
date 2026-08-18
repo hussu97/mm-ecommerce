@@ -113,7 +113,7 @@ export default function DashboardPage() {
       <div>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-xs font-body uppercase tracking-widest text-gray-500">Recent Orders</h2>
-          <Link href="/orders" className="text-xs text-primary hover:underline font-body">View all</Link>
+          <Link href="/orders" className="inline-flex items-center min-h-11 md:min-h-0 text-xs text-primary hover:underline font-body">View all</Link>
         </div>
 
         {loading ? (

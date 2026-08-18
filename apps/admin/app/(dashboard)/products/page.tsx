@@ -6,7 +6,8 @@ import Image from 'next/image';
 import { productsApi, categoriesApi, bulkApi } from '@/lib/api';
 import type { Category, Product, SalesChannel } from '@/lib/types';
 import { ChannelBadges } from '@/components/products/SalesChannels';
-import { Badge, Button, Input, MultiSelect, Pagination, TabBar, LoadError} from '@/components/ui';
+import { Badge, Button, Input, MultiSelect, Pagination, TabBar, LoadError, Spinner } from '@/components/ui';
+import { DataTable } from '@/components/ui/DataTable';
 import { useConfirm, useToast } from '@/components/ui/feedback';
 import { useApiList } from '@/hooks/useApiList';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
@@ -214,132 +215,121 @@ export default function ProductsPage() {
         </div>
       )}
 
-      {/* Table */}
-      <div className="bg-white border border-gray-200 overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-200 bg-gray-50">
-              <th className="px-4 py-3 w-8">
+      {loading ? (
+        <div className="flex justify-center py-16"><Spinner /></div>
+      ) : (
+        <DataTable<Product>
+          rows={products}
+          rowKey={p => p.id}
+          rowClassName={p => (selectedIds.has(p.id) ? 'bg-primary/5' : undefined)}
+          empty={
+            <p className="py-16 text-center text-sm text-gray-400 font-body">No products found.</p>
+          }
+          actions={product =>
+            activeTab === 'active' ? (
+              <>
+                <Link href={`/products/${product.slug}/edit`} onClick={e => e.stopPropagation()}>
+                  <Button variant="ghost" size="sm">Edit</Button>
+                </Link>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  loading={actionSlug === product.slug}
+                  onClick={() => handleDeactivate(product.slug, product.name)}
+                >
+                  Deactivate
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                loading={actionSlug === product.slug}
+                onClick={() => handleRestore(product.slug)}
+              >
+                Restore
+              </Button>
+            )
+          }
+          columns={[
+            {
+              header: '',
+              // The select-all checkbox lives in the header on desktop. A card
+              // list has no header row, so bulk selection is a desktop
+              // affordance here and the column says so.
+              priority: 'desktop',
+              className: 'w-8',
+              headerRender: () => (
                 <input
                   type="checkbox"
                   checked={products.length > 0 && selectedIds.size === products.length}
                   onChange={toggleSelectAll}
                   className="accent-primary"
                 />
-              </th>
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 w-12"></th>
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Product</th>
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden sm:table-cell">Category</th>
-              <th className="px-4 py-3 text-right text-[11px] font-body uppercase tracking-widest text-gray-500">Price</th>
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden md:table-cell">SKU</th>
-              <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500 hidden md:table-cell">Modifiers</th>
-              <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500 hidden lg:table-cell">Featured</th>
-              <th className="px-4 py-3 text-right text-[11px] font-body uppercase tracking-widest text-gray-500">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {loading ? (
-              Array.from({ length: 6 }).map((_, i) => (
-                <tr key={i}>
-                  {Array.from({ length: 9 }).map((_, j) => (
-                    <td key={j} className="px-4 py-3">
-                      <div className="h-4 bg-gray-100 animate-pulse rounded-sm" />
-                    </td>
-                  ))}
-                </tr>
-              ))
-            ) : products.length === 0 ? (
-              <tr>
-                <td colSpan={9} className="px-4 py-10 text-center text-sm text-gray-400 font-body">
-                  No products found.
-                </td>
-              </tr>
-            ) : (
-              products.map(product => (
-                <tr key={product.id} className={`hover:bg-gray-50 transition-colors ${selectedIds.has(product.id) ? 'bg-primary/5' : ''}`}>
-                  <td className="px-4 py-2.5 w-8">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.has(product.id)}
-                      onChange={() => toggleSelect(product.id)}
-                      className="accent-primary"
-                    />
-                  </td>
-                  <td className="px-4 py-2.5">
-                    {product.image_urls[0] ? (
-                      <div className="relative w-9 h-9 shrink-0">
-                        <Image
-                          src={product.image_urls[0]}
-                          alt={product.name}
-                          fill
-                          sizes="36px"
-                          className="object-cover rounded-sm"
-                        />
-                      </div>
-                    ) : (
-                      <div className="w-9 h-9 bg-gray-100 flex items-center justify-center rounded-sm">
-                        <span className="material-icons text-gray-300 text-[16px]">image</span>
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <div className="font-body font-medium text-gray-800 text-sm">{product.name}</div>
-                    <div className="font-body text-[11px] text-gray-400">{product.slug}</div>
-                  </td>
-                  <td className="px-4 py-2.5 hidden sm:table-cell">
-                    <span className="text-xs font-body text-gray-500">{product.category?.name ?? '—'}</span>
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <span className="text-xs font-body text-gray-700">
-                      {product.base_price > 0 ? formatCurrency(product.base_price) : 'From options'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 hidden md:table-cell">
-                    <span className="text-xs font-body text-gray-400">{product.sku ?? '—'}</span>
-                  </td>
-                  <td className="px-4 py-2.5 text-center hidden md:table-cell">
-                    <span className="text-xs font-body text-gray-500">
-                      {product.product_modifiers.length}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-center hidden lg:table-cell">
-                    {product.is_featured && <Badge variant="info">Featured</Badge>}
-                    <ChannelBadges channels={product.sales_channels} />
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      {activeTab === 'active' ? (
-                        <>
-                          <Link href={`/products/${product.slug}/edit`}>
-                            <Button variant="ghost" size="sm">Edit</Button>
-                          </Link>
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            loading={actionSlug === product.slug}
-                            onClick={() => handleDeactivate(product.slug, product.name)}
-                          >
-                            Deactivate
-                          </Button>
-                        </>
-                      ) : (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          loading={actionSlug === product.slug}
-                          onClick={() => handleRestore(product.slug)}
-                        >
-                          Restore
-                        </Button>
-                      )}
+              ),
+              render: p => (
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(p.id)}
+                  onChange={() => toggleSelect(p.id)}
+                  onClick={e => e.stopPropagation()}
+                  className="accent-primary"
+                />
+              ),
+            },
+            {
+              header: 'Product',
+              priority: 'primary',
+              render: p => (
+                <div className="flex items-center gap-3">
+                  {p.image_urls[0] ? (
+                    <div className="relative w-9 h-9 shrink-0">
+                      <Image
+                        src={p.image_urls[0]}
+                        alt={p.name}
+                        fill
+                        sizes="36px"
+                        className="object-cover rounded-sm"
+                      />
                     </div>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+                  ) : (
+                    <div className="w-9 h-9 shrink-0 bg-gray-100 flex items-center justify-center rounded-sm">
+                      <span className="material-icons text-gray-300 text-[16px]">image</span>
+                    </div>
+                  )}
+                  <span className="min-w-0 font-body font-medium text-gray-800 text-sm break-words">
+                    {p.name}
+                  </span>
+                </div>
+              ),
+            },
+            { header: 'Slug', priority: 'secondary', render: p => p.slug },
+            { header: 'Category', render: p => p.category?.name ?? '—' },
+            {
+              header: 'Price',
+              className: 'text-right',
+              render: p =>
+                p.base_price > 0 ? formatCurrency(p.base_price) : 'From options',
+            },
+            { header: 'SKU', render: p => p.sku ?? '—' },
+            {
+              header: 'Modifiers',
+              className: 'text-center',
+              render: p => p.product_modifiers.length,
+            },
+            {
+              header: 'Channels',
+              className: 'text-center',
+              render: p => (
+                <>
+                  {p.is_featured && <Badge variant="info">Featured</Badge>}
+                  <ChannelBadges channels={p.sales_channels} />
+                </>
+              ),
+            },
+          ]}
+        />
+      )}
 
       <Pagination
         page={page}

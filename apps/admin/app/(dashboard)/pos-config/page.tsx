@@ -64,8 +64,8 @@ function PaymentMethodsTab() {
       searchKeys={['name', 'code']}
       defaults={{ type: 'cash', is_active: true, allows_refund: true, display_order: 0 }}
       columns={[
-        { header: 'Name', render: (m) => <span className="font-medium">{m.name}</span> },
-        { header: 'Code', render: (m) => <code className="text-xs text-gray-500">{m.code}</code> },
+        { header: 'Name', priority: 'primary', render: (m) => <span className="font-medium">{m.name}</span> },
+        { header: 'Code', priority: 'secondary', render: (m) => <code className="text-xs text-gray-500">{m.code}</code> },
         { header: 'Type', render: (m) => <span className="capitalize">{m.type.replace('_', ' ')}</span> },
         { header: 'Opens drawer', render: (m) => (m.auto_open_drawer ? 'Yes' : '—') },
         { header: 'Tips', render: (m) => (m.allows_tips ? 'Yes' : '—') },
@@ -120,7 +120,7 @@ function TaxesTab() {
       searchKeys={['name']}
       defaults={{ type: 'inclusive', is_active: true, rate: 0.05 }}
       columns={[
-        { header: 'Name', render: (t) => <span className="font-medium">{t.name}</span> },
+        { header: 'Name', priority: 'primary', render: (t) => <span className="font-medium">{t.name}</span> },
         { header: 'Rate', render: (t) => `${(Number(t.rate) * 100).toFixed(2)}%` },
         { header: 'Type', render: (t) => <span className="capitalize">{t.type}</span> },
         { header: 'Status', render: (t) => <StatusBadge active={t.is_active && !t.deleted_at} /> },
@@ -157,7 +157,7 @@ function ChargesTab() {
       searchKeys={['name']}
       defaults={{ type: 'fixed', value: 0, is_auto_applied: false, is_active: true, order_types: [] }}
       columns={[
-        { header: 'Name', render: (c) => <span className="font-medium">{c.name}</span> },
+        { header: 'Name', priority: 'primary', render: (c) => <span className="font-medium">{c.name}</span> },
         { header: 'Type', render: (c) => <span className="capitalize">{c.type}</span> },
         {
           header: 'Value',
@@ -204,7 +204,7 @@ function ReasonsTab() {
       searchKeys={['name']}
       defaults={{ type: 'void_return', is_active: true }}
       columns={[
-        { header: 'Name', render: (r) => <span className="font-medium">{r.name}</span> },
+        { header: 'Name', priority: 'primary', render: (r) => <span className="font-medium">{r.name}</span> },
         {
           header: 'Used for',
           render: (r) => <span className="capitalize">{r.type.replace(/_/g, ' ')}</span>,

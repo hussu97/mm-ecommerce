@@ -182,7 +182,53 @@ export default function TranslationsPage() {
           <Spinner />
         </div>
       ) : (
-        <div className="bg-white border border-gray-200 overflow-x-auto">
+        <>
+          {/* A key-by-language matrix is the one list here whose columns are
+              not known in advance, so it cannot use `DataTable`. It follows the
+              same rule anyway: below `md` a row becomes a card — the key as the
+              title, one labelled field per language under it. The table needs
+              700px of minimum column widths to be legible at all, which is
+              nearly twice a phone. */}
+          <ul className="md:hidden space-y-2">
+            {filteredKeys.length === 0 ? (
+              <li className="rounded border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-400 font-body">
+                No translations found for this namespace.
+              </li>
+            ) : (
+              filteredKeys.map(key => (
+                <li key={key} className="rounded border border-gray-200 bg-white px-3.5 py-3">
+                  <p className="text-xs font-body text-gray-800 break-all">
+                    {namespace ? key.replace(`${namespace}.`, '') : key}
+                  </p>
+                  <div className="mt-2.5 space-y-2 border-t border-gray-100 pt-2.5">
+                    {languages.map(lang => (
+                      <label key={lang.code} className="block">
+                        <span className="mb-1 block text-[11px] font-body uppercase tracking-widest text-gray-400">
+                          {lang.name} ({lang.code})
+                        </span>
+                        <input
+                          type="text"
+                          className="w-full px-2 py-2 min-h-11 text-sm border border-gray-200 rounded focus:border-primary focus:outline-none font-body"
+                          dir={lang.direction}
+                          value={getValue(lang.code, key)}
+                          onChange={e => handleEdit(lang.code, key, e.target.value)}
+                          placeholder={`${lang.code}...`}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </li>
+              ))
+            )}
+          </ul>
+
+          {/* Deliberate at a desk: the matrix needs 220px for the key and
+              240px per language to be legible, so folding it would be worse
+              than dragging it. The phone shape is the card list above. */}
+          <div
+            data-scroll-intent="table"
+            className="hidden md:block bg-white border border-gray-200 overflow-x-auto"
+          >
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
@@ -232,7 +278,8 @@ export default function TranslationsPage() {
               )}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
 
       {!loading && filteredKeys.length > 0 && (

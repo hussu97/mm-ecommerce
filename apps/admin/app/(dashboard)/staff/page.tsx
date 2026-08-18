@@ -53,8 +53,8 @@ function StaffTab() {
       defaults={{ is_active: true, is_admin: false, is_driver: false }}
       emptyMessage="No staff yet. Add your first cashier."
       columns={[
-        { header: 'Name', render: (s) => <span className="font-medium">{s.display_name ?? s.email}</span> },
-        { header: 'Email', render: (s) => <span className="text-xs text-gray-500">{s.email}</span> },
+        { header: 'Name', priority: 'primary', render: (s) => <span className="font-medium">{s.display_name ?? s.email}</span> },
+        { header: 'Email', priority: 'secondary', render: (s) => <span className="text-xs text-gray-500">{s.email}</span> },
         { header: 'Staff no.', render: (s) => s.staff_number ?? '—' },
         { header: 'Role', render: (s) => s.role_name ?? <span className="text-gray-400">None</span> },
         {
@@ -135,7 +135,7 @@ function BranchAssignment({
           setSelected(staff.branch_ids);
           setOpen(true);
         }}
-        className="text-xs text-primary hover:underline font-body"
+        className="inline-flex items-center min-h-11 min-w-11 md:min-h-0 md:min-w-0 text-xs text-primary hover:underline font-body"
       >
         Branches
       </button>
@@ -246,7 +246,7 @@ function RolesTab() {
             <div className="mt-3 flex gap-3">
               <button
                 onClick={() => setEditing(role)}
-                className="text-xs text-primary hover:underline font-body"
+                className="inline-flex items-center min-h-11 min-w-11 md:min-h-0 md:min-w-0 text-xs text-primary hover:underline font-body"
               >
                 Edit permissions
               </button>
@@ -256,7 +256,7 @@ function RolesTab() {
                     await rolesApi.remove(role.id).catch(() => {});
                     void reload();
                   }}
-                  className="text-xs text-red-500 hover:underline font-body"
+                  className="inline-flex items-center min-h-11 min-w-11 md:min-h-0 md:min-w-0 text-xs text-red-500 hover:underline font-body"
                 >
                   Delete
                 </button>

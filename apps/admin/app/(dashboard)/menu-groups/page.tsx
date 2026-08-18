@@ -14,6 +14,7 @@ import { menuGroupsApi, productsApi, ApiError } from '@/lib/api';
 import type { MenuGroupNode } from '@/lib/api';
 import type { Product } from '@/lib/types';
 import { Button, Input } from '@/components/ui';
+import { RowAction } from '@/components/ui/DataTable';
 import { useConfirm } from '@/components/ui/feedback';
 
 const BLANK = { name: '', name_localized: '', parent_id: null as string | null, is_active: true };
@@ -232,9 +233,12 @@ export default function MenuGroupsPage() {
             </button>
           </td>
           <td className="px-4 py-2 text-right whitespace-nowrap">
-            <button onClick={() => openAdd(node)} className="text-primary text-sm mr-3">Add inside</button>
-            <button onClick={() => openEdit(node)} className="text-primary text-sm mr-3">Edit</button>
-            <button onClick={() => remove(node)} className="text-red-600 text-sm">Delete</button>
+            {/* `RowAction` rather than bare buttons: these sat 20px tall and
+                8px apart in a tree whose rows are already indented, which on a
+                phone is three targets inside one thumb. */}
+            <RowAction onClick={() => openAdd(node)}>Add inside</RowAction>
+            <RowAction onClick={() => openEdit(node)}>Edit</RowAction>
+            <RowAction danger onClick={() => remove(node)}>Delete</RowAction>
           </td>
         </tr>
         {isOpen && node.children.map(child => (

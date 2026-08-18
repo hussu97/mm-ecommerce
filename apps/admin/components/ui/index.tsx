@@ -19,9 +19,14 @@ const BtnVariants: Record<BtnVariant, string> = {
   outline:   'border border-gray-300 text-gray-600 hover:bg-gray-50',
   danger:    'bg-red-50 text-red-600 border border-red-200 hover:bg-red-100',
 };
+// Height is a floor, not a fixed value, so a button with a wrapped label still
+// grows. `md` meets the 44px thumb target on a phone and stays compact on a
+// desktop where the pointer is precise; `sm` is for controls that sit inside a
+// dense row and is deliberately smaller, which is why it must never be the
+// only way to perform an action.
 const BtnSizes: Record<BtnSize, string> = {
-  sm: 'text-xs px-3 py-1.5',
-  md: 'text-xs px-4 py-2',
+  sm: 'text-xs px-3 py-1.5 min-h-9',
+  md: 'text-xs px-4 py-2 min-h-[var(--tap-min)] md:min-h-0',
 };
 
 export function Button({ variant = 'primary', size = 'md', loading, className, disabled, children, ...props }: ButtonProps) {
@@ -61,7 +66,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(({ label, error, h
         ref={ref}
         id={inputId}
         className={cn(
-          'w-full px-3 py-2 text-sm font-body bg-white border rounded-sm outline-none transition-colors',
+          'w-full px-3 py-2 min-h-[var(--tap-min)] md:min-h-0 text-sm font-body bg-white border rounded-sm outline-none transition-colors',
           'placeholder:text-gray-400 focus:border-primary focus:ring-1 focus:ring-primary/30',
           error ? 'border-red-400' : 'border-gray-300',
           'disabled:bg-gray-50 disabled:opacity-60',
@@ -94,7 +99,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(({ label, error
         ref={ref}
         id={selectId}
         className={cn(
-          'w-full px-3 py-2 text-sm font-body bg-white border rounded-sm outline-none transition-colors cursor-pointer',
+          'w-full px-3 py-2 min-h-[var(--tap-min)] md:min-h-0 text-sm font-body bg-white border rounded-sm outline-none transition-colors cursor-pointer',
           'focus:border-primary focus:ring-1 focus:ring-primary/30',
           error ? 'border-red-400' : 'border-gray-300',
           className,
@@ -207,7 +212,7 @@ export function MultiSelect({ options, value, onChange, placeholder = 'All', cla
         type="button"
         onClick={() => setOpen(o => !o)}
         className={cn(
-          'w-full px-3 py-2 text-sm font-body bg-white border rounded-sm outline-none transition-colors flex items-center justify-between gap-2 cursor-pointer',
+          'w-full px-3 py-2 min-h-[var(--tap-min)] md:min-h-0 text-sm font-body bg-white border rounded-sm outline-none transition-colors flex items-center justify-between gap-2 cursor-pointer',
           open ? 'border-primary ring-1 ring-primary/30' : 'border-gray-300',
           value.length > 0 ? 'text-gray-700' : 'text-gray-400',
         )}
@@ -227,7 +232,7 @@ export function MultiSelect({ options, value, onChange, placeholder = 'All', cla
             </button>
           )}
           {options.map(opt => (
-            <label key={opt.value} className="flex items-center gap-2.5 px-3 py-2 hover:bg-gray-50 cursor-pointer">
+            <label key={opt.value} className="flex items-center gap-2.5 px-3 py-2 min-h-11 md:min-h-0 hover:bg-gray-50 cursor-pointer">
               <input
                 type="checkbox"
                 checked={value.includes(opt.value)}
@@ -257,10 +262,22 @@ interface PaginationProps {
   label?: string;
 }
 
+/**
+ * Stacks on a phone rather than competing for one line.
+ *
+ * "Page 1 of 9 · 431 orders", a page-size select reading "2000 / page" and two
+ * arrows do not fit across 390px, and `justify-between` resolved that by
+ * pushing the second arrow off the right edge — so on a phone there was no way
+ * to reach page two of anything.
+ *
+ * The arrows also carry a word on mobile. An icon-only chevron is both the
+ * smallest target on the screen and the most ambiguous, and this is a control
+ * people reach for while holding a phone one-handed.
+ */
 export function Pagination({ page, pages, total, perPage, onPageChange, onPerPageChange, label = 'items' }: PaginationProps) {
   const totalPages = Math.max(1, pages);
   return (
-    <div className="flex items-center justify-between mt-4">
+    <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <p className="text-xs text-gray-400 font-body">
         Page {page} of {totalPages} · {total} {label}
       </p>
@@ -268,18 +285,23 @@ export function Pagination({ page, pages, total, perPage, onPageChange, onPerPag
         <select
           value={perPage}
           onChange={e => { onPerPageChange(Number(e.target.value)); onPageChange(1); }}
-          className="text-xs font-body border border-gray-300 bg-white px-2 py-1.5 rounded-sm outline-none focus:border-primary cursor-pointer"
+          aria-label={`${label} per page`}
+          className="min-h-11 md:min-h-0 text-xs font-body border border-gray-300 bg-white px-2 py-1.5 rounded-sm outline-none focus:border-primary cursor-pointer"
         >
           {PER_PAGE_OPTIONS.map(n => (
             <option key={n} value={n}>{n} / page</option>
           ))}
         </select>
-        <Button variant="ghost" size="sm" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>
-          <span className="material-icons text-[14px]">chevron_left</span>
-        </Button>
-        <Button variant="ghost" size="sm" disabled={page >= totalPages} onClick={() => onPageChange(page + 1)}>
-          <span className="material-icons text-[14px]">chevron_right</span>
-        </Button>
+        <div className="flex flex-1 items-center justify-end gap-2">
+          <Button variant="ghost" size="sm" className="min-h-11 md:min-h-0 flex-1 sm:flex-none" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>
+            <span className="material-icons text-[14px]">chevron_left</span>
+            <span className="sm:hidden">Prev</span>
+          </Button>
+          <Button variant="ghost" size="sm" className="min-h-11 md:min-h-0 flex-1 sm:flex-none" disabled={page >= totalPages} onClick={() => onPageChange(page + 1)}>
+            <span className="sm:hidden">Next</span>
+            <span className="material-icons text-[14px]">chevron_right</span>
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -293,15 +315,37 @@ interface TabBarProps {
   onChange: (key: string) => void;
 }
 
+/**
+ * Scrolls sideways rather than squeezing or wrapping.
+ *
+ * Delivery Zones has five tabs and Orders has four; at 390px a plain flex row
+ * either compressed the labels into unreadable stubs or wrapped into a second
+ * line that looked like two separate controls. A tab strip is the one place a
+ * horizontal scroll is the right answer — the tabs are peers, the row is short,
+ * and a partly-visible fifth tab is itself the affordance saying "there is more
+ * this way".
+ *
+ * `shrink-0` on each tab is what makes it scroll instead of compress, and
+ * `snap-start` stops a drag leaving a tab half off the edge.
+ */
 export function TabBar({ tabs, active, onChange }: TabBarProps) {
   return (
-    <div className="flex border-b border-gray-200 mb-4">
+    <div
+      // Marks this scroller as deliberate. `scripts/mobile-audit.mjs` treats
+      // every other horizontal scroller on a phone as a defect, and this is
+      // the one shape where sideways is the right answer.
+      data-scroll-intent="tabs"
+      className="flex border-b border-gray-200 mb-4 overflow-x-auto snap-x scrollbar-none -mx-4 px-4 md:mx-0 md:px-0"
+      role="tablist"
+    >
       {tabs.map(tab => (
         <button
           key={tab.key}
+          role="tab"
+          aria-selected={active === tab.key}
           onClick={() => onChange(tab.key)}
           className={cn(
-            'px-4 py-2 text-xs font-body font-medium uppercase tracking-wider transition-colors border-b-2 -mb-px',
+            'shrink-0 snap-start whitespace-nowrap px-4 min-h-11 md:min-h-0 md:py-2 text-xs font-body font-medium uppercase tracking-wider transition-colors border-b-2 -mb-px',
             active === tab.key
               ? 'text-primary border-primary'
               : 'text-gray-500 border-transparent hover:text-gray-700',

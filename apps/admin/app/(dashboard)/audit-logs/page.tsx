@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { auditLogsApi } from '@/lib/api';
 import type { AuditAction, AuditLog } from '@/lib/types';
-import { Badge, Input, Pagination, Select, LoadError} from '@/components/ui';
+import { Badge, Input, Pagination, Select, LoadError, Spinner } from '@/components/ui';
+import { DataTable, RowAction } from '@/components/ui/DataTable';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -120,7 +121,7 @@ export default function AuditLogsPage() {
         </div>
         <button
           onClick={load}
-          className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-primary font-body transition-colors"
+          className="flex items-center gap-1.5 min-h-11 md:min-h-0 px-1 text-xs text-gray-500 hover:text-primary font-body transition-colors"
           title="Refresh"
         >
           <span className="material-icons text-[16px]">refresh</span>
@@ -171,99 +172,87 @@ export default function AuditLogsPage() {
       </div>
 
       {/* Table */}
-      <div className="bg-white border border-gray-200 overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-200 bg-gray-50">
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Timestamp</th>
-              <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500">Action</th>
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden sm:table-cell">Entity Type</th>
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Entity</th>
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden md:table-cell">Admin</th>
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden lg:table-cell">IP</th>
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Changes</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {loading ? (
-              Array.from({ length: 10 }).map((_, i) => (
-                <tr key={i}>
-                  {Array.from({ length: 7 }).map((_, j) => (
-                    <td key={j} className="px-4 py-3">
-                      <div className="h-4 bg-gray-100 animate-pulse rounded-sm" />
-                    </td>
-                  ))}
-                </tr>
-              ))
-            ) : logs.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-400 font-body">
-                  No audit log entries found.
-                </td>
-              </tr>
-            ) : (
-              logs.map(log => (
+      {loading ? (
+        <div className="flex justify-center py-16"><Spinner /></div>
+      ) : (
+        <DataTable<AuditLog>
+          rows={logs}
+          rowKey={log => log.id}
+          empty={
+            <p className="py-16 text-center text-sm text-gray-400 font-body">
+              No audit log entries found.
+            </p>
+          }
+          expanded={log =>
+            expandedId === log.id && log.changes ? (
+              <pre className="text-xs font-mono text-gray-700 whitespace-pre-wrap break-all bg-white border border-gray-200 p-3 rounded-sm max-h-60 overflow-y-auto">
+                {formatChanges(log.changes)}
+              </pre>
+            ) : null
+          }
+          actions={log =>
+            log.changes ? (
+              <RowAction onClick={() => setExpandedId(expandedId === log.id ? null : log.id)}>
+                <span className="material-icons text-[14px]">data_object</span>
+                {expandedId === log.id ? 'Hide changes' : 'View changes'}
+              </RowAction>
+            ) : null
+          }
+          columns={[
+            {
+              header: 'Entity',
+              // The subject of the entry, and so the card's title. It used to
+              // be the fourth column, behind a timestamp — which is the thing
+              // you scan by on a desktop and the thing you already know on a
+              // phone, where you are looking at one screen of recent activity.
+              priority: 'primary',
+              render: log => (
                 <>
-                  <tr key={log.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3 text-xs font-body text-gray-500 whitespace-nowrap">
-                      {formatDateTime(log.created_at)}
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <Badge variant={ACTION_VARIANT[log.action as AuditAction] ?? 'neutral'}>
-                        {log.action.replace('_', ' ')}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3 hidden sm:table-cell">
-                      <span className="text-xs font-mono text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded-sm">
-                        {log.entity_type}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-xs font-body text-gray-700">{log.entity_label}</span>
-                      <span className="block text-[10px] font-mono text-gray-400 mt-0.5">{log.entity_id}</span>
-                    </td>
-                    <td className="px-4 py-3 hidden md:table-cell">
-                      <span className="text-xs font-body text-gray-600">{log.admin_email}</span>
-                    </td>
-                    <td className="px-4 py-3 hidden lg:table-cell">
-                      <span className="text-[11px] font-mono text-gray-400">
-                        {log.ip_address ?? '—'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      {log.changes ? (
-                        <button
-                          onClick={() => setExpandedId(expandedId === log.id ? null : log.id)}
-                          className="flex items-center gap-1 text-xs font-body text-primary hover:text-primary/80 transition-colors"
-                        >
-                          <span className="material-icons text-[14px]">data_object</span>
-                          <span className="hidden sm:inline">View</span>
-                          <span className="material-icons text-[12px]">
-                            {expandedId === log.id ? 'expand_less' : 'expand_more'}
-                          </span>
-                        </button>
-                      ) : (
-                        <span className="text-xs text-gray-300 font-body">—</span>
-                      )}
-                    </td>
-                  </tr>
-
-                  {/* Expanded changes row */}
-                  {expandedId === log.id && log.changes && (
-                    <tr key={`${log.id}-changes`} className="bg-gray-50">
-                      <td colSpan={7} className="px-4 py-3">
-                        <pre className="text-xs font-mono text-gray-700 whitespace-pre-wrap break-all bg-white border border-gray-200 p-3 rounded-sm max-h-60 overflow-y-auto">
-                          {formatChanges(log.changes)}
-                        </pre>
-                      </td>
-                    </tr>
-                  )}
+                  <span className="text-xs font-body text-gray-700">{log.entity_label}</span>
+                  <span className="block text-[10px] font-mono text-gray-400 mt-0.5 break-all">
+                    {log.entity_id}
+                  </span>
                 </>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+              ),
+            },
+            {
+              header: 'Timestamp',
+              className: 'whitespace-nowrap',
+              render: log => (
+                <span className="text-xs font-body text-gray-500">
+                  {formatDateTime(log.created_at)}
+                </span>
+              ),
+            },
+            {
+              header: 'Action',
+              className: 'text-center',
+              render: log => (
+                <Badge variant={ACTION_VARIANT[log.action as AuditAction] ?? 'neutral'}>
+                  {log.action.replace('_', ' ')}
+                </Badge>
+              ),
+            },
+            {
+              header: 'Entity Type',
+              render: log => (
+                <span className="text-xs font-mono text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded-sm">
+                  {log.entity_type}
+                </span>
+              ),
+            },
+            { header: 'Admin', render: log => log.admin_email },
+            {
+              header: 'IP',
+              render: log => (
+                <span className="text-[11px] font-mono text-gray-400">
+                  {log.ip_address ?? '—'}
+                </span>
+              ),
+            },
+          ]}
+        />
+      )}
 
       <Pagination
         page={page}

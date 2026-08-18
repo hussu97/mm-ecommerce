@@ -31,6 +31,71 @@
 
   /* Border radius */
   --radius: 0.5rem;
+
+  /* ── Mobile ergonomics ──────────────────────────────────────────────────
+     Two numbers the whole console is built on, named here so a new screen
+     inherits them instead of inventing its own. See
+     `docs/admin-mobile-design-system.md`.
+
+     `--tap-min` is the smallest a thing you press may be. 44px is Apple's
+     figure and the one a thumb actually needs; the console shipped with
+     28px links and buttons, which on a phone means hitting the row above.
+
+     `--page-gutter` is the single left/right inset for page content. It was
+     applied twice — once by the dashboard shell and once by `ResourcePage`
+     — which cost 96px of a 390px screen before any content was drawn. */
+  --tap-min: 44px;
+  --page-gutter: 1rem;
+}
+
+/* iOS Safari zooms the whole page when a control smaller than 16px takes
+   focus, and then leaves it zoomed — so every tap into a filter or a search
+   box left the admin panned sideways with the layout half off-screen. The
+   console's type scale is deliberately small on desktop; on a phone the
+   controls opt out of it.
+
+   Scoped to the coarse-pointer case rather than to a width, because it is a
+   property of the input method and not of the window: a narrow desktop
+   window has no such behaviour and should keep the compact scale. */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  /* The browser default is 13px square, which is a quarter of the area a
+     fingertip actually covers — so selecting a row in a bulk-action list meant
+     several attempts, and often toggling the row above. Sized rather than
+     padded, so the box grows with its label instead of drifting away from it. */
+  input[type='checkbox'],
+  input[type='radio'] {
+    /* Absolute, not rem: the console's root size is not 16px, so a rem
+       value here silently came out at 18px. */
+    width: 22px;
+    height: 22px;
+  }
+}
+
+/* A horizontal scrollbar on the document is always a bug here — a wide data
+   table is meant to scroll inside its own container, not to drag the whole
+   console sideways off its left edge. `clip` rather than `hidden` so this
+   cannot silently create a scroll container and break `position: sticky` on
+   the table headers. */
+html,
+body {
+  overflow-x: clip;
+}
+
+/* A scroller whose bar would be noise rather than information — the tab strip,
+   a filter row. Only for strips where the cut-off content is itself the hint
+   that there is more; a data table keeps its scrollbar, because there the bar
+   is the only thing saying so. */
+.scrollbar-none {
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
 }
 
 body {

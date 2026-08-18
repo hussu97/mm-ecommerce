@@ -371,14 +371,14 @@ export default function CategoriesPage() {
                           <button
                             onClick={() => handleReorder(cat.slug, -1)}
                             disabled={globalIdx === 0 || reorderingSlug === cat.slug}
-                            className="text-gray-300 hover:text-primary disabled:opacity-30 transition-colors"
+                            className="inline-flex items-center justify-center min-h-9 min-w-9 md:min-h-0 md:min-w-0 text-gray-300 hover:text-primary disabled:opacity-30 transition-colors"
                           >
                             <span className="material-icons text-[14px]">arrow_drop_up</span>
                           </button>
                           <button
                             onClick={() => handleReorder(cat.slug, 1)}
                             disabled={globalIdx === filteredCategories.length - 1 || reorderingSlug === cat.slug}
-                            className="text-gray-300 hover:text-primary disabled:opacity-30 transition-colors"
+                            className="inline-flex items-center justify-center min-h-9 min-w-9 md:min-h-0 md:min-w-0 text-gray-300 hover:text-primary disabled:opacity-30 transition-colors"
                           >
                             <span className="material-icons text-[14px]">arrow_drop_down</span>
                           </button>

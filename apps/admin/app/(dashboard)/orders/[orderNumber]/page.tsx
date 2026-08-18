@@ -309,7 +309,7 @@ export default function OrderDetailPage() {
 
       {/* Back + header */}
       <div className="flex items-center gap-3 mb-6">
-        <Link href="/orders" className="text-gray-400 hover:text-primary transition-colors">
+        <Link href="/orders" className="inline-flex items-center justify-center min-h-11 min-w-11 -ml-2 md:min-h-0 md:min-w-0 md:ml-0 text-gray-400 hover:text-primary transition-colors">
           <span className="material-icons text-[20px]">arrow_back</span>
         </Link>
         <div className="flex-1">
@@ -910,7 +910,7 @@ function DeliveryPanel({
               href={delivery.share_link}
               target="_blank"
               rel="noreferrer"
-              className="text-xs font-body text-primary hover:underline"
+              className="inline-flex items-center min-h-11 md:min-h-0 text-xs font-body text-primary hover:underline"
             >
               Live tracking (internal)
             </a>
@@ -920,7 +920,7 @@ function DeliveryPanel({
               href={delivery.pod_image_url}
               target="_blank"
               rel="noreferrer"
-              className="text-xs font-body text-primary hover:underline"
+              className="inline-flex items-center min-h-11 md:min-h-0 text-xs font-body text-primary hover:underline"
             >
               Proof of delivery
             </a>

@@ -3,7 +3,8 @@
 import { useCallback, useState } from 'react';
 import { promoApi, bulkApi, ApiError } from '@/lib/api';
 import type { PromoCode } from '@/lib/types';
-import { Button, Input, Pagination, Select, TabBar, LoadError} from '@/components/ui';
+import { Button, Input, Pagination, Select, TabBar, LoadError, Spinner } from '@/components/ui';
+import { DataTable } from '@/components/ui/DataTable';
 import { useConfirm, useToast } from '@/components/ui/feedback';
 import { useApiList } from '@/hooks/useApiList';
 import { formatCurrency, formatDate } from '@/lib/utils';
@@ -388,134 +389,134 @@ export default function PromoCodesPage() {
       )}
 
       {/* Table */}
-      <div className="bg-white border border-gray-200 overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-200 bg-gray-50">
-              <th className="px-4 py-3 w-8">
+      {loading ? (
+        <div className="flex justify-center py-16"><Spinner /></div>
+      ) : (
+        <DataTable<PromoCode>
+          rows={paginatedCodes}
+          rowKey={p => p.id}
+          rowClassName={p => (selectedIds.has(p.id) ? 'bg-primary/5' : undefined)}
+          empty={
+            <p className="py-16 text-center text-sm text-gray-400 font-body">No promo codes yet.</p>
+          }
+          actions={promo =>
+            activeTab === 'active' ? (
+              <>
+                <Button variant="ghost" size="sm" onClick={() => openEdit(promo)}>Edit</Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  loading={actionCode === promo.code}
+                  onClick={() => handleDeactivate(promo.code)}
+                >
+                  Deactivate
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                loading={actionCode === promo.code}
+                onClick={() => handleRestore(promo.code)}
+              >
+                Restore
+              </Button>
+            )
+          }
+          columns={[
+            {
+              header: '',
+              priority: 'desktop',
+              className: 'w-8',
+              headerRender: () => (
                 <input
                   type="checkbox"
                   checked={paginatedCodes.length > 0 && paginatedCodes.every(c => selectedIds.has(c.id))}
                   onChange={toggleSelectAll}
                   className="accent-primary"
                 />
-              </th>
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Code</th>
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden sm:table-cell">Discount</th>
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden md:table-cell">Min Order</th>
-              <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500 hidden md:table-cell">Uses</th>
-              <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500 hidden lg:table-cell">First Orders</th>
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden lg:table-cell">Valid</th>
-              <th className="px-4 py-3 text-right text-[11px] font-body uppercase tracking-widest text-gray-500">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {loading ? (
-              Array.from({ length: 4 }).map((_, i) => (
-                <tr key={i}>
-                  {Array.from({ length: 8 }).map((_, j) => (
-                    <td key={j} className="px-4 py-3">
-                      <div className="h-4 bg-gray-100 animate-pulse rounded-sm" />
-                    </td>
-                  ))}
-                </tr>
-              ))
-            ) : filteredCodes.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-400 font-body">
-                  No promo codes yet.
-                </td>
-              </tr>
-            ) : (
-              paginatedCodes.map(promo => (
-                <tr key={promo.id} className={`hover:bg-gray-50 transition-colors ${selectedIds.has(promo.id) ? 'bg-primary/5' : ''}`}>
-                  <td className="px-4 py-3 w-8">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.has(promo.id)}
-                      onChange={() => toggleSelect(promo.id)}
-                      className="accent-primary"
-                    />
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="font-body font-medium text-gray-800 text-xs tracking-wider">{promo.code}</span>
-                    {promo.code_ar && (
-                      <span dir="rtl" className="block text-[11px] font-body text-gray-400 mt-0.5">{promo.code_ar}</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 hidden sm:table-cell">
-                    <span className="text-xs font-body text-gray-700">
-                      {promo.discount_type === 'percentage'
-                        ? `${promo.discount_value}%`
-                        : formatCurrency(promo.discount_value)
-                      }
+              ),
+              render: p => (
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(p.id)}
+                  onChange={() => toggleSelect(p.id)}
+                  className="accent-primary"
+                />
+              ),
+            },
+            {
+              header: 'Code',
+              priority: 'primary',
+              render: p => (
+                <>
+                  <span className="font-body font-medium text-gray-800 text-xs tracking-wider">
+                    {p.code}
+                  </span>
+                  {p.code_ar && (
+                    <span dir="rtl" className="block text-[11px] font-body text-gray-400 mt-0.5">
+                      {p.code_ar}
                     </span>
-                    <span className="text-[11px] font-body text-gray-400 ml-1 capitalize">({promo.discount_type})</span>
-                    {promo.max_discount_amount != null && (
-                      <span className="block text-[11px] font-body text-gray-400 mt-0.5">
-                        max {formatCurrency(promo.max_discount_amount)}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 hidden md:table-cell">
-                    <span className="text-xs font-body text-gray-500">
-                      {promo.min_order_amount != null ? formatCurrency(promo.min_order_amount) : '—'}
+                  )}
+                </>
+              ),
+            },
+            {
+              header: 'Discount',
+              render: p => (
+                <>
+                  {p.discount_type === 'percentage'
+                    ? `${p.discount_value}%`
+                    : formatCurrency(p.discount_value)}
+                  <span className="text-[11px] text-gray-400 ml-1 capitalize">
+                    ({p.discount_type})
+                  </span>
+                  {p.max_discount_amount != null && (
+                    <span className="block text-[11px] text-gray-400 mt-0.5">
+                      max {formatCurrency(p.max_discount_amount)}
                     </span>
-                  </td>
-                  <td className="px-4 py-3 text-center hidden md:table-cell">
-                    <span className="text-xs font-body text-gray-500">
-                      {promo.current_uses}{promo.max_uses != null ? ` / ${promo.max_uses}` : ''}
+                  )}
+                </>
+              ),
+            },
+            {
+              header: 'Min Order',
+              render: p =>
+                p.min_order_amount != null ? formatCurrency(p.min_order_amount) : '—',
+            },
+            {
+              header: 'Uses',
+              className: 'text-center',
+              render: p => (
+                <>
+                  {p.current_uses}
+                  {p.max_uses != null ? ` / ${p.max_uses}` : ''}
+                  {p.max_uses_per_user != null && (
+                    <span className="block text-[11px] text-gray-400 mt-0.5">
+                      {p.max_uses_per_user} per customer
                     </span>
-                    {promo.max_uses_per_user != null && (
-                      <span className="block text-[11px] font-body text-gray-400 mt-0.5">
-                        {promo.max_uses_per_user} per customer
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-center hidden lg:table-cell">
-                    <span className="text-xs font-body text-gray-500">
-                      {promo.first_orders_limit != null ? `First ${promo.first_orders_limit}` : '—'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 hidden lg:table-cell">
-                    <span className="text-[11px] font-body text-gray-400">
-                      {promo.valid_from ? formatDate(promo.valid_from) : '—'}
-                      {' → '}
-                      {promo.valid_until ? formatDate(promo.valid_until) : '∞'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      {activeTab === 'active' ? (
-                        <>
-                          <Button variant="ghost" size="sm" onClick={() => openEdit(promo)}>Edit</Button>
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            loading={actionCode === promo.code}
-                            onClick={() => handleDeactivate(promo.code)}
-                          >
-                            Deactivate
-                          </Button>
-                        </>
-                      ) : (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          loading={actionCode === promo.code}
-                          onClick={() => handleRestore(promo.code)}
-                        >
-                          Restore
-                        </Button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+                  )}
+                </>
+              ),
+            },
+            {
+              header: 'First Orders',
+              className: 'text-center',
+              render: p => (p.first_orders_limit != null ? `First ${p.first_orders_limit}` : '—'),
+            },
+            {
+              header: 'Valid',
+              render: p => (
+                <span className="text-[11px] text-gray-400">
+                  {p.valid_from ? formatDate(p.valid_from) : '—'}
+                  {' → '}
+                  {p.valid_until ? formatDate(p.valid_until) : '∞'}
+                </span>
+              ),
+            },
+          ]}
+        />
+      )}
 
       <Pagination
         page={page}

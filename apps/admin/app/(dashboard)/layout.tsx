@@ -113,8 +113,16 @@ function SidebarContent({ collapsed, pathname, user, setMobileOpen, onLogout }: 
                   : 'text-gray-600 hover:bg-gray-50 hover:text-primary border-r-2 border-transparent',
               )}
             >
-              <span className="material-icons text-[18px]">{icon}</span>
-              {!collapsed && <span className="text-xs font-body uppercase tracking-widest">{label}</span>}
+              <span className="material-icons text-[18px] shrink-0">{icon}</span>
+              {/* `min-w-0` + `truncate`: "Purchase Orders" and "Import /
+                  Export" are wider than the 208px rail once the icon and the
+                  uppercase tracking are paid for, and without these the whole
+                  nav became a horizontal scroller nobody would ever find. */}
+              {!collapsed && (
+                <span className="min-w-0 truncate text-xs font-body uppercase tracking-widest">
+                  {label}
+                </span>
+              )}
             </Link>
           );
         })}
@@ -210,11 +218,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       {/* Main */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
-        <header className="h-14 bg-white border-b border-gray-200 flex items-center px-4 gap-3 shrink-0">
-          {/* Mobile hamburger */}
+        <header className="h-14 bg-white border-b border-gray-200 flex items-center px-2 md:px-4 gap-2 md:gap-3 shrink-0">
+          {/* Mobile hamburger. Square and full-height rather than a bare icon:
+              this is the only way to the navigation on a phone, and an 18px
+              glyph is not a target a thumb can rely on. */}
           <button
             onClick={() => setMobileOpen(o => !o)}
-            className="md:hidden text-gray-500 hover:text-primary"
+            aria-label="Open navigation"
+            className="md:hidden flex items-center justify-center min-w-[var(--tap-min)] min-h-[var(--tap-min)] -ml-1 text-gray-500 hover:text-primary"
           >
             <span className="material-icons">menu</span>
           </button>
@@ -242,14 +253,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             Aggregator
           </a>
 
-          <div className="flex items-center gap-2 text-xs font-body text-gray-500">
-            <span className="material-icons text-[16px] text-primary">person</span>
-            {user.email}
+          {/* `min-w-0` + `truncate`: an admin's address can be sixty
+              characters, and without both of these it pushed the hamburger
+              off the left edge of a phone rather than shortening itself. */}
+          <div className="flex items-center gap-2 min-w-0 text-xs font-body text-gray-500">
+            <span className="material-icons text-[16px] text-primary shrink-0">person</span>
+            <span className="truncate">{user.email}</span>
           </div>
         </header>
 
-        {/* Page Content */}
-        <main className="flex-1 p-6 overflow-y-auto">
+        {/* Page Content.
+            The single source of the page gutter — `ResourcePage` used to add
+            its own `p-6` on top of this one, so half the console was drawn in
+            294px of a 390px screen. Anything rendered here supplies content,
+            never padding. */}
+        <main className="flex-1 px-4 py-5 md:p-6 overflow-y-auto overflow-x-hidden">
           {children}
         </main>
       </div>

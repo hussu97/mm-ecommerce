@@ -8,7 +8,7 @@ export default function NewProductPage() {
   return (
     <div>
       <div className="flex items-center gap-3 mb-6">
-        <Link href="/products" className="text-gray-400 hover:text-primary transition-colors">
+        <Link href="/products" className="inline-flex items-center justify-center min-h-11 min-w-11 -ml-2 md:min-h-0 md:min-w-0 md:ml-0 text-gray-400 hover:text-primary transition-colors">
           <span className="material-icons text-[20px]">arrow_back</span>
         </Link>
         <h1 className="font-display text-2xl text-gray-800">New Product</h1>

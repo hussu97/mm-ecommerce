@@ -32,8 +32,8 @@ export default function BranchesPage() {
         display_order: 0,
       }}
       columns={[
-        { header: 'Name', render: (b) => <span className="font-medium">{b.name}</span> },
-        { header: 'Reference', render: (b) => <code className="text-xs text-gray-500">{b.reference}</code> },
+        { header: 'Name', priority: 'primary', render: (b) => <span className="font-medium">{b.name}</span> },
+        { header: 'Reference', priority: 'secondary', render: (b) => <code className="text-xs text-gray-500">{b.reference}</code> },
         { header: 'Type', render: (b) => <span className="capitalize">{b.type}</span> },
         { header: 'Hours', render: (b) => `${b.opening_from} – ${b.opening_to}` },
         { header: 'Day starts', render: (b) => b.business_day_start },

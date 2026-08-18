@@ -11,6 +11,7 @@ import type {
 } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Select, Spinner, TabBar } from '@/components/ui';
+import { DataTable } from '@/components/ui/DataTable';
 import { ResourcePage, StatusBadge } from '@/components/pos/ResourcePage';
 import { formatCurrency } from '@/lib/utils';
 
@@ -78,8 +79,8 @@ function ItemsTab() {
       }}
       emptyMessage="No inventory items yet."
       columns={[
-        { header: 'SKU', render: (i) => <code className="text-xs text-gray-500">{i.sku}</code> },
-        { header: 'Name', render: (i) => <span className="font-medium">{i.name}</span> },
+        { header: 'SKU', priority: 'secondary', render: (i) => <code className="text-xs text-gray-500">{i.sku}</code> },
+        { header: 'Name', priority: 'primary', render: (i) => <span className="font-medium">{i.name}</span> },
         {
           header: 'Units',
           render: (i) => (
@@ -206,42 +207,52 @@ function LevelsTab() {
           No stock recorded yet. Receive a purchase order to get started.
         </p>
       ) : (
-        <div className="overflow-x-auto rounded border border-gray-200 bg-white">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-200 bg-gray-50 text-[11px] uppercase tracking-widest text-gray-500 font-body">
-                <th className="px-3 py-2 text-left">SKU</th>
-                <th className="px-3 py-2 text-left">Item</th>
-                <th className="px-3 py-2 text-right">On hand</th>
-                <th className="px-3 py-2 text-right">Min</th>
-                <th className="px-3 py-2 text-right">Par</th>
-                <th className="px-3 py-2 text-right">Avg cost</th>
-                <th className="px-3 py-2 text-right">Value</th>
-                <th className="px-3 py-2 text-left">Flag</th>
-              </tr>
-            </thead>
-            <tbody>
-              {levels.map((l) => (
-                <tr key={l.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
-                  <td className="px-3 py-2">
-                    <code className="text-xs text-gray-500">{l.item_sku}</code>
-                  </td>
-                  <td className="px-3 py-2 font-medium">{l.item_name}</td>
-                  <td className="px-3 py-2 text-right">
-                    {Number(l.quantity)} <span className="text-xs text-gray-400">{l.ingredient_unit}</span>
-                  </td>
-                  <td className="px-3 py-2 text-right text-gray-500">{Number(l.minimum_level ?? 0)}</td>
-                  <td className="px-3 py-2 text-right text-gray-500">{Number(l.par_level ?? 0)}</td>
-                  <td className="px-3 py-2 text-right">{Number(l.average_cost).toFixed(4)}</td>
-                  <td className="px-3 py-2 text-right">{formatCurrency(l.total_value ?? 0)}</td>
-                  <td className="px-3 py-2">
-                    {l.is_below_minimum ? <Badge variant="danger">Reorder</Badge> : null}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable<InventoryLevel>
+          rows={levels}
+          rowKey={(l) => l.id}
+          columns={[
+            { header: 'Item', priority: 'primary', render: (l) => l.item_name },
+            {
+              header: 'SKU',
+              priority: 'secondary',
+              render: (l) => <code className="text-xs text-gray-500">{l.item_sku}</code>,
+            },
+            {
+              header: 'On hand',
+              className: 'text-right',
+              render: (l) => (
+                <>
+                  {Number(l.quantity)}{' '}
+                  <span className="text-xs text-gray-400">{l.ingredient_unit}</span>
+                </>
+              ),
+            },
+            {
+              header: 'Min',
+              className: 'text-right',
+              render: (l) => <span className="text-gray-500">{Number(l.minimum_level ?? 0)}</span>,
+            },
+            {
+              header: 'Par',
+              className: 'text-right',
+              render: (l) => <span className="text-gray-500">{Number(l.par_level ?? 0)}</span>,
+            },
+            {
+              header: 'Avg cost',
+              className: 'text-right',
+              render: (l) => Number(l.average_cost).toFixed(4),
+            },
+            {
+              header: 'Value',
+              className: 'text-right',
+              render: (l) => formatCurrency(l.total_value ?? 0),
+            },
+            {
+              header: 'Flag',
+              render: (l) => (l.is_below_minimum ? <Badge variant="danger">Reorder</Badge> : '—'),
+            },
+          ]}
+        />
       )}
     </div>
   );
@@ -260,10 +271,10 @@ function SuppliersTab() {
       defaults={{ payment_terms_days: 0, is_active: true }}
       emptyMessage="No suppliers yet."
       columns={[
-        { header: 'Name', render: (s) => <span className="font-medium">{s.name}</span> },
+        { header: 'Name', priority: 'primary', render: (s) => <span className="font-medium">{s.name}</span> },
         { header: 'Contact', render: (s) => s.contact_name ?? '—' },
         { header: 'Phone', render: (s) => s.phone ?? '—' },
-        { header: 'Email', render: (s) => <span className="text-xs">{s.email ?? '—'}</span> },
+        { header: 'Email', priority: 'secondary', render: (s) => <span className="text-xs">{s.email ?? '—'}</span> },
         { header: 'Terms', render: (s) => `${s.payment_terms_days} days` },
         { header: 'Status', render: (s) => <StatusBadge active={s.is_active && !s.deleted_at} /> },
       ]}
@@ -295,8 +306,8 @@ function CategoriesTab() {
       defaults={{ display_order: 0, is_active: true }}
       emptyMessage="No categories yet."
       columns={[
-        { header: 'Name', render: (c) => <span className="font-medium">{c.name}</span> },
-        { header: 'Reference', render: (c) => c.reference ?? '—' },
+        { header: 'Name', priority: 'primary', render: (c) => <span className="font-medium">{c.name}</span> },
+        { header: 'Reference', priority: 'secondary', render: (c) => c.reference ?? '—' },
         { header: 'Order', render: (c) => c.display_order },
         { header: 'Status', render: (c) => <StatusBadge active={c.is_active && !c.deleted_at} /> },
       ]}

@@ -11,6 +11,7 @@ import type {
 } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Button, Input, Select, Spinner } from '@/components/ui';
+import { DataTable, RowAction } from '@/components/ui/DataTable';
 import { Modal } from '@/components/pos/ResourcePage';
 import { formatCurrency } from '@/lib/utils';
 
@@ -105,75 +106,52 @@ export default function PurchaseOrdersPage() {
           No purchase orders yet.
         </p>
       ) : (
-        <div className="overflow-x-auto rounded border border-gray-200 bg-white">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-200 bg-gray-50 text-[11px] uppercase tracking-widest text-gray-500 font-body">
-                <th className="px-3 py-2 text-left">Reference</th>
-                <th className="px-3 py-2 text-left">Supplier</th>
-                <th className="px-3 py-2 text-right">Lines</th>
-                <th className="px-3 py-2 text-right">Total</th>
-                <th className="px-3 py-2 text-left">Delivery</th>
-                <th className="px-3 py-2 text-left">Status</th>
-                <th className="px-3 py-2" />
-              </tr>
-            </thead>
-            <tbody>
-              {orders.map((po) => (
-                <tr key={po.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
-                  <td className="px-3 py-2">
-                    <code className="text-xs text-gray-600">{po.reference}</code>
-                  </td>
-                  <td className="px-3 py-2 font-medium">{po.supplier_name ?? '—'}</td>
-                  <td className="px-3 py-2 text-right">{po.items.length}</td>
-                  <td className="px-3 py-2 text-right">{formatCurrency(po.total_cost)}</td>
-                  <td className="px-3 py-2 text-xs text-gray-500">{po.delivery_date ?? '—'}</td>
-                  <td className="px-3 py-2">
-                    <Badge variant={STATUS_VARIANT[po.status]}>
-                      {po.status.replace(/_/g, ' ')}
-                    </Badge>
-                  </td>
-                  <td className="px-3 py-2 text-right whitespace-nowrap">
-                    <div className="flex justify-end gap-2">
-                      {po.status === 'draft' && (
-                        <button
-                          onClick={() => act(po.id, 'submit')}
-                          className="text-xs text-primary hover:underline font-body"
-                        >
-                          Submit
-                        </button>
-                      )}
-                      {po.status === 'pending' && (
-                        <>
-                          <button
-                            onClick={() => act(po.id, 'approve')}
-                            className="text-xs text-primary hover:underline font-body"
-                          >
-                            Approve
-                          </button>
-                          <button
-                            onClick={() => act(po.id, 'decline')}
-                            className="text-xs text-red-500 hover:underline font-body"
-                          >
-                            Decline
-                          </button>
-                        </>
-                      )}
-                      {(po.status === 'approved' || po.status === 'partially_received') && (
-                        <button
-                          onClick={() => setReceiving(po)}
-                          className="text-xs text-primary hover:underline font-body"
-                        >
-                          Receive
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable<PurchaseOrder>
+          rows={orders}
+          rowKey={(po) => po.id}
+          actions={(po) => (
+            <>
+              {po.status === 'draft' && (
+                <RowAction onClick={() => act(po.id, 'submit')}>Submit</RowAction>
+              )}
+              {po.status === 'pending' && (
+                <>
+                  <RowAction onClick={() => act(po.id, 'approve')}>Approve</RowAction>
+                  <RowAction danger onClick={() => act(po.id, 'decline')}>
+                    Decline
+                  </RowAction>
+                </>
+              )}
+              {(po.status === 'approved' || po.status === 'partially_received') && (
+                <RowAction onClick={() => setReceiving(po)}>Receive</RowAction>
+              )}
+            </>
+          )}
+          columns={[
+            { header: 'Supplier', priority: 'primary', render: (po) => po.supplier_name ?? '—' },
+            {
+              header: 'Reference',
+              priority: 'secondary',
+              render: (po) => <code className="text-xs text-gray-600">{po.reference}</code>,
+            },
+            {
+              header: 'Status',
+              render: (po) => (
+                <Badge variant={STATUS_VARIANT[po.status]}>{po.status.replace(/_/g, ' ')}</Badge>
+              ),
+            },
+            { header: 'Lines', className: 'text-right', render: (po) => po.items.length },
+            {
+              header: 'Total',
+              className: 'text-right',
+              render: (po) => formatCurrency(po.total_cost),
+            },
+            {
+              header: 'Delivery',
+              render: (po) => <span className="text-gray-500">{po.delivery_date ?? '—'}</span>,
+            },
+          ]}
+        />
       )}
 
       {creating && (

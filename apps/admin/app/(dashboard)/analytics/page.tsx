@@ -247,7 +247,7 @@ export default function AnalyticsPage() {
           <button
             onClick={handleExport}
             disabled={loading || exporting}
-            className="px-3 py-1.5 text-xs font-body uppercase tracking-wider border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50"
+            className="px-3 py-1.5 min-h-11 md:min-h-0 text-xs font-body uppercase tracking-wider border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50"
           >
             {exporting ? 'Exporting…' : 'Export CSV'}
           </button>
@@ -255,7 +255,7 @@ export default function AnalyticsPage() {
             <button
               key={p}
               onClick={() => applyPreset(p)}
-              className={`px-3 py-1.5 text-xs font-body uppercase tracking-wider border transition-colors ${
+              className={`px-3 py-1.5 min-h-11 md:min-h-0 text-xs font-body uppercase tracking-wider border transition-colors ${
                 preset === p
                   ? 'bg-primary text-white border-primary'
                   : 'border-gray-300 text-gray-600 hover:bg-gray-50'

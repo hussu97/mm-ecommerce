@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError } from '@/lib/api';
 import { Badge, Button, Input, Pagination, Select, Spinner } from '@/components/ui';
+import { DataTable, RowAction, type ColumnPriority } from '@/components/ui/DataTable';
 import { cn } from '@/lib/utils';
 
 /**
@@ -40,6 +41,16 @@ export interface ColumnDef<T> {
   /** Cell renderer. Return a string, number, or any node. */
   render: (row: T) => React.ReactNode;
   className?: string;
+  /**
+   * How this column behaves on a phone, where the row is drawn as a card
+   * rather than as a table row. See `components/ui/DataTable`.
+   *
+   * Left unset it is a labelled line in the card body, which is always
+   * correct and never surprising. Naming one column `primary` is what turns
+   * a card from a list of labels into a thing with a title, and is worth
+   * doing on every list somebody reads on a phone.
+   */
+  priority?: ColumnPriority;
 }
 
 export interface ResourcePageProps<T extends { id: string }> {
@@ -206,12 +217,17 @@ export function ResourcePage<T extends { id: string }>({
   const activeFields = fields.filter((f) => (creating ? !f.editOnly : !f.createOnly));
 
   return (
-    <div className="p-6 max-w-[1400px]">
-      <header className="flex flex-wrap items-start justify-between gap-3 mb-5">
-        <div>
+    // No padding of its own: the dashboard shell already sets the page gutter,
+    // and setting it twice cost 96px of a 390px screen.
+    <div className="max-w-[1400px]">
+      <header className="mb-5 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <h1 className="font-display text-xl text-primary tracking-wide">{title}</h1>
           {description && <p className="text-xs text-gray-500 font-body mt-1">{description}</p>}
         </div>
+        {/* Search takes the width it can get on a phone and a fixed 12rem on a
+            desktop; "New" stays beside it rather than dropping to its own line,
+            because the pair is one thought. */}
         <div className="flex items-center gap-2">
           {toolbar}
           {searchKeys.length > 0 && (
@@ -219,10 +235,10 @@ export function ResourcePage<T extends { id: string }>({
               placeholder="Search…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-48"
+              className="w-full sm:w-48"
             />
           )}
-          {create && <Button onClick={openCreate}>New</Button>}
+          {create && <Button className="shrink-0" onClick={openCreate}>New</Button>}
         </div>
       </header>
 
@@ -236,63 +252,30 @@ export function ResourcePage<T extends { id: string }>({
         <div className="flex justify-center py-16">
           <Spinner />
         </div>
-      ) : visible.length === 0 ? (
-        <p className="py-16 text-center text-sm text-gray-400 font-body">{emptyMessage}</p>
       ) : (
-        <div className="overflow-x-auto rounded border border-gray-200 bg-white">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-200 bg-gray-50">
-                {columns.map((c) => (
-                  <th
-                    key={c.header}
-                    className={cn(
-                      'px-3 py-2 text-left text-[11px] uppercase tracking-widest text-gray-500 font-body',
-                      c.className,
+        <DataTable<T>
+          columns={columns}
+          rows={pageRows}
+          rowKey={(row) => row.id}
+          empty={
+            <p className="py-16 text-center text-sm text-gray-400 font-body">{emptyMessage}</p>
+          }
+          actions={
+            update || remove || rowActions
+              ? (row) => (
+                  <>
+                    {rowActions?.(row, reload)}
+                    {update && <RowAction onClick={() => openEdit(row)}>Edit</RowAction>}
+                    {remove && (
+                      <RowAction danger onClick={() => setConfirmingDelete(row)}>
+                        Delete
+                      </RowAction>
                     )}
-                  >
-                    {c.header}
-                  </th>
-                ))}
-                {(update || remove || rowActions) && <th className="px-3 py-2 w-40" />}
-              </tr>
-            </thead>
-            <tbody>
-              {pageRows.map((row) => (
-                <tr key={row.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
-                  {columns.map((c) => (
-                    <td key={c.header} className={cn('px-3 py-2 align-middle', c.className)}>
-                      {c.render(row)}
-                    </td>
-                  ))}
-                  {(update || remove || rowActions) && (
-                    <td className="px-3 py-2 text-right whitespace-nowrap">
-                      <div className="flex items-center justify-end gap-2">
-                        {rowActions?.(row, reload)}
-                        {update && (
-                          <button
-                            onClick={() => openEdit(row)}
-                            className="text-xs text-primary hover:underline font-body"
-                          >
-                            Edit
-                          </button>
-                        )}
-                        {remove && (
-                          <button
-                            onClick={() => setConfirmingDelete(row)}
-                            className="text-xs text-red-500 hover:underline font-body"
-                          >
-                            Delete
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  </>
+                )
+              : undefined
+          }
+        />
       )}
 
       {paginated && !loading && visible.length > 0 && (

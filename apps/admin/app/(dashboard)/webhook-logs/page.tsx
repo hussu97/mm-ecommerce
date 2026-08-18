@@ -29,7 +29,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { webhookLogsApi } from '@/lib/api';
 import type { WebhookLog, WebhookLogDetail } from '@/lib/types';
-import { Badge, Input, Pagination, Select, LoadError } from '@/components/ui';
+import { Badge, Input, Pagination, Select, LoadError, Spinner } from '@/components/ui';
+import { DataTable, RowAction } from '@/components/ui/DataTable';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -187,7 +188,7 @@ export default function WebhookLogsPage() {
         </div>
         <button
           onClick={load}
-          className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-primary font-body transition-colors"
+          className="flex items-center gap-1.5 min-h-11 md:min-h-0 px-1 text-xs text-gray-500 hover:text-primary font-body transition-colors"
           title="Refresh"
         >
           <span className="material-icons text-[16px]">refresh</span>
@@ -251,154 +252,146 @@ export default function WebhookLogsPage() {
         </div>
       </div>
 
-      {/* Table */}
-      <div className="bg-white border border-gray-200 overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-200 bg-gray-50">
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Received</th>
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Courier</th>
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Event</th>
-              <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500">Outcome</th>
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden lg:table-cell">Order #</th>
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden xl:table-cell">External ID</th>
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden xl:table-cell">Key</th>
-              <th className="px-4 py-3 text-right text-[11px] font-body uppercase tracking-widest text-gray-500">Body</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {loading ? (
-              Array.from({ length: 10 }).map((_, i) => (
-                <tr key={i}>
-                  {Array.from({ length: 8 }).map((_, j) => (
-                    <td key={j} className="px-4 py-3">
-                      <div className="h-4 bg-gray-100 animate-pulse rounded-sm" />
-                    </td>
-                  ))}
-                </tr>
-              ))
-            ) : logs.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-400 font-body">
-                  No webhooks in this window.
-                </td>
-              </tr>
-            ) : (
-              logs.map(log => (
+      {loading ? (
+        <div className="flex justify-center py-16"><Spinner /></div>
+      ) : (
+        <DataTable<WebhookLog>
+          rows={logs}
+          rowKey={log => log.id}
+          empty={
+            <p className="py-16 text-center text-sm text-gray-400 font-body">
+              No webhooks in this window.
+            </p>
+          }
+          actions={log => (
+            <RowAction onClick={() => toggleRow(log.id)}>
+              {expandedId === log.id ? 'Hide body' : 'View body'}
+            </RowAction>
+          )}
+          expanded={log =>
+            expandedId === log.id ? (
+              <>
+                {log.error && (
+                  <p className="mb-3 px-3 py-2 text-xs font-mono text-red-700 bg-red-50 border border-red-200 whitespace-pre-wrap break-all">
+                    {log.error}
+                  </p>
+                )}
+                {detailError ? (
+                  <p className="text-xs font-body text-red-500">{detailError}</p>
+                ) : !detail ? (
+                  <div className="h-16 bg-gray-100 animate-pulse rounded-sm" />
+                ) : (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-body uppercase tracking-widest text-gray-400 mb-1">
+                        What they sent
+                      </p>
+                      <pre className="text-[11px] font-mono text-gray-700 bg-white border border-gray-200 p-3 overflow-x-auto max-h-72">
+                        {JSON.stringify(detail.payload, null, 2)}
+                      </pre>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-body uppercase tracking-widest text-gray-400 mb-1">
+                        What we answered
+                      </p>
+                      <pre className="text-[11px] font-mono text-gray-700 bg-white border border-gray-200 p-3 overflow-x-auto max-h-72">
+                        {JSON.stringify(detail.result, null, 2)}
+                      </pre>
+                      <p className="text-[11px] font-body text-gray-400 mt-2">
+                        from {detail.remote_ip ?? 'an unknown address'}
+                        {detail.http_status !== null && ` · HTTP ${detail.http_status}`}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : null
+          }
+          columns={[
+            {
+              header: 'Event',
+              // Their word, never ours — a push that says EXPIRED is evidence,
+              // and paraphrasing loses the reason. It is also what identifies
+              // the row, so it leads the card.
+              priority: 'primary',
+              render: log => (
+                <span className="text-xs font-mono text-gray-600">{log.event_type ?? '—'}</span>
+              ),
+            },
+            {
+              header: 'Courier',
+              priority: 'secondary',
+              render: log => (
                 <>
-                  <tr key={log.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3 text-xs font-body text-gray-500 whitespace-nowrap">
-                      {formatDateTime(log.received_at)}
-                      {log.duration_ms !== null && (
-                        <span className="text-gray-300"> · {log.duration_ms}ms</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-xs font-body text-gray-700">
-                        {PROVIDER_LABEL[log.provider] ?? log.provider}
-                      </span>
-                      <span className="text-[11px] font-body text-gray-400"> / {log.endpoint}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      {/* Their word, never ours — a push that says EXPIRED is
-                          evidence, and paraphrasing loses the reason. */}
-                      <span className="text-xs font-mono text-gray-600">
-                        {log.event_type ?? '—'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      {log.error ? (
-                        <Badge variant="danger">error</Badge>
-                      ) : log.matched === false ? (
-                        <Badge variant="warning">no match</Badge>
-                      ) : log.matched === true ? (
-                        <Badge variant="success">matched</Badge>
-                      ) : (
-                        <Badge variant="neutral">received</Badge>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 hidden lg:table-cell">
-                      {log.order_number ? (
-                        <button
-                          onClick={() => router.push(`/orders/${log.order_number}`)}
-                          className="text-xs font-body font-medium text-primary hover:underline"
-                        >
-                          {log.order_number}
-                        </button>
-                      ) : (
-                        <span className="text-xs text-gray-300 font-body">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 hidden xl:table-cell">
-                      <span className="text-[11px] font-mono text-gray-400">
-                        {log.external_id ?? '—'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 hidden xl:table-cell">
-                      {/* A fingerprint, never the key. Enough to tell two apart
-                          across two systems, which is the only question. */}
-                      <span className="text-[11px] font-mono text-gray-400">
-                        {log.api_key_fingerprint ?? '—'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={() => toggleRow(log.id)}
-                        className="inline-flex items-center gap-1 text-xs font-body text-gray-500 hover:text-primary transition-colors"
-                      >
-                        {expandedId === log.id ? 'Hide' : 'View'}
-                        <span className="material-icons text-[12px]">
-                          {expandedId === log.id ? 'expand_less' : 'expand_more'}
-                        </span>
-                      </button>
-                    </td>
-                  </tr>
-
-                  {expandedId === log.id && (
-                    <tr key={`${log.id}-body`} className="bg-gray-50">
-                      <td colSpan={8} className="px-4 py-3">
-                        {log.error && (
-                          <p className="mb-3 px-3 py-2 text-xs font-mono text-red-700 bg-red-50 border border-red-200 whitespace-pre-wrap break-all">
-                            {log.error}
-                          </p>
-                        )}
-                        {detailError ? (
-                          <p className="text-xs font-body text-red-500">{detailError}</p>
-                        ) : !detail ? (
-                          <div className="h-16 bg-gray-100 animate-pulse rounded-sm" />
-                        ) : (
-                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                            <div>
-                              <p className="text-[11px] font-body uppercase tracking-widest text-gray-400 mb-1">
-                                What they sent
-                              </p>
-                              <pre className="text-[11px] font-mono text-gray-700 bg-white border border-gray-200 p-3 overflow-x-auto max-h-72">
-                                {JSON.stringify(detail.payload, null, 2)}
-                              </pre>
-                            </div>
-                            <div>
-                              <p className="text-[11px] font-body uppercase tracking-widest text-gray-400 mb-1">
-                                What we answered
-                              </p>
-                              <pre className="text-[11px] font-mono text-gray-700 bg-white border border-gray-200 p-3 overflow-x-auto max-h-72">
-                                {JSON.stringify(detail.result, null, 2)}
-                              </pre>
-                              <p className="text-[11px] font-body text-gray-400 mt-2">
-                                from {detail.remote_ip ?? 'an unknown address'}
-                                {detail.http_status !== null && ` · HTTP ${detail.http_status}`}
-                              </p>
-                            </div>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  )}
+                  {PROVIDER_LABEL[log.provider] ?? log.provider}
+                  <span className="text-gray-400"> / {log.endpoint}</span>
                 </>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+              ),
+            },
+            {
+              header: 'Outcome',
+              className: 'text-center',
+              render: log =>
+                log.error ? (
+                  <Badge variant="danger">error</Badge>
+                ) : log.matched === false ? (
+                  <Badge variant="warning">no match</Badge>
+                ) : log.matched === true ? (
+                  <Badge variant="success">matched</Badge>
+                ) : (
+                  <Badge variant="neutral">received</Badge>
+                ),
+            },
+            {
+              header: 'Received',
+              className: 'whitespace-nowrap',
+              render: log => (
+                <span className="text-gray-500">
+                  {formatDateTime(log.received_at)}
+                  {log.duration_ms !== null && (
+                    <span className="text-gray-300"> · {log.duration_ms}ms</span>
+                  )}
+                </span>
+              ),
+            },
+            {
+              header: 'Order #',
+              render: log =>
+                log.order_number ? (
+                  <button
+                    onClick={() => router.push(`/orders/${log.order_number}`)}
+                    className="inline-flex items-center min-h-11 md:min-h-0 text-xs font-body font-medium text-primary hover:underline"
+                  >
+                    {log.order_number}
+                  </button>
+                ) : (
+                  <span className="text-gray-300">—</span>
+                ),
+            },
+            {
+              header: 'External ID',
+              priority: 'desktop',
+              render: log => (
+                <span className="text-[11px] font-mono text-gray-400">
+                  {log.external_id ?? '—'}
+                </span>
+              ),
+            },
+            {
+              header: 'Key',
+              // A fingerprint, never the key. Enough to tell two apart across
+              // two systems, which is the only question it answers — and a
+              // desk question, so it leaves the card.
+              priority: 'desktop',
+              render: log => (
+                <span className="text-[11px] font-mono text-gray-400">
+                  {log.api_key_fingerprint ?? '—'}
+                </span>
+              ),
+            },
+          ]}
+        />
+      )}
 
       <Pagination
         page={page}
