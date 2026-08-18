@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Integer,
@@ -170,6 +171,12 @@ class Branch(Base, UUIDMixin, TimestampMixin):
     business_days: Mapped[list[BranchBusinessDay]] = relationship(
         "BranchBusinessDay", back_populates="branch", cascade="all, delete-orphan"
     )
+    holidays: Mapped[list[BranchHoliday]] = relationship(
+        "BranchHoliday",
+        back_populates="branch",
+        cascade="all, delete-orphan",
+        order_by="BranchHoliday.holiday_date",
+    )
 
     def _translated(self, field: str, locale: str) -> str | None:
         """
@@ -227,6 +234,62 @@ class Branch(Base, UUIDMixin, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<Branch {self.reference} {self.name}>"
+
+
+class BranchHoliday(Base, UUIDMixin, TimestampMixin):
+    """
+    A whole day this branch does not trade.
+
+    **Exceptions only.** The shop works seven days a week, so there is no
+    weekday rule to express and deliberately none here: a Saturday is a trading
+    day, and the only thing that closes a branch is a row somebody wrote. That
+    also means the absence of rows is the ordinary state and costs nothing —
+    the same shape `branch_products` uses for "sold here".
+
+    **Whole days only, and that is a design decision rather than a first cut.**
+    A branch already has `opening_from` / `opening_to` for the hours it trades;
+    giving a holiday its own hours would be a second answer to that question,
+    free to disagree with the first. A half-day is a trading-hours change. A
+    holiday is the day being gone.
+
+    Dated as `YYYY-MM-DD` text rather than a `Date`, matching `business_date`
+    on the table above — the two are read side by side, and one shape for a
+    date in this schema beats two. The CHECK holds the format.
+
+    Read by `services/branch_holiday_service`, which hands the set to
+    `core/trading_hours`. Nothing else compares these strings by hand.
+    """
+
+    __tablename__ = "branch_holidays"
+    __table_args__ = (
+        UniqueConstraint("branch_id", "holiday_date", name="uq_branch_holiday_date"),
+        # Migration 106. Format only, mirroring `business_date_format` — these
+        # dates are compared against `date.isoformat()` output, and a row that
+        # is not that shape silently never matches.
+        CheckConstraint(
+            r"holiday_date ~ '^\d{4}-\d{2}-\d{2}$'",
+            name="ck_branch_holidays_holiday_date_format",
+        ),
+    )
+
+    branch_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("branches.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    holiday_date: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    #: What the shop calls it — "Eid al-Fitr", "Annual maintenance". Shown in
+    #: the admin and written into the promise's `reason`, so "why is this
+    #: quoting Thursday" has an answer without opening the table.
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    #: Anything the shop wants to remember about it. Never shown to a customer.
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    branch: Mapped[Branch] = relationship("Branch", back_populates="holidays")
+
+    def __repr__(self) -> str:
+        return f"<BranchHoliday {self.holiday_date} {self.name}>"
 
 
 class BranchBusinessDay(Base, UUIDMixin, TimestampMixin):

@@ -661,6 +661,41 @@ export interface BatchGroup {
   windows: BatchWindow[];
 }
 
+/**
+ * A carrier, and the two numbers that decide what a zone of its own is quoted.
+ *
+ * Only one of them is ever read: `unbatched_promise_kind` says which. A courier
+ * we dispatch ourselves leaves when we say so, and the honest answer is minutes
+ * from ready; one that collects on its own schedule is one we cannot see, and
+ * the only thing we can commit to is a number of days.
+ *
+ * These apply when there is no batch group to wait for — which is every noon
+ * Send zone and every third-party one, and any Lalamove zone left off a
+ * schedule.
+ */
+export interface Courier {
+  code: string;
+  name: string;
+  /** Read-only here. Whether this carrier can appear on the Batching screen. */
+  supports_batching: boolean;
+  unbatched_promise_kind: 'minutes' | 'next_day';
+  unbatched_promise_minutes: number | null;
+  unbatched_promise_days: number;
+  is_active: boolean;
+  /** Zones on the live map currently carried by this courier. */
+  zone_count: number;
+}
+
+export type CourierWrite = Partial<
+  Pick<
+    Courier,
+    | 'unbatched_promise_kind'
+    | 'unbatched_promise_minutes'
+    | 'unbatched_promise_days'
+    | 'is_active'
+  >
+>;
+
 /** One courier order carrying several of ours. */
 export interface DeliveryBatch {
   id: string;

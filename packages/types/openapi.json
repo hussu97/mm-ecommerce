@@ -886,6 +886,37 @@
         "title": "BatchGroupResponse",
         "type": "object"
       },
+      "BatchGroupUpdate": {
+        "description": "The parts of a schedule that are a commercial decision rather than a\nstructural one.\n\n`name` and `courier_code` are deliberately absent. Which carrier a group\nbooks is the thing `supports_batching` guards and the thing its zones were\nassigned against; moving it is a re-partitioning of the map, not a number\nsomebody adjusts on a Tuesday.",
+        "properties": {
+          "delivery_minutes_after_dispatch": {
+            "anyOf": [
+              {
+                "maximum": 1440.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Minutes After Dispatch"
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          }
+        },
+        "title": "BatchGroupUpdate",
+        "type": "object"
+      },
       "BatchResponse": {
         "properties": {
           "attempt_count": {
@@ -1792,6 +1823,136 @@
           "reference"
         ],
         "title": "BranchCreate",
+        "type": "object"
+      },
+      "BranchHolidayCreate": {
+        "properties": {
+          "holiday_date": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "title": "Holiday Date",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "holiday_date",
+          "name"
+        ],
+        "title": "BranchHolidayCreate",
+        "type": "object"
+      },
+      "BranchHolidayResponse": {
+        "properties": {
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "holiday_date": {
+            "title": "Holiday Date",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "branch_id",
+          "holiday_date",
+          "name",
+          "note",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "BranchHolidayResponse",
+        "type": "object"
+      },
+      "BranchHolidayUpdate": {
+        "properties": {
+          "holiday_date": {
+            "anyOf": [
+              {
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Holiday Date"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "title": "BranchHolidayUpdate",
         "type": "object"
       },
       "BranchLive": {
@@ -4795,6 +4956,117 @@
           "counted_quantity"
         ],
         "title": "CountLine",
+        "type": "object"
+      },
+      "CourierResponse": {
+        "description": "A carrier and what it promises, for the admin's Estimates screen.\n\n`supports_batching` is read-only here and shown anyway: it is the reason a\ncourier does or does not appear on the batching screen, and an admin\nwondering why noon Send has no schedule deserves the answer on the same\npage as the numbers.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "supports_batching": {
+            "title": "Supports Batching",
+            "type": "boolean"
+          },
+          "unbatched_promise_days": {
+            "title": "Unbatched Promise Days",
+            "type": "integer"
+          },
+          "unbatched_promise_kind": {
+            "title": "Unbatched Promise Kind",
+            "type": "string"
+          },
+          "unbatched_promise_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unbatched Promise Minutes"
+          },
+          "zone_count": {
+            "title": "Zone Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "code",
+          "name",
+          "supports_batching",
+          "unbatched_promise_kind",
+          "unbatched_promise_minutes",
+          "unbatched_promise_days",
+          "is_active",
+          "zone_count"
+        ],
+        "title": "CourierResponse",
+        "type": "object"
+      },
+      "CourierUpdate": {
+        "description": "What a courier promises when there is no batch to wait for.\n\n`code` and `supports_batching` are not here. The code is the join key every\npolygon and every group already holds, and whether a carrier can carry\nseveral of our orders in one booking is a fact about their product, not a\nsetting \u2014 turning it on for a courier that cannot would let a schedule be\nattached to a promise nothing can keep.",
+        "properties": {
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          },
+          "unbatched_promise_days": {
+            "anyOf": [
+              {
+                "maximum": 30.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unbatched Promise Days"
+          },
+          "unbatched_promise_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unbatched Promise Kind"
+          },
+          "unbatched_promise_minutes": {
+            "anyOf": [
+              {
+                "maximum": 1440.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unbatched Promise Minutes"
+          }
+        },
+        "title": "CourierUpdate",
         "type": "object"
       },
       "CourseCreate": {
@@ -27283,6 +27555,104 @@
         ]
       }
     },
+    "/api/v1/branches/holidays/{holiday_id}": {
+      "delete": {
+        "description": "Reopen the branch on that day.\n\nA hard delete rather than a soft one, unlike most of this router. A closure\nis a statement about one date and either stands or does not; a\n`deleted_at`-shaped closure would be a row saying the shop is shut that the\npromise has to be trusted to ignore, which is one more thing to get wrong\nthan simply not having the row.",
+        "operationId": "delete_holiday_api_v1_branches_holidays__holiday_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "holiday_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Holiday Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Delete Holiday",
+        "tags": [
+          "Branches"
+        ]
+      },
+      "put": {
+        "operationId": "update_holiday_api_v1_branches_holidays__holiday_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "holiday_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Holiday Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BranchHolidayUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BranchHolidayResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Update Holiday",
+        "tags": [
+          "Branches"
+        ]
+      }
+    },
     "/api/v1/branches/pickup-points": {
       "get": {
         "description": "The branches a customer may collect from. **Public.**\n\nUnauthenticated on purpose: this is checkout furniture, and a guest picking\ncollection has to see the same list a signed-in customer does. It carries\nonly what somebody driving there needs \u2014 name, address and city in both\nlocales, a pin, opening hours and a phone number \u2014 and none of the\noperational columns on `BranchResponse`, which is why it is a different\nmodel rather than the same one with a different dependency.\n\nDeclared above `/{branch_id}` so the literal path is matched before the\nUUID one gets a chance to reject it.",
@@ -27954,6 +28324,126 @@
           }
         ],
         "summary": "Branch Device Count",
+        "tags": [
+          "Branches"
+        ]
+      }
+    },
+    "/api/v1/branches/{branch_id}/holidays": {
+      "get": {
+        "description": "This branch's closed days, earliest first.\n\nUpcoming only by default. A closure that has already happened cannot move\nany promise still to be made, and keeping the screen to what is actionable\nis the point \u2014 the past ones stay in the table as the record of why a\npromise once read the way it did, and `include_past` shows them.",
+        "operationId": "list_holidays_api_v1_branches__branch_id__holidays_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_past",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Past",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BranchHolidayResponse"
+                  },
+                  "title": "Response List Holidays Api V1 Branches  Branch Id  Holidays Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Holidays",
+        "tags": [
+          "Branches"
+        ]
+      },
+      "post": {
+        "description": "Close this branch for a day.\n\nOne row per branch per date, enforced by a unique index; the same day\nsubmitted twice is a conflict rather than a second closure, because two\nrows saying the shop is shut is two records of one fact.",
+        "operationId": "create_holiday_api_v1_branches__branch_id__holidays_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BranchHolidayCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BranchHolidayResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Create Holiday",
         "tags": [
           "Branches"
         ]
@@ -29927,6 +30417,65 @@
         ]
       }
     },
+    "/api/v1/delivery-zones/batch-groups/{group_id}": {
+      "put": {
+        "description": "Change how long after a run leaves that its last box is through a door.\n\nThe other half of what the checkout quotes a batched zone, and until now the\nhalf that needed a deploy: the window said when the van goes, and this says\nhow long it then takes. Unlike a fee it takes effect immediately and is not\nversioned \u2014 a wrong number here delays nothing and overcharges nobody, it\njust says the wrong time, and the fix is to say the right one.\n\nOrders already quoted are untouched. What the shop said out loud is a\nrecord, not a derivation (`order_deliveries` keeps it), so moving this\nnumber moves the next promise rather than rewriting the last one.",
+        "operationId": "update_batch_group_api_v1_delivery_zones_batch_groups__group_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchGroupUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchGroupResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Update Batch Group",
+        "tags": [
+          "Delivery Zones"
+        ]
+      }
+    },
     "/api/v1/delivery-zones/batch-groups/{group_id}/batch-windows": {
       "get": {
         "description": "When orders in this group travel together. All times are Dubai time.",
@@ -30249,6 +30798,95 @@
           }
         ],
         "summary": "Dispatch Batch Now",
+        "tags": [
+          "Delivery Zones"
+        ]
+      }
+    },
+    "/api/v1/delivery-zones/couriers": {
+      "get": {
+        "description": "Every carrier and what it promises.",
+        "operationId": "list_couriers_api_v1_delivery_zones_couriers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CourierResponse"
+                  },
+                  "title": "Response List Couriers Api V1 Delivery Zones Couriers Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Couriers",
+        "tags": [
+          "Delivery Zones"
+        ]
+      }
+    },
+    "/api/v1/delivery-zones/couriers/{code}": {
+      "put": {
+        "description": "Change what a courier promises.\n\nRefuses a `kind` of `minutes` with no minutes to quote, in either the body\nor the row it would leave behind. That combination is the one way to make\nthe resolver fall back to its own literal \u2014 a number nobody chose, quoted\nto a customer as though somebody had.",
+        "operationId": "update_courier_api_v1_delivery_zones_couriers__code__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "title": "Code",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CourierUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CourierResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Update Courier",
         "tags": [
           "Delivery Zones"
         ]

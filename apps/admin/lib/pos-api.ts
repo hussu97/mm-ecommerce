@@ -7,7 +7,7 @@
 
 import { api, buildQs } from './api';
 import type {
-  Branch, BusinessSettings, Charge, CostOfGoods, Device, DrawerOperation,
+  Branch, BranchHoliday, BranchHolidayWrite, BusinessSettings, Charge, CostOfGoods, Device, DrawerOperation,
   InventoryCategory, InventoryItem, InventoryLevel, InventoryTransaction,
   InventoryValuation, KitchenFlow, MenuEngineeringRow, PaymentMethod,
   PaymentReportRow, PermissionCatalogue, PosOrder, Printer, PurchaseOrder,
@@ -27,6 +27,20 @@ export const branchesApi = {
   businessDays: (id: string, limit = 30) => api.get<unknown[]>(`/branches/${id}/business-days${buildQs({ limit })}`),
   closeBusinessDay: (id: string) => api.post<unknown>(`/branches/${id}/business-days/close`),
   sections: (id: string) => api.get<unknown[]>(`/branches/${id}/sections`),
+
+  // ── Holidays ────────────────────────────────────────────────────────────
+  //
+  // Whole days this branch does not trade. Read by the delivery estimate, so
+  // these are not decoration on a settings page: adding one moves what every
+  // customer in this branch's zones is quoted from the next request onward.
+  holidays: (id: string, includePast = false) =>
+    api.get<BranchHoliday[]>(`/branches/${id}/holidays${buildQs({ include_past: includePast })}`),
+  addHoliday: (id: string, data: BranchHolidayWrite) =>
+    api.post<BranchHoliday>(`/branches/${id}/holidays`, data),
+  updateHoliday: (holidayId: string, data: Partial<BranchHolidayWrite>) =>
+    api.put<BranchHoliday>(`/branches/holidays/${holidayId}`, data),
+  removeHoliday: (holidayId: string) =>
+    api.delete<void>(`/branches/holidays/${holidayId}`),
 };
 
 // ─── Configuration ────────────────────────────────────────────────────────────

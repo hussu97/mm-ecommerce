@@ -199,6 +199,44 @@ class BranchResponse(ORMModel):
     updated_at: datetime
 
 
+class BranchHolidayBase(BaseModel):
+    """
+    A whole day the branch does not trade.
+
+    `holiday_date` is `YYYY-MM-DD` and the pattern is enforced here as well as
+    by the CHECK on the column: these strings are compared against
+    `date.isoformat()` output, so one written any other way would close the
+    branch on no day at all, silently and without an error anywhere.
+
+    No hours. A branch that opens late is a trading-hours change; a holiday is
+    the day being gone.
+    """
+
+    holiday_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    name: str = Field(min_length=1, max_length=120)
+    note: str | None = Field(None, max_length=2000)
+
+
+class BranchHolidayCreate(BranchHolidayBase):
+    pass
+
+
+class BranchHolidayUpdate(BaseModel):
+    holiday_date: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    name: str | None = Field(None, min_length=1, max_length=120)
+    note: str | None = Field(None, max_length=2000)
+
+
+class BranchHolidayResponse(ORMModel):
+    id: UUID
+    branch_id: UUID
+    holiday_date: str
+    name: str
+    note: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
 class BusinessDayResponse(ORMModel):
     id: UUID
     branch_id: UUID

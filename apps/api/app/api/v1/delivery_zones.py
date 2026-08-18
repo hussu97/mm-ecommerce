@@ -20,7 +20,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -28,7 +28,7 @@ from app.core.deps import get_db
 from app.core.permissions import require
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.models.branch import Branch
-from app.models.courier import Courier
+from app.models.courier import Courier, UnbatchedPromiseEnum
 from app.models.delivery_batch import (
     BatchStatusEnum,
     DeliveryBatch,
@@ -222,6 +222,77 @@ class BatchGroupResponse(BaseModel):
             zone_names=zone_names,
             windows=[BatchWindowResponse.of(w) for w in windows],
         )
+
+
+class BatchGroupUpdate(BaseModel):
+    """
+    The parts of a schedule that are a commercial decision rather than a
+    structural one.
+
+    `name` and `courier_code` are deliberately absent. Which carrier a group
+    books is the thing `supports_batching` guards and the thing its zones were
+    assigned against; moving it is a re-partitioning of the map, not a number
+    somebody adjusts on a Tuesday.
+    """
+
+    delivery_minutes_after_dispatch: int | None = Field(None, ge=1, le=1440)
+    is_active: bool | None = None
+
+
+class CourierResponse(BaseModel):
+    """
+    A carrier and what it promises, for the admin's Estimates screen.
+
+    `supports_batching` is read-only here and shown anyway: it is the reason a
+    courier does or does not appear on the batching screen, and an admin
+    wondering why noon Send has no schedule deserves the answer on the same
+    page as the numbers.
+    """
+
+    code: str
+    name: str
+    supports_batching: bool
+    unbatched_promise_kind: str
+    unbatched_promise_minutes: int | None
+    unbatched_promise_days: int
+    is_active: bool
+    #: Zones currently carried by this courier on the live map. A courier with
+    #: none is one whose promise nobody is being quoted.
+    zone_count: int
+
+    @classmethod
+    def of(cls, c: Courier, zone_count: int) -> "CourierResponse":
+        return cls(
+            code=c.code,
+            name=c.name,
+            supports_batching=c.supports_batching,
+            unbatched_promise_kind=c.unbatched_promise_kind,
+            unbatched_promise_minutes=c.unbatched_promise_minutes,
+            unbatched_promise_days=c.unbatched_promise_days,
+            is_active=c.is_active,
+            zone_count=zone_count,
+        )
+
+
+class CourierUpdate(BaseModel):
+    """
+    What a courier promises when there is no batch to wait for.
+
+    `code` and `supports_batching` are not here. The code is the join key every
+    polygon and every group already holds, and whether a carrier can carry
+    several of our orders in one booking is a fact about their product, not a
+    setting — turning it on for a courier that cannot would let a schedule be
+    attached to a promise nothing can keep.
+    """
+
+    #: `minutes` or `next_day`. Which of the two numbers below is read.
+    unbatched_promise_kind: str | None = None
+    #: Ready-to-door, for a courier we dispatch ourselves. A day either side of
+    #: sensible is refused rather than quietly quoted.
+    unbatched_promise_minutes: int | None = Field(None, ge=1, le=1440)
+    #: Handover-to-door, for a courier that collects on its own schedule.
+    unbatched_promise_days: int | None = Field(None, ge=1, le=30)
+    is_active: bool | None = None
 
 
 class BatchResponse(BaseModel):
@@ -837,6 +908,163 @@ async def list_batch_groups(
             BatchGroupResponse.of(group, list(zones), await _windows_of(db, group.id))
         )
     return out
+
+
+@router.put("/batch-groups/{group_id}", response_model=BatchGroupResponse)
+async def update_batch_group(
+    group_id: uuid.UUID,
+    data: BatchGroupUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require("delivery.manage")),
+):
+    """
+    Change how long after a run leaves that its last box is through a door.
+
+    The other half of what the checkout quotes a batched zone, and until now the
+    half that needed a deploy: the window said when the van goes, and this says
+    how long it then takes. Unlike a fee it takes effect immediately and is not
+    versioned — a wrong number here delays nothing and overcharges nobody, it
+    just says the wrong time, and the fix is to say the right one.
+
+    Orders already quoted are untouched. What the shop said out loud is a
+    record, not a derivation (`order_deliveries` keeps it), so moving this
+    number moves the next promise rather than rewriting the last one.
+    """
+    group = await _load_group(db, group_id)
+    before = {
+        "delivery_minutes_after_dispatch": group.delivery_minutes_after_dispatch,
+        "is_active": group.is_active,
+    }
+    for field, value in data.model_dump(exclude_none=True).items():
+        setattr(group, field, value)
+    await db.flush()
+
+    await audit_service.log_action(
+        db,
+        action="UPDATE",
+        entity_type="delivery_batch_group",
+        entity_id=str(group.id),
+        entity_label=group.name,
+        admin=admin,
+        changes={
+            "from": before,
+            "to": {
+                "delivery_minutes_after_dispatch": (
+                    group.delivery_minutes_after_dispatch
+                ),
+                "is_active": group.is_active,
+            },
+        },
+        request=request,
+    )
+
+    zones = (
+        (
+            await db.execute(
+                select(DeliveryPolygon.name)
+                .where(DeliveryPolygon.batch_group_id == group.id)
+                .order_by(DeliveryPolygon.display_order)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return BatchGroupResponse.of(group, list(zones), await _windows_of(db, group.id))
+
+
+# ── Couriers ──────────────────────────────────────────────────────────────────
+#
+# The unbatched half of the delivery promise. A zone in no batch group — every
+# noon Send zone, and every third-party one — is quoted straight from these two
+# numbers, and until now neither had a way in that was not a migration.
+
+
+async def _live_zone_counts(db: AsyncSession) -> dict[str, int]:
+    """How many zones on the published map each courier currently carries."""
+    version = await delivery_zone_service.get_active_version(db)
+    if version is None:
+        return {}
+    rows = await db.execute(
+        select(DeliveryPolygon.fulfilment_provider, func.count())
+        .where(DeliveryPolygon.version_id == version.id)
+        .group_by(DeliveryPolygon.fulfilment_provider)
+    )
+    return {provider: int(count) for provider, count in rows.all()}
+
+
+@router.get("/couriers", response_model=list[CourierResponse])
+async def list_couriers(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require("delivery.manage")),
+):
+    """Every carrier and what it promises."""
+    couriers = (
+        (await db.execute(select(Courier).order_by(Courier.name))).scalars().all()
+    )
+    counts = await _live_zone_counts(db)
+    return [CourierResponse.of(c, counts.get(c.code, 0)) for c in couriers]
+
+
+@router.put("/couriers/{code}", response_model=CourierResponse)
+async def update_courier(
+    code: str,
+    data: CourierUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require("delivery.manage")),
+):
+    """
+    Change what a courier promises.
+
+    Refuses a `kind` of `minutes` with no minutes to quote, in either the body
+    or the row it would leave behind. That combination is the one way to make
+    the resolver fall back to its own literal — a number nobody chose, quoted
+    to a customer as though somebody had.
+    """
+    courier = (
+        await db.execute(select(Courier).where(Courier.code == code))
+    ).scalar_one_or_none()
+    if courier is None:
+        raise NotFoundError(f"Courier '{code}' not found")
+
+    kind = data.unbatched_promise_kind or courier.unbatched_promise_kind
+    allowed = {member.value for member in UnbatchedPromiseEnum}
+    if kind not in allowed:
+        raise BadRequestError(
+            f"Unknown promise kind '{kind}'. Allowed: {sorted(allowed)}"
+        )
+    minutes = (
+        data.unbatched_promise_minutes
+        if data.unbatched_promise_minutes is not None
+        else courier.unbatched_promise_minutes
+    )
+    if kind == UnbatchedPromiseEnum.MINUTES.value and not minutes:
+        raise BadRequestError(
+            f"{courier.name} promises an hour rather than a day, so it needs a "
+            "number of minutes. Set one, or switch it to next-day."
+        )
+
+    before = CourierResponse.of(courier, 0).model_dump(exclude={"zone_count"})
+    for field, value in data.model_dump(exclude_none=True).items():
+        setattr(courier, field, value)
+    await db.flush()
+
+    await audit_service.log_action(
+        db,
+        action="UPDATE",
+        entity_type="courier",
+        entity_id=courier.code,
+        entity_label=courier.name,
+        admin=admin,
+        changes={
+            "from": before,
+            "to": CourierResponse.of(courier, 0).model_dump(exclude={"zone_count"}),
+        },
+        request=request,
+    )
+    counts = await _live_zone_counts(db)
+    return CourierResponse.of(courier, counts.get(courier.code, 0))
 
 
 @router.get(

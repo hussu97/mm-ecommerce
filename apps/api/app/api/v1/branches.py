@@ -16,6 +16,7 @@ from app.core.exceptions import ConflictError
 from app.models import (
     Branch,
     BranchBusinessDay,
+    BranchHoliday,
     Device,
     PosTable,
     Section,
@@ -26,6 +27,9 @@ from app.models.user import User
 from app.schemas.fulfilment import PickupBranchResponse
 from app.schemas.pos import (
     BranchCreate,
+    BranchHolidayCreate,
+    BranchHolidayResponse,
+    BranchHolidayUpdate,
     BranchResponse,
     BranchUpdate,
     BusinessDayResponse,
@@ -38,6 +42,7 @@ from app.schemas.pos import (
 )
 from app.services import (
     audit_service,
+    branch_holiday_service,
     business_day_service,
     crud_service,
     fulfilment_service,
@@ -234,6 +239,178 @@ async def close_business_day(
         request=request,
     )
     return day
+
+
+# ─── Holidays ─────────────────────────────────────────────────────────────────
+#
+# Whole days a branch does not trade. Exceptions only — the shop works seven
+# days a week, so there is no weekday rule and no row means open.
+#
+# These are not decoration on a settings page: `services/delivery_promise`
+# reads them through `core.trading_hours`, so adding one here moves what every
+# customer in that branch's zones is quoted from the next request onward.
+
+
+@router.get("/{branch_id}/holidays", response_model=list[BranchHolidayResponse])
+async def list_holidays(
+    branch_id: uuid.UUID,
+    include_past: bool = False,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("admin.branches.manage")),
+):
+    """
+    This branch's closed days, earliest first.
+
+    Upcoming only by default. A closure that has already happened cannot move
+    any promise still to be made, and keeping the screen to what is actionable
+    is the point — the past ones stay in the table as the record of why a
+    promise once read the way it did, and `include_past` shows them.
+    """
+    await crud_service.get_or_404(db, Branch, branch_id)
+    return await branch_holiday_service.listing(
+        db, branch_id, include_past=include_past
+    )
+
+
+@router.post(
+    "/{branch_id}/holidays",
+    response_model=BranchHolidayResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_holiday(
+    request: Request,
+    branch_id: uuid.UUID,
+    data: BranchHolidayCreate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require("admin.branches.manage")),
+):
+    """
+    Close this branch for a day.
+
+    One row per branch per date, enforced by a unique index; the same day
+    submitted twice is a conflict rather than a second closure, because two
+    rows saying the shop is shut is two records of one fact.
+    """
+    branch = await crud_service.get_or_404(db, Branch, branch_id)
+    if await _holiday_on(db, branch_id, data.holiday_date) is not None:
+        raise ConflictError(f"{branch.name} is already closed on {data.holiday_date}.")
+    holiday = BranchHoliday(branch_id=branch_id, **data.model_dump())
+    db.add(holiday)
+    await db.flush()
+    await db.refresh(holiday)
+    await _log_holiday(
+        db, request, admin, branch, holiday, action="CREATE", changes={"added": True}
+    )
+    return holiday
+
+
+@router.put("/holidays/{holiday_id}", response_model=BranchHolidayResponse)
+async def update_holiday(
+    request: Request,
+    holiday_id: uuid.UUID,
+    data: BranchHolidayUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require("admin.branches.manage")),
+):
+    holiday = await crud_service.get_or_404(db, BranchHoliday, holiday_id)
+    before = {"holiday_date": holiday.holiday_date, "name": holiday.name}
+    fields = data.model_dump(exclude_unset=True)
+    moved_to = fields.get("holiday_date")
+    if moved_to and moved_to != holiday.holiday_date:
+        clash = await _holiday_on(db, holiday.branch_id, moved_to)
+        if clash is not None:
+            raise ConflictError(f"This branch is already closed on {moved_to}.")
+    for field, value in fields.items():
+        setattr(holiday, field, value)
+    await db.flush()
+    await db.refresh(holiday)
+
+    branch = await crud_service.get_or_404(db, Branch, holiday.branch_id)
+    await _log_holiday(
+        db,
+        request,
+        admin,
+        branch,
+        holiday,
+        action="UPDATE",
+        changes={
+            "from": before,
+            "to": {"holiday_date": holiday.holiday_date, "name": holiday.name},
+        },
+    )
+    return holiday
+
+
+@router.delete("/holidays/{holiday_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_holiday(
+    request: Request,
+    holiday_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require("admin.branches.manage")),
+):
+    """
+    Reopen the branch on that day.
+
+    A hard delete rather than a soft one, unlike most of this router. A closure
+    is a statement about one date and either stands or does not; a
+    `deleted_at`-shaped closure would be a row saying the shop is shut that the
+    promise has to be trusted to ignore, which is one more thing to get wrong
+    than simply not having the row.
+    """
+    holiday = await crud_service.get_or_404(db, BranchHoliday, holiday_id)
+    branch = await crud_service.get_or_404(db, Branch, holiday.branch_id)
+    await _log_holiday(
+        db,
+        request,
+        admin,
+        branch,
+        holiday,
+        action="DELETE",
+        changes={"removed": holiday.holiday_date},
+    )
+    await db.delete(holiday)
+    await db.flush()
+
+
+async def _holiday_on(
+    db: AsyncSession, branch_id: uuid.UUID, day: str
+) -> BranchHoliday | None:
+    return (
+        await db.execute(
+            select(BranchHoliday).where(
+                BranchHoliday.branch_id == branch_id,
+                BranchHoliday.holiday_date == day,
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def _log_holiday(
+    db: AsyncSession,
+    request: Request,
+    admin: User,
+    branch: Branch,
+    holiday: BranchHoliday,
+    *,
+    action: str,
+    changes: dict,
+) -> None:
+    """
+    Closures are audited like a status change, not like a settings tweak.
+
+    Somebody will one day ask why a week of orders quoted three days out, and
+    the answer is a row somebody added on a Tuesday afternoon.
+    """
+    await audit_service.log_action(
+        db,
+        action=action,
+        entity_type="branch_holiday",
+        entity_id=str(holiday.id),
+        entity_label=f"{branch.name} — {holiday.holiday_date} {holiday.name}",
+        admin=admin,
+        changes=changes,
+        request=request,
+    )
 
 
 # ─── Sections ─────────────────────────────────────────────────────────────────

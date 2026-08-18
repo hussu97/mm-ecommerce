@@ -74,6 +74,20 @@ class Courier(Base, UUIDMixin, TimestampMixin):
     unbatched_promise_minutes: Mapped[int | None] = mapped_column(
         Integer, nullable=True
     )
+    #: Days from the shop handing it over to the door. Read only when the kind
+    #: is `next_day`.
+    #:
+    #: One is "tomorrow", which is what this rule always meant and therefore the
+    #: default. It is a column because "next day" is a courier's *current* SLA
+    #: and not a law: a partner covering Al Ain quotes two days, and moving that
+    #: number used to be a deploy. Counted in calendar days from the day the
+    #: kitchen can work on the order — the courier's van is not ours, so its
+    #: transit does not pause for our holidays. What the holidays do move is the
+    #: day we hand it over, and that is `days`' starting point rather than
+    #: `days` itself.
+    unbatched_promise_days: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
 
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"

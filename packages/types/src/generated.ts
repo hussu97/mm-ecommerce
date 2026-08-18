@@ -896,6 +896,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/branches/holidays/{holiday_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Holiday */
+        put: operations["update_holiday_api_v1_branches_holidays__holiday_id__put"];
+        post?: never;
+        /**
+         * Delete Holiday
+         * @description Reopen the branch on that day.
+         *
+         *     A hard delete rather than a soft one, unlike most of this router. A closure
+         *     is a statement about one date and either stands or does not; a
+         *     `deleted_at`-shaped closure would be a row saying the shop is shut that the
+         *     promise has to be trusted to ignore, which is one more thing to get wrong
+         *     than simply not having the row.
+         */
+        delete: operations["delete_holiday_api_v1_branches_holidays__holiday_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/branches/pickup-points": {
         parameters: {
             query?: never;
@@ -1064,6 +1091,39 @@ export interface paths {
         get: operations["branch_device_count_api_v1_branches__branch_id__device_count_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/branches/{branch_id}/holidays": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Holidays
+         * @description This branch's closed days, earliest first.
+         *
+         *     Upcoming only by default. A closure that has already happened cannot move
+         *     any promise still to be made, and keeping the screen to what is actionable
+         *     is the point — the past ones stay in the table as the record of why a
+         *     promise once read the way it did, and `include_past` shows them.
+         */
+        get: operations["list_holidays_api_v1_branches__branch_id__holidays_get"];
+        put?: never;
+        /**
+         * Create Holiday
+         * @description Close this branch for a day.
+         *
+         *     One row per branch per date, enforced by a unique index; the same day
+         *     submitted twice is a conflict rather than a second closure, because two
+         *     rows saying the shop is shut is two records of one fact.
+         */
+        post: operations["create_holiday_api_v1_branches__branch_id__holidays_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1547,6 +1607,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/delivery-zones/batch-groups/{group_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update Batch Group
+         * @description Change how long after a run leaves that its last box is through a door.
+         *
+         *     The other half of what the checkout quotes a batched zone, and until now the
+         *     half that needed a deploy: the window said when the van goes, and this says
+         *     how long it then takes. Unlike a fee it takes effect immediately and is not
+         *     versioned — a wrong number here delays nothing and overcharges nobody, it
+         *     just says the wrong time, and the fix is to say the right one.
+         *
+         *     Orders already quoted are untouched. What the shop said out loud is a
+         *     record, not a derivation (`order_deliveries` keeps it), so moving this
+         *     number moves the next promise rather than rewriting the last one.
+         */
+        put: operations["update_batch_group_api_v1_delivery_zones_batch_groups__group_id__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/delivery-zones/batch-groups/{group_id}/batch-windows": {
         parameters: {
             query?: never;
@@ -1647,6 +1737,51 @@ export interface paths {
          *     rather than the one that was left.
          */
         post: operations["dispatch_batch_now_api_v1_delivery_zones_batches__batch_id__dispatch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/delivery-zones/couriers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Couriers
+         * @description Every carrier and what it promises.
+         */
+        get: operations["list_couriers_api_v1_delivery_zones_couriers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/delivery-zones/couriers/{code}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update Courier
+         * @description Change what a courier promises.
+         *
+         *     Refuses a `kind` of `minutes` with no minutes to quote, in either the body
+         *     or the row it would leave behind. That combination is the one way to make
+         *     the resolver fall back to its own literal — a number nobody chose, quoted
+         *     to a customer as though somebody had.
+         */
+        put: operations["update_courier_api_v1_delivery_zones_couriers__code__put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -6510,6 +6645,22 @@ export interface components {
             /** Zone Names */
             zone_names: string[];
         };
+        /**
+         * BatchGroupUpdate
+         * @description The parts of a schedule that are a commercial decision rather than a
+         *     structural one.
+         *
+         *     `name` and `courier_code` are deliberately absent. Which carrier a group
+         *     books is the thing `supports_batching` guards and the thing its zones were
+         *     assigned against; moving it is a re-partitioning of the map, not a number
+         *     somebody adjusts on a Tuesday.
+         */
+        BatchGroupUpdate: {
+            /** Delivery Minutes After Dispatch */
+            delivery_minutes_after_dispatch?: number | null;
+            /** Is Active */
+            is_active?: boolean | null;
+        };
         /** BatchResponse */
         BatchResponse: {
             /** Attempt Count */
@@ -6844,6 +6995,53 @@ export interface components {
              * @enum {string}
              */
             type: "restaurant" | "kitchen" | "warehouse";
+        };
+        /** BranchHolidayCreate */
+        BranchHolidayCreate: {
+            /** Holiday Date */
+            holiday_date: string;
+            /** Name */
+            name: string;
+            /** Note */
+            note?: string | null;
+        };
+        /** BranchHolidayResponse */
+        BranchHolidayResponse: {
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Holiday Date */
+            holiday_date: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Note */
+            note: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** BranchHolidayUpdate */
+        BranchHolidayUpdate: {
+            /** Holiday Date */
+            holiday_date?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Note */
+            note?: string | null;
         };
         /** BranchLive */
         BranchLive: {
@@ -7747,6 +7945,53 @@ export interface components {
              * Format: uuid
              */
             item_id: string;
+        };
+        /**
+         * CourierResponse
+         * @description A carrier and what it promises, for the admin's Estimates screen.
+         *
+         *     `supports_batching` is read-only here and shown anyway: it is the reason a
+         *     courier does or does not appear on the batching screen, and an admin
+         *     wondering why noon Send has no schedule deserves the answer on the same
+         *     page as the numbers.
+         */
+        CourierResponse: {
+            /** Code */
+            code: string;
+            /** Is Active */
+            is_active: boolean;
+            /** Name */
+            name: string;
+            /** Supports Batching */
+            supports_batching: boolean;
+            /** Unbatched Promise Days */
+            unbatched_promise_days: number;
+            /** Unbatched Promise Kind */
+            unbatched_promise_kind: string;
+            /** Unbatched Promise Minutes */
+            unbatched_promise_minutes: number | null;
+            /** Zone Count */
+            zone_count: number;
+        };
+        /**
+         * CourierUpdate
+         * @description What a courier promises when there is no batch to wait for.
+         *
+         *     `code` and `supports_batching` are not here. The code is the join key every
+         *     polygon and every group already holds, and whether a carrier can carry
+         *     several of our orders in one booking is a fact about their product, not a
+         *     setting — turning it on for a courier that cannot would let a schedule be
+         *     attached to a promise nothing can keep.
+         */
+        CourierUpdate: {
+            /** Is Active */
+            is_active?: boolean | null;
+            /** Unbatched Promise Days */
+            unbatched_promise_days?: number | null;
+            /** Unbatched Promise Kind */
+            unbatched_promise_kind?: string | null;
+            /** Unbatched Promise Minutes */
+            unbatched_promise_minutes?: number | null;
         };
         /** CourseCreate */
         CourseCreate: {
@@ -15876,6 +16121,70 @@ export interface operations {
             };
         };
     };
+    update_holiday_api_v1_branches_holidays__holiday_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                holiday_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BranchHolidayUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BranchHolidayResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_holiday_api_v1_branches_holidays__holiday_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                holiday_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_pickup_points_api_v1_branches_pickup_points_get: {
         parameters: {
             query?: never;
@@ -16298,6 +16607,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_holidays_api_v1_branches__branch_id__holidays_get: {
+        parameters: {
+            query?: {
+                include_past?: boolean;
+            };
+            header?: never;
+            path: {
+                branch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BranchHolidayResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_holiday_api_v1_branches__branch_id__holidays_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                branch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BranchHolidayCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BranchHolidayResponse"];
                 };
             };
             /** @description Validation Error */
@@ -17492,6 +17869,41 @@ export interface operations {
             };
         };
     };
+    update_batch_group_api_v1_delivery_zones_batch_groups__group_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchGroupUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchGroupResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_batch_windows_api_v1_delivery_zones_batch_groups__group_id__batch_windows_get: {
         parameters: {
             query?: never;
@@ -17672,6 +18084,61 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BatchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_couriers_api_v1_delivery_zones_couriers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CourierResponse"][];
+                };
+            };
+        };
+    };
+    update_courier_api_v1_delivery_zones_couriers__code__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CourierUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CourierResponse"];
                 };
             };
             /** @description Validation Error */

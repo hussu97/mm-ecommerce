@@ -4,11 +4,13 @@ import { useCallback } from 'react';
 import { branchesApi } from '@/lib/pos-api';
 import type { Branch } from '@/lib/pos-types';
 import { ResourcePage, StatusBadge } from '@/components/pos/ResourcePage';
+import { BranchHolidays } from '@/components/pos/BranchHolidays';
 
 export default function BranchesPage() {
   const load = useCallback(() => branchesApi.list(), []);
 
   return (
+    <>
     <ResourcePage<Branch>
       title="Branches"
       description="Shops, production kitchens and warehouses. Every order, till and stock level belongs to one."
@@ -116,5 +118,15 @@ export default function BranchesPage() {
         { name: 'is_active', label: 'Active', type: 'checkbox' },
       ]}
     />
+
+    {/* Its own section rather than a field on the branch, because a closure is
+        a row per date and a branch has none most of the time. It sits here
+        rather than under Delivery because it belongs with the trading hours
+        above — same question, answered for a whole day — even though what
+        reads it is the delivery estimate. */}
+    <div className="mt-8">
+      <BranchHolidays />
+    </div>
+    </>
   );
 }

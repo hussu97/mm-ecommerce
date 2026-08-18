@@ -17,6 +17,7 @@ import type {
 import { Badge, Button, Input, Select, Spinner, TabBar } from '@/components/ui';
 import { useConfirm, useToast } from '@/components/ui/feedback';
 import { BatchWindows } from '@/components/delivery/BatchWindows';
+import { DeliveryEstimates } from '@/components/delivery/DeliveryEstimates';
 import { ZoneMap } from '@/components/delivery/ZoneMap';
 import { cn, formatCurrency, formatDate } from '@/lib/utils';
 
@@ -153,6 +154,7 @@ export default function DeliveryZonesPage() {
           { key: 'map', label: 'Map' },
           { key: 'maps', label: 'Fees & couriers', count: versions.length },
           { key: 'batching', label: 'Batching' },
+          { key: 'estimates', label: 'Estimates' },
           { key: 'runs', label: 'Runs', count: pending || undefined },
         ]}
         active={tab}
@@ -171,6 +173,11 @@ export default function DeliveryZonesPage() {
       {tab === 'batching' && zoneMap && (
         <BatchingTab />
       )}
+
+      {/* Not gated on `zoneMap` like Batching is: what a courier promises is
+          true whether or not a map has been published, and an estate with no
+          live map is exactly when somebody is setting these up. */}
+      {tab === 'estimates' && <DeliveryEstimates />}
 
       {tab === 'runs' && (
         <RunsTab

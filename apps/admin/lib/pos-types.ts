@@ -57,6 +57,32 @@ export interface Branch {
   updated_at: string;
 }
 
+/**
+ * A whole day a branch does not trade.
+ *
+ * Exceptions only. The shop works seven days a week, so a weekend is a trading
+ * day and the only thing that closes a branch is a row somebody wrote.
+ *
+ * Whole days by design — there are no hour fields and there will not be. A
+ * branch that opens late is a trading-hours change; a holiday is the day being
+ * gone. The delivery estimate reads these, so adding one moves what every
+ * customer in this branch's zones is quoted.
+ */
+export interface BranchHoliday {
+  id: string;
+  branch_id: string;
+  /** `YYYY-MM-DD`, on the shop's own calendar. */
+  holiday_date: string;
+  name: string;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type BranchHolidayWrite = Pick<BranchHoliday, 'holiday_date' | 'name'> & {
+  note?: string | null;
+};
+
 export interface Tax {
   id: string;
   name: string;

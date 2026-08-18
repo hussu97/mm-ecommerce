@@ -77,6 +77,7 @@ from .tax import Tax, TaxGroup, TaxGroupTax, TaxTypeEnum  # noqa: F401
 from .branch import (  # noqa: F401
     Branch,
     BranchBusinessDay,
+    BranchHoliday,
     BranchTypeEnum,
 )
 from .role import (  # noqa: F401
@@ -247,6 +248,7 @@ __all__ = [
     "TaxTypeEnum",
     "Branch",
     "BranchBusinessDay",
+    "BranchHoliday",
     "BranchTypeEnum",
     "Role",
     "UserBranch",

@@ -863,6 +863,32 @@ A branch with no code simply does not dispatch through noon Send — its orders 
 back to Lalamove, and the delivery row says which branch is missing a code. So when
 Barsha Heights starts delivering, it is one script run and no deploy.
 
+**What noon Send promises** is no longer part of a deploy. It lives in
+`couriers.unbatched_promise_minutes` and is edited at **Admin → Delivery Zones →
+Estimates**, alongside every batch group's minutes-to-door and the number of days
+a third-party courier takes. On the release that introduces that screen — or from
+a shell, when the change should land with the deploy rather than after it:
+
+```bash
+python -m scripts.set_courier_promise                                  # report all
+python -m scripts.set_courier_promise --code noon_send --minutes 90    # 60 -> 90
+python -m scripts.set_courier_promise --code third_party --days 2      # not next-day
+```
+
+Deliberately a script and not a migration: these are commercial figures, and a
+migration that set one would re-set it on any environment restored from an older
+dump — silently reverting whatever the shop had since chosen. Nothing already
+quoted moves; what the shop said out loud is a record, and only the next promise
+reads the new number.
+
+**Closing a branch for a day** is **Admin → Branches → Holidays**. Whole days
+only — a branch opening late is a change to its trading hours, which are fields
+on the branch itself. Weekends are ordinary working days; only a dated row closes
+the shop. The delivery estimate reads them, so a closure moves what customers in
+that branch's zones are quoted from the next request onward: a batch run waits
+for the next open day, a third-party handover does too, and a courier promising
+minutes starts its clock at the next opening rather than now.
+
 Two things have to be done by the noon RoD integrations team, not here:
 
 1. **Register the webhooks.** Status →

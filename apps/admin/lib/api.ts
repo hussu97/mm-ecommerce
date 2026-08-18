@@ -7,7 +7,7 @@ import type {
   TrafficData, UploadResponse, User, DeliverySettings, SalesChannel,
   DeliveryMapVersion, DeliveryPricingMode, DeliveryZone, DeliveryZoneSummary, FulfilmentProvider, OrderDelivery, OrderEconomics,
   BatchGroup,
-  BatchWindow, BatchWindowWrite, DeliveryBatch, DeliveryZoneMap,
+  BatchWindow, BatchWindowWrite, Courier, CourierWrite, DeliveryBatch, DeliveryZoneMap,
   PaginatedWebhookLogs, WebhookLogDetail, WebhookLogFacets,
   PaymentGateway, PaymentGatewayUpdate,
   LalamoveQuote, OrderStatusEvent,
@@ -386,10 +386,24 @@ export const deliveryZonesApi = {
     api.put<BatchWindow>(`/delivery-zones/batch-windows/${windowId}`, data),
   deleteWindow: (windowId: string) =>
     api.delete<void>(`/delivery-zones/batch-windows/${windowId}`),
+  /** Minutes-to-door and whether the schedule runs. Immediate, not versioned. */
+  updateBatchGroup: (
+    groupId: string,
+    data: { delivery_minutes_after_dispatch?: number; is_active?: boolean },
+  ) => api.put<BatchGroup>(`/delivery-zones/batch-groups/${groupId}`, data),
   listBatches: (params?: { status_filter?: string; limit?: number }) =>
     api.get<DeliveryBatch[]>(`/delivery-zones/batches${buildQs(params)}`),
   dispatchBatch: (batchId: string) =>
     api.post<DeliveryBatch>(`/delivery-zones/batches/${batchId}/dispatch`),
+
+  // ── Courier promises ────────────────────────────────────────────────────
+  //
+  // What a zone with no batch group is quoted — every noon Send zone and every
+  // third-party one. Addressed by courier code, which is the same key the
+  // polygons and the groups already hold.
+  listCouriers: () => api.get<Courier[]>('/delivery-zones/couriers'),
+  updateCourier: (code: string, data: CourierWrite) =>
+    api.put<Courier>(`/delivery-zones/couriers/${code}`, data),
 };
 
 // ─── Analytics ────────────────────────────────────────────────────────────────
