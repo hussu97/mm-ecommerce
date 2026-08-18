@@ -148,11 +148,27 @@ export default function OrderDetailPage() {
     // Cancelling goes through on the first click — it is the one status the
     // counter changes while the customer is still on the phone. Every other
     // move still asks.
-    if (newStatus !== 'cancelled' && !(await confirmDialog({
-      title: 'Change status',
-      message: `Set order to "${STATUS_LABEL[newStatus]}"?`,
-      confirmLabel: 'Change status',
-    }))) return;
+    if (newStatus !== 'cancelled' && !(await confirmDialog(
+      // Correcting a settled order is not the same act as advancing a live
+      // one, and the difference is money: both endings refund automatically,
+      // and marking one delivered afterwards does not take the refund back.
+      // Say so here rather than let somebody find it in a reconciliation.
+      SETTLED_STATUSES.includes(order.status as OrderStatus)
+        ? {
+            title: 'Correct this order',
+            message:
+              `${order.order_number} is recorded as ` +
+              `"${STATUS_LABEL[order.status as OrderStatus]}". Marking it delivered ` +
+              'corrects that record. Any refund already issued stays issued — ' +
+              'check it before continuing.',
+            confirmLabel: 'Mark delivered',
+          }
+        : {
+            title: 'Change status',
+            message: `Set order to "${STATUS_LABEL[newStatus]}"?`,
+            confirmLabel: 'Change status',
+          },
+    ))) return;
     setActionLoading(true);
     try {
       const updated = await ordersApi.updateStatus(orderNumber, newStatus, notes || undefined);
@@ -383,10 +399,18 @@ export default function OrderDetailPage() {
             Mark On The Way
           </Button>
         )}
-        {(order.status === 'packed' || order.status === 'out_for_delivery' || isUndelivered) && (
+        {/* The last of these two is a correction, not a step: `undelivered`
+            and `cancelled` are endings, and the API opens the way back out of
+            them for this screen alone (`ADMIN_RECOVERABLE`) — a courier's late
+            "delivered" push must not resurrect an order the shop wrote off,
+            but a person who knows the customer has the cake may say so. */}
+        {(order.status === 'packed' ||
+          order.status === 'out_for_delivery' ||
+          isUndelivered ||
+          isCancelled) && (
           <Button size="sm" onClick={() => updateStatus('delivered')} loading={actionLoading}>
             <span className="material-icons text-[14px]">done_all</span>
-            Mark Delivered
+            {isUndelivered || isCancelled ? 'Correct To Delivered' : 'Mark Delivered'}
           </Button>
         )}
         {/* A courier reports this itself. The button is for the times nobody
@@ -397,14 +421,12 @@ export default function OrderDetailPage() {
             Mark Undelivered
           </Button>
         )}
-        {/* Back to the shelf, which is where a second attempt starts from. */}
-        {isUndelivered && (
-          <Button size="sm" onClick={() => updateStatus('packed')} loading={actionLoading}>
-            <span className="material-icons text-[14px]">restart_alt</span>
-            Return To Packed
-          </Button>
-        )}
-        {(order.status === 'created' || order.status === 'confirmed' || isUndelivered) && (
+        {/* "Return To Packed" and cancelling an undelivered order used to sit
+            here. Both were left behind when `undelivered` became an ending:
+            the API refuses either, so the buttons could only ever produce a
+            red toast. What follows an undelivered order is the refund it has
+            already started, or the correction above. */}
+        {(order.status === 'created' || order.status === 'confirmed') && (
           <Button variant="danger" size="sm" onClick={() => updateStatus('cancelled')} loading={actionLoading}>
             <span className="material-icons text-[14px]">cancel</span>
             Cancel Order

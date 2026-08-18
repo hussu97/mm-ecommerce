@@ -1,153 +1,187 @@
-# Role permission audit — consolidate the catalogue and enforce it
+# Configurable delivery estimates + branch holidays
 
-## Findings (2026-08-16)
+## The ask
 
-The catalogue in `app/models/role.py` holds **108 slugs**. An AST sweep of all
-346 routes in `app/api/v1` plus every service says:
+1. noon Send's promise moves 60 → 90 minutes.
+2. …and better: make the three delivery-estimate numbers configurable rather
+   than deploy-gated — noon Send zones (minutes), Lalamove batches
+   (minutes-to-door), third-party zones (days).
+3. Branch holidays, configurable in the admin branches tab, whole-day only
+   (the shop trades seven days a week; weekends are not holidays).
+4. The delivery estimate reads them, so a promise never lands on a day the
+   branch is shut.
 
-| | count |
-|---|---|
-| Slugs in the catalogue | 108 |
-| Slugs enforced anywhere in `app/` | 47 |
-| Slugs enforced nowhere — pure decoration | **61** |
-| Routes gated by a `require(...)`/`ensure(...)` permission | 88 |
-| Routes gated only by `get_admin_user` (the `is_admin` boolean) | 160 |
-| Routes gated only by `get_current_active_user` / `get_optional_user` | 61 |
+## What is already there (and what is not)
 
-Three separate problems, and only the first is the one that was noticed:
+`services/delivery_promise.py` is already the single resolver — four rules,
+first match wins — and two of the three numbers already live in the database:
 
-**1. The catalogue was copied from the Foodics authority matrix wholesale.**
-It grants permission over features this business does not have and in several
-cases never had: reservations (the tables were dropped in migration
-`080_drop_unbuilt_pos`), allergens, timed events, promotions, coupons, price
-tags, waiters, table layouts, count sheets, and eleven `x.create` / `x.submit`
-pairs in Inventory where the console has one button and one endpoint.
-
-**2. Granularity that never bought anything.** `pos.print.check` and
-`pos.print.receipt` are two permissions for pressing print. `reports.*` splits
-cost reporting four ways (`cost_analysis`, `menu_cost`,
-`cost_adjustment_history`, `inventory_items_cost`) and inventory reporting
-three ways, against a POS reports page that shows them together.
-`dashboard.general` / `.branches` / `.inventory` gate three panels of one page.
-
-**3. The real hole: the console does not use the catalogue at all.**
-`User.can()` returns `True` for any `is_admin` user, and 160 console routes ask
-only for `get_admin_user`. So every `admin.*` slug — all 21 of them — is
-decorative, and the only thing a role actually restricts today is the register.
-There is no way to give someone the branches screen without giving them
-payment gateways, staff roles, data export and the audit log as well.
-
-## Decisions
-
-* **Consolidate 108 → 43.** Every surviving slug is enforced on a real route by
-  the end of this change. A slug that names no route does not go in.
-* **Fold, do not drop, where a right is still exercised.** `pos.products.void`
-  becomes part of `pos.orders.void`; `inventory.counts.*`,
-  `.quantity_adjustment.*`, `.cost_adjustment.*`, `.production.*` and
-  `.spot_check.*` become `inventory.adjustments.manage`. Nobody loses a right
-  they were using — the migration maps old grants onto the new slug.
-* **Drop outright only what has no feature behind it**: reservations, allergens,
-  timed events, price tags, waiters, table layout, count sheets, print.
-* **Keep the `is_admin` bypass.** It is the documented "the owner is never
-  locked out" escape hatch and `is_super_admin` mirrors it. Changing it would
-  silently narrow live accounts, which is a separate decision to take
-  deliberately, not a side effect of a catalogue tidy.
-* **Gate the console on the catalogue.** Replace `Depends(get_admin_user)` with
-  `Depends(require("<slug>"))` on the console routers. `is_admin` users are
-  unaffected (`can()` still short-circuits for them); the change is that a
-  staff member holding `admin.branches.manage` can now be given the branches
-  screen *without* being made an admin, which is the entire point of the
-  permission system and has never worked.
-* **`admin.users.manage` is delegable, but only downwards.** Handing out the
-  role editor would otherwise be handing out every other permission, so rather
-  than keeping that one route admin-only, `assert_no_escalation` bounds it: a
-  non-admin may compose roles from permissions they already hold, and may not
-  mint a super-admin role or set `is_admin` on anyone.
-* **The migration rewrites `roles.permissions` in place.** It is a vocabulary
-  change to a column, not seed content, and it has to land in the same
-  deploy as the code — a `scripts/` file someone forgets leaves every non-super
-  role holding 108 slugs the API no longer recognises.
-
-## New catalogue (43)
-
-| Group | Slugs |
-|---|---|
-| Orders (3) | `orders.read`, `orders.manage`, `orders.custom.manage` |
-| Catalogue (3) | `catalogue.manage`, `catalogue.recipes.read`, `catalogue.recipes.manage` |
-| Inventory (6) | `inventory.read`, `inventory.manage`, `inventory.adjustments.manage`, `inventory.transfers.manage`, `inventory.purchase_orders.manage`, `inventory.purchase_orders.approve` |
-| Customers (1) | `customers.read` |
-| Marketing & content (2) | `marketing.manage`, `content.manage` |
-| Delivery (1) | `delivery.manage` |
-| Reports (4) | `reports.sales`, `reports.cost`, `reports.inventory`, `reports.other` |
-| Dashboard (1) | `dashboard.access` |
-| Administration (7) | `admin.branches.manage`, `admin.devices.manage`, `admin.settings.manage`, `admin.users.manage`, `admin.payments.manage`, `admin.logs.read`, `admin.data.manage` |
-| Cashier app (15) | `pos.register.access`, `pos.discounts.predefined`, `pos.discounts.open`, `pos.charges.open`, `pos.orders.void`, `pos.orders.return`, `pos.orders.split_join`, `pos.orders.edit_others`, `pos.payment.perform`, `pos.payment.refund`, `pos.products.open_price`, `pos.products.availability`, `pos.kitchen.manage`, `pos.till.manage`, `pos.driver.act_as` |
-
-## Plan
-
-- [x] Rewrite `PERMISSION_GROUPS` in `app/models/role.py` to the 43
-- [x] Add `PERMISSION_MIGRATION` old→new map next to it (single source for the
-      migration and the test that proves no live grant is dropped)
-- [x] Remap the 47 enforced call sites in routers/services onto the new slugs
-- [x] Gate the console routers on the catalogue (`get_admin_user` → `require`)
-- [x] Migration: rewrite `roles.permissions` through the map, both directions
-- [x] Tests: catalogue invariants, every slug enforced, migration map total
-- [x] Regenerate `packages/types` from the OpenAPI document
-- [x] Verify against a throwaway Postgres
-
-## Review
-
-**Catalogue: 108 → 43.** Three slugs came out during the work rather than
-before it, because the "every slug is enforced" test refused them and was
-right: `catalogue.read` (product, category, modifier and menu-group reads are
-the storefront's own public endpoints — a permission in front of them gates
-nothing), `customers.manage` (the console lists customers and has never had an
-edit endpoint), and `pos.reports.access` (the terminal and the console read the
-same report endpoints, already gated per report by `reports.*`).
-
-**Enforcement: 88 → 258 routes.** Coarse `is_admin`-only routes went 221 → 51,
-and the 51 that remain are session-scoped rather than authority-scoped: `/me`,
-your own till, your own cart and addresses, and the terminal's launch reads
-(branches, `pos_config`) that are deliberately open to any signed-in user.
-
-**Two holes found and closed on the way through**, both the same shape as the
-refund one already recorded in the catalogue — a right that existed as a slug
-and was enforced by nothing:
-
-* `POST /tills/{id}/drawer-operations` asked only "is this your till", not
-  "may you take money out of it". A pay-out or a no-sale is the drawer opening
-  outside a sale; it now needs `pos.till.manage`. **This narrows access** —
-  a cashier who could previously record a pay-out now needs the permission.
-  Cash sales are unaffected: they reach the ledger from the payment route.
-* Gating the console on `admin.users.manage` would have made that one
-  permission worth all forty-three — write a role holding everything, or flip
-  `is_super_admin`, assign it to yourself. `assert_no_escalation` in
-  `app/core/permissions.py` makes the role editor delegable only downwards: a
-  non-admin composes roles out of permissions they already hold, cannot mint a
-  super-admin role, and cannot set `is_admin` on anyone.
-
-**The `is_admin` bypass is unchanged.** `User.can()` still short-circuits for
-admins, so no live console account loses anything on deploy. What changed is
-that a staff member with a role can now be given one console section without
-being made an admin, which is what the permission system was for and had never
-once done.
-
-**Verified on a throwaway Postgres** (the API suite mocks the DB, so a broken
-migration passes every test). Five roles seeded in the old vocabulary:
-
-| Role | before | after |
+| Number | Where it lives today | Editable? |
 |---|---|---|
-| Owner (super admin) | 0 | 0 — untouched |
-| Cashier | 13 | 8 |
-| Shift lead | 15 | 8 |
-| Stock controller | 20 | 6 |
-| Back office | 16 | 6 |
+| noon Send minutes | `couriers.unbatched_promise_minutes` | **no UI, no API** |
+| Lalamove batch minutes-to-door | `delivery_batch_groups.delivery_minutes_after_dispatch` | **no UI, no API** |
+| Third-party days | nowhere — `days = 1` hardcoded in rule 3 | **no** |
 
-Every resulting slug validates against the new catalogue; `downgrade` puts them
-back into slugs the old catalogue accepts. The downgrade is deliberately
-generous — a folded slug hands back all of its siblings — because a rollback's
-safe failure is the console still working, not a manager locked out mid-service.
+So this is mostly *exposure*, not new modelling: one new column, two new
+write endpoints, one new screen. The only genuinely new concept is the
+holiday.
 
-**No frontend change was needed.** The role editor renders
-`GET /staff/permissions` and had no slug hardcoded anywhere; it picks up the new
-groups on its own. The OpenAPI document moved by one docstring, no schema.
+## Design
+
+### A. `branch_holidays` — the one new table
+
+* `branch_id` → branches (CASCADE), `holiday_date` `String(10)` `YYYY-MM-DD`
+  (matching how `business_date` is stored, with the same format CHECK),
+  `name`, optional `note`.
+* Unique on `(branch_id, holiday_date)`.
+* **Whole days only, by design** — no hour columns. A half-day closure is a
+  trading-hours change, which the branch already has fields for; giving
+  holidays hours would be a second answer to the same question.
+* Weekends are deliberately *not* derived. A closure is a row somebody wrote,
+  never a weekday rule.
+
+### B. `core/trading_hours.py` learns about closed days
+
+The module is already the one definition of "is the kitchen open". Holidays
+belong to it rather than to the promise resolver, so the dispatcher and the
+promise cannot disagree later. Additive, keyword-only, defaulting to empty —
+every existing call site keeps its behaviour:
+
+* `trading_date(moment, opens, closes)` — which trading day an instant belongs
+  to. A branch open 09:00–02:00 is still on yesterday's day at 01:00, so a
+  holiday closes that tail too.
+* `is_open(..., closed_dates=())` — false on a closed day.
+* `next_opening(..., closed_dates=())` — skips closed days.
+* `first_open_day(day, closed_dates)` — first date on/after `day` that trades.
+
+### C. The resolver
+
+`_Context` gains `closed_dates`; `_load` reads the holidays of the branch that
+already resolves the trading hours (same branch, same fallback, one query).
+
+* **Rule 2 (batch)** — re-match from the start of the next day while the run
+  would leave on a closed day. Nothing is packed on a holiday, so a slot that
+  day does not fire.
+* **Rule 3 (next_day)** — `days` becomes `couriers.unbatched_promise_days`
+  (new column, default 1, so today's behaviour is unchanged). The base day is
+  the first day the kitchen can work on it, and the arrival is then pushed off
+  a closed day too — a promise never names a day the shop is dark.
+* **Rule 4 (minutes)** — falls out for free: `is_open` is false on a holiday,
+  so it already takes the "start the clock at the next opening" branch, and
+  that opening now skips holidays.
+
+The dispatcher (`batching_service`) is deliberately untouched: an order only
+becomes dispatchable when a human packs it, and nobody packs on a holiday.
+
+### D. API
+
+* `GET /delivery-zones/couriers`, `PUT /delivery-zones/couriers/{code}` —
+  promise kind, minutes, days (`delivery.manage`).
+* `PUT /delivery-zones/batch-groups/{id}` — minutes-to-door, active
+  (`delivery.manage`).
+* `GET/POST /branches/{id}/holidays`, `PUT/DELETE /branches/holidays/{id}`
+  (`admin.branches.manage`), following the sections/tables shape already in
+  that router.
+
+### E. Admin
+
+* **Delivery zones → new "Estimates" tab.** Both halves of "what do we tell
+  the customer" on one screen: the courier promises, and each batch group's
+  minutes-to-door.
+* **Branches → "Holidays" section.** Branch picker + dated rows.
+
+### F. The 60 → 90 change itself
+
+A content edit, so `scripts/`, not a migration (CLAUDE.md §7). Ships as
+`scripts/set_courier_promise.py`; after deploy it is also one field on the new
+Estimates screen.
+
+## Added mid-task
+
+5. Order status may move **undelivered / cancelled → delivered**, from the admin
+   console only, as a manual correction.
+
+### Design
+
+`undelivered` and `cancelled` are endings and `VALID_TRANSITIONS` keeps them
+that way — that map is also read by the courier webhooks and the register, and
+widening it would let a late `delivered` push resurrect an order the shop had
+already written off and refunded.
+
+The route is `extra_from`, which `order_lifecycle.transition` already has for
+exactly this ("this one caller may leave a state the map closes"), driven by a
+new `ADMIN_RECOVERABLE` map. `order_service.update_status` — the admin-shaped
+doorway, and the only caller of it — is the only thing that passes it.
+
+Two consequences follow, and one deliberately does not:
+
+* **Stock.** Cancelling hands a website order's stock back; delivering after a
+  cancellation has to take it off again, or every corrected cancellation
+  overstates stock by its own contents, permanently and silently. The restock
+  and this became one `_move_stock(db, order, ±1)`, and `_consequences` now
+  receives the previous status so it can tell which.
+* **The refund.** Not reversed — the money is at a bank, not in a column. It
+  warns instead, and the admin confirm dialog says so before the click.
+* **The register void.** Left alone: a settled check reopened is a till that no
+  longer reconciles.
+
+The admin order screen also had three buttons left behind by the earlier change
+that made `undelivered` an ending — "Mark Delivered", "Return To Packed" and
+"Cancel Order" on an undelivered order. The API refused all three, so they could
+only produce a red toast. The first now works; the other two are gone.
+
+## Checklist
+
+- [x] Read the existing resolver, models, admin screens, tests
+- [x] `models/branch.py`: `BranchHoliday`
+- [x] `models/courier.py`: `unbatched_promise_days`
+- [x] Migration `106` (schema only)
+- [x] `core/trading_hours.py`: closed-day awareness
+- [x] `services/delivery_promise.py`: the three rules
+- [x] `services/branch_holiday_service.py`
+- [x] API: couriers, batch-group update, branch holidays
+- [x] Admin: Estimates tab, Holidays section, api bindings + types
+- [x] Regenerate `packages/types` from the OpenAPI document
+- [x] Tests: holiday cases per rule, trading_hours units, config plumbing
+- [x] `scripts/set_courier_promise.py` + PRODUCTION note
+- [x] `ADMIN_RECOVERABLE`: undelivered/cancelled → delivered, console only
+- [x] Run the API suite and the admin typecheck
+- [x] Commit and push to `main`
+
+## Review (2026-08-18)
+
+**One new concept, not four.** The three "configurable numbers" turned out to
+be two existing columns with no way to write them plus one hardcoded `1`, so
+the delivery half of this is a new column, two write endpoints and a screen —
+the resolver's four rules are untouched in shape. The genuinely new thing is
+the closed day, and it went into `core/trading_hours.py` rather than into the
+promise resolver, so the dispatcher's `kitchen_is_open` and the customer's
+promise still read one definition. Both are additive and default to empty, so
+every existing call site behaves exactly as before.
+
+**What the holiday rules came out as.** A promise never names a day the branch
+is shut — that is the whole rule, applied three ways: a batch run re-matches
+onto the next open day, a third-party day-promise walks its base day and its
+arrival day off closures, and the minutes rule needed no new code at all
+because `is_open` going false on a holiday already routes it through
+`next_opening`. Rule 2's re-match is bounded at 30 days and falls through to
+the courier rules rather than looping, so a year of holidays cannot hang a
+checkout.
+
+**The order correction reused a seam rather than widening the map.** `extra_from`
+already existed for "this one caller may leave a state the map closes", so
+`undelivered`/`cancelled` → `delivered` is open to the console and closed to
+every webhook, with a test pinning both halves. The part worth having found is
+the stock: cancelling gives it back, so correcting a cancellation has to take it
+again, and the two are now one function read in both directions.
+
+**Numbers, measured rather than assumed.** 1619 passing and 21 skipped in the
+API suite (up from 1577 + 21), 44 tests added across five files; admin typecheck,
+eslint and its 35 vitest tests clean; web typecheck clean; `packages/types`
+regenerated and `check:fresh` green, with the OpenAPI path set gaining exactly
+the five new routes and losing none. Migration 106 renders valid Postgres
+offline and leaves a single alembic head.
+
+The 60 → 90 change itself is **not applied by the deploy**: it ships as
+`scripts/set_courier_promise.py` (content edit, CLAUDE.md §7), and is also one
+field on the new Estimates screen.

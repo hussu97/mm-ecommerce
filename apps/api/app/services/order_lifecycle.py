@@ -44,6 +44,7 @@ from app.models.pos_order import OrderSourceEnum, PosOrderStatusEnum
 from app.models.product import Product
 
 __all__ = [
+    "ADMIN_RECOVERABLE",
     "VALID_TRANSITIONS",
     "can_transition",
     "transition",
@@ -162,6 +163,28 @@ _REFUNDABLE_ENDINGS = {
 }
 
 
+#: Endings a person may take an order back out of, and only a person.
+#:
+#: Both of these are written down when something has definitively failed, and
+#: both are sometimes written down wrongly: a driver reports a failed handover
+#: and then finds the customer; a cancellation is keyed against the wrong order
+#: number; the shop drives a box over itself after a courier gave up. What
+#: follows is not another van — it is a correction of the record.
+#:
+#: Deliberately **not** in `VALID_TRANSITIONS`. That map is read by the courier
+#: webhooks, the register and the checkout as well, and widening it would let a
+#: late `DELIVERED` push from a courier silently resurrect an order the shop had
+#: already written off and refunded. This reaches the resolver through
+#: `extra_from`, which is the module's existing way of saying "this one caller
+#: may leave a state the map closes" — and the only caller that passes it is
+#: `order_service.update_status`, the admin console's doorway.
+ADMIN_RECOVERABLE: dict[OrderStatusEnum, frozenset[OrderStatusEnum]] = {
+    OrderStatusEnum.DELIVERED: frozenset(
+        {OrderStatusEnum.UNDELIVERED, OrderStatusEnum.CANCELLED}
+    ),
+}
+
+
 def can_transition(current: OrderStatusEnum, new: OrderStatusEnum) -> bool:
     """Whether the map allows moving from `current` to `new`."""
     return new in VALID_TRANSITIONS.get(current, set())
@@ -258,21 +281,57 @@ async def transition(
             f"Allowed: {[s.value for s in allowed] or 'none (terminal state)'}"
         )
 
+    previous = order.status
     token = _GATED.set(True)
     try:
         order.status = new_status
     finally:
         _GATED.reset(token)
 
-    await _consequences(db, order, new_status)
+    await _consequences(db, order, previous, new_status)
     return True
 
 
+async def _move_stock(db: AsyncSession, order: Order, direction: int) -> None:
+    """
+    Put this order's stock back on the shelf (`+1`) or take it off again (`-1`).
+
+    Only a website order has any to move. Checkout decrements `stock_quantity`
+    when the order is written; a counter sale depletes recipe ingredients at
+    close instead, so touching it here would invent stock it never took — which
+    is what cancelling one from the console used to do.
+
+    One function for both directions rather than two nearly-identical loops,
+    because they are one fact read forwards and backwards: whatever a
+    cancellation gives back, un-cancelling has to take again. Two copies would
+    be free to drift, and the drift would show up as stock that is quietly
+    wrong rather than as an error.
+    """
+    if order.source != OrderSourceEnum.ONLINE.value:
+        return
+    for item in order.items:
+        if not item.product_id:
+            continue
+        await db.execute(
+            sql_update(Product)
+            .where(Product.id == item.product_id, Product.is_stock_product.is_(True))
+            .values(stock_quantity=Product.stock_quantity + direction * item.quantity)
+            .execution_options(synchronize_session=False)
+        )
+
+
 async def _consequences(
-    db: AsyncSession, order: Order, new_status: OrderStatusEnum
+    db: AsyncSession,
+    order: Order,
+    previous: OrderStatusEnum,
+    new_status: OrderStatusEnum,
 ) -> None:
     """
     What arriving at a status makes happen, whoever brought the order there.
+
+    Keyed off the destination, with one exception: undoing a cancellation has
+    to know it was a cancellation being undone, because what it owes is the
+    reverse of what that cancellation did.
 
     These used to live in `order_service.update_status`, which meant they fired
     only when an admin moved the order: a courier webhook marking an order
@@ -328,24 +387,44 @@ async def _consequences(
         if order.pos_status in _OPEN_ON_THE_REGISTER:
             order.pos_status = PosOrderStatusEnum.VOID.value
 
-        # A cancelled order releases the stock it claimed at creation. Only a
-        # website order claimed any: checkout decrements `stock_quantity` when
-        # the order is written, while a counter sale depletes recipe
-        # ingredients at close instead. Restocking a counter sale here would
-        # invent stock it never took — which is what cancelling one from the
-        # console used to do.
-        if order.source == OrderSourceEnum.ONLINE.value:
-            for item in order.items:
-                if item.product_id:
-                    await db.execute(
-                        sql_update(Product)
-                        .where(
-                            Product.id == item.product_id,
-                            Product.is_stock_product.is_(True),
-                        )
-                        .values(stock_quantity=Product.stock_quantity + item.quantity)
-                        .execution_options(synchronize_session=False)
-                    )
+        # A cancelled order releases the stock it claimed at creation.
+        await _move_stock(db, order, +1)
+
+    # A cancellation taken back by a person. The only route here is the admin
+    # console's `extra_from` (see `ADMIN_RECOVERABLE`) — nothing automatic can
+    # reach it — and the one thing it owes is the reverse of the line above:
+    # the cancellation put the stock back on the shelf, and the box did in fact
+    # leave, so it has to come off again. Without this, every corrected
+    # cancellation overstates stock by its own contents, permanently and
+    # silently.
+    #
+    # Two things it deliberately does *not* undo, because neither can be undone
+    # honestly here:
+    #
+    # * the register void. A settled check reopened is a till that no longer
+    #   reconciles, which is a worse record than a voided check next to a
+    #   delivered order.
+    # * the refund. Money already returned is a fact at a bank, not a column.
+    #   The warning below is the escalation — an order that reads `delivered`
+    #   with a non-zero `refunded_amount` is a real loss and somebody has to
+    #   look at it.
+    elif (
+        new_status == OrderStatusEnum.DELIVERED
+        and previous == OrderStatusEnum.CANCELLED
+    ):
+        await _move_stock(db, order, -1)
+
+    if new_status == OrderStatusEnum.DELIVERED and previous in _REFUNDABLE_ENDINGS:
+        refunded = order.refunded_amount or 0
+        if refunded:
+            logger.warning(
+                "Order %s was moved from %s to delivered with %s already "
+                "refunded. The refund is not reversed — the customer has both "
+                "the money and the order.",
+                order.order_number,
+                getattr(previous, "value", previous),
+                refunded,
+            )
 
     # An order that is not going to arrive, that was paid for by card, gets the
     # money back without anybody pressing anything else.

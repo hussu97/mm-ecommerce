@@ -1373,7 +1373,22 @@ async def update_status(
     # a webhook, the checkout and the till. This function is the admin-shaped
     # doorway to it: look up by number, carry the notes, answer with the
     # response model.
-    moved = await order_lifecycle.transition(db, order, new_status)
+    #
+    # `extra_from` is what makes this doorway different from the others, and
+    # only here: a person may take an order back out of `undelivered` or
+    # `cancelled` and mark it delivered, because those are written down when
+    # something has definitively failed and a person is sometimes wrong about
+    # that — a driver who reports a failed handover and then finds the
+    # customer, a cancellation keyed against the wrong order number. It stays
+    # out of `VALID_TRANSITIONS` on purpose: that map is also read by the
+    # courier webhooks, and a late `delivered` push must not resurrect an order
+    # the shop has already written off.
+    moved = await order_lifecycle.transition(
+        db,
+        order,
+        new_status,
+        extra_from=order_lifecycle.ADMIN_RECOVERABLE.get(new_status, frozenset()),
+    )
     if not moved:
         # Already there. `transition` treats that as a quiet no-op, which is
         # right for a webhook repeating itself and wrong for a person: an admin

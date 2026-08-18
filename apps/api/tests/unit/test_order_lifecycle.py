@@ -233,3 +233,139 @@ async def test_cancelling_leaves_a_settled_check_alone(quiet_consequences):
     )
     await order_lifecycle.transition(_Db(), order, OrderStatusEnum.CANCELLED)
     assert order.pos_status == PosOrderStatusEnum.CLOSED.value
+
+
+# ── correcting an ending, from the console only ──────────────────────────────
+#
+# `undelivered` and `cancelled` are endings and the map keeps them that way.
+# What changed is that a *person* may take an order back out of one and record
+# that it did arrive — a driver who reported a failed handover and then found
+# the customer, a cancellation keyed against the wrong order number. The route
+# is `extra_from`, and `order_service.update_status` is the only caller that
+# passes it.
+
+
+@pytest.mark.parametrize(
+    "ending", [OrderStatusEnum.UNDELIVERED, OrderStatusEnum.CANCELLED]
+)
+def test_the_shared_map_still_refuses_the_way_back(ending):
+    """
+    The property that keeps this admin-only. `VALID_TRANSITIONS` is what the
+    courier webhooks and the register read, and a late `delivered` push from a
+    courier must not resurrect an order the shop has already written off.
+    """
+    assert not order_lifecycle.can_transition(ending, OrderStatusEnum.DELIVERED)
+    assert ending in order_lifecycle.ADMIN_RECOVERABLE[OrderStatusEnum.DELIVERED]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ending", [OrderStatusEnum.UNDELIVERED, OrderStatusEnum.CANCELLED]
+)
+async def test_a_webhook_cannot_walk_an_ending_back(quiet_consequences, ending):
+    order = _order(ending, items=[])
+    moved = await order_lifecycle.transition(
+        _Db(), order, OrderStatusEnum.DELIVERED, on_invalid="skip"
+    )
+    assert moved is False
+    assert order.status == ending
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ending", [OrderStatusEnum.UNDELIVERED, OrderStatusEnum.CANCELLED]
+)
+async def test_the_console_may_correct_an_ending_to_delivered(
+    quiet_consequences, ending
+):
+    order = _order(ending, items=[])
+    moved = await order_lifecycle.transition(
+        _Db(),
+        order,
+        OrderStatusEnum.DELIVERED,
+        extra_from=order_lifecycle.ADMIN_RECOVERABLE[OrderStatusEnum.DELIVERED],
+    )
+    assert moved is True
+    assert order.status == OrderStatusEnum.DELIVERED
+
+
+@pytest.mark.asyncio
+async def test_correcting_a_cancellation_takes_the_stock_back_off_the_shelf():
+    """
+    The mirror of the restock, and the reason `_consequences` was given the
+    previous status at all. The cancellation put two back; the box did leave,
+    so two have to come off again. Without this, every corrected cancellation
+    overstates stock by its own contents — permanently, and with no error.
+    """
+    db = _Db()
+    order = _order(
+        OrderStatusEnum.CANCELLED,
+        items=[OrderItem(product_id=uuid.uuid4(), quantity=2)],
+    )
+    await order_lifecycle.transition(
+        db,
+        order,
+        OrderStatusEnum.DELIVERED,
+        extra_from=order_lifecycle.ADMIN_RECOVERABLE[OrderStatusEnum.DELIVERED],
+    )
+    assert len(db.executed) == 1
+    values = db.executed[0].compile().params
+    assert values["stock_quantity_1"] == -2, "stock was handed back a second time"
+
+
+@pytest.mark.asyncio
+async def test_correcting_an_undelivered_order_moves_no_stock():
+    """
+    Only a cancellation ever gave stock back, so only a cancellation owes it.
+    An undelivered order never left the ledger.
+    """
+    db = _Db()
+    order = _order(
+        OrderStatusEnum.UNDELIVERED,
+        items=[OrderItem(product_id=uuid.uuid4(), quantity=2)],
+    )
+    await order_lifecycle.transition(
+        db,
+        order,
+        OrderStatusEnum.DELIVERED,
+        extra_from=order_lifecycle.ADMIN_RECOVERABLE[OrderStatusEnum.DELIVERED],
+    )
+    assert db.executed == []
+
+
+@pytest.mark.asyncio
+async def test_correcting_a_refunded_ending_says_so_in_the_log(caplog):
+    """
+    The refund is not reversed and cannot be — the money is at a bank, not in a
+    column. An order reading `delivered` with a non-zero `refunded_amount` is a
+    real loss, so it has to be loud somewhere.
+    """
+    order = _order(
+        OrderStatusEnum.UNDELIVERED, items=[], refunded_amount=Decimal("120.00")
+    )
+    with caplog.at_level("WARNING", logger="app.services.order_lifecycle"):
+        await order_lifecycle.transition(
+            _Db(),
+            order,
+            OrderStatusEnum.DELIVERED,
+            extra_from=order_lifecycle.ADMIN_RECOVERABLE[OrderStatusEnum.DELIVERED],
+        )
+    assert "already" in caplog.text and "refunded" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_correction_does_not_reopen_a_voided_check():
+    """
+    Deliberate. A settled check reopened is a till that no longer reconciles,
+    which is a worse record than a voided check beside a delivered order.
+    """
+    order = _order(
+        OrderStatusEnum.CANCELLED, pos_status=PosOrderStatusEnum.VOID.value, items=[]
+    )
+    await order_lifecycle.transition(
+        _Db(),
+        order,
+        OrderStatusEnum.DELIVERED,
+        extra_from=order_lifecycle.ADMIN_RECOVERABLE[OrderStatusEnum.DELIVERED],
+    )
+    assert order.pos_status == PosOrderStatusEnum.VOID.value
