@@ -76,7 +76,7 @@ ${offer ? `### Offers\n- ${offer}\n\n` : ''}### Payment Methods
 ### Dietary
 - Everything is halal. No alcohol-based flavourings.
 - There is an eggless range.
-- Baked in a home kitchen that also handles nuts, dairy, eggs and gluten — an allergen-free environment cannot be guaranteed.
+- Baked in one kitchen that also handles nuts, dairy, eggs and gluten — an allergen-free environment cannot be guaranteed.
 
 ### Returns & Refunds
 - All sales are final — no returns or refunds on perishable baked goods

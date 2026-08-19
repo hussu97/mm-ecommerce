@@ -73,7 +73,7 @@ ${categoryLines}
 - **Is there anything eggless?** Yes, there is an eggless range.
 - **Is it halal?** Yes, all of it.
 - **What is a cookie melt?** A thick cookie served warm and deliberately underbaked in the middle, so the centre stays molten.
-- **Allergens?** Baked in a home kitchen that handles nuts, dairy, eggs and gluten. An allergen-free environment cannot be guaranteed.
+- **Allergens?** Baked in one kitchen that handles nuts, dairy, eggs and gluten. An allergen-free environment cannot be guaranteed.
 - **Returns?** Baked goods are perishable, so there are no returns. Damaged or wrong orders: message on WhatsApp within 24 hours.
 
 ## Links
