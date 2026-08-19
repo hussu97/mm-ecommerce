@@ -39,7 +39,7 @@ export async function GET() {
   // Header
   sections.push(`# Melting Moments Cakes — Full Product Catalogue
 
-> A home bakery in Sharjah, UAE. Brownies, cookies, cookie melts, cakes and desserts, baked to order and delivered to all seven emirates. Run by Fatema Abbasi.
+> A bakery in Sharjah, UAE. Brownies, cookies, cookie melts, cakes and desserts, baked to order and delivered to all seven emirates. Run by Fatema Abbasi.
 > Website: ${SITE_URL}
 > WhatsApp: +971 50 368 7757
 > Instagram: @meltingmomentscakes

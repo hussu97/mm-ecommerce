@@ -10,6 +10,53 @@
 
 ## Lessons
 
+### [2026-08-18] A fix that needs somebody to run it is not a fix
+- **What went wrong**: three separate changes the shop had asked for — noon Send
+  60→90, and two rounds of FAQ copy — all shipped as `scripts/` files because
+  CLAUDE.md §7 said content edits live there. Each deploy went green and none of
+  the three changed anything a customer could see. I reported that honestly each
+  time, which made it look handled; it was not. Hussain's answer was the obvious
+  one: *why don't you do all of this as a migration, which auto-runs on deploy —
+  you have done previous CMS changes the same way.*
+- **He was right about the precedent, and I never checked it.** `008`, `009`,
+  `054`, `058` and `061` are all CMS content in migrations. I read the rule,
+  matched "CMS copy" to "scripts/", and never asked why every existing example
+  contradicted it. A rule and five counter-examples in the same repo means the
+  rule is stale, not that the examples are wrong.
+- **The real distinction**, now written into §7: a *script* is an operator tool
+  a human chooses to run; a *migration* is for a change that has to land. "Is
+  this content?" was never the right question. "Does this need to be true the
+  moment the deploy finishes?" is.
+- **What the original rule was protecting against is real**, and is solved by a
+  guard rather than by exile: match the exact value being replaced (`WHERE
+  minutes = 60`, whole-string swaps) so that once somebody edits it in the
+  admin, the migration matches nothing — including when replayed against an
+  older dump. That is three lines, not a separate delivery mechanism.
+- **Rule**: before shipping a change as a script, ask what makes it true in
+  production and who does it. If the answer is "a human, later, from a shell I
+  cannot reach", it belongs in the deploy. And when a documented rule disagrees
+  with every instance of it in the codebase, resolve that before following it.
+
+### [2026-08-18] Counting occurrences in rendered HTML counts the framework, not the content
+- **What went wrong**: I reported "9 occurrences of `home kitchen` on the live
+  FAQ page, I fixed 2, so 7 remain" from `curl | grep -c`. There were **two** in
+  the FAQ. The other seven were the same two strings repeated in the JSON-LD
+  block and again in Next's RSC flight payload, which embeds the rendered tree
+  in the HTML. Hussain then asked me to fix seven things that did not exist.
+- **Why it was convincing**: the number was real and reproducible, and it was
+  next to a claim I had verified properly (the live page genuinely still showed
+  the old copy). One measured fact next to one miscounted one reads as two
+  measured facts.
+- **What the count should have been**: eight, across three CMS pages — the two
+  FAQ answers plus the `home` and `about` `seo.description` fields, in both
+  locales. Found in seconds by fetching `/cms/public/{slug}?locale=…` and
+  walking the JSON, which is the source the page renders *from*.
+- **Rule**: count in the data, never in the markup. For anything CMS-backed that
+  means the API's JSON or the `cms_pages` row; a grep over server-rendered HTML
+  triple-counts every string a modern framework emits. And when reporting "N
+  remaining", say where the N came from, so a wrong one is arguable rather than
+  actionable.
+
 ### [2026-08-08] A sentinel that is an `Enum` will pass an `isinstance(x, Enum)` check
 - **What went wrong**: the status listener took `oldvalue` from SQLAlchemy's
   `set` event and normalised it with `if isinstance(status, Enum): return

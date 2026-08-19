@@ -23,8 +23,18 @@ migrate it opportunistically.
    (values spelled out in the migration and mirrored in `__table_args__`).
    Provider-verbatim columns (courier words) stay unconstrained by design.
    Native PG enums are legacy — do not add new ones.
-7. **Migrations**: schema + structural backfills only. Content edits (CMS copy,
-   seed corrections) live in `scripts/`. Revision ids ≤32 chars.
+7. **Migrations**: schema, structural backfills, **and content the deploy has to
+   carry** — CMS copy, a corrected seed value, a commercial figure the shop has
+   agreed. That last part used to say content belongs in `scripts/`, and it was
+   wrong: every CMS rewrite here (`008`, `009`, `054`, `058`, `061`, `107`) is a
+   migration, because a script is only as good as somebody remembering to run
+   it, and until they do the site keeps saying the wrong thing. A content
+   migration must be **guarded so it cannot fight the admin**: match the exact
+   value it means to replace (`WHERE minutes = 60`, whole-string swaps) so that
+   once a human edits it in the console, the migration matches nothing and does
+   nothing — including on a database restored from an older dump. `scripts/` is
+   for operator tools a human runs deliberately, not for changes that need to
+   land. Revision ids ≤32 chars.
 8. **TypeScript contracts**: generated, never hand-written. `packages/types` is
    built from the API's OpenAPI document (`python -m scripts.export_openapi`
    then `pnpm --filter @mm/types generate`); CI fails on drift. Change a

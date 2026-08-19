@@ -98,7 +98,7 @@ export const metadata: Metadata = {
   keywords: [
     "brownie delivery Dubai", "dessert delivery Dubai", "dessert delivery Sharjah",
     "cookie delivery UAE", "cookie melts Dubai", "brownies Sharjah",
-    "home bakery Sharjah", "home bakery Dubai", "birthday cake delivery Dubai",
+    "bakery Sharjah", "bakery Dubai", "birthday cake delivery Dubai",
     "cake delivery Sharjah", "eggless brownies UAE", "eggless cake Dubai",
     "dessert boxes Dubai", "corporate gifting Dubai", "Eid sweets UAE",
     "Ramadan dessert boxes", "halal bakery UAE", "same day dessert delivery Dubai",

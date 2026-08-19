@@ -75,7 +75,7 @@ export default async function AboutPage({
       {
         ...FOUNDER,
         description:
-          'Fatema Abbasi founded Melting Moments Cakes and still does the baking herself, out of a home kitchen in Sharjah.',
+          'Fatema Abbasi founded Melting Moments Cakes and still does the baking herself, in the Sharjah kitchen.',
         worksFor: { '@id': BUSINESS_ID },
         image: `${SITE_URL}/images/photos/person_shot_1.jpg`,
       },
@@ -84,7 +84,7 @@ export default async function AboutPage({
         '@id': `${SITE_URL}/${locale}/about`,
         name: 'About Melting Moments Cakes',
         description:
-          'How a home bakery in Sharjah grew from baking for family into brownie, cookie and dessert delivery across the UAE.',
+          'How a bakery in Sharjah grew from baking for family into brownie, cookie and dessert delivery across the UAE.',
         about: { '@id': BUSINESS_ID },
         mainEntity: { '@id': FOUNDER_ID },
       },
@@ -111,7 +111,7 @@ export default async function AboutPage({
       <section className="relative h-[480px] sm:h-[560px]">
         <Image
           src="/images/photos/person_shot_1.jpg"
-          alt="Fatema Abbasi, founder and baker at Melting Moments Cakes, in her home kitchen in Sharjah"
+          alt="Fatema Abbasi, founder and baker at Melting Moments Cakes, in her kitchen in Sharjah"
           fill
           sizes="100vw"
           className="object-cover object-top"
