@@ -699,7 +699,7 @@ export type CourierWrite = Partial<
 /** One courier order carrying several of ours. */
 export interface DeliveryBatch {
   id: string;
-  polygon_id: string;
+  group_id: string;
   zone_name: string | null;
   window_label: string | null;
   dispatch_at: string;

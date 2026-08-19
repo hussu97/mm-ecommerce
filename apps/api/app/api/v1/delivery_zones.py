@@ -297,10 +297,10 @@ class CourierUpdate(BaseModel):
 
 class BatchResponse(BaseModel):
     id: str
-    #: The zone whose slot opened this run. A run is shared by every zone
-    #: closing on the same minute, so it says where the run came from rather
-    #: than what is on it — `zone_name` is the honest answer to that.
-    polygon_id: str
+    #: The group whose schedule opened this run. Zones ride together because
+    #: somebody put them in one group, so the group — not a zone — is what a run
+    #: belongs to. `zone_name` is the honest answer to what is on it.
+    group_id: str
     #: Every zone with an order on this run, comma-separated.
     zone_name: str | None
     window_label: str | None
@@ -1219,11 +1219,11 @@ async def list_batches(
     if not batches:
         return []
 
-    zone_names = dict(
+    group_names = dict(
         (
             await db.execute(
-                select(DeliveryPolygon.id, DeliveryPolygon.name).where(
-                    DeliveryPolygon.id.in_({b.polygon_id for b in batches})
+                select(DeliveryBatchGroup.id, DeliveryBatchGroup.name).where(
+                    DeliveryBatchGroup.id.in_({b.group_id for b in batches})
                 )
             )
         ).all()
@@ -1247,9 +1247,9 @@ async def list_batches(
     return [
         BatchResponse.of(
             b,
-            # What is actually on the run. Falls back to the zone that opened it
-            # for a batch that has not collected anything yet.
-            ", ".join(on_run.get(b.id) or []) or zone_names.get(b.polygon_id),
+            # What is actually on the run. Falls back to the group that opened
+            # it for a batch that has not collected anything yet.
+            ", ".join(on_run.get(b.id) or []) or group_names.get(b.group_id),
             numbers.get(b.id, []),
         )
         for b in batches
@@ -1298,8 +1298,8 @@ async def dispatch_batch_now(
         },
         request=request,
     )
-    polygon = await db.get(DeliveryPolygon, batch.polygon_id)
-    return BatchResponse.of(batch, polygon.name if polygon else None, [])
+    group = await db.get(DeliveryBatchGroup, batch.group_id)
+    return BatchResponse.of(batch, group.name if group else None, [])
 
 
 # ── Settings ──────────────────────────────────────────────────────────────────

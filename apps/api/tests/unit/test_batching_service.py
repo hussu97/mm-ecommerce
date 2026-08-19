@@ -282,6 +282,9 @@ class _Result:
     def first(self):
         return self._rows[0] if self._rows else None
 
+    def all(self):
+        return list(self._rows)
+
 
 class _Session:
     """
@@ -463,9 +466,134 @@ async def test_an_ordinary_order_joins_its_run(monkeypatch):
         batching_service, "_count_deliveries", AsyncMock(return_value=1)
     )
 
-    class _Db:
-        async def flush(self):
-            return None
-
-    result = await batching_service.assign_or_dispatch(_Db(), order)
+    result = await batching_service.assign_or_dispatch(_JoinSession(), order)
     assert result.batch_id == joined.id
+
+
+@pytest.mark.asyncio
+async def test_a_batched_order_carries_its_short_reference_from_the_moment_it_joins(
+    monkeypatch,
+):
+    """
+    The number on the paper, hours before the van is booked.
+
+    An un-batched order is dispatched inside acceptance, so its reference exists
+    by the time the ticket comes off the printer. A batched one is not booked
+    until its window closes — up to three hours later — and the ticket printed
+    at acceptance was going out carrying `MM-20260819-001`, which is the string
+    the short reference exists to keep out of a driver's mouth.
+    """
+    delivery, order, joined, leaves = _joining_order()
+    _stub_a_join(monkeypatch, delivery, joined, leaves)
+
+    await batching_service.assign_or_dispatch(_JoinSession(), order)
+
+    assert delivery.courier_reference, "the ticket would print our own order number"
+    assert len(delivery.courier_reference) == 7
+
+
+@pytest.mark.asyncio
+async def test_the_run_counts_the_order_that_has_just_joined(monkeypatch):
+    """
+    Sessions here are `autoflush=False`, so the join is in memory and not in the
+    table when the count runs. The first live batch sat on the admin screen
+    reading "0 drops" while holding an order for exactly this reason.
+    """
+    delivery, order, joined, leaves = _joining_order()
+    _stub_a_join(monkeypatch, delivery, joined, leaves)
+    db = _JoinSession()
+    # The count query answers from the session's flushed rows, so a
+    # `_count_deliveries` that forgets to flush sees nothing.
+    db.assigned.append(delivery)
+
+    await batching_service.assign_or_dispatch(db, order)
+
+    assert joined.stop_count == 1, "the run reads as empty while carrying an order"
+
+
+def _joining_order():
+    """An ordinary Lalamove order in a scheduled zone, and the run it will join."""
+    delivery = OrderDelivery(
+        order_id=uuid.uuid4(),
+        provider="lalamove",
+        zone_name="Dubai City",
+        polygon_id=uuid.uuid4(),
+        fee_charged=Decimal("25.00"),
+    )
+    order = SimpleNamespace(
+        id=delivery.order_id,
+        order_number="MM-20260819-001",
+        user_id=None,
+        email="someone@else.com",
+    )
+    leaves = dubai(18, 0)
+    joined = SimpleNamespace(
+        id=uuid.uuid4(), window_label="Batch 6", dispatch_at=leaves, stop_count=0
+    )
+    return delivery, order, joined, leaves
+
+
+def _stub_a_join(monkeypatch, delivery, joined, leaves):
+    """Everything around the join, so the test is about the join itself."""
+
+    async def get_delivery(_db, _order_id):
+        return delivery
+
+    async def never(_db, _order):
+        raise AssertionError("an ordinary order should have joined a run")
+
+    slot = window("Batch 6", "15:00", "18:00")
+    monkeypatch.setattr(batching_service.lalamove_service, "get_delivery", get_delivery)
+    monkeypatch.setattr(batching_service.lalamove_service, "is_enabled", lambda: True)
+    monkeypatch.setattr(batching_service.courier_service, "dispatch", never)
+    monkeypatch.setattr(
+        batching_service, "group_for_polygon", AsyncMock(return_value=uuid.uuid4())
+    )
+    monkeypatch.setattr(
+        batching_service, "active_windows", AsyncMock(return_value=[slot])
+    )
+    monkeypatch.setattr(
+        batching_service,
+        "find_window",
+        lambda *_a: WindowMatch(window=slot, dispatch_at=leaves),
+    )
+    monkeypatch.setattr(batching_service, "_open_batch", AsyncMock(return_value=joined))
+
+
+class _JoinSession:
+    """
+    A session with the two behaviours the join path actually depends on.
+
+    `autoflush=False`, like the real one — a row only becomes visible to a query
+    once somebody flushes — and `begin_nested`, which is how the reference
+    assignment survives a collision on the unique index.
+    """
+
+    def __init__(self):
+        #: Deliveries the caller has attached to the run, in memory.
+        self.assigned: list[OrderDelivery] = []
+        #: The same list, as far as a SELECT is concerned, after a flush.
+        self.visible: list[OrderDelivery] = []
+
+    async def flush(self):
+        self.visible = list(self.assigned)
+
+    async def execute(self, stmt):
+        params = stmt.compile().params
+        if "courier_reference_1" in params:
+            # `courier_reference._taken` — nothing is, in a fresh table.
+            return _Result([])
+        return _Result([d for d in self.visible if d.batch_id is not None])
+
+    def begin_nested(self):
+        session = self
+
+        class _Savepoint:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                await session.flush()
+                return False
+
+        return _Savepoint()

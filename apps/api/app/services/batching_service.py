@@ -359,6 +359,15 @@ async def assign_or_dispatch(
     batch = await _open_batch(db, group_id, match)
     delivery.batch_id = batch.id
     delivery.last_error = None
+    # The short number the driver will quote, spent now rather than at the end
+    # of the window. On the un-batched path dispatch happens inside acceptance,
+    # so the reference exists by the time the ticket prints; on this path the
+    # booking is up to three hours away and the paper would go out carrying
+    # `MM-20260819-001` — the fifteen-character string this number exists to
+    # replace. The reference identifies the order, not the booking, and `assign`
+    # is idempotent, so the dispatch at the close of the window finds this one
+    # already on the row and keeps it.
+    await courier_reference.assign(db, delivery)
     batch.stop_count = await _count_deliveries(db, batch.id)
     logger.info(
         "Order %s joins %s, leaving %s",
@@ -384,6 +393,12 @@ async def cancel_assignment(db: AsyncSession, delivery: OrderDelivery) -> None:
 
 
 async def _count_deliveries(db: AsyncSession, batch_id: uuid.UUID) -> int:
+    # The session is `autoflush=False`, so the assignment the caller has just
+    # made — this order joining the run, or being taken off it — is still only
+    # in memory and a bare SELECT counts the run as it was a moment ago. That is
+    # how the first live batch came to sit on the admin screen reading "0 drops"
+    # while holding an order.
+    await db.flush()
     result = await db.execute(
         select(OrderDelivery.id).where(OrderDelivery.batch_id == batch_id)
     )

@@ -6684,6 +6684,8 @@ export interface components {
             distance_m: number | null;
             /** Driver Name */
             driver_name: string | null;
+            /** Group Id */
+            group_id: string;
             /** Id */
             id: string;
             /** Last Error */
@@ -6692,8 +6694,6 @@ export interface components {
             next_attempt_at: string | null;
             /** Order Numbers */
             order_numbers: string[];
-            /** Polygon Id */
-            polygon_id: string;
             /** Share Link */
             share_link: string | null;
             /** Status */

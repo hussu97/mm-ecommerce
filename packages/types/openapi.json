@@ -1006,6 +1006,10 @@
             ],
             "title": "Driver Name"
           },
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -1039,10 +1043,6 @@
             },
             "title": "Order Numbers",
             "type": "array"
-          },
-          "polygon_id": {
-            "title": "Polygon Id",
-            "type": "string"
           },
           "share_link": {
             "anyOf": [
@@ -1088,7 +1088,7 @@
         },
         "required": [
           "id",
-          "polygon_id",
+          "group_id",
           "zone_name",
           "window_label",
           "dispatch_at",
