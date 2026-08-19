@@ -276,3 +276,81 @@ def test_109_mappings_are_cleanly_invertible():
         assert not set(mapping) & set(mapping.values()), (
             "an old string is also a new one"
         )
+
+
+# ── 110: publishing the address ──────────────────────────────────────────────
+
+_PATH_110 = (
+    Path(__file__).resolve().parents[2]
+    / "alembic"
+    / "versions"
+    / "110_publish_collection_address.py"
+)
+_spec_110 = importlib.util.spec_from_file_location("publish_address", _PATH_110)
+publish = importlib.util.module_from_spec(_spec_110)
+assert _spec_110.loader is not None
+_spec_110.loader.exec_module(publish)
+
+
+def test_both_pickup_answers_name_the_sharjah_counter():
+    """
+    The state 107 left behind was worse than either end of it: an invitation to
+    walk in, followed by a refusal to say where.
+    """
+    for new in publish.FAQ_REPLACEMENTS.values():
+        assert publish.SHARJAH in new or publish.SHARJAH_AR in new
+        assert "send you the address once the order is placed" not in new
+        assert "عنوان الاستلام في" not in new
+
+
+def test_the_second_collection_point_is_mentioned_but_not_addressed():
+    """
+    Barsha Heights is a counter inside somebody else's café. Customers should
+    know it exists; printing a partner's address in editorial copy is not a
+    call a copy migration gets to make, and the checkout already lists it.
+    """
+    english = [v for v in publish.FAQ_REPLACEMENTS.values() if "Sharjah" in v]
+    assert english, "expected the English answers"
+    for new in english:
+        assert "Barsha Heights" in new
+        assert "Attibassi" not in new
+        assert "Al Shafar" not in new
+
+
+def test_the_about_block_carries_no_address():
+    """
+    The whole point of `find_us` being copy-only: the page fetches the branches
+    and prints their addresses, so this block must never hold one itself.
+    """
+    for block in publish.ABOUT_FIND_US.values():
+        for value in block.values():
+            assert "Garden Tower" not in value
+            assert "Al Majaz" not in value
+            assert "Barsha" not in value
+
+
+def test_110_rewrite_is_idempotent_and_leaves_strangers_alone():
+    page = {
+        "en": {
+            "items": [
+                {
+                    "question": "Where are you based?",
+                    "answer": list(publish.FAQ_REPLACEMENTS)[0],
+                },
+                {"question": "Something else", "answer": "Unrelated answer."},
+            ]
+        }
+    }
+
+    once, first = publish.rewrite(page, publish.FAQ_REPLACEMENTS)
+    twice, second = publish.rewrite(once, publish.FAQ_REPLACEMENTS)
+
+    assert first == 1 and second == 0
+    assert twice == once
+    assert once["en"]["items"][1]["answer"] == "Unrelated answer."
+
+
+def test_110_mapping_is_cleanly_invertible():
+    m = publish.FAQ_REPLACEMENTS
+    assert len(set(m.values())) == len(m)
+    assert not set(m) & set(m.values())

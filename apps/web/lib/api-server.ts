@@ -12,6 +12,7 @@ import 'server-only';
 
 import { API_BASE } from './api-base';
 import { CACHE_TAGS, CONTENT_TTL } from './cache-policy';
+import type { PickupBranch } from './types';
 
 export { fetchJson, fetchJsonOrNull } from './fetch-json';
 
@@ -70,4 +71,28 @@ export const cmsApi = {
         return res.json();
       });
   },
+};
+
+export const branchesApi = {
+  /**
+   * The counters a customer may collect from. **Public**, and the same list the
+   * checkout renders.
+   *
+   * Fetched rather than written into the copy. An address in a CMS answer is a
+   * second copy of something the branch row already holds, and the day the shop
+   * moves, one of the two is wrong with nothing to say so — the failure this
+   * codebase has already been bitten by twice. The About page therefore asks
+   * for the branch and prints what it gets.
+   *
+   * Resolves to `[]` rather than throwing: a missing "where to collect" block
+   * is a worse page, but a page that 500s because a branch lookup timed out is
+   * a broken one, and nothing else on About depends on this.
+   */
+  pickupPoints: (): Promise<PickupBranch[]> =>
+    fetch(`${RSC_API_BASE}/branches/pickup-points`, {
+      next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.cms] },
+      signal: AbortSignal.timeout(8000),
+    })
+      .then(res => (res.ok ? res.json() : []))
+      .catch(() => []),
 };

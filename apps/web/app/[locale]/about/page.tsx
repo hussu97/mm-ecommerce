@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Image from 'next/image';
 import Link from 'next/link';
-import { cmsApi } from '@/lib/api-server';
+import { branchesApi, cmsApi } from '@/lib/api-server';
 import { Breadcrumb } from '@/components/ui';
 import { BUSINESS_ID, FOUNDER, FOUNDER_ID } from '@/lib/schema';
 import { Icon } from '@/components/ui/Icon';
@@ -19,6 +19,8 @@ interface AboutContent {
   values?: Value[];
   values_section?: { label?: string; title?: string };
   cta?: { title?: string; subtitle?: string; button_text?: string; button_link?: string };
+  /** Heading for the collection-points block. The addresses are not here — see below. */
+  find_us?: { label?: string; title?: string; subtitle?: string };
   seo?: { title?: string; description?: string };
 }
 
@@ -68,6 +70,11 @@ export default async function AboutPage({
   } catch {
     // fallback to empty — page will still render with empty strings
   }
+
+  // Never throws: `pickupPoints` resolves to `[]` on any failure, and the
+  // section below is skipped when it is empty.
+  const pickupPoints = await branchesApi.pickupPoints();
+  const isArabic = locale === 'ar';
 
   const jsonLd = {
     '@context': 'https://schema.org',
@@ -241,6 +248,66 @@ export default async function AboutPage({
                 <p className="font-body text-xs text-gray-500 leading-relaxed">{description}</p>
               </div>
             ))}
+          </div>
+        </section>
+      )}
+
+      {/* Where to collect.
+          The copy is CMS; the addresses are the branch rows, fetched. Writing
+          an address into the copy would be a second answer to a question the
+          branch record already settles, and the day the shop moves one of the
+          two is wrong with nothing to say so. "Where to collect" rather than
+          "our locations" because one of these is a partner counter. */}
+      {pickupPoints.length > 0 && (
+        <section className="max-w-6xl mx-auto px-4 py-16 lg:py-24">
+          <div className="text-center mb-12">
+            {c.find_us?.label && (
+              <p className="text-xs font-body uppercase tracking-widest text-secondary mb-3">
+                {c.find_us.label}
+              </p>
+            )}
+            <h2 className="font-display text-3xl sm:text-4xl text-primary">
+              {c.find_us?.title ?? 'Where to collect'}
+            </h2>
+            {c.find_us?.subtitle && (
+              <p className="font-body text-sm text-gray-500 mt-4 max-w-xl mx-auto">
+                {c.find_us.subtitle}
+              </p>
+            )}
+            <div className="h-px bg-secondary/40 max-w-xs mx-auto mt-5" />
+          </div>
+
+          <div className="grid sm:grid-cols-2 gap-6 max-w-3xl mx-auto">
+            {pickupPoints.map(point => {
+              const name = (isArabic && point.name_ar) || point.name;
+              const address = (isArabic && point.address_ar) || point.address;
+              return (
+                <div key={point.id} className="border border-gray-200 p-6">
+                  <h3 className="font-body text-sm font-medium uppercase tracking-widest text-gray-800 mb-3">
+                    {name}
+                  </h3>
+                  {address && (
+                    <p className="font-body text-sm text-gray-600 leading-relaxed mb-3">
+                      {address}
+                    </p>
+                  )}
+                  <p className="font-body text-xs text-gray-400 mb-4">
+                    {point.opening_from} – {point.opening_to}
+                  </p>
+                  {point.maps_url && (
+                    <a
+                      href={point.maps_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 font-body text-xs uppercase tracking-widest text-primary hover:underline"
+                    >
+                      <Icon name="place" className="text-[16px]" />
+                      {isArabic ? 'الاتجاهات' : 'Directions'}
+                    </a>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </section>
       )}
