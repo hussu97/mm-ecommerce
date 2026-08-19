@@ -1031,7 +1031,7 @@ async def refund_order(
     if order.payment_method != CARD:
         return Decimal("0")
 
-    attempt = _settled_attempt(order)
+    attempt = await _settled_attempt(db, order)
     if attempt is None or not attempt.payment_id:
         # Nothing was ever charged through a gateway we can call back. A cash
         # order, or a card attempt that never reached a payment handle.
@@ -1108,15 +1108,35 @@ async def refund_order(
     return result.amount
 
 
-def _settled_attempt(order: Order) -> PaymentTransaction | None:
+async def _settled_attempt(db: AsyncSession, order: Order) -> PaymentTransaction | None:
     """
     The attempt that actually took the money.
 
     `payment_transactions` holds one row per try, and a customer who abandoned a
     card screen twice before paying leaves three. Only the settled one has a
     handle worth refunding against.
+
+    **Queried rather than read off the relationship.** This is reached from
+    `order_lifecycle._consequences`, which every cancellation goes through —
+    the admin console, a courier webhook, a register, the checkout. Only one of
+    those could ever be persuaded to eager-load the collection, and under
+    asyncpg touching an unloaded one is a `MissingGreenlet` rather than a lazy
+    query. So the admin console answered 500 to every attempt to cancel a card
+    order, and the traceback named a refund helper rather than the cancellation
+    the person had asked for.
     """
-    for attempt in order.payment_transactions or []:
+    rows = (
+        (
+            await db.execute(
+                select(PaymentTransaction).where(
+                    PaymentTransaction.order_id == order.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for attempt in rows:
         if attempt.is_settled and attempt.payment_id:
             return attempt
     return None

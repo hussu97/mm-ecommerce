@@ -36,7 +36,7 @@ and `batch_scheduler` (each tick, to land everything now due).
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,6 +51,11 @@ from app.models.pos_order import OrderSourceEnum
 logger = logging.getLogger(__name__)
 
 __all__ = ["due", "land", "schedule", "sweep"]
+
+#: How old a confirmed order can be and still be something the kitchen is
+#: waiting to make. Past this it is abandoned — and announcing it as new work
+#: is worse than leaving it, because somebody has to work out what it is.
+_STALE_AFTER = timedelta(days=2)
 
 #: How many orders one tick will land. Generous — a window closing on a busy
 #: evening empties into the kitchen all at once, and holding some of it back to
@@ -138,6 +143,15 @@ async def due(db: AsyncSession, *, limit: int = _SWEEP_LIMIT) -> list[Order]:
     confirmation and its flush, would otherwise sit at `confirmed` forever with
     nobody making it. A null stamp reads as *overdue*, because an order nobody
     can date is one nobody is baking.
+
+    **Bounded by age, which that generosity makes necessary.** An order
+    confirmed months ago and never published is abandoned, not waiting — a
+    checkout that half-failed, a test order, a gateway event nobody finished
+    handling. Swept up it is announced as new work: three Stripe test orders
+    from March reached every terminal in the branch and rang the
+    unaccepted-order alarm once a minute until somebody stopped it. Nothing a
+    kitchen can still act on is more than a couple of days old, and anything
+    older needs a person rather than a sweep.
     """
     now = datetime.now(timezone.utc)
     return list(
@@ -148,6 +162,7 @@ async def due(db: AsyncSession, *, limit: int = _SWEEP_LIMIT) -> list[Order]:
                     Order.status == OrderStatusEnum.CONFIRMED,
                     Order.source == OrderSourceEnum.ONLINE.value,
                     (Order.arrives_at.is_(None)) | (Order.arrives_at <= now),
+                    Order.created_at > now - _STALE_AFTER,
                 )
                 # `items` for the cancellation restock a consequence may
                 # walk, `delivery` so the history can say *why* each order

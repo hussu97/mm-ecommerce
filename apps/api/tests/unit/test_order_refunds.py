@@ -20,6 +20,34 @@ from types import SimpleNamespace
 from app.services import payment_service
 
 
+class _AttemptsDb:
+    """
+    A session that answers the one query `_settled_attempt` makes.
+
+    It reads `payment_transactions` from the database rather than off the order
+    now — `refund_order` runs inside `order_lifecycle._consequences`, which is
+    reached from a webhook, a register and the admin console alike, and only one
+    of those could ever be made to eager-load the collection. These tests keep
+    setting the attribute because that is still the fact under test; this hands
+    the same rows back through the seam the code actually uses.
+    """
+
+    def __init__(self, order):
+        self._order = order
+
+    async def execute(self, _stmt):
+        rows = list(getattr(self._order, "payment_transactions", None) or [])
+
+        class _Result:
+            def scalars(self):
+                return self
+
+            def all(self):
+                return rows
+
+        return _Result()
+
+
 def _order(
     total="105.00",
     delivery_fee="20.00",
@@ -126,7 +154,7 @@ def test_a_different_amount_is_a_different_refund():
 async def test_a_cash_order_refunds_nothing_here():
     """There is no gateway to call. The shop hands the money back."""
     order = _order(payment_method="cod")
-    assert await payment_service.refund_order(None, order) == Decimal("0")
+    assert await payment_service.refund_order(_AttemptsDb(order), order) == Decimal("0")
 
 
 async def test_an_order_with_no_settled_attempt_refunds_nothing():
@@ -140,7 +168,7 @@ async def test_an_order_with_no_settled_attempt_refunds_nothing():
             is_settled=False, payment_id=None, gateway="stripe", refund_id=None
         )
     ]
-    assert await payment_service.refund_order(None, order) == Decimal("0")
+    assert await payment_service.refund_order(_AttemptsDb(order), order) == Decimal("0")
 
 
 async def test_an_order_already_refunded_through_here_is_left_alone():
@@ -150,7 +178,7 @@ async def test_an_order_already_refunded_through_here_is_left_alone():
             is_settled=True, payment_id="pi_123", gateway="stripe", refund_id="re_123"
         )
     ]
-    assert await payment_service.refund_order(None, order) == Decimal("0")
+    assert await payment_service.refund_order(_AttemptsDb(order), order) == Decimal("0")
 
 
 async def test_a_gateway_this_build_cannot_refund_does_not_raise():
@@ -165,4 +193,40 @@ async def test_a_gateway_this_build_cannot_refund_does_not_raise():
             is_settled=True, payment_id="x", gateway="tabby", refund_id=None
         )
     ]
-    assert await payment_service.refund_order(None, order) == Decimal("0")
+    assert await payment_service.refund_order(_AttemptsDb(order), order) == Decimal("0")
+
+
+def test_a_refund_never_reads_the_relationship_off_the_order():
+    """
+    The 500 every admin cancellation answered, guarded at the only level that
+    can hold.
+
+    `refund_order` runs inside `order_lifecycle._consequences`, so it is reached
+    from the admin console, a courier webhook, a register and the checkout. It
+    used to read `order.payment_transactions` off the relationship, and only the
+    checkout ever loaded it — under asyncpg the others got a `MissingGreenlet`,
+    which is an unhandled 500 rather than a lazy query. Cancelling a card order
+    from the console failed with a traceback naming a refund helper, for an
+    order nobody had asked to refund.
+
+    Checked as *shape* rather than behaviour, deliberately. The failure needs a
+    real asyncpg session and a genuinely unloaded collection to reproduce; a
+    unit test builds its order in memory with the attribute already populated,
+    so it exercises the one path that never broke. What is checkable, and what
+    would have caught this, is that the module does not reach for the
+    relationship at all.
+    """
+    import inspect as py_inspect
+
+    # Scoped to this function rather than the module. Four other places read
+    # the relationship quite legitimately — the checkout and the payment flows
+    # own the order they are building and have it loaded. This one does not: it
+    # is handed whatever the caller happened to select.
+    source = py_inspect.getsource(payment_service._settled_attempt)
+    assert "order.payment_transactions" not in source, (
+        "reached from callers that cannot eager-load this; query "
+        "payment_transactions instead of reading the relationship"
+    )
+    assert py_inspect.iscoroutinefunction(payment_service._settled_attempt), (
+        "_settled_attempt has to query, which makes it async"
+    )

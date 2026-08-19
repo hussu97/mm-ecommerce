@@ -70,6 +70,13 @@ def upgrade() -> None:
                )
          WHERE o.status = 'confirmed'
            AND o.check_number IS NOT NULL
+           -- Website orders only. A counter sale also carries a check number —
+           -- it is *issued* one at the till — and `confirmed` is where a closed
+           -- one comes to rest, so without this the backfill relabelled real
+           -- cashier sales as having arrived from somewhere. One did, on
+           -- production: POS-B001-2026-07-26-0002, a closed check on a till,
+           -- part of that day's Z-report.
+           AND o.source = 'online'
         """
     )
 
@@ -81,7 +88,15 @@ def upgrade() -> None:
         UPDATE orders
            SET arrives_at = COALESCE(opened_at, created_at)
          WHERE status = 'confirmed'
+           AND source = 'online'
            AND arrives_at IS NULL
+           -- Recent only. An order confirmed months ago and never published is
+           -- abandoned, not waiting: dating it in the past hands the sweep a
+           -- backlog to announce, and three test orders from March duly rang
+           -- the unaccepted-order alarm on every terminal in the branch, once
+           -- a minute, until somebody stopped it. The sweep bounds this too;
+           -- the two are the same rule written where each can enforce it.
+           AND COALESCE(opened_at, created_at) > now() - interval '2 days'
         """
     )
 
