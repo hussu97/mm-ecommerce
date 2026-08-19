@@ -208,3 +208,71 @@ def test_the_downgrade_mapping_is_a_clean_inverse():
 def test_no_replacement_still_contains_the_claim(old, new):
     for banned in ("home kitchen", "home bakery", "مطبخ منزلي", "مخبز منزلي"):
         assert banned not in new, f"{banned!r} survived in {new!r}"
+
+
+# ── 109: the four the first sweep missed ─────────────────────────────────────
+#
+# `107` swept `cms_pages` and stopped there. The same claim was also in
+# `ui_translations` and in a blog post, seeded by different migrations. These
+# tests exist mostly so the omission is written down somewhere that runs.
+
+_PATH_109 = (
+    Path(__file__).resolve().parents[2]
+    / "alembic"
+    / "versions"
+    / "109_premises_copy_remainder.py"
+)
+_spec_109 = importlib.util.spec_from_file_location("premises_remainder", _PATH_109)
+remainder = importlib.util.module_from_spec(_spec_109)
+assert _spec_109.loader is not None
+_spec_109.loader.exec_module(remainder)
+
+
+def test_the_blog_sentence_is_matched_inside_a_body():
+    """
+    A blog body is one long string with the claim buried in it, so `109` matches
+    substrings where `107` matched whole values. The regression to guard is the
+    opposite of `107`'s: too *little* matching, silently leaving the post alone.
+    """
+    body = (
+        "Ask before ordering. Sometimes it's an honest no.\n\n"
+        "One thing we can't change: it's a home kitchen that also handles eggs, "
+        "so an eggless recipe isn't an allergen-free environment. If it's an "
+        "allergy rather than a preference, tell us."
+    )
+    post = {"en": {"title": "Eggless baking", "body": body}}
+
+    out, changed = remainder.rewrite(post, remainder.BLOG_REPLACEMENTS)
+
+    assert changed == 1
+    assert "home kitchen" not in out["en"]["body"]
+    assert "one kitchen that also handles eggs" in out["en"]["body"]
+    # The sentences either side must survive untouched.
+    assert out["en"]["body"].startswith("Ask before ordering.")
+    assert out["en"]["body"].endswith("tell us.")
+    assert "allergen-free environment" in out["en"]["body"]
+
+
+def test_the_blog_rewrite_is_idempotent():
+    post = {"en": {"body": list(remainder.BLOG_REPLACEMENTS)[0]}}
+
+    once, first = remainder.rewrite(post, remainder.BLOG_REPLACEMENTS)
+    twice, second = remainder.rewrite(once, remainder.BLOG_REPLACEMENTS)
+
+    assert first == 1 and second == 0
+    assert twice == once
+
+
+def test_no_109_replacement_still_carries_the_claim():
+    for mapping in (remainder.UI_TRANSLATIONS, remainder.BLOG_REPLACEMENTS):
+        for new in mapping.values():
+            for banned in ("home kitchen", "home bakery", "مطبخ منزلي", "مخبز منزلي"):
+                assert banned not in new, f"{banned!r} survived in {new!r}"
+
+
+def test_109_mappings_are_cleanly_invertible():
+    for mapping in (remainder.UI_TRANSLATIONS, remainder.BLOG_REPLACEMENTS):
+        assert len(set(mapping.values())) == len(mapping)
+        assert not set(mapping) & set(mapping.values()), (
+            "an old string is also a new one"
+        )

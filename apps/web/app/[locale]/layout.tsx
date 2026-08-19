@@ -94,7 +94,7 @@ export const metadata: Metadata = {
     template: "%s | Melting Moments Cakes",
   },
   description:
-    "Home bakery in Sharjah delivering fudgy brownies, gooey cookies, cookie melts, cakes and desserts to Dubai, Sharjah, Ajman and the rest of the UAE. Baked to order by Fatema Abbasi.",
+    "Bakery in Sharjah delivering fudgy brownies, gooey cookies, cookie melts, cakes and desserts to Dubai, Sharjah, Ajman and the rest of the UAE. Baked to order by Fatema Abbasi.",
   keywords: [
     "brownie delivery Dubai", "dessert delivery Dubai", "dessert delivery Sharjah",
     "cookie delivery UAE", "cookie melts Dubai", "brownies Sharjah",

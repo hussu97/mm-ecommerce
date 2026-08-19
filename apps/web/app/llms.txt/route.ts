@@ -33,7 +33,7 @@ export async function GET() {
 > A bakery in Sharjah, UAE. Brownies, cookies, cookie melts, cakes and desserts, baked to order and delivered to all seven emirates. Run by Fatema Abbasi.
 
 ## About
-- Home bakery, based in Sharjah, UAE
+- Bakery, based in Sharjah, UAE
 - Founded and run by Fatema Abbasi, who still does the baking
 - Known for: fudgy brownies, gooey cookies, cookie melts, mix boxes, cakes, eggless options
 - Everything is baked to order — nothing is made in advance and stored

@@ -112,7 +112,7 @@ function buildJsonLd(
       {
         ...BAKERY_BASE,
         description:
-          'Home bakery in Sharjah delivering brownies, cookies, cookie melts, cakes and desserts across all seven emirates. Everything is baked to order.',
+          'Bakery in Sharjah delivering brownies, cookies, cookie melts, cakes and desserts across all seven emirates. Everything is baked to order.',
         hasMenu: `${SITE_URL}/en/all-products`,
         // The offer hangs off the bakery that makes it, so a reader that
         // resolves this entity gets the campaign with it rather than having to
@@ -193,7 +193,7 @@ export async function generateMetadata({
     c.seo?.title ?? 'Melting Moments Cakes — Brownie & Dessert Delivery Across the UAE';
   const base =
     c.seo?.description ??
-    'Home bakery in Sharjah delivering fudgy brownies, gooey cookies, cookie melts, cakes and desserts to Dubai, Sharjah, Ajman and the rest of the UAE. Baked to order.';
+    'Bakery in Sharjah delivering fudgy brownies, gooey cookies, cookie melts, cakes and desserts to Dubai, Sharjah, Ajman and the rest of the UAE. Baked to order.';
 
   // The live offer, appended to whatever the description already says.
   //
