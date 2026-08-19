@@ -45,6 +45,7 @@ from sqlalchemy.orm import selectinload
 from app.core import trading_hours
 from app.models.branch import Branch
 from app.models.order import Order, OrderStatusEnum
+from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.pos_order import OrderSourceEnum
 
 logger = logging.getLogger(__name__)
@@ -105,7 +106,7 @@ async def schedule(db: AsyncSession, order: Order) -> datetime | None:
     # sweep remains the backstop for anything this misses — a rollback between
     # here and the flush, a branch that was shut when the money landed.
     if order.arrives_at is not None and order.arrives_at <= datetime.now(timezone.utc):
-        await land(db, order)
+        await land(db, order, because="confirmed, with no run to wait for")
 
     return order.arrives_at
 
@@ -148,7 +149,10 @@ async def due(db: AsyncSession, *, limit: int = _SWEEP_LIMIT) -> list[Order]:
                     Order.source == OrderSourceEnum.ONLINE.value,
                     (Order.arrives_at.is_(None)) | (Order.arrives_at <= now),
                 )
-                .options(selectinload(Order.items))
+                # `items` for the cancellation restock a consequence may
+                # walk, `delivery` so the history can say *why* each order
+                # landed rather than only that it did.
+                .options(selectinload(Order.items), selectinload(Order.delivery))
                 .order_by(Order.arrives_at.nulls_first(), Order.created_at)
                 .limit(limit)
             )
@@ -158,13 +162,29 @@ async def due(db: AsyncSession, *, limit: int = _SWEEP_LIMIT) -> list[Order]:
     )
 
 
-async def land(db: AsyncSession, order: Order) -> bool:
+async def land(db: AsyncSession, order: Order, *, because: str) -> bool:
     """
     Put one order on the register, and get a driver moving for it.
 
     Returns whether it moved. False means something else got there first, which
     is an ordinary outcome: an admin marking an order packed, or a courier
     reporting a pickup, both leave `confirmed` without passing through here.
+
+    `because` is the reason this order landed *now*, and it goes in the status
+    history. Worth a parameter rather than one fixed string, because the reasons
+    are genuinely different questions later — a run leaving, a shop opening, and
+    a zone with nothing to wait for all arrive here and only the note tells them
+    apart.
+
+    **Attributed explicitly, and that matters more than it looks.** The inline
+    path runs inside `_consequences` for `confirmed`, which on the ordinary
+    route is itself inside `payment_service`'s
+    `acting_as(PAYMENT, actor_label="stripe", note="payment_intent.succeeded")`.
+    Inheriting that would record Stripe as having put the order on the register,
+    with a payment event id as the reason — neither of which happened. The
+    arrival is our own scheduling decision, so it says so, and the context
+    manager nests properly: the payment's attribution is restored on the way
+    out and still covers the confirmation itself.
 
     The dispatch is best-effort and comes second, in that order on purpose. A
     courier that is unreachable must not keep the kitchen from being told: the
@@ -174,9 +194,10 @@ async def land(db: AsyncSession, order: Order) -> bool:
     """
     from app.services import batching_service, order_lifecycle
 
-    moved = await order_lifecycle.transition(
-        db, order, OrderStatusEnum.ARRIVED_AT_POS, on_invalid="skip"
-    )
+    with acting_as(StatusSourceEnum.SYSTEM.value, note=because):
+        moved = await order_lifecycle.transition(
+            db, order, OrderStatusEnum.ARRIVED_AT_POS, on_invalid="skip"
+        )
     if not moved:
         return False
 
@@ -202,9 +223,26 @@ async def sweep(db: AsyncSession, *, limit: int = _SWEEP_LIMIT) -> list[str]:
     landed: list[str] = []
     for order in await due(db, limit=limit):
         try:
-            if await land(db, order):
+            if await land(db, order, because=_why(order)):
                 landed.append(order.order_number)
         except Exception:  # noqa: BLE001 — one bad order must not hold the rest
             logger.exception("Could not land %s on the register", order.order_number)
             await db.rollback()
     return landed
+
+
+def _why(order: Order) -> str:
+    """
+    The reason this order is landing now, for its status history.
+
+    Three things bring an order here and they are different questions later: a
+    run leaving, a shop opening, and an order whose stamp went missing. A
+    history that recorded only "arrived" would answer none of them — and the
+    third is the one worth being able to find, because it means something went
+    wrong at confirmation and the sweep is covering for it.
+    """
+    if order.delivery is not None and order.delivery.batch_id is not None:
+        return "its run left"
+    if order.arrives_at is None:
+        return "no arrival was scheduled; swept up"
+    return "its arrival fell due"

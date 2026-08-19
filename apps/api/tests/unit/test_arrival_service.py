@@ -39,6 +39,11 @@ def _order(status: OrderStatusEnum = OrderStatusEnum.CONFIRMED, **overrides) -> 
     )
     for key, value in overrides.items():
         setattr(order, key, value)
+    # Constructing with a status queues an event for it. These tests are about
+    # what `land` records, so the history starts empty.
+    from sqlalchemy import inspect as sa_inspect
+
+    sa_inspect(order).info.pop("pending_status_events", None)
     return order
 
 
@@ -53,8 +58,9 @@ def stubs(monkeypatch):
 
     calls: dict[str, list] = {"landed": [], "reserved": []}
 
-    async def land(db, order):
+    async def land(db, order, *, because):
         calls["landed"].append(order)
+        calls.setdefault("reasons", []).append(because)
         return True
 
     monkeypatch.setattr(arrival_service, "land", land)
@@ -194,7 +200,7 @@ async def test_a_courier_that_refuses_still_lets_the_kitchen_know(
     monkeypatch.setattr(batching_service, "assign_or_dispatch", explode)
     order = _order()
 
-    assert await arrival_service.land(_Db(), order) is True
+    assert await arrival_service.land(_Db(), order, because="test") is True
     assert order.status == OrderStatusEnum.ARRIVED_AT_POS
 
 
@@ -215,7 +221,7 @@ async def test_an_order_that_moved_on_without_us_is_left_alone(
     monkeypatch.setattr(batching_service, "assign_or_dispatch", never)
     order = _order(status=OrderStatusEnum.OUT_FOR_DELIVERY)
 
-    assert await arrival_service.land(_Db(), order) is False
+    assert await arrival_service.land(_Db(), order, because="test") is False
     assert order.status == OrderStatusEnum.OUT_FOR_DELIVERY
 
 
@@ -264,3 +270,94 @@ def test_an_arrived_order_cannot_go_back_to_confirmed():
         OrderStatusEnum.CONFIRMED
         not in VALID_TRANSITIONS[OrderStatusEnum.ARRIVED_AT_POS]
     )
+
+
+# ── the status history ────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_gateway_is_not_recorded_as_having_told_the_shop(
+    monkeypatch, quiet_publish
+):
+    """
+    The inline arrival runs inside `_consequences` for `confirmed`, which on the
+    ordinary route is inside `payment_service`'s own
+    `acting_as(PAYMENT, actor_label="stripe", note="payment_intent.succeeded")`.
+
+    Inherited, the history would say Stripe put the order on the register and
+    give a payment event id as the reason. Stripe reported money; it did not
+    tell a kitchen anything.
+    """
+    from app.models.order_status_event import StatusSourceEnum, acting_as
+    from app.services import batching_service
+
+    async def nothing(db, order, **kwargs):
+        return None
+
+    monkeypatch.setattr(batching_service, "assign_or_dispatch", nothing)
+    order = _order()
+
+    with acting_as(
+        StatusSourceEnum.PAYMENT.value,
+        actor_label="stripe",
+        note="payment_intent.succeeded",
+    ):
+        await arrival_service.land(_Db(), order, because="its run left")
+
+    events = _pending_events(order)
+    assert len(events) == 1
+    status, _previous, actor, _at = events[0]
+    assert status == OrderStatusEnum.ARRIVED_AT_POS
+    assert actor.source == StatusSourceEnum.SYSTEM.value
+    assert actor.actor_label != "stripe"
+    assert actor.note == "its run left"
+
+
+@pytest.mark.asyncio
+async def test_an_arrival_is_recorded_like_any_other_status(monkeypatch, quiet_publish):
+    """
+    Not by this module's own hand. `order_status_events` is written by an
+    attribute listener on `Order.status`, so a status is recorded because it was
+    *assigned*, not because somebody remembered to record it — which is the
+    property that survives the next writer.
+    """
+    from app.services import batching_service
+
+    async def nothing(db, order, **kwargs):
+        return None
+
+    monkeypatch.setattr(batching_service, "assign_or_dispatch", nothing)
+    order = _order()
+
+    await arrival_service.land(_Db(), order, because="its arrival fell due")
+
+    events = _pending_events(order)
+    assert [e[0] for e in events] == [OrderStatusEnum.ARRIVED_AT_POS]
+    assert events[0][1] == OrderStatusEnum.CONFIRMED
+
+
+def test_the_sweep_says_why_each_order_landed():
+    """
+    Three things bring an order to the sweep and they are different questions
+    later — the third most of all, because it means the confirmation failed to
+    stamp an arrival and this is covering for it.
+    """
+    from app.models.order_delivery import OrderDelivery
+
+    on_a_run = _order()
+    on_a_run.delivery = OrderDelivery(
+        order_id=on_a_run.id, provider="lalamove", batch_id=uuid.uuid4()
+    )
+    assert arrival_service._why(on_a_run) == "its run left"
+
+    held = _order(arrives_at=datetime.now(timezone.utc))
+    assert arrival_service._why(held) == "its arrival fell due"
+
+    assert "swept up" in arrival_service._why(_order())
+
+
+def _pending_events(order):
+    """The status rows the listener has queued for the next flush."""
+    from sqlalchemy import inspect as sa_inspect
+
+    return sa_inspect(order).info.get("pending_status_events", [])

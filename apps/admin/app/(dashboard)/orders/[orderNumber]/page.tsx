@@ -74,6 +74,35 @@ function promisedFor(order: Order): string | null {
   return f.precision === 'day_by' ? `${date}, before ${time}` : `${date}, ${time}`;
 }
 
+/**
+ * The address, in the boxes the customer typed it into.
+ *
+ * Order and wording follow `address_format._PARTS` and the checkout's own
+ * labels, so the admin, the rider's stop, the ticket and the confirmation email
+ * are all describing one address the same way. `unit_number` leads for the
+ * reason it leads there: a map pin gets somebody to the building and the flat
+ * number is what finishes the delivery.
+ *
+ * `label` is last and is the customer's own word for the place — "Home",
+ * "Office". It is not part of the address but it is often the fastest way for
+ * somebody on the phone to know which one they are looking at.
+ */
+const ADDRESS_FIELDS: { key: string; label: string }[] = [
+  { key: 'unit_number', label: 'Flat / villa / office' },
+  { key: 'address_line_1', label: 'Address' },
+  { key: 'address_line_2', label: 'Directions' },
+  { key: 'city', label: 'City' },
+  { key: 'label', label: 'Saved as' },
+];
+
+/** First and last name, however many of those the snapshot actually has. */
+function recipientName(snapshot: Record<string, string>): string {
+  return [snapshot.first_name, snapshot.last_name]
+    .map(part => (part ?? '').trim())
+    .filter(Boolean)
+    .join(' ');
+}
+
 const STATUS_LABEL: Record<OrderStatus, string> = {
   created: 'created',
   confirmed: 'confirmed',
@@ -442,12 +471,30 @@ export default function OrderDetailPage() {
         <div className="bg-white border border-gray-200 p-4">
           <p className="text-[11px] font-body uppercase tracking-widest text-gray-400 mb-2">Customer</p>
           <p className="text-sm font-body text-gray-800">{order.email}</p>
-          {order.shipping_address_snapshot && (
-            <div className="mt-2 text-xs font-body text-gray-500 space-y-0.5">
-              <p>{order.shipping_address_snapshot.first_name} {order.shipping_address_snapshot.last_name}</p>
-              <p>{order.shipping_address_snapshot.phone}</p>
-              <p>{order.shipping_address_snapshot.address_line_1}</p>
-              {order.shipping_address_snapshot.address_line_2 && <p>{order.shipping_address_snapshot.address_line_2}</p>}
+          {snapshot && (
+            <div className="mt-2 text-xs font-body text-gray-500">
+              <p className="text-gray-800">{recipientName(snapshot)}</p>
+              <p>{snapshot.phone}</p>
+              {/* Broken out rather than stacked into a paragraph. Every one of
+                  these is a field the customer typed into its own box, and
+                  running them together is how `unit_number` — the flat, the
+                  villa, the office — came to be invisible on the one screen
+                  somebody opens when a driver rings to say they cannot find
+                  the door. `address_format.one_line` fixed the same bug in the
+                  emails, the ticket and both couriers; this page was the fifth
+                  copy and the last one still dropping it. */}
+              <dl className="mt-2 space-y-1.5">
+                {ADDRESS_FIELDS.map(({ key, label }) => {
+                  const value = snapshot[key];
+                  if (!value) return null;
+                  return (
+                    <div key={key}>
+                      <dt className="text-[10px] uppercase tracking-wider text-gray-400">{label}</dt>
+                      <dd className="text-gray-700">{value}</dd>
+                    </div>
+                  );
+                })}
+              </dl>
               {/* The pin, not the typed address. A UAE address line is often
                   unsearchable — "villa 12, behind the mosque" is a real one —
                   and the coordinates are what the courier is sent to. */}
@@ -456,7 +503,7 @@ export default function OrderDetailPage() {
                   href={mapsHref}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="mt-2 inline-flex items-center gap-1.5 border border-gray-300 px-2.5 py-1.5 text-[11px] font-body text-gray-700 hover:border-primary hover:text-primary transition-colors"
+                  className="mt-3 inline-flex items-center gap-1.5 border border-gray-300 px-2.5 py-1.5 text-[11px] font-body text-gray-700 hover:border-primary hover:text-primary transition-colors"
                 >
                   <span className="material-icons text-[14px]">place</span>
                   Open the pin in Google Maps
