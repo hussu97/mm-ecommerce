@@ -37,9 +37,10 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete, text
+from sqlalchemy import delete
 
 from app.core.config import settings
+from app.core import advisory_lock
 from app.core.database import AsyncSessionFactory
 from app.models.audit_log import AuditLog
 from app.models.email_log import EmailLog
@@ -69,13 +70,10 @@ async def sweep_once(now: datetime | None = None) -> dict[str, int]:
     Returns how many rows went, per table — `{}` when another worker held the
     lock, which is a normal outcome rather than a failure.
     """
-    async with AsyncSessionFactory() as session:
-        got_lock = await session.scalar(
-            text("SELECT pg_try_advisory_lock(:key)"), {"key": _ADVISORY_LOCK_KEY}
-        )
-        if not got_lock:
+    async with advisory_lock.held(_ADVISORY_LOCK_KEY, name="log retention") as mine:
+        if not mine:
             return {}
-        try:
+        async with AsyncSessionFactory() as session:
             short = _cutoff(settings.LOG_RETENTION_DAYS, now)
             long = _cutoff(settings.AUDIT_RETENTION_DAYS, now)
 
@@ -101,14 +99,6 @@ async def sweep_once(now: datetime | None = None) -> dict[str, int]:
             except Exception:  # noqa: BLE001 — the watch must not kill the sweep
                 logger.exception("Failed-email watch errored; purge unaffected")
             return {table: count for table, count in removed.items() if count}
-        finally:
-            # Released explicitly rather than left to the connection closing: a
-            # pooled connection may not close for hours, and the lock would
-            # outlive the work by all of them.
-            await session.execute(
-                text("SELECT pg_advisory_unlock(:key)"), {"key": _ADVISORY_LOCK_KEY}
-            )
-            await session.commit()
 
 
 async def _purge(session, model, column, cutoff: datetime) -> int:

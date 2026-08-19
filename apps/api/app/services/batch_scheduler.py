@@ -12,9 +12,18 @@ and only once. Two guards, both cheap:
   * A Postgres **advisory lock**, so only one worker in the whole deployment is
     ever inside a sweep. It is a try-lock, not a wait: a worker that does not
     get it goes back to sleep rather than queueing up behind the one that did.
+    Taken through `app.core.advisory_lock`, which holds it on a connection of
+    its own — a lock taken on a pooled session's connection is released onto
+    whichever connection the pool hands back next, and when that is the wrong
+    one the lock is stranded and every later sweep quietly does nothing.
   * `SELECT … FOR UPDATE SKIP LOCKED` on the batches themselves, so even if the
     advisory lock were somehow bypassed, no two transactions can claim the same
     run.
+
+A worker that loses the race says nothing, because on a healthy deployment
+there is nothing to say. `_warn_if_overdue` is the exception, and exists because
+silence was indistinguishable from a stranded lock for as long as it took
+somebody to notice a cake nobody had collected.
 
 A minute of granularity is deliberate. Windows are hours long and the fee is
 already paid; landing a dispatch within sixty seconds of the hour is precision
@@ -25,10 +34,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import text
+from sqlalchemy import func, select
 
+from app.core import advisory_lock
 from app.core.database import AsyncSessionFactory
+from app.models.delivery_batch import BatchStatusEnum, DeliveryBatch
 from app.services import batching_service
 
 logger = logging.getLogger(__name__)
@@ -41,6 +53,11 @@ __all__ = ["run_forever", "sweep_once"]
 _ADVISORY_LOCK_KEY = 0x6D6D_4241_5443_4801  # "mmBATCH" + 1
 
 _TICK_SECONDS = 60
+
+#: How late a run has to be before a worker that is not sweeping says so. Two
+#: ticks of slack, so a sweep that is simply in progress is never mistaken for
+#: one that has stopped happening.
+_OVERDUE_GRACE = timedelta(seconds=_TICK_SECONDS * 2)
 
 
 async def sweep_once() -> list:
@@ -62,13 +79,11 @@ async def sweep_once() -> list:
     swallowed here rather than allowed out, because the runs waiting on the next
     tick are carrying cakes that are already paid for and boxed.
     """
-    async with AsyncSessionFactory() as session:
-        got_lock = await session.scalar(
-            text("SELECT pg_try_advisory_lock(:key)"), {"key": _ADVISORY_LOCK_KEY}
-        )
-        if not got_lock:
+    async with advisory_lock.held(_ADVISORY_LOCK_KEY, name="batch dispatcher") as mine:
+        if not mine:
+            await _warn_if_overdue()
             return []
-        try:
+        async with AsyncSessionFactory() as session:
             dispatched = await batching_service.dispatch_due_batches(session)
             await session.commit()
             try:
@@ -80,14 +95,45 @@ async def sweep_once() -> list:
                 logger.exception("Retry sweep failed; batches were unaffected")
                 await session.rollback()
             return dispatched
-        finally:
-            # Released explicitly rather than left to the connection closing,
-            # because a pooled connection may not close for a long time and the
-            # lock would outlive the work by hours.
-            await session.execute(
-                text("SELECT pg_advisory_unlock(:key)"), {"key": _ADVISORY_LOCK_KEY}
+
+
+async def _warn_if_overdue() -> None:
+    """
+    Say something when the sweep is not happening.
+
+    A worker that does not get the lock has always returned in silence, on the
+    reasoning that another worker has the job. That reasoning holds right up
+    until nobody has the job — a lock stranded on a pooled connection reads
+    exactly like a busy colleague, and the loop ticks on saying nothing while
+    packed cakes sit waiting for a van.
+
+    So the losing worker checks the one fact that distinguishes the two: is
+    there a run whose time came and went and which is still sitting there. On a
+    healthy deployment the worker holding the lock has already sent it and this
+    finds nothing, whatever number of workers are running. It needs no lock of
+    its own — it is one indexed read of a table this loop already owns.
+    """
+    try:
+        async with AsyncSessionFactory() as session:
+            overdue = await session.scalar(
+                select(func.count())
+                .select_from(DeliveryBatch)
+                .where(
+                    DeliveryBatch.status == BatchStatusEnum.PENDING.value,
+                    DeliveryBatch.dispatch_at
+                    < datetime.now(timezone.utc) - _OVERDUE_GRACE,
+                )
             )
-            await session.commit()
+    except Exception:  # noqa: BLE001 — a watch must not break the loop it watches
+        logger.exception("Could not check for overdue runs")
+        return
+
+    if overdue:
+        logger.warning(
+            "%s run(s) are past their departure and nothing is sending them; "
+            "the batch dispatcher's advisory lock may be stranded",
+            overdue,
+        )
 
 
 async def run_forever() -> None:
