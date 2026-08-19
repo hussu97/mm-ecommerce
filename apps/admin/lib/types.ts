@@ -186,6 +186,10 @@ export interface ProductListResponse {
 export type OrderStatus =
   | 'created'
   | 'confirmed'
+  // On the register and, on a zone we dispatch ourselves, with a courier
+  // already booked. The same minute as `confirmed` for most zones and hours
+  // later for a batched one, which is why it is a step of its own.
+  | 'arrived_at_pos'
   | 'packed'
   // Set by the courier's own pickup event on an integrated zone, and by hand
   // everywhere else.

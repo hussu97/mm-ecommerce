@@ -81,6 +81,13 @@ def wired(monkeypatch, order):
     monkeypatch.setattr(
         payment_service.order_service, "publish_to_register", AsyncMock()
     )
+    # Confirmation schedules the arrival rather than publishing directly, and
+    # scheduling reads the zone's run and the branch's hours. Neither is what
+    # these tests are about — they are about which gateway event reaches which
+    # handler — and both would query a session that is a bare mock.
+    from app.services import arrival_service
+
+    monkeypatch.setattr(arrival_service, "schedule", AsyncMock(return_value=None))
     sent = SimpleNamespace(
         confirmation=AsyncMock(),
         owner=AsyncMock(),

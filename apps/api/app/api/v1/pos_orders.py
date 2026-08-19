@@ -47,7 +47,6 @@ from app.schemas.pos_order import (
 )
 from app.services import (
     address_format,
-    batching_service,
     crud_service,
     email_service,
     option_snapshot,
@@ -661,29 +660,20 @@ async def accept_order(
     active`, which is what silences the alert on every device at the branch and
     what makes it an open check like any other.
 
-    **It is also where the courier is booked.** That used to happen when
-    somebody said the box was packed, which made the prep time and the driver's
-    travel time run end to end instead of overlapping — the kitchen worked for
-    forty minutes and only then did anyone start looking for a van. The two are
-    parallel now: the ticket prints and the driver is called in the same breath,
-    and the prep is long enough to absorb the drive.
+    **The courier is no longer booked here.** It was, briefly, and before that
+    it happened on packing; both were attempts to answer "when is the shop
+    committed to this order" with a register event. `arrived_at_pos` answers it
+    directly, and the booking now rides on that: an order is not on this list at
+    all until it has arrived, so by the time a cashier can press Accept the van
+    is already called and the reference on the ticket already exists.
 
-    Each kind of zone takes care of itself inside `assign_or_dispatch`:
-
-    * **third party** — nothing to call, so nothing happens. The order goes onto
-      the register and the paper and the shop hands it over the way it always has.
-    * **integrated, no schedule** — a driver is booked now.
-    * **integrated, on a schedule** — it joins the run whose window covers this
-      moment, and leaves when that window closes.
-
-    Best-effort, and deliberately after the flush. A courier that is unreachable
-    must not 500 an acceptance and leave the order shouting on every iPad in the
-    branch: the delivery row records the failure, the sweep retries it on the
-    ladder, and the cashier gets the open check they pressed for.
+    What acceptance still is, and all it is: the moment somebody has *seen* the
+    order. That silences the alarm on every device at the branch and turns the
+    order into an open check. It is not a status, deliberately — it is a fact
+    about a person, on a different axis from where the cake is.
 
     Idempotent, because two cashiers will press it at once on a busy counter and
-    the second one should not get an error for being slower. `assign_or_dispatch`
-    is idempotent for the same reason, so the second press books nothing twice.
+    the second one should not get an error for being slower.
     """
     order = await pos_order_service.get_order(db, order_id)
 
@@ -721,18 +711,6 @@ async def accept_order(
     # order has no creator until somebody claims it.
     order.creator_id = order.creator_id or user.id
     await db.flush()
-
-    try:
-        await batching_service.assign_or_dispatch(db, order, moment=order.accepted_at)
-    except Exception:  # noqa: BLE001 — a courier must not fail an acceptance
-        # A courier *refusal* never reaches here — it is written to the delivery
-        # row and scheduled on the ladder. This is the other kind: a bug, or the
-        # database going away mid-call. Nothing is scheduled for it, so it is
-        # logged loudly and the order shows on the admin's needs-a-human list.
-        logger.exception(
-            "Booking a courier for %s blew up on acceptance; it needs a person",
-            order.order_number,
-        )
 
     return _serialise(await pos_order_service.get_order(db, order_id))
 

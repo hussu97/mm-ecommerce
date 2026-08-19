@@ -22,6 +22,7 @@ const SETTLED_STATUSES: OrderStatus[] = ['cancelled', 'undelivered'];
 const STATUS_STEPS: OrderStatus[] = [
   'created',
   'confirmed',
+  'arrived_at_pos',
   'packed',
   'out_for_delivery',
   'delivered',
@@ -76,6 +77,7 @@ function promisedFor(order: Order): string | null {
 const STATUS_LABEL: Record<OrderStatus, string> = {
   created: 'created',
   confirmed: 'confirmed',
+  arrived_at_pos: 'at the shop',
   packed: 'packed',
   out_for_delivery: 'on the way',
   delivered: 'delivered',
@@ -86,6 +88,7 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
 const STATUS_VARIANT: Record<OrderStatus, 'warning' | 'info' | 'success' | 'danger'> = {
   created: 'warning',
   confirmed: 'info',
+  arrived_at_pos: 'info',
   packed: 'info',
   out_for_delivery: 'info',
   delivered: 'success',

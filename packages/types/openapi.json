@@ -12475,6 +12475,7 @@
         "enum": [
           "created",
           "confirmed",
+          "arrived_at_pos",
           "packed",
           "out_for_delivery",
           "delivered",
@@ -39414,7 +39415,7 @@
     },
     "/api/v1/pos/orders/{order_id}/accept": {
       "post": {
-        "description": "Take a waiting online order onto the register, and call the driver.\n\nThis is the moment a cashier has *seen* the order: it moves `pending \u2192\nactive`, which is what silences the alert on every device at the branch and\nwhat makes it an open check like any other.\n\n**It is also where the courier is booked.** That used to happen when\nsomebody said the box was packed, which made the prep time and the driver's\ntravel time run end to end instead of overlapping \u2014 the kitchen worked for\nforty minutes and only then did anyone start looking for a van. The two are\nparallel now: the ticket prints and the driver is called in the same breath,\nand the prep is long enough to absorb the drive.\n\nEach kind of zone takes care of itself inside `assign_or_dispatch`:\n\n* **third party** \u2014 nothing to call, so nothing happens. The order goes onto\n  the register and the paper and the shop hands it over the way it always has.\n* **integrated, no schedule** \u2014 a driver is booked now.\n* **integrated, on a schedule** \u2014 it joins the run whose window covers this\n  moment, and leaves when that window closes.\n\nBest-effort, and deliberately after the flush. A courier that is unreachable\nmust not 500 an acceptance and leave the order shouting on every iPad in the\nbranch: the delivery row records the failure, the sweep retries it on the\nladder, and the cashier gets the open check they pressed for.\n\nIdempotent, because two cashiers will press it at once on a busy counter and\nthe second one should not get an error for being slower. `assign_or_dispatch`\nis idempotent for the same reason, so the second press books nothing twice.",
+        "description": "Take a waiting online order onto the register, and call the driver.\n\nThis is the moment a cashier has *seen* the order: it moves `pending \u2192\nactive`, which is what silences the alert on every device at the branch and\nwhat makes it an open check like any other.\n\n**The courier is no longer booked here.** It was, briefly, and before that\nit happened on packing; both were attempts to answer \"when is the shop\ncommitted to this order\" with a register event. `arrived_at_pos` answers it\ndirectly, and the booking now rides on that: an order is not on this list at\nall until it has arrived, so by the time a cashier can press Accept the van\nis already called and the reference on the ticket already exists.\n\nWhat acceptance still is, and all it is: the moment somebody has *seen* the\norder. That silences the alarm on every device at the branch and turns the\norder into an open check. It is not a status, deliberately \u2014 it is a fact\nabout a person, on a different axis from where the cake is.\n\nIdempotent, because two cashiers will press it at once on a busy counter and\nthe second one should not get an error for being slower.",
         "operationId": "accept_order_api_v1_pos_orders__order_id__accept_post",
         "parameters": [
           {

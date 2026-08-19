@@ -164,6 +164,9 @@ export interface Cart {
 export type OrderStatus =
   | 'created'
   | 'confirmed'
+  // Internal: the shop has been told to make it. The customer's own view stays
+  // on "preparing" across both — see `fulfilment.stage`.
+  | 'arrived_at_pos'
   | 'packed'
   | 'out_for_delivery'
   | 'delivered'

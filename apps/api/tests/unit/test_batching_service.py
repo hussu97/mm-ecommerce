@@ -597,3 +597,61 @@ class _JoinSession:
                 return False
 
         return _Savepoint()
+
+
+@pytest.mark.asyncio
+async def test_an_order_on_a_run_is_never_given_a_second_one(monkeypatch):
+    """
+    Arrival happens at the instant the run closes, and `assign_or_dispatch` runs
+    there as a backstop. At that instant the window that matched at confirmation
+    has just ended and the *next* one has just begun — so a guard that asked
+    only whether the batch was still collecting fell through to a fresh
+    reservation and sat the order down to wait another three hours for a van.
+
+    The order is on a run. Opening it a second one is never the answer.
+    """
+    delivery = OrderDelivery(
+        order_id=uuid.uuid4(),
+        provider="lalamove",
+        zone_name="Dubai City",
+        polygon_id=uuid.uuid4(),
+        batch_id=uuid.uuid4(),
+        fee_charged=Decimal("25.00"),
+    )
+    order = SimpleNamespace(id=delivery.order_id, order_number="MM-20260819-001")
+
+    async def get_delivery(_db, _order_id):
+        return delivery
+
+    async def never_again(_db, _order, **_kw):
+        raise AssertionError("a second run was opened for an order already on one")
+
+    monkeypatch.setattr(batching_service.lalamove_service, "get_delivery", get_delivery)
+    monkeypatch.setattr(batching_service, "reserve", never_again)
+    monkeypatch.setattr(batching_service.courier_service, "dispatch", never_again)
+
+    assert await batching_service.assign_or_dispatch(_JoinSession(), order) is delivery
+
+
+@pytest.mark.asyncio
+async def test_reserving_books_nothing(monkeypatch):
+    """
+    `reserve` runs at confirmation, hours before anything is dispatched — which
+    is the ordering the whole arrival design turns on. A run is made of the
+    orders assigned to it and its window closing is what tells the shop about
+    them, so an order that waited to be told before joining would be waiting on
+    a run it was never on. Nothing here may contact a courier.
+    """
+    delivery, order, joined, leaves = _joining_order()
+    _stub_a_join(monkeypatch, delivery, joined, leaves)
+
+    async def never(_db, _order):
+        raise AssertionError("reserve called a courier")
+
+    monkeypatch.setattr(batching_service.courier_service, "dispatch", never)
+
+    batch = await batching_service.reserve(_JoinSession(), order)
+
+    assert batch is joined
+    assert delivery.batch_id == joined.id
+    assert delivery.courier_order_id is None, "a booking was made at confirmation"

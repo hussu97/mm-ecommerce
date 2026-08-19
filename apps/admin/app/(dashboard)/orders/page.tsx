@@ -32,6 +32,7 @@ const STATUS_OPTIONS = [
   { value: '', label: 'All Statuses' },
   { value: 'created', label: 'Created' },
   { value: 'confirmed', label: 'Confirmed' },
+  { value: 'arrived_at_pos', label: 'At the shop' },
   { value: 'packed', label: 'Packed' },
   { value: 'out_for_delivery', label: 'On The Way' },
   { value: 'delivered', label: 'Delivered' },
@@ -44,6 +45,7 @@ const STATUS_OPTIONS = [
 const STATUS_VARIANT: Record<OrderStatus, 'warning' | 'info' | 'success' | 'danger'> = {
   created: 'warning',
   confirmed: 'info',
+  arrived_at_pos: 'info',
   packed: 'info',
   out_for_delivery: 'info',
   delivered: 'success',

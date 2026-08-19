@@ -4,8 +4,8 @@
 The consequence tests pin the property the refactor exists for: what a status
 makes happen is keyed off the transition, not off who asked for it. The refund
 on `undelivered`, the register void and restock on `cancelled`, the publish on
-`confirmed` — each fires identically for the console, a webhook, the checkout
-and the till, because they all run this function.
+`arrived_at_pos` — each fires identically for the console, a webhook, the
+checkout and the till, because they all run this function.
 """
 
 from __future__ import annotations
@@ -59,6 +59,7 @@ def quiet_consequences(monkeypatch):
     the same seam the noon Send tests use.
     """
     from app.services import (
+        arrival_service,
         batching_service,
         courier_service,
         lalamove_service,
@@ -68,6 +69,7 @@ def quiet_consequences(monkeypatch):
 
     calls: dict[str, list] = {
         "publish": [],
+        "schedule": [],
         "dispatch": [],
         "batch_cancel": [],
         "courier_cancel": [],
@@ -76,6 +78,10 @@ def quiet_consequences(monkeypatch):
 
     async def publish(db, order, branch=None):
         calls["publish"].append(order)
+
+    async def schedule(db, order):
+        calls["schedule"].append(order)
+        return None
 
     async def dispatch(db, order):
         calls["dispatch"].append(order)
@@ -94,6 +100,7 @@ def quiet_consequences(monkeypatch):
         return Decimal("0")
 
     monkeypatch.setattr(order_service, "publish_to_register", publish)
+    monkeypatch.setattr(arrival_service, "schedule", schedule)
     monkeypatch.setattr(batching_service, "assign_or_dispatch", dispatch)
     monkeypatch.setattr(batching_service, "cancel_assignment", cancel_assignment)
     monkeypatch.setattr(lalamove_service, "get_delivery", get_delivery)
@@ -158,14 +165,33 @@ async def test_extra_from_widens_where_a_move_may_start(quiet_consequences):
 
 
 @pytest.mark.asyncio
-async def test_confirming_publishes_to_the_register(quiet_consequences):
+async def test_confirming_schedules_an_arrival_and_tells_nobody_yet(
+    quiet_consequences,
+):
+    """
+    Confirmation is about the money, and only that.
+
+    It used to publish to the register in the same breath, which was right for
+    every zone until one of them started holding orders for a shared van. The
+    shop is told at `arrived_at_pos` now — the same minute for most zones, and
+    hours later for a batched one.
+    """
     order = _order(OrderStatusEnum.CREATED)
     await order_lifecycle.transition(_Db(), order, OrderStatusEnum.CONFIRMED)
+    assert quiet_consequences["schedule"] == [order]
+    assert quiet_consequences["publish"] == [], "the counter heard about it too early"
+
+
+@pytest.mark.asyncio
+async def test_arriving_is_what_reaches_the_register(quiet_consequences):
+    order = _order(OrderStatusEnum.CONFIRMED)
+    await order_lifecycle.transition(_Db(), order, OrderStatusEnum.ARRIVED_AT_POS)
     assert quiet_consequences["publish"] == [order]
 
 
 @pytest.mark.asyncio
 async def test_packing_asks_for_a_van(quiet_consequences):
+    """The backstop: an order an admin finishes before any sweep reached it."""
     order = _order(OrderStatusEnum.CONFIRMED)
     await order_lifecycle.transition(_Db(), order, OrderStatusEnum.PACKED)
     assert quiet_consequences["dispatch"] == [order]

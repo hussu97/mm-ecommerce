@@ -99,6 +99,7 @@ __all__ = [
     "WindowMatch",
     "active_windows",
     "assign_or_dispatch",
+    "reserve",
     "cancel_assignment",
     "dispatch_batch",
     "dispatch_due_batches",
@@ -288,14 +289,14 @@ async def assign_or_dispatch(
     now. Third-party zones fall straight through and keep the manual flow they
     have always had.
 
-    **Called on acceptance, not on packing.** The register accepting an order —
-    by hand or by itself, on an auto-accepting terminal — is the shop committing
-    to make it, and that is early enough for the driver's travel to overlap the
-    prep instead of following it. `packed` still calls this as a backstop: a
-    branch with no terminal receiving online orders has no acceptance event at
-    all, and an admin marking such an order packed must still get a driver. Both
-    triggers are safe because this function is idempotent — an order already on
-    a run, or already booked, returns untouched at the guards below.
+    **Called on arrival, not on acceptance and not on packing.** Reaching the
+    register is the moment the shop is committed to the order, and on a batched
+    zone it is also the moment the run leaves — the two are one act by design,
+    which is what puts a courier reference on the ticket that prints. `packed`
+    still calls this as a backstop, for the order an admin marks finished before
+    any sweep has reached it. Both triggers are safe because this function is
+    idempotent: an order already on a run, or already booked, returns untouched
+    at the guards below.
 
     Only Lalamove has runs to share. A multi-drop Lalamove order is one booking
     with fifteen stops; noon Send's equivalent is a different product with a
@@ -311,28 +312,79 @@ async def assign_or_dispatch(
         delivery.provider, delivery.courier_status
     ):
         return delivery
-    if delivery.batch_id and delivery.batch is not None and delivery.batch.is_open:
-        # Already waiting on a run. Nothing to decide.
+    if delivery.batch_id:
+        # On a run, and the run's machinery owns it from here — whether it is
+        # still collecting, out with a driver, or failed and climbing its ladder
+        # in `dispatch_due_batches`.
+        #
+        # Deliberately *any* batch and not only an open one. This used to ask
+        # whether the batch was still collecting and fall through to a fresh
+        # reservation when it was not, which meant an order arriving at the
+        # instant its window closed matched the window that had just opened and
+        # sat down to wait another three hours for a van. The order is on a run;
+        # opening it a second one is never the answer.
         return delivery
 
     now = moment or datetime.now(timezone.utc)
     delivery.dispatchable_at = now
 
+    batch = await reserve(db, order, moment=now, delivery=delivery)
+    if batch is not None:
+        return delivery
+    return await courier_service.dispatch(db, order)
+
+
+async def reserve(
+    db: AsyncSession,
+    order: Order,
+    *,
+    moment: datetime | None = None,
+    delivery: OrderDelivery | None = None,
+) -> DeliveryBatch | None:
+    """
+    Take this order's place on a shared run, and book nothing.
+
+    Returns the run it joined, or None for an order that travels alone — which
+    covers a third-party zone, a pickup, a noon Send zone, a Lalamove zone
+    nobody put on a schedule, and a courier that is not configured at all. None
+    is an answer rather than a gap, and the caller's job is to decide what
+    "alone" means for it: `assign_or_dispatch` books a driver on the spot, and
+    `arrival_service.schedule` reads it as "the shop can be told now".
+
+    **Called at confirmation, well before anything is dispatched.** That
+    ordering is the load-bearing part of the whole arrival design: a run is made
+    of the orders assigned to it and its window closing is what tells the shop
+    about them, so an order that waited to be told before joining would be
+    waiting on a run it was never on. Nothing here contacts a courier.
+
+    Idempotent by way of `_open_batch`, which converges every order in a group
+    on one run per departure.
+    """
+    now = moment or datetime.now(timezone.utc)
+    if delivery is None:
+        delivery = await lalamove_service.get_delivery(db, order.id)
+    if delivery is None:
+        return None
+    if not courier_service.books_itself(delivery.provider):
+        # A third-party zone. Somebody else's van, on somebody else's schedule.
+        return None
+
     if delivery.provider != FulfilmentProviderEnum.LALAMOVE.value:
-        return await courier_service.dispatch(db, order)
+        # noon Send books one order at a time against a different endpoint with
+        # a cap of three drops. It is not a run and cannot be shared.
+        return None
 
     if not lalamove_service.is_enabled():
-        # No courier configured, so there is no shared run to wait for. Falling
-        # through to the single-order path records "dispatch this by hand" on
-        # the order immediately, where the person packing it will see it —
-        # rather than parking it in a batch that can only fail when its window
-        # closes an hour later.
-        return await courier_service.dispatch(db, order)
+        # No courier configured, so there is no shared run to wait for. Saying
+        # "alone" here records "dispatch this by hand" on the order immediately,
+        # where the person packing it will see it — rather than parking it in a
+        # batch that can only fail when its window closes an hour later.
+        return None
 
     if delivery.polygon_id is None:
         # An order placed before zones carried an id, or against a map that has
         # since been deleted. It still has to go out; it just goes alone.
-        return await courier_service.dispatch(db, order)
+        return None
 
     group_id = await group_for_polygon(db, delivery.polygon_id)
     if group_id is None:
@@ -340,33 +392,31 @@ async def assign_or_dispatch(
         # every noon Send zone and every Lalamove zone nobody put on a schedule:
         # nothing to wait for, so it leaves now.
         logger.info(
-            "Zone %s is in no batch group; order %s dispatches on its own",
+            "Zone %s is in no batch group; order %s travels on its own",
             delivery.polygon_id,
             order.order_number,
         )
-        return await courier_service.dispatch(db, order)
+        return None
 
     windows = await active_windows(db, group_id)
     match = find_window(windows, now)
     if match is None:
         logger.info(
-            "No batch window covers %s for order %s; dispatching on its own",
+            "No batch window covers %s for order %s; it travels on its own",
             _local(now).strftime("%H:%M"),
             order.order_number,
         )
-        return await courier_service.dispatch(db, order)
+        return None
 
     batch = await _open_batch(db, group_id, match)
     delivery.batch_id = batch.id
     delivery.last_error = None
     # The short number the driver will quote, spent now rather than at the end
-    # of the window. On the un-batched path dispatch happens inside acceptance,
-    # so the reference exists by the time the ticket prints; on this path the
-    # booking is up to three hours away and the paper would go out carrying
-    # `MM-20260819-001` — the fifteen-character string this number exists to
-    # replace. The reference identifies the order, not the booking, and `assign`
-    # is idempotent, so the dispatch at the close of the window finds this one
-    # already on the row and keeps it.
+    # of the window. The ticket prints when the run leaves and the booking
+    # happens in the same breath, so a reference assigned by the booking would
+    # be racing the paper; assigned here it is hours old by then. It identifies
+    # the order rather than the booking, and `assign` is idempotent, so the
+    # dispatch finds this one already on the row and keeps it.
     await courier_reference.assign(db, delivery)
     batch.stop_count = await _count_deliveries(db, batch.id)
     logger.info(
@@ -375,7 +425,7 @@ async def assign_or_dispatch(
         batch.window_label,
         batch.dispatch_at.isoformat(),
     )
-    return delivery
+    return batch
 
 
 async def cancel_assignment(db: AsyncSession, delivery: OrderDelivery) -> None:
@@ -465,6 +515,12 @@ async def reschedule_group(db: AsyncSession, group_id: uuid.UUID) -> int:
             continue
         await cancel_assignment(db, delivery)
         delivery.batch_id = batch.id
+        # The run is what tells the shop about the order, so moving the run
+        # moves that too. Without this an order dragged from a 21:00 slot to an
+        # 18:00 one would leave with a driver three hours before the kitchen was
+        # told to make it.
+        if delivery.order is not None:
+            delivery.order.arrives_at = batch.dispatch_at
         moved += 1
 
     await db.flush()
@@ -474,8 +530,13 @@ async def reschedule_group(db: AsyncSession, group_id: uuid.UUID) -> int:
             batch.stop_count = await _count_deliveries(db, batch_id)
 
     for delivery in strays:
-        if delivery.order is not None:
-            await courier_service.dispatch(db, delivery.order)
+        if delivery.order is None:
+            continue
+        # No slot left to wait for, so this one travels alone — and an order
+        # travelling alone is due at the register now rather than at a departure
+        # that no longer exists.
+        delivery.order.arrives_at = now
+        await courier_service.dispatch(db, delivery.order)
 
     if moved:
         logger.info("Rescheduled %s waiting orders in group %s", moved, group_id)
@@ -717,6 +778,7 @@ async def retry_failed_dispatches(
 #: conversation, and a person starts it.
 _RETRYABLE_STATUSES = {
     OrderStatusEnum.CONFIRMED,
+    OrderStatusEnum.ARRIVED_AT_POS,
     OrderStatusEnum.PACKED,
 }
 

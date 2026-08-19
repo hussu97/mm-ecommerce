@@ -69,6 +69,13 @@ VALID_TRANSITIONS: dict[OrderStatusEnum, set[OrderStatusEnum]] = {
         OrderStatusEnum.CREATED,
     },
     OrderStatusEnum.CONFIRMED: {
+        # The ordinary next step, and for most zones it happens within the
+        # minute. A batched order waits here for its run to close.
+        OrderStatusEnum.ARRIVED_AT_POS,
+        # Kept, though the sweep normally gets there first. An admin correcting
+        # an order, or a register running ahead of a sweep that has not ticked,
+        # is describing a box that physically exists — refusing that because our
+        # own bookkeeping has not caught up would be the tail wagging the dog.
         OrderStatusEnum.PACKED,
         OrderStatusEnum.CANCELLED,
         OrderStatusEnum.REFUNDED,
@@ -83,6 +90,23 @@ VALID_TRANSITIONS: dict[OrderStatusEnum, set[OrderStatusEnum]] = {
         # delivered push, or an admin recording a collected pickup order,
         # arrives here without ever seeing `packed`.
         OrderStatusEnum.DELIVERED,
+    },
+    OrderStatusEnum.ARRIVED_AT_POS: {
+        OrderStatusEnum.PACKED,
+        # **Straight past `packed`, deliberately.** On a zone we dispatch
+        # ourselves the courier's PICKED_UP is usually the first news that the
+        # box is finished, and the obvious reading — write a `packed` on the way
+        # through so the chain looks complete — invents a moment that never
+        # happened. `packed_at` is shown to the customer and read by the
+        # kitchen reports; a timestamp meaning "the instant we heard about the
+        # driver" would be a lie in both places. The chain is allowed to have a
+        # hole in it, and the hole is the honest record.
+        OrderStatusEnum.OUT_FOR_DELIVERY,
+        # A collected pickup, or a delivered push that outran its pickup one.
+        OrderStatusEnum.DELIVERED,
+        OrderStatusEnum.CANCELLED,
+        OrderStatusEnum.REFUNDED,
+        OrderStatusEnum.DISPUTED,
     },
     OrderStatusEnum.PACKED: {
         OrderStatusEnum.OUT_FOR_DELIVERY,
@@ -343,24 +367,36 @@ async def _consequences(
     `order_service` and the couriers, and importing them at the top would close
     the cycle they already thread carefully around.
     """
+    # Confirmation no longer reaches the register. What it does is decide
+    # *when* the register will hear: the order takes its place on a run if its
+    # zone has one, and is stamped with the moment it is due to arrive.
+    #
     # Confirming by hand is a confirmation like any other — a bank transfer
     # reconciled in the morning, or a declined card the customer paid another
-    # way. The register hears about the order the moment the money is
-    # acknowledged, whichever route acknowledged it. (`publish_to_register`
-    # itself declines counter sales and repeats — it is safe to say twice.)
+    # way — so this is keyed off the transition and not off the endpoint.
     if new_status == OrderStatusEnum.CONFIRMED:
+        from app.services import arrival_service
+
+        await arrival_service.schedule(db, order)
+
+    # The register hears about it here instead, which is the point of the
+    # status. For a batched zone this is hours after the money landed and the
+    # same instant the van is booked; for everything else the two are the same
+    # minute. `publish_to_register` declines counter sales and repeats, so it is
+    # safe to say twice, and the arrival sweep leans on that.
+    elif new_status == OrderStatusEnum.ARRIVED_AT_POS:
         from app.services import order_service
 
         await order_service.publish_to_register(db, order)
 
-    # The backstop, not the trigger. Acceptance on the register is what calls a
-    # driver now — early enough that the drive overlaps the prep rather than
-    # queueing behind it. But not every order is accepted on a register: a
-    # branch with no terminal receiving online orders has no acceptance event at
-    # all, and an admin marking such an order packed in the console must still
-    # get a van to the door. `assign_or_dispatch` returns untouched on anything
-    # already batched or already booked, so on the ordinary path this is free.
-    # Nothing happens for a third-party zone, exactly as before.
+    # The backstop, not the trigger. Arrival is what calls a driver now, and on
+    # a batched zone the run has already gone out by the time anything is
+    # packed. But an admin can mark an order packed that the sweep has not
+    # reached — a branch with no terminal, a run whose window is still open and
+    # a box the kitchen finished early — and that order still needs a van.
+    # `assign_or_dispatch` returns untouched on anything already batched or
+    # already booked, so on the ordinary path this is free. Nothing happens for
+    # a third-party zone, exactly as before.
     elif new_status == OrderStatusEnum.PACKED:
         from app.services import batching_service
 

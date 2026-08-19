@@ -425,7 +425,15 @@ async def get_funnel(
     counts: dict[OrderStatusEnum, int] = {row.status: int(row.count) for row in rows}
 
     created = counts.get(OrderStatusEnum.CREATED, 0)
-    confirmed = counts.get(OrderStatusEnum.CONFIRMED, 0)
+    # `arrived_at_pos` counts as confirmed here. The bucket means "paid for and
+    # not yet finished", and an order waiting for its run is exactly that —
+    # splitting it out would put a step in a funnel about *checkout* that is
+    # really about our dispatch schedule. Folding it in also keeps `total`
+    # whole: left out, every batched order would vanish from the denominator
+    # and quietly flatter the conversion rate.
+    confirmed = counts.get(OrderStatusEnum.CONFIRMED, 0) + counts.get(
+        OrderStatusEnum.ARRIVED_AT_POS, 0
+    )
     packed = counts.get(OrderStatusEnum.PACKED, 0)
     cancelled = counts.get(OrderStatusEnum.CANCELLED, 0)
     total = created + confirmed + packed + cancelled

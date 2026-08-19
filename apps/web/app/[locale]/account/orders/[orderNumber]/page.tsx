@@ -23,6 +23,9 @@ import { Icon } from '@/components/ui/Icon';
 const STATUS_STYLE: Record<OrderStatus, string> = {
   created: 'bg-yellow-50 text-yellow-700 border-yellow-200',
   confirmed: 'bg-blue-50 text-blue-700 border-blue-200',
+  // Same badge as `confirmed`: the difference between them is whether our
+  // kitchen has been told, which is not a fact about the customer's cake.
+  arrived_at_pos: 'bg-blue-50 text-blue-700 border-blue-200',
   packed: 'bg-purple-50 text-purple-700 border-purple-200',
   out_for_delivery: 'bg-indigo-50 text-indigo-700 border-indigo-200',
   delivered: 'bg-green-50 text-green-700 border-green-200',
@@ -46,6 +49,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
   const STATUS_LABEL: Record<OrderStatus, string> = {
     created: t('order.timeline_placed'),
     confirmed: t('order.status_confirmed'),
+    arrived_at_pos: t('order.status_confirmed'),
     packed: t('order.status_packed'),
     out_for_delivery: t('order.status_out_for_delivery'),
     delivered: t('order.status_delivered'),

@@ -188,6 +188,13 @@ def estimate_state_of(order: Order) -> str:
         return "undelivered"
     if order.status == OrderStatusEnum.PACKED:
         return "ready"
+    # `arrived_at_pos` falls through to "preparing" with `confirmed`, and that
+    # is the whole of its customer-facing meaning. The two are one word out
+    # here on purpose: which of them an order is in says whether *we* have told
+    # the kitchen, and a customer reading "preparing" is being told something
+    # about their cake rather than about our dispatch machinery. A batched
+    # order sitting at `confirmed` for two hours is genuinely being prepared for
+    # — its run is booked and its promise already names the hour.
     return "preparing"
 
 

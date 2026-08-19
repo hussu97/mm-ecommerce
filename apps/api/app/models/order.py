@@ -48,6 +48,17 @@ if TYPE_CHECKING:
 class OrderStatusEnum(str, enum.Enum):
     CREATED = "created"
     CONFIRMED = "confirmed"
+    #: The shop has been told to make it: it is on the register, the ticket has
+    #: printed, and — on a zone we dispatch ourselves — the courier is booked.
+    #:
+    #: Confirmation and this are the same instant for a third-party zone, a
+    #: pickup and an un-batched courier, and hours apart for a batched one,
+    #: which is the whole reason it is a status rather than a synonym for
+    #: `confirmed`. Before it existed the register heard about every order the
+    #: moment the money landed, and "has the shop been told" was a question you
+    #: answered by reading `pos_status` — a column about acceptance, on a
+    #: different axis, that says nothing about orders no register ever saw.
+    ARRIVED_AT_POS = "arrived_at_pos"
     PACKED = "packed"
     #: The parcel has left the kitchen. On an integrated zone this is set by the
     #: courier's own PICKED_UP webhook rather than by hand, so it means the
@@ -233,6 +244,24 @@ class Order(Base, UUIDMixin, TimestampMixin):
     )
     #: `time` or `day` — see `delivery_service.DeliveryEstimate.precision`.
     promised_precision: Mapped[str | None] = mapped_column(String(8), nullable=True)
+
+    #: When this order is due to reach the register — the moment it becomes
+    #: `arrived_at_pos`. Stamped at confirmation, once, from the answer the zone
+    #: gives:
+    #:
+    #:   * **batched courier** — the close of the run it has joined. The whole
+    #:     point of the status: the shop is told when the van is booked, not
+    #:     when the money landed.
+    #:   * **anything else** — now, or the branch's next opening if the shop is
+    #:     shut. An order placed at 03:00 used to land on a dark counter and
+    #:     ring at nobody until morning.
+    #:
+    #: Read by the arrival sweep and nothing else. It is not cleared on arrival:
+    #: a stamp that survives is what lets somebody ask, of an order that went
+    #: out late, when the system said the kitchen should have started.
+    arrives_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
 
     # ─── POS fields ───────────────────────────────────────────────────────────
     # Null for storefront orders. `status` above keeps the e-commerce lifecycle;

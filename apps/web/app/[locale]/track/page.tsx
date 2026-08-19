@@ -13,6 +13,10 @@ import { FulfilmentPanel } from '@/components/order/FulfilmentPanel';
 const STATUS_VARIANT: Record<OrderStatus, string> = {
   created: 'bg-yellow-50 text-yellow-700',
   confirmed: 'bg-blue-50 text-blue-700',
+  // Reads as `confirmed` to the customer, deliberately. The two differ only
+  // in whether our kitchen has been told, which is our business and not
+  // theirs — see `fulfilment_service.estimate_state_of`.
+  arrived_at_pos: 'bg-blue-50 text-blue-700',
   packed: 'bg-purple-50 text-purple-700',
   out_for_delivery: 'bg-indigo-50 text-indigo-700',
   delivered: 'bg-green-50 text-green-700',
@@ -44,6 +48,7 @@ export default function TrackPage() {
   const STATUS_LABEL: Record<OrderStatus, string> = {
     created: t('order.status_pending'),
     confirmed: t('order.status_confirmed'),
+    arrived_at_pos: t('order.status_confirmed'),
     packed: t('order.status_packed'),
     out_for_delivery: t('order.status_out_for_delivery'),
     delivered: t('order.status_delivered'),

@@ -41,7 +41,7 @@ from sqlalchemy import func, select
 from app.core import advisory_lock
 from app.core.database import AsyncSessionFactory
 from app.models.delivery_batch import BatchStatusEnum, DeliveryBatch
-from app.services import batching_service
+from app.services import arrival_service, batching_service
 
 logger = logging.getLogger(__name__)
 
@@ -67,13 +67,16 @@ async def sweep_once() -> list:
     Returns the batches dispatched, or nothing at all if another worker held
     the lock — which is a normal outcome, not a failure.
 
-    **Two kinds of work, one lock.** Runs whose window has closed, and single
-    orders whose retry has fallen due. They are swept together because they are
-    the same question asked of two tables — *is anything owed a driver right
-    now* — and because a second loop would need a second advisory lock, a second
-    tick and its own reason to exist. Retries run after batches: a batch going
-    out may itself be what clears an order's failure, and doing them in this
-    order means that order is already booked by the time its rung comes up.
+    **Three kinds of work, one lock.** Runs whose window has closed, orders due
+    to reach the register, and single orders whose retry has fallen due. They
+    are swept together because they are the same question asked of three tables
+    — *is anything owed something right now* — and because each extra loop would
+    need its own advisory lock, its own tick and its own reason to exist.
+
+    The order of the three is the order of their dependencies. A run going out
+    is what makes its orders due to arrive, and an arrival is what books a
+    driver for an order travelling alone, so by the time the retry sweep looks
+    for stragglers both of those have already had their turn this tick.
 
     Retries cannot stop batches. A failure in the retry sweep is logged and
     swallowed here rather than allowed out, because the runs waiting on the next
@@ -86,6 +89,24 @@ async def sweep_once() -> list:
         async with AsyncSessionFactory() as session:
             dispatched = await batching_service.dispatch_due_batches(session)
             await session.commit()
+            # Second, so a run that has just gone out is already booked by the
+            # time the orders on it reach the register — the ticket that prints
+            # then carries a courier reference rather than promising one. The
+            # arrival is not *conditional* on that booking, only ordered after
+            # it: an order whose courier refused still has to be made, and
+            # `arrival_service.land` says so whatever the dispatch answered.
+            try:
+                landed = await arrival_service.sweep(session)
+                await session.commit()
+                if landed:
+                    logger.info(
+                        "%s order(s) reached the register: %s",
+                        len(landed),
+                        ", ".join(landed),
+                    )
+            except Exception:  # noqa: BLE001 — never at the batches' expense
+                logger.exception("Arrival sweep failed; batches were unaffected")
+                await session.rollback()
             try:
                 retried = await batching_service.retry_failed_dispatches(session)
                 await session.commit()

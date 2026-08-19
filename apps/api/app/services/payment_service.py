@@ -713,17 +713,41 @@ _TRANSACTION_STATUSES = {
 }
 
 
+#: Statuses a "payment succeeded" push has nothing left to do for. Not the same
+#: set as "cannot reach `confirmed`" — an order further down the chain is
+#: fulfilled rather than terminal, and telling a human to refund it would be
+#: wrong in the loudest available way.
+_ALREADY_PAID_FOR = frozenset(
+    {
+        OrderStatusEnum.CONFIRMED,
+        OrderStatusEnum.ARRIVED_AT_POS,
+        OrderStatusEnum.PACKED,
+        OrderStatusEnum.OUT_FOR_DELIVERY,
+        OrderStatusEnum.DELIVERED,
+    }
+)
+
+
 async def _handle_payment_succeeded(
     db: AsyncSession, order: Order, event: GatewayEvent
 ) -> None:
     payment_id = event.payment_id or event.session_id
 
-    if order.status == OrderStatusEnum.CONFIRMED:
+    # Already paid for and already moving. `arrived_at_pos` belongs here as much
+    # as `confirmed` does: confirmation now lands the arrival in the same act
+    # for every zone without a shared run, so by the time a gateway's retry
+    # arrives — and they all retry — the order has usually gone one further.
+    # Reading only `confirmed` sent those down the terminal-status branch below
+    # and logged a critical about money taken for an order that will not be
+    # fulfilled, for the entirely ordinary event of a webhook being delivered
+    # twice.
+    if order.status in _ALREADY_PAID_FOR:
         if payment_id:
             order.payment_id = payment_id
         logger.info(
-            "Payment succeeded webhook skipped — order %s is already confirmed",
+            "Payment succeeded webhook skipped — order %s is already %s",
             order.order_number,
+            order.status.value,
         )
         return
 
@@ -750,11 +774,11 @@ async def _handle_payment_succeeded(
 
     if payment_id:
         order.payment_id = payment_id
-    # The money has landed, so now the shop is told: `transition` publishes to
-    # the register on the way through. This is the moment a card order becomes
-    # work — before it, the customer had only opened a payment page, and a
-    # kitchen that had already been shouted at about it would be baking against
-    # a charge that might never be made.
+    # The money has landed, so now the order becomes work: `transition` schedules
+    # its arrival on the way through, and lands it there and then unless it is
+    # waiting for a shared run. Before this the customer had only opened a
+    # payment page, and a kitchen already shouted at about it would be baking
+    # against a charge that might never be made.
     await order_lifecycle.transition(db, order, OrderStatusEnum.CONFIRMED)
 
     order_response = await order_service.to_response(db, order)

@@ -239,21 +239,27 @@ def _gateway_event(event_type: PaymentEventType) -> GatewayEvent:
     )
 
 
-async def test_a_settled_payment_publishes_the_order(monkeypatch):
+async def test_a_settled_payment_schedules_the_order_onto_the_kitchen(monkeypatch):
     """
     The moment a card order becomes work. Before it, the customer had only
     opened a payment page.
+
+    It *schedules* rather than publishes: settling the money is what decides
+    when the shop will be told, and for a batched zone that is the close of the
+    run this call puts the order on. The publish itself happens at
+    `arrived_at_pos`, which for most zones is the following tick and for a
+    batched one is hours away.
 
     Written against `_handle_payment_succeeded` rather than a gateway, because
     that handler is the one place both Stripe and Ziina arrive at — the point
     of `GatewayEvent` is that there is nothing below it to say twice.
     """
-    from app.services import payment_service
+    from app.services import arrival_service, payment_service
 
     order = _order()
-    published = AsyncMock()
+    scheduled = AsyncMock(return_value=None)
 
-    monkeypatch.setattr(payment_service.order_service, "publish_to_register", published)
+    monkeypatch.setattr(arrival_service, "schedule", scheduled)
     monkeypatch.setattr(
         payment_service.order_service, "to_response", AsyncMock(return_value=None)
     )
@@ -269,7 +275,7 @@ async def test_a_settled_payment_publishes_the_order(monkeypatch):
     )
 
     assert order.status == OrderStatusEnum.CONFIRMED
-    published.assert_awaited_once()
+    scheduled.assert_awaited_once()
 
 
 async def test_a_declined_card_publishes_nothing(monkeypatch):

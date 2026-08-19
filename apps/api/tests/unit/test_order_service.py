@@ -174,6 +174,22 @@ def mock_fulfilment():
             "app.services.batching_service.assign_or_dispatch",
             new_callable=AsyncMock,
         ),
+        # The two facts the arrival needs from the world, stubbed rather than
+        # the arrival itself: a zone with no shared run, and a shop that is
+        # open. `arrival_service.schedule` then runs for real and lands the
+        # order, which is what `test_a_cash_order_is_published_at_checkout`
+        # is checking. Reading either for real would mean a branch row and a
+        # holiday query on a session whose results are a fixed script.
+        patch(
+            "app.services.batching_service.reserve",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "app.services.arrival_service._next_working_moment",
+            new_callable=AsyncMock,
+            return_value=datetime.datetime.now(datetime.timezone.utc),
+        ),
         patch(
             "app.services.batching_service.cancel_assignment",
             new_callable=AsyncMock,
@@ -486,6 +502,12 @@ class TestOnlyPaidOrdersReachTheRegister:
         Cash has no payment event to wait for. The customer pays at the counter
         when they collect, so the order is accepted on the spot — and a shop
         that is not told about it is a customer arriving to nothing.
+
+        It reaches the counter already `arrived_at_pos`: a collection order has
+        no run to wait for, so confirmation and arrival are the same instant and
+        the publish carries the later of the two. The status is the assertion —
+        an order on a register that still reads `confirmed` would mean the two
+        had come apart.
         """
         cart = _cart(items=[_cart_item(_product("100.00"))])
         db = _db_for_create(cart, _order_mock(status=OrderStatusEnum.CONFIRMED))
@@ -497,7 +519,7 @@ class TestOnlyPaidOrdersReachTheRegister:
             await create_order(db, _cash_data(), user_id=None)
 
         publish.assert_awaited_once()
-        assert publish.await_args[0][1].status == OrderStatusEnum.CONFIRMED
+        assert publish.await_args[0][1].status == OrderStatusEnum.ARRIVED_AT_POS
 
 
 # ── Status transition logic ───────────────────────────────────────────────────
