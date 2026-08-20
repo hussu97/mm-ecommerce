@@ -293,6 +293,26 @@ export const analytics = {
   selectDeliveryMethod: (data: { method: 'delivery' | 'pickup'; fee: number }) =>
     track('select_delivery_method', { ...data, currency: CURRENCY }),
 
+  /**
+   * A discount the basket had applied was put back on the checkout because
+   * nothing carried it there.
+   *
+   * One of these is one customer who would otherwise have been shown a price
+   * in the basket and charged a higher one — `sessionStorage` was the only
+   * thing carrying the code, and it is allowed to fail. The recovery is
+   * silent by design, so this event is the only way the failure is visible at
+   * all: watch its rate against `promo_applied` to know how often the handoff
+   * breaks, and its `discount` to know what it would have cost.
+   *
+   * Deliberately not `promo_applied`. The customer applied the code once, in
+   * the basket, and counting it twice would inflate every coupon's take.
+   */
+  promoRecovered: (data: {
+    code: string;
+    discount: number;
+    subtotal?: number;
+  }) => track('promo_recovered', { ...data, currency: CURRENCY }),
+
   promoFailed: (data: {
     code: string;
     reason: string;

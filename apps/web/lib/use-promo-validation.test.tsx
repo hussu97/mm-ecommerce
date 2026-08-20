@@ -261,6 +261,15 @@ describe('useCartPromoRecovery', () => {
     return { onRecovered, ...view };
   };
 
+  it('reports the recovery, because nothing else makes the failure visible', async () => {
+    // The repair is silent to the customer by design, so this event is the
+    // only trace. It must not be `promo_applied`: the code was applied once,
+    // in the basket, and counting it twice inflates every coupon's take.
+    const { onRecovered } = recover();
+    await waitFor(() => expect(onRecovered).toHaveBeenCalledTimes(1));
+    expect(mocks.promoApplied).not.toHaveBeenCalled();
+  });
+
   it('puts the basket’s code back when nothing else carried it', async () => {
     // The bug: `sessionStorage` failed, so the checkout had no code, priced the
     // order at full price and would have submitted it that way.

@@ -367,6 +367,15 @@ function CheckoutContent() {
         promoMessage: outcome.message,
         promoNeedsVerify: outcome.needsVerify,
       });
+      // The recovery is silent to the customer, so this is the only trace it
+      // leaves. Each one is a discount that would have been lost between the
+      // two screens; the rate against `promo_applied` is how often the
+      // `sessionStorage` handoff actually fails.
+      analytics.promoRecovered({
+        code: outcome.code,
+        discount: outcome.discount,
+        subtotal,
+      });
     },
   });
 
