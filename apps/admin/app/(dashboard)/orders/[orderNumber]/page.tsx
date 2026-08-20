@@ -576,10 +576,18 @@ export default function OrderDetailPage() {
                 <td className="px-4 py-2.5">
                   <div className="text-xs font-body text-gray-800">{item.product_name}</div>
                   <div className="text-[11px] font-body text-gray-400">{item.product_sku}</div>
+                  {/*
+                    Each option carries its own count, and the count is the
+                    whole content of a mixed box: "Fudge Brownie, Lindor
+                    Brownie" describes a box of six no better than a box of two.
+                    Printed for every option rather than only the plural ones —
+                    beside a 5x, a bare name reads as an unknown quantity rather
+                    than as one.
+                  */}
                   {item.selected_options_snapshot && item.selected_options_snapshot.length > 0 && (
                     <div className="text-[11px] font-body text-gray-400 mt-0.5">
                       {item.selected_options_snapshot.map((o, i) => (
-                        <span key={i}>{i > 0 ? ', ' : ''}{o.option_name}{o.option_price > 0 ? ` (+${o.option_price.toFixed(2)})` : ''}</span>
+                        <span key={i}>{i > 0 ? ', ' : ''}{o.quantity ?? 1} &times; {o.option_name}{o.option_price > 0 ? ` (+${o.option_price.toFixed(2)})` : ''}</span>
                       ))}
                     </div>
                   )}

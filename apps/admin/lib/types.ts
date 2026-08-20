@@ -206,6 +206,15 @@ export interface SelectedOptionSnapshot {
   option_id: string;
   option_name: string;
   option_price: number;
+  /**
+   * How many of this option are on the line — five fudge brownies in a box of
+   * six, not one.
+   *
+   * Optional because it is: rows written before option quantities existed
+   * repeated the option instead and carry no key, so a missing value means one.
+   * Mirrors the same default in `schemas/option_snapshot.OptionSnapshot`.
+   */
+  quantity?: number;
 }
 
 export interface OrderItem {
