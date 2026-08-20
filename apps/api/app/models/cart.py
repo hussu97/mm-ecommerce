@@ -30,6 +30,36 @@ class Cart(Base, UUIDMixin, TimestampMixin):
         String(255), nullable=True, index=True
     )
 
+    #: The address typed into the checkout form by somebody with no account.
+    #:
+    #: Written back from `POST /orders/preview`, which already asked for it in
+    #: order to judge a new-customer coupon and then dropped it. It is the only
+    #: thing that makes an abandoned guest basket reachable — see migration 116.
+    #:
+    #: Never written for a basket that has a `user_id`: that one already has an
+    #: address on `users.email`, and a copy here would be free to go stale the
+    #: day somebody changes their account email. Read precedence is therefore
+    #: the account first and this second, and the two can never disagree.
+    guest_email: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )
+
+    #: When the person holding this basket last touched it.
+    #:
+    #: **Not `updated_at`.** Adding a line writes `cart_items` and never touches
+    #: this row, so a basket that has been actively filled for ten minutes can
+    #: carry an `updated_at` from the moment it was created. Stamped instead by
+    #: `cart_service.touch` on every read and every write of the basket, which
+    #: makes it the answer to the only question a stale basket raises: how long
+    #: has it been sitting there.
+    #:
+    #: Throttled to a minute's resolution at the point of writing, because
+    #: `GET /cart` fires on every page load and a column this cheap is not worth
+    #: one row update per page view.
+    last_activity_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+
     #: The promo code the customer applied in the basket, if any.
     #:
     #: The **code**, never the discount. What a coupon is worth depends on the

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -9,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import BadRequestError, NotFoundError
+from app.models.base import utcnow
 from app.models.cart import Cart, CartItem
 from app.models.product import Product
 from app.schemas.cart import (
@@ -31,12 +33,25 @@ __all__ = [
     "clear",
     "find_cart",
     "get_or_create",
+    "line_total",
+    "line_unit_price",
     "merge",
+    "remember_checkout_email",
     "remove_item",
+    "touch",
     "update_item",
     "update_item_note",
     "validate_note",
 ]
+
+#: How finely `last_activity_at` is kept.
+#:
+#: `GET /cart` fires on every storefront page load — the header's basket count
+#: is on every screen — so an unthrottled stamp would be one `UPDATE carts` per
+#: page view for every shopper on the site. Nothing reads this column to a
+#: finer grain than "minutes idle", so a minute of slack costs the answer
+#: nothing and costs the database a great deal less.
+_ACTIVITY_RESOLUTION = timedelta(minutes=1)
 
 
 def clean_note(note: str | None) -> str | None:
@@ -125,6 +140,106 @@ def option_charge(option: dict) -> Decimal:
     )
 
 
+def line_unit_price(item: CartItem) -> Decimal:
+    """
+    What one of this basket line costs: the product plus everything chosen on it.
+
+    The one formula, so that the storefront's basket and the console's live-cart
+    screen cannot quote a shopper two different numbers for the same row. A
+    product that has since been deleted prices at zero rather than raising —
+    `_discard_hidden_items` is what removes such a line, and a total is not the
+    place to discover it is still there.
+    """
+    options_total = sum(
+        (option_charge(opt) for opt in (item.selected_options or [])), Decimal("0")
+    )
+    base = Decimal(str(item.product.base_price)) if item.product else Decimal("0")
+    return base + options_total
+
+
+def line_total(item: CartItem) -> Decimal:
+    """What this basket line costs in full — see `line_unit_price`."""
+    return line_unit_price(item) * item.quantity
+
+
+def subtotal_of(cart: Cart) -> Decimal:
+    """
+    The goods value of a basket whose items and products are already loaded.
+
+    Goods only: no delivery, no small-basket surcharge, no discount. Those are
+    `order_pricing`'s to decide and depend on things a basket does not know —
+    where it is going, and whether today's coupon still applies.
+    """
+    return sum((line_total(item) for item in cart.items), Decimal("0.00"))
+
+
+def touch(cart: Cart, *, now: datetime | None = None) -> bool:
+    """
+    Stamp this basket as touched, unless it was already stamped this minute.
+
+    Returns whether the row was changed, so a caller reading a basket can skip
+    the flush on the overwhelmingly common path where it was not. See
+    `_ACTIVITY_RESOLUTION` for why the throttle is here and not left to the
+    database.
+
+    A stamp older than the column's timezone-aware type (a naive value from a
+    fixture, or from a row written before this column existed) is treated as
+    "long ago" rather than compared, because subtracting a naive datetime from
+    an aware one raises — and the honest answer to "when was this last touched"
+    is never worth a 500 on the basket page.
+    """
+    now = now or utcnow()
+    last = cart.last_activity_at
+    if last is not None and last.tzinfo is not None:
+        if now - last < _ACTIVITY_RESOLUTION:
+            return False
+    cart.last_activity_at = now
+    return True
+
+
+async def _touched(db: AsyncSession, cart: Cart) -> None:
+    """`touch`, flushed — the form every caller in this module wants."""
+    if touch(cart):
+        await db.flush()
+
+
+async def remember_checkout_email(
+    db: AsyncSession, cart: Cart | None, email: str | None
+) -> None:
+    """
+    Write the address typed into the checkout back onto the guest basket it
+    belongs to.
+
+    The one thing that makes an abandoned guest basket reachable. The checkout
+    already sends this — `OrderPreviewRequest.email`, where it decides whether a
+    new-customer coupon applies — and until now it was read for that and
+    discarded, so a shopper who filled the form in and closed the tab left
+    behind a row nobody could write to.
+
+    **Guest baskets only.** A basket with a `user_id` already has an address on
+    `users.email`; copying it here would create a second answer free to go stale
+    the day somebody changes their account email.
+
+    Not validated, and deliberately: this is not a login and it does not decide
+    anything. It records what was typed. Whether it is deliverable is Resend's
+    answer to give, at the point something is actually sent, and a stricter rule
+    here would only mean a reachable customer we refused to record.
+    """
+    if cart is None or cart.user_id is not None:
+        return
+    cleaned = (email or "").strip().lower()
+    if not cleaned or cleaned == cart.guest_email:
+        # Still activity, even when the address has not changed — somebody is on
+        # the checkout right now, which is the most interesting thing a basket
+        # can be doing.
+        if cleaned:
+            await _touched(db, cart)
+        return
+    cart.guest_email = cleaned[:255]
+    touch(cart)
+    await db.flush()
+
+
 async def _build_response(cart: Cart) -> CartResponse:
     """Build a CartResponse with computed fields from an already-loaded Cart."""
     items: list[CartItemResponse] = []
@@ -134,15 +249,9 @@ async def _build_response(cart: Cart) -> CartResponse:
     for cart_item in cart.items:
         product = cart_item.product
 
-        # Compute unit price from stored JSONB snapshot
-        selected_options = cart_item.selected_options or []
-        options_total = sum(
-            (option_charge(opt) for opt in selected_options), Decimal("0")
-        )
-        base = Decimal(str(product.base_price)) if product else Decimal("0")
-        unit_price = base + options_total
-        line_total = unit_price * cart_item.quantity
-        subtotal += line_total
+        unit_price = line_unit_price(cart_item)
+        item_line_total = line_total(cart_item)
+        subtotal += item_line_total
         item_count += cart_item.quantity
 
         item_resp = CartItemResponse.model_validate(cart_item)
@@ -152,7 +261,7 @@ async def _build_response(cart: Cart) -> CartResponse:
         )
         item_resp.product_translations = product.translations or {} if product else {}
         item_resp.unit_price = float(unit_price)
-        item_resp.line_total = float(line_total)
+        item_resp.line_total = float(item_line_total)
         item_resp.personalisation_type = (
             product.personalisation_type if product else None
         )
@@ -284,6 +393,11 @@ async def get_or_create(
         db, user_id, session_id, options=tuple(_cart_load_options())
     )
 
+    # A read, and still activity: this is the call the storefront makes on every
+    # page load, so it is the truest signal there is that somebody is still
+    # here holding this basket. Throttled — see `_ACTIVITY_RESOLUTION`.
+    await _touched(db, cart)
+
     cart = await _discard_hidden_items(db, cart)
     return await _build_response(cart)
 
@@ -413,6 +527,7 @@ async def set_promo_code(
     cart = await get_or_create_cart(db, user_id, session_id)
     cleaned = (code or "").strip().upper()
     cart.promo_code = cleaned or None
+    touch(cart)
     await db.flush()
     return await _build_response(await _load_cart(db, cart.id))
 
@@ -483,6 +598,7 @@ async def add_item(
         )
         db.add(item)
 
+    touch(cart)
     await db.flush()
     cart = await _discard_hidden_items(db, await _load_cart(db, cart.id))
     return await _build_response(cart)
@@ -505,6 +621,7 @@ async def update_item(
         raise NotFoundError("Cart item not found")
 
     item.quantity = data.quantity
+    touch(cart)
     await db.flush()
 
     cart = await _load_cart(db, cart.id)
@@ -538,6 +655,7 @@ async def update_item_note(
         raise NotFoundError("Cart item not found")
 
     item.personalisation_note = validate_note(item.product, note)
+    touch(cart)
     await db.flush()
 
     cart = await _load_cart(db, cart.id)
@@ -560,6 +678,7 @@ async def remove_item(
         raise NotFoundError("Cart item not found")
 
     await db.delete(item)
+    touch(cart)
     await db.flush()
 
     cart = await _load_cart(db, cart.id)
@@ -577,6 +696,7 @@ async def clear(
     for item in items_result.scalars().all():
         await db.delete(item)
 
+    touch(cart)
     await db.flush()
     cart = await _load_cart(db, cart.id)
     return await _build_response(cart)
@@ -593,6 +713,7 @@ async def merge(
     user_cart = await get_or_create_cart(db, user_id, None)
 
     if not guest_cart:
+        await _touched(db, user_cart)
         cart = await _load_cart(db, user_cart.id)
         return await _build_response(cart)
 
@@ -666,8 +787,11 @@ async def merge(
             )
             db.add(new_item)
 
-    # Delete guest cart (cascade deletes items)
+    # Delete guest cart (cascade deletes items). Its `guest_email` goes with it,
+    # and is not carried across: the account's own address is the answer for a
+    # basket that now has a `user_id`.
     await db.delete(guest_cart)
+    touch(user_cart)
     await db.flush()
 
     cart = await _discard_hidden_items(db, await _load_cart(db, user_cart.id))

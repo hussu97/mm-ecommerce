@@ -6,6 +6,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
+from app.core import search as search_text
 from app.core.exceptions import ConflictError, NotFoundError
 from app.services import menu_group_service
 from app.models.category import Category
@@ -34,10 +35,6 @@ __all__ = [
     "unlink_modifier",
     "update",
 ]
-
-
-def _escape_like(s: str) -> str:
-    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _from_price():
@@ -210,7 +207,7 @@ async def get_all(
             stmt = stmt.where(Category.slug.in_(category_slugs))
 
     if search:
-        stmt = stmt.where(Product.name.ilike(f"%{_escape_like(search)}%", escape="\\"))
+        stmt = stmt.where(search_text.contains(Product.name, search))
 
     if featured is not None:
         stmt = stmt.where(Product.is_featured == featured)

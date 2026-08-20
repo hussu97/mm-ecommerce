@@ -167,6 +167,9 @@ Generated from SQLAlchemy models in `apps/api/app/models/`.
 | `users` | `email` | btree unique | login lookup |
 | `carts` | `user_id` | btree | |
 | `carts` | `session_id` | btree | guest cart lookup |
+| `carts` | `session_id` WHERE `session_id IS NOT NULL` | partial unique | one cart per guest session (migration 114) |
+| `carts` | `last_activity_at` | btree | live-basket listing and any recovery sweep |
+| `carts` | `guest_email` | btree | the baskets a guest can be written to about |
 | `cart_items` | `cart_id` | btree | |
 | `cart_items` | `(cart_id, product_id)` | btree composite | add-to-cart dedup |
 | `orders` | `order_number` | btree unique | |
@@ -195,5 +198,7 @@ Generated from SQLAlchemy models in `apps/api/app/models/`.
 - `order_items` stores product name/sku/translations as **snapshots** at order time — product edits don't mutate historical orders.
 - `orders.shipping_address_snapshot` (JSONB) stores the full address at order time — same reason.
 - `carts.session_id` supports **guest checkout**: anonymous users have a cart keyed by browser session ID. When they check out, the backend falls back to session_id if no user-owned cart is found.
+- `carts.guest_email` holds the address typed into the checkout, written back by `POST /orders/preview` — the only thing that makes an abandoned **guest** basket reachable. Never set on a cart with a `user_id`: that one already has an address on `users.email`, and a second copy would be free to go stale. See `docs/cart-abandonment-email.md`.
+- `carts.last_activity_at` is when the shopper last touched the basket, and is **not** `updated_at`: adding a line writes `cart_items` and never touches the `carts` row.
 - `users.is_guest = true` marks accounts created solely for checkout — they have no password and are treated as unauthenticated by the storefront.
 - `promo_codes` is standalone (no FK to orders); the used code is stored as a string in `orders.promo_code_used`.

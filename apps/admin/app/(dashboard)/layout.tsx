@@ -5,58 +5,8 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { loginPathFor } from '@/lib/auth-redirect';
+import { activeNavHref, NAV } from '@/lib/nav';
 import { cn } from '@/lib/utils';
-
-// Grouped so the POS surface stays distinguishable from the storefront one as
-// the navigation grows.
-const NAV: Array<
-  { href: string; label: string; icon: string } | { section: string }
-> = [
-  { href: '/',              label: 'Dashboard',       icon: 'dashboard' },
-
-  { section: 'Catalogue' },
-  { href: '/products',      label: 'Products',        icon: 'inventory_2' },
-  { href: '/categories',    label: 'Categories',      icon: 'category' },
-  { href: '/modifiers',     label: 'Modifiers',       icon: 'tune' },
-  { href: '/menu-groups',   label: 'Menu Groups',     icon: 'account_tree' },
-
-  { section: 'Point of Sale' },
-  // Counter orders live on the one Orders screen now — the two channels have
-  // always shared a table, and two entries here meant counting today's takings
-  // twice and adding them up.
-  { href: '/branches',      label: 'Branches',        icon: 'storefront' },
-  { href: '/staff',         label: 'Staff & Roles',   icon: 'badge' },
-  { href: '/devices',       label: 'Devices',         icon: 'tablet_mac' },
-  { href: '/pos-config',    label: 'POS Config',      icon: 'settings_applications' },
-  { href: '/pos-reports',   label: 'POS Reports',     icon: 'insights' },
-
-  { section: 'Inventory' },
-  { href: '/inventory',     label: 'Inventory',       icon: 'warehouse' },
-  { href: '/purchase-orders', label: 'Purchase Orders', icon: 'shopping_cart_checkout' },
-
-  { section: 'Online store' },
-  { href: '/orders',        label: 'Orders',          icon: 'receipt_long' },
-  { href: '/custom-orders', label: 'Custom Orders',   icon: 'cake' },
-  { href: '/promo-codes',   label: 'Promo Codes',     icon: 'local_offer' },
-  { href: '/customers',     label: 'Customers',       icon: 'people' },
-  { href: '/delivery-zones', label: 'Delivery',       icon: 'local_shipping' },
-  // Under "Online store" and not "System": this is the lever you reach for
-  // during a processor incident, and an incident is not the moment to go
-  // hunting three sections down.
-  { href: '/payment-gateways', label: 'Payments',     icon: 'credit_card' },
-  { href: '/analytics',     label: 'Analytics',       icon: 'bar_chart' },
-  { href: '/content',       label: 'Content',         icon: 'edit_note' },
-  { href: '/languages',     label: 'Languages',       icon: 'translate' },
-  { href: '/translations',  label: 'Translations',    icon: 'text_fields' },
-
-  { section: 'System' },
-  { href: '/admin-users',   label: 'Admin Users',     icon: 'admin_panel_settings' },
-  { href: '/import',        label: 'Import / Export', icon: 'sync_alt' },
-  { href: '/security',      label: 'Security',        icon: 'vpn_key' },
-  { href: '/email-logs',    label: 'Email Logs',      icon: 'mail' },
-  { href: '/webhook-logs',  label: 'Webhook Logs',    icon: 'webhook' },
-  { href: '/audit-logs',    label: 'Audit Logs',      icon: 'manage_history' },
-];
 
 const AGGREGATOR_DASHBOARD_URL =
   process.env.NEXT_PUBLIC_AGGREGATOR_DASHBOARD_URL ?? 'https://aggregator.meltingmomentscakes.com';
@@ -70,6 +20,7 @@ interface SidebarContentProps {
 }
 
 function SidebarContent({ collapsed, pathname, user, setMobileOpen, onLogout }: SidebarContentProps) {
+  const currentHref = activeNavHref(pathname);
   return (
     <>
       {/* Logo */}
@@ -98,7 +49,7 @@ function SidebarContent({ collapsed, pathname, user, setMobileOpen, onLogout }: 
             );
           }
           const { href, label, icon } = entry;
-          const active = href === '/' ? pathname === '/' : pathname.startsWith(href);
+          const active = href === currentHref;
           return (
             <Link
               key={href}

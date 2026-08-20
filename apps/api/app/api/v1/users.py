@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import search as search_text
 from app.core.deps import get_db
 from app.core.permissions import require
 from app.models.admin_passkey import AdminPasskey
@@ -12,10 +13,6 @@ from app.models.order import Order, OrderStatusEnum
 from app.models.user import User as UserModel
 
 router = APIRouter()
-
-
-def _escape_like(s: str) -> str:
-    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 # ─── Schemas ──────────────────────────────────────────────────────────────────
@@ -86,8 +83,7 @@ async def list_customers(
     )
 
     if search:
-        escaped = _escape_like(search)
-        base = base.where(UserModel.email.ilike(f"%{escaped}%", escape="\\"))
+        base = base.where(search_text.contains(UserModel.email, search))
 
     total = (
         await db.execute(select(func.count()).select_from(base.subquery()))

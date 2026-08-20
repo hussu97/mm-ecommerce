@@ -2,7 +2,7 @@ import type {
   AdminLoginOptions, AdminPasskey, AdminUserSummary,
   AnalyticsOverview, AuditLog, Category, CmsPage, CustomerBreakdown, ZoneSalesData,
   FunnelData, ImportResult, Language, Modifier, Order, OrdersPoint, PaginatedAuditLogs,
-  PaginatedCustomers, PaginatedEmailLogs, PaginatedOrders, Product, ProductListResponse,
+  PaginatedCustomers, PaginatedEmailLogs, PaginatedLiveCarts, PaginatedOrders, Product, ProductListResponse,
   PromoCode, PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
   TrafficData, UploadResponse, User, DeliverySettings, SalesChannel,
   DeliveryMapVersion, DeliveryPricingMode, DeliveryZone, DeliveryZoneSummary, FulfilmentProvider, OrderDelivery, OrderEconomics,
@@ -460,6 +460,22 @@ export const analyticsApi = {
     api.get<ZoneSalesData[]>(`/analytics/zones${buildQs(params)}`),
   promos: (params?: { start_date?: string; end_date?: string }) =>
     api.get<PromoPerformance[]>(`/analytics/promos${buildQs(params)}`),
+  /**
+   * The baskets people are holding right now.
+   *
+   * No date range: everything else on the analytics screen answers a question
+   * about a period, and this one answers "what is in people's hands", which a
+   * start and end date can only get wrong.
+   */
+  liveCarts: (params?: {
+    page?: number;
+    per_page?: number;
+    search?: string;
+    has_email?: boolean;
+    min_value?: number;
+    idle_minutes_min?: number;
+    idle_days_max?: number;
+  }) => api.get<PaginatedLiveCarts>(`/analytics/live-carts${buildQs(params)}`),
 };
 
 // ─── Customers ────────────────────────────────────────────────────────────────

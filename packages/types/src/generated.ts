@@ -233,6 +233,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/analytics/live-carts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Live Carts
+         * @description Every basket that currently holds items, most recently touched first.
+         *
+         *     What the shop could not see before this endpoint: that eleven people are
+         *     holding four thousand dirhams of cake right now, that six of them stopped
+         *     two hours ago, and that four of those six left an address on the way past
+         *     the checkout. That last number is the abandoned-cart business case, and
+         *     `summary` states it directly.
+         *
+         *     **Every figure is the server's.** The subtotal is
+         *     `cart_service.line_total` — the same formula the storefront basket renders
+         *     from — and the surcharge is `order_pricing.low_order_fee_for`, the function
+         *     that charges it. There is no arithmetic on the console side and no second
+         *     copy of either rule here (CLAUDE.md rule 10).
+         *
+         *     **The delivery fee is a quote, not a price.** It is what a courier said this
+         *     basket would cost to the pin the shopper had dropped, captured by the
+         *     checkout preview while they were still deciding. A basket that never reached
+         *     an address shows nothing rather than a guess.
+         *
+         *     `idle_days_max` is a floor under the query rather than a preference: `carts`
+         *     has no expiry, so without it this grows to every basket ever abandoned and
+         *     the page nobody wants is the one the database works hardest for.
+         */
+        get: operations["get_live_carts_api_v1_analytics_live_carts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/analytics/orders-chart": {
         parameters: {
             query?: never;
@@ -9627,6 +9668,129 @@ export interface components {
             /** Native Name */
             native_name?: string | null;
         };
+        /**
+         * LiveCart
+         * @description One basket that currently holds items, and everything needed to judge it.
+         */
+        LiveCart: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Delivery Fee */
+            delivery_fee?: number | null;
+            /** Delivery Zone */
+            delivery_zone?: string | null;
+            /** Email */
+            email?: string | null;
+            /** Email Source */
+            email_source?: string | null;
+            /** Estimated Total */
+            estimated_total: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Idle Minutes */
+            idle_minutes?: number | null;
+            /**
+             * Is Registered
+             * @default false
+             */
+            is_registered: boolean;
+            /**
+             * Item Count
+             * @default 0
+             */
+            item_count: number;
+            /** Last Activity At */
+            last_activity_at?: string | null;
+            /**
+             * Lines
+             * @default []
+             */
+            lines: components["schemas"]["LiveCartLine"][];
+            /**
+             * Low Order Fee
+             * @default 0
+             */
+            low_order_fee: number;
+            /** Promo Code */
+            promo_code?: string | null;
+            /** Session Id */
+            session_id?: string | null;
+            /** Subtotal */
+            subtotal: number;
+            /** User Id */
+            user_id?: string | null;
+        };
+        /**
+         * LiveCartLine
+         * @description One line of a basket somebody is still holding.
+         */
+        LiveCartLine: {
+            /** Line Total */
+            line_total: number;
+            /**
+             * Options
+             * @default []
+             */
+            options: string[];
+            /** Personalisation Note */
+            personalisation_note?: string | null;
+            /**
+             * Product Id
+             * Format: uuid
+             */
+            product_id: string;
+            /** Product Name */
+            product_name: string;
+            /** Product Sku */
+            product_sku?: string | null;
+            /** Quantity */
+            quantity: number;
+            /** Unit Price */
+            unit_price: number;
+        };
+        /** LiveCartsResponse */
+        LiveCartsResponse: {
+            /** Items */
+            items: components["schemas"]["LiveCart"][];
+            /** Page */
+            page: number;
+            /** Pages */
+            pages: number;
+            /** Per Page */
+            per_page: number;
+            summary: components["schemas"]["LiveCartsSummary"];
+            /** Total */
+            total: number;
+        };
+        /**
+         * LiveCartsSummary
+         * @description The header figures — and, read together, the abandoned-cart business case.
+         *
+         *     `reachable_value` against `total_value` is the whole question: it is what
+         *     a recovery email could be sent about, as against what is sitting there.
+         *     Both are over the filtered set, so narrowing to "idle more than an hour"
+         *     narrows these too, which is the comparison worth making.
+         */
+        LiveCartsSummary: {
+            /** Carts */
+            carts: number;
+            /** Idle Over 1H */
+            idle_over_1h: number;
+            /** Idle Over 24H */
+            idle_over_24h: number;
+            /** Reachable Value */
+            reachable_value: number;
+            /** Total Value */
+            total_value: number;
+            /** With Email */
+            with_email: number;
+        };
         /** LoginRequest */
         LoginRequest: {
             /**
@@ -15046,6 +15210,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FunnelData"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_live_carts_api_v1_analytics_live_carts_get: {
+        parameters: {
+            query?: {
+                page?: number;
+                per_page?: number;
+                /** @description Match an email address or a session id */
+                search?: string | null;
+                /** @description Only baskets we can (or cannot) write to */
+                has_email?: boolean | null;
+                /** @description Only baskets worth at least this, in goods */
+                min_value?: number | null;
+                /** @description Only baskets untouched for at least this long */
+                idle_minutes_min?: number;
+                /** @description Ignore baskets untouched for longer than this */
+                idle_days_max?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LiveCartsResponse"];
                 };
             };
             /** @description Validation Error */

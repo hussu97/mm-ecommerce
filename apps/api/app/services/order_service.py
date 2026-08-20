@@ -26,6 +26,7 @@ from app.core.exceptions import (
     NotFoundError,
 )
 from app.core.phone import normalise_phone
+from app.core import search as search_text
 from app.models.branch import Branch
 from app.models.cart import Cart, CartItem
 from app.models.delivery_batch import DELIVERY_TIMEZONE
@@ -101,10 +102,6 @@ __all__ = [
     "stamp_packed",
     "update_status",
 ]
-
-
-def _escape_like(s: str) -> str:
-    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _order_load_options():
@@ -1144,6 +1141,14 @@ async def preview_order(
     # every product behind a lazy load this cannot perform.
     cart = await find_priceable_cart(db, user_id, data.session_id or session_id)
 
+    # The second thing this endpoint persists, and for the same reason as the
+    # first: it is the only moment the information exists. A guest who types
+    # their address into the checkout and then closes the tab leaves a basket
+    # nobody can write to, which `tasks/conversion-audit.md` names as the single
+    # blocker under abandoned-cart recovery. Guest baskets only, and the address
+    # is recorded rather than judged — see `cart_service.remember_checkout_email`.
+    await cart_service.remember_checkout_email(db, cart, data.email or fallback_email)
+
     items_data: list[dict] = []
     if cart is not None and cart.items:
         items_data, _ = _compute_item_totals(cart, strict=False)
@@ -1479,12 +1484,11 @@ async def get_all_admin(
     if status:
         base_stmt = base_stmt.where(Order.status == status)
     if search:
-        escaped = _escape_like(search)
         base_stmt = base_stmt.where(
-            Order.order_number.ilike(f"%{escaped}%", escape="\\")
-            | Order.email.ilike(f"%{escaped}%", escape="\\")
-            | Order.customer_name.ilike(f"%{escaped}%", escape="\\")
-            | Order.customer_phone.ilike(f"%{escaped}%", escape="\\")
+            search_text.contains(Order.order_number, search)
+            | search_text.contains(Order.email, search)
+            | search_text.contains(Order.customer_name, search)
+            | search_text.contains(Order.customer_phone, search)
         )
 
     count_result = await db.execute(

@@ -10012,6 +10012,305 @@
         "title": "LanguageUpdate",
         "type": "object"
       },
+      "LiveCart": {
+        "description": "One basket that currently holds items, and everything needed to judge it.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "delivery_fee": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Fee"
+          },
+          "delivery_zone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Zone"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "email_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email Source"
+          },
+          "estimated_total": {
+            "title": "Estimated Total",
+            "type": "number"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "idle_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idle Minutes"
+          },
+          "is_registered": {
+            "default": false,
+            "title": "Is Registered",
+            "type": "boolean"
+          },
+          "item_count": {
+            "default": 0,
+            "title": "Item Count",
+            "type": "integer"
+          },
+          "last_activity_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Activity At"
+          },
+          "lines": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/LiveCartLine"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "low_order_fee": {
+            "default": 0.0,
+            "title": "Low Order Fee",
+            "type": "number"
+          },
+          "promo_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promo Code"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "subtotal": {
+            "title": "Subtotal",
+            "type": "number"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "id",
+          "subtotal",
+          "estimated_total",
+          "created_at"
+        ],
+        "title": "LiveCart",
+        "type": "object"
+      },
+      "LiveCartLine": {
+        "description": "One line of a basket somebody is still holding.",
+        "properties": {
+          "line_total": {
+            "title": "Line Total",
+            "type": "number"
+          },
+          "options": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "personalisation_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Personalisation Note"
+          },
+          "product_id": {
+            "format": "uuid",
+            "title": "Product Id",
+            "type": "string"
+          },
+          "product_name": {
+            "title": "Product Name",
+            "type": "string"
+          },
+          "product_sku": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Sku"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "unit_price": {
+            "title": "Unit Price",
+            "type": "number"
+          }
+        },
+        "required": [
+          "product_id",
+          "product_name",
+          "quantity",
+          "unit_price",
+          "line_total"
+        ],
+        "title": "LiveCartLine",
+        "type": "object"
+      },
+      "LiveCartsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LiveCart"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "per_page": {
+            "title": "Per Page",
+            "type": "integer"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/LiveCartsSummary"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "per_page",
+          "pages",
+          "summary"
+        ],
+        "title": "LiveCartsResponse",
+        "type": "object"
+      },
+      "LiveCartsSummary": {
+        "description": "The header figures \u2014 and, read together, the abandoned-cart business case.\n\n`reachable_value` against `total_value` is the whole question: it is what\na recovery email could be sent about, as against what is sitting there.\nBoth are over the filtered set, so narrowing to \"idle more than an hour\"\nnarrows these too, which is the comparison worth making.",
+        "properties": {
+          "carts": {
+            "title": "Carts",
+            "type": "integer"
+          },
+          "idle_over_1h": {
+            "title": "Idle Over 1H",
+            "type": "integer"
+          },
+          "idle_over_24h": {
+            "title": "Idle Over 24H",
+            "type": "integer"
+          },
+          "reachable_value": {
+            "title": "Reachable Value",
+            "type": "number"
+          },
+          "total_value": {
+            "title": "Total Value",
+            "type": "number"
+          },
+          "with_email": {
+            "title": "With Email",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "carts",
+          "total_value",
+          "with_email",
+          "reachable_value",
+          "idle_over_1h",
+          "idle_over_24h"
+        ],
+        "title": "LiveCartsSummary",
+        "type": "object"
+      },
       "LoginRequest": {
         "properties": {
           "email": {
@@ -25708,6 +26007,150 @@
           }
         ],
         "summary": "Get Funnel",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
+    "/api/v1/analytics/live-carts": {
+      "get": {
+        "description": "Every basket that currently holds items, most recently touched first.\n\nWhat the shop could not see before this endpoint: that eleven people are\nholding four thousand dirhams of cake right now, that six of them stopped\ntwo hours ago, and that four of those six left an address on the way past\nthe checkout. That last number is the abandoned-cart business case, and\n`summary` states it directly.\n\n**Every figure is the server's.** The subtotal is\n`cart_service.line_total` \u2014 the same formula the storefront basket renders\nfrom \u2014 and the surcharge is `order_pricing.low_order_fee_for`, the function\nthat charges it. There is no arithmetic on the console side and no second\ncopy of either rule here (CLAUDE.md rule 10).\n\n**The delivery fee is a quote, not a price.** It is what a courier said this\nbasket would cost to the pin the shopper had dropped, captured by the\ncheckout preview while they were still deciding. A basket that never reached\nan address shows nothing rather than a guess.\n\n`idle_days_max` is a floor under the query rather than a preference: `carts`\nhas no expiry, so without it this grows to every basket ever abandoned and\nthe page nobody wants is the one the database works hardest for.",
+        "operationId": "get_live_carts_api_v1_analytics_live_carts_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Per Page",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Match an email address or a session id",
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Match an email address or a session id",
+              "title": "Search"
+            }
+          },
+          {
+            "description": "Only baskets we can (or cannot) write to",
+            "in": "query",
+            "name": "has_email",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only baskets we can (or cannot) write to",
+              "title": "Has Email"
+            }
+          },
+          {
+            "description": "Only baskets worth at least this, in goods",
+            "in": "query",
+            "name": "min_value",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only baskets worth at least this, in goods",
+              "title": "Min Value"
+            }
+          },
+          {
+            "description": "Only baskets untouched for at least this long",
+            "in": "query",
+            "name": "idle_minutes_min",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "Only baskets untouched for at least this long",
+              "minimum": 0,
+              "title": "Idle Minutes Min",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Ignore baskets untouched for longer than this",
+            "in": "query",
+            "name": "idle_days_max",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "description": "Ignore baskets untouched for longer than this",
+              "maximum": 365,
+              "minimum": 1,
+              "title": "Idle Days Max",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveCartsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Live Carts",
         "tags": [
           "Analytics"
         ]

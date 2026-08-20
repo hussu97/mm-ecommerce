@@ -478,6 +478,69 @@ export interface PromoPerformance {
   discount_given: number;
 }
 
+// ─── Live baskets ─────────────────────────────────────────────────────────────
+
+/** One line of a basket somebody is still holding. */
+export interface LiveCartLine {
+  product_id: string;
+  product_name: string;
+  product_sku: string | null;
+  quantity: number;
+  unit_price: number;
+  line_total: number;
+  /** The chosen options as words, e.g. `Filling: Ferrero ×2`. */
+  options: string[];
+  personalisation_note: string | null;
+}
+
+/**
+ * A basket that currently holds items.
+ *
+ * Every figure is the server's — see `/analytics/live-carts`. Nothing on this
+ * screen recomputes a price, and `estimated_total` deliberately excludes any
+ * promo discount: the code is stored on the basket, the discount is decided at
+ * the checkout, and quoting one here would be a second answer.
+ */
+export interface LiveCart {
+  id: string;
+  user_id: string | null;
+  session_id: string | null;
+  email: string | null;
+  /** `account` | `checkout` — where the address above came from. */
+  email_source: string | null;
+  is_registered: boolean;
+  lines: LiveCartLine[];
+  item_count: number;
+  subtotal: number;
+  low_order_fee: number;
+  delivery_fee: number | null;
+  delivery_zone: string | null;
+  estimated_total: number;
+  promo_code: string | null;
+  created_at: string;
+  last_activity_at: string | null;
+  idle_minutes: number | null;
+}
+
+/** The header figures — `reachable_value` against `total_value` is the case. */
+export interface LiveCartsSummary {
+  carts: number;
+  total_value: number;
+  with_email: number;
+  reachable_value: number;
+  idle_over_1h: number;
+  idle_over_24h: number;
+}
+
+export interface PaginatedLiveCarts {
+  items: LiveCart[];
+  total: number;
+  page: number;
+  per_page: number;
+  pages: number;
+  summary: LiveCartsSummary;
+}
+
 // ─── Email Logs ───────────────────────────────────────────────────────────────
 
 export type EmailLogStatus = 'sent' | 'failed' | 'skipped';

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import { analyticsApi, exportApi } from '@/lib/api';
 import type {
   AnalyticsOverview, CustomerBreakdown, ZoneSalesData, FunnelData,
@@ -244,6 +245,16 @@ export default function AnalyticsPage() {
 
         {/* Date range controls */}
         <div className="flex flex-wrap items-center gap-2">
+          {/* One step earlier in the funnel than anything else on this page,
+              and outside its date range entirely — a basket somebody is holding
+              has no period to belong to. Its own screen, linked from here
+              because this is where you are standing when you want it. */}
+          <Link
+            href="/analytics/carts"
+            className="px-3 py-1.5 min-h-11 md:min-h-0 text-xs font-body uppercase tracking-wider border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors"
+          >
+            Live Baskets
+          </Link>
           <button
             onClick={handleExport}
             disabled={loading || exporting}
