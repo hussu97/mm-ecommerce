@@ -805,6 +805,13 @@ export interface OrderDelivery {
    * wherever it is rendered.
    */
   driver_distance_km: number | null;
+  /**
+   * Minutes of driving against live traffic. Null where only the straight-line
+   * estimate exists — never derived from the distance, because a duration got
+   * by dividing a guess by an assumed speed is a guess wearing the clothes of a
+   * measurement.
+   */
+  driver_eta_minutes: number | null;
   driver_location_at: string | null;
   pod_status: string | null;
   pod_image_url: string | null;

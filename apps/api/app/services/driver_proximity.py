@@ -28,9 +28,17 @@ eventually disagree about the same driver. They render what this quotes.
   to be getting further away, and a growing distance-from-the-kitchen on a
   counter screen is worse than no distance at all.
 
-**And it is an estimate, labelled as one.** Straight line times the same detour
-factor the zone pricing is fitted against. Nobody bills from it; it answers "ten
-minutes or two" and that is all it is asked.
+**Two answers, and it says which it gave.** Where Mapbox has routed the leg
+recently, this returns driven road kilometres and minutes against live traffic —
+the straight line does not know about the creek, the one-ways round Al Majaz, or
+which bridge is between the rider and the shop, and a driver two kilometres away
+as the crow flies can be six of road. Where it has not, this falls back to
+straight line times the fitted detour factor and returns **no minutes at all**,
+because a duration derived by dividing that estimate by an assumed speed would
+be a guess dressed as a measurement.
+
+Nobody bills from either. Both answer "ten minutes or two", which is all this is
+ever asked.
 """
 
 from __future__ import annotations
@@ -59,10 +67,25 @@ MAX_AGE = timedelta(minutes=6)
 class Proximity:
     """How far away the driver is, and when that was true."""
 
-    #: Estimated road kilometres from the driver to the branch.
+    #: Kilometres from the driver to the branch — driven road distance when
+    #: Mapbox answered, straight line times the detour factor otherwise.
     distance_km: float
     #: The moment the position behind it was reported.
     at: datetime
+    #: Minutes of driving against traffic as it was at `at`, or `None` when the
+    #: number came from the fallback.
+    #:
+    #: Null rather than derived from the distance. A duration invented by
+    #: dividing kilometres by an assumed speed is a guess wearing the clothes of
+    #: a measurement, and a counter cannot tell the two apart — 4 km through Al
+    #: Majaz at eight in the evening is not 4 km at three in the afternoon.
+    #: Nothing is better than a confident wrong number here.
+    minutes: float | None = None
+
+    @property
+    def is_routed(self) -> bool:
+        """Measured on real roads rather than estimated from a straight line."""
+        return self.minutes is not None
 
 
 def to_pickup(
@@ -98,6 +121,34 @@ def to_pickup(
     if (now or datetime.now(timezone.utc)) - at > MAX_AGE:
         return None
 
+    # ── the routed answer, when there is a fresh one ──────────────────────────
+    #
+    # Aged against the same window as the position, on its own stamp. The two go
+    # stale for different reasons — a rider moves, and separately Mapbox stops
+    # answering or the token is wrong — so a fresh pin with an old route is a
+    # real state and it must degrade to the estimate rather than quote a
+    # duration for a road the driver left ten minutes ago.
+    routed_at = delivery.driver_route_at
+    if routed_at is not None and routed_at.tzinfo is None:
+        routed_at = routed_at.replace(tzinfo=timezone.utc)
+    if (
+        routed_at is not None
+        and delivery.driver_route_km is not None
+        and delivery.driver_route_minutes is not None
+        and (now or datetime.now(timezone.utc)) - routed_at <= MAX_AGE
+    ):
+        return Proximity(
+            distance_km=float(delivery.driver_route_km),
+            minutes=float(delivery.driver_route_minutes),
+            at=routed_at,
+        )
+
+    # ── the fallback ──────────────────────────────────────────────────────────
+    #
+    # What shipped before Mapbox existed, and still correct to within a fitted
+    # detour factor. No token, an unreachable router, a pin with no drivable
+    # route: all of them land here, and a counter reading "~4.2 km away" rather
+    # than "6 min · 4.2 km away" has lost precision and nothing else.
     straight = geo.straight_line_km(
         float(latitude),
         float(longitude),

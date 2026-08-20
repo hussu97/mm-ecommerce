@@ -11506,6 +11506,17 @@
             ],
             "title": "Driver Distance Km"
           },
+          "driver_eta_minutes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Driver Eta Minutes"
+          },
           "driver_location_at": {
             "anyOf": [
               {
@@ -14475,6 +14486,17 @@
               }
             ],
             "title": "Driver Distance Km"
+          },
+          "driver_eta_minutes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Driver Eta Minutes"
           },
           "driver_location_at": {
             "anyOf": [

@@ -249,6 +249,35 @@ class Settings(BaseSettings):
     #: estimate what a run costs us — noon Send has no quotation API, so this is
     #: the only cost figure that will ever exist for one of their tasks.
     NOON_SEND_DETOUR_FACTOR: float = 1.49
+
+    # ── routing ───────────────────────────────────────────────────────────────
+    #
+    #: Mapbox Directions, for "how far is the driver from the kitchen" — the one
+    #: question the counter asks that neither courier answers.
+    #:
+    #: Optional by design. Without it `driver_proximity` falls back to the
+    #: straight-line estimate above, which is the behaviour that shipped first
+    #: and is still correct to within a detour factor. A missing token must cost
+    #: precision, never a blank screen or a failed webhook.
+    #:
+    #: A `pk.` public token: the Directions API needs no scope, and any secret
+    #: scope would make this an `sk.` token with a much larger blast radius.
+    #: Deliberately **not** URL-restricted — Mapbox enforces those on the HTTP
+    #: `Referer` header, which a server request does not send, so a restricted
+    #: token would reject every call we make with an error that reads like a bad
+    #: key. It is a server secret and never reaches a browser.
+    MAPBOX_ACCESS_TOKEN: str = ""
+    #: Seconds between route refreshes for one delivery.
+    #:
+    #: noon Send pushes a position every 15-30 seconds and the sweep ticks every
+    #: minute, so without a floor a single order could ask Mapbox four times a
+    #: minute to re-answer a question whose answer has not changed. A driver does
+    #: not cross a meaningful amount of Sharjah in sixty seconds.
+    MAPBOX_MIN_ROUTE_INTERVAL_S: int = 60
+    #: How long to wait on Mapbox before giving up and using the estimate.
+    #:
+    #: Short: this runs inside the batch sweep, which has cakes waiting on it.
+    MAPBOX_TIMEOUT_S: float = 5.0
     #: The published rate card, which has a vehicle tier. AED 12 on a bike is
     #: what makes this courier worth having — on a bike they beat Lalamove at
     #: every distance in range; in the bulky car product at AED 25 they lose at

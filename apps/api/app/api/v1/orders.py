@@ -115,12 +115,18 @@ class OrderDeliveryResponse(BaseModel):
     #: with. From `order_drivers`, where exactly one row is active by database
     #: constraint rather than by convention.
     previous_drivers: list["PreviousDriver"] = []
-    #: Roughly how far the driver still is from the branch, in kilometres, and
-    #: when the position behind that was true. Null unless a named driver is on
-    #: the way *to the kitchen* — after collection the number would only grow —
-    #: and null rather than stale when the courier has gone quiet. An estimate,
-    #: and labelled as one wherever it is shown.
+    #: How far the driver still is from the branch, and when the position behind
+    #: that was true. Null unless a named driver is on the way *to the kitchen* —
+    #: after collection the number would only grow — and null rather than stale
+    #: when the courier has gone quiet.
+    #:
+    #: Driven road kilometres where Mapbox routed the leg recently, straight line
+    #: times the fitted detour factor otherwise. `driver_eta_minutes` is how to
+    #: tell which: it is null on the fallback, because a duration derived by
+    #: dividing an estimate by an assumed speed is a guess wearing the clothes of
+    #: a measurement.
     driver_distance_km: float | None = None
+    driver_eta_minutes: float | None = None
     driver_location_at: datetime | None = None
     pod_status: str | None
     pod_image_url: str | None
@@ -195,6 +201,7 @@ class OrderDeliveryResponse(BaseModel):
                 if not row.is_active
             ],
             driver_distance_km=proximity.distance_km if proximity else None,
+            driver_eta_minutes=proximity.minutes if proximity else None,
             driver_location_at=proximity.at if proximity else None,
             pod_status=d.pod_status,
             pod_image_url=d.pod_image_url,

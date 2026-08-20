@@ -344,6 +344,27 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
     driver_assigned_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    #: The driven route from the position above to the kitchen, as Mapbox
+    #: measured it against traffic at `driver_route_at`.
+    #:
+    #: Cached rather than asked per render: the register polls every twenty
+    #: seconds, the admin every thirty, and several terminals watch one branch —
+    #: so a single order would otherwise put a hundred calls a minute through a
+    #: paid API to re-answer a question whose answer changes once.
+    #:
+    #: Stamped with when the *route* was computed rather than when the position
+    #: was reported, because the two go stale for different reasons: Mapbox
+    #: unreachable or the token missing leaves a fresh pin with an old route, and
+    #: `driver_proximity` has to be able to tell those apart and fall back.
+    driver_route_km: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 1), nullable=True
+    )
+    driver_route_minutes: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 1), nullable=True
+    )
+    driver_route_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     #: How many drivers this booking has had. 0 until one is matched, 1 for the
     #: ordinary case, 2+ once somebody has been swapped.
     #:

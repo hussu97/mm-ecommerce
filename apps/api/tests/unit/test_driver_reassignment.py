@@ -373,3 +373,157 @@ def test_the_sweep_refreshes_before_the_counter_stops_being_told():
     from app.services import driver_tracking
 
     assert driver_tracking.STALE_AFTER < driver_proximity.MAX_AGE
+
+
+# ── the routed answer ─────────────────────────────────────────────────────────
+
+
+def _routed(**overrides) -> OrderDelivery:
+    """A delivery with a driver on the way and a fresh Mapbox answer on it."""
+    fields = {
+        "driver_id": "79973",
+        "driver_name": "Ali",
+        "driver_latitude": Decimal("25.3500"),
+        "driver_longitude": Decimal("55.3900"),
+        "driver_location_at": NOW,
+        "driver_route_km": Decimal("6.4"),
+        "driver_route_minutes": Decimal("11.0"),
+        "driver_route_at": NOW,
+    }
+    fields.update(overrides)
+    return _delivery(**fields)
+
+
+def test_a_routed_leg_beats_the_straight_line():
+    """
+    The reason Mapbox is called at all.
+
+    6.4 km of road against a straight line that would have said about 5 — the
+    creek, the one-ways and the bridges are the difference, and they are the
+    difference a rider actually drives.
+    """
+    proximity = driver_proximity.to_pickup(_routed(), _branch(), now=NOW)
+
+    assert proximity is not None
+    assert proximity.is_routed
+    assert proximity.distance_km == 6.4
+    assert proximity.minutes == 11.0
+
+
+def test_the_fallback_offers_no_eta_at_all():
+    """
+    No token, an unreachable Mapbox, a pin with no drivable route — all of them
+    land on the estimate, and none of them may produce minutes.
+
+    A duration got by dividing a straight-line guess by an assumed speed is a
+    guess wearing the clothes of a measurement, and a counter cannot tell the
+    two apart. Nothing beats a confident wrong number.
+    """
+    delivery = _routed(
+        driver_route_km=None, driver_route_minutes=None, driver_route_at=None
+    )
+
+    proximity = driver_proximity.to_pickup(delivery, _branch(), now=NOW)
+
+    assert proximity is not None
+    assert not proximity.is_routed
+    assert proximity.minutes is None
+    assert proximity.distance_km > 0
+
+
+def test_a_stale_route_falls_back_rather_than_quoting_old_minutes():
+    """
+    The position and the route go stale for different reasons — a rider moves,
+    and separately Mapbox stops answering or the token is wrong. A fresh pin
+    with an old route is a real state, and "6 min away" for a road the driver
+    left ten minutes ago is worse than the estimate.
+    """
+    delivery = _routed(
+        driver_route_at=NOW - driver_proximity.MAX_AGE - timedelta(seconds=1)
+    )
+
+    proximity = driver_proximity.to_pickup(delivery, _branch(), now=NOW)
+
+    assert proximity is not None
+    assert not proximity.is_routed
+    assert proximity.minutes is None
+
+
+def test_a_route_is_not_quoted_once_the_parcel_is_collected():
+    """The gates that applied to the estimate apply to the routed answer too."""
+    delivery = _routed(courier_status="PICKED_UP")
+    assert driver_proximity.to_pickup(delivery, _branch(), now=NOW) is None
+
+
+@pytest.mark.asyncio
+async def test_a_failed_route_leaves_the_last_good_one_alone(monkeypatch):
+    """
+    Mapbox says nothing — unreachable, a bad token, a pin in the sea.
+
+    The columns keep whatever they had and, crucially, `driver_route_at` is
+    **not** stamped. Stamping on failure would make a broken token look like a
+    fresh route for a minute at a time, suppressing the retry — and the screens
+    would quietly stop showing an ETA with nothing to say why.
+    """
+    from app.services import driver_routing
+    from app.services.providers import mapbox_provider
+
+    async def _no_route(**_kwargs):
+        return None
+
+    monkeypatch.setattr(mapbox_provider, "route", _no_route)
+
+    delivery = _routed()
+    moved = await driver_routing._route_one(
+        _Db(), delivery, _branch(), at=NOW + timedelta(minutes=5)
+    )
+
+    assert moved is False
+    assert delivery.driver_route_at == NOW
+    assert delivery.driver_route_km == Decimal("6.4")
+
+
+@pytest.mark.asyncio
+async def test_a_successful_route_is_written_with_the_moment_it_was_asked(monkeypatch):
+    from app.services import driver_routing
+    from app.services.providers import mapbox_provider
+
+    async def _leg(**_kwargs):
+        return mapbox_provider.Route(distance_km=3.2, minutes=7.5)
+
+    monkeypatch.setattr(mapbox_provider, "route", _leg)
+
+    delivery = _routed()
+    later = NOW + timedelta(minutes=5)
+    assert await driver_routing._route_one(_Db(), delivery, _branch(), at=later)
+
+    assert delivery.driver_route_km == Decimal("3.2")
+    assert delivery.driver_route_minutes == Decimal("7.5")
+    assert delivery.driver_route_at == later
+
+
+@pytest.mark.asyncio
+async def test_mapbox_is_asked_for_lng_lat_in_that_order(monkeypatch):
+    """
+    Their coordinate order is the reverse of every other pin in this codebase,
+    and getting it wrong does not raise — it routes across the Arabian Sea and
+    returns a plausible-looking number of kilometres.
+    """
+    from app.services import driver_routing
+    from app.services.providers import mapbox_provider
+
+    seen: dict = {}
+
+    async def _capture(**kwargs):
+        seen.update(kwargs)
+        return mapbox_provider.Route(distance_km=1.0, minutes=2.0)
+
+    monkeypatch.setattr(mapbox_provider, "route", _capture)
+    await driver_routing._route_one(_Db(), _routed(), _branch(), at=NOW)
+
+    # Latitudes are ~25 in Sharjah and longitudes ~55. A transposition shows up
+    # here as the two swapping magnitude.
+    assert 25 < seen["from_latitude"] < 26
+    assert 55 < seen["from_longitude"] < 56
+    assert 25 < seen["to_latitude"] < 26
+    assert 55 < seen["to_longitude"] < 56

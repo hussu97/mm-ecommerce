@@ -44,6 +44,7 @@ from app.models.delivery_batch import BatchStatusEnum, DeliveryBatch
 from app.services import (
     arrival_service,
     batching_service,
+    driver_routing,
     driver_tracking,
     payment_service,
 )
@@ -136,6 +137,15 @@ async def sweep_once() -> list:
                 await session.commit()
                 if tracked:
                     logger.info("Refreshed %s live driver(s)", tracked)
+                # After the positions, never before: a route computed from last
+                # minute's pin is a minute of driving out of date before anybody
+                # reads it. Both couriers in one pass — they differ in how a
+                # position arrives and not at all in what the counter wants done
+                # with it once it is on the row.
+                routed = await driver_routing.refresh_routes(session)
+                await session.commit()
+                if routed:
+                    logger.info("Re-routed %s inbound driver(s)", routed)
             except Exception:  # noqa: BLE001 — never at the batches' expense
                 logger.exception("Driver sweep failed; batches were unaffected")
                 await session.rollback()

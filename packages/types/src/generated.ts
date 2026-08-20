@@ -10095,6 +10095,8 @@ export interface components {
             driver_assignment_count: number;
             /** Driver Distance Km */
             driver_distance_km?: number | null;
+            /** Driver Eta Minutes */
+            driver_eta_minutes?: number | null;
             /** Driver Location At */
             driver_location_at?: string | null;
             /** Driver Name */
@@ -11112,6 +11114,8 @@ export interface components {
             driver_assignment_count: number;
             /** Driver Distance Km */
             driver_distance_km?: number | null;
+            /** Driver Eta Minutes */
+            driver_eta_minutes?: number | null;
             /** Driver Location At */
             driver_location_at?: string | null;
             /** Driver Name */

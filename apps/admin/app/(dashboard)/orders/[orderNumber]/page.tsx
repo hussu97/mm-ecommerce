@@ -988,13 +988,36 @@ function DeliveryPanel({
           <div className="col-span-2">
             <dt className="text-gray-500">Distance from branch</dt>
             <dd className="text-gray-800">
-              ~{delivery.driver_distance_km.toFixed(1)} km away
+              {/* The ETA leads where there is one — it is the number a person
+                  actually plans against — and its presence is also what says
+                  the figures were routed rather than estimated. The tilde on
+                  the kilometres survives only on the fallback, where it is
+                  earned. */}
+              {delivery.driver_eta_minutes !== null ? (
+                <>
+                  <span className="font-medium">
+                    {Math.round(delivery.driver_eta_minutes)} min
+                  </span>
+                  {' · '}
+                  {delivery.driver_distance_km.toFixed(1)} km away
+                </>
+              ) : (
+                <>~{delivery.driver_distance_km.toFixed(1)} km away</>
+              )}
               {delivery.driver_location_at && (
                 <span className="text-gray-400">
                   {' '}· as of {formatTimeAgo(delivery.driver_location_at)}
                 </span>
               )}
             </dd>
+            {delivery.driver_eta_minutes === null && (
+              // Said rather than left to be inferred from a missing number: an
+              // estimate and a routed answer look identical at a glance, and
+              // only one of them accounts for the bridge.
+              <dd className="text-[11px] text-gray-400">
+                Straight-line estimate — no live route available
+              </dd>
+            )}
           </div>
         )}
         {delivery.previous_drivers.length > 0 && (
