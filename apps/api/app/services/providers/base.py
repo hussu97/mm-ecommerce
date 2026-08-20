@@ -59,6 +59,11 @@ class PaymentEventType(str, enum.Enum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    #: The customer walked away from a checkout and the gateway has given up on
+    #: it. Distinct from `FAILED`, which is a charge that was attempted and
+    #: refused: nothing was ever charged here, so there is nothing to tell the
+    #: customer and no card to blame.
+    EXPIRED = "expired"
     REFUNDED = "refunded"
     DISPUTED = "disputed"
     UNHANDLED = "unhandled"

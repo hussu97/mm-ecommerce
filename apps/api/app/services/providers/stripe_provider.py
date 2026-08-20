@@ -262,6 +262,7 @@ class StripeProvider(PaymentGatewayProvider):
           - payment_intent.succeeded      → SUCCEEDED
           - payment_intent.payment_failed → FAILED
           - payment_intent.canceled       → CANCELLED
+          - checkout.session.expired      → EXPIRED
           - charge.refunded               → REFUNDED
           - charge.dispute.created        → DISPUTED
         Everything else → UNHANDLED, which is acknowledged and applied to nothing.
@@ -375,6 +376,13 @@ _EVENT_TYPES: dict[str, PaymentEventType] = {
     "payment_intent.succeeded": PaymentEventType.SUCCEEDED,
     "payment_intent.payment_failed": PaymentEventType.FAILED,
     "payment_intent.canceled": PaymentEventType.CANCELLED,
+    # Stripe gives a Checkout Session 24 hours and then says this, once, with
+    # our `order_number` in its metadata. Until it was mapped, an abandoned
+    # checkout sat at `created` forever: MM-20260820-001 was a customer who
+    # opened the payment page at 05:16, went back, and re-ordered at 05:28 —
+    # and the first order kept a redemption of the NEW code and one of that
+    # customer's three "first orders" for a sale that never happened.
+    "checkout.session.expired": PaymentEventType.EXPIRED,
     "charge.refunded": PaymentEventType.REFUNDED,
     "charge.dispute.created": PaymentEventType.DISPUTED,
 }

@@ -41,7 +41,7 @@ from sqlalchemy import func, select
 from app.core import advisory_lock
 from app.core.database import AsyncSessionFactory
 from app.models.delivery_batch import BatchStatusEnum, DeliveryBatch
-from app.services import arrival_service, batching_service
+from app.services import arrival_service, batching_service, payment_service
 
 logger = logging.getLogger(__name__)
 
@@ -67,18 +67,22 @@ async def sweep_once() -> list:
     Returns the batches dispatched, or nothing at all if another worker held
     the lock — which is a normal outcome, not a failure.
 
-    **Three kinds of work, one lock.** Runs whose window has closed, orders due
-    to reach the register, and single orders whose retry has fallen due. They
-    are swept together because they are the same question asked of three tables
-    — *is anything owed something right now* — and because each extra loop would
-    need its own advisory lock, its own tick and its own reason to exist.
+    **Four kinds of work, one lock.** Runs whose window has closed, orders due
+    to reach the register, single orders whose retry has fallen due, and
+    checkouts nobody ever paid for. They are swept together because they are the
+    same question asked of four tables — *is anything owed something right now*
+    — and because each extra loop would need its own advisory lock, its own tick
+    and its own reason to exist.
 
-    The order of the three is the order of their dependencies. A run going out
-    is what makes its orders due to arrive, and an arrival is what books a
+    The order of the first three is the order of their dependencies. A run going
+    out is what makes its orders due to arrive, and an arrival is what books a
     driver for an order travelling alone, so by the time the retry sweep looks
-    for stragglers both of those have already had their turn this tick.
+    for stragglers both of those have already had their turn this tick. The
+    fourth depends on nothing and is last for that reason: an abandoned basket
+    is two days old by the time it qualifies, so which minute of the day it is
+    noticed in does not matter to anybody.
 
-    Retries cannot stop batches. A failure in the retry sweep is logged and
+    Nothing else can stop batches. A failure in the later sweeps is logged and
     swallowed here rather than allowed out, because the runs waiting on the next
     tick are carrying cakes that are already paid for and boxed.
     """
@@ -114,6 +118,23 @@ async def sweep_once() -> list:
                     logger.info("Retried %s failed dispatch(es)", len(retried))
             except Exception:  # noqa: BLE001 — never at the batches' expense
                 logger.exception("Retry sweep failed; batches were unaffected")
+                await session.rollback()
+            try:
+                # The backstop under `checkout.session.expired`, for the
+                # deliveries of it that never arrived. An order left at
+                # `created` is not inert: it holds a redemption of its promo
+                # code, a place in the customer's first-orders count, and any
+                # stock the checkout took off the shelf.
+                expired = await payment_service.expire_stale_checkouts(session)
+                await session.commit()
+                if expired:
+                    logger.info(
+                        "%s abandoned checkout(s) cancelled: %s",
+                        len(expired),
+                        ", ".join(expired),
+                    )
+            except Exception:  # noqa: BLE001 — never at the batches' expense
+                logger.exception("Checkout sweep failed; batches were unaffected")
                 await session.rollback()
             return dispatched
 

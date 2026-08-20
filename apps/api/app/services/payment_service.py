@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Mapping
 
@@ -29,6 +30,7 @@ from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.models.base import utcnow
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.models.order_status_event import StatusSourceEnum, acting_as
+from app.models.pos_order import OrderSourceEnum
 from app.models.payment_transaction import (
     PaymentTransaction,
     PaymentTransactionStatusEnum,
@@ -51,6 +53,7 @@ from app.services.providers.stripe_provider import provider as stripe_provider
 __all__ = [
     "COD",
     "create_session",
+    "expire_stale_checkouts",
     "get_status",
     "handle_webhook",
     "normalise_method",
@@ -599,6 +602,8 @@ async def _apply_event(db: AsyncSession, gateway: str, event: GatewayEvent) -> d
                 order.order_number,
                 order.status,
             )
+        elif event.event_type is PaymentEventType.EXPIRED:
+            await _handle_checkout_expired(db, order)
         elif event.event_type is PaymentEventType.REFUNDED:
             await _handle_refund(db, order, event)
         elif event.event_type is PaymentEventType.DISPUTED:
@@ -708,6 +713,12 @@ _TRANSACTION_STATUSES = {
     PaymentEventType.SUCCEEDED: PaymentTransactionStatusEnum.SUCCEEDED,
     PaymentEventType.FAILED: PaymentTransactionStatusEnum.FAILED,
     PaymentEventType.CANCELLED: PaymentTransactionStatusEnum.CANCELLED,
+    # No status of its own on the attempt: `CANCELLED` is already spelled "the
+    # customer walked away", which is exactly what an expiry is. A new column
+    # value would split one fact across two words for no reader's benefit —
+    # `raw_status` keeps `checkout.session.expired` for anyone who needs to know
+    # which way the walking-away was noticed.
+    PaymentEventType.EXPIRED: PaymentTransactionStatusEnum.CANCELLED,
     PaymentEventType.REFUNDED: PaymentTransactionStatusEnum.REFUNDED,
     PaymentEventType.DISPUTED: PaymentTransactionStatusEnum.DISPUTED,
 }
@@ -799,6 +810,136 @@ async def _handle_payment_succeeded(
             order.order_number,
             exc,
         )
+
+
+async def _handle_checkout_expired(db: AsyncSession, order: Order) -> bool:
+    """
+    A checkout nobody finished, closed out. Returns whether the order moved.
+
+    **Cancelled rather than `payment_failed`.** Nothing was refused here: the
+    gateway never attempted a charge, the customer simply left the page. Calling
+    that a payment failure would put a card-declined story on an order that has
+    none, and would send the customer the payment-failed email for a checkout
+    they walked away from on purpose.
+
+    Left at `created`, which is what happened until now, it is not harmless. The
+    row keeps whatever the checkout claimed when it was written: a redemption of
+    its promo code, a place in the customer's first-orders count, and — for a
+    stock product — stock taken off the shelf at checkout and never put back.
+    `_redemptions_by` and `orders_placed_by` both exclude *cancelled* orders and
+    nothing else, so an abandoned checkout quietly spends a coupon the customer
+    still has. MM-20260820-001 did exactly that: opened at 05:16, abandoned,
+    re-ordered as -002 at 05:28, and the first one went on holding a use of the
+    NEW code for a sale that never existed.
+
+    Cancelling gives all of that back through `_consequences`, which restocks
+    and releases, and it sends nothing to anybody: the cancellation email is
+    dispatched by its callers, not by `transition`, and an order the customer
+    abandoned themselves does not need to be told about.
+
+    Guarded twice on purpose. `created` is the only status this may touch — an
+    expiry arriving after a successful payment is a late duplicate, not a
+    reversal — and `_is_paid` is asked as well, because the status is our record
+    of the money and this is precisely the case where our record could be the
+    thing that is wrong. A wrongly cancelled order cannot be walked back:
+    `cancelled` is terminal outside `ADMIN_RECOVERABLE`.
+    """
+    if order.status != OrderStatusEnum.CREATED:
+        logger.info(
+            "Checkout expiry ignored — order %s is already %s",
+            order.order_number,
+            getattr(order.status, "value", order.status),
+        )
+        return False
+
+    if _is_paid(order):
+        # Paid, and sitting at `created` anyway. That is a webhook we missed,
+        # not an abandoned basket, and cancelling it would restock a box
+        # somebody bought. Loud, because it means the confirmation never ran.
+        logger.critical(
+            "Order %s expired at the gateway but reads as paid — "
+            "it needs reconciling by hand, not cancelling",
+            order.order_number,
+        )
+        return False
+
+    moved = await order_lifecycle.transition(
+        db, order, OrderStatusEnum.CANCELLED, on_invalid="skip"
+    )
+    if moved:
+        logger.info(
+            "Order %s cancelled: its checkout expired without a payment",
+            order.order_number,
+        )
+    return moved
+
+
+#: How long an unpaid checkout is left alone before it is closed out without
+#: the gateway's say-so. Stripe gives a Checkout Session 24 hours and then fires
+#: `checkout.session.expired` itself, so this is deliberately well past that:
+#: anything still `created` two days later is an event that never arrived — a
+#: webhook dropped, a signature secret rotated mid-flight, a deploy that was
+#: down for the one delivery Stripe made — rather than a customer still
+#: deciding. Being late here costs a coupon use sitting idle for an extra day.
+#: Being early would cancel a checkout somebody is still paying for.
+_ABANDONED_AFTER = timedelta(hours=48)
+
+
+async def expire_stale_checkouts(db: AsyncSession, *, limit: int = 100) -> list[str]:
+    """
+    Cancel checkouts nobody finished and nobody told us about. Returns what moved.
+
+    The backstop under `checkout.session.expired`, not a replacement for it. The
+    webhook is the timely answer and arrives with the gateway's own word for
+    what happened; this is what covers the delivery that never landed, and the
+    orders written before the event was mapped at all.
+
+    Its whole safety lives in `_handle_checkout_expired`, which refuses anything
+    that is not still `created` and anything that reads as paid — and that is
+    why the transactions are eager-loaded here rather than left to a lazy
+    fetch that would raise inside async SQLAlchemy: the paid check is the one
+    that must never be skipped, and `items` is what the restock walks.
+
+    Sequential, and small. A hundred a tick is far more than a shop this size
+    abandons in a day, and one order failing must not take the rest with it.
+    """
+    now = datetime.now(timezone.utc)
+    stale = (
+        (
+            await db.execute(
+                select(Order)
+                .options(
+                    selectinload(Order.items),
+                    selectinload(Order.payment_transactions),
+                )
+                .where(
+                    Order.status == OrderStatusEnum.CREATED,
+                    # A counter sale is never in this state waiting for a card
+                    # page, and a cashier's open check is not this function's
+                    # business.
+                    Order.source == OrderSourceEnum.ONLINE.value,
+                    Order.created_at <= now - _ABANDONED_AFTER,
+                )
+                .order_by(Order.created_at)
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    cancelled: list[str] = []
+    for order in stale:
+        # Ours, not the gateway's: no webhook said this, we decided it from a
+        # clock. `acting_as` puts that in the status history rather than
+        # attributing the cancellation to Stripe.
+        with acting_as(
+            StatusSourceEnum.SYSTEM.value,
+            note="checkout abandoned without payment",
+        ):
+            if await _handle_checkout_expired(db, order):
+                cancelled.append(order.order_number)
+    return cancelled
 
 
 async def _handle_payment_failed(
