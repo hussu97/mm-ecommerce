@@ -1,10 +1,11 @@
+import uuid
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.cache import cache_delete, cache_delete_pattern, cache_get, cache_set
-from app.core.deps import get_db, get_optional_user
+from app.core.cache import cache_delete_pattern, cache_get, cache_set
+from app.core.deps import browsing_branch, get_db, get_optional_user
 from app.core.permissions import require
 from app.core.exceptions import ForbiddenError
 from app.models.user import User
@@ -23,9 +24,17 @@ _CACHED_CHANNELS = ("web", "pos")
 
 
 async def _invalidate() -> None:
-    """Retire every channel's list. A category edit can change any of them."""
+    """
+    Retire every channel's list. A category edit can change any of them.
+
+    A pattern rather than the exact keys, because the web list is now keyed by
+    branch as well: one entry per kitchen plus the estate-wide one. Deleting the
+    three names this used to build would leave every branch-scoped copy up for
+    its whole TTL, which is a category edit that reaches nobody who has told us
+    where they are.
+    """
     for channel in _CACHED_CHANNELS:
-        await cache_delete(_CACHE_KEY.format(channel=channel))
+        await cache_delete_pattern(_CACHE_KEY.format(channel=channel) + "*")
     # Featured products are also category-scoped. Without this, hiding a
     # category leaves its feature cards up until their independent TTL ends.
     await cache_delete_pattern("products:featured:*")
@@ -42,6 +51,7 @@ async def list_categories(
             "the register can actually sell. 'all' is the console's view."
         ),
     ),
+    branch: uuid.UUID | None = Depends(browsing_branch),
     db: AsyncSession = Depends(get_db),
     viewer: User | None = Depends(get_optional_user),
 ):
@@ -60,7 +70,10 @@ async def list_categories(
         channel = "web"
 
     resolved = category_service.resolve_channel(channel, include_inactive)
-    cache_key = _CACHE_KEY.format(channel=resolved)
+    # Keyed by branch, because two kitchens have two counts and the nav is drawn
+    # from this. One entry serving both would put a chip on the nav for a
+    # category the shopper's own branch has nothing in.
+    cache_key = _CACHE_KEY.format(channel=f"{resolved}:{branch or 'any'}")
     cacheable = not include_inactive and resolved in _CACHED_CHANNELS
 
     if cacheable:
@@ -69,7 +82,7 @@ async def list_categories(
             return cached
 
     result = await category_service.get_all(
-        db, include_inactive=include_inactive, channel=resolved
+        db, include_inactive=include_inactive, channel=resolved, branch_id=branch
     )
 
     if cacheable:

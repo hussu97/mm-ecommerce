@@ -47,6 +47,15 @@ export interface DeliveryArea {
   free_threshold: number | null;
   free_delivery_available: boolean;
   speed: DeliverySpeed;
+  /**
+   * The kitchen this pin resolves to, or null where we do not serve it.
+   *
+   * Handed straight back on catalogue reads so the shelf matches the branch
+   * that would bake the order. Null is an answer and not a gap — the server
+   * reads it as "show what any branch can make", which is the wider and safer
+   * of the two.
+   */
+  branch_id?: string | null;
 }
 
 /** The shop itself, and the fallback when we know nothing. */

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 
 from decimal import Decimal
@@ -14,6 +15,7 @@ from fastapi import Request
 
 from app.core.cache import cache_delete_pattern, cache_get, cache_set
 from app.core.deps import (
+    browsing_branch,
     get_current_active_user,
     get_db,
     get_optional_user,
@@ -29,6 +31,8 @@ from app.schemas.product import (
     ProductUpdate,
 )
 from app.services import audit_service, product_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -79,6 +83,7 @@ async def list_products(
             "forgotten parameter; the terminal asks for 'pos'."
         ),
     ),
+    branch: uuid.UUID | None = Depends(browsing_branch),
     db: AsyncSession = Depends(get_db),
     viewer: User | None = Depends(get_optional_user),
 ):
@@ -105,6 +110,7 @@ async def list_products(
         is_active=is_active,
         channel=channel,
         staff=is_catalogue_staff,
+        branch_id=branch,
     )
     pages = max(1, (total + per_page - 1) // per_page)
     return ProductListResponse(
@@ -115,15 +121,19 @@ async def list_products(
 @router.get("/featured", response_model=list[ProductResponse])
 async def list_featured(
     limit: int = Query(8, ge=1, le=50),
+    branch: uuid.UUID | None = Depends(browsing_branch),
     db: AsyncSession = Depends(get_db),
 ):
     """Get featured products."""
-    cache_key = f"products:featured:{limit}"
+    # The branch is part of the key, not a variation the key ignores. Two
+    # kitchens have two answers here, and one cache entry serving both would
+    # put whichever was asked for first in front of every shopper for the TTL.
+    cache_key = f"products:featured:{limit}:{branch or 'any'}"
     cached = await cache_get(cache_key)
     if cached is not None:
         return cached
 
-    result = await product_service.get_featured(db, limit=limit)
+    result = await product_service.get_featured(db, limit=limit, branch_id=branch)
     await cache_set(
         cache_key,
         [r.model_dump(mode="json") for r in result],
@@ -135,6 +145,7 @@ async def list_featured(
 @router.get("/cart-addons", response_model=list[ProductResponse])
 async def list_cart_addons(
     limit: int = Query(8, ge=1, le=20),
+    branch: uuid.UUID | None = Depends(browsing_branch),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -143,12 +154,12 @@ async def list_cart_addons(
     Declared above `/{slug}` deliberately: FastAPI matches in order, and below
     it this path would be read as a product whose slug is "cart-addons".
     """
-    cache_key = f"products:cart_addons:{limit}"
+    cache_key = f"products:cart_addons:{limit}:{branch or 'any'}"
     cached = await cache_get(cache_key)
     if cached is not None:
         return cached
 
-    result = await product_service.get_cart_addons(db, limit=limit)
+    result = await product_service.get_cart_addons(db, limit=limit, branch_id=branch)
     await cache_set(
         cache_key,
         [r.model_dump(mode="json") for r in result],
@@ -160,6 +171,7 @@ async def list_cart_addons(
 @router.get("/{slug}", response_model=ProductResponse)
 async def get_product(
     slug: str,
+    branch: uuid.UUID | None = Depends(browsing_branch),
     db: AsyncSession = Depends(get_db),
     viewer: User | None = Depends(get_optional_user),
 ):
@@ -174,7 +186,7 @@ async def get_product(
     """
     if viewer is not None and (viewer.is_staff or viewer.is_admin):
         return await product_service.get_by_slug_admin(db, slug)
-    return await product_service.get_by_slug(db, slug)
+    return await product_service.get_by_slug(db, slug, branch_id=branch)
 
 
 @router.post("", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)

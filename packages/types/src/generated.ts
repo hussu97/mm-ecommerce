@@ -8272,6 +8272,8 @@ export interface components {
          *     to a page that is mostly images.
          */
         DeliveryAreaResponse: {
+            /** Branch Id */
+            branch_id?: string | null;
             /** Delivery Fee */
             delivery_fee?: number | null;
             /**
@@ -17109,6 +17111,8 @@ export interface operations {
                 include_inactive?: boolean;
                 /** @description Which catalogue to count against. 'web' is the storefront and is the default; the terminal asks for 'pos', which counts only what the register can actually sell. 'all' is the console's view. */
                 channel?: ("web" | "pos" | "all") | null;
+                /** @description The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area. */
+                branch_id?: string | null;
             };
             header?: never;
             path?: never;
@@ -24723,6 +24727,8 @@ export interface operations {
                 is_active?: boolean | null;
                 /** @description Which catalogue to list. 'web' is the storefront and is the default so POS-only items can never leak onto the website by a forgotten parameter; the terminal asks for 'pos'. */
                 channel?: "web" | "pos" | "all";
+                /** @description The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area. */
+                branch_id?: string | null;
             };
             header?: never;
             path?: never;
@@ -24818,6 +24824,8 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                /** @description The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area. */
+                branch_id?: string | null;
             };
             header?: never;
             path?: never;
@@ -24849,6 +24857,8 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                /** @description The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area. */
+                branch_id?: string | null;
             };
             header?: never;
             path?: never;
@@ -24913,7 +24923,10 @@ export interface operations {
     };
     get_product_api_v1_products__slug__get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area. */
+                branch_id?: string | null;
+            };
             header?: never;
             path: {
                 slug: string;

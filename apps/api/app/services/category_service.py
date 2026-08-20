@@ -6,7 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import ConflictError, NotFoundError
 from app.models.category import Category
 from app.models.product import POS_CHANNEL, WEB_CHANNEL, Product, sells_on
-from app.services.availability_service import out_at_every_branch_subquery
+from app.services.availability_service import (
+    out_at_every_branch_subquery,
+    unsellable_at_branch_subquery,
+)
 from app.schemas.category import CategoryCreate, CategoryResponse, CategoryUpdate
 from app.services import menu_group_service
 
@@ -35,7 +38,7 @@ async def _with_product_count(db: AsyncSession, cat: Category) -> CategoryRespon
     return response
 
 
-def _countable_products(channel: str):
+def _countable_products(channel: str, branch_id=None):
     """
     The join condition that decides which products a category is counted for.
 
@@ -55,9 +58,19 @@ def _countable_products(channel: str):
     if channel == WEB_CHANNEL:
         # Availability too, and for the same reason the count exists: a
         # category is listed because it has something to sell. A category whose
-        # every product is marked out at every branch has nothing, and counting
-        # those left a chip on the nav that opened an empty page.
-        clause = clause & sells_on(WEB_CHANNEL) & ~out_at_every_branch_subquery()
+        # every product is marked out is nothing to sell, and counting those
+        # left a chip on the nav that opened an empty page.
+        #
+        # Against the shopper's own branch where we know it, so the nav and the
+        # grid under it are answering the same question. A count taken across
+        # the estate beside a grid filtered to one kitchen is a category header
+        # reading "6" above four cakes.
+        clause = clause & sells_on(WEB_CHANNEL)
+        clause = clause & (
+            ~unsellable_at_branch_subquery(branch_id)
+            if branch_id is not None
+            else ~out_at_every_branch_subquery()
+        )
     elif channel == POS_CHANNEL:
         clause = clause & menu_group_service.pos_visibility_clause()
     return clause
@@ -91,11 +104,12 @@ async def get_all(
     db: AsyncSession,
     include_inactive: bool = False,
     channel: str | None = None,
+    branch_id=None,
 ) -> list[CategoryResponse]:
     channel = resolve_channel(channel, include_inactive)
     stmt = (
         select(Category, func.count(Product.id).label("product_count"))
-        .outerjoin(Product, _countable_products(channel))
+        .outerjoin(Product, _countable_products(channel, branch_id))
         .group_by(Category.id)
         .order_by(Category.display_order, Category.name)
     )
@@ -120,11 +134,12 @@ async def get_by_slug(
     slug: str,
     include_inactive: bool = False,
     channel: str | None = None,
+    branch_id=None,
 ) -> CategoryResponse:
     channel = resolve_channel(channel, include_inactive)
     stmt = (
         select(Category, func.count(Product.id).label("product_count"))
-        .outerjoin(Product, _countable_products(channel))
+        .outerjoin(Product, _countable_products(channel, branch_id))
         .where(Category.slug == slug)
         .group_by(Category.id)
     )

@@ -6,6 +6,7 @@ import { ProductGrid } from '@/components/category/ProductGrid';
 import { SearchTracker } from '@/components/analytics/SearchTracker';
 import { getTranslations, createT } from '@/lib/i18n/server';
 import { Icon } from '@/components/ui/Icon';
+import { browsingBranch } from '@/lib/location/branch-server';
 
 interface SearchParams {
   q?: string;
@@ -14,7 +15,10 @@ interface SearchParams {
   page?: string;
 }
 
-async function searchProducts(params: SearchParams): Promise<ProductListResponse | null> {
+async function searchProducts(
+  params: SearchParams,
+  branchId: string | null,
+): Promise<ProductListResponse | null> {
   const { q, category, sort, page } = params;
   if (!q) return null;
 
@@ -24,6 +28,10 @@ async function searchProducts(params: SearchParams): Promise<ProductListResponse
     ...(category && { category }),
     ...(sort && { sort }),
     ...(page && { page }),
+    // Somebody searching for a cake their own kitchen cannot make is somebody
+    // being sent to a page the checkout will refuse. This route is already
+    // `no-store`, so scoping it costs nothing that was being saved.
+    ...(branchId && { branch_id: branchId }),
   });
 
   const res = await fetch(`${RSC_API_BASE}/products?${qs.toString()}`, { cache: 'no-store' });
@@ -61,7 +69,7 @@ export default async function SearchPage({
   const translations = await getTranslations(locale);
   const t = createT(translations);
 
-  const data = await searchProducts(sp);
+  const data = await searchProducts(sp, await browsingBranch());
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-12">

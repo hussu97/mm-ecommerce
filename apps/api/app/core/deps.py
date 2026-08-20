@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import AsyncGenerator
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Query, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 from sqlalchemy import select
@@ -12,6 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import AsyncSessionFactory
 from app.core.security import decode_token
 from app.models import User
+from app.models.branch import Branch
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "get_admin_user",
@@ -130,3 +134,36 @@ async def get_optional_user(
     """Returns the current user if authenticated, otherwise None (for guest browsing)."""
     resolved = request.cookies.get("mm_access_token") or token
     return await _get_user_from_token(resolved, db, required=False)
+
+
+async def browsing_branch(
+    branch_id: uuid.UUID | None = Query(
+        None,
+        description=(
+            "The kitchen the shopper's pin resolves to. Given one, the "
+            "storefront answers for what that branch can make; omitted, for "
+            "what any branch can. Read `branch_id` off GET /delivery/area."
+        ),
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> uuid.UUID | None:
+    """
+    The branch this shopper is browsing as, or None to answer for the estate.
+
+    Validated rather than trusted. The id arrives from a cookie the browser
+    wrote and can be stale — a branch closed since the tab was opened, or a
+    hand-edited value — and a catalogue filtered on a branch that no longer
+    takes orders would quietly go empty. None is the widest honest answer:
+    everything some branch can still make.
+
+    A dependency rather than a helper because every storefront read needs the
+    same three lines, and the one that grows its own copy is the one that ends
+    up trusting the parameter.
+    """
+    if branch_id is None:
+        return None
+    branch = await db.get(Branch, branch_id)
+    if branch is None or branch.deleted_at is not None or not branch.is_active:
+        logger.info("Ignoring browsing branch %s, which cannot take orders", branch_id)
+        return None
+    return branch.id

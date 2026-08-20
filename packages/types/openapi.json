@@ -6008,6 +6008,18 @@
       "DeliveryAreaResponse": {
         "description": "What delivery looks like at a pin, before there is a basket.\n\nSeparate from `/quote` because the questions are different. A quote needs a\ncart, a subtotal and a live courier estimate, and it exists to put a number\non one order. This answers \"what is delivery like where I live\" for a banner\non the homepage and a line on a product card \u2014 pages a customer reaches long\nbefore a cart exists.\n\nCheap on purpose: a point-in-polygon lookup against the cached map and\nnothing else. No courier is called, so it costs no money and adds no latency\nto a page that is mostly images.",
         "properties": {
+          "branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Id"
+          },
           "delivery_fee": {
             "anyOf": [
               {
@@ -29200,6 +29212,25 @@
               "description": "Which catalogue to count against. 'web' is the storefront and is the default; the terminal asks for 'pos', which counts only what the register can actually sell. 'all' is the console's view.",
               "title": "Channel"
             }
+          },
+          {
+            "description": "The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area.",
+            "in": "query",
+            "name": "branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area.",
+              "title": "Branch Id"
+            }
           }
         ],
         "responses": {
@@ -42614,6 +42645,25 @@
               "title": "Channel",
               "type": "string"
             }
+          },
+          {
+            "description": "The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area.",
+            "in": "query",
+            "name": "branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area.",
+              "title": "Branch Id"
+            }
           }
         ],
         "responses": {
@@ -42763,6 +42813,25 @@
               "title": "Limit",
               "type": "integer"
             }
+          },
+          {
+            "description": "The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area.",
+            "in": "query",
+            "name": "branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area.",
+              "title": "Branch Id"
+            }
           }
         ],
         "responses": {
@@ -42812,6 +42881,25 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "description": "The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area.",
+            "in": "query",
+            "name": "branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area.",
+              "title": "Branch Id"
             }
           }
         ],
@@ -42957,6 +43045,25 @@
             "schema": {
               "title": "Slug",
               "type": "string"
+            }
+          },
+          {
+            "description": "The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area.",
+            "in": "query",
+            "name": "branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area.",
+              "title": "Branch Id"
             }
           }
         ],

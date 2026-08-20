@@ -29,10 +29,18 @@ SETTINGS = DeliverySettings(
 )
 
 
-def _zone(provider="lalamove", *, fee="20.00", threshold="75.00", eligible=True):
+def _zone(
+    provider="lalamove",
+    *,
+    fee="20.00",
+    threshold="75.00",
+    eligible=True,
+    branch_id=None,
+):
     return Zone(
         id=uuid.uuid4(),
         name="Dubai Near",
+        branch_id=branch_id,
         delivery_fee=Decimal(fee),
         fulfilment_provider=provider,
         min_lat=24.0,
@@ -149,4 +157,40 @@ def test_the_response_model_carries_nothing_else():
         "free_threshold",
         "free_delivery_available",
         "speed",
+        # The kitchen this pin resolves to, which the storefront hands back on
+        # catalogue reads so the shelf matches the branch. An id, not a name:
+        # `zone_name` remains the only field here allowed to name a place.
+        "branch_id",
     }
+
+
+async def test_a_pin_reports_the_kitchen_that_would_bake_it():
+    """
+    The whole reason the field exists. The browser stores this and asks the
+    catalogue for that branch, so a shopper is shown what the checkout — which
+    resolves the same zone — will actually accept.
+    """
+    kitchen = uuid.uuid4()
+    result = await _area(_zone("lalamove", branch_id=kitchen))
+
+    assert result.branch_id == kitchen
+
+
+async def test_a_pin_we_do_not_serve_names_no_kitchen():
+    result = await _area(None)
+
+    assert result.serviceable is False
+    assert result.branch_id is None
+
+
+async def test_a_zone_drawn_before_branches_names_none_rather_than_guessing():
+    """
+    Null is an answer here, and the storefront's answer to it is to show what
+    any branch can make. Reaching for `resolve_branch`'s last resort — any
+    active branch — would name a kitchen nobody chose and filter a catalogue by
+    it, which is a guess wearing the clothes of a fact.
+    """
+    result = await _area(_zone("lalamove", branch_id=None))
+
+    assert result.serviceable is True
+    assert result.branch_id is None

@@ -5,6 +5,7 @@ import { cmsApi, RSC_API_BASE } from '@/lib/api-server';
 // homepage render asks the API for the category list once rather than twice.
 import { getCategories } from '@/lib/catalogue';
 import { CACHE_TAGS, CONTENT_TTL } from '@/lib/cache-policy';
+import { browsingBranch } from '@/lib/location/branch-server';
 import type { AdvertisedPromo, Product, Category } from '@/lib/types';
 import { DeliveryPromiseBanner } from '@/components/home/DeliveryPromiseBanner';
 import { HeroCarousel, type HeroContent } from '@/components/home/HeroCarousel';
@@ -174,11 +175,14 @@ async function getHomeContent(locale: string): Promise<HomeContent> {
  * empty rail — which, cached for a minute, is a homepage that has stopped
  * selling anything. See `lib/fetch-json.ts`.
  */
-async function getFeaturedProducts(): Promise<Product[]> {
-  const items = await fetchJson<Product[]>(`${RSC_API_BASE}/products/featured`, {
-    next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
-    signal: AbortSignal.timeout(8000),
-  });
+async function getFeaturedProducts(branchId: string | null): Promise<Product[]> {
+  const items = await fetchJson<Product[]>(
+    `${RSC_API_BASE}/products/featured${branchId ? `?branch_id=${encodeURIComponent(branchId)}` : ''}`,
+    {
+      next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
+      signal: AbortSignal.timeout(8000),
+    },
+  );
   return items ?? [];
 }
 
@@ -244,9 +248,14 @@ export default async function HomePage({
 }) {
   const { locale } = await params;
 
+  // The rail answers for this shopper's kitchen, so a bestseller they cannot
+  // buy is not the first thing on the page. A visitor with no location — every
+  // crawler, and every first visit — keeps the cached, estate-wide homepage.
+  const branchId = await browsingBranch();
+
   const [c, featuredProducts, categories, promo] = await Promise.all([
     getHomeContent(locale),
-    getFeaturedProducts(),
+    getFeaturedProducts(branchId),
     getCategories(),
     getFeaturedPromo(),
   ]);

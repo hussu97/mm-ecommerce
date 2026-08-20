@@ -10,9 +10,12 @@ import {
   useState,
 } from 'react';
 
+import { useRouter } from 'next/navigation';
+
 import { addressesApi, deliveryApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { guestAddresses } from '@/lib/guest-addresses';
+import { readBranch, rememberBranch } from './branch-cookie';
 import {
   DEFAULT_LOCATION,
   LOCATION_ASKED_KEY,
@@ -75,6 +78,7 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
   const { user, isLoading: authLoading } = useAuth();
   const [location, setLocationState] = useState<Location>(DEFAULT_LOCATION);
   const [area, setArea] = useState<DeliveryArea | null>(null);
+  const router = useRouter();
   const [loading, setLoading] = useState(false);
 
   // Guards the seed so it runs once. Without it, `user` arriving a beat after
@@ -206,6 +210,28 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
     };
   }, [authLoading, user, setLocation, requestBrowserLocation]);
 
+  /**
+   * Record the kitchen, and redraw the page when it has actually changed.
+   *
+   * The cookie alone only reaches the *next* server render, which for somebody
+   * setting their location while looking at a category page means the grid goes
+   * on showing another branch's shelf until they navigate. `router.refresh()`
+   * re-runs the server components in place, with the new cookie.
+   *
+   * Guarded on the value rather than fired on every lookup, and that guard is
+   * load-bearing: this effect runs whenever the pin moves, and refreshing
+   * unconditionally would re-render the tree on every one of them — including
+   * the several that resolve to the same kitchen.
+   */
+  const applyBranch = useCallback(
+    (branchId: string | null) => {
+      if (readBranch() === branchId) return;
+      rememberBranch(branchId);
+      router.refresh();
+    },
+    [router],
+  );
+
   // ── what delivery looks like there ─────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
@@ -213,12 +239,23 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
     deliveryApi
       .area(location.latitude, location.longitude)
       .then((result) => {
-        if (!cancelled) setArea(result);
+        if (cancelled) return;
+        setArea(result);
+        // The one piece of this the *server* needs. The category grid, the
+        // homepage rail and search are rendered server-side and filter the
+        // catalogue to the kitchen that would bake this order, and a cookie is
+        // the only browser state they can read — see `branch-cookie.ts`.
+        applyBranch(result.branch_id ?? null);
       })
       .catch(() => {
         // The banner falls back to its unlocated copy. A failed lookup must not
-        // leave a stale promise about a different emirate on screen.
-        if (!cancelled) setArea(null);
+        // leave a stale promise about a different emirate on screen — and for
+        // the same reason it must not leave a branch behind: a catalogue
+        // filtered by a kitchen we are no longer sure about is a shelf that
+        // does not match anything.
+        if (cancelled) return;
+        setArea(null);
+        applyBranch(null);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -226,7 +263,9 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [location.latitude, location.longitude]);
+    // `applyBranch` is stable on `router` and included so the linter can see
+    // the effect's whole surface; the pin is what actually re-runs it.
+  }, [location.latitude, location.longitude, applyBranch]);
 
   const value = useMemo<LocationContextValue>(
     () => ({

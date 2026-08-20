@@ -702,4 +702,12 @@ export interface DeliveryArea {
   free_delivery_available: boolean;
   /** `express` is inside the hour, `same_day` today, `next_day` tomorrow. */
   speed: 'express' | 'same_day' | 'next_day';
+  /**
+   * The kitchen this pin resolves to, or null where we do not serve it.
+   *
+   * `LocationProvider` writes it to a cookie so the server-rendered catalogue
+   * can filter to that branch — see `lib/location/branch-cookie.ts`. Null is an
+   * answer, read as "show what any branch can make".
+   */
+  branch_id?: string | null;
 }

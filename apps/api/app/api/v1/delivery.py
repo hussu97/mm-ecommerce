@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from decimal import Decimal
 from typing import Any
 
@@ -72,6 +73,18 @@ class DeliveryAreaResponse(BaseModel):
     #: genuinely is three, and collapsing them would make the near zones wear
     #: the far zones' promise.
     speed: str = "next_day"
+    #: The kitchen this pin resolves to, so the storefront can ask the catalogue
+    #: what that kitchen has. Resolved exactly as an order would resolve it, and
+    #: that is the point of sending it: the shopper is shown what the checkout
+    #: will accept rather than what the estate can collectively make.
+    #:
+    #: An id and not a name. It is a key the browser hands back on catalogue
+    #: reads, and naming a branch to a customer is a different decision —
+    #: `zone_name` is the one thing here that may name a place.
+    #:
+    #: Null for a pin nowhere near us, where there is no kitchen to answer for
+    #: and no order to place either.
+    branch_id: uuid.UUID | None = None
 
 
 class DeliveryCalculateResponse(BaseModel):
@@ -185,6 +198,17 @@ async def delivery_area(
         free_threshold=None if threshold is None else float(threshold),
         free_delivery_available=zone.free_delivery_eligible,
         speed=_speed_of(zone),
+        # The zone's own kitchen, and deliberately not `order_service.
+        # resolve_branch`. That function must always name one, because an order
+        # has to be baked somewhere, so it ends at "any active branch" — a guess
+        # that is right for writing a row and wrong for filtering a catalogue.
+        # Null here means we do not know which kitchen, and the storefront's
+        # answer to not knowing is to show what any branch can make, which is
+        # the wider and safer of the two.
+        #
+        # It is also the whole cost of this field: one column already loaded,
+        # on an endpoint the browser calls every time the pin moves.
+        branch_id=zone.branch_id,
     )
 
 

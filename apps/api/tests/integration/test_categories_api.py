@@ -66,6 +66,9 @@ class TestCategoriesEndpoints:
         assert get_all.await_args.kwargs == {
             "include_inactive": False,
             "channel": "web",
+            # No cookie, no pin: the widest honest answer, which is every
+            # category some branch can still sell out of.
+            "branch_id": None,
         }
 
     async def test_get_category_by_slug_not_found_returns_404(self, client):

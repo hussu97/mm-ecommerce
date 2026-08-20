@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
@@ -142,6 +144,7 @@ async def get_all(
     is_active: bool | None = None,
     channel: str = "web",
     staff: bool = False,
+    branch_id: uuid.UUID | None = None,
 ) -> tuple[list[ProductResponse], int]:
     """
     List products for one sales channel.
@@ -155,6 +158,9 @@ async def get_all(
     be bought; the console's list is what exists, out-of-stock rows included,
     because hiding a product from the screen where it is put back is how it
     never gets put back.
+
+    `branch_id` is the kitchen the shopper's pin resolves to, and narrows the
+    list to what that kitchen can make. Ignored for staff, who are not shopping.
     """
     # Built in two halves on purpose. Everything that decides *which* rows match
     # goes on `stmt`; the ordering and the eager loads go on afterwards, and only
@@ -188,7 +194,7 @@ async def get_all(
             *(
                 (sells_on(WEB_CHANNEL), active_website_category_clause())
                 if staff
-                else website_product_visibility_clause()
+                else website_product_visibility_clause(branch_id)
             )
         )
     elif channel == "pos":
@@ -228,13 +234,15 @@ async def get_all(
     return [ProductResponse.model_validate(p) for p in products], total
 
 
-async def get_by_slug(db: AsyncSession, slug: str) -> ProductResponse:
+async def get_by_slug(
+    db: AsyncSession, slug: str, *, branch_id: uuid.UUID | None = None
+) -> ProductResponse:
     stmt = (
         select(Product)
         .options(*_product_load_options())
         .where(
             Product.slug == slug,
-            *website_product_visibility_clause(),
+            *website_product_visibility_clause(branch_id),
         )
     )
     result = await db.execute(stmt)
@@ -254,13 +262,15 @@ async def get_by_slug_admin(db: AsyncSession, slug: str) -> ProductResponse:
     return ProductResponse.model_validate(product)
 
 
-async def get_featured(db: AsyncSession, limit: int = 8) -> list[ProductResponse]:
+async def get_featured(
+    db: AsyncSession, limit: int = 8, *, branch_id: uuid.UUID | None = None
+) -> list[ProductResponse]:
     stmt = (
         select(Product)
         .options(*_product_load_options())
         .where(
             Product.is_featured == True,  # noqa: E712
-            *website_product_visibility_clause(),
+            *website_product_visibility_clause(branch_id),
         )
         .order_by(Product.display_order, Product.created_at.desc())
         .limit(limit)
@@ -270,7 +280,9 @@ async def get_featured(db: AsyncSession, limit: int = 8) -> list[ProductResponse
     return [ProductResponse.model_validate(p) for p in products]
 
 
-async def get_cart_addons(db: AsyncSession, limit: int = 8) -> list[ProductResponse]:
+async def get_cart_addons(
+    db: AsyncSession, limit: int = 8, *, branch_id: uuid.UUID | None = None
+) -> list[ProductResponse]:
     """
     The small things the cart offers alongside the basket — a gift note today.
 
@@ -283,7 +295,7 @@ async def get_cart_addons(db: AsyncSession, limit: int = 8) -> list[ProductRespo
         .options(*_product_load_options())
         .where(
             Product.is_cart_addon == True,  # noqa: E712
-            *website_product_visibility_clause(),
+            *website_product_visibility_clause(branch_id),
         )
         .order_by(Product.display_order, Product.created_at.desc())
         .limit(limit)

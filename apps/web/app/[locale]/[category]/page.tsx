@@ -19,6 +19,7 @@ import {
   type ProductSort,
 } from '@/lib/product-sort';
 import { fetchJson, fetchJsonOrNull } from '@/lib/fetch-json';
+import { branchParam, browsingBranch } from '@/lib/location/branch-server';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 const PER_PAGE = 12;
 
@@ -45,6 +46,7 @@ async function getCategoryData(
   slug: string,
   page: number = 1,
   sort: ProductSort = DEFAULT_PRODUCT_SORT,
+  branchId: string | null = null,
 ): Promise<{ category: Category; products: Product[]; total: number; pages: number } | null> {
   // No try/catch that turns a failure into `null`. `null` means notFound(), and
   // under ISR a 404 rendered during a blip is *kept* — a live category gone for
@@ -56,7 +58,7 @@ async function getCategoryData(
       signal: AbortSignal.timeout(8000),
     }),
     fetchJson<ProductListResponse>(
-      `${RSC_API_BASE}/products?category=${slug}&per_page=${PER_PAGE}&page=${page}&sort=${sort}`,
+      `${RSC_API_BASE}/products?category=${slug}&per_page=${PER_PAGE}&page=${page}&sort=${sort}${branchParam(branchId)}`,
       {
         next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
         signal: AbortSignal.timeout(8000),
@@ -172,8 +174,14 @@ export default async function CategoryPage({
   const page = Math.max(1, parseInt(pageStr ?? '1', 10) || 1);
   const sort = parseProductSort(sortStr);
 
+  // The kitchen this shopper's pin resolves to, so the grid is what that
+  // kitchen can make rather than what the estate collectively can. Reading the
+  // cookie makes this route dynamic for a shopper who has set a location; a
+  // crawler and a first visit have none and keep the cached, estate-wide page.
+  const branchId = await browsingBranch();
+
   const [data, translations] = await Promise.all([
-    getCategoryData(slug, page, sort),
+    getCategoryData(slug, page, sort, branchId),
     getTranslations(locale),
   ]);
 

@@ -122,6 +122,53 @@ def unavailable_option_ids_at(branch_id: uuid.UUID):
     )
 
 
+def unsellable_at_branch_subquery(branch_id: uuid.UUID):
+    """
+    Products this one branch cannot make, as a correlated predicate on `Product`.
+
+    The SQL twin of `BranchAvailability.product_available`, and it has to stay
+    the twin: this decides what a shopper is shown, that decides what the cart
+    and the checkout refuse, and a shopper offered a cake the checkout will not
+    take has been sent down a corridor with a wall at the end.
+
+    Both halves of the rule, for the same reason the in-memory one has both. A
+    product marked out is unsellable. So is a product nobody marked whose
+    *required* groups have nothing left to choose from — a box of three with no
+    fillings is not a box. An optional group emptying out is not a blocker,
+    because nobody had to pick from it, which is why this reads
+    `minimum_options >= 1` rather than any flag named "required".
+
+    Live options only: an option switched off in the catalogue is gone
+    everywhere, and counting it as something left to choose would keep a box
+    sellable on the strength of a filling no branch has.
+    """
+    marked_out = Product.id.in_(unavailable_product_ids_at(branch_id))
+
+    out_here = unavailable_option_ids_at(branch_id)
+    # A required group with nothing left in it. `~exists` on the options rather
+    # than a count, so Postgres can stop at the first live one.
+    empty_required_group = (
+        select(ProductModifier.id)
+        .join(Modifier, Modifier.id == ProductModifier.modifier_id)
+        .where(
+            ProductModifier.product_id == Product.id,
+            ProductModifier.minimum_options >= 1,
+            Modifier.is_active.is_(True),
+            ~select(ModifierOption.id)
+            .where(
+                ModifierOption.modifier_id == Modifier.id,
+                ModifierOption.is_active.is_(True),
+                ModifierOption.id.notin_(out_here),
+            )
+            .exists(),
+        )
+        .correlate(Product)
+        .exists()
+    )
+
+    return or_(marked_out, empty_required_group)
+
+
 def out_at_every_branch_subquery():
     """
     Products no branch can make.
