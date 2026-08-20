@@ -34,6 +34,7 @@ from .pos_order import OrderItemStatusEnum, PosOrderStatusEnum
 if TYPE_CHECKING:
     from .branch import Branch
     from .order_delivery import OrderDelivery
+    from .order_driver import OrderDriver
     from .order_status_event import OrderStatusEvent
     from .payment_transaction import PaymentTransaction
     from .pos_order import (
@@ -411,6 +412,20 @@ class Order(Base, UUIDMixin, TimestampMixin):
         back_populates="order",
         cascade="all, delete-orphan",
         uselist=False,
+    )
+    #: Every driver who has held this order, oldest stint first. Exactly one of
+    #: them has `is_active`, enforced by a unique constraint rather than by
+    #: whoever remembered to check — see `order_driver`.
+    #:
+    #: Lazy by default. The register's order list and the admin card read the
+    #: *current* driver off `delivery`, which carries a live copy of it; the
+    #: ledger itself is wanted only where the history is, and a `selectinload`
+    #: on every list would be a second query for a column nobody read.
+    drivers: Mapped[list[OrderDriver]] = relationship(
+        "OrderDriver",
+        back_populates="order",
+        cascade="all, delete-orphan",
+        order_by="OrderDriver.sequence",
     )
     #: Every status this order has reached, oldest first. Written by the
     #: listener in `order_status_event`, not by any caller here — see that

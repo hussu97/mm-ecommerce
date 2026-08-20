@@ -59,6 +59,34 @@ export function formatDateTime(iso: string): string {
   });
 }
 
+/**
+ * How long ago, in the words somebody uses out loud — "40s ago", "3 min ago".
+ *
+ * For facts whose *age* is the point rather than their clock time. A driver's
+ * position is the case this was written for: "as of 14:32" makes a reader do
+ * the subtraction, and the whole reason the stamp is shown is that a distance
+ * measured four minutes ago means something different from one measured now.
+ *
+ * Anything past an hour is given as a time instead. By then the number of
+ * minutes has stopped being the useful form, and nothing that quotes this is
+ * shown at all once it is that stale.
+ */
+export function formatTimeAgo(iso: string): string {
+  const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min ago`;
+  return formatTime(iso);
+}
+
+/** `1` → `1st`. For "the 2nd driver on this order". */
+export function ordinal(value: number): string {
+  const suffix =
+    value % 100 >= 11 && value % 100 <= 13
+      ? 'th'
+      : ['th', 'st', 'nd', 'rd'][value % 10] ?? 'th';
+  return `${value}${suffix}`;
+}
+
 /** Just the time, where the surrounding row already says which day. */
 export function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-AE', {

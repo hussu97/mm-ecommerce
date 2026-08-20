@@ -32,7 +32,6 @@ Standard cakes go by bike.
 from __future__ import annotations
 
 import logging
-import math
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -61,7 +60,9 @@ from app.models.webhook_event import WebhookEvent
 from app.services import (
     address_format,
     courier_reference,
+    driver_assignment,
     email_service,
+    geo,
     order_lifecycle,
 )
 from app.services.lalamove_service import (
@@ -84,6 +85,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "PROVIDER",
     "apply_tracking",
+    "tracking_position",
     "apply_webhook",
     "cancel_delivery",
     "dispatch_order",
@@ -97,10 +99,6 @@ __all__ = [
 ]
 
 PROVIDER = FulfilmentProviderEnum.NOON_SEND.value
-
-#: Kilometres per degree of latitude. Good to a fraction of a percent over the
-#: fifteen kilometres this is ever asked about.
-_KM_PER_DEG_LAT = 111.32
 
 #: The shop's clock, which is what the surge windows are quoted against.
 TZ = ZoneInfo(DELIVERY_TIMEZONE)
@@ -127,10 +125,10 @@ def road_distance_km(lat_a: float, lng_a: float, lat_b: float, lng_b: float) -> 
     nothing bills from it — accurate enough to say what a zone costs on average,
     which is what it is for.
     """
-    mean_lat = math.radians((lat_a + lat_b) / 2)
-    dy = (lat_b - lat_a) * _KM_PER_DEG_LAT
-    dx = (lng_b - lng_a) * _KM_PER_DEG_LAT * math.cos(mean_lat)
-    return math.hypot(dx, dy) * settings.NOON_SEND_DETOUR_FACTOR
+    return (
+        geo.straight_line_km(lat_a, lng_a, lat_b, lng_b)
+        * settings.NOON_SEND_DETOUR_FACTOR
+    )
 
 
 #: Peak windows, on the shop's clock, in which every band costs AED 1 more.
@@ -613,6 +611,12 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
     # against staging, is `pending_assignment`, and storing their ack instead
     # would put a word in `courier_status` that no status map has ever heard of.
     delivery.courier_status = NoonSendStatusEnum.PENDING_ASSIGNMENT.value
+    # A new task carries nobody. `clear` closes any stint left open by the task
+    # this replaces, so a re-dispatch does not leave a rider from the abandoned
+    # booking reading as current — while keeping the assignment counter
+    # monotonic, so the register cannot mistake the next rider's slip for one it
+    # has already printed.
+    await driver_assignment.clear(db, delivery)
     delivery.booked_at = datetime.now(timezone.utc)
     delivery.status_updated_at = delivery.booked_at
     delivery.last_error = None
@@ -825,19 +829,27 @@ async def apply_webhook(
     if task_nr := payload.get("order_nr"):
         delivery.courier_order_id = str(task_nr)
 
+    # ── who is carrying it ────────────────────────────────────────────────────
+    #
+    # Their status push is three fields — task, status, reference — so the
+    # rider's name is not in it, and the detail call is the only way to learn it.
+    #
+    # Asked on every pre-collection push rather than only on the *transition* to
+    # `assigned`, which is what this used to do. A courier that swaps riders
+    # mid-task re-sends `assigned` — the same word it already sent — so the
+    # transition test was false and the swap went unread; and one that swaps
+    # after the bike reaches the shop reports `arrived_at_pickup_location` with
+    # no mention of the change at all. `record` is what decides whether anything
+    # actually moved, so asking more often costs one call and no false alarms.
+    if status in _RIDER_BEARING_STATUSES:
+        change = await _refresh_rider(db, delivery, at=updated_at)
+        if change.is_new_driver:
+            await _announce_rider(db, delivery)
+
     if status and status != delivery.courier_status:
         delivery.courier_previous_status = delivery.courier_status
         delivery.courier_status = status
         moment = updated_at or datetime.now(timezone.utc)
-        if status == NoonSendStatusEnum.ASSIGNED.value:
-            # Their status push is three fields — task, status, reference — so
-            # the rider's name is not in it. The integration doc is explicit
-            # that "once a Delivery Agent is assigned, their contact details
-            # will be shared in the task detail", so the detail is what we ask.
-            # Without this the counter was told "a rider is on the way" with no
-            # name and no number to call.
-            await _fill_rider_details(delivery)
-            await _announce_rider(db, delivery)
         # `picked_up_at` and `delivered_at` used to be written here too. They
         # were the same two moments `order_status_events` records as
         # `out_for_delivery` and `delivered` — the same fact in two tables, and
@@ -866,16 +878,34 @@ async def apply_webhook(
     return delivery
 
 
-async def _fill_rider_details(delivery: OrderDelivery) -> None:
-    """
-    Put a name and a number to the rider, from the task detail.
+#: The statuses in which a rider exists and has not yet collected — the window
+#: in which asking the task detail can tell us something we did not know.
+#:
+#: `picked_up` and everything after it are out: the person is on their way to the
+#: customer, a swap then is noon's problem rather than the counter's, and the
+#: call would buy nothing the shop can act on.
+_RIDER_BEARING_STATUSES = frozenset(
+    {
+        NoonSendStatusEnum.ASSIGNED.value,
+        NoonSendStatusEnum.ARRIVED_AT_PICKUP_LOCATION.value,
+    }
+)
 
-    Best-effort: the webhook must still answer 200. Their doc warns the details
-    are "only available for active tasks or recently completed ones", so this is
-    called on assignment rather than left until someone opens the admin.
+
+async def _refresh_rider(
+    db: AsyncSession, delivery: OrderDelivery, *, at: datetime | None = None
+) -> driver_assignment.Change:
+    """
+    Read the task detail and fold whoever it names onto the order.
+
+    Best-effort: the webhook must still answer 200, so a failed read is a
+    `UNCHANGED` and a warning rather than a dropped status update. Their doc
+    warns the details are "only available for active tasks or recently completed
+    ones", which is why this is asked while the task is live rather than left
+    until somebody opens the admin.
     """
     if not delivery.courier_order_id or not is_enabled():
-        return
+        return driver_assignment.Change.UNCHANGED
     try:
         details = await provider.get_task(str(delivery.courier_order_id))
     except Exception:  # pragma: no cover — network, never worth failing on
@@ -883,19 +913,24 @@ async def _fill_rider_details(delivery: OrderDelivery) -> None:
             "Could not read the noon Send task %s for rider details",
             delivery.courier_order_id,
         )
-        return
+        return driver_assignment.Change.UNCHANGED
+
     rider = details.get("da_details") or {}
     if not rider:
-        return
-    delivery.driver_name = rider.get("name") or delivery.driver_name
-    delivery.driver_phone = rider.get("phone_number") or delivery.driver_phone
+        return driver_assignment.Change.UNCHANGED
+
+    change = await driver_assignment.record(
+        db, delivery, driver_assignment.Driver.from_noon_send(rider), at=at
+    )
     location = rider.get("location") or {}
-    delivery.driver_latitude = (
-        degrees(location.get("latitude")) or delivery.driver_latitude
+    await driver_assignment.record_position(
+        db,
+        delivery,
+        latitude=degrees(location.get("latitude")),
+        longitude=degrees(location.get("longitude")),
+        at=at,
     )
-    delivery.driver_longitude = (
-        degrees(location.get("longitude")) or delivery.driver_longitude
-    )
+    return change
 
 
 async def _announce_rider(db: AsyncSession, delivery: OrderDelivery) -> None:
@@ -911,7 +946,11 @@ async def _announce_rider(db: AsyncSession, delivery: OrderDelivery) -> None:
         return
     try:
         await push_service.notify_rider_assigned(
-            db, order, rider_name=delivery.driver_name
+            db,
+            order,
+            rider_name=delivery.driver_name,
+            rider_phone=delivery.driver_phone,
+            assignment=delivery.driver_assignment_count or 1,
         )
     except Exception:  # pragma: no cover — defensive
         logger.exception("Could not announce the rider for %s", order.order_number)
@@ -930,31 +969,62 @@ async def handle_tracking_webhook(
     delivery = await _delivery_for(db, payload)
     if delivery is None:
         return {"received": True, "matched": False}
-    apply_tracking(delivery, payload)
+    await apply_tracking(db, delivery, payload)
     return {"received": True, "matched": True}
 
 
-def apply_tracking(delivery: OrderDelivery, payload: dict[str, Any]) -> None:
+def tracking_position(payload: dict[str, Any]) -> tuple[Decimal | None, Decimal | None]:
     """
-    Move the rider's pin.
+    The rider's coordinates out of a tracking push, or a pair of nulls.
 
-    The coordinates are nested under `da_details.location` and encoded the same
-    way we send ours — degrees times 10^7, as strings. This read them one level
-    too high and unconverted, so every tracking push was a silent no-op: the
-    lookup missed, the guard below was never satisfied, and nothing was written
-    or logged. Two real pushes arrived that way before anyone looked.
+    The values are encoded the same way we send ours — degrees times 10^7, as
+    strings — and this read them one level too high and unconverted, so every
+    tracking push was a silent no-op: the lookup missed, the guard was never
+    satisfied, and nothing was written or logged. Two real pushes arrived that
+    way before anyone looked.
+
+    Both shapes, because noon uses both. The task detail nests the pair under
+    `location`; the tracking webhook puts them straight on `da_details`. This
+    read only the first, so every tracking push for a live order was a no-op —
+    thirteen of them arrived in eight minutes and moved nothing.
     """
     details = payload.get("da_details") or {}
-    # Both shapes, because noon uses both. The task detail nests the pair under
-    # `location`; the tracking webhook puts them straight on `da_details`. This
-    # read only the first, so every tracking push for a live order was a no-op —
-    # thirteen of them arrived in eight minutes and moved nothing.
     location = details.get("location") or details
-    latitude = degrees(location.get("latitude"))
-    longitude = degrees(location.get("longitude"))
-    if latitude is not None and longitude is not None:
-        delivery.driver_latitude = latitude
-        delivery.driver_longitude = longitude
+    return degrees(location.get("latitude")), degrees(location.get("longitude"))
+
+
+async def apply_tracking(
+    db: AsyncSession, delivery: OrderDelivery, payload: dict[str, Any]
+) -> driver_assignment.Change:
+    """
+    Move the rider's pin — and notice if it is a different rider holding it.
+
+    The position is the reason the endpoint exists, and the second half is
+    nearly free. Their status webhook has no rider in it at all, so on a task
+    that was swapped without a status change these pings are the *only* thing
+    naming the new person: a name and a number arriving every fifteen seconds
+    that nothing was reading. Where the push carries neither, `record` sees an
+    empty driver and does nothing, which is the ordinary case.
+    """
+    latitude, longitude = tracking_position(payload)
+    change = await driver_assignment.record(
+        db,
+        delivery,
+        driver_assignment.Driver.from_noon_send(payload.get("da_details")),
+        at=parse_time(payload.get("timestamp")),
+    )
+    await driver_assignment.record_position(
+        db,
+        delivery,
+        latitude=latitude,
+        longitude=longitude,
+        # Their own stamp where the push carries one. A position is only worth
+        # quoting with the moment it was true beside it, and these can queue.
+        at=parse_time(payload.get("timestamp")),
+    )
+    if change.is_new_driver:
+        await _announce_rider(db, delivery)
+    return change
 
 
 async def _order_of(db: AsyncSession, delivery: OrderDelivery) -> Order | None:
@@ -1055,15 +1125,22 @@ async def refresh(db: AsyncSession, order_id: uuid.UUID) -> OrderDelivery | None
 
     rider = details.get("da_details") or {}
     if rider:
-        delivery.driver_name = rider.get("name") or delivery.driver_name
-        delivery.driver_phone = rider.get("phone_number") or delivery.driver_phone
+        # Through `record` rather than written onto the row, because an admin
+        # pressing "Check status" is one of the ways a swap gets noticed: the
+        # push that would have said so is exactly the push that never arrived,
+        # which is why somebody is pressing the button.
+        change = await driver_assignment.record(
+            db, delivery, driver_assignment.Driver.from_noon_send(rider)
+        )
         location = rider.get("location") or {}
-        delivery.driver_latitude = (
-            degrees(location.get("latitude")) or delivery.driver_latitude
+        await driver_assignment.record_position(
+            db,
+            delivery,
+            latitude=degrees(location.get("latitude")),
+            longitude=degrees(location.get("longitude")),
         )
-        delivery.driver_longitude = (
-            degrees(location.get("longitude")) or delivery.driver_longitude
-        )
+        if change.is_new_driver:
+            await _announce_rider(db, delivery)
     if details.get("has_pod"):
         delivery.pod_status = "AVAILABLE"
 

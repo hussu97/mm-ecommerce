@@ -782,6 +782,30 @@ export interface OrderDelivery {
   driver_name: string | null;
   driver_phone: string | null;
   driver_plate: string | null;
+  /** When the current driver took the order. */
+  driver_assigned_at: string | null;
+  /**
+   * Which driver this is — 1 for the first, 2 for whoever took over from them.
+   * Zero until a courier matches anybody.
+   */
+  driver_assignment_count: number;
+  /**
+   * Everyone who held this order before the current driver, oldest first. Empty
+   * on the overwhelming majority, which are carried by the driver they started
+   * with.
+   */
+  previous_drivers: PreviousDriver[];
+  /**
+   * Roughly how far the driver still is from the branch, in kilometres, with
+   * the moment that position was true.
+   *
+   * Null unless a named driver is on the way *to the kitchen*: after collection
+   * the number would only grow, and a position the courier has stopped
+   * refreshing is withheld rather than shown stale. An estimate — say so
+   * wherever it is rendered.
+   */
+  driver_distance_km: number | null;
+  driver_location_at: string | null;
   pod_status: string | null;
   pod_image_url: string | null;
   booked_at: string | null;
@@ -791,6 +815,16 @@ export interface OrderDelivery {
   cancel_reason: string | null;
   last_error: string | null;
   needs_attention: boolean;
+}
+
+/** A driver who used to be on this order, and when they stopped being. */
+export interface PreviousDriver {
+  sequence: number;
+  name: string | null;
+  phone: string | null;
+  plate: string | null;
+  assigned_at: string | null;
+  replaced_at: string | null;
 }
 
 /** What Lalamove would charge to carry a third-party order, and the margin. */

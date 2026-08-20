@@ -10086,6 +10086,17 @@ export interface components {
             courier_status: string | null;
             /** Delivered At */
             delivered_at: string | null;
+            /** Driver Assigned At */
+            driver_assigned_at?: string | null;
+            /**
+             * Driver Assignment Count
+             * @default 0
+             */
+            driver_assignment_count: number;
+            /** Driver Distance Km */
+            driver_distance_km?: number | null;
+            /** Driver Location At */
+            driver_location_at?: string | null;
             /** Driver Name */
             driver_name: string | null;
             /** Driver Phone */
@@ -10108,6 +10119,11 @@ export interface components {
             pod_image_url: string | null;
             /** Pod Status */
             pod_status: string | null;
+            /**
+             * Previous Drivers
+             * @default []
+             */
+            previous_drivers: components["schemas"]["PreviousDriver"][];
             /** Provider */
             provider: string;
             /** Quoted Cost */
@@ -11089,6 +11105,15 @@ export interface components {
             device_id: string | null;
             /** Discount Amount */
             discount_amount: string;
+            /**
+             * Driver Assignment Count
+             * @default 0
+             */
+            driver_assignment_count: number;
+            /** Driver Distance Km */
+            driver_distance_km?: number | null;
+            /** Driver Location At */
+            driver_location_at?: string | null;
             /** Driver Name */
             driver_name?: string | null;
             /** Driver Phone */
@@ -11171,6 +11196,24 @@ export interface components {
             updated_at: string;
             /** Vat Amount */
             vat_amount: string;
+        };
+        /**
+         * PreviousDriver
+         * @description A driver who used to be on this order, and when they stopped being.
+         */
+        PreviousDriver: {
+            /** Assigned At */
+            assigned_at?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Phone */
+            phone?: string | null;
+            /** Plate */
+            plate?: string | null;
+            /** Replaced At */
+            replaced_at?: string | null;
+            /** Sequence */
+            sequence: number;
         };
         /** PrinterCreate */
         PrinterCreate: {

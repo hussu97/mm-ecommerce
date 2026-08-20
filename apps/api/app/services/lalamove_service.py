@@ -54,6 +54,7 @@ from app.models.webhook_event import WebhookEvent
 from app.services import (
     address_format,
     courier_reference,
+    driver_assignment,
     email_service,
     order_lifecycle,
 )
@@ -79,6 +80,8 @@ __all__ = [
     "delivery_key_of",
     "dispatch_order",
     "estimate_for_point",
+    "announce_driver",
+    "fill_driver_details",
     "get_delivery",
     "handle_webhook",
     "is_enabled",
@@ -566,7 +569,17 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
         booking.get("status") or CourierStatusEnum.ASSIGNING_DRIVER.value
     )
     delivery.share_link = booking.get("shareLink")
-    delivery.driver_id = booking.get("driverId") or None
+    # A fresh booking carries nobody — Lalamove answers `ASSIGNING_DRIVER` and
+    # matches a driver minutes later. `clear` closes any stint left open by the
+    # booking this replaces, so a re-dispatch does not leave two people reading
+    # as current, and keeps the assignment counter monotonic so the register
+    # cannot mistake the next driver's slip for one already printed.
+    await driver_assignment.clear(db, delivery)
+    await driver_assignment.record(
+        db,
+        delivery,
+        driver_assignment.Driver.from_lalamove(None, driver_id=booking.get("driverId")),
+    )
     delivery.booked_at = datetime.now(timezone.utc)
     delivery.status_updated_at = delivery.booked_at
     delivery.last_error = None
@@ -786,7 +799,12 @@ async def assign_and_dispatch(
         booking.get("status") or CourierStatusEnum.ASSIGNING_DRIVER.value
     )
     delivery.share_link = booking.get("shareLink")
-    delivery.driver_id = booking.get("driverId") or None
+    await driver_assignment.clear(db, delivery)
+    await driver_assignment.record(
+        db,
+        delivery,
+        driver_assignment.Driver.from_lalamove(None, driver_id=booking.get("driverId")),
+    )
     delivery.stop_id = stops[1].get("stopId")
     delivery.booked_at = datetime.now(timezone.utc)
     delivery.status_updated_at = delivery.booked_at
@@ -1128,17 +1146,29 @@ async def apply_webhook(
     event_type = payload.get("eventType")
     delivery.last_payload = payload
 
-    had_driver = bool(delivery.driver_id)
+    # ── who is carrying it ────────────────────────────────────────────────────
+    #
+    # Both shapes are folded into one decision. `DRIVER_ASSIGNED` describes the
+    # whole person; the status change that production actually receives carries
+    # a bare `driverId` and nothing else. Either can be the *first* driver or a
+    # replacement for one, and `driver_assignment.record` is what tells them
+    # apart — this used to ask `not had_driver`, which is only ever true once
+    # and so made a mid-booking swap invisible.
+    reported = driver_assignment.Driver.from_lalamove(
+        data.get("driver") if event_type == "DRIVER_ASSIGNED" else None,
+        driver_id=courier_order.get("driverId"),
+    )
+    change = await driver_assignment.record(db, delivery, reported, at=updated_at)
 
     if event_type == "DRIVER_ASSIGNED":
-        driver = data.get("driver") or {}
-        delivery.driver_id = driver.get("driverId") or delivery.driver_id
-        delivery.driver_name = driver.get("name") or delivery.driver_name
-        delivery.driver_phone = driver.get("phone") or delivery.driver_phone
-        delivery.driver_plate = driver.get("plateNumber") or delivery.driver_plate
         location = data.get("location") or {}
-        delivery.driver_latitude = decimal_or_none(location.get("lat"))
-        delivery.driver_longitude = decimal_or_none(location.get("lng"))
+        await driver_assignment.record_position(
+            db,
+            delivery,
+            latitude=decimal_or_none(location.get("lat")),
+            longitude=decimal_or_none(location.get("lng")),
+            at=updated_at,
+        )
 
     if event_type == "POD_STATUS_CHANGED":
         pod = _pod_for(delivery, courier_order.get("stops") or [])
@@ -1149,19 +1179,19 @@ async def apply_webhook(
     apply_price(delivery, courier_order.get("priceBreakdown"))
     if courier_order.get("shareLink"):
         delivery.share_link = courier_order["shareLink"]
-    if courier_order.get("driverId"):
-        delivery.driver_id = str(courier_order["driverId"])
 
-    # A driver we did not know about a moment ago. Announced here rather than
-    # only under `DRIVER_ASSIGNED`, because that event has never once arrived:
-    # across every webhook production has received, the types were
-    # ORDER_CREATED, ORDER_STATUS_CHANGED, POD_STATUS_CHANGED and
+    # A driver we had not been told about, or a different one from last time.
+    # Handled here rather than only under `DRIVER_ASSIGNED`, because that event
+    # has never once arrived: across every webhook production has received the
+    # types were ORDER_CREATED, ORDER_STATUS_CHANGED, POD_STATUS_CHANGED and
     # WALLET_BALANCE_CHANGED, and the driver id came in on the status change.
     # Hanging the announcement off an event we do not get meant the counter was
     # never told a rider was coming.
-    if delivery.driver_id and not had_driver:
-        await _fill_driver_details(db, delivery)
-        await _announce_driver(db, delivery)
+    if change.is_new_driver:
+        # The status push carries an id and no name, so the shop has nothing to
+        # say or ring until this fetches one.
+        await fill_driver_details(db, delivery, at=updated_at)
+        await announce_driver(db, delivery)
 
     status = courier_order.get("status")
     if status and status != delivery.courier_status:
@@ -1195,13 +1225,23 @@ async def apply_webhook(
     return delivery
 
 
-async def _fill_driver_details(db: AsyncSession, delivery: OrderDelivery) -> None:
+async def fill_driver_details(
+    db: AsyncSession,
+    delivery: OrderDelivery,
+    *,
+    at: datetime | None = None,
+) -> None:
     """
-    Put a name and a number to the driver id.
+    Put a name, a number and a position to the driver id.
 
     The status webhook carries only `driverId`, so without this every Lalamove
     delivery kept an empty `driver_name` and the shop had no way to reach the
     person holding the cake — the two production orders both ended that way.
+
+    Public rather than private because `driver_tracking` calls it on every tick
+    of the sweep: this endpoint is the only place Lalamove will say where a
+    driver is, and a position asked for once at assignment is a position that is
+    twenty minutes old by pickup.
 
     Best-effort: the webhook must still answer 200, and a delivery with an
     anonymous driver is worse than one with a named driver but far better than
@@ -1224,21 +1264,32 @@ async def _fill_driver_details(db: AsyncSession, delivery: OrderDelivery) -> Non
         return
 
     detail = driver.get("data") if isinstance(driver.get("data"), dict) else driver
-    delivery.driver_name = detail.get("name") or delivery.driver_name
-    delivery.driver_phone = detail.get("phone") or delivery.driver_phone
-    delivery.driver_plate = detail.get("plateNumber") or delivery.driver_plate
+    # Through `record` rather than written straight onto the row: this endpoint
+    # is asked about a driver id we already hold, so it can only ever confirm or
+    # enrich that person, and `record` is where "the same person, better
+    # described" is distinguished from a swap.
+    await driver_assignment.record(
+        db,
+        delivery,
+        driver_assignment.Driver.from_lalamove(detail, driver_id=delivery.driver_id),
+        at=at,
+    )
     coords = detail.get("coordinates") or {}
-    delivery.driver_latitude = (
-        decimal_or_none(coords.get("lat")) or delivery.driver_latitude
-    )
-    delivery.driver_longitude = (
-        decimal_or_none(coords.get("lng")) or delivery.driver_longitude
+    await driver_assignment.record_position(
+        db,
+        delivery,
+        latitude=decimal_or_none(coords.get("lat")),
+        longitude=decimal_or_none(coords.get("lng")),
+        # Their `coordinates.updatedAt` where they send one, because a position
+        # is only as good as the moment it was true and this one may already be
+        # a minute old by the time we ask.
+        at=parse_time(coords.get("updatedAt")) or at or datetime.now(timezone.utc),
     )
 
 
-async def _announce_driver(db: AsyncSession, delivery: OrderDelivery) -> None:
+async def announce_driver(db: AsyncSession, delivery: OrderDelivery) -> None:
     """
-    Tell the counter somebody is coming for it.
+    Tell the counter somebody is coming for it — or that somebody else is now.
 
     Best-effort, and deliberately swallowed: this runs inside a webhook that
     must answer 200, and a notification that fails is a quieter shop rather
@@ -1255,7 +1306,11 @@ async def _announce_driver(db: AsyncSession, delivery: OrderDelivery) -> None:
         return
     try:
         await push_service.notify_rider_assigned(
-            db, order, rider_name=delivery.driver_name
+            db,
+            order,
+            rider_name=delivery.driver_name,
+            rider_phone=delivery.driver_phone,
+            assignment=delivery.driver_assignment_count or 1,
         )
     except Exception:  # pragma: no cover — defensive
         logger.exception("Could not announce the driver for %s", order.order_number)

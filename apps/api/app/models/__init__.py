@@ -54,9 +54,11 @@ from .order_delivery import (  # noqa: F401
     CourierStatusEnum,
     NoonSendStatusEnum,
     OrderDelivery,
+    is_collected,
     is_failed,
     is_terminal,
 )
+from .order_driver import OrderDriver  # noqa: F401
 from .order_status_event import (  # noqa: F401
     OrderStatusEvent,
     StatusActor,

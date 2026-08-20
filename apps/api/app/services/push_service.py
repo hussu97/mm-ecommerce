@@ -229,22 +229,61 @@ async def notify_order_placed(db: AsyncSession, order: Order) -> int:
 
 
 async def notify_rider_assigned(
-    db: AsyncSession, order: Order, *, rider_name: str | None = None
+    db: AsyncSession,
+    order: Order,
+    *,
+    rider_name: str | None = None,
+    rider_phone: str | None = None,
+    assignment: int = 1,
 ) -> int:
-    """A courier has a name and is on the way to collect."""
+    """
+    A courier has a name and is on the way to collect — or a different one is.
+
+    A swap says so in the title. "Rider assigned" arriving twice for one order
+    reads as a duplicate notification and gets dismissed, which is exactly the
+    wrong response: somebody else is coming, the number on the counter's screen
+    has changed, and a slip with the new name on it is about to print.
+
+    The number rides along in the body because this is what a counter reads when
+    a driver is late, and the alternative was unlocking an iPad to look it up.
+
+    *assignment* is which stint this is — 1 for the first driver, 2 for the
+    person who took over from them. One argument rather than a name and a
+    separate "is this a replacement" flag, because two arguments can disagree
+    and this one is already the number the register keys its printing off.
+
+    **The collapse id carries it.** Left as one id per order, APNs would replace
+    the first driver's alert with the second's — fine on a locked screen and
+    wrong in a notification list somebody scrolls back through to work out who
+    they spoke to.
+    """
     if not order.branch_id:
         return 0
 
+    reassigned = assignment > 1
     who = rider_name or "A rider"
+    reference = f"#{order.check_number or order.order_number}"
+    body = (
+        f"{who} has taken over {reference}"
+        if reassigned
+        else f"{who} is collecting {reference}"
+    )
+    if rider_phone:
+        body = f"{body} · {rider_phone}"
     payload = _alert(
-        "Rider assigned",
-        f"{who} is collecting #{order.check_number or order.order_number}",
+        "Rider changed" if reassigned else "Rider assigned",
+        body,
         sound="default",
         extra={
             "event": "rider_assigned",
             "order_number": order.order_number,
             "order_id": str(order.id),
             "branch_id": str(order.branch_id),
+            # So the register can nudge the right queue rather than re-reading
+            # everything, and can tell a first driver from a replacement without
+            # parsing the words a person reads.
+            "reassigned": reassigned,
+            "assignment": assignment,
             # Informational: nothing to dismiss, no tone to repeat.
             "requires_acknowledgement": False,
         },
@@ -253,5 +292,5 @@ async def notify_rider_assigned(
         db,
         order.branch_id,
         payload=payload,
-        collapse_id=f"rider-{order.order_number}",
+        collapse_id=f"rider-{order.order_number}-{assignment}",
     )

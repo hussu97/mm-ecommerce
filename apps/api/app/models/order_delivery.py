@@ -135,6 +135,37 @@ def is_terminal(provider: str | None, status: str | None) -> bool:
     )
 
 
+#: provider -> the statuses in which the parcel is already on the bike.
+#:
+#: Read by the one thing that cares: how far the driver is from the *kitchen*.
+#: That number answers "how long until somebody collects this" and stops meaning
+#: anything the moment they have, because from then on the driver is supposed to
+#: be getting further away. Quoting it past collection would put a growing
+#: distance on a counter screen next to an order nobody there is waiting for.
+_COLLECTED_STATUSES: dict[str, frozenset[str]] = {
+    "lalamove": frozenset(
+        {
+            CourierStatusEnum.PICKED_UP.value,
+            CourierStatusEnum.COMPLETED.value,
+        }
+    ),
+    "noon_send": frozenset(
+        {
+            NoonSendStatusEnum.PICKED_UP.value,
+            NoonSendStatusEnum.ARRIVED_AT_DELIVERY.value,
+            NoonSendStatusEnum.DELIVERED.value,
+        }
+    ),
+}
+
+
+def is_collected(provider: str | None, status: str | None) -> bool:
+    """The driver has the parcel; they are no longer coming to the kitchen."""
+    return bool(status) and status in _COLLECTED_STATUSES.get(
+        provider or "", frozenset()
+    )
+
+
 def is_failed(provider: str | None, status: str | None) -> bool:
     """Terminal, and the parcel never reached the customer.
 
@@ -284,6 +315,12 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
     price_breakdown: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
 
     # ── driver ────────────────────────────────────────────────────────────────
+    #
+    # One driver, and the ones before them. A courier swapping riders mid-booking
+    # is routine on both integrations — a shift ending, a bike that will not
+    # start — and it used to overwrite nothing at all, because the code that
+    # filled these ran only when the row had no driver yet. The shop kept the
+    # first name and the first number and rang somebody who had dropped the job.
     driver_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     driver_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
     driver_phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
@@ -294,6 +331,37 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
     driver_longitude: Mapped[Decimal | None] = mapped_column(
         Numeric(9, 6), nullable=True
     )
+    #: When the pair above was actually true.
+    #:
+    #: Not decoration. A position with no age is a position nothing can refuse:
+    #: "the driver is 400 m away" reads the same whether it was measured twenty
+    #: seconds or twenty minutes ago, and only one of those is a sentence a
+    #: counter should act on. `driver_proximity` quotes no distance without this.
+    driver_location_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: When the *current* driver took the booking.
+    driver_assigned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: How many drivers this booking has had. 0 until one is matched, 1 for the
+    #: ordinary case, 2+ once somebody has been swapped.
+    #:
+    #: A counter, deliberately, rather than a timestamp or a boolean. The
+    #: register prints a slip naming the driver, and it decides a fresh one is
+    #: owed by comparing this against what it last printed — so the value has to
+    #: be something two terminals cannot read differently and that cannot go
+    #: backwards. `driver_assigned_at` is neither: clocks differ, and a courier
+    #: re-sending an older push would move it.
+    driver_assignment_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    #: Who had it before is **not** here. It is `order_drivers`, one row per
+    #: stint, and the columns above are the live copy of whichever of those rows
+    #: is active — the same relationship `orders.status` has with
+    #: `order_status_events`. A history squashed into a JSON column on this row
+    #: could not have been asked "who is carrying order 4 right now" by the
+    #: database, and nothing could have stopped two drivers being current at once.
 
     # ── proof of delivery ─────────────────────────────────────────────────────
     pod_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
@@ -374,6 +442,27 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
     def was_reassigned(self) -> bool:
         """This order is travelling with a courier its zone did not choose."""
         return bool(self.original_provider) and self.original_provider != self.provider
+
+    @property
+    def has_swapped_drivers(self) -> bool:
+        """More than one person has held this booking."""
+        return (self.driver_assignment_count or 0) > 1
+
+    @property
+    def is_driver_on_the_way_here(self) -> bool:
+        """
+        A named driver is still travelling towards the kitchen.
+
+        Both endings are excluded and for different reasons: once the parcel is
+        collected the driver is meant to be getting further away, and once the
+        booking is over — cancelled, rejected, expired — there is no driver at
+        all, whatever name the row is still carrying.
+        """
+        if not (self.driver_id or self.driver_name):
+            return False
+        return not is_collected(self.provider, self.courier_status) and not is_terminal(
+            self.provider, self.courier_status
+        )
 
     @property
     def is_waiting_for_a_batch(self) -> bool:

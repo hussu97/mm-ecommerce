@@ -41,7 +41,12 @@ from sqlalchemy import func, select
 from app.core import advisory_lock
 from app.core.database import AsyncSessionFactory
 from app.models.delivery_batch import BatchStatusEnum, DeliveryBatch
-from app.services import arrival_service, batching_service, payment_service
+from app.services import (
+    arrival_service,
+    batching_service,
+    driver_tracking,
+    payment_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,20 +72,22 @@ async def sweep_once() -> list:
     Returns the batches dispatched, or nothing at all if another worker held
     the lock — which is a normal outcome, not a failure.
 
-    **Four kinds of work, one lock.** Runs whose window has closed, orders due
-    to reach the register, single orders whose retry has fallen due, and
-    checkouts nobody ever paid for. They are swept together because they are the
-    same question asked of four tables — *is anything owed something right now*
-    — and because each extra loop would need its own advisory lock, its own tick
-    and its own reason to exist.
+    **Five kinds of work, one lock.** Runs whose window has closed, orders due
+    to reach the register, single orders whose retry has fallen due, drivers
+    whose position or identity we can only learn by asking, and checkouts nobody
+    ever paid for. They are swept together because they are the same question
+    asked of five tables — *is anything owed something right now* — and because
+    each extra loop would need its own advisory lock, its own tick and its own
+    reason to exist.
 
     The order of the first three is the order of their dependencies. A run going
     out is what makes its orders due to arrive, and an arrival is what books a
     driver for an order travelling alone, so by the time the retry sweep looks
     for stragglers both of those have already had their turn this tick. The
-    fourth depends on nothing and is last for that reason: an abandoned basket
-    is two days old by the time it qualifies, so which minute of the day it is
-    noticed in does not matter to anybody.
+    fourth follows them because a booking has to exist before anybody can be
+    driving towards it. The fifth depends on nothing and is last for that
+    reason: an abandoned basket is two days old by the time it qualifies, so
+    which minute of the day it is noticed in does not matter to anybody.
 
     Nothing else can stop batches. A failure in the later sweeps is logged and
     swallowed here rather than allowed out, because the runs waiting on the next
@@ -118,6 +125,19 @@ async def sweep_once() -> list:
                     logger.info("Retried %s failed dispatch(es)", len(retried))
             except Exception:  # noqa: BLE001 — never at the batches' expense
                 logger.exception("Retry sweep failed; batches were unaffected")
+                await session.rollback()
+            try:
+                # Fourth, and it depends on the first three only in the sense
+                # that a booking has to exist before anybody can be driving
+                # towards it. Lalamove reports a driver's position exactly once
+                # and never mentions a rider swap at all, so this is the only
+                # thing that keeps either current — see `driver_tracking`.
+                tracked = await driver_tracking.refresh_live_drivers(session)
+                await session.commit()
+                if tracked:
+                    logger.info("Refreshed %s live driver(s)", tracked)
+            except Exception:  # noqa: BLE001 — never at the batches' expense
+                logger.exception("Driver sweep failed; batches were unaffected")
                 await session.rollback()
             try:
                 # The backstop under `checkout.session.expired`, for the
