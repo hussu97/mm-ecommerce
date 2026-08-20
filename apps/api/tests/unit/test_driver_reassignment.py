@@ -527,3 +527,72 @@ async def test_mapbox_is_asked_for_lng_lat_in_that_order(monkeypatch):
     assert 55 < seen["from_longitude"] < 56
     assert 25 < seen["to_latitude"] < 26
     assert 55 < seen["to_longitude"] < 56
+
+
+# ── the sweep's own query ─────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_sweep_builds_its_query_when_lalamove_is_configured(monkeypatch):
+    """
+    Reach the query. Every other test in this file stops short of it.
+
+    This is the test that was missing, and its absence shipped a bug to
+    production: `refresh_live_drivers` returns early when Lalamove is not
+    configured, which it never is under test, so the `select(...)` below was
+    never once executed by CI. It referenced `lalamove_service.PROVIDER` — a
+    constant `noon_send_service` has and `lalamove_service` did not — and every
+    tick of the sweep died on an `AttributeError` that the surrounding
+    `except` dutifully logged and swallowed.
+
+    Nothing was broken loudly. The sweep simply did nothing, forever, which is
+    exactly the shape of failure the logging was meant to make visible and
+    instead made survivable.
+
+    So this asserts the cheapest possible thing — that the query can be built
+    and run — because "does this module reference a name that exists" is not a
+    question a reader can answer by looking, and is the only question that
+    mattered here.
+    """
+    from app.services import driver_tracking, lalamove_service
+
+    monkeypatch.setattr(lalamove_service, "is_enabled", lambda: True)
+
+    executed: list = []
+
+    class _QueryingDb(_Db):
+        async def execute(self, stmt):
+            executed.append(stmt)
+            return SimpleNamespace(
+                scalars=lambda: SimpleNamespace(all=lambda: [], first=lambda: None)
+            )
+
+    refreshed = await driver_tracking.refresh_live_drivers(_QueryingDb(), now=NOW)
+
+    assert refreshed == 0
+    assert executed, "the sweep returned before it ever asked the database"
+    assert str(executed[0]).startswith("SELECT")
+
+
+@pytest.mark.asyncio
+async def test_the_routing_sweep_builds_its_query_too(monkeypatch):
+    """The same hole, on the sibling sweep. Same reason, same cheap assertion."""
+    from app.services import driver_routing
+    from app.services.providers import mapbox_provider
+
+    monkeypatch.setattr(mapbox_provider, "is_configured", lambda: True)
+
+    executed: list = []
+
+    class _QueryingDb(_Db):
+        async def execute(self, stmt):
+            executed.append(stmt)
+            return SimpleNamespace(
+                scalars=lambda: SimpleNamespace(all=lambda: [], first=lambda: None)
+            )
+
+    routed = await driver_routing.refresh_routes(_QueryingDb(), now=NOW)
+
+    assert routed == 0
+    assert executed, "the sweep returned before it ever asked the database"
+    assert str(executed[0]).startswith("SELECT")

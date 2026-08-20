@@ -63,8 +63,20 @@ from app.services.providers.lalamove_provider import LalamoveError, provider
 
 logger = logging.getLogger(__name__)
 
+#: This module's provider key, as `order_deliveries.provider` spells it.
+#:
+#: Exists because `noon_send_service.PROVIDER` does, and code that sweeps both
+#: couriers has to name them the same way. Its absence was not harmless: the
+#: driver sweep referenced `lalamove_service.PROVIDER` on the reasonable
+#: assumption that the two services were symmetrical, and every tick of it died
+#: on an AttributeError for a fortnight of ticks — caught and logged, so batches
+#: were never at risk, and silently doing nothing, which is the failure mode
+#: nobody notices.
+PROVIDER = FulfilmentProviderEnum.LALAMOVE.value
+
 __all__ = [
     "Estimate",
+    "PROVIDER",
     "PickupPoint",
     "Drop",
     "QuotationExpired",
