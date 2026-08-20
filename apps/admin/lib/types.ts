@@ -928,3 +928,42 @@ export interface OrderEconomics {
   margin_on_charged: number | null;
   margin_on_items: number | null;
 }
+
+// ─── Per-branch availability ──────────────────────────────────────────────────
+
+/**
+ * One branch's override of the catalogue, for one product.
+ *
+ * These tables are exception-only: a row exists where a branch differs, and
+ * "no row" means "sells it as the catalogue says". That is why the console
+ * indexes them by `product_id + branch_id` and treats a miss as in stock —
+ * reading absence as unavailable would show every branch as out of everything.
+ */
+export interface BranchProductAvailability {
+  branch_id: string;
+  product_id: string;
+  is_in_stock: boolean;
+  is_active: boolean;
+  price: number | null;
+  /**
+   * When it comes back, or null for "until somebody puts it back".
+   *
+   * Only meaningful while `is_in_stock` is false: putting something back clears
+   * the clock as well as the flag, and a CHECK constraint refuses a row that is
+   * available and still counting down.
+   */
+  out_of_stock_until: string | null;
+}
+
+/**
+ * How long a stockout lasts. The same three the register offers, because they
+ * are the same three answers a shop actually gives — and a console that
+ * invented a fourth would be describing a state no terminal can produce.
+ */
+export type StockDuration = 'one_hour' | 'end_of_day' | 'indefinite';
+
+export const STOCK_DURATIONS: { value: StockDuration; label: string }[] = [
+  { value: 'one_hour', label: 'For an hour' },
+  { value: 'end_of_day', label: 'Until tomorrow' },
+  { value: 'indefinite', label: 'Until I put it back' },
+];

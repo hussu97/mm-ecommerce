@@ -32,7 +32,7 @@ from app.models.menu import BranchModifierOption, BranchProduct
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.product import WEB_CHANNEL, Product, sells_on
 from app.models.user import User
-from app.services import availability_service
+from app.services import availability_service, catalogue_cache
 
 from .devices import get_current_device
 
@@ -258,6 +258,10 @@ async def set_product_availability(
             duration=data.duration,
         )
 
+    # The website answers per branch now, so this is a change it is supposed to
+    # show — and its featured rail, add-on tray and category counts are all
+    # cached against the very branch that just changed.
+    await catalogue_cache.retire()
     return await _one(db, device, product_id)
 
 
@@ -302,4 +306,7 @@ async def set_option_availability(
     ).scalar_one_or_none()
     if product_id is None:
         raise NotFoundError("That option is not on any product")
+    # Same reason as the product write: the last filling going out is what makes
+    # a box unsellable on the website too.
+    await catalogue_cache.retire()
     return await _one(db, device, product_id)

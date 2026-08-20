@@ -2056,6 +2056,18 @@
             "title": "Is In Stock",
             "type": "boolean"
           },
+          "out_of_stock_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Out Of Stock Until"
+          },
           "price": {
             "anyOf": [
               {
@@ -19307,6 +19319,11 @@
           "branch_id": {
             "format": "uuid",
             "title": "Branch Id",
+            "type": "string"
+          },
+          "duration": {
+            "default": "indefinite",
+            "title": "Duration",
             "type": "string"
           },
           "is_active": {
@@ -42744,6 +42761,37 @@
         ]
       }
     },
+    "/api/v1/products/availability": {
+      "get": {
+        "description": "Every branch override in the estate, for the console's product list.\n\nOne call rather than one per product: these tables are exception-only, so\nthe whole answer is a few dozen rows however large the catalogue gets, and\nthe list needs all of them at once to draw a column.\n\nDeclared above `/availability/{branch_id}` so the literal path is matched\nbefore the parameterised one \u2014 otherwise FastAPI reads \"availability\" as a\nbranch id and answers 422.",
+        "operationId": "list_all_branch_availability_api_v1_products_availability_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BranchProductResponse"
+                  },
+                  "title": "Response List All Branch Availability Api V1 Products Availability Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List All Branch Availability",
+        "tags": [
+          "Products"
+        ]
+      }
+    },
     "/api/v1/products/availability/{branch_id}": {
       "get": {
         "description": "Every product this branch has overridden.\n\nAbsent means \"as the catalogue says\" \u2014 only differences are stored, so a\nbranch that sells the standard menu has no rows here at all.",
@@ -42937,7 +42985,7 @@
     },
     "/api/v1/products/{product_id}/availability": {
       "put": {
-        "description": "Mark a product in or out of stock at one branch, from the terminal.\n\nThis is the \"86 it\" button: the kitchen runs out of pistachio kunafa and\nthe cashier needs it off the menu at this branch within seconds, without\ntouching the catalogue every other branch sells from.",
+        "description": "Mark a product in or out of stock at one branch.\n\nTwo callers with one meaning. The register's version of this is the \"86 it\"\nbutton \u2014 the kitchen runs out of pistachio kunafa and the cashier needs it\noff the menu at this branch within seconds, without touching the catalogue\nevery other branch sells from. The console's version is the same fact\nentered by somebody who is not standing in that kitchen: a manager closing\nan item across the estate, or putting back something a terminal marked out\nlast night and nobody cleared.\n\nEither permission opens it, and that is deliberate rather than lax. They are\ntwo ways of describing the same authority over the same column, and\nrequiring the register's permission from a console user meant an\nadministrator could see the state on their screen and not change it.\n\n**The stock half goes through `availability_service`, not through this\nrow.** That function owns the clock \u2014 what `end_of_day` means for a shop\ntrading past midnight, and the rule that putting something back clears the\ncountdown as well as the flag, which a CHECK constraint enforces. Setting\nthe column here would be a second implementation of a rule the register\nalready has, and the two would drift.",
         "operationId": "set_branch_availability_api_v1_products__product_id__availability_put",
         "parameters": [
           {

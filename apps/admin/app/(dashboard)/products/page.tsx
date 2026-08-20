@@ -12,6 +12,7 @@ import { useConfirm, useToast } from '@/components/ui/feedback';
 import { useApiList } from '@/hooks/useApiList';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { formatCurrency } from '@/lib/utils';
+import { BranchStockBadges, useBranchStock } from '@/components/products/BranchStock';
 
 export default function ProductsPage() {
   const toast = useToast();
@@ -51,6 +52,12 @@ export default function ProductsPage() {
     items: products, total, pages, page, perPage, setPage, setPerPage,
     loading, loadError, refetch,
   } = useApiList<Product>({ paginate: 'server', fetch: fetchProducts });
+
+  // One fetch of the branches and one of every override, shared by the whole
+  // page. These tables are exception-only, so the answer is a few dozen rows
+  // however long the list gets — which is what makes a per-branch column
+  // affordable rather than a request per row.
+  const { branches, statusOf } = useBranchStock();
 
   // Load categories + pre-fetch inactive count on mount
   useEffect(() => {
@@ -316,6 +323,22 @@ export default function ProductsPage() {
               header: 'Modifiers',
               className: 'text-center',
               render: p => p.product_modifiers.length,
+            },
+            {
+              // Where the register's "86 it" button shows up in the console.
+              // Until now this state was invisible here — and since the
+              // storefront started answering per branch, an item marked out at
+              // one kitchen is gone from that emirate's website with nothing on
+              // this screen to say so.
+              header: 'Branch stock',
+              className: 'text-center',
+              render: p => (
+                <BranchStockBadges
+                  productId={p.id}
+                  branches={branches}
+                  statusOf={statusOf}
+                />
+              ),
             },
             {
               header: 'Channels',

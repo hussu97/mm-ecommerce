@@ -11,6 +11,7 @@ import type {
   PaginatedWebhookLogs, WebhookLogDetail, WebhookLogFacets,
   PaymentGateway, PaymentGatewayUpdate,
   LalamoveQuote, OrderStatusEvent,
+  BranchProductAvailability, StockDuration,
 } from './types';
 import type {
   PublicKeyCredentialCreationOptionsJSON,
@@ -242,6 +243,34 @@ export const productsApi = {
   delete: (slug: string) => api.delete<void>(`/products/${slug}`),
   linkModifier: (slug: string, data: object) => api.post<Product>(`/products/${slug}/modifiers`, data),
   unlinkModifier: (slug: string, modifierId: string) => api.delete<Product>(`/products/${slug}/modifiers/${modifierId}`),
+
+  /**
+   * Every branch override in the estate, in one call.
+   *
+   * The tables are exception-only, so this is a few dozen rows however large
+   * the catalogue gets — which is what lets the product list draw a per-branch
+   * column without a request per row.
+   */
+  branchAvailability: () =>
+    api.get<BranchProductAvailability[]>('/products/availability'),
+
+  /**
+   * Mark a product in or out of stock at one branch, or set its branch price.
+   *
+   * `duration` only means anything on the way out. Putting something back
+   * clears the countdown with the flag, which the API enforces.
+   */
+  setBranchAvailability: (
+    productId: string,
+    data: {
+      branch_id: string;
+      is_in_stock?: boolean;
+      is_active?: boolean;
+      price?: number;
+      duration?: StockDuration;
+    },
+  ) =>
+    api.put<BranchProductAvailability>(`/products/${productId}/availability`, data),
 };
 
 // ─── Modifiers ────────────────────────────────────────────────────────────────

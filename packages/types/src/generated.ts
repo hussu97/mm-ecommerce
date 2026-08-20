@@ -5048,6 +5048,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/products/availability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List All Branch Availability
+         * @description Every branch override in the estate, for the console's product list.
+         *
+         *     One call rather than one per product: these tables are exception-only, so
+         *     the whole answer is a few dozen rows however large the catalogue gets, and
+         *     the list needs all of them at once to draw a column.
+         *
+         *     Declared above `/availability/{branch_id}` so the literal path is matched
+         *     before the parameterised one — otherwise FastAPI reads "availability" as a
+         *     branch id and answers 422.
+         */
+        get: operations["list_all_branch_availability_api_v1_products_availability_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/products/availability/{branch_id}": {
         parameters: {
             query?: never;
@@ -5124,11 +5152,27 @@ export interface paths {
         get?: never;
         /**
          * Set Branch Availability
-         * @description Mark a product in or out of stock at one branch, from the terminal.
+         * @description Mark a product in or out of stock at one branch.
          *
-         *     This is the "86 it" button: the kitchen runs out of pistachio kunafa and
-         *     the cashier needs it off the menu at this branch within seconds, without
-         *     touching the catalogue every other branch sells from.
+         *     Two callers with one meaning. The register's version of this is the "86 it"
+         *     button — the kitchen runs out of pistachio kunafa and the cashier needs it
+         *     off the menu at this branch within seconds, without touching the catalogue
+         *     every other branch sells from. The console's version is the same fact
+         *     entered by somebody who is not standing in that kitchen: a manager closing
+         *     an item across the estate, or putting back something a terminal marked out
+         *     last night and nobody cleared.
+         *
+         *     Either permission opens it, and that is deliberate rather than lax. They are
+         *     two ways of describing the same authority over the same column, and
+         *     requiring the register's permission from a console user meant an
+         *     administrator could see the state on their screen and not change it.
+         *
+         *     **The stock half goes through `availability_service`, not through this
+         *     row.** That function owns the clock — what `end_of_day` means for a shop
+         *     trading past midnight, and the rule that putting something back clears the
+         *     countdown as well as the flag, which a CHECK constraint enforces. Setting
+         *     the column here would be a second implementation of a rule the register
+         *     already has, and the two would drift.
          */
         put: operations["set_branch_availability_api_v1_products__product_id__availability_put"];
         post?: never;
@@ -7075,6 +7119,8 @@ export interface components {
             is_active: boolean;
             /** Is In Stock */
             is_in_stock: boolean;
+            /** Out Of Stock Until */
+            out_of_stock_until?: string | null;
             /** Price */
             price?: string | null;
             /**
@@ -12656,6 +12702,11 @@ export interface components {
              * Format: uuid
              */
             branch_id: string;
+            /**
+             * Duration
+             * @default indefinite
+             */
+            duration: string;
             /** Is Active */
             is_active?: boolean | null;
             /** Is In Stock */
@@ -24785,6 +24836,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_all_branch_availability_api_v1_products_availability_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BranchProductResponse"][];
                 };
             };
         };

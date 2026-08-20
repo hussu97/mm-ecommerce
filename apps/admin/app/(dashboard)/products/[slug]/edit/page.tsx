@@ -7,6 +7,7 @@ import { productsApi } from '@/lib/api';
 import type { Product } from '@/lib/types';
 import { ProductForm } from '@/components/products/ProductForm';
 import { Spinner } from '@/components/ui';
+import { BranchStockPanel } from '@/components/products/BranchStock';
 
 export default function EditProductPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = use(params);
@@ -52,6 +53,24 @@ export default function EditProductPage({ params }: { params: Promise<{ slug: st
         </div>
       </div>
       <ProductForm product={product} />
+
+      {/*
+        Below the form rather than inside it, because it is not part of the
+        form: every control here writes immediately to one branch's row, while
+        the form above is a draft nobody has saved yet. Folding branch stock
+        into the same Save would mean a manager marking something out at one
+        kitchen and losing it by navigating away.
+      */}
+      <section className="mt-8">
+        <h2 className="font-display text-lg text-gray-800 mb-1">Branch stock</h2>
+        <p className="text-xs font-body text-gray-400 mb-3">
+          What each kitchen can make right now. The website shows a customer the
+          catalogue of the branch that would bake their order, so a product off
+          sale here is gone from that area&rsquo;s storefront. Saved as you press
+          it — nothing here waits for Save above.
+        </p>
+        <BranchStockPanel productId={product.id} />
+      </section>
     </div>
   );
 }

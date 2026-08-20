@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime
 
 from decimal import Decimal
 from typing import Literal
@@ -13,16 +14,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastapi import Request
 
-from app.core.cache import cache_delete_pattern, cache_get, cache_set
+from app.core.cache import cache_get, cache_set
 from app.core.deps import (
     browsing_branch,
     get_current_active_user,
     get_db,
     get_optional_user,
 )
-from app.core.exceptions import ForbiddenError
+from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.core.permissions import require
+from app.models.branch import Branch
 from app.models.menu import BranchProduct
+from app.models.product import Product
 from app.models.user import User
 from app.schemas.product import (
     ProductCreate,
@@ -30,7 +33,12 @@ from app.schemas.product import (
     ProductResponse,
     ProductUpdate,
 )
-from app.services import audit_service, product_service
+from app.services import (
+    audit_service,
+    availability_service,
+    catalogue_cache,
+    product_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +57,7 @@ async def _invalidate_catalogue_caches() -> None:
     category list too. Otherwise the chip survives its own contents for the
     rest of the TTL and the cashier taps into an empty grid.
     """
-    await cache_delete_pattern("products:featured:*")
-    await cache_delete_pattern("products:cart_addons:*")
-    await cache_delete_pattern("categories:channel:*")
+    await catalogue_cache.retire()
 
 
 class ProductListResponse(BaseModel):
@@ -293,6 +299,11 @@ class BranchProductResponse(BaseModel):
     is_in_stock: bool
     is_active: bool
     price: Decimal | None = None
+    #: When it comes back, or null for "until somebody puts it back". Only
+    #: meaningful while `is_in_stock` is false — the column is cleared on the
+    #: way back in, and a CHECK refuses a row that is available and still
+    #: counting down.
+    out_of_stock_until: datetime | None = None
 
     model_config = {"from_attributes": True}
 
@@ -303,6 +314,31 @@ class SetAvailabilityRequest(BaseModel):
     is_active: bool | None = None
     #: A branch-specific price; null leaves the catalogue price in force.
     price: Decimal | None = Field(None, ge=0)
+    #: How long a stockout lasts: `one_hour`, `end_of_day` or `indefinite`.
+    #: The same three words the register sends, because they are the same three
+    #: answers and a console that invented a fourth would be describing a state
+    #: no terminal can produce or explain.
+    duration: str = availability_service.DURATION_INDEFINITE
+
+
+@router.get("/availability", response_model=list[BranchProductResponse])
+async def list_all_branch_availability(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("catalogue.manage")),
+):
+    """
+    Every branch override in the estate, for the console's product list.
+
+    One call rather than one per product: these tables are exception-only, so
+    the whole answer is a few dozen rows however large the catalogue gets, and
+    the list needs all of them at once to draw a column.
+
+    Declared above `/availability/{branch_id}` so the literal path is matched
+    before the parameterised one — otherwise FastAPI reads "availability" as a
+    branch id and answers 422.
+    """
+    rows = (await db.execute(select(BranchProduct))).scalars().all()
+    return [BranchProductResponse.model_validate(r) for r in rows]
 
 
 @router.get("/availability/{branch_id}", response_model=list[BranchProductResponse])
@@ -333,33 +369,71 @@ async def list_branch_availability(
 async def set_branch_availability(
     product_id: uuid.UUID,
     data: SetAvailabilityRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_active_user),
 ):
     """
-    Mark a product in or out of stock at one branch, from the terminal.
+    Mark a product in or out of stock at one branch.
 
-    This is the "86 it" button: the kitchen runs out of pistachio kunafa and
-    the cashier needs it off the menu at this branch within seconds, without
-    touching the catalogue every other branch sells from.
+    Two callers with one meaning. The register's version of this is the "86 it"
+    button — the kitchen runs out of pistachio kunafa and the cashier needs it
+    off the menu at this branch within seconds, without touching the catalogue
+    every other branch sells from. The console's version is the same fact
+    entered by somebody who is not standing in that kitchen: a manager closing
+    an item across the estate, or putting back something a terminal marked out
+    last night and nobody cleared.
+
+    Either permission opens it, and that is deliberate rather than lax. They are
+    two ways of describing the same authority over the same column, and
+    requiring the register's permission from a console user meant an
+    administrator could see the state on their screen and not change it.
+
+    **The stock half goes through `availability_service`, not through this
+    row.** That function owns the clock — what `end_of_day` means for a shop
+    trading past midnight, and the rule that putting something back clears the
+    countdown as well as the flag, which a CHECK constraint enforces. Setting
+    the column here would be a second implementation of a rule the register
+    already has, and the two would drift.
     """
-    if not user.can("pos.products.availability"):
+    if not (user.can("pos.products.availability") or user.can("catalogue.manage")):
         raise ForbiddenError("You do not have permission to change availability")
 
-    row = (
-        await db.execute(
-            select(BranchProduct).where(
-                BranchProduct.branch_id == data.branch_id,
-                BranchProduct.product_id == product_id,
-            )
+    branch = await db.get(Branch, data.branch_id)
+    if branch is None or branch.deleted_at is not None:
+        raise NotFoundError("Branch not found")
+
+    product = await db.get(Product, product_id)
+    if product is None:
+        raise NotFoundError("Product not found")
+
+    if data.duration not in availability_service.DURATIONS:
+        raise BadRequestError(
+            f"Unknown duration {data.duration!r}. "
+            f"Expected one of {', '.join(availability_service.DURATIONS)}"
         )
-    ).scalar_one_or_none()
-    if row is None:
-        row = BranchProduct(branch_id=data.branch_id, product_id=product_id)
-        db.add(row)
 
     if data.is_in_stock is not None:
-        row.is_in_stock = data.is_in_stock
+        row = await availability_service.set_product_stock(
+            db,
+            branch=branch,
+            product_id=product_id,
+            in_stock=data.is_in_stock,
+            duration=data.duration,
+        )
+    else:
+        row = (
+            await db.execute(
+                select(BranchProduct).where(
+                    BranchProduct.branch_id == data.branch_id,
+                    BranchProduct.product_id == product_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            row = BranchProduct(branch_id=data.branch_id, product_id=product_id)
+            db.add(row)
+
     if data.is_active is not None:
         row.is_active = data.is_active
     if data.price is not None:
@@ -367,4 +441,29 @@ async def set_branch_availability(
 
     await db.flush()
     await db.refresh(row)
+
+    # The website answers per branch, and its cached answers are keyed by the
+    # branch that just changed.
+    await catalogue_cache.retire()
+
+    # Logged, because this is a change somebody will ask about later: a cake
+    # that vanished from one emirate's website overnight is a question with a
+    # name and a time on the answer.
+    await audit_service.log_action(
+        db,
+        action="UPDATE",
+        entity_type="branch_product",
+        entity_id=str(row.id),
+        entity_label=f"{product.name} @ {branch.reference}",
+        admin=user,
+        changes={
+            "is_in_stock": row.is_in_stock,
+            "out_of_stock_until": (
+                row.out_of_stock_until.isoformat() if row.out_of_stock_until else None
+            ),
+            "is_active": row.is_active,
+            "price": str(row.price) if row.price is not None else None,
+        },
+        request=request,
+    )
     return BranchProductResponse.model_validate(row)
