@@ -408,11 +408,44 @@ async def unavailable_cart_lines(
 
 def products_load_options():
     """Eager loads `blocking_groups` needs, so it cannot lazy-load mid-request."""
+    return [_blocking_groups_chain(selectinload(Product.product_modifiers))]
+
+
+def cart_load_options():
+    """
+    The same requirement, rooted at a `Cart` instead of a `Product`.
+
+    Exists because the requirement had exactly one spelling and the checkout
+    could not use it. `blocking_groups` walks `product_modifiers → modifier →
+    options`, `products_load_options` said so for a query selecting products,
+    and the two callers that reach it through a *cart* — `preview_order` and
+    `create_order` — loaded their products for pricing instead and lazy-loaded
+    the rest. Under async SQLAlchemy that is not a slow query, it is a
+    `MissingGreenlet`, and it took the checkout down with a 500.
+
+    It only ever fired at a branch with something actually out of stock, since
+    `unavailable_cart_lines` returns before the per-line loop otherwise. So it
+    lay dormant through every test and every ordinary day, and surfaced as
+    "checkout is broken" on exactly the days the shop had run out of something.
+
+    Both spellings live here, next to the function whose needs they describe,
+    so a change to `blocking_groups` updates one file rather than however many
+    callers happened to know.
+    """
+    from app.models.cart import Cart, CartItem
+
     return [
-        selectinload(Product.product_modifiers)
-        .selectinload(ProductModifier.modifier)
-        .selectinload(Modifier.options)
+        _blocking_groups_chain(
+            selectinload(Cart.items)
+            .joinedload(CartItem.product)
+            .selectinload(Product.product_modifiers)
+        )
     ]
+
+
+def _blocking_groups_chain(loader):
+    """`product_modifiers → modifier → options`, onto whatever precedes it."""
+    return loader.selectinload(ProductModifier.modifier).selectinload(Modifier.options)
 
 
 # ─── Housekeeping ─────────────────────────────────────────────────────────────

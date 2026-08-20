@@ -216,11 +216,23 @@ def _priceable_cart_options():
     inside async SQLAlchemy is not a slow query, it is a `MissingGreenlet` — so
     this is a correctness requirement rather than a performance one, and it is
     written once because both the order and its preview need exactly it.
+
+    **And both of them also ask what the branch has run out of.** That walk —
+    `product_modifiers → modifier → options`, in `availability_service.
+    blocking_groups` — was missing here, so `preview_order` and step 5a of
+    `create_order` both lazy-loaded it and 500ed. Only at a branch with
+    something actually out of stock, because `unavailable_cart_lines` returns
+    before the per-line loop otherwise: dormant through every test and every
+    ordinary day, and "checkout is broken" on the days the shop had run out of
+    something. The chain is owned by the service that needs it rather than
+    copied to here, so changing `blocking_groups` cannot leave this behind
+    again.
     """
     return [
         selectinload(Cart.items)
         .joinedload(CartItem.product)
-        .joinedload(Product.category)
+        .joinedload(Product.category),
+        *availability_service.cart_load_options(),
     ]
 
 
