@@ -55,6 +55,7 @@ from app.services import (
     address_format,
     courier_reference,
     driver_assignment,
+    driver_routing,
     email_service,
     order_lifecycle,
 )
@@ -1203,6 +1204,10 @@ async def apply_webhook(
         # The status push carries an id and no name, so the shop has nothing to
         # say or ring until this fetches one.
         await fill_driver_details(db, delivery, at=updated_at)
+        # Routed here rather than left to the sweep's next tick. The register
+        # prints a driver slip off this within seconds, and a slip is paper —
+        # one that goes out with the ETA missing cannot be corrected.
+        await driver_routing.route_now(db, delivery)
         await announce_driver(db, delivery)
 
     status = courier_order.get("status")

@@ -61,6 +61,7 @@ from app.services import (
     address_format,
     courier_reference,
     driver_assignment,
+    driver_routing,
     email_service,
     geo,
     order_lifecycle,
@@ -844,6 +845,10 @@ async def apply_webhook(
     if status in _RIDER_BEARING_STATUSES:
         change = await _refresh_rider(db, delivery, at=updated_at)
         if change.is_new_driver:
+            # Before the announcement, because the register prints a driver slip
+            # off this within seconds and a slip is paper: one that goes out with
+            # the ETA missing cannot be corrected.
+            await driver_routing.route_now(db, delivery)
             await _announce_rider(db, delivery)
 
     if status and status != delivery.courier_status:
@@ -1023,6 +1028,7 @@ async def apply_tracking(
         at=parse_time(payload.get("timestamp")),
     )
     if change.is_new_driver:
+        await driver_routing.route_now(db, delivery)
         await _announce_rider(db, delivery)
     return change
 

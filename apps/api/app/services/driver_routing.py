@@ -38,7 +38,7 @@ from app.services.providers import mapbox_provider
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["refresh_routes"]
+__all__ = ["refresh_routes", "route_now"]
 
 
 async def refresh_routes(
@@ -128,3 +128,44 @@ async def _route_one(
     delivery.driver_route_minutes = Decimal(str(leg.minutes))
     delivery.driver_route_at = at
     return True
+
+
+async def route_now(db: AsyncSession, delivery: OrderDelivery) -> bool:
+    """
+    Route one delivery immediately, ignoring the every-minute floor.
+
+    Called the moment a driver is assigned or swapped, and that is the whole
+    reason it bypasses the floor: the floor exists to stop us paying to
+    re-answer a question whose answer has not changed, and a driver nobody has
+    ever routed is a new question.
+
+    **The register prints paper off this.** The driver slip carries how far off
+    the rider was when it printed, and it prints within seconds of the
+    assignment — so waiting for the sweep's next tick would put a slip in
+    somebody's hand with the ETA missing, up to a minute before the number
+    existed. That is a piece of paper that cannot be corrected.
+
+    Best-effort like everything else on this path: a failure returns `False` and
+    the slip prints without an ETA, which is what it would have said anyway.
+    """
+    if not mapbox_provider.is_configured():
+        return False
+    if not delivery.is_driver_on_the_way_here:
+        return False
+
+    order = (
+        delivery.order
+        or (await db.execute(select(Order).where(Order.id == delivery.order_id)))
+        .scalars()
+        .first()
+    )
+    if order is None or order.branch_id is None:
+        return False
+
+    branch = await db.get(Branch, order.branch_id)
+    if branch is None or branch.latitude is None or branch.longitude is None:
+        return False
+    if delivery.driver_latitude is None or delivery.driver_longitude is None:
+        return False
+
+    return await _route_one(db, delivery, branch, at=datetime.now(timezone.utc))
