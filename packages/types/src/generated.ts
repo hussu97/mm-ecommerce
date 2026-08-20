@@ -5063,9 +5063,13 @@ export interface paths {
          *     the whole answer is a few dozen rows however large the catalogue gets, and
          *     the list needs all of them at once to draw a column.
          *
-         *     Declared above `/availability/{branch_id}` so the literal path is matched
-         *     before the parameterised one — otherwise FastAPI reads "availability" as a
-         *     branch id and answers 422.
+         *     **Declared up here, above `/{slug}`, and not down with the rest of the
+         *     availability section.** FastAPI matches in declaration order, so this route
+         *     sitting beside its siblings was read as a product whose slug is
+         *     "availability" and answered 404 to every caller — while its two-segment
+         *     neighbour `/availability/{branch_id}` was unaffected, which is exactly what
+         *     made the difference easy to miss. Its models come with it, because a
+         *     decorator cannot name a class defined below it.
          */
         get: operations["list_all_branch_availability_api_v1_products_availability_get"];
         put?: never;

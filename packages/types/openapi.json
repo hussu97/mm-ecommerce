@@ -42763,7 +42763,7 @@
     },
     "/api/v1/products/availability": {
       "get": {
-        "description": "Every branch override in the estate, for the console's product list.\n\nOne call rather than one per product: these tables are exception-only, so\nthe whole answer is a few dozen rows however large the catalogue gets, and\nthe list needs all of them at once to draw a column.\n\nDeclared above `/availability/{branch_id}` so the literal path is matched\nbefore the parameterised one \u2014 otherwise FastAPI reads \"availability\" as a\nbranch id and answers 422.",
+        "description": "Every branch override in the estate, for the console's product list.\n\nOne call rather than one per product: these tables are exception-only, so\nthe whole answer is a few dozen rows however large the catalogue gets, and\nthe list needs all of them at once to draw a column.\n\n**Declared up here, above `/{slug}`, and not down with the rest of the\navailability section.** FastAPI matches in declaration order, so this route\nsitting beside its siblings was read as a product whose slug is\n\"availability\" and answered 404 to every caller \u2014 while its two-segment\nneighbour `/availability/{branch_id}` was unaffected, which is exactly what\nmade the difference easy to miss. Its models come with it, because a\ndecorator cannot name a class defined below it.",
         "operationId": "list_all_branch_availability_api_v1_products_availability_get",
         "responses": {
           "200": {

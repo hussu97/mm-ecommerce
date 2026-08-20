@@ -166,3 +166,30 @@ async def test_a_price_only_change_touches_no_clock(monkeypatch):
     _, stamped = await _call(monkeypatch, _user("catalogue.manage"), price=99)
 
     assert stamped == {}
+
+
+# ── reachability ──────────────────────────────────────────────────────────────
+
+
+def test_the_estate_wide_read_is_not_shadowed_by_the_slug_route():
+    """
+    `/products/availability` has to be declared before `/products/{slug}`.
+
+    FastAPI matches in declaration order. Written beside the rest of the
+    availability section — which sits below `/{slug}` — this route was read as a
+    product whose slug is "availability" and answered 404 to every caller, while
+    `/availability/{branch_id}` kept working because two segments cannot match a
+    one-segment path. One of them worked, so nothing looked broken; the console
+    simply drew no column.
+
+    Asserted on the router's own ordering rather than through a client, because
+    a client test would need the auth this route requires and would then be
+    testing the dependency instead of the order.
+    """
+    from app.api.v1.products import router
+
+    paths = [route.path for route in router.routes]
+
+    assert paths.index("/availability") < paths.index("/{slug}"), (
+        "/products/availability is shadowed by /products/{slug} and will 404"
+    )

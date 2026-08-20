@@ -174,6 +174,61 @@ async def list_cart_addons(
     return result
 
 
+# ─── Per-branch availability ──────────────────────────────────────────────────
+
+
+class BranchProductResponse(BaseModel):
+    branch_id: uuid.UUID
+    product_id: uuid.UUID
+    is_in_stock: bool
+    is_active: bool
+    price: Decimal | None = None
+    #: When it comes back, or null for "until somebody puts it back". Only
+    #: meaningful while `is_in_stock` is false — the column is cleared on the
+    #: way back in, and a CHECK refuses a row that is available and still
+    #: counting down.
+    out_of_stock_until: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class SetAvailabilityRequest(BaseModel):
+    branch_id: uuid.UUID
+    is_in_stock: bool | None = None
+    is_active: bool | None = None
+    #: A branch-specific price; null leaves the catalogue price in force.
+    price: Decimal | None = Field(None, ge=0)
+    #: How long a stockout lasts: `one_hour`, `end_of_day` or `indefinite`.
+    #: The same three words the register sends, because they are the same three
+    #: answers and a console that invented a fourth would be describing a state
+    #: no terminal can produce or explain.
+    duration: str = availability_service.DURATION_INDEFINITE
+
+
+@router.get("/availability", response_model=list[BranchProductResponse])
+async def list_all_branch_availability(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("catalogue.manage")),
+):
+    """
+    Every branch override in the estate, for the console's product list.
+
+    One call rather than one per product: these tables are exception-only, so
+    the whole answer is a few dozen rows however large the catalogue gets, and
+    the list needs all of them at once to draw a column.
+
+    **Declared up here, above `/{slug}`, and not down with the rest of the
+    availability section.** FastAPI matches in declaration order, so this route
+    sitting beside its siblings was read as a product whose slug is
+    "availability" and answered 404 to every caller — while its two-segment
+    neighbour `/availability/{branch_id}` was unaffected, which is exactly what
+    made the difference easy to miss. Its models come with it, because a
+    decorator cannot name a class defined below it.
+    """
+    rows = (await db.execute(select(BranchProduct))).scalars().all()
+    return [BranchProductResponse.model_validate(r) for r in rows]
+
+
 @router.get("/{slug}", response_model=ProductResponse)
 async def get_product(
     slug: str,
@@ -288,57 +343,6 @@ async def unlink_modifier(
 ):
     """Unlink a modifier from a product (admin only)."""
     return await product_service.unlink_modifier(db, slug, modifier_id)
-
-
-# ─── Per-branch availability ──────────────────────────────────────────────────
-
-
-class BranchProductResponse(BaseModel):
-    branch_id: uuid.UUID
-    product_id: uuid.UUID
-    is_in_stock: bool
-    is_active: bool
-    price: Decimal | None = None
-    #: When it comes back, or null for "until somebody puts it back". Only
-    #: meaningful while `is_in_stock` is false — the column is cleared on the
-    #: way back in, and a CHECK refuses a row that is available and still
-    #: counting down.
-    out_of_stock_until: datetime | None = None
-
-    model_config = {"from_attributes": True}
-
-
-class SetAvailabilityRequest(BaseModel):
-    branch_id: uuid.UUID
-    is_in_stock: bool | None = None
-    is_active: bool | None = None
-    #: A branch-specific price; null leaves the catalogue price in force.
-    price: Decimal | None = Field(None, ge=0)
-    #: How long a stockout lasts: `one_hour`, `end_of_day` or `indefinite`.
-    #: The same three words the register sends, because they are the same three
-    #: answers and a console that invented a fourth would be describing a state
-    #: no terminal can produce or explain.
-    duration: str = availability_service.DURATION_INDEFINITE
-
-
-@router.get("/availability", response_model=list[BranchProductResponse])
-async def list_all_branch_availability(
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("catalogue.manage")),
-):
-    """
-    Every branch override in the estate, for the console's product list.
-
-    One call rather than one per product: these tables are exception-only, so
-    the whole answer is a few dozen rows however large the catalogue gets, and
-    the list needs all of them at once to draw a column.
-
-    Declared above `/availability/{branch_id}` so the literal path is matched
-    before the parameterised one — otherwise FastAPI reads "availability" as a
-    branch id and answers 422.
-    """
-    rows = (await db.execute(select(BranchProduct))).scalars().all()
-    return [BranchProductResponse.model_validate(r) for r in rows]
 
 
 @router.get("/availability/{branch_id}", response_model=list[BranchProductResponse])
