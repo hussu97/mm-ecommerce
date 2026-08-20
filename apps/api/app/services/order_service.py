@@ -255,24 +255,23 @@ async def find_priceable_cart(
     basket yet" is an ordinary state for `preview_order` and a fatal one for
     `create_order`; see `_locate_cart` for the second.
     """
+    # Through `cart_service.cart_for_identity` rather than `scalar_one_or_none()`,
+    # which is what used to be here and asserts a uniqueness `carts` lacked.
+    # Two concurrent add-to-cart calls for one guest made two rows, and from
+    # then on this raised `MultipleResultsFound` — so the checkout 500ed for the
+    # same reason the basket did. Migration 114 stops the duplicate being
+    # created; this stops one that already exists from refusing a sale.
     cart: Cart | None = None
+    options = tuple(_priceable_cart_options())
 
     if user_id:
-        result = await db.execute(
-            select(Cart)
-            .options(*_priceable_cart_options())
-            .where(Cart.user_id == user_id)
-        )
-        cart = result.scalar_one_or_none()
+        cart = await cart_service.cart_for_identity(db, user_id, None, options=options)
 
     # Fallback to session-id cart (guest user who just received a JWT)
     if (not cart or not cart.items) and session_id:
-        result = await db.execute(
-            select(Cart)
-            .options(*_priceable_cart_options())
-            .where(Cart.session_id == session_id)
+        session_cart = await cart_service.cart_for_identity(
+            db, None, session_id, options=options
         )
-        session_cart = result.scalar_one_or_none()
         if session_cart and session_cart.items:
             cart = session_cart
 

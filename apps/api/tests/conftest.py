@@ -21,6 +21,8 @@ def mock_db():
     session.add = MagicMock()
     mock_result = MagicMock()
     mock_result.scalar_one_or_none = MagicMock(return_value=None)
+    # Both accessors answer the same, so a test stubbing one is not silently
+    # pinned to the SQLAlchemy call the code happens to use today.
     mock_result.scalars.return_value.first.return_value = None
     mock_result.scalars.return_value.all.return_value = []
     session.execute = AsyncMock(return_value=mock_result)

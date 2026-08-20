@@ -320,6 +320,12 @@ def _result(
     r.scalar_one.return_value = scalar_one
     scalars = MagicMock()
     scalars.all.return_value = scalars_all or []
+    # A stubbed row answers whichever accessor the code reaches for. Wiring
+    # `scalar_one_or_none` alone pinned these tests to one SQLAlchemy call, so
+    # when `find_priceable_cart` stopped using it — that call asserts a
+    # uniqueness `carts` does not have, and 500ed six real customers — a great
+    # many of them failed for a reason unrelated to what they assert.
+    scalars.first.return_value = scalar_one_or_none
     # `.scalars().unique().one_or_none()` — the shape `_resolve_tax` reads a tax
     # group through.
     scalars.unique.return_value.one_or_none.return_value = scalars_unique_one_or_none

@@ -4,6 +4,7 @@ import uuid
 from decimal import Decimal
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -279,30 +280,114 @@ async def get_or_create(
     if not user_id and not session_id:
         raise BadRequestError("Either user_id or session_id is required")
 
-    # Try to find existing cart
-    if user_id:
-        stmt = (
-            select(Cart).options(*_cart_load_options()).where(Cart.user_id == user_id)
-        )
-    else:
-        stmt = (
-            select(Cart)
-            .options(*_cart_load_options())
-            .where(Cart.session_id == session_id)
-        )
-
-    result = await db.execute(stmt)
-    cart = result.scalar_one_or_none()
-
-    if not cart:
-        cart = Cart(user_id=user_id, session_id=session_id)
-        db.add(cart)
-        await db.flush()
-        # Reload with options
-        cart = await _load_cart(db, cart.id)
+    cart = await get_or_create_cart(
+        db, user_id, session_id, options=tuple(_cart_load_options())
+    )
 
     cart = await _discard_hidden_items(db, cart)
     return await _build_response(cart)
+
+
+# ─── Finding a shopper's basket ───────────────────────────────────────────────
+
+
+def identity_clause(user_id: uuid.UUID | None, session_id: str | None):
+    """
+    Which cart belongs to this shopper — the account if there is one, else the
+    session. Written once because six places asked it and all six had to agree.
+    """
+    return Cart.user_id == user_id if user_id else Cart.session_id == session_id
+
+
+async def cart_for_identity(
+    db: AsyncSession,
+    user_id: uuid.UUID | None,
+    session_id: str | None,
+    *,
+    options: tuple = (),
+) -> Cart | None:
+    """
+    The basket for **one** identity — the account, or the session, not both.
+
+    Distinct from `find_cart` below, which tries the account and then falls back
+    to the session. This answers the narrower question every storage path
+    actually asks, and `find_cart` is now written in terms of it.
+
+    Never an exception.
+
+    `scalar_one_or_none()` used to sit at each of these call sites, and it is
+    the wrong verb: it asserts a uniqueness `carts` did not have. Two concurrent
+    add-to-cart calls for one guest each found no cart and each made one, and
+    from then on **every** read of that basket raised `MultipleResultsFound` —
+    so adding to the cart and loading the cart both answered 500 until the rows
+    were cleared. Six customers hit that in a week.
+
+    Migration 114 makes the duplicate impossible going forward. This is the
+    second half of the same fix, and it is not redundant: an index protects the
+    database from tomorrow, and a database restored from an older dump still
+    carries yesterday's duplicates. A basket that shows one of two carts is a
+    customer who can shop; one that raises is a customer who cannot.
+
+    Oldest first, deterministically, so that if two ever do exist every screen
+    picks the same one rather than each showing whichever the planner returned.
+    """
+    stmt = select(Cart).where(identity_clause(user_id, session_id))
+    if options:
+        stmt = stmt.options(*options)
+    stmt = stmt.order_by(Cart.created_at.asc(), Cart.id.asc()).limit(1)
+    return (await db.execute(stmt)).scalars().first()
+
+
+async def get_or_create_cart(
+    db: AsyncSession,
+    user_id: uuid.UUID | None,
+    session_id: str | None,
+    *,
+    options: tuple = (),
+) -> Cart:
+    """
+    The shopper's basket, making one if this is their first item.
+
+    The race this closes is the ordinary get-or-create one: look, find nothing,
+    insert — with another request doing exactly the same thing in the gap. It
+    needs no unusual traffic to hit, only a double tap on a phone or a retry
+    after a slow response, which is why it reached six customers in a week on a
+    shop this size.
+
+    The insert goes inside a **savepoint** so that losing the race costs this
+    request nothing. An `IntegrityError` on the outer transaction would poison
+    it and take the whole request down — the customer would still get a 500,
+    just a different one — whereas rolling back to the savepoint leaves the
+    session usable and the answer is simply the cart the winner made.
+    """
+    cart = await cart_for_identity(db, user_id, session_id, options=options)
+    if cart is not None:
+        return cart
+
+    cart = Cart(user_id=user_id, session_id=session_id)
+    try:
+        async with db.begin_nested():
+            db.add(cart)
+            await db.flush()
+    except IntegrityError:
+        # Somebody else created it between the read above and this insert.
+        # `uq_carts_session_id` is what turned that from a duplicate row into
+        # this exception, and re-reading is the whole handling it needs.
+        existing = await cart_for_identity(db, user_id, session_id, options=options)
+        if existing is None:  # pragma: no cover — the index says this cannot be
+            raise
+        return existing
+
+    if options:
+        # Re-read so the caller's eager loads actually apply. A cart that has
+        # just been flushed is *persistent*, so touching `cart.items` on it
+        # lazy-loads — which under async SQLAlchemy is a `MissingGreenlet`, not
+        # a slow query. The row is new and empty either way; this is about the
+        # loader state, not the contents.
+        loaded = await cart_for_identity(db, user_id, session_id, options=options)
+        if loaded is not None:
+            return loaded
+    return cart
 
 
 async def add_item(
@@ -311,18 +396,7 @@ async def add_item(
     session_id: str | None,
     data: CartItemCreate,
 ) -> CartResponse:
-    # Get or create cart
-    if user_id:
-        stmt = select(Cart).where(Cart.user_id == user_id)
-    else:
-        stmt = select(Cart).where(Cart.session_id == session_id)
-
-    result = await db.execute(stmt)
-    cart = result.scalar_one_or_none()
-    if not cart:
-        cart = Cart(user_id=user_id, session_id=session_id)
-        db.add(cart)
-        await db.flush()
+    cart = await get_or_create_cart(db, user_id, session_id)
 
     # Shoppers can buy only live website products in live categories. This is
     # intentionally enforced here too, rather than trusting the product grid.
@@ -486,18 +560,10 @@ async def merge(
 ) -> CartResponse:
     """Merge guest session cart into user cart after login."""
     # Find guest cart
-    guest_result = await db.execute(
-        select(Cart).where(Cart.session_id == guest_session_id)
-    )
-    guest_cart = guest_result.scalar_one_or_none()
+    guest_cart = await cart_for_identity(db, None, guest_session_id)
 
     # Find or create user cart
-    user_result = await db.execute(select(Cart).where(Cart.user_id == user_id))
-    user_cart = user_result.scalar_one_or_none()
-    if not user_cart:
-        user_cart = Cart(user_id=user_id)
-        db.add(user_cart)
-        await db.flush()
+    user_cart = await get_or_create_cart(db, user_id, None)
 
     if not guest_cart:
         cart = await _load_cart(db, user_cart.id)
@@ -594,13 +660,11 @@ async def find_cart(
     error.
     """
     if user_id:
-        result = await db.execute(select(Cart).where(Cart.user_id == user_id))
-        cart = result.scalar_one_or_none()
+        cart = await cart_for_identity(db, user_id, None)
         if cart:
             return cart
     if session_id:
-        result = await db.execute(select(Cart).where(Cart.session_id == session_id))
-        return result.scalar_one_or_none()
+        return await cart_for_identity(db, None, session_id)
     return None
 
 
@@ -608,15 +672,10 @@ async def _get_user_cart(
     db: AsyncSession, user_id: uuid.UUID | None, session_id: str | None
 ) -> Cart:
     """Get a cart without loading relationships."""
-    if user_id:
-        stmt = select(Cart).where(Cart.user_id == user_id)
-    elif session_id:
-        stmt = select(Cart).where(Cart.session_id == session_id)
-    else:
+    if not user_id and not session_id:
         raise BadRequestError("Either user_id or session_id is required")
 
-    result = await db.execute(stmt)
-    cart = result.scalar_one_or_none()
+    cart = await cart_for_identity(db, user_id, session_id)
     if not cart:
         raise NotFoundError("Cart not found")
     return cart

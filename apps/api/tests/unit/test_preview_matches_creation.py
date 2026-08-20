@@ -118,7 +118,15 @@ def _result(**kwargs):
     r.scalar_one = MagicMock(return_value=kwargs.get("scalar_one"))
     scalars = MagicMock()
     scalars.all.return_value = kwargs.get("scalars_all") or []
-    scalars.first.return_value = kwargs.get("scalars_first")
+    # A stubbed row answers whichever accessor the code reaches for. These
+    # helpers used to wire `scalar_one_or_none` alone, which quietly pinned the
+    # tests to one SQLAlchemy call — so when `find_priceable_cart` stopped using
+    # it (that call asserts a uniqueness `carts` does not have, and 500ed six
+    # real customers) thirty-four tests failed for a reason that had nothing to
+    # do with what any of them was asserting.
+    scalars.first.return_value = kwargs.get(
+        "scalars_first", kwargs.get("scalar_one_or_none")
+    )
     scalars.unique.return_value.one_or_none.return_value = kwargs.get(
         "scalars_unique_one_or_none"
     )
