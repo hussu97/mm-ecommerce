@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from decimal import Decimal
 from typing import Mapping
 
 import stripe
-from stripe._error import APIConnectionError, SignatureVerificationError, StripeError
+from stripe._error import (
+    APIConnectionError,
+    IdempotencyError,
+    SignatureVerificationError,
+    StripeError,
+)
 
 from app.core.config import settings
 from app.core.exceptions import BadRequestError
@@ -50,6 +56,61 @@ def _fee_label(delivery_fee: Decimal, low_order_fee: Decimal) -> str:
     if low_order_fee > 0:
         return "Small order fee"
     return "Delivery Fee"
+
+
+def coupon_id(order: Order) -> str:
+    """
+    The one coupon this order's discount is ever expressed as.
+
+    Named off the order rather than minted fresh, and that is the whole point.
+    A `Coupon.create` with no id returns a new random one every call, so the
+    `discounts` argument to `Session.create` was different on every attempt at
+    the same order — while the idempotency key stayed `sess_{order_number}`.
+    Stripe's rule is that one key must always carry one payload, so the *second*
+    time a customer opened the payment page for a discounted order it answered
+    400 `idempotency_error` and no page opened at all.
+
+    That is not a rare corner: it is every customer who reaches Stripe, changes
+    their mind, and comes back. MM-20260820-001 is the worked example — two
+    refusals ten seconds apart, then a whole new order placed from scratch, with
+    the abandoned one still holding a use of the coupon it was discounted with.
+
+    An order's discount is fixed when the order is written, so one coupon per
+    order is not a cache, it is the truth: the same id always describes the same
+    money off.
+    """
+    return f"order-{order.order_number}"
+
+
+def _discounts_for(order: Order) -> list[dict]:
+    """
+    The `discounts` argument, stable across every attempt at this order.
+
+    Returns `[]` for an undiscounted order and — deliberately — for one whose
+    coupon could not be created. A payment page charging full price is wrong,
+    but it is recoverable by a person; no payment page at all is a customer who
+    leaves. The warning is what brings somebody to it.
+    """
+    if not order.discount_amount or order.discount_amount <= 0:
+        return []
+
+    identifier = coupon_id(order)
+    try:
+        stripe.Coupon.create(
+            id=identifier,
+            amount_off=int(order.discount_amount * 100),
+            currency="aed",
+            duration="once",
+            name=f"Promo: {order.promo_code_used or 'discount'}",
+        )
+    except StripeError as exc:
+        # The ordinary path on every attempt after the first: the coupon this
+        # order needs already exists, which is exactly what asking for it by
+        # name is for. Anything else is a real failure and is logged as one.
+        if getattr(exc, "code", None) != "resource_already_exists":
+            logger.warning("Could not create Stripe coupon: %s", exc)
+            return []
+    return [{"coupon": identifier}]
 
 
 class StripeProvider(PaymentGatewayProvider):
@@ -136,19 +197,7 @@ class StripeProvider(PaymentGatewayProvider):
                 }
             )
 
-        # Apply discount as a Stripe coupon
-        discounts = []
-        if order.discount_amount and order.discount_amount > 0:
-            try:
-                coupon = stripe.Coupon.create(
-                    amount_off=int(order.discount_amount * 100),
-                    currency="aed",
-                    duration="once",
-                    name=f"Promo: {order.promo_code_used or 'discount'}",
-                )
-                discounts = [{"coupon": coupon.id}]
-            except StripeError as e:
-                logger.warning("Could not create Stripe coupon: %s", e)
+        discounts = _discounts_for(order)
 
         # The email rides along so the confirmation page can prove ownership to
         # GET /orders/{order_number} even if the guest session cookie was lost.
@@ -157,8 +206,8 @@ class StripeProvider(PaymentGatewayProvider):
         )
         cancel_url = checkout_urls.cancel_url(order)
 
-        try:
-            session = stripe.checkout.Session.create(
+        def create(idempotency_key: str):
+            return stripe.checkout.Session.create(
                 payment_method_types=["card"],
                 line_items=line_items,
                 mode="payment",
@@ -176,8 +225,41 @@ class StripeProvider(PaymentGatewayProvider):
                         "order_id": str(order.id),
                     },
                 },
-                idempotency_key=f"sess_{order.order_number}",
+                idempotency_key=idempotency_key,
             )
+
+        try:
+            try:
+                session = create(f"sess_{order.order_number}")
+            except IdempotencyError as exc:
+                # The key is the order, so Stripe replays the first session for
+                # every later attempt on it — which is the behaviour we want:
+                # one order, one payment page, whichever tab the customer is on.
+                # It refuses outright when the *parameters* differ, and every
+                # difference this has ever had was a bug rather than a genuinely
+                # different request.
+                #
+                # The one that reached production minted a fresh Stripe coupon
+                # on every call, so a discounted order's `discounts` never
+                # matched twice. MM-20260820-001 was that: session created at
+                # 05:16, customer went back, two 400s at 05:18, no payment page
+                # either time, and a second order placed from scratch at 05:28.
+                # The stable coupon id in `_discounts_for` is the fix.
+                #
+                # This stays underneath it because a dead checkout button is the
+                # worst outcome available here, and any future drift in this
+                # payload would produce exactly that. A second Checkout Session
+                # is a cheap thing to be wrong about — only one can be paid, both
+                # carry the order number, and the loser expires into
+                # `checkout.session.expired`, which is ignored for an order that
+                # is no longer `created`.
+                logger.warning(
+                    "Stripe refused the idempotent session for %s (%s); "
+                    "opening a fresh one so the customer is not stranded",
+                    order.order_number,
+                    exc,
+                )
+                session = create(f"sess_{order.order_number}_{uuid.uuid4().hex[:12]}")
         except APIConnectionError as e:
             # Never reached Stripe at all. The order is fine; the road is not.
             logger.error("Stripe unreachable creating session: %s", e)

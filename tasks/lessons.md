@@ -586,3 +586,32 @@ stop and stayed scheduled to collect it. State that lives in two rows needs the
 write that updates one to update the other in the same call
 (`cancel_assignment`), or the correction waits for whatever sweep happens to
 notice — hours later, if at all.
+
+## An idempotency key is a promise about the payload, not just the endpoint
+
+`Session.create` was called with `idempotency_key=f"sess_{order_number}"` —
+correct, and the behaviour we want: one order, one payment page, whichever tab
+the customer is on. Two lines above it, the discount was applied by calling
+`Coupon.create` with no id, which mints a *new* coupon every time. So the
+`discounts` argument under that fixed key was different on every attempt, and
+Stripe's rule is that one key carries one payload or it carries nothing: the
+second time a customer opened the payment page for a discounted order, it
+answered 400 `idempotency_error` and no page opened at all.
+
+It never showed up as an error anybody saw. The first attempt always works, so
+it fires only for a customer who reaches Stripe, changes their mind, and comes
+back — who then has no way forward and places the order again from scratch, which
+looks like ordinary indecision in the orders list. It was found in Stripe's own
+Health tab, not in ours.
+
+**Rule:** when you pin an idempotency key, every argument under it has to be a
+function of the same thing the key is. Anything minted, timestamped or random in
+that payload — a coupon, a nonce, a "created at" — makes the key a trap that
+springs on the second call. Name such resources after the entity
+(`order-MM-20260820-001`) and reuse them, so "the same request" stays the same
+request.
+
+**Corollary:** put a fallback under any pinned key on a customer-facing path. A
+dead checkout button is the worst outcome available, and it is what payload
+drift always produces. Catching the refusal and opening a fresh session costs a
+duplicate that nothing can pay twice.
