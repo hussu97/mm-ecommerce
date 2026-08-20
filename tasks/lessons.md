@@ -555,3 +555,34 @@ the whole set.
 the deliverable, not a side note. It belongs next to the catalogue, duplicated
 into the migration that applies it (a migration must keep describing the
 database as it was), and compared by a test so the two copies cannot drift.
+
+## Two statuses can be legal neighbours and still be a hole in the flow
+
+`arrived_at_pos` was introduced so an order reaches the register when the van is
+booked rather than when the money lands. `confirmed → packed` stayed in
+`VALID_TRANSITIONS` — reasonably, since a rider can collect a box our own
+bookkeeping never caught up with — and `stamp_packed` fires on every successful
+courier booking. So the first order to take the new path (MM-20260820-002,
+dispatched by hand out of an 08:00 run at 05:31) went `confirmed → packed` and
+skipped the only status `publish_to_register` hangs off. Lalamove had a driver
+on the way; the kitchen had no check number, no ticket, no alarm and nothing to
+accept. The arrival sweep could not recover it either — that sweep looks for
+orders still at `confirmed`, and this one had already gone past.
+
+The batched path had the same hole and it was not an edge case there: a run
+being booked stamps every order on it packed, in the same sweep tick that would
+otherwise have landed those orders a moment later.
+
+**Rule:** when a new status is inserted into a flow, the shortcut past it is
+still in the transition map — go and find every writer that can take it. Ask of
+each: does this transition skip a consequence keyed on the status I just added?
+A consequence keyed on `new_status` fires only for the orders that actually pass
+through it, and a legal shortcut is silent. Fix at the choke point the shortcuts
+share (here `stamp_packed`), not at each caller.
+
+**Corollary:** an order that leaves a shared run has to tell the run. The
+delivery row knew it had its own booking; the batch went on counting it as a
+stop and stayed scheduled to collect it. State that lives in two rows needs the
+write that updates one to update the other in the same call
+(`cancel_assignment`), or the correction waits for whatever sweep happens to
+notice — hours later, if at all.

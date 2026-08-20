@@ -167,12 +167,29 @@ async def _record_outcome(
     if delivery.courier_order_id and not delivery.last_error:
         delivery.dispatch_attempts = 0
         delivery.next_attempt_at = None
+        # Imported here rather than at the top: both of these import this
+        # module.
+        from app.services import batching_service, order_service
+
+        # This box has a van of its own now, so it is not riding the run any
+        # more — and the run has to be told, because until it is it still counts
+        # this order as a stop. An admin pressing Dispatch now on one order out
+        # of a pending run left the Runs tab claiming a drop that was already
+        # being driven across town, and left the run itself scheduled to go out
+        # and collect it. It corrected itself only at the window's close, hours
+        # later, when the booking guard in `_ready_deliveries` found nothing to
+        # send.
+        #
+        # `cancel_assignment` is the same call an order cancellation makes and
+        # means the same thing here: off the run, stop count re-counted, and the
+        # run cancelled outright if this was the last thing on it. A run that has
+        # already left is left alone — a driver carrying the rest of it is not
+        # something this can rewrite.
+        await batching_service.cancel_assignment(db, delivery)
+
         # A driver has been called for this box, which is the closest thing to
         # "packed" that anybody now says out loud — the press that used to say
-        # it is gone from the register. Imported here rather than at the top:
-        # `order_service` imports this module.
-        from app.services import order_service
-
+        # it is gone from the register.
         await order_service.stamp_packed(
             db, order, note=f"{delivery.provider} booking accepted"
         )

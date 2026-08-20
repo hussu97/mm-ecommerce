@@ -27,13 +27,27 @@ NOW = datetime(2026, 8, 15, 7, 21, tzinfo=timezone.utc)  # 11:21 in Dubai
 
 
 class _Db:
-    """Hands back one branch, which is all `_record_outcome` asks for."""
+    """
+    The two rows `_record_outcome` reaches for: the branch, for the retry
+    window, and the run the order is coming off.
+    """
 
-    def __init__(self, branch: Branch | None = None):
+    def __init__(self, branch: Branch | None = None, batch=None):
         self.branch = branch
+        self.batch = batch
 
-    async def get(self, _model, _pk):
-        return self.branch
+    async def get(self, model, _pk):
+        return self.batch if model.__name__ == "DeliveryBatch" else self.branch
+
+    async def flush(self):
+        return None
+
+    async def execute(self, _statement):
+        # `_count_deliveries` counts what is still on the run. Nothing is: these
+        # tests put one order on it and have just taken that order off.
+        from types import SimpleNamespace
+
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
 
 
 def _order(status=OrderStatusEnum.PACKED, branch_id=None):
@@ -139,6 +153,70 @@ async def test_a_booking_that_worked_clears_the_counter():
 
     assert delivery.dispatch_attempts == 0
     assert delivery.next_attempt_at is None
+
+
+async def test_a_solo_booking_takes_the_order_off_its_run():
+    """
+    Dispatch now on one order out of a pending run.
+
+    MM-20260820-002 was booked by hand at 05:31 out of a run due to leave at
+    08:00, and stayed on that run afterwards: the Runs tab went on claiming a
+    drop that was already being driven across town, and the run itself stayed
+    scheduled to go out and collect it. It only corrected itself at the window's
+    close, when the booking guard in `_ready_deliveries` found nothing to send.
+
+    The box has a van of its own now. The run is told immediately, and a run
+    with nothing left on it is cancelled rather than left waiting to collect
+    air.
+    """
+    from app.models.delivery_batch import BatchStatusEnum, DeliveryBatch
+
+    batch = DeliveryBatch(
+        id=uuid.uuid4(),
+        group_id=uuid.uuid4(),
+        window_label="Batch 1",
+        dispatch_at=NOW,
+        status=BatchStatusEnum.PENDING.value,
+        stop_count=1,
+    )
+    delivery = _delivery(
+        batch_id=batch.id,
+        courier_order_id="3566062152324444486",
+        last_error=None,
+    )
+
+    await courier_service._record_outcome(_Db(batch=batch), _order(), delivery)
+
+    assert delivery.batch_id is None, "still riding a run it is not on"
+    assert batch.stop_count == 0
+    assert batch.status == BatchStatusEnum.CANCELLED.value
+
+
+async def test_a_run_that_has_already_left_is_not_rewritten():
+    """
+    A driver carrying the other drops is not something a later booking may
+    undo. The order comes off the run; the run stays dispatched.
+    """
+    from app.models.delivery_batch import BatchStatusEnum, DeliveryBatch
+
+    batch = DeliveryBatch(
+        id=uuid.uuid4(),
+        group_id=uuid.uuid4(),
+        dispatch_at=NOW,
+        status=BatchStatusEnum.DISPATCHED.value,
+        stop_count=3,
+    )
+    delivery = _delivery(
+        batch_id=batch.id,
+        courier_order_id="3566062152324444486",
+        last_error=None,
+    )
+
+    await courier_service._record_outcome(_Db(batch=batch), _order(), delivery)
+
+    assert delivery.batch_id is None
+    assert batch.stop_count == 3
+    assert batch.status == BatchStatusEnum.DISPATCHED.value
 
 
 async def test_a_dispatch_that_did_nothing_schedules_nothing():

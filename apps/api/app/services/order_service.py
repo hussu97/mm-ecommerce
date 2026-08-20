@@ -552,7 +552,39 @@ async def stamp_packed(db: AsyncSession, order: Order, *, note: str) -> bool:
     come to disagree about what packing an order does. It calls
     `assign_or_dispatch` on the way through, which returns untouched because
     whatever called this has just booked the driver.
+
+    **The shop is told first, if it has not been told yet.** `confirmed →
+    packed` is a legal transition, so an order whose van was booked before its
+    arrival fell due went straight past `arrived_at_pos` — and
+    `publish_to_register` hangs off that status and nothing else. The order was
+    never attached to a register, never printed, and never rang the alarm: no
+    check number, no ticket, nothing to accept. It could not even be recovered
+    by the arrival sweep afterwards, because that sweep looks for orders still
+    at `confirmed` and this one was already `packed`.
+
+    Both bookings reach here, so both were affected: an admin pressing Dispatch
+    now on a single order, and a run going out — including on schedule, where
+    the batch is booked in the same sweep tick that would otherwise have landed
+    its orders a moment later. A driver was called for a box nobody in the
+    kitchen had been asked to make.
+
+    So a booking that finds the order still at `confirmed` lands it first, which
+    is the same act the sweep would have performed and in the same order: the
+    register hears about it with the courier reference already on the ticket,
+    and then the box is stamped finished. `land` is idempotent about the
+    dispatch — `assign_or_dispatch` returns untouched on an order that already
+    has a courier order — so telling the shop cannot book a second van.
     """
+    if order.status == OrderStatusEnum.CONFIRMED:
+        # Imported here for the same reason as `order_service` below: this
+        # module sits under the arrival machinery, and closing the cycle at
+        # import time is a crash on boot.
+        from app.services import arrival_service
+
+        # `note` is why the booking happened, which is exactly why the shop is
+        # being told now — "lalamove booking accepted", "batch 1 booked".
+        await arrival_service.land(db, order, because=note)
+
     if OrderStatusEnum.PACKED not in VALID_TRANSITIONS.get(order.status, set()):
         return False
     with acting_as(StatusSourceEnum.SYSTEM.value, note=note):
