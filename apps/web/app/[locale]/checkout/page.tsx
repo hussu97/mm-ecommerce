@@ -34,7 +34,7 @@ import { clearCheckoutSession, useCheckoutForm } from './hooks/useCheckoutForm';
 import { useOrderPreview } from './hooks/useOrderPreview';
 import { usePhoneVerification } from './hooks/usePhoneVerification';
 import { useRetryOrder } from './hooks/useRetryOrder';
-import { usePromoRevalidation } from '@/lib/use-promo-validation';
+import { useCartPromoRecovery, usePromoRevalidation } from '@/lib/use-promo-validation';
 import type { DeliveryRates, PickupBranch } from '@/lib/types';
 import { Icon } from '@/components/ui/Icon';
 
@@ -346,6 +346,30 @@ function CheckoutContent() {
   // the preview does not is act: it takes a refused code off the form, tells
   // the customer why, and carries the phone-gate flag the address panel needs.
   // The preview reports; this decides.
+  // The code the basket applied, when nothing carried it here. `sessionStorage`
+  // is allowed to fail and did: on 20 August a basket reading 29.75 became a
+  // checkout reading 35.00 with an empty promo field, and the order would have
+  // been submitted at full price. The cart remembers the code server-side now,
+  // and this validates it afresh rather than trusting a carried number.
+  //
+  // Ordered before the re-validation below because it is what *puts* a code on
+  // the form; that one keeps an existing code honest.
+  useCartPromoRecovery({
+    cartCode: cart?.promo_code,
+    formCode: form.promoCode,
+    subtotal,
+    identity: promoIdentity,
+    enabled: !retryOrder && !restoringOrder && cartLoaded && subtotal > 0,
+    onRecovered: (outcome) => {
+      onChange({
+        promoCode: outcome.code,
+        promoDiscount: outcome.discount,
+        promoMessage: outcome.message,
+        promoNeedsVerify: outcome.needsVerify,
+      });
+    },
+  });
+
   usePromoRevalidation({
     code: form.promoCode,
     discount: form.promoDiscount,

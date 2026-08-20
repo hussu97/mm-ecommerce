@@ -269,6 +269,20 @@ export const cartApi = {
   removeItem: (item_id: string) =>
     api.delete<Cart>(`/cart/items/${item_id}`),
   clear: () => api.delete<Cart>('/cart'),
+  /**
+   * Remember which code the basket has applied, or `null` to forget it.
+   *
+   * The code only — never the discount. What it is worth depends on the
+   * basket, the identity and the day, and the checkout re-validates rather
+   * than trusting a number carried from another screen.
+   *
+   * This is what makes the discount survive the hop to the checkout. It used
+   * to travel in `sessionStorage` alone, and when that write failed the
+   * checkout priced the order at full price *and submitted it that way* —
+   * both the preview and the order gate on a discount being present.
+   */
+  setPromo: (code: string | null) =>
+    api.put<Cart>('/cart/promo', { code }),
   merge: (session_id: string) =>
     api.post<Cart>('/cart/merge', { session_id }),
 };

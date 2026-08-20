@@ -390,6 +390,33 @@ async def get_or_create_cart(
     return cart
 
 
+async def set_promo_code(
+    db: AsyncSession,
+    user_id: uuid.UUID | None,
+    session_id: str | None,
+    code: str | None,
+) -> CartResponse:
+    """
+    Remember which code the customer applied, or forget it.
+
+    The **code**, never the discount. What a coupon is worth depends on the
+    basket, the identity and the day, so the checkout re-asks
+    `/promo-codes/validate` rather than trusting a number carried from another
+    screen — see migration 115.
+
+    Nothing is validated here. This records an intention, and every place that
+    turns it into money validates it again: the checkout to show a total, and
+    `create_order` to charge one. Refusing an expired code at this point would
+    mean the basket and the checkout each had an opinion about eligibility, and
+    the two would eventually differ.
+    """
+    cart = await get_or_create_cart(db, user_id, session_id)
+    cleaned = (code or "").strip().upper()
+    cart.promo_code = cleaned or None
+    await db.flush()
+    return await _build_response(await _load_cart(db, cart.id))
+
+
 async def add_item(
     db: AsyncSession,
     user_id: uuid.UUID | None,

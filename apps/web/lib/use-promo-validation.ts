@@ -227,3 +227,102 @@ export function usePromoRevalidation({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, applied, subtotal, identity?.email, identity?.phone, identity?.delivery_method, validateCode]);
 }
+
+
+// ─── Recovering a code the basket applied ─────────────────────────────────────
+
+interface RecoveryOptions {
+  /** The code the server says is on this basket, from `Cart.promo_code`. */
+  cartCode: string | null | undefined;
+  /** The code already on the checkout form, from `sessionStorage` or typed. */
+  formCode: string;
+  subtotal: number;
+  identity?: PromoIdentity;
+  enabled?: boolean;
+  /**
+   * Called only with an *applied* outcome — narrowed deliberately, because
+   * this hook never reports a refusal to the customer and a wider type would
+   * invite a caller to handle a case that cannot reach them.
+   */
+  onRecovered: (outcome: Extract<PromoOutcome, { kind: 'applied' }>) => void;
+}
+
+/**
+ * Put the basket's code back on the checkout when nothing else carried it.
+ *
+ * The code used to travel from the basket in `sessionStorage` and nowhere
+ * else. When that write failed — private mode, a full quota — the checkout
+ * learned nothing, and because both `useOrderPreview` and the order submission
+ * gate on `promoDiscount > 0`, the customer was shown one price in the basket
+ * and **charged another**. On 20 August a basket reading 29.75 became a
+ * checkout reading 35.00 with an empty promo field.
+ *
+ * The cart now remembers the code server-side, and this validates it here
+ * rather than trusting a carried number — so the discount is today's answer
+ * for this basket and this customer, computed by the same endpoint the panel
+ * uses when a code is typed.
+ *
+ * **Three guards, and each prevents something specific:**
+ *
+ * * *The form wins.* A code already on the form — restored from the session or
+ *   typed into the panel — is the customer's, and is never overwritten by the
+ *   basket's. The check is repeated inside the callback because the session
+ *   restore is an effect too: without it, a validation started while the form
+ *   was still empty could land after the restore and replace the code it
+ *   brought.
+ * * *Once per code.* Otherwise the `onRecovered` that follows changes the form,
+ *   which re-renders, which re-runs this.
+ * * *Applied only.* A refused code is dropped in silence. The customer never
+ *   typed it on this screen, and a toast about a coupon they did not enter is
+ *   noise — the basket already told them if it was refused there.
+ */
+export function useCartPromoRecovery({
+  cartCode,
+  formCode,
+  subtotal,
+  identity,
+  enabled = true,
+  onRecovered,
+}: RecoveryOptions) {
+  const { validateCode } = usePromoValidation('checkout');
+
+  const onRecoveredRef = useRef(onRecovered);
+  onRecoveredRef.current = onRecovered;
+  // Read inside the callback rather than closed over, so a code that arrives
+  // between the request and its answer still wins.
+  const formCodeRef = useRef(formCode);
+  formCodeRef.current = formCode;
+
+  const attempted = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const code = (cartCode ?? '').trim();
+    if (!code || formCode) return;
+    if (attempted.current === code) return;
+    attempted.current = code;
+
+    void validateCode(code, {
+      subtotal,
+      identity,
+      announced: false,
+      fromTray: false,
+    }).then((outcome) => {
+      if (!outcome || outcome.kind !== 'applied') return;
+      if (formCodeRef.current) return;
+      onRecoveredRef.current(outcome);
+    });
+    // Same reasoning as `usePromoRevalidation`: identity is watched field by
+    // field because it is rebuilt on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    enabled,
+    cartCode,
+    formCode,
+    subtotal,
+    identity?.email,
+    identity?.phone,
+    identity?.delivery_method,
+    validateCode,
+  ]);
+}

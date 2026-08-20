@@ -3984,6 +3984,24 @@
         "title": "CartMergeRequest",
         "type": "object"
       },
+      "CartPromoRequest": {
+        "description": "The code the basket has applied, or `null` to forget it.",
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          }
+        },
+        "title": "CartPromoRequest",
+        "type": "object"
+      },
       "CartResponse": {
         "properties": {
           "id": {
@@ -4003,6 +4021,17 @@
             },
             "title": "Items",
             "type": "array"
+          },
+          "promo_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promo Code"
           },
           "session_id": {
             "anyOf": [
@@ -29356,6 +29385,71 @@
           }
         ],
         "summary": "Merge Cart",
+        "tags": [
+          "Cart"
+        ]
+      }
+    },
+    "/api/v1/cart/promo": {
+      "put": {
+        "description": "Remember the code applied in the basket, or clear it with `null`.\n\nRecords the code and nothing else. The discount is priced by\n`/promo-codes/validate` and charged by `create_order`, both of which\nvalidate afresh \u2014 so this endpoint cannot put a discount on an order and a\ncode stored here that has since expired simply fails at the checkout like\nany other.",
+        "operationId": "set_cart_promo_api_v1_cart_promo_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Session-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Session-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CartPromoRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CartResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Set Cart Promo",
         "tags": [
           "Cart"
         ]

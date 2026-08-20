@@ -20,6 +20,12 @@ from app.services import cart_service
 router = APIRouter()
 
 
+class CartPromoRequest(BaseModel):
+    """The code the basket has applied, or `null` to forget it."""
+
+    code: str | None = None
+
+
 class CartMergeRequest(BaseModel):
     session_id: str
 
@@ -123,6 +129,28 @@ async def clear_cart(
     """Remove all items from the cart."""
     user_id, session_id = _resolve_identity(current_user, x_session_id)
     return await cart_service.clear(db, user_id=user_id, session_id=session_id)
+
+
+@router.put("/promo", response_model=CartResponse)
+async def set_cart_promo(
+    data: CartPromoRequest,
+    x_session_id: str | None = Header(None, alias="X-Session-Id"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_optional_user),
+):
+    """
+    Remember the code applied in the basket, or clear it with `null`.
+
+    Records the code and nothing else. The discount is priced by
+    `/promo-codes/validate` and charged by `create_order`, both of which
+    validate afresh — so this endpoint cannot put a discount on an order and a
+    code stored here that has since expired simply fails at the checkout like
+    any other.
+    """
+    user_id, session_id = _resolve_identity(current_user, x_session_id)
+    return await cart_service.set_promo_code(
+        db, user_id=user_id, session_id=session_id, code=data.code
+    )
 
 
 @router.post("/merge", response_model=CartResponse)

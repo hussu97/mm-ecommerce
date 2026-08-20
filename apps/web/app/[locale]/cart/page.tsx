@@ -4,7 +4,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useCart } from '@/lib/cart-context';
-import { ensureSessionId } from '@/lib/api';
+import { cartApi, ensureSessionId } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { accountEmailOf, ensureCheckoutAuth } from '@/lib/checkout-auth';
 import { analytics, failureReason } from '@/lib/analytics';
@@ -188,6 +188,13 @@ export default function CartPage() {
       message: outcome.message,
       needsVerify: outcome.needsVerify,
     });
+    // Tell the server which code is on the basket, so the checkout can find it
+    // without `sessionStorage`. Deliberately not awaited and deliberately
+    // swallowed: the discount on this screen is already real and the customer
+    // is not waiting on a bookkeeping call. If it fails, the `sessionStorage`
+    // copy below still carries the code — the two are belt and braces, and it
+    // took both failing to lose a discount before either existed.
+    void cartApi.setPromo(outcome.code).catch(() => { /* the session copy remains */ });
     addToast(t('cart.promo_applied', { code: outcome.code }), 'success');
     // The code is on and the discount is real; what is left is an errand, and
     // one that only a delivery order will actually be asked to run. Counted
@@ -207,6 +214,9 @@ export default function CartPage() {
     setAppliedPromo(null);
     setPromoCode('');
     setPromoError(null);
+    // Forget it server-side too, or the checkout would helpfully re-apply the
+    // code this customer has just taken off.
+    void cartApi.setPromo(null).catch(() => { /* nothing to undo */ });
   }, []);
 
   const handleProceedToCheckout = useCallback(async () => {

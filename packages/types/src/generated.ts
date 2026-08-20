@@ -1327,6 +1327,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cart/promo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Cart Promo
+         * @description Remember the code applied in the basket, or clear it with `null`.
+         *
+         *     Records the code and nothing else. The discount is priced by
+         *     `/promo-codes/validate` and charged by `create_order`, both of which
+         *     validate afresh — so this endpoint cannot put a discount on an order and a
+         *     code stored here that has since expired simply fails at the checkout like
+         *     any other.
+         */
+        put: operations["set_cart_promo_api_v1_cart_promo_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/categories": {
         parameters: {
             query?: never;
@@ -7650,6 +7676,14 @@ export interface components {
             /** Session Id */
             session_id: string;
         };
+        /**
+         * CartPromoRequest
+         * @description The code the basket has applied, or `null` to forget it.
+         */
+        CartPromoRequest: {
+            /** Code */
+            code?: string | null;
+        };
         /** CartResponse */
         CartResponse: {
             /**
@@ -7667,6 +7701,8 @@ export interface components {
              * @default []
              */
             items: components["schemas"]["CartItemResponse"][];
+            /** Promo Code */
+            promo_code?: string | null;
             /** Session Id */
             session_id: string | null;
             /**
@@ -17184,6 +17220,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["CartMergeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CartResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_cart_promo_api_v1_cart_promo_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Session-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CartPromoRequest"];
             };
         };
         responses: {

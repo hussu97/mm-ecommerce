@@ -30,6 +30,14 @@ class Cart(Base, UUIDMixin, TimestampMixin):
         String(255), nullable=True, index=True
     )
 
+    #: The promo code the customer applied in the basket, if any.
+    #:
+    #: The **code**, never the discount. What a coupon is worth depends on the
+    #: basket, the identity and the day, and it is recomputed every time it is
+    #: asked; a copy of the amount here would be a second answer free to drift
+    #: from the first. See migration 115 for the failure this exists to close.
+    promo_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
     # ─── Live courier estimate ────────────────────────────────────────────────
     # What a real courier said this basket would cost to deliver to the pin the
     # customer had dropped, captured while they were still deciding. It is

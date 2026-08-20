@@ -36,6 +36,10 @@ class TestCartEndpoints:
         mock_cart.items = []
         mock_cart.item_count = 0
         mock_cart.subtotal = 0.0
+        # A `MagicMock` invents every attribute it is asked for, so a field
+        # added to `CartResponse` arrives as a mock and fails response
+        # validation. Stated rather than left to the mock's imagination.
+        mock_cart.promo_code = None
 
         with patch(
             "app.api.v1.cart.cart_service.clear",
@@ -59,6 +63,10 @@ class TestCartEndpoints:
         mock_cart.items = []
         mock_cart.item_count = 0
         mock_cart.subtotal = 0.0
+        # A `MagicMock` invents every attribute it is asked for, so a field
+        # added to `CartResponse` arrives as a mock and fails response
+        # validation. Stated rather than left to the mock's imagination.
+        mock_cart.promo_code = None
 
         with patch(
             "app.api.v1.cart.cart_service.get_or_create",
@@ -78,6 +86,10 @@ class TestCartEndpoints:
         mock_cart.items = []
         mock_cart.item_count = 0
         mock_cart.subtotal = 0.0
+        # A `MagicMock` invents every attribute it is asked for, so a field
+        # added to `CartResponse` arrives as a mock and fails response
+        # validation. Stated rather than left to the mock's imagination.
+        mock_cart.promo_code = None
 
         with patch(
             "app.api.v1.cart.cart_service.get_or_create",

@@ -83,6 +83,11 @@ class CartResponse(BaseModel):
     user_id: UUID | None
     session_id: str | None
     items: list[CartItemResponse] = []
+    #: The code the customer applied in the basket, so the checkout can pick it
+    #: up from a cart it was fetching anyway rather than from `sessionStorage`,
+    #: which is allowed to fail and did. Never carries the discount — the
+    #: checkout re-validates and the server prices the order.
+    promo_code: str | None = None
 
     # Computed fields
     item_count: int = 0

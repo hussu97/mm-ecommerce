@@ -157,6 +157,13 @@ export interface Cart {
   items: CartItem[];
   item_count: number;
   subtotal: number;
+  /**
+   * The promo code applied in the basket, if any — the code, never the
+   * discount. The checkout reads it off the cart it fetches anyway and
+   * re-validates, so a failed `sessionStorage` write no longer costs the
+   * customer their discount.
+   */
+  promo_code: string | null;
 }
 
 // ─── Order ────────────────────────────────────────────────────────────────────

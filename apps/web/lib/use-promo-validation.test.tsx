@@ -38,6 +38,7 @@ vi.mock('./analytics', async (importOriginal) => {
 import {
   appliedPromoCode,
   promoOutcomeOf,
+  useCartPromoRecovery,
   usePromoRevalidation,
   usePromoValidation,
   type PromoOutcome,
@@ -234,5 +235,106 @@ describe('usePromoRevalidation', () => {
     renderRevalidation({ enabled: false });
     await new Promise((resolve) => setTimeout(resolve, 700));
     expect(mocks.validate).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('useCartPromoRecovery', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.validate.mockResolvedValue({ valid: true, discount_amount: 5.25, message: null });
+  });
+
+  const recover = (props: Partial<Parameters<typeof useCartPromoRecovery>[0]> = {}) => {
+    const onRecovered = vi.fn();
+    const view = renderHook(
+      (p: { cartCode: string | null; formCode: string }) =>
+        useCartPromoRecovery({
+          cartCode: p.cartCode,
+          formCode: p.formCode,
+          subtotal: 35,
+          onRecovered,
+          ...props,
+        }),
+      { initialProps: { cartCode: 'NEW', formCode: '', ...props } as never },
+    );
+    return { onRecovered, ...view };
+  };
+
+  it('puts the basket’s code back when nothing else carried it', async () => {
+    // The bug: `sessionStorage` failed, so the checkout had no code, priced the
+    // order at full price and would have submitted it that way.
+    const { onRecovered } = recover();
+
+    await waitFor(() => expect(onRecovered).toHaveBeenCalledTimes(1));
+    expect(onRecovered).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'applied', code: 'NEW', discount: 5.25 }),
+    );
+  });
+
+  it('leaves a code the customer already has alone', async () => {
+    // Restored from the session, or typed into the panel. Either way it is
+    // theirs and the basket does not get to overwrite it.
+    const { onRecovered } = recover({ formCode: 'TYPED' } as never);
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mocks.validate).not.toHaveBeenCalled();
+    expect(onRecovered).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the basket has no code', async () => {
+    const { onRecovered } = recover({ cartCode: null } as never);
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mocks.validate).not.toHaveBeenCalled();
+    expect(onRecovered).not.toHaveBeenCalled();
+  });
+
+  it('asks once, however often the page re-renders', async () => {
+    // `onRecovered` changes the form, which re-renders, which re-runs the
+    // effect. Without the guard that is a validation request per render.
+    const { onRecovered, rerender } = recover();
+    await waitFor(() => expect(onRecovered).toHaveBeenCalledTimes(1));
+
+    rerender({ cartCode: 'NEW', formCode: '' });
+    rerender({ cartCode: 'NEW', formCode: '' });
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mocks.validate).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a refused code in silence', async () => {
+    // The customer never typed it on this screen. A toast about a coupon they
+    // did not enter is noise, and the basket already told them if it failed
+    // there.
+    mocks.validate.mockResolvedValue({ valid: false, discount_amount: 0, message: 'Expired' });
+    const { onRecovered } = recover();
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mocks.validate).toHaveBeenCalled();
+    expect(onRecovered).not.toHaveBeenCalled();
+  });
+
+  it('loses the race to a code that arrives while it was asking', async () => {
+    // The session restore is an effect too. A validation started while the
+    // form was empty must not land afterwards and replace the code the restore
+    // brought — which is why the check is repeated inside the callback.
+    let release: (v: unknown) => void = () => {};
+    mocks.validate.mockReturnValue(new Promise((r) => { release = r; }));
+
+    const { onRecovered, rerender } = recover();
+    rerender({ cartCode: 'NEW', formCode: 'RESTORED' });
+    release({ valid: true, discount_amount: 5.25, message: null });
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(onRecovered).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet until the basket is loaded', async () => {
+    const { onRecovered } = recover({ enabled: false } as never);
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mocks.validate).not.toHaveBeenCalled();
+    expect(onRecovered).not.toHaveBeenCalled();
   });
 });
