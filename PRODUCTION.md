@@ -825,6 +825,7 @@ however the map is redrawn.
 > which was survivable when one known account was routed there and is not
 > survivable now. Both default to production; set them together or not at all.
 | `NOON_SEND_WEBHOOK_API_KEY` | a secret you generate | Hand the same value to the integrations team with the webhook URLs |
+| `MAPBOX_ACCESS_TOKEN` | a `pk.` token from account.mapbox.com | **Optional.** Drives "driver 6 min · 4.2 km away" on the register and the admin. Empty falls back to a straight-line estimate with no ETA — nothing breaks. Directions needs no scope, so leave every secret scope unticked; and leave the URL restriction **empty**, because Mapbox enforces it on the `Referer` header that a server request does not send. |
 | `NOON_SEND_ENFORCE_WEBHOOK_KEY` | `false` | Whether a push missing that key is refused. Leave off until the key noon actually sends matches the one above — compare the two fingerprints on any `webhook_logs` row. Enforcing before they agree discards live delivery updates, which is what happened during the trial. |
 
 The rest fall back in the deploy workflow:
@@ -841,6 +842,7 @@ The rest fall back in the deploy workflow:
 ```bash
 gh secret set NOON_SEND_API_KEY --repo hussu97/mm-ecommerce
 gh secret set NOON_SEND_WEBHOOK_API_KEY --repo hussu97/mm-ecommerce
+gh secret set MAPBOX_ACCESS_TOKEN --repo hussu97/mm-ecommerce
 ```
 
 **Registering a branch.** Which outlet a rider collects from is a property of the

@@ -128,6 +128,14 @@ services:
       # `.env` had all of it. This file is what decides.
       NOON_SEND_API_KEY: ${NOON_SEND_API_KEY:-}
       NOON_SEND_WEBHOOK_API_KEY: ${NOON_SEND_WEBHOOK_API_KEY:-}
+      # The register shows how far the driver is too, so both services need it.
+      # An empty default is correct here and only here: the token is optional and
+      # an empty string is the "no routing, use the estimate" state the code is
+      # written around — unlike NOON_SEND_BASE, where "" reaches a float field
+      # and pydantic refuses it at import.
+      MAPBOX_ACCESS_TOKEN: ${MAPBOX_ACCESS_TOKEN:-}
+      MAPBOX_MIN_ROUTE_INTERVAL_S: ${MAPBOX_MIN_ROUTE_INTERVAL_S:-60}
+      MAPBOX_TIMEOUT_S: ${MAPBOX_TIMEOUT_S:-5.0}
       NOON_SEND_ENFORCE_WEBHOOK_KEY: ${NOON_SEND_ENFORCE_WEBHOOK_KEY:-false}
       NOON_SEND_ENV: ${NOON_SEND_ENV:-production}
       NOON_SEND_LOCALE: ${NOON_SEND_LOCALE:-en-ae}
@@ -283,6 +291,14 @@ services:
       # never boots. That is what took the register down on this deploy.
       NOON_SEND_API_KEY: ${NOON_SEND_API_KEY:-}
       NOON_SEND_WEBHOOK_API_KEY: ${NOON_SEND_WEBHOOK_API_KEY:-}
+      # The register shows how far the driver is too, so both services need it.
+      # An empty default is correct here and only here: the token is optional and
+      # an empty string is the "no routing, use the estimate" state the code is
+      # written around — unlike NOON_SEND_BASE, where "" reaches a float field
+      # and pydantic refuses it at import.
+      MAPBOX_ACCESS_TOKEN: ${MAPBOX_ACCESS_TOKEN:-}
+      MAPBOX_MIN_ROUTE_INTERVAL_S: ${MAPBOX_MIN_ROUTE_INTERVAL_S:-60}
+      MAPBOX_TIMEOUT_S: ${MAPBOX_TIMEOUT_S:-5.0}
       NOON_SEND_ENFORCE_WEBHOOK_KEY: ${NOON_SEND_ENFORCE_WEBHOOK_KEY:-false}
       NOON_SEND_ENV: ${NOON_SEND_ENV:-production}
       NOON_SEND_LOCALE: ${NOON_SEND_LOCALE:-en-ae}

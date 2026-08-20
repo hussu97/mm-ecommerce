@@ -48,6 +48,7 @@ from app.schemas.pos_order import (
 from app.services import (
     address_format,
     crud_service,
+    driver_proximity,
     email_service,
     option_snapshot,
     order_service,
@@ -112,6 +113,19 @@ def _serialise(order: Order) -> PosOrderResponse:
         payload.courier_reference = order.delivery.courier_reference
         payload.driver_name = order.delivery.driver_name
         payload.driver_phone = order.delivery.driver_phone
+        payload.driver_assignment_count = order.delivery.driver_assignment_count
+        payload.driver_location_at = order.delivery.driver_location_at
+        # Computed here rather than on the terminal, and for the same reason the
+        # money is: two screens deriving a kilometre from raw coordinates would
+        # eventually disagree about the same driver. `to_pickup` declines far
+        # more often than it answers — no position, a stale one, or a parcel
+        # already collected — and null is the honest reading of every one of
+        # those. The branch is guarded the same way the courier is, because a
+        # caller that forgot to load it must cost a missing distance and not a
+        # 500 on the receipt path.
+        if "branch" not in inspect(order).unloaded:
+            proximity = driver_proximity.to_pickup(order.delivery, order.branch)
+            payload.driver_distance_km = proximity.distance_km if proximity else None
     # Same guard, same reason. A hint for the terminal, not the enforcement —
     # `accept_order` asks the question again with the branch definitely loaded,
     # so a payload that could not resolve the hours costs a 409 and an alarm

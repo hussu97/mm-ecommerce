@@ -254,6 +254,32 @@ class PosOrderResponse(ORMModel):
     #: nowhere else. It was answerable only on a laptop.
     driver_name: str | None = None
     driver_phone: str | None = None
+    #: Which driver this is — 1 for the first, 2 for whoever took over from
+    #: them. Zero until a courier matches anybody.
+    #:
+    #: The register keys its driver slip off this. A terminal keeps the number
+    #: it last printed for an order and prints again when the server's is
+    #: higher, which is what makes a reassignment reprint by construction rather
+    #: than by anybody remembering to add a second trigger. A counter, not a
+    #: timestamp: two terminals must not be able to read it differently, and it
+    #: must never go backwards — a re-dispatch clears the driver but keeps this,
+    #: precisely so the next driver's slip cannot look like one already printed.
+    driver_assignment_count: int = 0
+    #: Roughly how far the driver still is from this branch, in kilometres, and
+    #: when that was last true. Null unless a named driver is on the way *here*
+    #: — after collection the number would only grow, and a stale or undated
+    #: position is refused rather than quoted. See `driver_proximity`.
+    #:
+    #: An estimate: straight line times the measured detour factor, the same
+    #: figure the zone pricing is fitted against. It answers "ten minutes or
+    #: two", which is what somebody standing over a boxed order is asking.
+    driver_distance_km: float | None = None
+    #: Minutes of driving against traffic as it was, or null when we only have
+    #: the straight-line estimate. Never derived from the distance — a duration
+    #: invented by dividing kilometres by an assumed speed is a guess wearing the
+    #: clothes of a measurement, and the counter cannot tell the two apart.
+    driver_eta_minutes: float | None = None
+    driver_location_at: datetime | None = None
     #: Whether the accept call that returned this payload is the one that did
     #: it, or whether somebody else had already taken the order.
     #:

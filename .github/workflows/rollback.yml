@@ -119,6 +119,9 @@ jobs:
           NOON_SEND_WEBHOOK_API_KEY=${{ secrets.NOON_SEND_WEBHOOK_API_KEY }}
           NOON_SEND_ENFORCE_WEBHOOK_KEY=${{ secrets.NOON_SEND_ENFORCE_WEBHOOK_KEY || 'false' }}
           NOON_SEND_TIMEOUT_SECONDS=${{ secrets.NOON_SEND_TIMEOUT_SECONDS || '8' }}
+          MAPBOX_ACCESS_TOKEN=${{ secrets.MAPBOX_ACCESS_TOKEN }}
+          MAPBOX_MIN_ROUTE_INTERVAL_S=${{ secrets.MAPBOX_MIN_ROUTE_INTERVAL_S || '60' }}
+          MAPBOX_TIMEOUT_S=${{ secrets.MAPBOX_TIMEOUT_S || '5.0' }}
           LOG_RETENTION_DAYS=${{ secrets.LOG_RETENTION_DAYS || '7' }}
           AUDIT_RETENTION_DAYS=${{ secrets.AUDIT_RETENTION_DAYS || '90' }}
           BATCH_DISPATCHER_ENABLED=${{ secrets.BATCH_DISPATCHER_ENABLED || 'true' }}

@@ -74,7 +74,12 @@ from app.models.order_delivery import (
     OrderDelivery,
     is_failed,
 )
-from app.services import courier_reference, courier_service, lalamove_service
+from app.services import (
+    courier_reference,
+    courier_service,
+    driver_assignment,
+    lalamove_service,
+)
 from app.services.providers.lalamove_provider import LalamoveError, provider
 
 logger = logging.getLogger(__name__)
@@ -1030,7 +1035,22 @@ async def _book_chunk(
         delivery.courier_previous_status = delivery.courier_status
         delivery.courier_status = status
         delivery.share_link = booking.get("shareLink")
-        delivery.driver_id = booking.get("driverId") or None
+        # Through the one writer, like every other dispatch. A fresh booking
+        # carries nobody — Lalamove answers `ASSIGNING_DRIVER` and matches a
+        # driver minutes later — and `clear` closes the stint left open by
+        # whatever booking this run replaces, so a re-batched order does not
+        # leave a rider from the abandoned one reading as current. Written
+        # straight onto the column, that stint would have stayed active while
+        # the delivery said nobody was assigned.
+        await driver_assignment.clear(db, delivery, at=now)
+        await driver_assignment.record(
+            db,
+            delivery,
+            driver_assignment.Driver.from_lalamove(
+                None, driver_id=booking.get("driverId")
+            ),
+            at=now,
+        )
         delivery.stop_id = stop_id
         delivery.stop_sequence = sequence
         delivery.booked_at = now

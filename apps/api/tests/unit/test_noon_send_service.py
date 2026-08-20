@@ -26,7 +26,9 @@ from sqlalchemy import inspect
 from app.models.order import Order, OrderStatusEnum
 from app.models.order_status_event import pending_events
 from app.models.order_delivery import OrderDelivery
-from app.services import noon_send_service
+from app.models.order_driver import OrderDriver
+from app.services import driver_assignment, noon_send_service
+from app.services.providers import noon_send_provider
 from app.services.lalamove_service import PickupPoint
 
 NOW = datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc)
@@ -49,11 +51,36 @@ class _FakeResult:
 
 
 class _FakeDb:
-    def __init__(self, order):
-        self.order = order
+    """
+    A session for the two things these tests read through one.
 
-    async def execute(self, _stmt):
+    It has to tell the queries apart. `apply_webhook` looks up the `Order`;
+    `driver_assignment` looks up the active `OrderDriver` row and inserts new
+    ones — and a fake that answered both with the same object would hand an
+    `Order` back as somebody's driver and make every reassignment test agree
+    with itself for the wrong reason.
+    """
+
+    def __init__(self, order=None, drivers=None):
+        self.order = order
+        self.drivers: list[OrderDriver] = list(drivers or [])
+
+    def add(self, row):
+        self.drivers.append(row)
+
+    async def execute(self, stmt):
+        if _selects(stmt, OrderDriver):
+            active = next((d for d in self.drivers if d.is_active), None)
+            return _FakeResult(active)
         return _FakeResult(self.order)
+
+
+def _selects(stmt, model) -> bool:
+    """Whether this SELECT is asking for *model*."""
+    return any(
+        description.get("entity") is model
+        for description in getattr(stmt, "column_descriptions", [])
+    )
 
 
 def _delivery(**overrides) -> OrderDelivery:
@@ -570,7 +597,8 @@ def test_a_paid_order_is_sent_as_prepaid_even_when_flagged_cod():
     assert task.prepaid_value == 18500
 
 
-def test_rider_position_overwrites_rather_than_accumulates():
+@pytest.mark.asyncio
+async def test_rider_position_overwrites_rather_than_accumulates():
     """
     Each ping replaces the last — there is no breadcrumb trail, only where the
     rider is now.
@@ -581,7 +609,8 @@ def test_rider_position_overwrites_rather_than_accumulates():
     nested under `location`, degrees times 10^7, as strings.
     """
     delivery = _delivery()
-    noon_send_service.apply_tracking(
+    await noon_send_service.apply_tracking(
+        _FakeDb(),
         delivery,
         {
             "da_details": {
@@ -589,7 +618,8 @@ def test_rider_position_overwrites_rather_than_accumulates():
             }
         },
     )
-    noon_send_service.apply_tracking(
+    await noon_send_service.apply_tracking(
+        _FakeDb(),
         delivery,
         {
             "da_details": {
@@ -601,9 +631,94 @@ def test_rider_position_overwrites_rather_than_accumulates():
     assert delivery.driver_longitude == Decimal("55.40")
 
 
-def test_a_position_push_without_coordinates_is_ignored():
+@pytest.mark.asyncio
+async def test_a_tracking_push_naming_a_different_rider_is_a_reassignment():
+    """
+    Their status webhook has no rider in it at all, and a swap does not always
+    change the status — a task can be handed on while it sits at `assigned`.
+    These pings are then the *only* thing naming the new person: a name and a
+    number arriving every fifteen seconds that nothing was reading.
+    """
+    db = _FakeDb(order=None)
+    delivery = _delivery()
+    await noon_send_service.apply_tracking(
+        db,
+        delivery,
+        {
+            "da_details": {
+                "name": "Mohammed",
+                "phone_number": "+971500000003",
+                "location": {"latitude": "253300000", "longitude": "553700000"},
+            }
+        },
+    )
+
+    change = await noon_send_service.apply_tracking(
+        db,
+        delivery,
+        {
+            "da_details": {
+                "name": "Bilal",
+                "phone_number": "+971500000004",
+                "location": {"latitude": "253100000", "longitude": "554000000"},
+            }
+        },
+    )
+
+    assert change is driver_assignment.Change.REASSIGNED
+    assert delivery.driver_name == "Bilal"
+    assert delivery.driver_phone == "+971500000004"
+    assert delivery.driver_assignment_count == 2
+    # The new rider's own pin, not the one the old rider left behind.
+    assert delivery.driver_latitude == Decimal("25.31")
+    assert len([d for d in db.drivers if d.is_active]) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_assigned_still_asks_who_is_carrying_it(monkeypatch):
+    """
+    A swap arrives as the word `assigned` a second time.
+
+    This used to be read as "no transition" — `status != delivery.courier_status`
+    was false — so the detail was never re-read and the second rider was never
+    learned. The rank guard lets an equal status through precisely so that this
+    can be noticed.
+    """
+    asked: list[str] = []
+
+    async def _get_task(task_nr):
+        asked.append(task_nr)
+        return {
+            "status_code": "assigned",
+            "da_details": {"name": "Bilal", "phone_number": "+971500000004"},
+        }
+
+    monkeypatch.setattr(noon_send_service, "is_enabled", lambda: True)
+    monkeypatch.setattr(noon_send_provider.provider, "get_task", _get_task)
+    monkeypatch.setattr(noon_send_service, "_announce_rider", _swallow_announcement)
+
+    order = _order(OrderStatusEnum.PACKED)
+    delivery = _delivery(
+        courier_status="assigned",
+        driver_name="Mohammed",
+        driver_phone="+971500000003",
+        driver_assignment_count=1,
+    )
+    await noon_send_service.apply_webhook(_FakeDb(order), _push("assigned"), delivery)
+
+    assert asked == [TASK_NR]
+    assert delivery.driver_name == "Bilal"
+    assert delivery.driver_assignment_count == 2
+
+
+async def _swallow_announcement(_db, _delivery):
+    """The push is somebody else's test; this one is about who the row names."""
+
+
+@pytest.mark.asyncio
+async def test_a_position_push_without_coordinates_is_ignored():
     delivery = _delivery(driver_latitude=Decimal("25.33"))
-    noon_send_service.apply_tracking(delivery, {"da_details": {}})
+    await noon_send_service.apply_tracking(_FakeDb(), delivery, {"da_details": {}})
     assert delivery.driver_latitude == Decimal("25.33")
 
 
@@ -763,7 +878,8 @@ REAL_TRACKING = {
 }
 
 
-def test_a_tracking_push_moves_the_rider_pin():
+@pytest.mark.asyncio
+async def test_a_tracking_push_moves_the_rider_pin():
     """
     The coordinates are nested under `da_details.location`, and encoded the way
     we encode ours — degrees times 10^7, as strings.
@@ -775,13 +891,14 @@ def test_a_tracking_push_moves_the_rider_pin():
     """
     delivery = OrderDelivery(order_id=uuid.uuid4(), provider="noon_send")
 
-    noon_send_service.apply_tracking(delivery, REAL_TRACKING)
+    await noon_send_service.apply_tracking(_FakeDb(), delivery, REAL_TRACKING)
 
     assert delivery.driver_latitude == Decimal("25.2017557")
     assert delivery.driver_longitude == Decimal("55.2733762")
 
 
-def test_the_pin_fits_the_column_it_is_written_to():
+@pytest.mark.asyncio
+async def test_the_pin_fits_the_column_it_is_written_to():
     """
     `driver_latitude` is `Numeric(9, 6)`, which stops at 999.999999. The raw
     252017557 does not fit, so the missing conversion was not merely wrong — it
@@ -789,7 +906,7 @@ def test_the_pin_fits_the_column_it_is_written_to():
     "Check status" on a task with a rider on it.
     """
     delivery = OrderDelivery(order_id=uuid.uuid4(), provider="noon_send")
-    noon_send_service.apply_tracking(delivery, REAL_TRACKING)
+    await noon_send_service.apply_tracking(_FakeDb(), delivery, REAL_TRACKING)
 
     for value in (delivery.driver_latitude, delivery.driver_longitude):
         assert abs(value) < 1000
@@ -797,7 +914,8 @@ def test_the_pin_fits_the_column_it_is_written_to():
         assert -180 <= float(delivery.driver_longitude) <= 180
 
 
-def test_a_push_with_no_rider_yet_leaves_the_pin_alone():
+@pytest.mark.asyncio
+async def test_a_push_with_no_rider_yet_leaves_the_pin_alone():
     """Before assignment `da_details` is null, and that is not an error."""
     delivery = OrderDelivery(
         order_id=uuid.uuid4(),
@@ -806,7 +924,9 @@ def test_a_push_with_no_rider_yet_leaves_the_pin_alone():
         driver_longitude=Decimal("55.2"),
     )
 
-    noon_send_service.apply_tracking(delivery, {"order_nr": "X", "da_details": None})
+    await noon_send_service.apply_tracking(
+        _FakeDb(), delivery, {"order_nr": "X", "da_details": None}
+    )
 
     assert delivery.driver_latitude == Decimal("25.1")
 
@@ -821,7 +941,8 @@ REAL_TRACKING_WEBHOOK = {
 }
 
 
-def test_both_shapes_of_coordinate_are_understood():
+@pytest.mark.asyncio
+async def test_both_shapes_of_coordinate_are_understood():
     """
     noon sends the same number two ways, and we have both from one order.
 
@@ -834,10 +955,12 @@ def test_both_shapes_of_coordinate_are_understood():
     latitude exceeds 90 and no longitude exceeds 180.
     """
     from_webhook = OrderDelivery(order_id=uuid.uuid4(), provider="noon_send")
-    noon_send_service.apply_tracking(from_webhook, REAL_TRACKING_WEBHOOK)
+    await noon_send_service.apply_tracking(
+        _FakeDb(), from_webhook, REAL_TRACKING_WEBHOOK
+    )
 
     from_detail = OrderDelivery(order_id=uuid.uuid4(), provider="noon_send")
-    noon_send_service.apply_tracking(from_detail, REAL_TRACKING)
+    await noon_send_service.apply_tracking(_FakeDb(), from_detail, REAL_TRACKING)
 
     for delivery in (from_webhook, from_detail):
         assert 25.0 < float(delivery.driver_latitude) < 25.5, "not a Dubai latitude"

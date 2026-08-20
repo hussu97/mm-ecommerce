@@ -11478,6 +11478,57 @@
             ],
             "title": "Delivered At"
           },
+          "driver_assigned_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Driver Assigned At"
+          },
+          "driver_assignment_count": {
+            "default": 0,
+            "title": "Driver Assignment Count",
+            "type": "integer"
+          },
+          "driver_distance_km": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Driver Distance Km"
+          },
+          "driver_eta_minutes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Driver Eta Minutes"
+          },
+          "driver_location_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Driver Location At"
+          },
           "driver_name": {
             "anyOf": [
               {
@@ -11592,6 +11643,14 @@
               }
             ],
             "title": "Pod Status"
+          },
+          "previous_drivers": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PreviousDriver"
+            },
+            "title": "Previous Drivers",
+            "type": "array"
           },
           "provider": {
             "title": "Provider",
@@ -14412,6 +14471,45 @@
             "title": "Discount Amount",
             "type": "string"
           },
+          "driver_assignment_count": {
+            "default": 0,
+            "title": "Driver Assignment Count",
+            "type": "integer"
+          },
+          "driver_distance_km": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Driver Distance Km"
+          },
+          "driver_eta_minutes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Driver Eta Minutes"
+          },
+          "driver_location_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Driver Location At"
+          },
           "driver_name": {
             "anyOf": [
               {
@@ -14687,6 +14785,77 @@
           "updated_at"
         ],
         "title": "PosOrderResponse",
+        "type": "object"
+      },
+      "PreviousDriver": {
+        "description": "A driver who used to be on this order, and when they stopped being.",
+        "properties": {
+          "assigned_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned At"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "plate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plate"
+          },
+          "replaced_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaced At"
+          },
+          "sequence": {
+            "title": "Sequence",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sequence"
+        ],
+        "title": "PreviousDriver",
         "type": "object"
       },
       "PrinterCreate": {

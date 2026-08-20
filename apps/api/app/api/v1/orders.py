@@ -14,9 +14,11 @@ from app.core.deps import (
     get_db,
     get_optional_user,
 )
+from app.models.branch import Branch
 from app.models.order import Order, OrderStatusEnum
 from app.models.order_status_event import OrderStatusEvent, StatusSourceEnum, acting_as
 from app.models.order_delivery import OrderDelivery
+from app.models.order_driver import OrderDriver
 from app.models.user import User
 from app.schemas.fulfilment import FulfilmentResponse
 from app.schemas.order import (
@@ -42,6 +44,7 @@ from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.services import (
     audit_service,
     courier_service,
+    driver_proximity,
     order_economics,
     email_service,
     fulfilment_service,
@@ -59,6 +62,17 @@ class PaginatedOrders(BaseModel):
     page: int
     per_page: int
     pages: int
+
+
+class PreviousDriver(BaseModel):
+    """A driver who used to be on this order, and when they stopped being."""
+
+    sequence: int
+    name: str | None = None
+    phone: str | None = None
+    plate: str | None = None
+    assigned_at: datetime | None = None
+    replaced_at: datetime | None = None
 
 
 class OrderDeliveryResponse(BaseModel):
@@ -89,6 +103,31 @@ class OrderDeliveryResponse(BaseModel):
     driver_name: str | None
     driver_phone: str | None
     driver_plate: str | None
+    #: When this driver took the order, and which driver they are — 1 for the
+    #: first, 2 for whoever took over. Both are here because "the driver
+    #: changed" is the thing the card could not say: a swapped booking used to
+    #: render exactly like an unswapped one, and the person on the phone to the
+    #: courier had no way to know they were describing somebody else.
+    driver_assigned_at: datetime | None = None
+    driver_assignment_count: int = 0
+    #: Everyone who has held this order, oldest stint first — empty on the
+    #: overwhelming majority, which are carried by the one driver they started
+    #: with. From `order_drivers`, where exactly one row is active by database
+    #: constraint rather than by convention.
+    previous_drivers: list["PreviousDriver"] = []
+    #: How far the driver still is from the branch, and when the position behind
+    #: that was true. Null unless a named driver is on the way *to the kitchen* —
+    #: after collection the number would only grow — and null rather than stale
+    #: when the courier has gone quiet.
+    #:
+    #: Driven road kilometres where Mapbox routed the leg recently, straight line
+    #: times the fitted detour factor otherwise. `driver_eta_minutes` is how to
+    #: tell which: it is null on the fallback, because a duration derived by
+    #: dividing an estimate by an assumed speed is a guess wearing the clothes of
+    #: a measurement.
+    driver_distance_km: float | None = None
+    driver_eta_minutes: float | None = None
+    driver_location_at: datetime | None = None
     pod_status: str | None
     pod_image_url: str | None
     booked_at: datetime | None
@@ -111,11 +150,20 @@ class OrderDeliveryResponse(BaseModel):
         cls,
         d: OrderDelivery,
         reached: dict[str, datetime] | None = None,
+        *,
+        branch: Branch | None = None,
+        drivers: list[OrderDriver] | None = None,
     ) -> "OrderDeliveryResponse":
         """*reached* is `fulfilment_service.reached_at` — when the order hit each
         status. Optional so a caller that only wants the courier and the cost
-        need not pay for the query; the two timestamps are then null."""
+        need not pay for the query; the two timestamps are then null.
+
+        *branch* and *drivers* are optional for the same reason, and their
+        absence degrades to a null distance and an empty history rather than to
+        an exception — a list endpoint that does not load them is showing less,
+        not failing."""
         reached = reached or {}
+        proximity = driver_proximity.to_pickup(d, branch)
         cost = d.cost_total if d.cost_total is not None else d.quoted_cost
         margin = (
             float(d.fee_charged) - float(cost)
@@ -138,6 +186,23 @@ class OrderDeliveryResponse(BaseModel):
             driver_name=d.driver_name,
             driver_phone=d.driver_phone,
             driver_plate=d.driver_plate,
+            driver_assigned_at=d.driver_assigned_at,
+            driver_assignment_count=d.driver_assignment_count,
+            previous_drivers=[
+                PreviousDriver(
+                    sequence=row.sequence,
+                    name=row.name,
+                    phone=row.phone,
+                    plate=row.plate,
+                    assigned_at=row.assigned_at,
+                    replaced_at=row.replaced_at,
+                )
+                for row in (drivers or [])
+                if not row.is_active
+            ],
+            driver_distance_km=proximity.distance_km if proximity else None,
+            driver_eta_minutes=proximity.minutes if proximity else None,
+            driver_location_at=proximity.at if proximity else None,
             pod_status=d.pod_status,
             pod_image_url=d.pod_image_url,
             booked_at=d.booked_at,
@@ -325,9 +390,8 @@ async def refresh_order_delivery(
             "retries them for a day."
         )
 
-    return OrderDeliveryResponse.of(
-        await noon_send_service.refresh(db, order.id) or delivery,
-        await fulfilment_service.reached_at(db, order),
+    return await _delivery_payload(
+        db, order, await noon_send_service.refresh(db, order.id) or delivery
     )
 
 
@@ -526,10 +590,7 @@ async def get_order_delivery(
 ):
     """Who is carrying this order, where it is, and what it cost us."""
     order = await _load_order(db, order_number)
-    return OrderDeliveryResponse.of(
-        await _load_delivery(db, order_number),
-        await fulfilment_service.reached_at(db, order),
-    )
+    return await _delivery_payload(db, order, await _load_delivery(db, order_number))
 
 
 @router.post("/{order_number}/delivery/dispatch", response_model=OrderDeliveryResponse)
@@ -570,9 +631,7 @@ async def dispatch_order_delivery(
         },
         request=request,
     )
-    return OrderDeliveryResponse.of(
-        delivery, await fulfilment_service.reached_at(db, order)
-    )
+    return await _delivery_payload(db, order, delivery)
 
 
 # ── moving a third-party order onto Lalamove (admin only) ─────────────────────
@@ -600,6 +659,37 @@ class LalamoveQuoteResponse(BaseModel):
     #: a decision for the person pressing the button rather than a reason to
     #: refuse.
     margin: float | None
+
+
+async def _delivery_payload(
+    db: AsyncSession, order: Order, delivery: OrderDelivery
+) -> OrderDeliveryResponse:
+    """
+    The delivery card, with everything it needs to be complete.
+
+    One function rather than four call sites each remembering to fetch the
+    branch and the driver ledger — which is how three of them would end up
+    showing no distance and no history, and nobody would notice because a null
+    renders as an em dash.
+    """
+    branch = await db.get(Branch, order.branch_id) if order.branch_id else None
+    drivers = list(
+        (
+            await db.execute(
+                select(OrderDriver)
+                .where(OrderDriver.order_id == order.id)
+                .order_by(OrderDriver.sequence)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return OrderDeliveryResponse.of(
+        delivery,
+        await fulfilment_service.reached_at(db, order),
+        branch=branch,
+        drivers=drivers,
+    )
 
 
 async def _load_order(db: AsyncSession, order_number: str) -> Order:
@@ -787,9 +877,7 @@ async def assign_order_to_lalamove(
         # hand. Reported as a failure rather than returned as a success with an
         # error field the UI might not read.
         raise BadGatewayError(delivery.last_error)
-    return OrderDeliveryResponse.of(
-        delivery, await fulfilment_service.reached_at(db, order)
-    )
+    return await _delivery_payload(db, order, delivery)
 
 
 class OrderStatusEventResponse(BaseModel):

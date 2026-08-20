@@ -7,7 +7,7 @@ import { ordersApi, ApiError } from '@/lib/api';
 import type { LalamoveQuote, Order, OrderDelivery, OrderEconomics, OrderStatus } from '@/lib/types';
 import { Badge, Button } from '@/components/ui';
 import { useConfirm, useToast } from '@/components/ui/feedback';
-import { cn, formatCurrency, formatDateTime } from '@/lib/utils';
+import { cn, formatCurrency, formatDateTime, formatTimeAgo, ordinal } from '@/lib/utils';
 
 /**
  * Orders that are not going anywhere, whatever the delivery row still says.
@@ -167,6 +167,23 @@ export default function OrderDetailPage() {
   }, [orderNumber, isDeliveryOrder]);
 
   useEffect(() => { loadDelivery(); }, [loadDelivery]);
+
+  // ── while somebody is on their way ────────────────────────────────────────
+  //
+  // A distance is only useful if it moves. Fetched once, the card would say
+  // "~4.2 km away" for as long as the tab stayed open, and the number would go
+  // from helpful to actively misleading without changing.
+  //
+  // Only while there is a driver still coming to the branch — the one state in
+  // which the figure exists at all — so an order sitting on somebody's second
+  // monitor all afternoon is not polling for a delivery that finished at noon.
+  // Half a minute, against a position the server refreshes each minute.
+  const isDriverInbound = delivery?.driver_distance_km !== null && delivery !== null;
+  useEffect(() => {
+    if (!isDriverInbound) return;
+    const timer = setInterval(loadDelivery, 30_000);
+    return () => clearInterval(timer);
+  }, [isDriverInbound, loadDelivery]);
 
   // Reloaded alongside the order rather than once: a refund, a re-dispatch or a
   // courier finally invoicing all move the net, and a stale figure here is
@@ -939,11 +956,82 @@ function DeliveryPanel({
 
         {delivery.driver_name && (
           <div className="col-span-2">
-            <dt className="text-gray-500">Driver</dt>
+            <dt className="text-gray-500">
+              Driver
+              {/* Said out loud, because a swapped booking used to render exactly
+                  like an unswapped one — and the person on the phone to the
+                  courier had no way to know they were describing somebody who
+                  had dropped the job an hour ago. */}
+              {delivery.driver_assignment_count > 1 && (
+                <span className="ml-1 text-amber-700">
+                  · reassigned ({ordinal(delivery.driver_assignment_count)} driver)
+                </span>
+              )}
+            </dt>
             <dd className="text-gray-800">
               {delivery.driver_name}
               {delivery.driver_phone && ` · ${delivery.driver_phone}`}
               {delivery.driver_plate && ` · ${delivery.driver_plate}`}
+            </dd>
+            {delivery.driver_assigned_at && (
+              <dd className="text-[11px] text-gray-400">
+                since {formatDateTime(delivery.driver_assigned_at)}
+              </dd>
+            )}
+          </div>
+        )}
+        {/* How far they still are from the kitchen — the one question somebody
+            standing over a boxed order is actually asking. Absent rather than
+            zero when the courier has gone quiet or the parcel is already on the
+            bike; see `driver_proximity` for why silence beats a stale figure. */}
+        {delivery.driver_distance_km !== null && (
+          <div className="col-span-2">
+            <dt className="text-gray-500">Distance from branch</dt>
+            <dd className="text-gray-800">
+              {/* The ETA leads where there is one — it is the number a person
+                  actually plans against — and its presence is also what says
+                  the figures were routed rather than estimated. The tilde on
+                  the kilometres survives only on the fallback, where it is
+                  earned. */}
+              {delivery.driver_eta_minutes !== null ? (
+                <>
+                  <span className="font-medium">
+                    {Math.round(delivery.driver_eta_minutes)} min
+                  </span>
+                  {' · '}
+                  {delivery.driver_distance_km.toFixed(1)} km away
+                </>
+              ) : (
+                <>~{delivery.driver_distance_km.toFixed(1)} km away</>
+              )}
+              {delivery.driver_location_at && (
+                <span className="text-gray-400">
+                  {' '}· as of {formatTimeAgo(delivery.driver_location_at)}
+                </span>
+              )}
+            </dd>
+            {delivery.driver_eta_minutes === null && (
+              // Said rather than left to be inferred from a missing number: an
+              // estimate and a routed answer look identical at a glance, and
+              // only one of them accounts for the bridge.
+              <dd className="text-[11px] text-gray-400">
+                Straight-line estimate — no live route available
+              </dd>
+            )}
+          </div>
+        )}
+        {delivery.previous_drivers.length > 0 && (
+          <div className="col-span-2 sm:col-span-4">
+            <dt className="text-gray-500">Previous drivers</dt>
+            <dd className="text-gray-600 space-y-0.5">
+              {delivery.previous_drivers.map((driver) => (
+                <div key={driver.sequence} className="text-[11px]">
+                  {driver.name ?? 'Unnamed'}
+                  {driver.phone && ` · ${driver.phone}`}
+                  {driver.replaced_at &&
+                    ` · replaced ${formatDateTime(driver.replaced_at)}`}
+                </div>
+              ))}
             </dd>
           </div>
         )}

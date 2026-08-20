@@ -22,6 +22,7 @@ from app.models.order import Order, OrderStatusEnum
 from app.models.order_status_event import pending_events
 from sqlalchemy import inspect
 from app.models.order_delivery import OrderDelivery
+from app.models.order_driver import OrderDriver
 from app.services import batching_service, lalamove_service
 
 NOW = datetime(2026, 8, 2, 12, 0, tzinfo=timezone.utc)
@@ -37,12 +38,29 @@ class _FakeResult:
 
 
 class _FakeDb:
-    """Answers exactly one kind of query: give me the order behind this id."""
+    """
+    A session for the two things these tests read through one.
 
-    def __init__(self, order):
+    It has to tell the queries apart. `apply_webhook` looks up the `Order`;
+    `driver_assignment` looks up the active `OrderDriver` row and inserts new
+    ones — and a fake that answered both with the same object would hand an
+    `Order` back as somebody's driver, and every reassignment test would agree
+    with itself for the wrong reason.
+    """
+
+    def __init__(self, order, drivers=None):
         self.order = order
+        self.drivers = list(drivers or [])
 
-    async def execute(self, _stmt):
+    def add(self, row):
+        self.drivers.append(row)
+
+    async def execute(self, stmt):
+        if any(
+            description.get("entity") is OrderDriver
+            for description in getattr(stmt, "column_descriptions", [])
+        ):
+            return _FakeResult(next((d for d in self.drivers if d.is_active), None))
         return _FakeResult(self.order)
 
     async def get(self, _model, _pk):
@@ -255,6 +273,57 @@ async def test_driver_details_are_recorded():
     assert delivery.driver_name == "Test Driver"
     assert delivery.driver_plate == "VP7815702"
     assert delivery.driver_latitude == Decimal("25.3304")
+
+
+async def test_a_second_driver_replaces_the_first(monkeypatch):
+    """
+    The swap the old code could not see.
+
+    `apply_webhook` used to fill the driver only `if delivery.driver_id and not
+    had_driver`, which is true exactly once per booking. Lalamove reassigning a
+    rider mid-job — a shift ending, a bike that will not start — arrived as a
+    perfectly ordinary status push carrying a different `driverId`, and was
+    dropped: the row kept the first name and the first number, and the counter
+    rang somebody who was no longer coming.
+    """
+    delivery, order = _delivery(), _order()
+    db = _FakeDb(order)
+    # The detail call is what puts a name to an id, and it is a network call.
+    # Stubbed to nothing so this test is about who the row ends up naming.
+    monkeypatch.setattr(lalamove_service, "is_enabled", lambda: False)
+    announced: list[tuple] = []
+
+    async def _record_announcement(_db, d):
+        announced.append((d.driver_id, d.driver_assignment_count))
+
+    monkeypatch.setattr(lalamove_service, "announce_driver", _record_announcement)
+
+    for driver_id, minute in (("79973", 1), ("80112", 7)):
+        await lalamove_service.apply_webhook(
+            db,
+            {
+                "eventType": "ORDER_STATUS_CHANGED",
+                "data": {
+                    "order": {
+                        "orderId": COURIER_ID,
+                        "status": "ON_GOING",
+                        "driverId": driver_id,
+                    },
+                    "updatedAt": (NOW + timedelta(minutes=minute))
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                },
+            },
+            delivery,
+        )
+
+    assert delivery.driver_id == "80112"
+    assert delivery.driver_assignment_count == 2
+    # Both were worth telling the counter about, and the second is what makes
+    # the register reprint the slip.
+    assert announced == [("79973", 1), ("80112", 2)]
+    assert len(db.drivers) == 2
+    assert len([d for d in db.drivers if d.is_active]) == 1
 
 
 async def test_proof_of_delivery_is_recorded():
