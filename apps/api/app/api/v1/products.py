@@ -104,6 +104,7 @@ async def list_products(
         include_inactive=include_inactive,
         is_active=is_active,
         channel=channel,
+        staff=is_catalogue_staff,
     )
     pages = max(1, (total + per_page - 1) // per_page)
     return ProductListResponse(

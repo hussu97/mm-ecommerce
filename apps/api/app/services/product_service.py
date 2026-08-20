@@ -141,6 +141,7 @@ async def get_all(
     include_inactive: bool = False,
     is_active: bool | None = None,
     channel: str = "web",
+    staff: bool = False,
 ) -> tuple[list[ProductResponse], int]:
     """
     List products for one sales channel.
@@ -149,6 +150,11 @@ async def get_all(
     share this query, and defaulting the other way would mean a forgotten
     parameter puts bottled water on a cake website. Asking for the POS
     catalogue is explicit; leaking to the web is not possible by omission.
+
+    `staff` decides whether availability applies. A shopper's list is what can
+    be bought; the console's list is what exists, out-of-stock rows included,
+    because hiding a product from the screen where it is put back is how it
+    never gets put back.
     """
     # Built in two halves on purpose. Everything that decides *which* rows match
     # goes on `stmt`; the ordering and the eager loads go on afterwards, and only
@@ -171,7 +177,20 @@ async def get_all(
         stmt = stmt.where(Product.is_active == True)  # noqa: E712
 
     if channel == "web":
-        stmt = stmt.where(sells_on(WEB_CHANNEL), active_website_category_clause())
+        # The shopper's catalogue is the shared definition, availability
+        # included. It used to be these two clauses spelled out inline, which
+        # is the same list minus `out_at_every_branch_subquery` — so a product
+        # both branches had marked out went on being listed and searched while
+        # `get_by_slug`, which does use the shared clause, answered 404 for it.
+        # Nine cakes were in that state: on the category page, gone when
+        # clicked, which is worse than either answer on its own.
+        stmt = stmt.where(
+            *(
+                (sells_on(WEB_CHANNEL), active_website_category_clause())
+                if staff
+                else website_product_visibility_clause()
+            )
+        )
     elif channel == "pos":
         # The per-product flag and the menu tree together — see
         # menu_group_service.pos_visibility_clause for why membership only

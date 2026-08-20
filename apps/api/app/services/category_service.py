@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import ConflictError, NotFoundError
 from app.models.category import Category
 from app.models.product import POS_CHANNEL, WEB_CHANNEL, Product, sells_on
+from app.services.availability_service import out_at_every_branch_subquery
 from app.schemas.category import CategoryCreate, CategoryResponse, CategoryUpdate
 from app.services import menu_group_service
 
@@ -52,7 +53,11 @@ def _countable_products(channel: str):
     """
     clause = (Product.category_id == Category.id) & (Product.is_active == True)  # noqa: E712
     if channel == WEB_CHANNEL:
-        clause = clause & sells_on(WEB_CHANNEL)
+        # Availability too, and for the same reason the count exists: a
+        # category is listed because it has something to sell. A category whose
+        # every product is marked out at every branch has nothing, and counting
+        # those left a chip on the nav that opened an empty page.
+        clause = clause & sells_on(WEB_CHANNEL) & ~out_at_every_branch_subquery()
     elif channel == POS_CHANNEL:
         clause = clause & menu_group_service.pos_visibility_clause()
     return clause
