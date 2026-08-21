@@ -914,11 +914,15 @@ so it is a window rather than an archive.
 
 **Deploy order.** Each step is independently reversible:
 
-1. `alembic upgrade 125_cost_banded_map_v2` — the re-split map, every zone still
-   naming the courier that carries it today. Pure geometry.
+1. `alembic upgrade 126_cost_banded_map_v2` — the re-split map, every zone still
+   naming the courier that carries it today, and every zone carrying the
+   alternates `125_zone_alternates` gave the map before it.
 2. Ship the Slider code with `SLIDER_API_KEY` and `SLIDER_TRIAL_EMAILS` empty.
-3. `alembic upgrade 127_slider_zones` — the six zones name Slider. Still a
-   no-op; nobody is on the list.
+   `alembic upgrade 127_slider_courier` registers the courier row.
+3. `alembic upgrade 128_slider_zones` — the six zones name Slider, and their
+   alternates move with them. Still a no-op; nobody is on the list. The zones
+   **keep** the Lalamove runs they were riding, which is what keeps their
+   arrival promise and their batching identical for everybody off the list.
 4. Set `SLIDER_API_KEY` and `SLIDER_ACCOUNT_ID`.
 5. Set `SLIDER_TRIAL_EMAILS`. The pilot begins, one account, and that one
    setting grants both halves at once.

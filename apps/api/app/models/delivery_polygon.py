@@ -80,6 +80,19 @@ DEFAULT_ALTERNATES: dict[str, list[str]] = {
         FulfilmentProviderEnum.THIRD_PARTY.value,
         FulfilmentProviderEnum.LALAMOVE.value,
     ],
+    #: Slider is offered Lalamove, which has none of noon Send's limits, and a
+    #: third party as the manual escape. **Not noon Send**, for the same reason
+    #: a Lalamove zone is not: five of the six Slider zones are outside Sharjah,
+    #: where noon Send cannot go at all.
+    #:
+    #: `Sharjah Core` is the exception and is the one zone where noon Send is a
+    #: real answer — which is exactly what the pilot gate falls back to there.
+    #: A per-provider default cannot say that, so `126_cost_banded_map_v2` seeds
+    #: that zone's row explicitly and this stays the safe answer everywhere else.
+    FulfilmentProviderEnum.SLIDER.value: [
+        FulfilmentProviderEnum.LALAMOVE.value,
+        FulfilmentProviderEnum.THIRD_PARTY.value,
+    ],
 }
 
 

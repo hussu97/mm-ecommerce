@@ -61,6 +61,7 @@ from app.services import (
     email_service,
     lalamove_service,
     noon_send_service,
+    slider_service,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,7 @@ __all__ = [
 
 LALAMOVE = FulfilmentProviderEnum.LALAMOVE.value
 NOON_SEND = FulfilmentProviderEnum.NOON_SEND.value
+SLIDER = FulfilmentProviderEnum.SLIDER.value
 THIRD_PARTY = FulfilmentProviderEnum.THIRD_PARTY.value
 
 #: Where an order may be standing and still be moved.
@@ -392,7 +394,7 @@ async def quote(
     a fault. The gates still raise, because being asked to price a move that is
     not allowed is a programming error rather than a courier one.
 
-    The three couriers are priced three different ways and the shape has to
+    The couriers are priced differently from one another and the shape has to
     admit it rather than pretend otherwise:
 
     * **Lalamove** issue a quotation with an id, valid for five minutes, and
@@ -404,8 +406,21 @@ async def quote(
       id. `may_serve` is asked as well, because their real refusal (an emirate
       boundary, a 20 km cap) happens at task creation and costs a cancellation
       fee by then.
+    * **Slider** quote per vehicle tier and issue no id to book against, so
+      like noon Send the price is deterministic and cannot expire. `may_serve`
+      is asked as well, for the money ceilings — but note their fare endpoint
+      is **not** a coverage check (it priced Riyadh and Muscat), so a price here
+      is not a promise they will carry it. The 422 at booking is, and `move`
+      surfaces it.
     * **third party** is not booked and not priced. There is no number, and
       inventing one would be worse than the honest blank.
+
+    **A human pressing this button is outside the pilot gate.** Automatic
+    routing hands a Slider zone back to noon Send or Lalamove for everyone off
+    `SLIDER_TRIAL_EMAILS`; this does not, and deliberately. The gate exists so
+    the rollout changes nothing on its own, not to stop somebody rescuing a
+    stuck order with the courier standing right there — and whoever presses it
+    is looking at the courier's name and its price.
     """
     delivery = await _locked(db, order, lock=False)
     await _assert_may_move(db, order, delivery, target)
@@ -455,6 +470,29 @@ async def quote(
             float(address.get("latitude")),
             float(address.get("longitude")),
             branch_id=order.branch_id,
+        )
+        if estimate is None:
+            return None, error
+        return (
+            _built(estimate.cost, estimate.currency, estimate.distance_m, None, None),
+            None,
+        )
+
+    if target == SLIDER:
+        allowed, why_not = await slider_service.may_serve(db, order)
+        if not allowed:
+            return None, why_not or "Slider will not take this order"
+        address = order.shipping_address_snapshot or {}
+        estimate, error = await slider_service.estimate_for_point(
+            db,
+            float(address.get("latitude")),
+            float(address.get("longitude")),
+            branch_id=order.branch_id,
+            # The drop's emirate decides the vehicle, and the vehicle decides
+            # the fare. Without it every quote here would price the car, and an
+            # order inside Sharjah would be shown a number it will not be
+            # charged.
+            drop_emirate=str(address.get("city") or ""),
         )
         if estimate is None:
             return None, error
@@ -670,6 +708,18 @@ async def move(
         if not delivery.courier_order_id:
             raise ConflictError(
                 delivery.last_error or "noon Send would not take this order"
+            )
+    elif target == SLIDER:
+        # Their only serviceability answer is a 422 at creation — the fare
+        # endpoint priced Riyadh and Muscat — so this is where an address
+        # outside their area is discovered, and it has to reach the person who
+        # pressed the button rather than being logged.
+        result = await slider_service.dispatch_order(db, order)
+        if result is not None:
+            delivery = result
+        if not delivery.courier_order_id:
+            raise ConflictError(
+                delivery.last_error or "Slider would not take this order"
             )
     else:  # pragma: no cover — `_assert_may_move` has already refused this
         raise ConflictError(f"Unknown courier '{target}'")

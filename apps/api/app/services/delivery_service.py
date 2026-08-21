@@ -297,6 +297,10 @@ async def price(
         float(longitude),
         address,
         zone.branch_id if zone else None,
+        # The zone's own name, because one courier's price depends on which
+        # emirate the drop is in and a pin does not carry one. Every zone name
+        # begins with its emirate by construction.
+        zone.name if zone else None,
     )
 
     eligible = zone is not None and zone.free_delivery_eligible

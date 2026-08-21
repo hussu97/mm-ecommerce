@@ -26,7 +26,7 @@ DATA = Path(__file__).resolve().parents[2] / "app" / "data"
 #: The migration that publishes the map currently in force. Everything here is
 #: read out of it rather than restated, so the test cannot agree with a fee
 #: table nobody is using.
-LIVE_MIGRATION = "125_cost_banded_map_v2.py"
+LIVE_MIGRATION = "126_cost_banded_map_v2.py"
 
 #: The flat price of everywhere we do not dispatch ourselves. Read by the
 #: fixture as well, so the migration's own constant is the only definition.
@@ -38,7 +38,7 @@ OUTER_THRESHOLD = "200.00"
 #: with every zone still naming the courier that carries it today, and the
 #: routing is flipped afterwards. Both are in force at `head`, so a test that
 #: read only the first would be checking a map nobody runs.
-ROUTING_MIGRATION = "127_slider_zones.py"
+ROUTING_MIGRATION = "128_slider_zones.py"
 
 LALAMOVE = "lalamove"
 NOON_SEND = "noon_send"
@@ -66,7 +66,7 @@ def _routing_overrides() -> dict[str, str]:
     """zone -> the courier `ROUTING_MIGRATION` moves it to."""
     namespace: dict[str, object] = {}
     source = (VERSIONS / ROUTING_MIGRATION).read_text()
-    start = source.index("ZONES: list[tuple[str, str]] = [")
+    start = source.index("ZONES: list[tuple[str, str, str, str]] = [")
     end = source.index("\n]", source.index("= [", start)) + 2
     exec(source[start:end], namespace)  # noqa: S102 — our own file, no input
     slider = source[source.index('SLIDER = "') + 10 :]

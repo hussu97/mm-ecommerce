@@ -62,9 +62,11 @@ from app.services import (
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "FALLBACKS",
     "books_itself",
     "cancel",
     "carrier_for",
+    "may_be_carried_by",
     "dispatch",
     "estimate_for_point",
     "is_enabled",
@@ -106,6 +108,42 @@ def may_use_noon_send(order: Order) -> tuple[bool, str | None]:
     if not noon_send_service.is_enabled():
         return False, "noon Send is not configured"
     return True, None
+
+
+#: preferred courier -> the couriers the **automatic** routing may hand an order
+#: to instead, in the order it tries them.
+#:
+#: Not the same thing as `delivery_polygons.alternate_providers`, and the two
+#: are deliberately separate. Alternates are where a *person* may move a stuck
+#: order; this is where the code sends one on its own, with nobody watching. A
+#: zone can reasonably allow a manual move somewhere the dispatcher would never
+#: go by itself.
+#:
+#: Written down rather than left implicit in `_dispatch_once` because two other
+#: places have to ask the same question without an order in hand: whether a run
+#: booked with one courier is a run this zone's orders can ever be on. See
+#: `may_be_carried_by`.
+FALLBACKS: dict[str, tuple[str, ...]] = {
+    # noon Send inside Sharjah, Lalamove outside it — which between them is
+    # every Slider zone, since all six were carved out of one or the other.
+    SLIDER: (NOON_SEND, LALAMOVE),
+    # The long-standing one: noon Send cap a run at 20 km, cannot cross an
+    # emirate boundary, and can simply have nobody free.
+    NOON_SEND: (LALAMOVE,),
+}
+
+
+def may_be_carried_by(preferred: str | None, courier: str | None) -> bool:
+    """
+    Whether an order in a `preferred` zone can end up on `courier` by itself.
+
+    The question a shared run has to ask about a zone. A run is one booking with
+    one courier, so a zone may only ride one its orders can actually be carried
+    by — and since `126` that is no longer the same as "the zone names this
+    courier": every order in a Slider zone but the pilot account's is handed
+    straight back to Lalamove, so a Lalamove run is exactly where they belong.
+    """
+    return courier == preferred or courier in FALLBACKS.get(preferred or "", ())
 
 
 def carrier_for(order: Order, delivery: OrderDelivery) -> tuple[str, str | None]:
@@ -212,8 +250,23 @@ async def _dispatch_once(
         # A swap the zone did not choose. The reason goes to the log and **not**
         # to `last_error`: a booking that succeeded is not a problem, and
         # `last_error` drives `needs_attention`, so filling it here would put
-        # every gated order on the admin's needs-a-human list. What makes the
-        # swap visible afterwards is `original_provider` on the row.
+        # every gated order on the admin's needs-a-human list.
+        #
+        # And **not** to `original_provider` either, which is the same rule the
+        # noon Send fallback below already follows. That column means "a human
+        # moved this order", and three separate things read it that way: the
+        # admin prints "moved from X" beside the courier, `allowed_targets`
+        # treats it as the map's own choice when there is no zone to ask, and
+        # `fulfilment_service._estimate` reads it as "this order was written
+        # against a third-party zone" and answers tomorrow-before-10-PM instead
+        # of an hour. Setting it here would put a hand-moved badge and a
+        # next-day promise on every Dubai order in a Slider zone — which is to
+        # say on almost all of them, since the gate hands almost all of them
+        # back.
+        #
+        # What makes the swap visible is the same thing that makes the noon Send
+        # one visible: the zone says one courier and the row says another, and
+        # this line is the explanation.
         logger.info(
             "Order %s is in a %s zone and is going by %s: %s",
             order.order_number,
@@ -221,8 +274,6 @@ async def _dispatch_once(
             carrier,
             gated,
         )
-        if not delivery.original_provider:
-            delivery.original_provider = delivery.provider
         delivery.provider = carrier
 
     # The zone decides for the rest, and nothing else does. A `lalamove` zone is
@@ -440,6 +491,7 @@ async def estimate_for_point(
     longitude: float,
     address: str | None = None,
     branch_id: uuid.UUID | None = None,
+    zone_name: str | None = None,
 ):
     """
     What this zone's courier would charge us to reach this point.
@@ -465,7 +517,17 @@ async def estimate_for_point(
         )
     if provider == SLIDER and slider_service.is_enabled():
         return await slider_service.estimate_for_point(
-            db, latitude, longitude, address, branch_id
+            db,
+            latitude,
+            longitude,
+            address,
+            branch_id,
+            # Slider prices a bike and a car differently and the rule that picks
+            # between them turns on the drop's emirate — which, at a checkout
+            # with nothing but a pin, only the polygon knows. Without it every
+            # quote here would price the car, and a `Sharjah Core` order would
+            # be shown a fare it will not be booked at.
+            drop_emirate=zone_name,
         )
     return await lalamove_service.estimate_for_point(
         db, latitude, longitude, address, branch_id

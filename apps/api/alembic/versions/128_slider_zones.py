@@ -48,8 +48,8 @@ So the group is not a schedule Slider rides. It is the schedule the zone's
 almost every order in the zone. `couriers.supports_batching` is false for Slider,
 which is what stops an admin attaching a *new* schedule to one.
 
-Revision ID: 127_slider_zones
-Revises: 126_slider_courier
+Revision ID: 128_slider_zones
+Revises: 127_slider_courier
 Create Date: 2026-08-21
 """
 
@@ -60,49 +60,76 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "127_slider_zones"
-down_revision: Union[str, None] = "126_slider_courier"
+revision: str = "128_slider_zones"
+down_revision: Union[str, None] = "127_slider_courier"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 SLIDER = "slider"
 
-#: (zone, the provider it must currently name). Naming the old provider as well
-#: as the zone is the guard: once somebody moves one of these in the console
-#: this matches nothing and does nothing, including on a restored dump.
-ZONES: list[tuple[str, str]] = [
-    ("Sharjah Core", "noon_send"),
-    ("Ajman City", "lalamove"),
-    ("Dubai Near", "lalamove"),
-    ("Dubai Mid", "lalamove"),
-    ("Dubai Far", "lalamove"),
-    ("Umm al-Quwain City", "lalamove"),
+#: (zone, the provider it must currently name, where its orders may be moved
+#: once Slider carries it, where they may be moved if this is rolled back).
+#:
+#: Naming the old provider as well as the zone is the guard: once somebody moves
+#: one of these in the console this matches nothing and does nothing, including
+#: on a restored dump.
+#:
+#: The alternates travel with the courier because they are a statement *about*
+#: the courier — "where may an order go when this one will not carry it" — and
+#: leaving `Ajman City` offering `["third_party"]`, which is what a Lalamove
+#: zone offers, would mean a stuck Slider order could not be handed to Lalamove
+#: at all. Which is the very thing the automatic gate does for it on every
+#: order but the pilot account's.
+#:
+#: `Sharjah Core` keeps noon Send among its alternates and gains Lalamove,
+#: because inside Sharjah both are real answers and the gate itself falls back
+#: to noon Send there. The other five do not: noon Send cannot cross an emirate
+#: boundary, so offering them it would be offering a refusal.
+ZONES: list[tuple[str, str, str, str]] = [
+    (
+        "Sharjah Core",
+        "noon_send",
+        '["noon_send", "lalamove", "third_party"]',
+        '["third_party", "lalamove"]',
+    ),
+    ("Ajman City", "lalamove", '["lalamove", "third_party"]', '["third_party"]'),
+    ("Dubai Near", "lalamove", '["lalamove", "third_party"]', '["third_party"]'),
+    ("Dubai Mid", "lalamove", '["lalamove", "third_party"]', '["third_party"]'),
+    ("Dubai Far", "lalamove", '["lalamove", "third_party"]', '["third_party"]'),
+    (
+        "Umm al-Quwain City",
+        "lalamove",
+        '["lalamove", "third_party"]',
+        '["third_party"]',
+    ),
 ]
 
 
 def upgrade() -> None:
     conn = op.get_bind()
-    for name, was in ZONES:
+    for name, was, alternates, _back in ZONES:
         conn.execute(
             sa.text(
-                "UPDATE delivery_polygons p SET fulfilment_provider = :now "
+                "UPDATE delivery_polygons p SET fulfilment_provider = :now, "
+                "    alternate_providers = CAST(:alternates AS jsonb) "
                 "FROM delivery_polygon_versions v "
                 "WHERE v.id = p.version_id AND v.is_active "
                 "AND p.name = :name AND p.fulfilment_provider = :was"
             ),
-            {"now": SLIDER, "name": name, "was": was},
+            {"now": SLIDER, "name": name, "was": was, "alternates": alternates},
         )
 
 
 def downgrade() -> None:
     conn = op.get_bind()
-    for name, was in ZONES:
+    for name, was, _alternates, back in ZONES:
         conn.execute(
             sa.text(
-                "UPDATE delivery_polygons p SET fulfilment_provider = :was "
+                "UPDATE delivery_polygons p SET fulfilment_provider = :was, "
+                "    alternate_providers = CAST(:back AS jsonb) "
                 "FROM delivery_polygon_versions v "
                 "WHERE v.id = p.version_id AND v.is_active "
                 "AND p.name = :name AND p.fulfilment_provider = :now"
             ),
-            {"was": was, "now": SLIDER, "name": name},
+            {"was": was, "now": SLIDER, "name": name, "back": back},
         )

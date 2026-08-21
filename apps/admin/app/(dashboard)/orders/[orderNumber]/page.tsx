@@ -1362,10 +1362,13 @@ function DeliveryPanel({
             </a>
           )}
           <div className="flex-1" />
-          {/* noon Send only. Lalamove pushes its own updates and retries them
-              for a day, so the endpoint refuses it and a button here would be a
-              400 waiting to happen. */}
-          {!isSettled && delivery.provider === 'noon_send' && delivery.courier_order_id && (
+          {/* The couriers whose statuses only ever reach us by push, and who do
+              not retry one that is lost. Lalamove pushes its own updates and
+              retries them for a day, so the endpoint refuses it and a button
+              here would be a 400 waiting to happen. */}
+          {!isSettled &&
+            (delivery.provider === 'noon_send' || delivery.provider === 'slider') &&
+            delivery.courier_order_id && (
             <Button size="sm" variant="ghost" onClick={onRefresh} disabled={busy}>
               <span className="material-icons text-[14px]">sync</span>
               Check status

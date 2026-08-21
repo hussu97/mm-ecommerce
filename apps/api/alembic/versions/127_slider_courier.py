@@ -28,8 +28,8 @@ Everywhere else this row is not consulted at all: the Ajman, Dubai and Umm
 al-Quwain Slider zones stay in their batch groups, and a grouped zone is
 promised its group's next window close.
 
-Revision ID: 126_slider_courier
-Revises: 125_cost_banded_map_v2
+Revision ID: 127_slider_courier
+Revises: 126_cost_banded_map_v2
 Create Date: 2026-08-21
 """
 
@@ -40,8 +40,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "126_slider_courier"
-down_revision: Union[str, None] = "125_cost_banded_map_v2"
+revision: str = "127_slider_courier"
+down_revision: Union[str, None] = "126_cost_banded_map_v2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -20,9 +20,9 @@ from pathlib import Path
 
 VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
 
-MAP_MIGRATION = VERSIONS / "125_cost_banded_map_v2.py"
-COURIER_MIGRATION = VERSIONS / "126_slider_courier.py"
-ROUTING_MIGRATION = VERSIONS / "127_slider_zones.py"
+MAP_MIGRATION = VERSIONS / "126_cost_banded_map_v2.py"
+COURIER_MIGRATION = VERSIONS / "127_slider_courier.py"
+ROUTING_MIGRATION = VERSIONS / "128_slider_zones.py"
 
 #: The promise noon Send carries, set by `108`. Inside Sharjah it is the courier
 #: that actually carries every order but the pilot account's.
@@ -61,9 +61,14 @@ def _batch_groups() -> dict[str, str]:
     }
 
 
+def _routing_rows() -> list[tuple[str, str, str, str]]:
+    """(zone, courier it was on, alternates after, alternates on the way back)."""
+    return _literal(ROUTING_MIGRATION, "ZONES", "list[tuple[str, str, str, str]]")
+
+
 def _moved_to_slider() -> dict[str, str]:
     """zone -> the courier it was on before, out of the routing migration."""
-    return dict(_literal(ROUTING_MIGRATION, "ZONES", "list[tuple[str, str]]"))
+    return {name: was for name, was, *_ in _routing_rows()}
 
 
 def test_a_zone_moved_to_slider_keeps_the_run_it_was_riding():

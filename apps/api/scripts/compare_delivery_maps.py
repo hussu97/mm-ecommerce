@@ -46,7 +46,7 @@ VERSIONS = ROOT / "alembic" / "versions"
 DATA = ROOT / "app" / "data"
 
 OLD_MIGRATION = "085_cost_banded_map.py"
-NEW_MIGRATION = "125_cost_banded_map_v2.py"
+NEW_MIGRATION = "126_cost_banded_map_v2.py"
 
 #: The corners of the UAE, generously. Points outside every zone in *both* maps
 #: are the sea and the empty quarter and are not interesting; a point that one

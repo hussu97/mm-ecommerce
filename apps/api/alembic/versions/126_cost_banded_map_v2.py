@@ -43,8 +43,8 @@ Nothing has to be restarted afterwards. `get_active_zones` re-reads
 `get_active_version` on every call and caches by version id, so changing the id
 misses every worker's cache and reloads it on that worker's next request.
 
-Revision ID: 125_cost_banded_map_v2
-Revises: 124_device_build_platform
+Revision ID: 126_cost_banded_map_v2
+Revises: 125_zone_alternates
 Create Date: 2026-08-21
 """
 
@@ -58,8 +58,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "125_cost_banded_map_v2"
-down_revision: Union[str, None] = "124_device_build_platform"
+revision: str = "126_cost_banded_map_v2"
+down_revision: Union[str, None] = "125_zone_alternates"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -106,6 +106,36 @@ ZONES: list[tuple[str, str, str, str, bool]] = [
     ("Sharjah East Coast", OUTER_FEE, OUTER_THRESHOLD, "third_party", True),
     ("Umm al-Quwain", OUTER_FEE, OUTER_THRESHOLD, "third_party", True),
 ]
+
+#: preferred courier -> where a zone's orders may be moved when it will not
+#: carry them, for the zones this migration creates.
+#:
+#: A new map's polygons are new rows, and `125_zone_alternates` ran before this
+#: one — its backfill cannot reach forward. Left to the column default every
+#: zone on this map would publish with `[]`, which reads as "these orders may
+#: not be moved anywhere" and is exactly the outage that migration exists to
+#: prevent, reintroduced by a map republish.
+#:
+#: Spelled out rather than imported from `DEFAULT_ALTERNATES`, per the same
+#: reasoning `125` gives: a migration has to keep describing the database as it
+#: was, so it must not read a constant that will be edited later.
+ALTERNATES: dict[str, str] = {
+    "lalamove": '["third_party"]',
+    "third_party": '["lalamove"]',
+    "noon_send": '["third_party", "lalamove"]',
+}
+
+#: The one zone whose answer a per-provider matrix cannot give.
+#:
+#: `Sharjah Core` is carved out of `Sharjah Central`, so it is the only zone on
+#: this map that is both inside noon Send's reach and destined for a different
+#: courier. Its alternates say so — and once `128` hands it to Slider this is
+#: also precisely what the pilot gate falls back to there, so the map and the
+#: automatic routing agree rather than one of them silently refusing a move the
+#: other makes on its own.
+ZONE_ALTERNATES: dict[str, str] = {
+    "Sharjah Core": '["third_party", "lalamove"]',
+}
 
 #: Which shared run each zone rides, by group name — the groups `088` created,
 #: which belong to the schedule rather than to a map version and so survive
@@ -225,10 +255,12 @@ def upgrade() -> None:
             sa.text(
                 "INSERT INTO delivery_polygons "
                 "(id, version_id, name, delivery_fee, free_delivery_threshold, "
-                " pricing_mode, free_delivery_eligible, fulfilment_provider, branch_id, "
+                " pricing_mode, free_delivery_eligible, fulfilment_provider, "
+                " alternate_providers, branch_id, "
                 " geometry, min_lat, max_lat, min_lng, max_lng, display_order) "
                 "VALUES (:id, :version_id, :name, :fee, :threshold, 'static', :free, "
-                " :provider, :branch_id, CAST(:geometry AS jsonb), :min_lat, :max_lat, "
+                " :provider, CAST(:alternates AS jsonb), :branch_id, "
+                " CAST(:geometry AS jsonb), :min_lat, :max_lat, "
                 " :min_lng, :max_lng, :display_order)"
             ),
             {
@@ -239,6 +271,7 @@ def upgrade() -> None:
                 "threshold": threshold,
                 "free": free,
                 "provider": provider,
+                "alternates": ZONE_ALTERNATES.get(name, ALTERNATES[provider]),
                 "branch_id": str(branch_id) if branch_id else None,
                 "geometry": json.dumps(geometry),
                 "min_lat": min_lat,

@@ -36,11 +36,13 @@ def _zone(
     threshold="75.00",
     eligible=True,
     branch_id=None,
+    batch_group_id=None,
 ):
     return Zone(
         id=uuid.uuid4(),
         name="Dubai Near",
         branch_id=branch_id,
+        batch_group_id=batch_group_id,
         delivery_fee=Decimal(fee),
         fulfilment_provider=provider,
         min_lat=24.0,
@@ -79,12 +81,38 @@ async def _area(zone):
     "provider,expected",
     [
         ("noon_send", "express"),
-        ("lalamove", "same_day"),
+        ("slider", "express"),
+        ("lalamove", "express"),
         ("third_party", "next_day"),
     ],
 )
-def test_each_kind_of_zone_gets_its_own_promise(provider, expected):
+def test_a_zone_waiting_for_nobody_is_promised_express(provider, expected):
+    """Ours to dispatch and in no group: a rider is called when the box is packed."""
     assert _speed_of(_zone(provider)) == expected
+
+
+@pytest.mark.parametrize("provider", ["lalamove", "slider", "noon_send"])
+def test_a_zone_on_a_shared_run_waits_for_it(provider):
+    """It lands today if it makes a window and tomorrow if it misses the last."""
+    assert _speed_of(_zone(provider, batch_group_id=uuid.uuid4())) == "same_day"
+
+
+def test_the_promise_follows_the_schedule_and_not_the_courier_name():
+    """
+    The regression this shape exists to prevent.
+
+    This used to read `is_noon_send`, which was the same answer for as long as
+    they were the only unbatched courier we booked — and stopped being the same
+    answer the day `Sharjah Core` was carved out of `Sharjah Central` and handed
+    to Slider. Nothing about the zone got slower; only the name on it changed,
+    and a customer in the inner ring would have watched "express" turn into
+    "same day" for no reason they could see.
+    """
+    group = uuid.uuid4()
+    assert _speed_of(_zone("noon_send")) == _speed_of(_zone("slider"))
+    assert _speed_of(_zone("noon_send", batch_group_id=group)) == _speed_of(
+        _zone("slider", batch_group_id=group)
+    )
 
 
 def test_an_unknown_pin_gets_the_most_cautious_promise():

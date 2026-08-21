@@ -214,8 +214,20 @@ async def test_a_card_order_over_five_hundred_is_refused_before_a_rider_is_engag
     assert "500.00" in reason
 
 
+@pytest.fixture
+def owes_everything(monkeypatch):
+    """Nothing has been paid, so the cash the rider collects is the total."""
+
+    async def outstanding(db, order):
+        return Decimal(str(order.total or 0))
+
+    monkeypatch.setattr(slider_service, "_outstanding", outstanding)
+
+
 @pytest.mark.asyncio
-async def test_cash_on_delivery_stops_at_three_hundred_and_fifty(pickup):
+async def test_cash_on_delivery_stops_at_three_hundred_and_fifty(
+    pickup, owes_everything
+):
     over = _order(payment_method="cod", total=Decimal("350.01"))
     under = _order(payment_method="cod", total=Decimal("350.00"))
     assert not (await slider_service.may_serve(None, over))[0]
@@ -223,6 +235,28 @@ async def test_cash_on_delivery_stops_at_three_hundred_and_fifty(pickup):
     # And the same value on a card is fine, which is the whole reason there are
     # two numbers rather than one.
     assert (await slider_service.may_serve(None, _order(total=Decimal("350.01"))))[0]
+
+
+@pytest.mark.asyncio
+async def test_the_cash_ceiling_measures_what_the_rider_will_be_handed(
+    pickup, monkeypatch
+):
+    """
+    Not the order's total. On a part-paid COD order those are different numbers,
+    and it is the outstanding one that goes into `cod_amount` — so checking the
+    total would refuse a AED 600 order on which only AED 100 is still owed, and
+    would be checking a figure nobody is carrying.
+    """
+
+    async def owes_a_little(db, order):
+        return Decimal("100.00")
+
+    monkeypatch.setattr(slider_service, "_outstanding", owes_a_little)
+
+    allowed, reason = await slider_service.may_serve(
+        None, _order(payment_method="cod", total=Decimal("600.00"))
+    )
+    assert allowed, reason
 
 
 @pytest.mark.asyncio
@@ -809,3 +843,177 @@ async def test_a_tracking_link_on_a_push_is_kept(inbound):
         delivery,
     )
     assert delivery.share_link == "https://t.slider/1"
+
+
+# ── the emirate, and the two shapes it arrives in ─────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        # A city, off an order's shipping snapshot.
+        ("Sharjah", "Sharjah"),
+        ("umm al quwain", "Umm al-Quwain"),
+        # A zone name, which is all a checkout with nothing but a pin has.
+        ("Sharjah Core", "Sharjah"),
+        ("Umm al-Quwain City", "Umm al-Quwain"),
+        ("Ras al-Khaimah North", "Ras al-Khaimah"),
+        ("Dubai Hatta", "Dubai"),
+        ("Ajman Masfout", "Ajman"),
+        # Neither.
+        ("Muscat", ""),
+        ("", ""),
+        (None, ""),
+    ],
+)
+def test_an_emirate_is_read_out_of_a_city_or_a_zone_name(value, expected):
+    assert slider_service.emirate_of(value) == expected
+
+
+def test_every_zone_on_the_published_map_names_an_emirate():
+    """
+    The assumption `emirate_of` rests on, checked against the map rather than
+    asserted. A zone whose name did not begin with its emirate would quote the
+    car everywhere, silently — the fare would simply be the wrong tier's.
+    """
+    import ast
+    from pathlib import Path
+
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "alembic"
+        / "versions"
+        / "126_cost_banded_map_v2.py"
+    )
+    source = migration.read_text()
+    start = source.index("= [", source.index("ZONES: list[")) + 2
+    end = source.index("\n]", start) + 2
+    zones = ast.literal_eval(
+        source[start:end]
+        .replace("OUTER_FEE", '"80.00"')
+        .replace("OUTER_THRESHOLD", '"200.00"')
+    )
+    for name, *_ in zones:
+        assert slider_service.emirate_of(name), name
+
+
+@pytest.mark.asyncio
+async def test_a_checkout_quote_prices_the_tier_the_booking_will_use(booked):
+    """
+    A checkout has a pin and no order, so the emirate has to come from the zone
+    the pin landed in. Without it every quote here priced the **car** — and a
+    `Sharjah Core` customer would have been shown a fare their order was never
+    going to be booked at, which is exactly the disagreement `vehicle_for`
+    exists to prevent, reintroduced one layer up.
+    """
+    db = _Db(_row())
+
+    by_zone, _ = await slider_service.estimate_for_point(
+        db, 25.3213, 55.3820, drop_emirate="Sharjah Core"
+    )
+    order = _order(
+        shipping_address_snapshot={
+            "latitude": 25.3213,
+            "longitude": 55.3820,
+            "phone": "+971501234567",
+            "first_name": "Hussain",
+            "last_name": "Abbasi",
+            "address_line_1": "Garden Tower 1, Al Majaz 3",
+            "city": "Sharjah",
+        }
+    )
+    await slider_service.dispatch_order(db, order)
+
+    assert booked["vehicle"] == "bike"
+    assert by_zone.cost == db.delivery.cost_total
+
+
+@pytest.mark.asyncio
+async def test_two_quotes_at_one_pin_in_two_emirates_do_not_share_a_price(booked):
+    """
+    The cached fare has to carry the emirate, because the emirate picks the
+    vehicle and the vehicle picks the fare. Keyed on the pin alone, whichever of
+    the two asked first would have answered for both.
+    """
+    db = _Db(_row())
+
+    inside, _ = await slider_service.estimate_for_point(
+        db, 25.3213, 55.3820, drop_emirate="Sharjah Core"
+    )
+    crossing, _ = await slider_service.estimate_for_point(
+        db, 25.3213, 55.3820, drop_emirate="Ajman City"
+    )
+
+    assert inside.cost == Decimal("18.50")
+    assert crossing.cost == Decimal("26.00")
+
+
+# ── asking, when the push never came ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_lost_push_can_be_asked_for(booked, inbound, monkeypatch):
+    """
+    Slider's statuses only reach us by push and they do not retry a lost one, so
+    without this a rider could deliver an order and the shop would still be
+    looking at `heading_to_pickup` tomorrow. It matters most during the pilot,
+    which is one account placing real orders on production to find out what this
+    integration does.
+    """
+
+    async def details(delivery_id):
+        assert delivery_id == "SLD-4820193"
+        return {
+            "id": delivery_id,
+            "status": "delivered",
+            "rider": {"id": "r_88", "name": "Imran"},
+        }
+
+    monkeypatch.setattr(slider_service.provider, "get_delivery", details)
+    db = _Db(_row())
+    db.delivery.courier_order_id = "SLD-4820193"
+    db.delivery.courier_status = "in_transit"
+
+    result = await slider_service.refresh(db, db.delivery.order_id)
+
+    assert result.courier_status == "delivered"
+    # Through the real handler, so the order moves, the customer is written to
+    # and the refund path is the same one a push takes. A second copy of that
+    # would be a second thing to keep in step with `VALID_TRANSITIONS`.
+    assert inbound == ["delivered"]
+
+
+@pytest.mark.asyncio
+async def test_the_fabricated_payload_says_where_it_came_from(
+    booked, inbound, monkeypatch
+):
+    """
+    `last_payload` is the first thing anybody reads when asking what the courier
+    said. A hand-built one wearing a real push's shape is a lie in the one place
+    that is meant to be evidence.
+    """
+
+    async def details(_id):
+        return {"id": _id, "status": "picked_up"}
+
+    monkeypatch.setattr(slider_service.provider, "get_delivery", details)
+    db = _Db(_row())
+    db.delivery.courier_order_id = "SLD-1"
+
+    await slider_service.refresh(db, db.delivery.order_id)
+    assert db.delivery.last_payload["source"] == "slider_refresh"
+
+
+@pytest.mark.asyncio
+async def test_a_delivery_slider_will_not_talk_about_says_so(booked, monkeypatch):
+    async def unreachable(_id):
+        raise SliderError("Slider is unreachable")
+
+    monkeypatch.setattr(slider_service.provider, "get_delivery", unreachable)
+    db = _Db(_row())
+    db.delivery.courier_order_id = "SLD-1"
+    db.delivery.courier_status = "in_transit"
+
+    result = await slider_service.refresh(db, db.delivery.order_id)
+    assert "Could not read the delivery" in result.last_error
+    assert result.courier_status == "in_transit"

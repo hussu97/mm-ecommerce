@@ -1236,6 +1236,14 @@ async def assert_group_fits_polygon(
     In the service rather than a database constraint deliberately: a zone's
     courier can change, and the useful outcome then is a readable refusal at the
     moment somebody tries it, not an integrity error surfacing as a 500.
+
+    "One courier" means the one that will actually turn up, which since `126` is
+    not always the one the zone names. Every order in a Slider zone but the
+    pilot account's is handed back to Lalamove automatically, so those zones
+    ride the Lalamove run they have always ridden and must go on doing so — the
+    run is what their promise is read off. `courier_service.may_be_carried_by`
+    is where that is written down, so this and `update_polygon` cannot come to
+    different conclusions about the same pairing.
     """
     courier = (
         await db.execute(select(Courier).where(Courier.code == group.courier_code))
@@ -1245,7 +1253,9 @@ async def assert_group_fits_polygon(
             f"{group.courier_code} orders cannot be batched, so "
             f"'{group.name}' cannot carry a schedule."
         )
-    if polygon.fulfilment_provider != group.courier_code:
+    if not courier_service.may_be_carried_by(
+        polygon.fulfilment_provider, group.courier_code
+    ):
         raise BadRequestError(
             f"'{polygon.name}' is delivered by {polygon.fulfilment_provider}, "
             f"but '{group.name}' books {group.courier_code}. "

@@ -1066,3 +1066,56 @@ point the new map does not claim — the last being the fatal one, since `088`
 removed the national default fee and an unmatched pin is now a hard checkout
 failure. Named landmarks check the places somebody thought of; the sweep checks
 the places nobody did, which is where a sliver hides.
+
+
+---
+
+## A column that means "a human did this" must not be written by a machine
+
+*Slider integration QA, August 2026.*
+
+The gate that hands a Slider zone's orders back to Lalamove set
+`original_provider` on the delivery row, on the reasoning that the swap should
+be visible afterwards. It reads well and it was wrong, because that column had
+already been given a meaning by somebody else: **a person moved this order.**
+Three things downstream depend on that reading, and only one of them is obvious.
+
+* The admin prints "moved from Slider" beside the courier — on every order,
+  including the thousands nobody touched.
+* `fulfilment_reassignment.allowed_targets` treats it as the map's own choice
+  when there is no zone to ask.
+* `fulfilment_service._estimate` reads a populated `original_provider` as "this
+  order was written against a third-party zone" and answers
+  tomorrow-before-10-PM instead of an hour.
+
+The last one is a customer-facing promise changing on almost every Dubai order,
+produced by a line of code whose stated purpose was to add an audit trail.
+
+**Rule:** before writing a column an existing feature owns, grep every read of
+it and ask what each one thinks the value means. A column's type is `str | None`;
+its meaning is whatever the readers assume, and they will not tell you.
+
+**Rule:** the honest signal for an automatic swap was already there and cost
+nothing — the zone says one courier, the row says another, and a `logger.info`
+explains it. That is exactly what the noon Send fallback has always done, and
+the convention was sitting four lines below the code that broke it.
+
+## "No-op" is a claim about every screen, not about the routing
+
+The same review found two more of these, and neither is a courier call:
+
+* `_speed_of` decided the storefront's speed label by asking `is_noon_send`.
+  True of the courier and only accidentally true of the zones — so carving
+  `Sharjah Core` out of `Sharjah Central` and handing it to a different courier
+  silently downgraded the inner ring from "express" to "same day". It asks
+  `is_batched` now, which is the property the label is actually about.
+* A checkout quote has a pin and no order, so it never had the drop's emirate,
+  so it priced the car everywhere — including the one zone where the booking
+  uses the bike. The estimate and the booking agreeing on the vehicle was the
+  whole point of putting that rule in a single function, and the disagreement
+  reappeared one layer up, in the *arguments*.
+
+**Rule:** when a rule takes an input, check that every caller can actually
+supply it. A parameter with a `None` default is a rule that quietly stops
+applying, and the caller that cannot fill it is usually the one that matters —
+here, the one the customer is looking at.

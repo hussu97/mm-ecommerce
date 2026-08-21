@@ -319,8 +319,25 @@ async def test_the_pilot_account_is_carried_by_slider(slider_ready, slider_spies
 
     assert slider_spies == ["slider"]
     assert result.courier_order_id == "SLD-4820193"
-    # Nothing was swapped, so there is nothing to record as having been swapped.
     assert result.original_provider is None
+
+
+@pytest.mark.asyncio
+async def test_a_gated_order_is_not_marked_as_moved_by_hand(slider_ready, slider_spies):
+    """
+    The gate is not a reassignment, and three things downstream would read it as
+    one. `fulfilment_service._estimate` is the expensive one: it treats a
+    populated `original_provider` as "this order was written against a
+    third-party zone" and answers tomorrow-before-10-PM instead of an hour, so a
+    gate that filled it would have re-promised every Dubai order in a Slider
+    zone — which is almost all of them, since almost all of them are gated.
+    """
+    delivery = _slider_delivery()
+    await courier_service.dispatch(_Db(delivery), _order(email="someone@else.com"))
+
+    assert delivery.provider == "lalamove"
+    assert delivery.original_provider is None
+    assert not delivery.was_reassigned
 
 
 @pytest.mark.asyncio
@@ -348,11 +365,17 @@ async def test_everybody_else_in_a_slider_zone_goes_where_they_always_did(
 
     assert slider_spies == ["lalamove"]
     assert result.provider == "lalamove"
-    # Which zone chose it is still on the row, so the swap is visible afterwards
-    # — and `last_error` is clear, because a booking that worked is not a
-    # problem and `needs_attention` must not fill up with routine fallbacks.
-    assert result.original_provider == "slider"
+    # `last_error` is clear, because a booking that worked is not a problem and
+    # `needs_attention` must not fill up with routine fallbacks.
     assert not result.needs_attention
+    # And `original_provider` is untouched, which is the same rule the noon Send
+    # fallback follows. That column means "a human moved this order" and three
+    # things read it that way — the admin prints "moved from X", the
+    # reassignment dialog treats it as the map's own choice, and
+    # `fulfilment_service` reads it as "written against a third-party zone" and
+    # answers tomorrow rather than an hour. Setting it here would put a
+    # hand-moved badge and a next-day promise on nearly every Dubai order.
+    assert result.original_provider is None
 
 
 @pytest.mark.asyncio
@@ -372,7 +395,8 @@ async def test_a_slider_zone_inside_sharjah_falls_back_to_noon_send(
     )
 
     assert slider_spies == ["noon_send"]
-    assert result.original_provider == "slider"
+    assert result.provider == "noon_send"
+    assert result.original_provider is None
 
 
 @pytest.mark.asyncio

@@ -78,6 +78,7 @@ __all__ = [
     "handle_webhook",
     "is_enabled",
     "may_serve",
+    "refresh",
     "road_distance_km",
     "same_emirate",
     "vehicle_for",
@@ -126,21 +127,63 @@ def is_enabled() -> bool:
 # ── the vehicle rule ──────────────────────────────────────────────────────────
 
 
-def same_emirate(pickup_emirate: str | None, drop_emirate: str | None) -> bool:
+#: The seven emirates, longest first so that a prefix search cannot stop early
+#: on a shorter name and so "Ras al-Khaimah North" resolves to Ras al-Khaimah.
+EMIRATES: tuple[str, ...] = (
+    "Ras al-Khaimah",
+    "Umm al-Quwain",
+    "Abu Dhabi",
+    "Fujairah",
+    "Sharjah",
+    "Ajman",
+    "Dubai",
+)
+
+
+def _squash(value: str | None) -> str:
+    """Lower-case letters and digits only.
+
+    None of these strings are ours: `branches.city` is typed by an admin and the
+    drop's is whatever the address form captured, so "Umm al-Quwain", "Umm Al
+    Quwain" and "umm al quwain" have to mean one place.
+    """
+    return "".join(ch for ch in (value or "").lower() if ch.isalnum())
+
+
+def emirate_of(value: str | None) -> str:
+    """
+    The emirate a city **or a zone name** names, or "" for neither.
+
+    Two shapes of string reach the vehicle rule and they are not the same. A
+    dispatch has an order, so it has `shipping_address_snapshot["city"]` — a
+    place name. A checkout quote has only a pin, and the thing that knows where
+    that pin is is the polygon it landed in, whose name is `Sharjah Core` or
+    `Umm al-Quwain City`. Both have to reach the same answer, or the tier in the
+    quote is not the tier on the booking — which is the one failure this
+    module's single `vehicle_for` exists to prevent.
+
+    Every zone name begins with its emirate by construction: the map generator
+    enforces it because `delivery_service.public_zone_name` maps a zone to its
+    emirate the same way, and anything else leaks a raw band name to a browser.
+    So the prefix is a fact about the name rather than a guess about the text.
+    """
+    squashed = _squash(value)
+    for emirate in EMIRATES:
+        if squashed.startswith(_squash(emirate)):
+            return emirate
+    return ""
+
+
+def same_emirate(pickup: str | None, drop: str | None) -> bool:
     """
     Whether these two places are in the same emirate.
 
-    Compared as squashed lower-case text because neither string is ours:
-    `branches.city` is typed by an admin and the drop's is whatever the address
-    form captured, so "Umm al-Quwain", "Umm Al Quwain" and "umm al quwain" all
-    have to mean the same emirate. An empty value on either side is not a match
-    — "we do not know" must fall to the car, which is allowed to cross.
+    Either side may be a city or a zone name; both go through `emirate_of`
+    first, so a `Sharjah Core` quote and a `Sharjah` dispatch agree. A value
+    that names no emirate is not a match — "we do not know" must fall to the
+    car, which is the vehicle allowed to cross.
     """
-
-    def squash(value: str | None) -> str:
-        return "".join(ch for ch in (value or "").lower() if ch.isalnum())
-
-    left, right = squash(pickup_emirate), squash(drop_emirate)
+    left, right = emirate_of(pickup), emirate_of(drop)
     return bool(left) and left == right
 
 
@@ -293,12 +336,19 @@ async def estimate_for_point(
         return None, None
 
     # ~11 m of precision — finer than a building, coarser than the jitter a
-    # dragged pin produces. Keyed on the origin too: the same doorstep costs a
-    # different amount from a different kitchen.
+    # dragged pin produces.
+    #
+    # Keyed on everything that moves the answer, which is more than the pin. The
+    # origin, because the same doorstep costs a different amount from a
+    # different kitchen — and the resolved **emirate**, because it decides the
+    # vehicle and the vehicle decides the fare. Without it a `Sharjah Core`
+    # quote and a bare-pin quote at the same coordinates would share one entry,
+    # and one of the two would be shown the other tier's price.
     key = (
-        branch_id if pickup is None else None,
+        pickup.reference if pickup is not None else branch_id,
         round(latitude, 4),
         round(longitude, 4),
+        emirate_of(drop_emirate),
     )
     cached = _quote_cache.get(key)
     if cached:
@@ -355,7 +405,23 @@ async def estimate_for_point(
 # ── the per-order gate ────────────────────────────────────────────────────────
 
 
-def _drop_emirate(order: Order) -> str:
+def _drop_emirate(order: Order, delivery: OrderDelivery | None = None) -> str:
+    """
+    Which emirate this order is going to, from the most reliable thing we have.
+
+    The **zone** first. It is the polygon the pin actually landed in, it is what
+    the checkout quoted against, and it is decided by geometry rather than
+    typing. The address's `city` is a customer's or a geocoder's word for the
+    same place and can disagree with the pin — and a disagreement here is a
+    quote on one vehicle and a booking on the other, which is the failure this
+    module's single `vehicle_for` exists to prevent.
+
+    The city is the fallback, for a delivery row written before zones carried a
+    name or against a map that has since been deleted.
+    """
+    zone = emirate_of(getattr(delivery, "zone_name", None))
+    if zone:
+        return zone
     return str((order.shipping_address_snapshot or {}).get("city") or "").strip()
 
 
@@ -382,11 +448,22 @@ async def may_serve(db: AsyncSession, order: Order) -> tuple[bool, str | None]:
     if pickup is None:
         return False, "No pickup branch is configured"
 
+    # The cash ceiling is measured against what the rider will actually be
+    # handed, not against the order's total. Those are the same number on an
+    # unpaid COD order and are not the same on a part-paid one — and it is
+    # `outstanding` that `dispatch_order` puts in `cod_amount`, so checking the
+    # total would be checking a figure nobody is carrying. The card ceiling is
+    # about the value of the parcel, which is the total.
     is_cod = (order.payment_method or "").lower() == "cod"
-    ceiling = COD_CASH_CEILING if is_cod else COD_CARD_CEILING
-    value = Decimal(str(order.total or 0))
+    if is_cod:
+        value, ceiling, kind = (
+            await _outstanding(db, order),
+            COD_CASH_CEILING,
+            "cash on delivery",
+        )
+    else:
+        value, ceiling, kind = Decimal(str(order.total or 0)), COD_CARD_CEILING, "card"
     if value > ceiling:
-        kind = "cash on delivery" if is_cod else "card"
         return False, (
             f"AED {value:.2f} is over Slider's {kind} ceiling of AED {ceiling:.2f}"
         )
@@ -509,7 +586,7 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
         )
     )
     vehicle = vehicle_for(
-        in_same_emirate=same_emirate(pickup.emirate, _drop_emirate(order)),
+        in_same_emirate=same_emirate(pickup.emirate, _drop_emirate(order, delivery)),
         road_km=distance_km,
     )
 
@@ -862,6 +939,60 @@ async def apply_webhook(
         delivery.status_updated_at = datetime.now(timezone.utc)
 
     await _advance_order(db, delivery, at=updated_at)
+    return delivery
+
+
+async def refresh(db: AsyncSession, order_id: uuid.UUID) -> OrderDelivery | None:
+    """
+    Pull the current state of a delivery, for when a webhook never arrived.
+
+    Slider's statuses only reach us by push, and a push that is lost is lost —
+    the same hole noon Send has, and the reason they have this too. Without a
+    way to ask, a rider could deliver an order and the shop would still be
+    looking at `heading_to_pickup` tomorrow. That matters more during the pilot
+    than it will afterwards: one account is placing real orders on production
+    specifically to find out what this integration does, and "it stopped
+    updating" needs an answer better than a phone call.
+
+    Reachable from the admin's delivery panel — see
+    `POST /orders/{n}/delivery/refresh`.
+    """
+    delivery = await get_delivery(db, order_id)
+    if delivery is None or not delivery.courier_order_id:
+        return delivery
+    if not is_enabled():
+        delivery.last_error = "Slider is not configured"
+        return delivery
+
+    try:
+        details = await provider.get_delivery(str(delivery.courier_order_id))
+    except SliderError as exc:
+        delivery.last_error = f"Could not read the delivery from Slider: {exc}"
+        return delivery
+
+    # Fed through the real handler rather than written beside it. Ending a
+    # booking here is the order's transition, the customer's email, the refund
+    # path and the cancellation reason; a second copy of that is a second thing
+    # to keep in step with `VALID_TRANSITIONS`, and it would drift.
+    #
+    # Named for where it came from rather than borrowing a status push's shape:
+    # `last_payload` is the first thing anybody reads when asking what the
+    # courier said, and a fabricated payload wearing a real event's name is a
+    # lie in the one place that is supposed to be evidence. No timestamp, for
+    # the same reason — the rank guard drops anything older than what we hold,
+    # and the genuine moment may well predate a push we did receive, so the
+    # honest stamp is now.
+    await apply_webhook(
+        db,
+        {
+            "id": delivery.courier_order_id,
+            "status": _status(details),
+            "rider": details.get("rider") or details.get("driver"),
+            "tracking_url": details.get("tracking_url"),
+            "source": "slider_refresh",
+        },
+        delivery=delivery,
+    )
     return delivery
 
 

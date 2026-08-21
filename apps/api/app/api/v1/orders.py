@@ -50,6 +50,7 @@ from app.services import (
     fulfilment_service,
     lalamove_service,
     noon_send_service,
+    slider_service,
     order_service,
 )
 
@@ -405,15 +406,23 @@ async def refresh_order_delivery(
     delivery = await lalamove_service.get_delivery(db, order.id)
     if delivery is None:
         raise NotFoundError(f"No delivery recorded for order '{order_number}'")
-    if delivery.provider != FulfilmentProviderEnum.NOON_SEND.value:
+    # The couriers whose statuses only ever reach us by push, and who do not
+    # retry one that is lost. Lalamove is not among them — they push their own
+    # updates and retry for a day, so a button here would be a 400 waiting to
+    # happen and a needless call besides.
+    refreshers = {
+        FulfilmentProviderEnum.NOON_SEND.value: noon_send_service.refresh,
+        FulfilmentProviderEnum.SLIDER.value: slider_service.refresh,
+    }
+    ask = refreshers.get(delivery.provider)
+    if ask is None:
         raise BadRequestError(
-            "Only noon Send needs asking — Lalamove pushes its own updates and "
-            "retries them for a day."
+            f"{delivery.provider} does not need asking — Lalamove pushes its "
+            "own updates and retries them for a day, and a third party has no "
+            "status to read."
         )
 
-    return await _delivery_payload(
-        db, order, await noon_send_service.refresh(db, order.id) or delivery
-    )
+    return await _delivery_payload(db, order, await ask(db, order.id) or delivery)
 
 
 class TrackOrderRequest(BaseModel):

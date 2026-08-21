@@ -142,10 +142,19 @@ async def calculate_delivery(
 def _speed_of(zone) -> str:
     if zone is None:
         return "next_day"
-    if zone.is_noon_send:
-        # A bike, dispatched on its own, inside noon Send's 20 km reach.
-        return "express"
     if zone.books_itself:
+        if not zone.is_batched:
+            # Ours to dispatch and waiting for nobody: a rider is called the
+            # moment the box is packed.
+            #
+            # Asked of the **schedule** rather than of the courier. It used to
+            # name noon Send, which was the same answer for as long as they were
+            # the only unbatched courier we booked — and stopped being the same
+            # answer the day `Sharjah Core` was carved out of `Sharjah Central`
+            # and given to Slider. The zone did not get slower; only the name on
+            # it changed, and a customer in the inner ring would have watched
+            # "express" turn into "same day" for no reason they could see.
+            return "express"
         # Ours to dispatch, but batched onto a shared run — so it lands today
         # if it makes a window, and tomorrow if it misses the last one.
         return "same_day"
