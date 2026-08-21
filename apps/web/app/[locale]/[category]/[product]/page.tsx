@@ -165,6 +165,24 @@ export default async function ProductDetailPage({
     getDefaultDeliveryFee(),
   ]);
 
+  // ── Do not add a `loading.tsx` to this segment ─────────────────────────────
+  //
+  // There used to be one, and it is why none of the three lines below did
+  // anything. A `loading.tsx` makes the whole segment a Suspense boundary, so
+  // Next committed a 200 and streamed the shell before this function ran:
+  // `notFound()` and `permanentRedirect()` were then setting a status that had
+  // already gone to the client. Measured on production before it was removed —
+  // `/en/cat-brownies/mix-cookies-box-of-9`, a real product under the wrong
+  // category, answered 200 and rendered the product, with the canonical tag
+  // doing all the work the redirect was supposed to do.
+  //
+  // The cost of not having one is that a click on a product card waits for
+  // `getProduct` before anything paints, instead of showing a skeleton. That is
+  // one API call behind a 60-second cache, and there is nothing on this page
+  // that does not need its answer, so there was never anything to stream in the
+  // meantime — the skeleton was buying a paint, not a fetch. The category route
+  // keeps its skeleton because its grid genuinely can stream; see the
+  // `<Suspense>` in `[category]/page.tsx`.
   if (!product) notFound();
   if (product.category && !product.category.is_active) notFound();
 

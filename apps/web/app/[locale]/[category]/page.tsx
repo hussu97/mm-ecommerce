@@ -1,9 +1,10 @@
-import { cache } from 'react';
+import { cache, Suspense } from 'react';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import type { Category, Product, ProductListResponse } from '@/lib/types';
 import { ProductGrid } from '@/components/category/ProductGrid';
+import { ProductCardSkeleton } from '@/components/ui';
 import { CategoryTracker } from '@/components/analytics/CategoryTracker';
 import { Breadcrumb } from '@/components/ui';
 import { localizedField } from '@/lib/i18n/entity';
@@ -181,34 +182,67 @@ function Pagination({
   );
 }
 
-export default async function CategoryPage({
-  params,
-  searchParams,
+/**
+ * The six-card skeleton that `loading.tsx` used to paint.
+ *
+ * It lives here now, as the fallback of a boundary *inside* the page, for one
+ * reason: a `loading.tsx` makes the whole segment a Suspense boundary, so Next
+ * committed a 200 and streamed the shell before this component ever ran — and
+ * `notFound()` cannot set a status that has already been sent. Every unknown
+ * category URL answered 200 with the 404 body and a `noindex` tag, which Google
+ * reads as a live page (`/en/about-me` was indexed exactly this way), and the
+ * `permanentRedirect()` on the product route below never redirected anything.
+ *
+ * Moving the boundary below the existence check keeps the skeleton and gets the
+ * status back. The header renders immediately; only the grid waits.
+ */
+function ProductGridSkeleton() {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <ProductCardSkeleton key={i} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The half of the page that needs the catalogue.
+ *
+ * Split out so the products fetch happens under a Suspense boundary rather than
+ * in front of the response. Everything here needs the product list — the grid,
+ * the page count, the `ItemList` in the JSON-LD, and the analytics event that
+ * reports how many results the shopper saw — so it is one component rather than
+ * four boundaries.
+ *
+ * The JSON-LD streams with it. A crawler reads the completed document, not the
+ * first flush, so structured data below a boundary is still structured data.
+ */
+async function CategoryProducts({
+  slug,
+  locale,
+  page,
+  sort,
+  branchId,
+  categoryName,
+  basePath,
+  t,
 }: {
-  params: Promise<{ locale: string; category: string }>;
-  searchParams: Promise<{ page?: string; sort?: string }>;
+  slug: string;
+  locale: string;
+  page: number;
+  sort: ProductSort;
+  branchId: string | null;
+  categoryName: string;
+  basePath: string;
+  t: (key: string, params?: Record<string, string | number>) => string;
 }) {
-  const { locale, category: slug } = await params;
-  const { page: pageStr, sort: sortStr } = await searchParams;
-  const page = Math.max(1, parseInt(pageStr ?? '1', 10) || 1);
-  const sort = parseProductSort(sortStr);
-
-  // The kitchen this shopper's pin resolves to, so the grid is what that
-  // kitchen can make rather than what the estate collectively can. Reading the
-  // cookie makes this route dynamic for a shopper who has set a location; a
-  // crawler and a first visit have none and keep the cached, estate-wide page.
-  const branchId = await browsingBranch();
-
-  const [data, translations] = await Promise.all([
-    getCategoryData(slug, page, sort, branchId),
-    getTranslations(locale),
-  ]);
-
+  const data = await getCategoryData(slug, page, sort, branchId);
+  // The category existed a moment ago — the page checked before rendering this.
+  // A null here means the listing query failed, not that the page is missing.
   if (!data) notFound();
 
-  const t = createT(translations);
-  const { category, products, pages } = data;
-  const categoryName = localizedField(category, 'name', category.name, locale);
+  const { products, pages } = data;
 
   const jsonLd = {
     '@context': 'https://schema.org',
@@ -243,8 +277,6 @@ export default async function CategoryPage({
     ],
   };
 
-  // The sort rides on every listing URL so paging does not silently drop it.
-  const basePath = `/${locale}/${slug}${sort === DEFAULT_PRODUCT_SORT ? '' : `?sort=${sort}`}`;
   const baseAbsPath = `${SITE_URL}${basePath}`;
   const sep = basePath.includes('?') ? '&' : '?';
   const prevUrl = page === 2 ? baseAbsPath : `${baseAbsPath}${sep}page=${page - 1}`;
@@ -259,52 +291,100 @@ export default async function CategoryPage({
       {page > 1 && <link rel="prev" href={prevUrl} />}
       {page < pages && <link rel="next" href={nextUrl} />}
 
-      <div className="max-w-7xl mx-auto px-4 py-5 sm:py-12">
-
-        <CategoryTracker categoryName={categoryName} productCount={data.total} />
-        <Breadcrumb items={[{ label: t('breadcrumb.home'), href: `/${locale}` }, { label: categoryName }]} />
-
-        {/* Category header — trimmed on phones so the grid starts inside the
-            first screen rather than a scroll below it. */}
-        <header className="mb-4 sm:mb-10">
-          <div className="flex items-center justify-between gap-3 sm:items-end sm:gap-4">
-            <div className="min-w-0">
-              <h1 className="font-display text-xl sm:text-4xl text-primary uppercase tracking-widest mb-1 sm:mb-3">
-                {categoryName}
-              </h1>
-              {category.description && (
-                <p className="font-body text-xs sm:text-sm text-gray-500 max-w-xl line-clamp-1 sm:line-clamp-none">
-                  {category.description}
-                </p>
-              )}
-            </div>
-            {/* Beside the heading, not under it. It used to take its own line on
-                phones because the control is forced to 16px there — the
-                anti-zoom rule in globals.css, which is unlayered and so beats
-                any utility class — and at 16px uppercase with wide tracking the
-                longest option was too wide to share a row. `SortSelect` drops
-                the tracking and the uppercase below `sm`, which is what makes
-                it fit; the row itself was never the problem. */}
-            <div className="flex justify-end shrink-0">
-              <SortSelect
-                action={`/${locale}/${slug}`}
-                surface="category"
-                value={sort}
-                options={productSortOptions(t)}
-                label={productSortLabel(t)}
-              />
-            </div>
-          </div>
-          <div className="h-px bg-secondary/40 mt-2 sm:mt-4" />
-        </header>
-
-        {/* Product grid */}
-        <ProductGrid products={products} />
-
-        {/* Pagination */}
-        <Pagination page={page} pages={pages} basePath={basePath} t={t} />
-
-      </div>
+      <CategoryTracker categoryName={categoryName} productCount={data.total} />
+      <ProductGrid products={products} />
+      <Pagination page={page} pages={pages} basePath={basePath} t={t} />
     </>
+  );
+}
+
+export default async function CategoryPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ locale: string; category: string }>;
+  searchParams: Promise<{ page?: string; sort?: string }>;
+}) {
+  const { locale, category: slug } = await params;
+  const { page: pageStr, sort: sortStr } = await searchParams;
+  const page = Math.max(1, parseInt(pageStr ?? '1', 10) || 1);
+  const sort = parseProductSort(sortStr);
+
+  // The kitchen this shopper's pin resolves to, so the grid is what that
+  // kitchen can make rather than what the estate collectively can. Reading the
+  // cookie makes this route dynamic for a shopper who has set a location; a
+  // crawler and a first visit have none and keep the cached, estate-wide page.
+  const branchId = await browsingBranch();
+
+  // Awaited *before* anything renders, which is the whole point of the split.
+  // `getCategoryMeta` is one small request and `React.cache`d — `generateMetadata`
+  // has already made it — so the cost of asking here is nothing, and the answer
+  // is what decides whether this URL is a page at all.
+  const [category, translations] = await Promise.all([
+    getCategoryMeta(slug),
+    getTranslations(locale),
+  ]);
+
+  if (!category) notFound();
+
+  const t = createT(translations);
+  const categoryName = localizedField(category, 'name', category.name, locale);
+
+  // The sort rides on every listing URL so paging does not silently drop it.
+  const basePath = `/${locale}/${slug}${sort === DEFAULT_PRODUCT_SORT ? '' : `?sort=${sort}`}`;
+
+  return (
+    <div className="max-w-7xl mx-auto px-4 py-5 sm:py-12">
+
+      <Breadcrumb items={[{ label: t('breadcrumb.home'), href: `/${locale}` }, { label: categoryName }]} />
+
+      {/* Category header — trimmed on phones so the grid starts inside the
+          first screen rather than a scroll below it. */}
+      <header className="mb-4 sm:mb-10">
+        <div className="flex items-center justify-between gap-3 sm:items-end sm:gap-4">
+          <div className="min-w-0">
+            <h1 className="font-display text-xl sm:text-4xl text-primary uppercase tracking-widest mb-1 sm:mb-3">
+              {categoryName}
+            </h1>
+            {category.description && (
+              <p className="font-body text-xs sm:text-sm text-gray-500 max-w-xl line-clamp-1 sm:line-clamp-none">
+                {category.description}
+              </p>
+            )}
+          </div>
+          {/* Beside the heading, not under it. It used to take its own line on
+              phones because the control is forced to 16px there — the
+              anti-zoom rule in globals.css, which is unlayered and so beats
+              any utility class — and at 16px uppercase with wide tracking the
+              longest option was too wide to share a row. `SortSelect` drops
+              the tracking and the uppercase below `sm`, which is what makes
+              it fit; the row itself was never the problem. */}
+          <div className="flex justify-end shrink-0">
+            <SortSelect
+              action={`/${locale}/${slug}`}
+              surface="category"
+              value={sort}
+              options={productSortOptions(t)}
+              label={productSortLabel(t)}
+            />
+          </div>
+        </div>
+        <div className="h-px bg-secondary/40 mt-2 sm:mt-4" />
+      </header>
+
+      <Suspense key={`${slug}-${page}-${sort}-${branchId ?? ''}`} fallback={<ProductGridSkeleton />}>
+        <CategoryProducts
+          slug={slug}
+          locale={locale}
+          page={page}
+          sort={sort}
+          branchId={branchId}
+          categoryName={categoryName}
+          basePath={basePath}
+          t={t}
+        />
+      </Suspense>
+
+    </div>
   );
 }
