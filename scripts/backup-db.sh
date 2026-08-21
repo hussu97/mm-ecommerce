@@ -55,6 +55,31 @@ echo "    Backup size: $(du -sh "$BACKUP_FILE" | cut -f1)"
 #
 # `gcloud storage` is preferred and `gsutil` is the fallback; neither present
 # is a warning, not a failure.
+#
+# The SDK is found before that check rather than trusted to be on `PATH`. It is
+# installed in a user's home directory here, and put on `PATH` by a line in
+# `.bashrc` — which a non-interactive `ssh host 'command'` never sources. So the
+# deploy, which runs exactly that way, saw no `gcloud`, took the LOCAL ONLY
+# branch and printed a warning into a log nobody reads. Between that and a
+# bucket that had never actually been created, this script had never once put a
+# backup anywhere but the same disk as the database it was dumping.
+for _sdk_bin in \
+  /usr/lib/google-cloud-sdk/bin \
+  /usr/local/google-cloud-sdk/bin \
+  /snap/bin \
+  "$HOME/google-cloud-sdk/bin" \
+  /home/*/google-cloud-sdk/bin
+do
+  if [ -x "$_sdk_bin/gcloud" ]; then
+    case ":$PATH:" in
+      *":$_sdk_bin:"*) ;;
+      *) PATH="$PATH:$_sdk_bin" ;;
+    esac
+    break
+  fi
+done
+export PATH
+
 if [ -n "${BACKUP_GCS_BUCKET:-}" ]; then
   GCS_TARGET="gs://${BACKUP_GCS_BUCKET}/backups/$(basename "$BACKUP_FILE")"
   echo "==> Uploading to GCS: $GCS_TARGET"

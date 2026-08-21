@@ -152,3 +152,73 @@ Verified rather than assumed:
 
 Not done, deliberately: the `/terms` URL now 404s rather than redirecting, which is
 correct — it never named a real page, and nothing links to it any more.
+
+---
+
+# VM resource audit remediation (2026-08-21)
+
+An audit of the production VM found the disk at 59% (11 GB of 20 GB) with ~4 GB of
+stale Docker images, and — far more seriously — **no offsite copy of the database at
+all**: the GCS backup bucket named in `.env` had never been created, `gcloud` was not
+on the deploy shell's `PATH` so the upload branch never ran, there was no backup cron,
+and the disk had no snapshot schedule. Every dump lived on the same disk as the volume
+it was backing up.
+
+- [x] Create the `melting-moments-cakes-backups` GCS bucket + grant the VM's service account write access
+- [x] Make `scripts/backup-db.sh` find `gcloud` regardless of login shell
+- [x] Add a daily boot-disk snapshot schedule
+- [x] Install the backup cron the deploy guide already documents
+- [x] Cut the deploy image-prune window from 168h to 12h
+- [x] Reclaim stale caches (docker images, build cache, apt archives, btmp, stray files)
+- [x] Raise `max_connections` 20 -> 30 to remove the deploy-window overlap risk
+
+## Review
+
+**The audit's finding was not disk, it was that the shop had no offsite backup and
+nobody could tell.** Three independent faults hid each other: the bucket named in
+`.env` had never been created, `gcloud` was installed into a home directory and put
+on `PATH` by `.bashrc` — which the non-interactive deploy shell never sources — so
+the upload branch never ran, and the warning it printed instead went to a log nobody
+reads. There was also no cron (backups happened only because `deploy.yml` takes one
+before migrating) and no disk snapshot schedule. Every dump sat on the same 20GB
+disk as the volume it was dumping.
+
+Done and verified:
+
+* **Bucket** `gs://melting-moments-cakes-backups`, me-central1, uniform access,
+  public access prevention, 90-day lifecycle. The VM's default compute SA already
+  holds `roles/editor`, so no service-account swap (and no instance stop) was needed.
+* **`backup-db.sh` finds the SDK itself** across the usual install locations rather
+  than trusting `PATH`. Proven under `env -i` with `PATH=/usr/bin:/bin` — i.e. the
+  way cron will actually run it, not the way an interactive shell would.
+* **The dump was restored, not just uploaded.** Pulled the GCS copy back down,
+  restored into a throwaway database, and compared: orders 49/49, order_items 73/73,
+  products 131/131, carts 3526/3526, audit_logs 207/207, and the same
+  `alembic_version`. Throwaway dropped.
+* **Snapshots**: `mm-backend-daily-snapshot`, 03:00 UTC, 14 days, plus one manual
+  snapshot taken before any cleanup so there was a recovery point during the work.
+* **Cron** installed under `hussainabbasi786110` (the deploy user and owner of
+  `backups/`), with a logrotate rule for `/var/log/mm-backup.log`.
+* **Prune window 168h -> 12h.** The 168h was commented as a rollback window and is
+  not one: `rollback.yml` pulls the target SHA from GHCR and never reads the local
+  cache. At a dozen-plus deploys a day it was only buying 59 dangling images.
+* **Disk 59% -> 43%** (11G -> 8.0G): images, build cache, 336MB of apt archives,
+  25MB of `btmp` (~25k failed SSH logins), a 27MB uncapped container log, and stray
+  installers. Available RAM went 145MB -> 209MB.
+* **Container logs capped** via a new `/etc/docker/daemon.json` (10m x 3), applied
+  with `systemctl reload docker` so no container was stopped.
+* **`max_connections` 20 -> 30.** 3 slots are superuser-reserved, so 17 were usable
+  while two API apps can open 20 between them before deploy overlap is counted.
+
+Two things worth carrying forward. First, a deploy runs `git reset --hard
+origin/main`, so anything applied to the VM by hand is temporary — the fixes to
+`backup-db.sh` and `max_connections` were both reverted by a deploy that landed
+mid-session, which is precisely why they belong in this commit and not on the box.
+Second, `docker-compose.prod.yml`'s postgres `command:` is a folded scalar: a `#`
+line inside it becomes an argument to postgres rather than a comment. The rationale
+comment now sits above the key, with a warning.
+
+Not done, deliberately: giving the VM a dedicated service account with
+`storage.objectCreator` (rather than the default account's project-wide `editor`)
+would mean a compromised VM could add backups but not delete them. It needs an
+instance stop, so it wants a maintenance window rather than a live afternoon.

@@ -23,13 +23,23 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       # Tuned for e2-micro: keep shared_buffers small to leave headroom for the app
       POSTGRES_INITDB_ARGS: ""
+    # `max_connections` was 20, which left no room for a deploy. Postgres
+    # reserves 3 slots for a superuser, so 17 were actually available to the
+    # app — while the two API apps can each open pool_size 5 + max_overflow 5,
+    # which is 20 between them before the old containers of a rolling deploy are
+    # even counted. The 2026-08-21 audit measured 15 in use during an overlap.
+    # Backends share most of their memory, so the extra slots cost the 320m cap
+    # far less than 10 x work_mem suggests, and are only opened under load.
+    #
+    # Note for anyone editing the block below: it is a folded scalar, so a `#`
+    # line inside it is not a comment — it becomes an argument to postgres.
     command: >
       postgres
       -c shared_buffers=64MB
       -c work_mem=4MB
       -c maintenance_work_mem=32MB
       -c effective_cache_size=192MB
-      -c max_connections=20
+      -c max_connections=30
       -c checkpoint_completion_target=0.9
       -c wal_buffers=4MB
       -c synchronous_commit=off

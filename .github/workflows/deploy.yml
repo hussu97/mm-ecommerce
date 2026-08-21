@@ -592,14 +592,22 @@ jobs:
           # -f alone only removes *dangling* images, so every tagged image the
           # VM has ever pulled stayed on the 20GB disk: it reached 71% full
           # with 4.6GB of superseded tags. -a removes tagged images no running
-          # container uses; until=168h keeps a 7-day rollback window.
+          # container uses.
+          #
+          # The window was 168h, described as a rollback window. It was not one:
+          # `rollback.yml` resolves a SHA, `docker pull`s that tag from GHCR and
+          # re-tags it as :latest, so it never reads this cache and a local copy
+          # buys nothing but pull time. What 7 days did buy, at a cadence that
+          # reaches a dozen-plus deploys a day, was 59 dangling images and ~4GB
+          # of a 20GB disk. 12h keeps today's images for a fast re-`up` and
+          # discards the rest.
           echo "Pruning old images..."
-          docker image prune -af --filter "until=168h" < /dev/null
+          docker image prune -af --filter "until=12h" < /dev/null
 
           # nginx is built on the VM (--build above), and that cache is never
-          # reclaimed either — it had grown to 3.2GB. Same 7-day window.
+          # reclaimed either — it had grown to 3.2GB. Same window as above.
           echo "Pruning stale build cache..."
-          docker builder prune -f --filter "until=168h" < /dev/null
+          docker builder prune -f --filter "until=12h" < /dev/null
 
           # journald shipped uncapped (default: 10% of the disk = 2GB here) and
           # had reached 810MB. Cap it so logs cannot crowd out the DB. Guarded

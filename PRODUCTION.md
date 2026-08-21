@@ -32,12 +32,13 @@ Internet
 | Admin panel (Next.js) | Vercel | Hobby (free, same account) | $0 |
 | Backend VM (e2-micro) | GCP Compute Engine | On-demand + sustained discount | ~$4 |
 | Boot disk (20 GB SSD) | GCP Persistent Disk | Standard SSD | ~$5 |
-| Database backups | GCP Cloud Storage | Standard, ~2 GB | ~$0.05 |
-| Network egress | GCP | ~5 GB/mo | ~$0.40 |
+| Database backups | GCP Cloud Storage | Standard, ~2 GB, 90-day lifecycle | ~$0.05 |
+| Boot-disk snapshots | GCP Compute | Daily, 14-day retention, incremental | ~$0.50 |
+| Network egress | GCP | ~2.3 GB/mo (measured 2026-08-21) | ~$0.20 |
 | Media storage | Cloudflare R2 | Free tier (10 GB) | $0 |
 | SSL certificates | Let's Encrypt | Free | $0 |
 | Analytics | Umami Cloud | Free tier | $0 |
-| **Total** | | | **~$9–10/mo** |
+| **Total** | | | **~$10–11/mo** |
 
 ---
 
@@ -191,110 +192,121 @@ Verify: `curl https://api.meltingmomentscakes.com/health` should return `{"statu
 
 ---
 
-## Step 8: GCP Cloud Storage Bucket + Service Account
+## Step 8: GCP Cloud Storage Bucket (offsite backups)
+
+> **History.** Everything in this step was documented from the start and *none of
+> it was ever run*. The 2026-08-21 audit found no bucket in the project, no
+> `mm-backup-sa`, and therefore not one offsite copy of the database in the five
+> months the shop had been live — while `BACKUP_GCS_BUCKET` sat in `.env` looking
+> like it was working. The commands below are the ones that were actually run.
 
 ```bash
-# Create backup bucket (in the same region as the VM)
 gcloud storage buckets create gs://melting-moments-cakes-backups \
   --project=melting-moments-cakes \
-  --location=ME-CENTRAL1 \
-  --uniform-bucket-level-access
+  --location=me-central1 \
+  --default-storage-class=STANDARD \
+  --uniform-bucket-level-access \
+  --public-access-prevention
 
-# Create a service account for backups
-gcloud iam service-accounts create mm-backup-sa \
-  --project=melting-moments-cakes \
-  --display-name="MM Backup Service Account"
-
-# Grant it permission to write to the backup bucket
-gcloud storage buckets add-iam-policy-binding gs://melting-moments-cakes-backups \
-  --member="serviceAccount:mm-backup-sa@melting-moments-cakes.iam.gserviceaccount.com" \
-  --role="roles/storage.objectCreator"
-
-# Grant it permission to write to Cloud Logging (required by the gcplogs Docker driver)
-gcloud projects add-iam-policy-binding melting-moments-cakes \
-  --member="serviceAccount:mm-backup-sa@melting-moments-cakes.iam.gserviceaccount.com" \
-  --role="roles/logging.logWriter"
-
-# The VM must be stopped before its service account can be changed.
-gcloud compute instances stop mm-backend \
-  --project=melting-moments-cakes \
-  --zone=me-central1-a
-
-# Attach the service account to the VM with both storage + logging scopes
-gcloud compute instances set-service-account mm-backend \
-  --project=melting-moments-cakes \
-  --zone=me-central1-a \
-  --service-account=mm-backup-sa@melting-moments-cakes.iam.gserviceaccount.com \
-  --scopes=https://www.googleapis.com/auth/devstorage.read_write,https://www.googleapis.com/auth/logging.write
-
-gcloud compute instances start mm-backend \
-  --project=melting-moments-cakes \
-  --zone=me-central1-a
+# Local retention is 7 days; offsite keeps 90, then ages out on its own so the
+# bucket cannot quietly become a bill.
+cat > lifecycle.json <<'EOF'
+{"rule": [{"action": {"type": "Delete"}, "condition": {"age": 90}}]}
+EOF
+gcloud storage buckets update gs://melting-moments-cakes-backups \
+  --lifecycle-file=lifecycle.json
 ```
 
-Then set `BACKUP_GCS_BUCKET=melting-moments-cakes-backups` in `.env`.
+**No dedicated service account.** This step used to create `mm-backup-sa` and
+re-attach it to the VM — which requires stopping the instance. That was not done,
+and it is not necessary: the VM runs as the project's default compute service
+account (`136865397988-compute@developer.gserviceaccount.com`), which holds
+`roles/editor` and can therefore already write to the bucket. The upload was
+verified end-to-end after the bucket existed.
+
+Worth doing later, but deliberately *not* done during the audit because it needs
+an instance stop: give the VM a dedicated account with `roles/storage.objectCreator`
+on this bucket only. `objectCreator` can add backups but not delete them, so a
+compromise of the VM cannot erase the offsite copies — which `roles/editor`
+currently can.
+
+`BACKUP_GCS_BUCKET=melting-moments-cakes-backups` is already set in `.env`.
+
+---
+
+## Step 8b: Boot-Disk Snapshot Schedule
+
+The database dump protects against a bad migration. It does not protect against
+losing the VM, and until 2026-08-21 nothing did — the project had zero snapshots
+and no schedule, so the dumps and the volume they came from shared one disk.
+
+```bash
+gcloud compute resource-policies create snapshot-schedule mm-backend-daily-snapshot \
+  --project=melting-moments-cakes \
+  --region=me-central1 \
+  --max-retention-days=14 \
+  --on-source-disk-delete=keep-auto-snapshots \
+  --daily-schedule \
+  --start-time=03:00 \
+  --storage-location=me-central1
+
+gcloud compute disks add-resource-policies mm-backend \
+  --project=melting-moments-cakes \
+  --zone=me-central1-a \
+  --resource-policies=mm-backend-daily-snapshot
+```
+
+03:00 UTC is deliberate: it is an hour after the backup cron in Step 9, so every
+snapshot contains a dump taken that morning.
 
 ---
 
 ## Step 9: Schedule Automated Backups (Cron)
 
-```bash
-# Make backup script executable
-chmod +x /opt/melting-moments-cakes/scripts/backup-db.sh
+> **History.** This too was documented and never installed. `crontab -l` was empty
+> for both users until 2026-08-21. Backups happened only because `deploy.yml` takes
+> one before migrating, which hid the gap behind a busy deploy cadence — a quiet
+> week was a week with no backup at all.
 
-# Open crontab
-crontab -e
+The crontab belongs to **`hussainabbasi786110`**, the user the deploy runs as and
+the owner of `backups/`. `crontab -e` as whoever you happen to be logged in as is
+how this gets installed into the wrong account and silently never runs:
+
+```bash
+sudo crontab -u hussainabbasi786110 -e
 ```
 
-Add this line (runs daily at 2 AM):
 ```
 0 2 * * * DEPLOY_DIR=/opt/melting-moments-cakes /opt/melting-moments-cakes/scripts/backup-db.sh >> /var/log/mm-backup.log 2>&1
 ```
 
-Test it manually:
-```bash
-DEPLOY_DIR=/opt/melting-moments-cakes /opt/melting-moments-cakes/scripts/backup-db.sh
-# Verify file appears in GCS:
-gsutil ls gs://melting-moments-cakes-backups/backups/
-```
+`/var/log/mm-backup.log` must exist and be owned by that user, and is rotated
+weekly by `/etc/logrotate.d/mm-backup` (8 weeks, compressed).
 
----
-
-## Step 9b: Cloudflare Tunnel (temporary — no domain yet)
-
-If you don't have the final domain yet, use a free Cloudflare Quick Tunnel to expose the API over HTTPS.
+**Test it the way cron will run it, not the way your shell will.** The difference
+is the whole reason the GCS upload never worked: `gcloud` lives in a home
+directory and is put on `PATH` by `.bashrc`, which non-interactive shells do not
+source. `backup-db.sh` now finds the SDK itself, and this is the check that proves
+it:
 
 ```bash
-# Install cloudflared on the VM
-curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
-sudo dpkg -i cloudflared.deb
+sudo -u hussainabbasi786110 env -i \
+  HOME=/home/hussainabbasi786110 PATH=/usr/bin:/bin SHELL=/bin/sh \
+  DEPLOY_DIR=/opt/melting-moments-cakes \
+  /bin/sh -c /opt/melting-moments-cakes/scripts/backup-db.sh
 
-# Run in background (survives SSH disconnect)
-nohup cloudflared tunnel --url http://localhost:8000 > ~/cloudflared.log 2>&1 &
-
-# Get the public URL
-tail -f ~/cloudflared.log
-# Look for a line like: https://xxxx-xxxx-xxxx.trycloudflare.com
+# The only proof that counts:
+gcloud storage ls -l gs://melting-moments-cakes-backups/backups/
 ```
 
-Use the printed URL as `NEXT_PUBLIC_API_URL` in Vercel — **with** the `/api/v1` suffix:
-```
-NEXT_PUBLIC_API_URL=https://xxxx-xxxx-xxxx.trycloudflare.com/api/v1
-```
+A backup that has never been restored is a hypothesis. To test one:
 
-> **Note:** The tunnel URL changes every time `cloudflared` restarts. Update the Vercel env var and redeploy when that happens. Once you have the real domain, follow Step 12 and use `https://api.meltingmomentscakes.com` instead.
-
-Also update `.env` on the VM to allow the Vercel preview URLs in CORS:
-```env
-CORS_ORIGINS=["https://<web>.vercel.app","https://<admin>.vercel.app"]
-ALLOWED_HOSTS=["*"]
-WEB_URL=https://<web>.vercel.app
-ADMIN_URL=https://<admin>.vercel.app
-```
-
-Restart the API after updating `.env`:
 ```bash
-docker compose -f docker-compose.prod.yml up -d api
+gcloud storage cp gs://melting-moments-cakes-backups/backups/<file>.sql.gz /tmp/t.sql.gz
+docker exec melting-moments-cakes-postgres-1 psql -U mm_user -d postgres -c "CREATE DATABASE restore_test;"
+gunzip -c /tmp/t.sql.gz | docker exec -i melting-moments-cakes-postgres-1 psql -U mm_user -d restore_test -q
+# compare row counts against the live database, then:
+docker exec melting-moments-cakes-postgres-1 psql -U mm_user -d postgres -c "DROP DATABASE restore_test;"
 ```
 
 ---
@@ -1179,6 +1191,24 @@ echo | openssl s_client -connect api.meltingmomentscakes.com:443 2>/dev/null | o
 
 **SSL renewal**: Handled automatically by the `certbot` container (runs every 12 hours).
 
-**Database backups**: Cron runs `scripts/backup-db.sh` daily at 2 AM, uploads to GCS, retains 7 days locally.
+**Database backups**: `hussainabbasi786110`'s cron runs `scripts/backup-db.sh` at
+02:00 UTC daily, keeping 7 days locally in `/opt/melting-moments-cakes/backups`
+and 90 days in `gs://melting-moments-cakes-backups` (aged out by a bucket
+lifecycle rule). `deploy.yml` takes an extra one before every migration. Verify
+offsite copies are still arriving with `gcloud storage ls -l
+gs://melting-moments-cakes-backups/backups/` — the local dumps existing proves
+nothing about the offsite ones, which is exactly how their absence went unnoticed
+for five months.
+
+**Disk snapshots**: `mm-backend-daily-snapshot` snapshots the boot disk at 03:00
+UTC, 14-day retention. This is what covers losing the VM itself; the dumps live
+on the same disk as the database and cannot.
+
+**Disk housekeeping**: `deploy.yml` prunes images and build cache older than 12h
+on every deploy, and caps the systemd journal at 200 MB. Container logs are
+capped by `/etc/docker/daemon.json` (`max-size: 10m`, `max-file: 3`) — without it
+a long-lived container's json log grows without bound, which one had done to
+27 MB. That file applies to containers created *after* it is written, so a
+container that predates it keeps its uncapped log until recreated.
 
 **Scaling**: If the e2-micro becomes a bottleneck, upgrade in-place: `gcloud compute instances set-machine-type mm-backend --machine-type=e2-small --zone=me-central1-a` (requires VM stop/start).

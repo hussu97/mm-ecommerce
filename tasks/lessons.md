@@ -1147,3 +1147,41 @@ with a bare `syntax error at or near ":"`, because SQLAlchemy's `text()` will
 not bind a parameter that is followed by `::`. Spell the cast `CAST(:new AS
 text)`, the way `010` already does. Nothing catches this without a real
 database — the API suite mocks it, and the migration file imports fine.
+
+---
+
+## A backup that has never been restored is a hypothesis (2026-08-21)
+
+Asked to audit VM resources and stale caches, the interesting finding was not
+disk at all. It was that the shop had been live five months with no offsite copy
+of its database, and that everything *looked* fine: `BACKUP_GCS_BUCKET` was set in
+`.env`, `backups/` was full of recent dumps, and `PRODUCTION.md` documented a cron
+and a bucket in confident detail. All three signals were about the local dumps.
+None of them said anything about the offsite ones, which did not exist.
+
+Three faults were each individually invisible and covered for one another: the
+bucket had never been created, `gcloud` was installed under a home directory and
+put on `PATH` by `.bashrc` — which `ssh host 'command'` never sources — so the
+upload branch never ran, and the resulting warning went to a deploy log nobody
+reads. The documentation described the intended state so plausibly that it read
+as evidence.
+
+**Rule:** verify the artefact at its destination, not the process that should
+have put it there. `gcloud storage ls` on the bucket was worth more than the
+script, the env var and the docs combined. And when a script's behaviour depends
+on the environment, test it in that environment — `env -i HOME=... PATH=/usr/bin:/bin`
+reproduced the cron failure that every interactive shell hid. Then restore the
+thing and diff row counts, because "the file uploaded" and "the file is a database"
+are different claims.
+
+**Corollary, on where a fix belongs:** a deploy runs `git reset --hard
+origin/main`. Fixes applied directly to the VM — the script patch, the
+`max_connections` bump — were both silently reverted by a deploy that landed
+mid-session. Anything under `/opt/melting-moments-cakes` is a working copy, not a
+place to change things. Config that lives outside git (crontab, `daemon.json`,
+GCP resources) survives; anything tracked has to go through a commit.
+
+**Also:** in `docker-compose.prod.yml`, the postgres `command: >` block is a
+folded scalar. A `#` line indented inside it is not a comment — it becomes an
+argument to postgres and the container will not start. Put the rationale above
+the `command:` key.
