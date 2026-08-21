@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { NextRequest } from 'next/server';
-import { proxy } from './proxy';
+import { config, proxy } from './proxy';
 
 /**
  * A visitor who lands on `/checkout` — from a shared link, a QR code, a browser
@@ -83,6 +83,37 @@ describe('locale routing', () => {
   });
 
   /**
+   * The Sentry tunnel is not a page either. It used to be answered with a 307
+   * to `/ar/monitoring`, which is `[locale]/[category]` rendering a category
+   * called "monitoring" — so every crash report the storefront filed was
+   * redirected into a product listing and thrown away, and the listing then
+   * asked the API for a category that does not exist. Thirty
+   * `GET /api/v1/categories/monitoring 404`s in twelve hours, one per report
+   * that never arrived.
+   */
+  it('leaves the Sentry tunnel alone in every language', () => {
+    const cases: Record<string, string>[] = [
+      {},
+      { 'accept-language': 'en-US,en;q=0.9' },
+      { 'accept-language': 'ar-AE,ar;q=0.9' },
+      { 'accept-language': 'fr-FR' },
+    ];
+    for (const headers of cases) {
+      expect(location(proxy(request('/monitoring', headers)))).toBeNull();
+    }
+  });
+
+  it('still sends a page whose slug merely starts with the tunnel path to a locale', () => {
+    // Matched exactly rather than as a prefix, so "monitoring" stays available
+    // as an ordinary word a slug may begin with.
+    for (const path of ['/monitoring-cakes', '/monitoringly']) {
+      expect(location(proxy(request(path, { 'accept-language': 'en' }))), path).toBe(
+        `https://meltingmomentscakes.com/en${path}`,
+      );
+    }
+  });
+
+  /**
    * The analytics prefix is an ordinary word, not a reserved one, so a slug can
    * legitimately begin with it. Skipping on the prefix alone would strand
    * `/vaguely-chocolate` at a 404 instead of sending it to a language.
@@ -92,6 +123,32 @@ describe('locale routing', () => {
       expect(location(proxy(request(path, { 'accept-language': 'en' }))), path).toBe(
         `https://meltingmomentscakes.com/en${path}`,
       );
+    }
+  });
+});
+
+/**
+ * The matcher, not the function.
+ *
+ * These two have to agree: the body returning `NextResponse.next()` only
+ * matters for a path the matcher let through in the first place, and a matcher
+ * that skips too much strands a real page on a 404 without the body ever
+ * getting a say. The anchor on `monitoring$` is the whole difference between
+ * those two failures, so it is asserted rather than read.
+ */
+describe('proxy matcher', () => {
+  const matches = (path: string) =>
+    config.matcher.some((m) => new RegExp(`^${m}$`).test(path));
+
+  it('skips the paths that are not pages', () => {
+    for (const path of ['/monitoring', '/vague/api/send', '/api/health', '/_next/static/x.js', '/logo.png']) {
+      expect(matches(path), path).toBe(false);
+    }
+  });
+
+  it('still runs for real pages, including ones that start with a reserved word', () => {
+    for (const path of ['/', '/checkout', '/cat-brownies', '/en/cat-brownies', '/monitoring-cakes', '/vaguely-chocolate']) {
+      expect(matches(path), path).toBe(true);
     }
   });
 });

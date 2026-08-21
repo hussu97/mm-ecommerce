@@ -52,10 +52,28 @@ export function proxy(request: NextRequest) {
   // nothing else can claim, but this one is an ordinary word: without the slash
   // it would also swallow any category or product slug that merely starts with
   // it, and strand that page on a 404 instead of sending it to a language.
+  //
+  // `/monitoring` is the same failure as `/vague/`, one layer over: it is the
+  // Sentry tunnel (`tunnelRoute` in `next.config.ts`, `tunnel` in
+  // `instrumentation-client.ts`), the path the browser posts crash reports to
+  // so an ad blocker cannot see them going to Sentry. It has no dot and no
+  // locale, so it fell through to the rule below and was answered with a 307 to
+  // `/ar/monitoring` — which is not the tunnel, it is `[locale]/[category]`
+  // rendering a category called "monitoring". Every crash report the storefront
+  // tried to file was redirected into a product listing and thrown away, and
+  // the listing then asked the API for a category that does not exist: thirty
+  // `GET /api/v1/categories/monitoring 404`s in twelve hours, one per report we
+  // never received.
+  //
+  // Matched exactly, not as a prefix. Sentry posts to `/monitoring` itself and
+  // carries the destination in the query string, so there is nothing below it
+  // to reserve — and an exact match leaves a slug like `monitoring-cakes` free
+  // to be an ordinary page, which is the trap described above.
   if (
     pathname.startsWith("/_next") ||
     pathname.startsWith("/api") ||
     pathname.startsWith("/vague/") ||
+    pathname === "/monitoring" ||
     pathname.startsWith("/images") ||
     pathname.startsWith("/favicon") ||
     pathname.includes(".")
@@ -90,5 +108,8 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next|api|vague/|images|favicon|.*\\..*).*)"],
+  // `monitoring$` rather than `monitoring`, for the reason spelled out above:
+  // anchored, so the Sentry tunnel is skipped and a page whose slug merely
+  // starts with the word is not.
+  matcher: ["/((?!_next|api|vague/|images|favicon|monitoring$|.*\\..*).*)"],
 };
