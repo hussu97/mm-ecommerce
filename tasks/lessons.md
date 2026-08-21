@@ -615,3 +615,43 @@ request.
 dead checkout button is the worst outcome available, and it is what payload
 drift always produces. Catching the refusal and opening a fresh session costs a
 duplicate that nothing can pay twice.
+
+---
+
+## A guarded migration that matches nothing looks exactly like one that worked
+
+**2026-08-21.** `118` rewrote the free-delivery figure across `cms_pages` and I
+reported it done. It was not: the same claim also sat in `ui_translations` as
+`promo_banner.text`, the strip across the top of every page on the site, in both
+languages. Deployed, went green, and left the most-read sentence the shop
+publishes still promising free delivery over AED 150 when the checkout gives it
+away at 75.
+
+`109` opens with the same admission about `107`, three months earlier, and even
+names `ui_translations` as the table `cms_pages` sweeps miss. I did not read it
+until after I had repeated it.
+
+Then the fix repeated the shape of the mistake. `121`'s first draft matched
+`key = 'promo_banner.text'`, which is the name the *site* uses — `i18n_service`
+builds it on the way out with `f"{t.namespace}.{t.key}"`. In the database those
+are two columns, `namespace='promo_banner'` and `key='text'`. It would have
+deployed green and changed nothing. It only surfaced because the throwaway
+database was seeded by the real migrations and disagreed with the fixture I had
+hand-written to match my own assumption.
+
+**Rule:** a content migration is only verified when it has been run against a
+row seeded by the migrations, in the state production is actually in. A fixture
+you wrote yourself tests your assumption, not the schema — and a guarded
+migration that matches nothing is indistinguishable from one that worked, from
+every angle except the site.
+
+**Rule:** the guard cuts both ways. `WHERE value = :old` is what stops the
+migration fighting the admin, and it is also what makes a wrong `WHERE` silent.
+So assert the *after* state, never just that the migration ran — and for content,
+assert it against the public endpoint the site reads rather than the table.
+
+**Corollary:** before writing a content migration, walk `/cms/public`,
+`/i18n/translations` and `/blog/public` for the string. That is how `109` found
+its own leftovers and it is the only method that has worked here. Grepping the
+repo finds the seed migrations, which are history — several have been superseded
+and the console has edited rows since.
