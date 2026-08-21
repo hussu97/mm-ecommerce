@@ -11519,6 +11519,8 @@ export interface components {
         PolygonResponse: {
             /** Alternate Providers */
             alternate_providers: string[];
+            /** Batch Group Id */
+            batch_group_id: string | null;
             /** Branch Id */
             branch_id: string | null;
             /** Delivery Fee */

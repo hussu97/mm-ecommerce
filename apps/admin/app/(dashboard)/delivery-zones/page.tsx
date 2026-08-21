@@ -611,6 +611,16 @@ function ZoneRow({
               chosen={zone.alternate_providers ?? []}
               onChange={alternate_providers => onChange({ alternate_providers })}
             />
+            {/* Changing the courier above detaches this zone from its run — a
+                run is one booking with one courier — and the API does it rather
+                than refusing, because nothing here can attach one back. So the
+                run has to be visible while somebody is editing the field that
+                drops it. */}
+            {zone.batch_group_id && (
+              <span className="text-[11px] font-body text-gray-500">
+                on a shared run — changing the courier takes it off
+              </span>
+            )}
           </div>
         )}
       </td>

@@ -80,6 +80,13 @@ class PolygonResponse(BaseModel):
     #: The kitchen that bakes this zone's orders and hands them to the courier.
     #: Null falls back to the single configured pickup branch.
     branch_id: str | None
+    #: The run this zone travels on, or null for one that leaves alone.
+    #:
+    #: Read-only here — no route attaches a zone to a group, only migrations do.
+    #: It is exposed because changing a zone's courier *detaches* it (a run is
+    #: one booking with one courier), and a setting that can be lost by editing
+    #: a neighbouring field has to be visible while somebody edits it.
+    batch_group_id: str | None
     display_order: int
     #: How many coordinates the outline has, so the admin can tell a hand-drawn
     #: box from a real boundary without fetching either.
@@ -97,6 +104,7 @@ class PolygonResponse(BaseModel):
             fulfilment_provider=p.fulfilment_provider,
             alternate_providers=list(p.alternate_providers or []),
             branch_id=str(p.branch_id) if p.branch_id else None,
+            batch_group_id=str(p.batch_group_id) if p.batch_group_id else None,
             display_order=p.display_order,
             point_count=_point_count(p.geometry),
         )
@@ -605,25 +613,29 @@ async def create_version(
             min_lng=polygon.min_lng,
             max_lng=polygon.max_lng,
             display_order=polygon.display_order,
+            # The run this zone travels on. A draft published without it does
+            # not fail: it quietly stops batching and starts sending every order
+            # on its own — the same orders, at several times the cost, with
+            # nothing on screen to say why.
+            #
+            # The group itself is deliberately **not** copied. Groups are not
+            # versioned — `DeliveryBatchWindow` says so in its own docstring —
+            # because unlike a fee, a wrong window delays a dispatch by an hour
+            # and is fixed by moving it, with anything still waiting rescheduled
+            # onto the corrected slot. So the copy points at the same group the
+            # source did, and `group_for_polygon` finds the same schedule
+            # through it.
+            #
+            # There used to be a loop below here that copied the *windows* into
+            # the draft, which read as though it covered this. It did not, and
+            # could not: it passed a polygon id to `_windows_of`, which filters
+            # on `group_id`, so it always matched nothing — and had it ever
+            # matched, it built a `DeliveryBatchWindow(polygon_id=...)`, a
+            # column that stopped existing when windows moved onto groups in
+            # `088`. A loop that never runs reads exactly like one that works.
+            batch_group_id=polygon.batch_group_id,
         )
         db.add(copy)
-        await db.flush()
-        # The batch schedule travels with the zone. A draft published without
-        # one would silently stop batching and start sending every order on its
-        # own — the same orders, at three times the cost, with nothing on
-        # screen to say why.
-        for window in await _windows_of(db, polygon.id):
-            db.add(
-                DeliveryBatchWindow(
-                    polygon_id=copy.id,
-                    label=window.label,
-                    start_hour=window.start_hour,
-                    start_minute=window.start_minute,
-                    end_hour=window.end_hour,
-                    end_minute=window.end_minute,
-                    is_active=window.is_active,
-                )
-            )
     await db.flush()
 
     await audit_service.log_action(
@@ -679,6 +691,9 @@ async def update_polygon(
         "fulfilment_provider": polygon.fulfilment_provider,
         "alternate_providers": list(polygon.alternate_providers or []),
         "branch_id": str(polygon.branch_id) if polygon.branch_id else None,
+        "batch_group_id": (
+            str(polygon.batch_group_id) if polygon.batch_group_id else None
+        ),
         "display_order": polygon.display_order,
     }
 
@@ -710,6 +725,30 @@ async def update_polygon(
                 f"Choose one of: {', '.join(sorted(allowed))}",
             )
         polygon.fulfilment_provider = data.fulfilment_provider
+        # A zone that changes courier leaves any run it was riding.
+        #
+        # "A run is one booking with one courier" — `assert_group_fits_polygon`
+        # says so, and until now this could not arise: a draft never carried a
+        # `batch_group_id`, because `create_version` dropped it. Now that the
+        # copy keeps it, changing a draft zone's courier can leave it pointed at
+        # a group that books somebody else, and nothing downstream would notice
+        # until the window closed and the booking was refused — an hour after
+        # anybody could have acted on it.
+        #
+        # Detached rather than refused, following the same reasoning the column
+        # already gives for its `SET NULL`: a zone with no run dispatches
+        # immediately, which costs a courier fare, and a zone pointed at a
+        # schedule it cannot use never goes out at all. There is also no route
+        # that attaches a zone to a group, so refusing here would make the
+        # courier field permanently uneditable on every batched zone.
+        #
+        # It lands in the audit entry below, because `batch_group_id` is in both
+        # the `before` and `to` dicts — so the one thing that must not be silent
+        # is not.
+        if polygon.batch_group_id is not None:
+            group = await db.get(DeliveryBatchGroup, polygon.batch_group_id)
+            if group is not None and group.courier_code != polygon.fulfilment_provider:
+                polygon.batch_group_id = None
     if data.alternate_providers is not None:
         allowed = {p.value for p in FulfilmentProviderEnum}
         unknown = [c for c in data.alternate_providers if c not in allowed]
@@ -761,6 +800,9 @@ async def update_polygon(
                 "fulfilment_provider": polygon.fulfilment_provider,
                 "alternate_providers": list(polygon.alternate_providers or []),
                 "branch_id": str(polygon.branch_id) if polygon.branch_id else None,
+                "batch_group_id": (
+                    str(polygon.batch_group_id) if polygon.batch_group_id else None
+                ),
                 "display_order": polygon.display_order,
             },
         },

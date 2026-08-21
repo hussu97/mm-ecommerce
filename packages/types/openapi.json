@@ -14752,6 +14752,17 @@
             "title": "Alternate Providers",
             "type": "array"
           },
+          "batch_group_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Group Id"
+          },
           "branch_id": {
             "anyOf": [
               {
@@ -14810,6 +14821,7 @@
           "fulfilment_provider",
           "alternate_providers",
           "branch_id",
+          "batch_group_id",
           "display_order",
           "point_count"
         ],

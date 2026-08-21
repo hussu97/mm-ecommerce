@@ -664,6 +664,13 @@ export interface DeliveryZone {
    * not them.
    */
   alternate_providers: FulfilmentProvider[];
+  /**
+   * The run this zone travels on, or null for one that leaves alone.
+   *
+   * Read-only — only a migration attaches a zone to a group. Shown because
+   * changing the courier detaches it: a run is one booking with one courier.
+   */
+  batch_group_id: string | null;
   display_order: number;
   point_count: number;
 }

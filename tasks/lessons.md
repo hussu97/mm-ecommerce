@@ -884,3 +884,38 @@ hard way.
 **Rule:** a loop that never executes reads exactly like a loop that works. When
 a copy path has a compensating block, check its filter actually matches — pass it
 a real id and count the rows — before trusting that it covers anything.
+
+## The compensating block is the first place to look, and the last place anyone does
+
+**2026-08-21, the follow-up to the copy-every-column lesson above.** Fixing
+`create_version` turned up more than the missing `batch_group_id`.
+
+The loop that appeared to carry the schedule into a draft had **two** independent
+faults, either of which alone would have made it useless: it passed a polygon id
+to `_windows_of`, which filters on `group_id`, so it always matched nothing; and
+it built a `DeliveryBatchWindow(polygon_id=...)` against a column that stopped
+existing when windows moved onto groups in `088`. Dead in two ways, next to a
+comment that described exactly the outcome its absence caused.
+
+`create_version` had **no test at all**. That is the actual reason this lived:
+not that the loop was subtle, but that nothing ever ran it.
+
+**Rule:** a block that exists to compensate for something is worth executing once
+by hand before believing it. Pass its filter a real id and count the rows. Two
+faults in nine lines is what "nobody has run this since the schema changed" looks
+like.
+
+**Rule:** the function that clones a versioned row deserves a test that asserts
+*every* column, by name, in a loop. Not the one you just added — all of them. It
+is the only shape of test that catches the next person's omission, and this
+codebase has now paid for the same omission twice (`free_delivery_threshold`
+carries its own comment about it).
+
+**Corollary, on fixes that open doors:** copying `batch_group_id` made a state
+reachable that never had been — a draft zone on a run, whose courier an admin can
+then change to one the run does not book. `assert_group_fits_polygon` existed for
+exactly that and had **no callers**, because nothing could reach the state. When
+a fix makes previously-dead validation reachable, wire it up in the same commit;
+and when you choose to degrade rather than refuse, check the operator can *see*
+what was dropped — a silent detach is the same class of bug as the silent drop
+being fixed.
