@@ -325,11 +325,11 @@ async def slider_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             return {"received": True}
 
         recorder.event_type = str(payload.get("status") or "").strip() or None
-        recorder.external_id = (
-            str(payload.get("id") or payload.get("delivery_id") or "") or None
-        )
+        # Theirs and ours, and they are not the same field. `order_number` is
+        # the handle Slider allocates; `order_id` is the reference we sent them.
+        recorder.external_id = str(payload.get("order_number") or "") or None
         recorder.order_number = (
-            str(payload.get("order_number") or payload.get("reference") or "") or None
+            str(payload.get("order_id") or payload.get("reference") or "") or None
         )
 
         if not _slider_token_is_valid(presented, settings.SLIDER_WEBHOOK_TOKEN):
@@ -415,12 +415,10 @@ async def slider_staging_webhook(request: Request, db: AsyncSession = Depends(ge
         recorder.payload = payload
         if isinstance(payload, dict):
             recorder.event_type = str(payload.get("status") or "").strip() or None
-            recorder.external_id = (
-                str(payload.get("id") or payload.get("delivery_id") or "") or None
-            )
+            # Theirs and ours — see the production endpoint above.
+            recorder.external_id = str(payload.get("order_number") or "") or None
             recorder.order_number = (
-                str(payload.get("order_number") or payload.get("reference") or "")
-                or None
+                str(payload.get("order_id") or payload.get("reference") or "") or None
             )
 
         if not _slider_token_is_valid(presented, settings.SLIDER_STAGING_WEBHOOK_TOKEN):

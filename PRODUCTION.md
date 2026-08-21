@@ -870,8 +870,8 @@ is a no-op for every customer but one, deliberately.
 
 | Secret | Value | Notes |
 |--------|-------|-------|
-| `SLIDER_API_KEY` | from the Slider dashboard | Sent as `X-Slider-Key` — their API ignores a Bearer token, and answers one exactly as it answers no credentials at all. Empty means every Slider zone falls back, exactly as an empty Lalamove or noon Send key does. Not an outage |
-| `SLIDER_ACCOUNT_ID` | from the Slider dashboard | Sent as `X-Account-Id` |
+| `SLIDER_API_KEY` | from the Slider dashboard | `sk_test_…` for the sandbox, `sk_live_…` for production — swap it and `SLIDER_ACCOUNT_ID` together with `SLIDER_ENV`. Sent as `X-Slider-Key` — their API ignores a Bearer token, and answers one exactly as it answers no credentials at all. Empty means every Slider zone falls back, exactly as an empty Lalamove or noon Send key does. Not an outage |
+| `SLIDER_ACCOUNT_ID` | from the Slider dashboard | Sent in the request **body** as `account_id`; an `X-Account-Id` header is ignored. **Environment-specific** — the sandbox account is not the production account, so this changes when `SLIDER_ENV` does, in step with the key |
 | `SLIDER_WEBHOOK_TOKEN` | a secret you generate | Set the same value in Slider's dashboard. **Enforced** — an empty token rejects every push, unlike `NOON_SEND_ENFORCE_WEBHOOK_KEY` |
 | `SLIDER_STAGING_WEBHOOK_TOKEN` | a second secret you generate | For the staging webhook, which is pointed at production on purpose. See below |
 | `SLIDER_TRIAL_EMAILS` | empty until the pilot starts | Then `h_abbasi97@hotmail.com`. Comma-separated |
@@ -937,6 +937,20 @@ so it is a window rather than an archive.
 5. Set `SLIDER_TRIAL_EMAILS`. The pilot begins, one account, and that one
    setting grants both halves at once.
 6. Empty the list to end it.
+
+> **Answered 2026-08-21 — the bike does cross an emirate boundary.** Their live
+> sandbox quotes Sharjah→Ajman (15.27 km) as `{"vehicle_type": "bike",
+> "is_available": true, "delivery_fee": 19.62}`, and their published reference
+> names exactly one bike constraint: a 35 km ceiling, with no emirate rule at
+> all. `slider_service.vehicle_for` still refuses a cross-emirate bike, so we
+> are booking cars we are not required to book — about AED 4 an order on this
+> route. **Left unchanged deliberately**: it moves what a customer is quoted and
+> which vehicle carries a cake, which is a commercial call, not a bug fix.
+>
+> **The API reference is `https://partners.slider-app.com/docs`.** Read it before
+> changing anything here. Four separate field-level bugs in the first cut of this
+> integration were all of the same kind — a plausible guess where a published
+> name existed.
 
 > **Open question, worth answering before step 5.** Can Slider's bike cross an
 > emirate boundary? Their `/deliveries/fare` says yes — it offered a bike for

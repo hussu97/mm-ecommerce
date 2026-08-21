@@ -305,7 +305,8 @@ class Settings(BaseSettings):
     #:
     #: Sent as `X-Slider-Key`. A Bearer token is ignored by their API.
     SLIDER_API_KEY: str = ""
-    #: The account the deliveries are booked against, sent as `X-Account-Id`.
+    #: The account the deliveries are booked against. Sent in the request
+    #: **body** as `account_id` — an `X-Account-Id` header is ignored.
     SLIDER_ACCOUNT_ID: str = ""
     #: `staging` or `production` — or an absolute `https://` origin, which wins
     #: over both. The two names resolve in `slider_provider.HOSTS`, confirmed

@@ -241,19 +241,29 @@ def _stop(
     latitude: float,
     longitude: float,
     address: str,
-    name: str = "",
     phone: str = "",
+    directions: str = "",
 ) -> dict[str, Any]:
-    """One end of a run, in the shape Slider wants it."""
+    """One end of a run, in the shape Slider wants it.
+
+    Their reference names four fields on a stop — `address`, `latitude`,
+    `longitude`, `directions`, `contact_number` — and no contact name. What we
+    used to send (`contact_phone`, `contact_name`) was neither read nor
+    rejected, which is the worst of both: a rider with no number to call and a
+    request that looked like it worked.
+
+    `directions` is where a customer's note belongs. It is the only free-text
+    field a rider is shown, and the fare/create endpoints have no `notes`.
+    """
     stop: dict[str, Any] = {
         "latitude": round(float(latitude), 7),
         "longitude": round(float(longitude), 7),
         "address": address[:250],
     }
-    if name:
-        stop["contact_name"] = name[:100]
     if phone:
-        stop["contact_phone"] = phone
+        stop["contact_number"] = phone
+    if directions:
+        stop["directions"] = directions[:250]
     return stop
 
 
@@ -261,31 +271,38 @@ def _fare(payload: dict[str, Any], vehicle: str) -> tuple[Decimal | None, float 
     """
     The price and the road distance out of one fare response, for one vehicle.
 
-    Written to tolerate their shape rather than to assert it. The tiers have
-    turned up both as top-level keys and nested under `vehicles`, and the money
-    field has been `fare`, `total` and `amount` across endpoints — none of which
-    changes the two numbers we need. An unavailable tier prices as nothing.
+    `vehicles` is a **list** of `{vehicle_type, is_available,
+    unavailable_reason, delivery_fee}`, matched on `vehicle_type`. It was read
+    here as a mapping keyed by vehicle, and the money as `fare`/`total`/
+    `amount`, so every tier priced as nothing and every Slider zone quietly
+    fell back to the courier it was meant to replace. An unavailable tier does
+    price as nothing, which is why the bug looked like ordinary behaviour.
     """
-    tiers = (
-        payload.get("vehicles")
-        if isinstance(payload.get("vehicles"), dict)
-        else payload
-    )
-    block = tiers.get(vehicle) if isinstance(tiers, dict) else None
+    tiers = payload.get("vehicles")
+    block = None
+    if isinstance(tiers, list):
+        block = next(
+            (
+                t
+                for t in tiers
+                if isinstance(t, dict)
+                and str(t.get("vehicle_type") or "").strip().lower() == vehicle
+            ),
+            None,
+        )
+    elif isinstance(tiers, dict):
+        # Tolerated, not expected. Their reference is unambiguous that this is a
+        # list; a mapping here would mean the shape changed under us.
+        block = tiers.get(vehicle)
     if not isinstance(block, dict):
         return None, None
     if block.get("is_available") is False:
         return None, None
 
-    cost = next(
-        (
-            aed(block.get(key))
-            for key in ("fare", "total", "amount")
-            if aed(block.get(key)) is not None
-        ),
-        None,
-    )
-    distance = block.get("distance_km", payload.get("distance_km"))
+    cost = aed(block.get("delivery_fee"))
+    # `distance_km` belongs to the run, not to a tier: it sits at the top level
+    # of the response and is the same number for bike and car.
+    distance = payload.get("distance_km", block.get("distance_km"))
     try:
         distance_km = float(distance) if distance is not None else None
     except (TypeError, ValueError):
@@ -303,7 +320,7 @@ async def _quote(
             longitude=pickup.longitude,
             address=pickup.address,
         ),
-        drop_off=_stop(
+        delivery=_stop(
             latitude=latitude,
             longitude=longitude,
             address=address or "",
@@ -502,21 +519,23 @@ def build_stops(
     if len(text) < 5:
         return None, None, "Order has no usable street address"
 
-    name = address_format.recipient_name(address) or order.order_number
+    # No contact name anywhere: their stop has `contact_number` and nothing to
+    # carry a name in. The recipient is identified to the rider by the address
+    # and by `display_order_id`.
     return (
         _stop(
             latitude=pickup.latitude,
             longitude=pickup.longitude,
             address=pickup.address,
-            name=pickup.name,
             phone=pickup.phone,
         ),
         _stop(
             latitude=latitude,
             longitude=longitude,
             address=text,
-            name=name,
             phone=phone,
+            # What the customer asked for, on the stop the rider is standing at.
+            directions=str(order.notes or "").strip(),
         ),
         None,
     )
@@ -595,18 +614,17 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
 
     try:
         created = await provider.create_delivery(
-            reference=reference,
+            # Ours, and the whole of their idempotency: there is no idempotency
+            # header in their reference, so a retry after a timeout is the same
+            # delivery to them only because this field repeats.
+            order_id=reference,
+            # What the rider is shown.
+            display_order_id=order.order_number,
             vehicle=vehicle,
             pickup=collect,
-            drop_off=drop,
+            dropoff=drop,
             cod_amount=float(outstanding) if is_cod else 0.0,
-            # What the customer asked for, and nothing else. Everything else a
-            # rider might want is already in the payload, and a gate code at the
-            # end of a truncated line is a gate code nobody reads.
-            notes=str(order.notes or "").strip() or None,
-            # The order number, so a retry after a timeout is the same delivery
-            # to them rather than a second rider to us.
-            idempotency_key=order.order_number,
+            cod_type="cash",
         )
     except SliderError as exc:
         delivery.last_error = f"Slider: {exc}"
@@ -617,9 +635,11 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
         logger.exception("Unexpected error dispatching %s", order.order_number)
         return delivery
 
-    delivery_id = (
-        created.get("id") or created.get("delivery_id") or created.get("reference")
-    )
+    # Their handle is `order_number`, a number. `id` / `delivery_id` /
+    # `reference` are not fields they return, so this used to find nothing and
+    # abandon a booking that had in fact been made. `order_id` is our own
+    # reference echoed back, deliberately not used as their id.
+    delivery_id = created.get("order_number")
     if not delivery_id:
         delivery.last_error = "Slider accepted the delivery but returned no id"
         return delivery
@@ -751,8 +771,16 @@ _ORDER_STATUS_FOR: dict[str, OrderStatusEnum] = {
 
 
 def _reference(payload: dict[str, Any]) -> str:
+    """**Our** reference off one of their pushes.
+
+    `order_id` is the field we filled on the way out, so it is the one that
+    comes back as ours. `order_number` is *theirs* — a number they allocate —
+    and reading it here matched Slider's handle against our
+    `courier_reference` column, which can never hit. Their handle is looked up
+    separately, against `courier_order_id`.
+    """
     return str(
-        payload.get("order_number")
+        payload.get("order_id")
         or payload.get("reference")
         or payload.get("order_reference")
         or ""
@@ -774,7 +802,7 @@ def _event_id(payload: dict[str, Any]) -> str:
     genuine retry reproduces all three; a real transition changes at least one.
     """
     return (
-        f"slider:{_reference(payload) or payload.get('id')}:"
+        f"slider:{_reference(payload) or payload.get('order_number')}:"
         f"{_status(payload)}:{payload.get('timestamp') or payload.get('updated_at')}"
     )
 
@@ -783,7 +811,7 @@ async def _delivery_for(
     db: AsyncSession, payload: dict[str, Any]
 ) -> OrderDelivery | None:
     """The delivery this push is about, by Slider's id or by our own reference."""
-    delivery_id = payload.get("id") or payload.get("delivery_id")
+    delivery_id = payload.get("order_number")
     if delivery_id:
         found = (
             (
@@ -840,9 +868,7 @@ async def _delivery_for(
 async def handle_webhook(db: AsyncSession, payload: dict[str, Any]) -> dict[str, Any]:
     """Deduplicate and apply one status push from Slider."""
     status = _status(payload)
-    if not _reference(payload) and not (
-        payload.get("id") or payload.get("delivery_id")
-    ):
+    if not _reference(payload) and not payload.get("order_number"):
         raise SliderError("Webhook names no delivery")
 
     inserted = await db.execute(
@@ -898,7 +924,7 @@ async def apply_webhook(
             return delivery
 
     delivery.last_payload = payload
-    if delivery_id := (payload.get("id") or payload.get("delivery_id")):
+    if delivery_id := payload.get("order_number"):
         delivery.courier_order_id = str(delivery_id)
     if tracking := (payload.get("tracking_url") or payload.get("tracking_link")):
         delivery.share_link = str(tracking)
@@ -909,7 +935,7 @@ async def apply_webhook(
         db,
         delivery,
         driver_assignment.Driver.from_slider(
-            payload.get("rider") or payload.get("driver")
+            payload.get("driver_info") or payload.get("driver") or payload.get("rider")
         ),
         at=updated_at,
     )

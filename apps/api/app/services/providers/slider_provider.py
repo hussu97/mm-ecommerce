@@ -182,7 +182,6 @@ class SliderClient:
         path: str,
         *,
         json_body: dict[str, Any] | None = None,
-        idempotency_key: str | None = None,
         timeout: float | None = None,
         attempts: int = 2,
     ) -> Any:
@@ -204,10 +203,12 @@ class SliderClient:
             # answers 403 and the failure reads as a rejected key.
             "User-Agent": USER_AGENT,
         }
-        if config.account_id:
-            headers["X-Account-Id"] = config.account_id
-        if idempotency_key:
-            headers["Idempotency-Key"] = idempotency_key
+        # No `X-Account-Id`, and no `Idempotency-Key`. Neither appears in their
+        # reference, and the account header is provably ignored: with it set and
+        # `account_id` absent from the body, `/deliveries/fare` still answers
+        # "account_id or order_number is required". The account travels in the
+        # body on every endpoint that wants it, and `order_id` is what makes a
+        # repeated create the same delivery to them.
 
         last: Exception | None = None
         for attempt in range(attempts):
@@ -244,15 +245,22 @@ class SliderClient:
         self,
         *,
         pickup: dict[str, Any],
-        drop_off: dict[str, Any],
+        delivery: dict[str, Any],
     ) -> dict[str, Any]:
         """
         POST /deliveries/fare — what each vehicle tier would cost for this run.
 
-        The answer is keyed by vehicle (`bike`, `car`), each block carrying an
-        availability flag, a fare and the road distance Slider bills against.
-        That distance is the number worth having: it is measured, where ours is
-        a straight line times a fitted factor.
+        Their reference names the drop `delivery`, not `drop_off`, and wants
+        `account_id` in the body. Both were wrong here and both failed loudly
+        rather than silently, which is the only mercy in it: the drop under any
+        other key answers "The delivery field is required".
+
+        The answer is `{distance_km, duration_minutes, vehicles: [...]}`, and
+        `vehicles` is a **list** of `{vehicle_type, is_available,
+        unavailable_reason, delivery_fee}` — not a mapping keyed by vehicle.
+        `distance_km` is top level and belongs to the run, not to a tier. That
+        distance is the number worth having: it is measured, where ours is a
+        straight line times a fitted factor.
 
         **This is not a coverage check.** It priced Riyadh, Muscat and Liwa
         happily. Treat a fare as a price and nothing more.
@@ -261,7 +269,11 @@ class SliderClient:
             await self._call(
                 "POST",
                 "/deliveries/fare",
-                json_body={"pickup": pickup, "drop_off": drop_off},
+                json_body={
+                    "account_id": self.config.account_id,
+                    "pickup": pickup,
+                    "delivery": delivery,
+                },
             )
             or {}
         )
@@ -269,13 +281,15 @@ class SliderClient:
     async def create_delivery(
         self,
         *,
-        reference: str,
+        order_id: str,
         vehicle: str,
         pickup: dict[str, Any],
-        drop_off: dict[str, Any],
+        dropoff: dict[str, Any],
+        display_order_id: str | None = None,
         cod_amount: float = 0.0,
-        notes: str | None = None,
-        idempotency_key: str | None = None,
+        cod_type: str = "cash",
+        driver_tip: float = 0.0,
+        schedule_at: str | None = None,
     ) -> dict[str, Any]:
         """
         POST /deliveries — a rider is dispatched to the kitchen.
@@ -284,41 +298,51 @@ class SliderClient:
         treats `SliderError.is_unserviceable` as "book somebody else" rather
         than as a failure to report.
 
-        The idempotency key defaults to the reference so that a retried request
-        after a timeout is the same delivery to them rather than a second rider
-        to us.
+        `order_id` is ours and is what makes a retry after a timeout the same
+        delivery to them rather than a second rider to us — there is no
+        idempotency header in their reference, so this field is the whole of it.
+        `display_order_id` is what the rider is shown.
+
+        Note `dropoff`, one word: `drop_off` is silently not the field they
+        read. Cash on delivery is `payment_on_delivery: {type, amount}` rather
+        than a scalar, and their ceilings are AED 350 cash / AED 500 card —
+        exceeding one is a 422, which `is_unserviceable` would otherwise read as
+        "out of area" and quietly hand to another courier.
         """
         body: dict[str, Any] = {
-            "reference": reference,
+            "order_id": order_id,
+            "account_id": self.config.account_id,
             "vehicle_type": vehicle,
             "pickup": pickup,
-            "drop_off": drop_off,
+            "dropoff": dropoff,
         }
+        if display_order_id:
+            body["display_order_id"] = display_order_id
         if cod_amount:
-            body["cod_amount"] = cod_amount
-        if notes:
-            body["notes"] = notes[:250]
+            body["payment_on_delivery"] = {
+                "type": cod_type,
+                "amount": round(float(cod_amount), 2),
+            }
+        if driver_tip:
+            body["driver_tip"] = round(float(driver_tip), 2)
+        if schedule_at:
+            body["schedule_at"] = schedule_at
+        return await self._call("POST", "/deliveries", json_body=body) or {}
+
+    async def get_delivery(self, order_number: str) -> dict[str, Any]:
+        """GET /deliveries/{order_number} — status, rider, tracking link.
+
+        Keyed by **their** `order_number` from the create response, not by ours
+        and not by an `id` field, which they do not return.
+        """
+        return await self._call("GET", f"/deliveries/{order_number}") or {}
+
+    async def cancel_delivery(self, order_number: str) -> dict[str, Any]:
+        """DELETE /deliveries/{order_number} — before the parcel is collected."""
         return (
             await self._call(
-                "POST",
-                "/deliveries",
-                json_body=body,
-                idempotency_key=idempotency_key or reference,
-            )
-            or {}
-        )
-
-    async def get_delivery(self, delivery_id: str) -> dict[str, Any]:
-        """GET /deliveries/{id} — status, rider details, tracking link."""
-        return await self._call("GET", f"/deliveries/{delivery_id}") or {}
-
-    async def cancel_delivery(self, delivery_id: str) -> dict[str, Any]:
-        """POST /deliveries/{id}/cancel — only before the parcel is collected."""
-        return (
-            await self._call(
-                "POST",
-                f"/deliveries/{delivery_id}/cancel",
-                idempotency_key=f"cancel-{delivery_id}",
+                "DELETE",
+                f"/deliveries/{order_number}",
             )
             or {}
         )

@@ -119,10 +119,28 @@ def test_thirty_five_road_km_is_not_thirty_five_straight_line(monkeypatch):
 
 # ── the fare response ─────────────────────────────────────────────────────────
 
+#: Verbatim from the sandbox, 2026-08-21. `vehicles` is a **list** keyed by
+#: `vehicle_type`, the money is `delivery_fee`, and `distance_km` is top level
+#: and shared by both tiers. Read as a mapping with a `fare` key — which is what
+#: this fixture used to assert — every tier prices as nothing and every Slider
+#: zone silently falls back to the courier it was meant to replace.
 FARE = {
     "distance_km": 12.4,
-    "bike": {"is_available": True, "fare": "18.50", "distance_km": 12.4},
-    "car": {"is_available": True, "fare": "26.00", "distance_km": 12.4},
+    "duration_minutes": 19,
+    "vehicles": [
+        {
+            "vehicle_type": "bike",
+            "is_available": True,
+            "unavailable_reason": None,
+            "delivery_fee": 18.50,
+        },
+        {
+            "vehicle_type": "car",
+            "is_available": True,
+            "unavailable_reason": None,
+            "delivery_fee": 26.00,
+        },
+    ],
 }
 
 
@@ -132,19 +150,32 @@ def test_a_fare_is_read_for_the_tier_that_was_asked_for():
 
 
 def test_an_unavailable_tier_prices_as_nothing():
-    payload = {"bike": {"is_available": False, "fare": "18.50"}}
+    payload = {
+        "distance_km": 12.4,
+        "vehicles": [
+            {
+                "vehicle_type": "bike",
+                "is_available": False,
+                "unavailable_reason": "out of range",
+                "delivery_fee": None,
+            }
+        ],
+    }
     assert slider_service._fare(payload, "bike") == (None, None)
 
 
-def test_the_tiers_are_read_whether_or_not_they_are_nested():
-    """Both shapes have turned up. Neither changes the two numbers we need."""
-    nested = {"vehicles": {"car": {"is_available": True, "total": "26.00"}}}
-    assert slider_service._fare(nested, "car")[0] == Decimal("26.00")
+def test_the_distance_is_taken_from_the_run_and_not_from_the_tier():
+    """It is one number for both tiers, and it sits at the top level."""
+    bike_cost, bike_km = slider_service._fare(FARE, "bike")
+    car_cost, car_km = slider_service._fare(FARE, "car")
+    assert bike_km == car_km == 12.4
+    assert bike_cost != car_cost
 
 
 def test_a_missing_tier_is_not_a_crash():
     assert slider_service._fare({}, "bike") == (None, None)
-    assert slider_service._fare({"bike": "nonsense"}, "bike") == (None, None)
+    assert slider_service._fare({"vehicles": "nonsense"}, "bike") == (None, None)
+    assert slider_service._fare({"vehicles": ["nonsense"]}, "bike") == (None, None)
 
 
 # ── the money ceilings ────────────────────────────────────────────────────────
@@ -392,7 +423,14 @@ async def test_every_request_names_itself(monkeypatch):
     # Their API ignores a Bearer token outright, so sending one alongside would
     # read as belt-and-braces while doing nothing. It must not come back.
     assert "Authorization" not in seen
-    assert seen["X-Account-Id"] == "acct_1"
+    # No account header. It is not in their reference and is provably ignored:
+    # with it set and `account_id` absent from the body, /deliveries/fare still
+    # answers "account_id or order_number is required". The account travels in
+    # the body.
+    assert "X-Account-Id" not in seen
+    # Nor an idempotency header — they document none. `order_id` is the whole of
+    # it, and it lives in the create body.
+    assert "Idempotency-Key" not in seen
 
 
 @pytest.mark.asyncio
@@ -535,15 +573,23 @@ def booked(monkeypatch, pickup):
     slider_service.clear_caches()
     sent: dict = {}
 
-    async def fare(*, pickup, drop_off):
+    async def fare(*, pickup, delivery):
         return FARE
 
     async def create_delivery(**kwargs):
         sent.update(kwargs)
+        # Their create response: `order_number` is the handle, and there is no
+        # `id` field anywhere in it.
         return {
-            "id": "SLD-4820193",
+            "order_number": 4820193,
+            "order_id": "4820193",
             "status": "searching_rider",
-            "tracking_url": "https://track.slider.test/SLD-4820193",
+            "vehicle_type": "bike",
+            "fare": 18.50,
+            "currency": "AED",
+            "distance_km": 12.4,
+            "tracking_url": "https://track.slider.test/4820193",
+            "created_at": "2026-08-21T15:00:00Z",
         }
 
     async def get_delivery(db, order_id):
@@ -632,9 +678,9 @@ async def test_a_booking_records_the_id_the_tracking_link_and_nothing_else(booke
     db = _Db(_row())
     delivery = await slider_service.dispatch_order(db, _order())
 
-    assert delivery.courier_order_id == "SLD-4820193"
+    assert delivery.courier_order_id == "4820193"
     assert delivery.courier_status == "searching_rider"
-    assert delivery.share_link == "https://track.slider.test/SLD-4820193"
+    assert delivery.share_link == "https://track.slider.test/4820193"
     assert delivery.last_error is None
     # `courier_service._record_outcome` owns the retry ladder, once, on the way
     # out. A provider that touched it would let a rung be skipped depending on
@@ -661,12 +707,15 @@ async def test_a_refusal_leaves_the_error_and_no_id_and_no_commit(booked, monkey
 
 
 @pytest.mark.asyncio
-async def test_a_failed_fare_call_still_books_but_records_no_cost(booked, monkeypatch):
+async def test_a_failed_fare_call_still_books_and_prices_off_the_booking(
+    booked, monkeypatch
+):
     """
     The booking is what matters; the price is what we would like. A fare call
-    that failed leaves the cost columns empty rather than filling them with
-    something computed — unlike noon Send, who publish a rate card and no API,
-    Slider quotes, so a figure on this row is always one of theirs.
+    that failed does not leave the cost unknown, because their create response
+    carries `fare` itself — so the figure on this row is still one of theirs,
+    never something we computed. Unlike noon Send, who publish a rate card and
+    no API, Slider quotes at both ends.
     """
 
     async def unreachable(**_kwargs):
@@ -676,10 +725,35 @@ async def test_a_failed_fare_call_still_books_but_records_no_cost(booked, monkey
     db = _Db(_row())
     delivery = await slider_service.dispatch_order(db, _order())
 
-    assert delivery.courier_order_id == "SLD-4820193"
-    assert delivery.cost_total is None
+    assert delivery.courier_order_id == "4820193"
+    # Off the create response, not off the quote that never arrived.
+    assert delivery.cost_total == Decimal("18.50")
+    assert delivery.price_breakdown["is_estimate"] is False
     # And the vehicle still had to be chosen, from the fitted distance.
     assert booked["vehicle"] == "car"
+
+
+@pytest.mark.asyncio
+async def test_a_booking_that_prices_nowhere_records_no_cost(booked, monkeypatch):
+    """
+    Both ends silent is the only case that leaves the cost columns empty. It
+    fills them with nothing rather than with something computed: a number here
+    has to be billable, or the margin report is fiction.
+    """
+
+    async def unreachable(**_kwargs):
+        raise SliderError("Slider is unreachable")
+
+    async def priceless(**kwargs):
+        return {"order_number": 4820193, "status": "searching_rider"}
+
+    monkeypatch.setattr(slider_service.provider, "fare", unreachable)
+    monkeypatch.setattr(slider_service.provider, "create_delivery", priceless)
+    db = _Db(_row())
+    delivery = await slider_service.dispatch_order(db, _order())
+
+    assert delivery.courier_order_id == "4820193"
+    assert delivery.cost_total is None
 
 
 @pytest.mark.asyncio
@@ -964,17 +1038,18 @@ async def test_a_lost_push_can_be_asked_for(booked, inbound, monkeypatch):
     integration does.
     """
 
-    async def details(delivery_id):
-        assert delivery_id == "SLD-4820193"
+    async def details(order_number):
+        assert order_number == "4820193"
         return {
-            "id": delivery_id,
+            "order_number": int(order_number),
+            "order_id": order_number,
             "status": "delivered",
-            "rider": {"id": "r_88", "name": "Imran"},
+            "driver": {"name": "Imran", "phone_number": "+971500000088"},
         }
 
     monkeypatch.setattr(slider_service.provider, "get_delivery", details)
     db = _Db(_row())
-    db.delivery.courier_order_id = "SLD-4820193"
+    db.delivery.courier_order_id = "4820193"
     db.delivery.courier_status = "in_transit"
 
     result = await slider_service.refresh(db, db.delivery.order_id)

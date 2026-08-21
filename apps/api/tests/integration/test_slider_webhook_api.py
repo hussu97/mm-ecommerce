@@ -42,12 +42,25 @@ HEADER = "X-Slider-Token"
 URL = "/api/v1/webhooks/slider"
 STAGING_URL = "/api/v1/webhooks/slider/staging"
 
+#: Their status push, in the shape their reference documents. Note which way
+#: round the two identifiers go: `order_number` is the handle **Slider**
+#: allocates, `order_id` is the reference **we** sent on the create. This
+#: fixture had them swapped, and with them swapped the reference lookup
+#: searched our `courier_reference` column for Slider's number.
 PUSH = {
-    "id": "SLD-4820193",
-    "order_number": "MM-1001",
+    "order_number": 4820193,
+    "order_id": "MM-1001",
     "status": "delivered",
+    "estimated_delivery_time": None,
+    "tracking_link": "https://track.slider.test/4820193",
+    "driver_info": {
+        "name": "Imran",
+        "phone_number": "+971509876543",
+        "latitude": 25.3463,
+        "longitude": 55.4209,
+        "vehicle": "Honda PCX",
+    },
     "timestamp": "2026-08-21T10:14:00Z",
-    "rider": {"id": "r_88", "name": "Imran", "phone": "+971509876543"},
 }
 
 
@@ -189,7 +202,7 @@ class TestTheRequestIsWrittenDown:
         assert row.provider == "slider"
         assert row.endpoint == "status"
         assert row.event_type == "delivered"
-        assert row.external_id == "SLD-4820193"
+        assert row.external_id == "4820193"
         assert row.order_number == "MM-1001"
         assert row.payload == PUSH
         assert row.signature_valid is True
@@ -231,7 +244,7 @@ def a_real_order(mock_db):
     delivery = OrderDelivery(
         order_id=order.id,
         provider="slider",
-        courier_order_id="SLD-4820193",
+        courier_order_id="4820193",
         courier_status="in_transit",
     )
 

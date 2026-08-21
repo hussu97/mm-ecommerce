@@ -111,19 +111,33 @@ class Driver:
     @classmethod
     def from_slider(cls, rider: dict | None) -> Driver:
         """
-        Slider's rider block, which does carry an id.
+        Slider's `driver_info`, which carries no id.
 
         Their status webhook names the rider inline, so unlike noon Send there
         is no second call to make to find out who is holding the parcel. The
         block is absent until somebody accepts the job, and an absent one is the
         ordinary state of a delivery still searching rather than an error.
+
+        It holds `{name, phone_number, latitude, longitude, vehicle}` — no id,
+        despite an earlier reading of it here — so identity falls to the phone
+        number, exactly as it does for noon Send. `vehicle` is a description
+        rather than a plate, and is kept in `plate` because that is the field
+        the slip prints and a description beats a blank.
         """
         rider = rider or {}
         return cls(
+            # Their `driver_info` carries no id — `{name, phone_number,
+            # latitude, longitude, vehicle}` and nothing else — so the phone is
+            # the identity. `record` matches on name/phone when the id is
+            # absent, which is the case this relies on.
             driver_id=_clean(rider.get("id") or rider.get("rider_id")),
             name=_clean(rider.get("name")),
-            phone=_clean(rider.get("phone") or rider.get("phone_number")),
-            plate=_clean(rider.get("plate_number") or rider.get("vehicle_number")),
+            phone=_clean(rider.get("phone_number") or rider.get("phone")),
+            plate=_clean(
+                rider.get("vehicle")
+                or rider.get("plate_number")
+                or rider.get("vehicle_number")
+            ),
         )
 
 
