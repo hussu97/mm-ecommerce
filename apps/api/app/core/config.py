@@ -302,6 +302,8 @@ class Settings(BaseSettings):
     #: Ajman, Dubai and Umm al-Quwain zones its car costs about AED 0.94 an
     #: order more than Lalamove; Ajman alone is cheaper on every measured area,
     #: because Lalamove's 17 AED base is high and Ajman is close.
+    #:
+    #: Sent as `X-Slider-Key`. A Bearer token is ignored by their API.
     SLIDER_API_KEY: str = ""
     #: The account the deliveries are booked against, sent as `X-Account-Id`.
     SLIDER_ACCOUNT_ID: str = ""

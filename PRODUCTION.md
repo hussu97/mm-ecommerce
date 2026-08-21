@@ -870,7 +870,7 @@ is a no-op for every customer but one, deliberately.
 
 | Secret | Value | Notes |
 |--------|-------|-------|
-| `SLIDER_API_KEY` | from the Slider dashboard | Empty means every Slider zone falls back, exactly as an empty Lalamove or noon Send key does. Not an outage |
+| `SLIDER_API_KEY` | from the Slider dashboard | Sent as `X-Slider-Key` — their API ignores a Bearer token, and answers one exactly as it answers no credentials at all. Empty means every Slider zone falls back, exactly as an empty Lalamove or noon Send key does. Not an outage |
 | `SLIDER_ACCOUNT_ID` | from the Slider dashboard | Sent as `X-Account-Id` |
 | `SLIDER_WEBHOOK_TOKEN` | a secret you generate | Set the same value in Slider's dashboard. **Enforced** — an empty token rejects every push, unlike `NOON_SEND_ENFORCE_WEBHOOK_KEY` |
 | `SLIDER_STAGING_WEBHOOK_TOKEN` | a second secret you generate | For the staging webhook, which is pointed at production on purpose. See below |
@@ -894,6 +894,16 @@ gh secret set SLIDER_WEBHOOK_TOKEN --repo hussu97/mm-ecommerce
 gh secret set SLIDER_STAGING_WEBHOOK_TOKEN --repo hussu97/mm-ecommerce
 gh secret set SLIDER_TRIAL_EMAILS --repo hussu97/mm-ecommerce
 ```
+
+> **Blocked on Slider, 2026-08-21 — the production VM's IP is refused.** The
+> API answers `34.18.98.2` (the GCP VM) with a `403` nginx page for the same
+> request it answers from elsewhere with a normal `401` JSON — credentials or
+> no credentials, so it is the source IP and not the key. **Slider must
+> allowlist `34.18.98.2`** before a booking can succeed from production.
+>
+> Do not read this 403 as the `User-Agent` one described in the provider's
+> module docstring. That 403 is cured by sending a UA; this one persists with
+> it. Two failures of the same shape and different causes.
 
 **Two things to fix in the Slider dashboard first.**
 

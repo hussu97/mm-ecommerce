@@ -388,7 +388,10 @@ async def test_every_request_names_itself(monkeypatch):
     await _client(None)._call("GET", "/deliveries/1")
 
     assert seen["User-Agent"] == slider_provider.USER_AGENT
-    assert seen["Authorization"] == "Bearer test-key"
+    assert seen["X-Slider-Key"] == "test-key"
+    # Their API ignores a Bearer token outright, so sending one alongside would
+    # read as belt-and-braces while doing nothing. It must not come back.
+    assert "Authorization" not in seen
     assert seen["X-Account-Id"] == "acct_1"
 
 

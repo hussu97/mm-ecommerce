@@ -191,7 +191,14 @@ class SliderClient:
             raise SliderError("Slider is not configured")
 
         headers = {
-            "Authorization": f"Bearer {config.api_key}",
+            # `X-Slider-Key`, not `Authorization: Bearer`. Verified against the
+            # sandbox on 2026-08-21: a Bearer token is ignored outright — the
+            # reply to it is byte-identical to sending no credentials at all
+            # ("Unauthorized: X-Slider-Key header is required"), where a wrong
+            # value in this header earns a different error ("Invalid
+            # X-Slider-Key"). A scheme they ignore fails as an auth error that
+            # reads like a bad key, so it is worth naming here.
+            "X-Slider-Key": config.api_key,
             "Accept": "application/json",
             # Not decoration. See the module docstring: without this their WAF
             # answers 403 and the failure reads as a rejected key.
