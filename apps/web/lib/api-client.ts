@@ -32,22 +32,103 @@ export class ApiError extends Error {
 
 // ─── Session helpers ──────────────────────────────────────────────────────────
 
-export function getSessionId(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('mm_session_id');
+/**
+ * The guest session id, held in memory as well as in `localStorage`.
+ *
+ * `localStorage` is the durable copy and stays the one that matters — it is
+ * what lets a basket survive a reload. The in-memory copy exists because it can
+ * go away underneath us: the Instagram in-app browser evicts storage
+ * mid-session, and some privacy modes make `setItem` throw outright. Either way
+ * the old code answered `null`, `request()` sent no `X-Session-Id`, and the API
+ * had no idea whose basket it was being asked about — which is how four
+ * customers' items ended up in one shared cart (see migration 117).
+ *
+ * A tab-lifetime id is not as good as a persisted one. It is enormously better
+ * than none: the shopper keeps their own basket for as long as they are
+ * shopping, instead of being handed a stranger's.
+ */
+let memorySessionId: string | null = null;
+
+function storedSessionId(): string | null {
+  try {
+    return localStorage.getItem('mm_session_id');
+  } catch {
+    // Storage disabled by the browser, not merely empty. Not an error state
+    // worth reporting — it is a setting, and the fallback below handles it.
+    return null;
+  }
 }
 
+export function getSessionId(): string | null {
+  if (typeof window === 'undefined') return null;
+  return storedSessionId() ?? memorySessionId;
+}
+
+/**
+ * A new guest session id, on a browser that may not have the good API.
+ *
+ * `crypto.randomUUID` is the right answer and is what this returns whenever it
+ * exists. It is not, however, something to call unguarded from `request()`:
+ * it needs a secure context and Safari only got it in 15.4, so on an older
+ * iPhone the bare call throws — and since `request()` is the funnel for
+ * *every* endpoint the storefront has, that would take the product grid and
+ * the translations down with the basket. The old code got away with calling it
+ * unguarded because it only ran from `CartProvider`, where a throw cost the
+ * cart and nothing else.
+ *
+ * Each fallback is narrower than the one above it and all of them are wide
+ * enough that two shoppers do not collide, which is the only property that
+ * actually matters here — a collision is the shared-basket bug all over again.
+ */
+function newSessionId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return 'sess_' + crypto.randomUUID().replace(/-/g, '');
+    }
+  } catch {
+    // Present but refusing — a non-secure context. Try the older API.
+  }
+
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      return (
+        'sess_' +
+        Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+      );
+    }
+  } catch {
+    // No usable crypto at all. Below is not a security boundary — a session id
+    // is not a credential, it only has to be unlikely to repeat.
+  }
+
+  const rand = () => Math.random().toString(36).slice(2, 10);
+  return `sess_${Date.now().toString(36)}${rand()}${rand()}${rand()}`;
+}
+
+/**
+ * Never throws. `request()` calls this on every request the storefront makes,
+ * so a throw here is the whole site rather than one basket.
+ */
 export function ensureSessionId(): string {
-  let id = getSessionId();
-  if (!id) {
-    id = 'sess_' + crypto.randomUUID().replace(/-/g, '');
+  const id = getSessionId() || newSessionId();
+  memorySessionId = id;
+  try {
     localStorage.setItem('mm_session_id', id);
+  } catch {
+    // Kept in memory above, so this page's basket is still coherent.
   }
   return id;
 }
 
 export function clearSessionId(): void {
-  localStorage.removeItem('mm_session_id');
+  memorySessionId = null;
+  try {
+    localStorage.removeItem('mm_session_id');
+  } catch {
+    // Nothing was stored, so there is nothing to retire.
+  }
 }
 
 // ─── Refresh access token ─────────────────────────────────────────────────────
@@ -74,7 +155,19 @@ async function refreshAccessToken(): Promise<boolean> {
 // ─── Core fetch ───────────────────────────────────────────────────────────────
 
 async function request<T>(path: string, options: RequestInit = {}, _retry = true): Promise<T> {
-  const sessionId = getSessionId();
+  /**
+   * `ensure`, not `get`. Reading it meant every call site inherited whatever
+   * `localStorage` happened to hold at that moment, and only `CartProvider`'s
+   * mount and `refreshCart` ever put anything there. A shopper whose storage
+   * was evicted after mount then had `addItem` and `updateItem` go out with no
+   * identity at all while reads quietly re-minted one — which is exactly the
+   * asymmetry seen in production, where `GET /cart` was 49-for-49 and the
+   * quantity stepper answered 400.
+   *
+   * Minting it here costs nothing when one already exists and means no request
+   * in this file can be the one that forgets.
+   */
+  const sessionId = ensureSessionId();
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',

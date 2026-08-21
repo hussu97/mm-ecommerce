@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import false, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -38,6 +38,7 @@ __all__ = [
     "merge",
     "remember_checkout_email",
     "remove_item",
+    "require_identity",
     "touch",
     "update_item",
     "update_item_note",
@@ -386,8 +387,7 @@ async def get_or_create(
     user_id: uuid.UUID | None = None,
     session_id: str | None = None,
 ) -> CartResponse:
-    if not user_id and not session_id:
-        raise BadRequestError("Either user_id or session_id is required")
+    require_identity(user_id, session_id)
 
     cart = await get_or_create_cart(
         db, user_id, session_id, options=tuple(_cart_load_options())
@@ -405,12 +405,48 @@ async def get_or_create(
 # ─── Finding a shopper's basket ───────────────────────────────────────────────
 
 
+def require_identity(user_id: uuid.UUID | None, session_id: str | None) -> None:
+    """
+    Refuse a basket operation that names nobody.
+
+    `get_or_create` and `_get_user_cart` each carried this check inline and
+    `add_item` did not, and that asymmetry is the whole of the bug migration 117
+    cleans up after: adding to the basket answered 201 while every other
+    operation on the same basket answered 400, because the add was the one path
+    that reached `get_or_create_cart` without first being asked who was
+    shopping. A customer on the Instagram in-app browser, whose `localStorage`
+    had been evicted between page load and tap, added a cake slice and was then
+    told 400 the moment they touched the quantity stepper.
+
+    It lives here, and is called from `get_or_create_cart` rather than from each
+    of its callers, so that the next path to reach the database cannot be the
+    one that forgets.
+    """
+    if not user_id and not session_id:
+        raise BadRequestError("Either user_id or session_id is required")
+
+
 def identity_clause(user_id: uuid.UUID | None, session_id: str | None):
     """
     Which cart belongs to this shopper — the account if there is one, else the
     session. Written once because six places asked it and all six had to agree.
+
+    A request carrying neither matches **nothing**. This used to end
+    `else Cart.session_id == session_id`, which for `session_id = None`
+    SQLAlchemy renders as `session_id IS NULL` — and a cart row with no identity
+    is one that every session-less shopper on the internet matches at once.
+    Production grew exactly one of those and four different customers' items
+    accumulated in it over five months; because `add_item` answers with the
+    whole basket, the last of them was shown a stranger's cake slice. The
+    `false()` is the half of the fix that stops the row being *found*;
+    `require_identity` stops it being *made*, and migration 117 stops it being
+    *stored*. See migration 117 for the incident.
     """
-    return Cart.user_id == user_id if user_id else Cart.session_id == session_id
+    if user_id:
+        return Cart.user_id == user_id
+    if session_id:
+        return Cart.session_id == session_id
+    return false()
 
 
 async def cart_for_identity(
@@ -473,7 +509,13 @@ async def get_or_create_cart(
     it and take the whole request down — the customer would still get a 500,
     just a different one — whereas rolling back to the savepoint leaves the
     session usable and the answer is simply the cart the winner made.
+
+    Asked here, once, rather than at each caller: `add_item` is the path that
+    reached this function without asking, and a basket with no owner is not a
+    basket to create. See `require_identity`.
     """
+    require_identity(user_id, session_id)
+
     cart = await cart_for_identity(db, user_id, session_id, options=options)
     if cart is not None:
         return cart
@@ -823,8 +865,7 @@ async def _get_user_cart(
     db: AsyncSession, user_id: uuid.UUID | None, session_id: str | None
 ) -> Cart:
     """Get a cart without loading relationships."""
-    if not user_id and not session_id:
-        raise BadRequestError("Either user_id or session_id is required")
+    require_identity(user_id, session_id)
 
     cart = await cart_for_identity(db, user_id, session_id)
     if not cart:

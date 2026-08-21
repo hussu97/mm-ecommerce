@@ -6,7 +6,15 @@ from typing import TYPE_CHECKING, Any
 
 from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -20,9 +28,21 @@ if TYPE_CHECKING:
 class Cart(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "carts"
 
+    #: A cart names whose it is — an account, or a guest session, never
+    #: neither. A row with both NULL is matched by `session_id IS NULL`, which
+    #: is what a lookup for a shopper carrying no session id compiles to, and
+    #: production accumulated four customers' items in one such row before
+    #: migration 117 removed it. Mirrored from that migration.
+    __table_args__ = (
+        CheckConstraint(
+            "user_id IS NOT NULL OR (session_id IS NOT NULL AND session_id <> '')",
+            name="ck_carts_has_identity",
+        ),
+    )
+
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
     )

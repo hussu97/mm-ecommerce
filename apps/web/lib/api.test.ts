@@ -380,3 +380,106 @@ describe('productsApi', () => {
     expect(url).toContain('/products/chocolate-cake');
   });
 });
+
+// ─── The guest basket, in browsers that make it hard ──────────────────────────
+//
+// Every one of these is a browser a real customer of this shop arrives in. The
+// storefront's traffic is overwhelmingly the Instagram in-app browser on iOS,
+// which evicts `localStorage` mid-session; Safari with "Block All Cookies" set
+// makes it throw outright; and an iPhone left on iOS 15.3 has no
+// `crypto.randomUUID` at all.
+//
+// The rule these assert is one rule: **a guest always ends up with an id, and
+// with the same id for as long as the page lives.** Without it `request()`
+// sends no `X-Session-Id`, and an API that cannot tell whose basket it is being
+// asked about is how four customers' items ended up in one cart.
+
+describe('guest session id in a hostile browser', () => {
+  const throwingStorage = {
+    getItem: () => {
+      throw new Error('The operation is insecure.');
+    },
+    setItem: () => {
+      throw new Error('The operation is insecure.');
+    },
+    removeItem: () => {
+      throw new Error('The operation is insecure.');
+    },
+    clear: () => {},
+    key: () => null,
+    length: 0,
+  };
+
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', localStorageMock);
+    clearSessionId();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal('localStorage', localStorageMock);
+  });
+
+  it('sends X-Session-Id even when nothing was ever stored', async () => {
+    // The regression. `request()` used to *read* the id, so a shopper whose
+    // storage had never been seeded — or had been evicted since — sent no
+    // header at all, and the API filed their item in a cart owned by nobody.
+    const mockFetch = makeMockFetch(200, {});
+    vi.stubGlobal('fetch', mockFetch);
+
+    await api.get('/test');
+
+    const [, options] = mockFetch.mock.calls[0];
+    expect(options.headers['X-Session-Id']).toBeTruthy();
+  });
+
+  it('keeps one id across requests when localStorage throws', async () => {
+    vi.stubGlobal('localStorage', throwingStorage);
+    const mockFetch = makeMockFetch(200, {});
+    vi.stubGlobal('fetch', mockFetch);
+
+    await api.get('/one');
+    await api.get('/two');
+
+    const first = mockFetch.mock.calls[0][1].headers['X-Session-Id'];
+    const second = mockFetch.mock.calls[1][1].headers['X-Session-Id'];
+    expect(first).toBeTruthy();
+    // Two carts for one shopper in one visit is the failure this prevents.
+    expect(second).toBe(first);
+  });
+
+  it('does not throw when storage refuses to persist', () => {
+    vi.stubGlobal('localStorage', throwingStorage);
+    expect(() => ensureSessionId()).not.toThrow();
+    expect(ensureSessionId()).toBeTruthy();
+  });
+
+  it('mints an id without crypto.randomUUID', () => {
+    // iOS below 15.4. The bare call throws there, and because `request()` is
+    // the funnel for every endpoint, an unguarded throw would take the product
+    // grid down with the basket rather than just the basket.
+    vi.stubGlobal('crypto', { getRandomValues: globalThis.crypto.getRandomValues.bind(globalThis.crypto) });
+    const id = ensureSessionId();
+    expect(id).toMatch(/^sess_[0-9a-f]{32}$/);
+  });
+
+  it('mints a unique id with no usable crypto at all', () => {
+    vi.stubGlobal('crypto', {});
+
+    const first = ensureSessionId();
+    clearSessionId();
+    const second = ensureSessionId();
+
+    expect(first).toBeTruthy();
+    expect(second).toBeTruthy();
+    // A collision here would be the shared-basket bug all over again.
+    expect(second).not.toBe(first);
+  });
+
+  it('prefers the stored id over the in-memory one', () => {
+    // The durable copy stays authoritative, so a reload keeps the basket.
+    const minted = ensureSessionId();
+    expect(getSessionId()).toBe(minted);
+    expect(localStorage.getItem('mm_session_id')).toBe(minted);
+  });
+});

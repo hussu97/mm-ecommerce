@@ -102,6 +102,58 @@ class TestCartEndpoints:
 
         assert response.status_code == 200
 
+    # ─── A basket has to name whose it is ─────────────────────────────────
+    #
+    # These four go through the real `cart_service` rather than patching it,
+    # which is the whole point: the bug was not in a router, it was that
+    # `add_item` was the one path that reached `get_or_create_cart` without
+    # first asking who was shopping. Patching the service would assert nothing
+    # about the thing that broke.
+
+    async def test_add_to_cart_without_identity_returns_400(self, client):
+        """
+        The regression. This answered **201** and quietly filed the item in a
+        cart with no owner — the one every session-less shopper matched, and
+        four customers' items accumulated in it. See migration 117.
+        """
+        response = await client.post(
+            "/api/v1/cart/items",
+            json={"product_id": _VALID_UUID, "quantity": 1},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Either user_id or session_id is required"
+
+    async def test_update_item_without_identity_returns_400(self, client):
+        """
+        The symptom the customer saw: an add that worked, then a quantity
+        stepper that did not. It is asserted alongside the add so that the two
+        can never disagree again — whatever they answer, they answer together.
+        """
+        response = await client.put(
+            f"/api/v1/cart/items/{_VALID_UUID}",
+            json={"quantity": 2},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Either user_id or session_id is required"
+
+    async def test_remove_item_without_identity_returns_400(self, client):
+        response = await client.delete(f"/api/v1/cart/items/{_VALID_UUID}")
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Either user_id or session_id is required"
+
+    async def test_get_cart_without_identity_returns_400(self, client):
+        """
+        Unpatched, unlike `test_get_cart_without_session_creates_cart` above,
+        which stubs `get_or_create` and so never reaches the guard.
+        """
+        response = await client.get("/api/v1/cart")
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Either user_id or session_id is required"
+
     async def test_merge_cart_without_auth_returns_401(self, client):
         response = await client.post(
             "/api/v1/cart/merge",
