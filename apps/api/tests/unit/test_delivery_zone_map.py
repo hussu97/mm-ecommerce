@@ -26,7 +26,7 @@ DATA = Path(__file__).resolve().parents[2] / "app" / "data"
 #: The migration that publishes the map currently in force. Everything here is
 #: read out of it rather than restated, so the test cannot agree with a fee
 #: table nobody is using.
-LIVE_MIGRATION = "085_cost_banded_map.py"
+LIVE_MIGRATION = "125_cost_banded_map_v2.py"
 
 #: The flat price of everywhere we do not dispatch ourselves. Read by the
 #: fixture as well, so the migration's own constant is the only definition.
@@ -95,7 +95,11 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
 @pytest.mark.parametrize(
     "label,lat,lng,expected,fee,threshold,provider",
     [
-        # ── Sharjah, inside noon Send's 20 km reach: free, at any basket ─────
+        # ── Sharjah Core: the 3.5 km ring, free at any basket ────────────────
+        # Split out of Sharjah Central because a car from a courier that prices
+        # road distance beats noon Send's bike inside it — by about AED 1 an
+        # order, which is not the reason. Dispatch reliability is.
+        #
         # The fee is zero rather than waived, so the threshold is 0.00 and not
         # NULL. NULL would mean "use the national number"; zero means there is
         # no bar to clear, and confusing the two starts charging the one zone
@@ -104,7 +108,7 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "Melting Moments itself",
             25.3304139,
             55.3736131,
-            "Sharjah Central",
+            "Sharjah Core",
             "0.00",
             "0.00",
             NOON_SEND,
@@ -113,13 +117,31 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "Al Majaz Waterfront",
             25.3213,
             55.3820,
+            "Sharjah Core",
+            "0.00",
+            "0.00",
+            NOON_SEND,
+        ),
+        ("Al Khan", 25.3306, 55.3600, "Sharjah Core", "0.00", "0.00", NOON_SEND),
+        ("Rolla", 25.3560, 55.3870, "Sharjah Core", "0.00", "0.00", NOON_SEND),
+        # Inside the radius and *not* one of the areas the split was drawn for:
+        # 2.9 km straight is 5 km of road to Al Nud and 7 to the industrial
+        # area, and a courier that prices road distance loses on both. A radial
+        # band cannot exclude them, which is the honest cost of drawing this
+        # one as a circle. Pinned so that nobody later reads the zone as "the
+        # set where the new courier wins" — it is not, quite.
+        ("Al Nud", 25.3390, 55.4020, "Sharjah Core", "0.00", "0.00", NOON_SEND),
+        # ── Sharjah Central: out to noon Send's 20 km road ceiling ───────────
+        ("Maysaloon", 25.3220, 55.4250, "Sharjah Central", "0.00", "0.00", NOON_SEND),
+        (
+            "Sharjah Industrial Area",
+            25.3110,
+            55.4090,
             "Sharjah Central",
             "0.00",
             "0.00",
             NOON_SEND,
         ),
-        ("Al Khan", 25.3306, 55.3600, "Sharjah Central", "0.00", "0.00", NOON_SEND),
-        ("Maysaloon", 25.3220, 55.4250, "Sharjah Central", "0.00", "0.00", NOON_SEND),
         (
             "Muwaileh Commercial",
             25.3120,
@@ -139,8 +161,8 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "0.00",
             NOON_SEND,
         ),
-        # Al Taawun belongs here too and does not resolve — see
-        # `test_al_taawun_is_in_a_hole_in_the_source_outlines` below.
+        # Al Taawun belongs to the Core and is served through a gap in the
+        # source outlines — see `test_al_taawun_is_served...` below.
         # ── Sharjah, past noon Send's ceiling ────────────────────────────────
         # 21.1 road km. noon Send would be cheaper here too; it is not allowed
         # to be, so the boundary sits at the ceiling and not where prices cross.
@@ -157,8 +179,8 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "75.00",
             LALAMOVE,
         ),
-        # ── Dubai: three bands, one fee, so the far half can be repriced later
-        #    without redrawing anything ─────────────────────────────────────
+        # ── Dubai: bands carrying one fee, so the far half can be repriced
+        #    later without redrawing anything ─────────────────────────────────
         (
             "Deira City Centre",
             25.2530,
@@ -206,15 +228,31 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "100.00",
             LALAMOVE,
         ),
+        # The one fee this re-split moves, and the only one. Al Rams sat in the
+        # Ras al-Khaimah leftover at 80 because the old single band stopped at
+        # 78 km; the emirate's own bands now reach it, and it pays what the rest
+        # of Ras al-Khaimah pays. A fee going down, on a courier that will
+        # actually carry it.
+        (
+            "Al Rams",
+            25.8790,
+            56.0330,
+            "Ras al-Khaimah North",
+            "50.00",
+            "100.00",
+            LALAMOVE,
+        ),
         # ── Ours to deliver, but not on a courier's price ────────────────────
         # All of these look like "Sharjah" or "Dubai" on an address form and
         # cost three to six times a city run. This is the whole reason the
-        # emirate outlines were cut up.
+        # emirate outlines were cut up — and the reason the leftovers are now
+        # cut up again: Al Dhaid at 25 km and Khor Fakkan at 98 used to share
+        # one shape, one name and one price.
         (
             "Al Dhaid (inland Sharjah)",
             25.2880,
             55.8810,
-            "Sharjah",
+            "Sharjah Inland",
             OUTER_FEE,
             OUTER_THRESHOLD,
             THIRD_PARTY,
@@ -223,7 +261,7 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "Khor Fakkan (east coast)",
             25.3390,
             56.3560,
-            "Sharjah",
+            "Sharjah East Coast",
             OUTER_FEE,
             OUTER_THRESHOLD,
             THIRD_PARTY,
@@ -232,7 +270,7 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "Kalba (east coast)",
             25.0400,
             56.3500,
-            "Sharjah",
+            "Sharjah East Coast",
             OUTER_FEE,
             OUTER_THRESHOLD,
             THIRD_PARTY,
@@ -241,7 +279,7 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "Masfout (Ajman exclave)",
             24.8200,
             56.0500,
-            "Ajman",
+            "Ajman Masfout",
             OUTER_FEE,
             OUTER_THRESHOLD,
             THIRD_PARTY,
@@ -250,7 +288,25 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "Manama (Ajman exclave)",
             25.3100,
             55.9800,
-            "Ajman",
+            "Ajman Masfout",
+            OUTER_FEE,
+            OUTER_THRESHOLD,
+            THIRD_PARTY,
+        ),
+        (
+            "Falaj Al Mualla (inland UAQ)",
+            25.3760,
+            55.8590,
+            "Umm al-Quwain Inland",
+            OUTER_FEE,
+            OUTER_THRESHOLD,
+            THIRD_PARTY,
+        ),
+        (
+            "Dubai Industrial City",
+            24.8720,
+            55.0300,
+            "Dubai Outer",
             OUTER_FEE,
             OUTER_THRESHOLD,
             THIRD_PARTY,
@@ -260,7 +316,7 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "Hatta (Dubai exclave)",
             24.7967,
             56.1180,
-            "Dubai",
+            "Dubai Hatta",
             OUTER_FEE,
             OUTER_THRESHOLD,
             THIRD_PARTY,
@@ -339,14 +395,21 @@ def test_a_city_is_still_listed_ahead_of_its_own_emirate(zones):
     """
     order = [z["name"] for z in zones]
     for inner, outer in (
+        ("Sharjah Core", "Sharjah Central"),
         ("Sharjah Central", "Sharjah Outer"),
-        ("Sharjah Outer", "Sharjah"),
-        ("Ajman City", "Ajman"),
+        ("Sharjah Outer", "Sharjah Inland"),
+        ("Sharjah Inland", "Sharjah East Coast"),
+        ("Ajman City", "Ajman Inland"),
+        ("Ajman Inland", "Ajman Masfout"),
         ("Dubai Near", "Dubai Mid"),
         ("Dubai Mid", "Dubai Far"),
-        ("Dubai Far", "Dubai"),
-        ("Umm al-Quwain City", "Umm al-Quwain"),
-        ("Ras al-Khaimah City", "Ras al-Khaimah"),
+        ("Dubai Far", "Dubai Outer"),
+        ("Dubai Outer", "Dubai Hatta"),
+        ("Umm al-Quwain City", "Umm al-Quwain Inland"),
+        ("Umm al-Quwain Inland", "Umm al-Quwain"),
+        ("Ras al-Khaimah South", "Ras al-Khaimah City"),
+        ("Ras al-Khaimah City", "Ras al-Khaimah North"),
+        ("Ras al-Khaimah North", "Ras al-Khaimah"),
     ):
         assert order.index(inner) < order.index(outer)
 
@@ -366,7 +429,7 @@ def test_al_taawun_is_served_even_though_no_emirate_claims_it(zones):
     """
     zone = resolve(zones, 25.3160, 55.3720)
     assert zone is not None, "Al Taawun matched no zone"
-    assert zone["name"] == "Sharjah Central"
+    assert zone["name"] == "Sharjah Core"
     assert zone["fee"] == Decimal("0.00")
 
 
