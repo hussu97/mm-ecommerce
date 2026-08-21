@@ -483,15 +483,25 @@ jobs:
           # build runs in parallel and bakes whatever the API answers with into
           # the static pages, per locale, so a page can ship half migrated.
           #
-          # `cms:*` was the original case. `categories:*` and `products:*` were
-          # added when migration 120 renamed the category slugs: the storefront
-          # builds its navigation *and its sitemap* from the category list, so a
-          # stale list meant shipping a sitemap of URLs that had just been
-          # redirected away — the one document you would rather not hand a
-          # search engine full of 308s.
-          echo "Invalidating catalogue and CMS caches..."
+          # This list is **every read-through cache prefix the API writes**, not
+          # the ones a particular migration was known to touch. It was built one
+          # prefix at a time and that is exactly how it kept being wrong:
+          # `cms:*` alone, then `categories:*` and `products:*` when migration
+          # 120 renamed the category slugs, then `i18n:*` when 121 edited the
+          # promo banner and the old text stayed up for five minutes after a
+          # green deploy. Adding the prefix you just got caught by leaves the
+          # next one to be discovered in production.
+          #
+          # `analytics:*` is deliberately absent: it is derived from `orders`,
+          # nothing in `alembic/` writes it, and dropping it only makes the next
+          # dashboard load slow for no reason.
+          #
+          # A whole-database FLUSHDB is not the shortcut it looks like — this
+          # Redis also holds rate-limiter state and idempotency keys, and losing
+          # those mid-deploy is worse than a stale page.
+          echo "Invalidating read-through caches..."
           docker compose -f docker-compose.prod.yml exec -T redis \
-            sh -c 'for p in "cms:*" "categories:*" "products:*"; do redis-cli --scan --pattern "$p" | xargs -r redis-cli del; done' < /dev/null \
+            sh -c 'for p in "cms:*" "i18n:*" "categories:*" "products:*" "blog:*" "redirects:*"; do redis-cli --scan --pattern "$p" | xargs -r redis-cli del; done' < /dev/null \
             || echo "WARNING: cache flush failed — content may be stale for up to 5 minutes"
 
           echo "Restarting the APIs with the new image..."

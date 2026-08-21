@@ -15,12 +15,18 @@ export async function GET() {
   // the site.
   const offer = offerSentence(await getFeaturedPromo());
 
-  // The delivery figures below are the published zone fees, and they come from
-  // `085_cost_banded_map` — the same place `lib/schema.ts` takes them from.
-  // They have to move when the map does. They said "Dubai and Ajman: AED 20"
-  // until the Ajman band was read properly: it is 10, and the rest of Sharjah
-  // is 20 rather than the free that "Sharjah city" implied for the whole
-  // emirate. "From", not "over", because `delivery_service.price` qualifies on
+  // The delivery figures below are the published zone fees. They have to move
+  // when the map does, and the way to check them is `GET /delivery/area` with a
+  // pin in each zone — not by reading `085_cost_banded_map`, because the console
+  // can edit a polygon's fee and threshold and the migration is then history.
+  //
+  // Every line here was verified that way. Two corrections came out of it: Ajman
+  // is 10 and had been published as Dubai's 20, and "the rest of Sharjah" is not
+  // one thing — the Dubai-facing edge is served by the Dubai band at 20/75 while
+  // Al Dhaid, Kalba and Khor Fakkan are the outer 80/200, so a single figure for
+  // the emirate was wrong by a factor of four at one end of it.
+  //
+  // "From", not "over", because `delivery_service.price` qualifies on
   // `subtotal >= threshold` — a basket of exactly 75 delivers free.
 
   let categories: Category[] = [];
@@ -54,7 +60,7 @@ export async function GET() {
 - Order online at ${SITE_URL}/en, or by WhatsApp on +971 50 368 7757
 - 24–48 hours' notice is best; 5–7 days for large, custom or event orders
 - Same-day slots are sometimes available for orders placed early — the checkout shows what is open
-- Sharjah city is free at any basket size; the rest of Sharjah is AED 20, free from AED 75
+- Sharjah city is free at any basket size. The rest of the emirate splits: the Dubai-facing edge (Al Nahda, Al Rahmaniya) is AED 20 free from AED 75, and the east coast and interior (Al Dhaid, Kalba, Khor Fakkan) are AED 80 free from AED 200
 - Dubai AED 20 and Ajman city AED 10, both free from AED 75. Umm Al Quwain city AED 30, free from 75. Ras Al Khaimah city AED 50, free from 100
 - Everywhere else in the UAE: AED 80, free from AED 200
 - Sharjah city arrives in about an hour; Dubai and Ajman the same day; everywhere else next day

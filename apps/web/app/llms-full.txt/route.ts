@@ -57,7 +57,8 @@ export async function GET() {
 - Delivers to all seven emirates: Dubai, Sharjah, Ajman, Abu Dhabi, Al Ain, Fujairah, Ras Al Khaimah, Umm Al Quwain
 - The fee depends on how far the address is from the Sharjah kitchen, and the checkout prices it from the pin:
   - Sharjah city: free, at any basket size, delivered in about an hour
-  - The rest of Sharjah: AED 20, free from AED 75, same day
+  - Sharjah's Dubai-facing edge (Al Nahda, Al Rahmaniya): AED 20, free from AED 75, same day
+  - Sharjah's east coast and interior (Al Dhaid, Kalba, Khor Fakkan): AED 80, free from AED 200, next day
   - Dubai: AED 20, free from AED 75, same day
   - Ajman city: AED 10, free from AED 75, same day
   - Umm Al Quwain city: AED 30, free from AED 75
