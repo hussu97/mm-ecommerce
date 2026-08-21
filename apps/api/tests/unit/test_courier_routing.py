@@ -266,3 +266,239 @@ async def test_a_third_party_zone_calls_nobody(configured, spies):
     assert spies == []
     assert result is delivery
     assert result.courier_order_id is None
+
+
+# ── the Slider pilot gate ─────────────────────────────────────────────────────
+#
+# Six zones on the map name Slider, and for everyone who is not on
+# `SLIDER_TRIAL_EMAILS` those zones resolve to the courier that carried them
+# before it existed: noon Send inside Sharjah, Lalamove outside it. The point of
+# these tests is that the rollout is a **no-op for every customer but one** —
+# which is what makes it safe to publish the map before the courier is proven.
+
+TRIAL_EMAIL = "pilot@example.com"
+
+
+@pytest.fixture
+def slider_ready(monkeypatch, configured):
+    """Slider configured, one account on the list, and it never gets called."""
+    monkeypatch.setattr(settings, "SLIDER_API_KEY", "test-key")
+    monkeypatch.setattr(settings, "SLIDER_TRIAL_EMAILS", TRIAL_EMAIL)
+    return settings
+
+
+@pytest.fixture
+def slider_spies(monkeypatch, spies, in_range):
+    async def slider_may_serve(db, order):
+        return True, None
+
+    async def slider_dispatch(db, order):
+        spies.append("slider")
+        db.delivery.courier_order_id = "SLD-4820193"
+        db.delivery.provider = "slider"
+        db.delivery.last_error = None
+        return db.delivery
+
+    monkeypatch.setattr(courier_service.slider_service, "may_serve", slider_may_serve)
+    monkeypatch.setattr(
+        courier_service.slider_service, "dispatch_order", slider_dispatch
+    )
+    return spies
+
+
+def _slider_delivery(zone="Ajman City") -> OrderDelivery:
+    delivery = _delivery("slider")
+    delivery.zone_name = zone
+    return delivery
+
+
+@pytest.mark.asyncio
+async def test_the_pilot_account_is_carried_by_slider(slider_ready, slider_spies):
+    delivery = _slider_delivery()
+    result = await courier_service.dispatch(_Db(delivery), _order(email=TRIAL_EMAIL))
+
+    assert slider_spies == ["slider"]
+    assert result.courier_order_id == "SLD-4820193"
+    assert result.original_provider is None
+
+
+@pytest.mark.asyncio
+async def test_a_gated_order_is_not_marked_as_moved_by_hand(slider_ready, slider_spies):
+    """
+    The gate is not a reassignment, and three things downstream would read it as
+    one. `fulfilment_service._estimate` is the expensive one: it treats a
+    populated `original_provider` as "this order was written against a
+    third-party zone" and answers tomorrow-before-10-PM instead of an hour, so a
+    gate that filled it would have re-promised every Dubai order in a Slider
+    zone — which is almost all of them, since almost all of them are gated.
+    """
+    delivery = _slider_delivery()
+    await courier_service.dispatch(_Db(delivery), _order(email="someone@else.com"))
+
+    assert delivery.provider == "lalamove"
+    assert delivery.original_provider is None
+    assert not delivery.was_reassigned
+
+
+@pytest.mark.asyncio
+async def test_the_address_is_matched_case_and_space_insensitively(
+    slider_ready, slider_spies
+):
+    await courier_service.dispatch(
+        _Db(_slider_delivery()), _order(email=f"  {TRIAL_EMAIL.upper()} ")
+    )
+    assert slider_spies == ["slider"]
+
+
+@pytest.mark.asyncio
+async def test_everybody_else_in_a_slider_zone_goes_where_they_always_did(
+    slider_ready, slider_spies
+):
+    """
+    The whole safety argument, in two lines: Ajman was Lalamove's before the
+    zone was drawn, and for a customer who is not on the list it still is.
+    """
+    delivery = _slider_delivery()
+    result = await courier_service.dispatch(
+        _Db(delivery), _order(email="someone@else.com")
+    )
+
+    assert slider_spies == ["lalamove"]
+    assert result.provider == "lalamove"
+    # `last_error` is clear, because a booking that worked is not a problem and
+    # `needs_attention` must not fill up with routine fallbacks.
+    assert not result.needs_attention
+    # And `original_provider` is untouched, which is the same rule the noon Send
+    # fallback follows. That column means "a human moved this order" and three
+    # things read it that way — the admin prints "moved from X", the
+    # reassignment dialog treats it as the map's own choice, and
+    # `fulfilment_service` reads it as "written against a third-party zone" and
+    # answers tomorrow rather than an hour. Setting it here would put a
+    # hand-moved badge and a next-day promise on nearly every Dubai order.
+    assert result.original_provider is None
+
+
+@pytest.mark.asyncio
+async def test_a_slider_zone_inside_sharjah_falls_back_to_noon_send(
+    slider_ready, monkeypatch, slider_spies
+):
+    """`Sharjah Core` was carved out of `Sharjah Central`, which is noon Send's."""
+
+    async def dispatched(db, order):
+        db.delivery.courier_order_id = "EHG84NNJMVG35BTDE"
+        slider_spies.append("noon_send")
+        return db.delivery
+
+    monkeypatch.setattr(courier_service.noon_send_service, "dispatch_order", dispatched)
+    result = await courier_service.dispatch(
+        _Db(_slider_delivery(zone="Sharjah Core")), _order(email="someone@else.com")
+    )
+
+    assert slider_spies == ["noon_send"]
+    assert result.provider == "noon_send"
+    assert result.original_provider is None
+
+
+@pytest.mark.asyncio
+async def test_a_guest_typing_the_pilot_address_never_reaches_slider(
+    slider_ready, slider_spies
+):
+    """
+    Being signed in is the half of the identity that cannot be forged. An email
+    is a string anybody may type into a guest checkout.
+    """
+    await courier_service.dispatch(
+        _Db(_slider_delivery()), _order(user_id=None, email=TRIAL_EMAIL)
+    )
+    assert slider_spies == ["lalamove"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("app_env", ["development", "staging", "production"])
+@pytest.mark.parametrize("slider_env", ["staging", "production"])
+async def test_no_environment_widens_the_pilot(
+    slider_ready, monkeypatch, slider_spies, app_env, slider_env
+):
+    """
+    The gate is the list and nothing else. An environment-shaped gate opens a
+    trial to everybody the moment the environment changes, which is the mistake
+    the noon Send trial was written to avoid and this one inherits the avoidance.
+    """
+    monkeypatch.setattr(settings, "APP_ENV", app_env)
+    monkeypatch.setattr(settings, "SLIDER_ENV", slider_env)
+
+    await courier_service.dispatch(
+        _Db(_slider_delivery()), _order(email="someone@else.com")
+    )
+    assert slider_spies == ["lalamove"]
+
+
+@pytest.mark.asyncio
+async def test_an_empty_list_ends_the_pilot(slider_ready, monkeypatch, slider_spies):
+    monkeypatch.setattr(settings, "SLIDER_TRIAL_EMAILS", "")
+    await courier_service.dispatch(_Db(_slider_delivery()), _order(email=TRIAL_EMAIL))
+    assert slider_spies == ["lalamove"]
+
+
+@pytest.mark.asyncio
+async def test_an_unconfigured_key_is_a_fallback_not_an_outage(
+    slider_ready, monkeypatch, slider_spies
+):
+    """The same contract the other two couriers already have."""
+    monkeypatch.setattr(settings, "SLIDER_API_KEY", "")
+    result = await courier_service.dispatch(
+        _Db(_slider_delivery()), _order(email=TRIAL_EMAIL)
+    )
+    assert slider_spies == ["lalamove"]
+    assert result.courier_order_id
+
+
+@pytest.mark.asyncio
+async def test_a_slider_refusal_falls_through_rather_than_stranding_the_order(
+    slider_ready, monkeypatch, slider_spies
+):
+    """
+    Slider publishes no serviceability endpoint and their fare call is not one —
+    it priced Riyadh, Muscat and Liwa. An address outside their area is only
+    ever discovered as a 422 at creation, on an order that is already paid for
+    and boxed.
+    """
+
+    async def refused(db, order):
+        slider_spies.append("slider")
+        db.delivery.last_error = "Slider: outside the service area"
+        return db.delivery
+
+    monkeypatch.setattr(courier_service.slider_service, "dispatch_order", refused)
+    result = await courier_service.dispatch(
+        _Db(_slider_delivery()), _order(email=TRIAL_EMAIL)
+    )
+
+    assert slider_spies == ["slider", "lalamove"]
+    assert result.courier_order_id
+    assert not result.needs_attention
+
+
+@pytest.mark.asyncio
+async def test_the_cod_ceiling_is_a_refusal_before_a_rider_is_engaged(
+    slider_ready, monkeypatch, slider_spies
+):
+    """A rejection after a rider has been engaged is a cancellation we pay for."""
+
+    async def over_the_ceiling(db, order):
+        return False, "AED 600.00 is over Slider's card ceiling of AED 500.00"
+
+    monkeypatch.setattr(courier_service.slider_service, "may_serve", over_the_ceiling)
+    await courier_service.dispatch(
+        _Db(_slider_delivery()), _order(email=TRIAL_EMAIL, total=Decimal("600.00"))
+    )
+    assert slider_spies == ["lalamove"]
+
+
+@pytest.mark.asyncio
+async def test_a_lalamove_zone_is_never_offered_to_slider(slider_ready, slider_spies):
+    """The reverse of the gate: the map still decides which zones are Slider's."""
+    await courier_service.dispatch(
+        _Db(_delivery("lalamove")), _order(email=TRIAL_EMAIL)
+    )
+    assert slider_spies == ["lalamove"]

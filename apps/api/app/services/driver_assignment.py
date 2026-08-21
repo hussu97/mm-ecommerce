@@ -108,6 +108,24 @@ class Driver:
             plate=_clean(details.get("vehicle_number") or details.get("plate_number")),
         )
 
+    @classmethod
+    def from_slider(cls, rider: dict | None) -> Driver:
+        """
+        Slider's rider block, which does carry an id.
+
+        Their status webhook names the rider inline, so unlike noon Send there
+        is no second call to make to find out who is holding the parcel. The
+        block is absent until somebody accepts the job, and an absent one is the
+        ordinary state of a delivery still searching rather than an error.
+        """
+        rider = rider or {}
+        return cls(
+            driver_id=_clean(rider.get("id") or rider.get("rider_id")),
+            name=_clean(rider.get("name")),
+            phone=_clean(rider.get("phone") or rider.get("phone_number")),
+            plate=_clean(rider.get("plate_number") or rider.get("vehicle_number")),
+        )
+
 
 class Change(enum.Enum):
     """What `record` did."""

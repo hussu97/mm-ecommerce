@@ -48,6 +48,7 @@ from app.models.user import User
 from app.services import (
     audit_service,
     batching_service,
+    courier_service,
     delivery_service,
     delivery_zone_service,
 )
@@ -745,9 +746,18 @@ async def update_polygon(
         # It lands in the audit entry below, because `batch_group_id` is in both
         # the `before` and `to` dicts — so the one thing that must not be silent
         # is not.
+        #
+        # "Cannot use" is asked of `courier_service.may_be_carried_by` rather
+        # than by comparing the two strings, so this and
+        # `assert_group_fits_polygon` cannot come to different conclusions about
+        # one pairing. Since `126` they are not the same question: a Slider zone
+        # rides the Lalamove run it has always ridden, because every order in it
+        # but the pilot account's is handed back to Lalamove automatically.
         if polygon.batch_group_id is not None:
             group = await db.get(DeliveryBatchGroup, polygon.batch_group_id)
-            if group is not None and group.courier_code != polygon.fulfilment_provider:
+            if group is not None and not courier_service.may_be_carried_by(
+                polygon.fulfilment_provider, group.courier_code
+            ):
                 polygon.batch_group_id = None
     if data.alternate_providers is not None:
         allowed = {p.value for p in FulfilmentProviderEnum}

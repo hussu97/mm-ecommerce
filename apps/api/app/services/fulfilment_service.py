@@ -99,6 +99,7 @@ _SETTLED = {
 _BOOKED_BY_US = {
     FulfilmentProviderEnum.LALAMOVE.value,
     FulfilmentProviderEnum.NOON_SEND.value,
+    FulfilmentProviderEnum.SLIDER.value,
 }
 
 #: Couriers that text the customer their own tracking link once a rider has the
@@ -107,6 +108,9 @@ _BOOKED_BY_US = {
 #: end with a live map — they differ only in who delivers the link, and this is
 #: what lets the email say "check your messages" instead of showing a button
 #: that does not exist.
+#:
+#: Slider is deliberately absent: it publishes a `tracking_url` to us on the
+#: booking, so it behaves like Lalamove and not like noon Send.
 _TRACKS_BY_SMS = {FulfilmentProviderEnum.NOON_SEND.value}
 
 

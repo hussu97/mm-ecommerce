@@ -18,6 +18,7 @@ from app.services import (
     delivery_promise,
     delivery_zone_service,
     lalamove_service,
+    trial_customer,
 )
 from app.services.delivery_zone_service import Zone
 
@@ -296,6 +297,10 @@ async def price(
         float(longitude),
         address,
         zone.branch_id if zone else None,
+        # The zone's own name, because one courier's price depends on which
+        # emirate the drop is in and a pin does not carry one. Every zone name
+        # begins with its emirate by construction.
+        zone.name if zone else None,
     )
 
     eligible = zone is not None and zone.free_delivery_eligible
@@ -392,6 +397,13 @@ async def calculate_fee(
 
     An order without coordinates cannot be delivered anyway, so the default fee
     is the honest answer for one.
+
+    The pilot accounts pay nothing, anywhere. Their orders exist to exercise the
+    courier pipeline on production, and a test that costs the tester money is a
+    test that gets run less often than it should. The identity is passed in
+    rather than looked up here so that the two callers that know it — the
+    checkout quote and the order being written — are the only two that can grant
+    it, and so both grant it identically.
     """
     if settings is None:
         settings = await get_settings(db)
@@ -407,8 +419,12 @@ async def calculate_fee(
         address=address,
         settings=settings,
     )
+    # After `price`, not before: a pilot account still may not order somewhere we
+    # cannot deliver to. Free is a discount, not an exemption from geography.
     if not priced.serviceable:
         raise UnserviceableAreaError()
+    if trial_customer.is_trial_customer(user_id, email):
+        return Decimal("0.00")
     fee = priced.fee
     if fee is None:
         # No pin, so no zone, so no price. This used to answer with the national
@@ -471,6 +487,13 @@ async def quote_priced(
     is not "how much" but "when". It is only present once there is a pin,
     because before then there is no schedule to read it off.
 
+    A pilot account sees free delivery, and sees it the same way anyone over the
+    threshold does. Presenting it as its own kind of discount would mean a
+    second state for the checkout to render, and the account exists to walk the
+    ordinary path rather than a special one — including having its
+    "AED X to go" zeroed, or it would be shown "free delivery" and "AED 150 to
+    go" at the same time.
+
     Returns the payload **and** the `DeliveryPrice` it was built from, because
     `POST /orders/preview` needs both and must not ask twice: `price()` reaches
     a courier's live pricing API in the dynamic zones, so a second call is a
@@ -488,8 +511,14 @@ async def quote_priced(
         settings=settings,
     )
 
-    fee = priced.fee
-    free_applied = priced.free_applied
+    # A pilot account pays nothing anywhere it can be delivered to. Applied here
+    # rather than inside `price` so the waiver stays a property of who is
+    # ordering rather than of the map — and applied at the same point
+    # `calculate_fee` applies it, which is what keeps the price on the checkout
+    # and the price on the order the same number.
+    waived = trial_customer.is_trial_customer(user_id, email) and priced.serviceable
+    fee = Decimal("0.00") if waived else priced.fee
+    free_applied = priced.free_applied or waived
 
     if (
         cart is not None
@@ -538,9 +567,9 @@ async def quote_priced(
         # default standing in for a zone we cannot resolve yet. Copy driven by
         # it has to stay hedged ("in selected areas") until a pin lands.
         "free_threshold_provisional": priced.threshold_is_provisional,
-        # Zero once it is free, however it became free. Otherwise an order
-        # over the threshold would be shown "free delivery" and "AED 150 to go"
-        # at the same time.
+        # Zero once it is free, however it became free — over the threshold or
+        # waived for the pilot. Otherwise one of the two would be shown "free
+        # delivery" and "AED 150 to go" at the same time.
         "remaining_for_free": 0.0
         if free_applied or priced.free_threshold is None
         else float(max(Decimal("0.00"), priced.free_threshold - subtotal)),

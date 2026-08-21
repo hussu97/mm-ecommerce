@@ -7,44 +7,35 @@ Dhaid and Khor Fakkan, Dubai reaches Hatta, Ajman owns two inland exclaves.
 Those places cost three to six times what the city next door costs, and pricing
 them at the city fee would lose money on every order.
 
-So each served emirate is clipped to a circle around the kitchen, sized to the
-area the rate card was actually measured over:
+So each served emirate is cut into concentric bands around the kitchen, sized
+to the areas the rate cards were actually measured over, and its leftover is
+whatever the bands did not reach.
 
-  * Sharjah    25 km — covers Al Khan through University City (17 road km),
-                       excludes Al Dhaid (~55 km) and the east coast exclaves.
-  * Ajman      30 km — covers the whole coastal emirate including Emirates
-                       City, excludes the Masfout and Manama exclaves (~50 km).
-  * Dubai      40 km — covers Deira through Palm Jumeirah and Dubai Marina,
-                       the furthest points the POC quoted (48 road km / AED 51),
-                       and stops short of Jebel Ali and Hatta.
+The bands themselves are `BANDS` below, with the reasoning for each radius
+beside it. Two rules govern the set rather than any one entry:
 
-Sharjah is then cut once more, because a second courier is cheaper inside part
-of it. noon Send charges AED 12 flat to 10 road km on a bike, then +1/km to 15
-and +1.50/km to 20, against Lalamove's `17 + 0.70/km` — cheaper at every
-distance it will carry, surge included. Price therefore never decides the
-boundary; noon Send's **20 km ceiling on pickup-to-drop-off distance** does.
-Road distance runs about 1.49x straight line across the sixteen Sharjah areas
-the rate card was measured over, so 20 road km is a 13.4 km circle:
+  * **A band exists wherever one price would otherwise span two very different
+    runs.** Ras al-Khaimah was a single 78 km band charging 50 AED flat from 56
+    km out to 77; Sharjah's leftover held Al Dhaid at 25 km and Khor Fakkan at
+    98 in one shape. Splitting them changes no fee today and makes repricing
+    the far half an admin edit tomorrow.
+  * **The leftover must be a place, not an accident.** Because the leftover is
+    "the emirate minus the bands", it inherits that emirate's exclaves. Once
+    the bands reach far enough inland, Sharjah's leftover *is* the east coast,
+    Ajman's *is* Masfout, Dubai's *is* Hatta — which is why they are renamed
+    rather than redrawn. Radial bands cannot separate Sharjah's east-coast
+    towns from Fujairah's; both sit 96-103 km out. The existing
+    `circle ∩ emirate − neighbours` machinery already separates them by
+    outline, so this is a band change plus a rename and nothing more.
 
-  * Sharjah Central  13.4 km — Al Khan through Al Zahia and University City, on
-                               noon Send. Al Rahmaniya (21.1 road km) is over
-                               the ceiling and stays on Lalamove, as does
-                               everything beyond it.
-
-That the boundary is a circle around the kitchen rather than a road-distance
-isoline is the approximation being made here, and it is the conservative one:
-1.49x is the mean ratio, so a few pins just inside the circle will be a little
-over 20 road km. noon Send refuses those outright, and `courier_service` falls
-back to Lalamove when it does — the customer's fee never moves either way.
-
-The remainder of every emirate keeps the 50 AED third-party price, and is a
-genuine remainder: the served circle is punched out of it as a hole, so the two
-zones do not overlap. Sharjah City is punched the same way by the Central
-circle. That could have been left to `display_order` — list the smaller zone
-first and take the first match — but a shape whose price depends on the row
-above it is a shape you cannot look at and understand. It also draws wrong: two
-translucent fills stacked over Deira, and no way to tell which one an order
-there is actually paying.
+The leftover keeps the third-party price, and is a genuine remainder: the
+outermost band's circle is punched out of it as a hole, so the two shapes do
+not overlap. Each band is punched the same way by the one inside it. That could
+have been left to `display_order` — list the smaller zone first and take the
+first match — but a shape whose price depends on the row above it is a shape
+you cannot look at and understand. It also draws wrong: two translucent fills
+stacked over Deira, and no way to tell which one an order there is actually
+paying.
 
 The hole is the whole circle, not the circle clipped to the emirate. Anywhere
 the two disagree is already outside the outer ring, and a point outside the
@@ -88,24 +79,35 @@ CIRCLE_POINTS = 96
 #: it punched out, so the set is disjoint and a pin's price is a property of
 #: where it is rather than of which row was checked first.
 #:
-#: Radii are crow-flies. Road distance runs about **1.42x** straight line across
-#: the 88 areas the Lalamove rate card was measured over, so a road figure
-#: divided by 1.42 gives the circle that contains it.
+#: Radii are crow-flies, and every figure below is a **measured** crow distance
+#: taken from the areas quoted live against a courier API — not a road figure
+#: divided by a detour factor. The factor varies enough per route that
+#: estimating from it put three bands in the wrong place, Jebel Ali among them.
 #:
-#: Why each boundary is where it is. Every figure below is the **measured**
-#: crow distance of the furthest area that band should contain, taken from the
-#: 88 areas quoted live against the Lalamove API — not a road figure divided by
-#: a detour factor. The factor varies enough per route that estimating from it
-#: put three bands in the wrong place, Jebel Ali among them.
+#: Why each boundary is where it is.
 #:
+#:  Sharjah Core     3.5 km — Al Majaz, Al Khan, Al Qasimia, Al Taawun, Abu
+#:                            Shagara, Al Layyah, Rolla: the set where Slider's
+#:                            car beats noon Send's bike. Two areas inside the
+#:                            radius lose to noon Send — Al Nud and Sharjah
+#:                            Industrial Area, both 2.9 km straight and 5-7 km
+#:                            by road — and a radial band cannot exclude them.
+#:                            The net is about AED 1 an order; the reason to
+#:                            draw it is dispatch reliability, not the money.
 #:  Sharjah Central 13.4 km — noon Send's 20 km road ceiling. Reach decides this
 #:                            one, not price. University City (12.4) is in;
 #:                            Al Rahmaniya (15.9) is out, correctly — noon Send
 #:                            will not carry it.
-#:  Sharjah Outer     25 km — Al Rahmaniya and the rest of the city. The east
-#:                            coast starts at 80 km and stays third-party.
+#:  Sharjah Outer     25 km — Al Rahmaniya and the rest of the city.
+#:  Sharjah Inland    60 km — Al Dhaid and the inland desert, 25-60 km out. It
+#:                            used to sit in the `Sharjah` leftover beside Khor
+#:                            Fakkan at 98 km, which is a 73 km spread inside
+#:                            one shape and one price.
 #:  Ajman City        22 km — the whole coastal emirate; the furthest measured
 #:                            area is Emirates City at 16.7. Masfout (89.5) is out.
+#:  Ajman Inland      60 km — the same split, for the same reason: Masfout is an
+#:                            exclave near Hatta and does not belong in a band
+#:                            with the corniche.
 #:  Dubai Near        20 km — Al Nahda (4.9) through Business Bay (19.6).
 #:                            Courier cost 24-37.
 #:  Dubai Mid         31 km — Silicon Oasis (23.2) through Al Barsha (30.2).
@@ -114,41 +116,82 @@ CIRCLE_POINTS = 96
 #:                            Cost 47-59. The 40 km first cut dropped Investment
 #:                            Park and Jebel Ali onto the third party at 80,
 #:                            when a Lalamove car reaches both for 56-59.
+#:  Dubai Outer       70 km — the southern desert. Stops well short of Hatta
+#:                            (96), which is the exclave the leftover now holds
+#:                            on its own.
 #:  Umm al-Quwain     36 km — all five measured areas (30.4-35.1), where a car
 #:                            costs 43-47 against the flat 80. Falaj Al Mualla
 #:                            (55) is out; Lalamove refuses it anyway.
-#:  Ras al-Khaimah    78 km — Al Jazirah Al Hamra (55.6) through RAK City
-#:                            (76.7), where a car costs 63-80. Al Rams (91) is
-#:                            out, correctly: a car costs 94 there.
+#:  Umm al-Quwain     60 km — Falaj Al Mualla and the inland strip, which was
+#:  Inland                    otherwise sandwiched between the UAQ City band at
+#:                            36 km and the Ras al-Khaimah band at 78.
+#:  Ras al-Khaimah    60 km — Al Jazirah Al Hamra (55.6) and everything south of
+#:  South                     it. One 78 km band charged 50 AED flat from 56 km
+#:                            to 77; three bands can be repriced separately.
+#:  Ras al-Khaimah    80 km — RAK City (76.7), where a car costs 63-80.
+#:  City
+#:  Ras al-Khaimah   110 km — Al Rams (91) and the northern tip. A car costs 94
+#:  North                     there, so this band is where a future reprice will
+#:                            land first.
 #:
-#: The three Dubai bands all carry the same fee today. They are drawn anyway,
-#: because the whole point of the rebuild is that repricing the far half later
-#: is an admin edit rather than a migration that redraws the map.
-#: Bands that close gaps in the source outlines rather than inheriting them.
-#:
-#: All of them. The construction is `circle ∩ grown-emirate − neighbours`, and
-#: the growth is bounded to `GAP_FILL_KM`, so a band can only pick up ground its
-#: own emirate very nearly claims already. An earlier version subtracted
-#: neighbours from the bare circle with no bound and claimed open sea; that is
-#: what `GAP_FILL_KM` exists to prevent.
-FILL_GAPS: frozenset[str] = frozenset(name for bands in () for name, _ in bands) | {
-    "Sharjah Central",
-    "Sharjah Outer",
-    "Ajman City",
-    "Dubai Near",
-    "Dubai Mid",
-    "Dubai Far",
-    "Umm al-Quwain City",
-    "Ras al-Khaimah City",
+#: Bands sharing a fee are drawn anyway, because the whole point of the rebuild
+#: is that repricing the far half later is an admin edit rather than a migration
+#: that redraws the map.
+BANDS: dict[str, list[tuple[str, float]]] = {
+    "Sharjah": [
+        ("Sharjah Core", 3.5),
+        ("Sharjah Central", 13.4),
+        ("Sharjah Outer", 25.0),
+        ("Sharjah Inland", 60.0),
+    ],
+    "Ajman": [("Ajman City", 22.0), ("Ajman Inland", 60.0)],
+    "Dubai": [
+        ("Dubai Near", 20.0),
+        ("Dubai Mid", 31.0),
+        ("Dubai Far", 48.0),
+        ("Dubai Outer", 70.0),
+    ],
+    "Umm al-Quwain": [
+        ("Umm al-Quwain City", 36.0),
+        ("Umm al-Quwain Inland", 60.0),
+    ],
+    "Ras al-Khaimah": [
+        ("Ras al-Khaimah South", 60.0),
+        ("Ras al-Khaimah City", 80.0),
+        ("Ras al-Khaimah North", 110.0),
+    ],
 }
 
-BANDS: dict[str, list[tuple[str, float]]] = {
-    "Sharjah": [("Sharjah Central", 13.4), ("Sharjah Outer", 25.0)],
-    "Ajman": [("Ajman City", 22.0)],
-    "Dubai": [("Dubai Near", 20.0), ("Dubai Mid", 31.0), ("Dubai Far", 48.0)],
-    "Umm al-Quwain": [("Umm al-Quwain City", 36.0)],
-    "Ras al-Khaimah": [("Ras al-Khaimah City", 78.0)],
+#: What an emirate's leftover is called once the bands above have taken the near
+#: ground. Only the three whose leftover is a *named place* rather than "the
+#: rest of the emirate" are renamed, and the name is the point: `Sharjah` used
+#: to hold Al Dhaid at 25 km and Khor Fakkan at 98 in one shape, and nothing on
+#: screen said so.
+#:
+#: Every name here still begins with an emirate, because
+#: `delivery_service.public_zone_name` maps a zone to its emirate by prefix and
+#: anything else leaks the raw band name to a customer's browser.
+REMAINDER_NAMES: dict[str, str] = {
+    "Sharjah": "Sharjah East Coast",
+    "Ajman": "Ajman Masfout",
+    "Dubai": "Dubai Hatta",
 }
+
+#: Bands that close gaps in the source outlines rather than inheriting them.
+#:
+#: All of them, and derived rather than listed. The construction is
+#: `circle ∩ grown-emirate − neighbours` with the growth bounded to
+#: `GAP_FILL_KM`, so a band can only pick up ground its own emirate very nearly
+#: claims already. An earlier version subtracted neighbours from the bare circle
+#: with no bound and claimed open sea; that is what `GAP_FILL_KM` exists to
+#: prevent.
+#:
+#: This was a hand-kept list beside `BANDS`, which meant adding a band and
+#: forgetting to add its name fell silently back to the old `emirate ∩ circle`
+#: form — the one that left Al Taawun belonging to no zone at all.
+FILL_GAPS: frozenset[str] = frozenset(
+    name for bands in BANDS.values() for name, _ in bands
+)
 
 
 def _circle(lat: float, lng: float, radius_km: float) -> Ring:
@@ -472,11 +515,15 @@ def build() -> list[dict]:
     # kitchen with customers in it.
     zones.sort(key=lambda z: z["radius_km"])
 
+    # The leftover, which is the emirate with everything the bands took punched
+    # out of it. Named for what it actually holds where that is a place rather
+    # than a direction — `Sharjah East Coast` rather than a second `Sharjah`
+    # sitting under the four bands of the same name.
     for emirate, geometry in emirates.items():
         bands = BANDS.get(emirate)
         zones.append(
             {
-                "name": emirate,
+                "name": REMAINDER_NAMES.get(emirate, emirate),
                 "geometry": (
                     punch_out(geometry, bands[-1][1])
                     if bands is not None

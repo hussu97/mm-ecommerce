@@ -119,11 +119,79 @@ NOON_SEND_FAILED_STATUSES = frozenset(
     }
 )
 
+
+class SliderStatusEnum(str, enum.Enum):
+    """Slider's delivery lifecycle, verbatim, for the same reason as above.
+
+    Linear, and that matters more here than for the other two: their webhook
+    carries no event id and gives no ordering guarantee, so the only thing that
+    can stop a late `picked_up` walking a delivered order backwards is the
+    order of these words. See `SLIDER_STATUS_RANK`.
+
+    `return_trip_started` is their `undelivered`: a rider arrived, could not
+    hand the parcel over, and is bringing it back. It is kept as their word
+    rather than translated, because "the rider is carrying it back to the shop"
+    and "nobody ever accepted the booking" want different things done about
+    them and one word for both loses the difference.
+    """
+
+    SEARCHING_RIDER = "searching_rider"
+    RIDER_ASSIGNED = "rider_assigned"
+    HEADING_TO_PICKUP = "heading_to_pickup"
+    AT_PICKUP = "at_pickup"
+    PICKED_UP = "picked_up"
+    IN_TRANSIT = "in_transit"
+    DELIVERED = "delivered"
+    RETURN_TRIP_STARTED = "return_trip_started"
+    CANCELLED = "cancelled"
+
+
+SLIDER_TERMINAL_STATUSES = frozenset(
+    {
+        SliderStatusEnum.DELIVERED.value,
+        SliderStatusEnum.RETURN_TRIP_STARTED.value,
+        SliderStatusEnum.CANCELLED.value,
+    }
+)
+
+#: How far through the journey each status is.
+#:
+#: The only ordering there is. Slider's webhook has no event id and no promise
+#: that pushes arrive in order, and the payload's timestamp is theirs rather
+#: than ours — so a clock comparison would be trusting a field to decide whether
+#: to trust the payload it came in. Anything unlisted ranks -1 and can never
+#: displace a status we already hold.
+SLIDER_STATUS_RANK: dict[str, int] = {
+    SliderStatusEnum.SEARCHING_RIDER.value: 0,
+    SliderStatusEnum.RIDER_ASSIGNED.value: 1,
+    SliderStatusEnum.HEADING_TO_PICKUP.value: 2,
+    SliderStatusEnum.AT_PICKUP.value: 3,
+    SliderStatusEnum.PICKED_UP.value: 4,
+    SliderStatusEnum.IN_TRANSIT.value: 5,
+    # The three ways it ends sit together at the top: none of them may be undone
+    # by a late push describing something that happened earlier.
+    SliderStatusEnum.DELIVERED.value: 6,
+    SliderStatusEnum.RETURN_TRIP_STARTED.value: 6,
+    SliderStatusEnum.CANCELLED.value: 6,
+}
+
+#: Terminal, and the parcel never reached the customer. Both need a human: the
+#: order is paid and boxed with either nobody coming for it or a rider bringing
+#: it back.
+SLIDER_FAILED_STATUSES = frozenset(
+    {
+        SliderStatusEnum.RETURN_TRIP_STARTED.value,
+        SliderStatusEnum.CANCELLED.value,
+    }
+)
+
+
 #: provider -> (terminal statuses, failed statuses). Third-party deliveries have
 #: no courier status at all, so they match neither and fall through to empty.
 _STATUS_SETS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     "lalamove": (TERMINAL_COURIER_STATUSES, FAILED_COURIER_STATUSES),
     "noon_send": (NOON_SEND_TERMINAL_STATUSES, NOON_SEND_FAILED_STATUSES),
+    "slider": (SLIDER_TERMINAL_STATUSES, SLIDER_FAILED_STATUSES),
 }
 
 
@@ -154,6 +222,17 @@ _COLLECTED_STATUSES: dict[str, frozenset[str]] = {
             NoonSendStatusEnum.PICKED_UP.value,
             NoonSendStatusEnum.ARRIVED_AT_DELIVERY.value,
             NoonSendStatusEnum.DELIVERED.value,
+        }
+    ),
+    # `return_trip_started` is deliberately absent. The parcel is on the bike,
+    # but the bike is on its way back *here* — so the one question this set
+    # answers, "how long until somebody collects this", becomes answerable
+    # again rather than meaningless.
+    "slider": frozenset(
+        {
+            SliderStatusEnum.PICKED_UP.value,
+            SliderStatusEnum.IN_TRANSIT.value,
+            SliderStatusEnum.DELIVERED.value,
         }
     ),
 }

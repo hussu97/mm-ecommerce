@@ -12,9 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.deps import get_db
 from app.api.v1.payments import process_gateway_webhook
-from app.services import lalamove_service, noon_send_service
+from app.services import lalamove_service, noon_send_service, slider_service
 from app.services.providers.lalamove_provider import LalamoveError
 from app.services.providers.noon_send_provider import NoonSendError
+from app.services.providers.slider_provider import SliderError
 from app.services.webhook_log_service import Recorder
 
 logger = logging.getLogger(__name__)
@@ -246,6 +247,195 @@ async def noon_send_webhook(
                 result={"received": True, "error": str(exc)}, error=str(exc)
             )
             return {"received": True, "error": str(exc)}
+    finally:
+        await recorder.save()
+
+
+# ── Slider ────────────────────────────────────────────────────────────────────
+#
+# Slider does not sign requests either. What they send instead is a **static
+# token in a header we choose the name of**, configured per environment in their
+# dashboard — so the token is the whole of the check, and it is enforced rather
+# than merely recorded.
+#
+# That is the deliberate difference from the noon Send routes above.
+# `NOON_SEND_ENFORCE_WEBHOOK_KEY` is false in production, because enforcing it
+# once dropped every status update for a live trial when noon's staging side
+# turned out to send a key no screen of ours had produced. Slider's token is one
+# we set on both sides ourselves, so there is no such asymmetry to be caught by
+# — and an unenforced token on an endpoint that moves orders to `delivered` is
+# an open endpoint.
+
+
+def _slider_token_is_valid(presented: str | None, expected: str) -> bool:
+    """Constant-time, so a mismatch cannot be found a character at a time.
+
+    An empty configured token refuses everything. That is the opposite of the
+    noon Send decision one screen up, and deliberately: there the risk was
+    dropping real deliveries from a courier already carrying orders, here it is
+    a brand-new endpoint with nothing riding on it yet. A pilot that fails
+    closed is a pilot somebody fixes; one that fails open is one nobody looks at.
+    """
+    expected = (expected or "").strip()
+    if not expected:
+        return False
+    return bool(presented) and hmac.compare_digest(presented, expected)
+
+
+def _slider_token(request: Request, header_name: str) -> str | None:
+    """The token off whichever header Slider was told to send it in.
+
+    Read by name at request time rather than declared as a FastAPI `Header`
+    parameter, because the name is configuration: their dashboard has a "Token
+    Header Key" field per environment, and both of ours were empty when this was
+    written. A token with no header name may not be sent at all, or may arrive
+    somewhere nobody is reading.
+    """
+    return request.headers.get((header_name or "").strip() or "X-Slider-Token")
+
+
+@router.post("/slider", status_code=status.HTTP_200_OK)
+async def slider_webhook(request: Request, db: AsyncSession = Depends(get_db)):
+    """
+    Slider delivery status pushes: rider assigned, picked up, delivered, returned.
+
+    Answers 200 to everything, for the same reason both routes above do — a
+    retried-then-disabled webhook URL would leave every later order with no
+    status at all, which is worse than swallowing one bad event. A push that
+    fails the token check is journalled and dropped rather than acted on.
+    """
+    presented = _slider_token(request, settings.SLIDER_WEBHOOK_HEADER)
+    recorder = Recorder(
+        "slider",
+        "status",
+        request=request,
+        key_fingerprint=_key_fingerprint(presented),
+    )
+    try:
+        try:
+            payload = await request.json()
+        except Exception:
+            logger.warning("Slider webhook had no readable body")
+            recorder.finish(result={"received": True}, error="unreadable body")
+            return {"received": True}
+
+        recorder.payload = payload
+        if not isinstance(payload, dict):
+            recorder.finish(result={"received": True}, error="body was not an object")
+            return {"received": True}
+
+        recorder.event_type = str(payload.get("status") or "").strip() or None
+        recorder.external_id = (
+            str(payload.get("id") or payload.get("delivery_id") or "") or None
+        )
+        recorder.order_number = (
+            str(payload.get("order_number") or payload.get("reference") or "") or None
+        )
+
+        if not _slider_token_is_valid(presented, settings.SLIDER_WEBHOOK_TOKEN):
+            recorder.signature_valid = False
+            logger.warning(
+                "Rejected a Slider webhook: token %s does not match the configured %s",
+                _key_fingerprint(presented),
+                _key_fingerprint(settings.SLIDER_WEBHOOK_TOKEN) or "(none)",
+            )
+            recorder.finish(result={"received": True, "error": "unauthorised"})
+            return {"received": True, "error": "unauthorised"}
+        recorder.signature_valid = True
+
+        try:
+            result = await slider_service.handle_webhook(db, payload)
+            logger.info(
+                "Slider webhook for %s → %s",
+                recorder.order_number or recorder.external_id or "?",
+                result,
+            )
+            recorder.finish(result=result)
+            return result
+        except SliderError as exc:
+            logger.warning("Rejected Slider webhook: %s", exc)
+            recorder.finish(
+                result={"received": True, "error": str(exc)}, error=str(exc)
+            )
+            return {"received": True, "error": str(exc)}
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.exception("Slider webhook processing failed")
+            recorder.finish(
+                result={"received": True, "error": str(exc)}, error=str(exc)
+            )
+            return {"received": True, "error": str(exc)}
+    finally:
+        await recorder.save()
+
+
+@router.post("/slider/staging", status_code=status.HTTP_200_OK)
+async def slider_staging_webhook(request: Request, db: AsyncSession = Depends(get_db)):
+    """
+    Slider's **staging** pushes, pointed at production on purpose, and inert.
+
+    Their dashboard configures a staging and a production webhook separately.
+    Pointing the staging one here means real Slider traffic can be watched while
+    the integration is still being proved — acknowledged, journalled, and
+    nothing else.
+
+    It writes **nothing**: no `webhook_events` row, no `order_deliveries` update,
+    no `apply_webhook`, not even an order lookup. A staging delivery id is
+    meaningless against production data, and a staging `delivered` that moved a
+    real order would refund a cake that is sitting on a shelf.
+
+    That is enforced by `test_the_staging_webhook_writes_nothing`, which posts a
+    well-formed `delivered` payload naming a real order and asserts the order and
+    its delivery row are byte-identical afterwards. A comment saying "staging
+    does nothing" would not stop somebody wiring it up later; a test does.
+
+    Rows land in the admin's Webhook logs as `provider = "slider"`,
+    `endpoint = "staging"`. Note `LOG_RETENTION_DAYS` is 7, so this is a window
+    on live traffic rather than an archive.
+
+    `db` is taken so the recorder's own session is opened alongside the request's
+    in the ordinary way; nothing here reads or writes through it. The journal
+    goes to `webhook_log_service.Recorder`, which runs on a dedicated session
+    that survives a rollback — exactly the property wanted for a record of "this
+    arrived".
+    """
+    presented = _slider_token(request, settings.SLIDER_STAGING_WEBHOOK_HEADER)
+    recorder = Recorder(
+        "slider",
+        "staging",
+        request=request,
+        key_fingerprint=_key_fingerprint(presented),
+    )
+    try:
+        try:
+            payload = await request.json()
+        except Exception:
+            recorder.finish(result={"received": True}, error="unreadable body")
+            return {"received": True}
+
+        recorder.payload = payload
+        if isinstance(payload, dict):
+            recorder.event_type = str(payload.get("status") or "").strip() or None
+            recorder.external_id = (
+                str(payload.get("id") or payload.get("delivery_id") or "") or None
+            )
+            recorder.order_number = (
+                str(payload.get("order_number") or payload.get("reference") or "")
+                or None
+            )
+
+        if not _slider_token_is_valid(presented, settings.SLIDER_STAGING_WEBHOOK_TOKEN):
+            recorder.signature_valid = False
+            recorder.finish(result={"received": True, "error": "unauthorised"})
+            return {"received": True, "error": "unauthorised"}
+        recorder.signature_valid = True
+
+        logger.info(
+            "Slider staging webhook for %s: %s",
+            recorder.order_number or recorder.external_id or "?",
+            json.dumps(payload, default=str)[:2000],
+        )
+        recorder.finish(result={"received": True})
+        return {"received": True}
     finally:
         await recorder.save()
 

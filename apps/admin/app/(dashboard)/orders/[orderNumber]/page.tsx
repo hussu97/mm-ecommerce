@@ -1091,6 +1091,7 @@ function ChangeFulfilmentDialog({
 const PROVIDER_LABEL: Record<string, string> = {
   lalamove: 'Lalamove',
   noon_send: 'noon Send',
+  slider: 'Slider',
   third_party: 'Third party',
 };
 
@@ -1136,6 +1137,10 @@ function DeliveryPanel({
   // noon Send publishes a rate card and no quotation API, so their number is
   // computed here rather than billed. Saying so stops it being read as an
   // invoice line.
+  // noon Send publishes a rate card and no quotation API, so their number is
+  // computed here rather than billed. Slider and Lalamove both quote, so
+  // theirs is not an estimate — a Slider booking whose fare call failed
+  // records no cost at all rather than a guessed one.
   const costIsEstimate = delivery.provider === 'noon_send';
 
   return (
@@ -1153,9 +1158,11 @@ function DeliveryPanel({
           variant={
             delivery.provider === 'noon_send'
               ? 'success'
-              : isCourier
-                ? 'info'
-                : 'neutral'
+              : delivery.provider === 'slider'
+                ? 'warning'
+                : isCourier
+                  ? 'info'
+                  : 'neutral'
           }
         >
           {PROVIDER_LABEL[delivery.provider] ?? delivery.provider}
@@ -1355,10 +1362,13 @@ function DeliveryPanel({
             </a>
           )}
           <div className="flex-1" />
-          {/* noon Send only. Lalamove pushes its own updates and retries them
-              for a day, so the endpoint refuses it and a button here would be a
-              400 waiting to happen. */}
-          {!isSettled && delivery.provider === 'noon_send' && delivery.courier_order_id && (
+          {/* The couriers whose statuses only ever reach us by push, and who do
+              not retry one that is lost. Lalamove pushes its own updates and
+              retries them for a day, so the endpoint refuses it and a button
+              here would be a 400 waiting to happen. */}
+          {!isSettled &&
+            (delivery.provider === 'noon_send' || delivery.provider === 'slider') &&
+            delivery.courier_order_id && (
             <Button size="sm" variant="ghost" onClick={onRefresh} disabled={busy}>
               <span className="material-icons text-[14px]">sync</span>
               Check status

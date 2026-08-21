@@ -1012,3 +1012,110 @@ still guarding anything. A refusal and a mitigation for the same hazard means on
 of them is redundant, and it is usually the refusal — which is also the one the
 user feels. Where a real consequence remains, say it (the van will still call for
 a parcel that has gone) and let the person decide.
+
+---
+
+## A courier gate that only the dispatcher knows about is not a gate
+
+*Slider integration, August 2026.*
+
+The plan said: put the "who actually carries this" swap in
+`courier_service._dispatch_once`, mirroring the noon Send → Lalamove fallback
+that already lives there. That is where a reader looks for it, and it is the
+right place — it is just not the *only* place that asks the question.
+
+`batching_service.reserve` runs at **order confirmation**, hours before anything
+is dispatched, and it decides whether the order joins a shared run by testing
+`delivery.provider != "lalamove"`. A zone that starts saying `slider` therefore
+takes every order in it off the batch run immediately, whoever ends up carrying
+it — silently, at roughly three times the courier cost, with the Runs tab simply
+showing fewer stops.
+
+**Rule:** when a provider becomes something other than what the map says, find
+every read of `delivery.provider` and ask which of them is deciding something.
+Give the swap one function — `courier_service.carrier_for(order, delivery)` —
+and make each of them call it. A gate that two call sites compute differently is
+two gates.
+
+**Rule:** a rollout described as "a no-op for everybody but one account" has to
+be checked against the things that are *not* the routing. Three of them moved
+here and none is a courier call:
+
+* the **batch run** the zone rides (above),
+* the **delivery promise**, which `delivery_promise.resolve` reads off the
+  zone's declared courier and its group — so detaching a zone from its group, or
+  giving the new courier a shorter `unbatched_promise_minutes` than the courier
+  that will actually carry it, changes what every customer is told,
+* the **speed label** in `delivery.py:_speed_of`.
+
+The promise one is the nastiest: under-promising costs nothing and
+over-promising produces late orders, so the new courier's row carries the
+*fallback's* figure until the gate comes off, not its own.
+
+**Rule:** pin a "this changes nothing" claim with a test that reads the
+migrations, not with a comment. `test_slider_rollout_is_a_no_op.py` asserts the
+group survived and the promise did not get shorter; both would otherwise be
+invisible until a customer complained.
+
+## Verify a map re-split by sweeping it, not by listing landmarks
+
+Every band inherits its parent's fee by convention, and a convention is not a
+guarantee. `scripts/compare_delivery_maps.py` resolves both maps over a 98,000
+point grid and prints every fee that moved, every courier that changed and every
+point the new map does not claim — the last being the fatal one, since `088`
+removed the national default fee and an unmatched pin is now a hard checkout
+failure. Named landmarks check the places somebody thought of; the sweep checks
+the places nobody did, which is where a sliver hides.
+
+
+---
+
+## A column that means "a human did this" must not be written by a machine
+
+*Slider integration QA, August 2026.*
+
+The gate that hands a Slider zone's orders back to Lalamove set
+`original_provider` on the delivery row, on the reasoning that the swap should
+be visible afterwards. It reads well and it was wrong, because that column had
+already been given a meaning by somebody else: **a person moved this order.**
+Three things downstream depend on that reading, and only one of them is obvious.
+
+* The admin prints "moved from Slider" beside the courier — on every order,
+  including the thousands nobody touched.
+* `fulfilment_reassignment.allowed_targets` treats it as the map's own choice
+  when there is no zone to ask.
+* `fulfilment_service._estimate` reads a populated `original_provider` as "this
+  order was written against a third-party zone" and answers
+  tomorrow-before-10-PM instead of an hour.
+
+The last one is a customer-facing promise changing on almost every Dubai order,
+produced by a line of code whose stated purpose was to add an audit trail.
+
+**Rule:** before writing a column an existing feature owns, grep every read of
+it and ask what each one thinks the value means. A column's type is `str | None`;
+its meaning is whatever the readers assume, and they will not tell you.
+
+**Rule:** the honest signal for an automatic swap was already there and cost
+nothing — the zone says one courier, the row says another, and a `logger.info`
+explains it. That is exactly what the noon Send fallback has always done, and
+the convention was sitting four lines below the code that broke it.
+
+## "No-op" is a claim about every screen, not about the routing
+
+The same review found two more of these, and neither is a courier call:
+
+* `_speed_of` decided the storefront's speed label by asking `is_noon_send`.
+  True of the courier and only accidentally true of the zones — so carving
+  `Sharjah Core` out of `Sharjah Central` and handing it to a different courier
+  silently downgraded the inner ring from "express" to "same day". It asks
+  `is_batched` now, which is the property the label is actually about.
+* A checkout quote has a pin and no order, so it never had the drop's emirate,
+  so it priced the car everywhere — including the one zone where the booking
+  uses the bike. The estimate and the booking agreeing on the vehicle was the
+  whole point of putting that rule in a single function, and the disagreement
+  reappeared one layer up, in the *arguments*.
+
+**Rule:** when a rule takes an input, check that every caller can actually
+supply it. A parameter with a `None` default is a rule that quietly stops
+applying, and the caller that cannot fill it is usually the one that matters —
+here, the one the customer is looking at.

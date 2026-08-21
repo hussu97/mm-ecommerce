@@ -41,6 +41,13 @@ class FulfilmentProviderEnum(str, enum.Enum):
     #: to Lalamove whenever it will not take a job — including, deliberately, for
     #: every customer outside the trial while it runs against noon's staging.
     NOON_SEND = "noon_send"
+    #: Booked over Slider's API. A third courier, brought in for dispatch
+    #: accuracy rather than for price — across Ajman, Dubai and Umm al-Quwain
+    #: its car costs about AED 0.94 an order more than Lalamove, and Ajman
+    #: alone is cheaper on every area. It books one delivery at a time and
+    #: cannot be batched, so a Slider zone never joins a shared run. Like the
+    #: other two, an unconfigured key is a fallback and not an outage.
+    SLIDER = "slider"
     #: Whoever we already use. No integration: the same manual flow as today.
     THIRD_PARTY = "third_party"
 
@@ -72,6 +79,19 @@ DEFAULT_ALTERNATES: dict[str, list[str]] = {
     FulfilmentProviderEnum.NOON_SEND.value: [
         FulfilmentProviderEnum.THIRD_PARTY.value,
         FulfilmentProviderEnum.LALAMOVE.value,
+    ],
+    #: Slider is offered Lalamove, which has none of noon Send's limits, and a
+    #: third party as the manual escape. **Not noon Send**, for the same reason
+    #: a Lalamove zone is not: five of the six Slider zones are outside Sharjah,
+    #: where noon Send cannot go at all.
+    #:
+    #: `Sharjah Core` is the exception and is the one zone where noon Send is a
+    #: real answer — which is exactly what the pilot gate falls back to there.
+    #: A per-provider default cannot say that, so `126_cost_banded_map_v2` seeds
+    #: that zone's row explicitly and this stays the safe answer everywhere else.
+    FulfilmentProviderEnum.SLIDER.value: [
+        FulfilmentProviderEnum.LALAMOVE.value,
+        FulfilmentProviderEnum.THIRD_PARTY.value,
     ],
 }
 

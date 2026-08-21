@@ -974,6 +974,10 @@ async def create_order(
         latitude=address.latitude if address else None,
         longitude=address.longitude if address else None,
         address=address.address_line_1 if address else None,
+        # The same identity the preview priced against, so a pilot account's
+        # free delivery survives from the summary onto the order.
+        user_id=user_id,
+        email=data.email or fallback_email,
     )
 
     # 5. Find the kitchen before writing anything. `orders.branch_id` is NOT
@@ -1215,6 +1219,10 @@ async def preview_order(
         delivery_method=data.delivery_method,
         discount_amount=discount_amount,
         priced=priced,
+        # The same identity `quote_priced` above was given, or the summary and
+        # the totals under it would disagree about a pilot account's fee.
+        user_id=user_id,
+        email=data.email or fallback_email,
         # A preview answers; it does not refuse. See `compute_order_totals`.
         strict=False,
     )

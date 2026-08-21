@@ -845,6 +845,95 @@ gh secret set NOON_SEND_WEBHOOK_API_KEY --repo hussu97/mm-ecommerce
 gh secret set MAPBOX_ACCESS_TOKEN --repo hussu97/mm-ecommerce
 ```
 
+#### Slider (the third courier)
+
+Slider is gated to one account while the pilot runs. Six zones on the map name
+it — `Sharjah Core`, `Ajman City`, the three Dubai bands and `Umm al-Quwain
+City` — and for every customer who is **not** on `SLIDER_TRIAL_EMAILS` those
+zones resolve to exactly the courier that carried them before: noon Send inside
+Sharjah, Lalamove everywhere else. So publishing the map and shipping the code
+is a no-op for every customer but one, deliberately.
+
+> **`SLIDER_TRIAL_EMAILS` is one switch with two halves.** Setting it starts the
+> pilot: Slider carries that account's orders, *and* its delivery is free
+> anywhere it can be delivered to. Emptying it ends both together — Slider opens
+> to its zones and nobody gets free delivery. It is matched against a
+> **signed-in** customer's own account email; a guest typing the same address
+> never qualifies. It is deliberately not tied to `APP_ENV` or `SLIDER_ENV`,
+> because an environment-shaped gate opens a trial to everybody the moment the
+> environment changes.
+>
+> The waiver zeroes what the **customer** pays and nothing else. `quoted_cost`
+> and `cost_total` on `order_deliveries` still record what Slider charged us, so
+> cost the pilot from those two columns — the margin figure shows every pilot
+> order as fully negative, correctly.
+
+| Secret | Value | Notes |
+|--------|-------|-------|
+| `SLIDER_API_KEY` | from the Slider dashboard | Empty means every Slider zone falls back, exactly as an empty Lalamove or noon Send key does. Not an outage |
+| `SLIDER_ACCOUNT_ID` | from the Slider dashboard | Sent as `X-Account-Id` |
+| `SLIDER_WEBHOOK_TOKEN` | a secret you generate | Set the same value in Slider's dashboard. **Enforced** — an empty token rejects every push, unlike `NOON_SEND_ENFORCE_WEBHOOK_KEY` |
+| `SLIDER_STAGING_WEBHOOK_TOKEN` | a second secret you generate | For the staging webhook, which is pointed at production on purpose. See below |
+| `SLIDER_TRIAL_EMAILS` | empty until the pilot starts | Then `h_abbasi97@hotmail.com`. Comma-separated |
+
+The rest fall back in the deploy workflow:
+
+| Secret | Falls back to | Notes |
+|--------|---------------|-------|
+| `SLIDER_ENV` | `staging` | `staging`, `production`, or an absolute `https://` origin which wins over both. **Confirm the hostnames with Slider before the pilot** — they are the one part of this integration that could not be verified from the repository, and a wrong one fails as DNS on the first real booking |
+| `SLIDER_TIMEOUT_SECONDS` | `8` | |
+| `SLIDER_BIKE_MAX_KM` | `35` | **Road** kilometres, and half of the vehicle rule: a bike only if the drop is in the *same emirate* as the kitchen **and** within this. See the open question below |
+| `SLIDER_DETOUR_FACTOR` | `1.44` | Straight line to road distance, measured over the 97 areas of the fare survey. Used only when Slider has not told us a distance itself |
+| `SLIDER_WEBHOOK_HEADER` | `X-Slider-Token` | Must match the "Token Header Key" field in Slider's dashboard, which ships **empty** — set it explicitly or the token may never be sent |
+| `SLIDER_STAGING_WEBHOOK_HEADER` | `X-Slider-Token` | Same, for the staging webhook |
+
+```bash
+gh secret set SLIDER_API_KEY --repo hussu97/mm-ecommerce
+gh secret set SLIDER_ACCOUNT_ID --repo hussu97/mm-ecommerce
+gh secret set SLIDER_WEBHOOK_TOKEN --repo hussu97/mm-ecommerce
+gh secret set SLIDER_STAGING_WEBHOOK_TOKEN --repo hussu97/mm-ecommerce
+gh secret set SLIDER_TRIAL_EMAILS --repo hussu97/mm-ecommerce
+```
+
+**Two things to fix in the Slider dashboard first.**
+
+1. The **staging Webhook URL** is an email address (`h_abbasi97@hotmail.com`) in
+   a URL field. Nothing will ever be delivered to it. It needs to be
+   `https://<prod-host>/api/v1/webhooks/slider/staging`.
+2. **Both Token Header Key fields are empty.** A token with no header key may
+   not be sent at all, or may arrive in a header we are not reading. Set both to
+   `X-Slider-Token`, matching `SLIDER_*_WEBHOOK_HEADER`.
+
+The production webhook goes to `https://<prod-host>/api/v1/webhooks/slider`. The
+staging one is pointed at production on purpose: `/api/v1/webhooks/slider/staging`
+acknowledges the push, writes a `webhook_logs` row and does **nothing else** — no
+`webhook_events`, no `order_deliveries`, no order lookup. Real Slider traffic can
+then be watched in Admin → Webhook logs (`provider = slider`, `endpoint =
+staging`) while the integration is still being proved. `LOG_RETENTION_DAYS` is 7,
+so it is a window rather than an archive.
+
+**Deploy order.** Each step is independently reversible:
+
+1. `alembic upgrade 126_cost_banded_map_v2` — the re-split map, every zone still
+   naming the courier that carries it today, and every zone carrying the
+   alternates `125_zone_alternates` gave the map before it.
+2. Ship the Slider code with `SLIDER_API_KEY` and `SLIDER_TRIAL_EMAILS` empty.
+   `alembic upgrade 127_slider_courier` registers the courier row.
+3. `alembic upgrade 128_slider_zones` — the six zones name Slider, and their
+   alternates move with them. Still a no-op; nobody is on the list. The zones
+   **keep** the Lalamove runs they were riding, which is what keeps their
+   arrival promise and their batching identical for everybody off the list.
+4. Set `SLIDER_API_KEY` and `SLIDER_ACCOUNT_ID`.
+5. Set `SLIDER_TRIAL_EMAILS`. The pilot begins, one account, and that one
+   setting grants both halves at once.
+6. Empty the list to end it.
+
+> **Open question, worth answering before step 5.** Can Slider's bike cross an
+> emirate boundary? Their `/deliveries/fare` says yes — it offered a bike for
+> Sharjah→Ajman at 12 km and for nine Sharjah→Dubai routes out to 34.4 km. The
+> code assumes no. It is worth about AED 5 an order across Ajman and Dubai, and
+> if the answer is yes the only change is in `slider_service.vehicle_for`.
+
 **Registering a branch.** Which outlet a rider collects from is a property of the
 branch, not of the deployment — Lalamove already reads the pickup coordinates and
 phone from the same row. Each kitchen is registered with noon Send separately and

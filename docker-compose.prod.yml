@@ -143,6 +143,28 @@ services:
       NOON_SEND_MAX_DISTANCE_M: ${NOON_SEND_MAX_DISTANCE_M:-20000}
       NOON_SEND_DETOUR_FACTOR: ${NOON_SEND_DETOUR_FACTOR:-1.49}
       NOON_SEND_TIMEOUT_SECONDS: ${NOON_SEND_TIMEOUT_SECONDS:-8}
+      # ── Slider ──────────────────────────────────────────────────────────
+      # The third courier. Every one of these has to be here and not only in
+      # `.env`: this block is an allow-list, and a variable the VM holds but
+      # this file does not name never reaches the container — the app just sees
+      # its default. That is exactly how noon Send ran inert on production for
+      # weeks with the key sitting on the box the whole time.
+      #
+      # SLIDER_TRIAL_EMAILS is the gate, and it must reach BOTH services: the
+      # register books the courier when an order is packed, so a list that
+      # arrived at the storefront and not here would carry the pilot account's
+      # order on the wrong courier depending on which door it came through.
+      SLIDER_API_KEY: ${SLIDER_API_KEY:-}
+      SLIDER_ACCOUNT_ID: ${SLIDER_ACCOUNT_ID:-}
+      SLIDER_ENV: ${SLIDER_ENV:-staging}
+      SLIDER_TIMEOUT_SECONDS: ${SLIDER_TIMEOUT_SECONDS:-8}
+      SLIDER_BIKE_MAX_KM: ${SLIDER_BIKE_MAX_KM:-35}
+      SLIDER_DETOUR_FACTOR: ${SLIDER_DETOUR_FACTOR:-1.44}
+      SLIDER_WEBHOOK_TOKEN: ${SLIDER_WEBHOOK_TOKEN:-}
+      SLIDER_WEBHOOK_HEADER: ${SLIDER_WEBHOOK_HEADER:-X-Slider-Token}
+      SLIDER_STAGING_WEBHOOK_TOKEN: ${SLIDER_STAGING_WEBHOOK_TOKEN:-}
+      SLIDER_STAGING_WEBHOOK_HEADER: ${SLIDER_STAGING_WEBHOOK_HEADER:-X-Slider-Token}
+      SLIDER_TRIAL_EMAILS: ${SLIDER_TRIAL_EMAILS:-}
       # ── How long the debugging trails live ──────────────────────────────
       # `webhook_logs` grows by a row every 15-30 seconds per live noon Send
       # task. The bound is what makes storing every one at full payload
@@ -306,6 +328,28 @@ services:
       NOON_SEND_MAX_DISTANCE_M: ${NOON_SEND_MAX_DISTANCE_M:-20000}
       NOON_SEND_DETOUR_FACTOR: ${NOON_SEND_DETOUR_FACTOR:-1.49}
       NOON_SEND_TIMEOUT_SECONDS: ${NOON_SEND_TIMEOUT_SECONDS:-8}
+      # ── Slider ──────────────────────────────────────────────────────────
+      # The third courier. Every one of these has to be here and not only in
+      # `.env`: this block is an allow-list, and a variable the VM holds but
+      # this file does not name never reaches the container — the app just sees
+      # its default. That is exactly how noon Send ran inert on production for
+      # weeks with the key sitting on the box the whole time.
+      #
+      # SLIDER_TRIAL_EMAILS is the gate, and it must reach BOTH services: the
+      # register books the courier when an order is packed, so a list that
+      # arrived at the storefront and not here would carry the pilot account's
+      # order on the wrong courier depending on which door it came through.
+      SLIDER_API_KEY: ${SLIDER_API_KEY:-}
+      SLIDER_ACCOUNT_ID: ${SLIDER_ACCOUNT_ID:-}
+      SLIDER_ENV: ${SLIDER_ENV:-staging}
+      SLIDER_TIMEOUT_SECONDS: ${SLIDER_TIMEOUT_SECONDS:-8}
+      SLIDER_BIKE_MAX_KM: ${SLIDER_BIKE_MAX_KM:-35}
+      SLIDER_DETOUR_FACTOR: ${SLIDER_DETOUR_FACTOR:-1.44}
+      SLIDER_WEBHOOK_TOKEN: ${SLIDER_WEBHOOK_TOKEN:-}
+      SLIDER_WEBHOOK_HEADER: ${SLIDER_WEBHOOK_HEADER:-X-Slider-Token}
+      SLIDER_STAGING_WEBHOOK_TOKEN: ${SLIDER_STAGING_WEBHOOK_TOKEN:-}
+      SLIDER_STAGING_WEBHOOK_HEADER: ${SLIDER_STAGING_WEBHOOK_HEADER:-X-Slider-Token}
+      SLIDER_TRIAL_EMAILS: ${SLIDER_TRIAL_EMAILS:-}
       NOON_SEND_BASE: ${NOON_SEND_BASE:-12}
       NOON_SEND_BULKY_BASE: ${NOON_SEND_BULKY_BASE:-25}
       NOON_SEND_SURGE_AED: ${NOON_SEND_SURGE_AED:-1}

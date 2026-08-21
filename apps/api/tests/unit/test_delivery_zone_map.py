@@ -26,15 +26,23 @@ DATA = Path(__file__).resolve().parents[2] / "app" / "data"
 #: The migration that publishes the map currently in force. Everything here is
 #: read out of it rather than restated, so the test cannot agree with a fee
 #: table nobody is using.
-LIVE_MIGRATION = "085_cost_banded_map.py"
+LIVE_MIGRATION = "126_cost_banded_map_v2.py"
 
 #: The flat price of everywhere we do not dispatch ourselves. Read by the
 #: fixture as well, so the migration's own constant is the only definition.
 OUTER_FEE = "80.00"
 OUTER_THRESHOLD = "200.00"
 
+#: The migration that hands six of those zones to Slider. Applied on top,
+#: because it is a separate deploy step by design — the map is published first
+#: with every zone still naming the courier that carries it today, and the
+#: routing is flipped afterwards. Both are in force at `head`, so a test that
+#: read only the first would be checking a map nobody runs.
+ROUTING_MIGRATION = "128_slider_zones.py"
+
 LALAMOVE = "lalamove"
 NOON_SEND = "noon_send"
+SLIDER = "slider"
 THIRD_PARTY = "third_party"
 
 
@@ -54,8 +62,27 @@ def _geojson_path() -> Path:
     return DATA / match.group(1)
 
 
+def _routing_overrides() -> dict[str, str]:
+    """zone -> the courier `ROUTING_MIGRATION` moves it to."""
+    namespace: dict[str, object] = {}
+    source = (VERSIONS / ROUTING_MIGRATION).read_text()
+    start = source.index("ZONES: list[tuple[str, str, str, str]] = [")
+    end = source.index("\n]", source.index("= [", start)) + 2
+    exec(source[start:end], namespace)  # noqa: S102 — our own file, no input
+    slider = source[source.index('SLIDER = "') + 10 :]
+    slider = slider[: slider.index('"')]
+    return {name: slider for name, *_ in namespace["ZONES"]}  # type: ignore[index]
+
+
 def _seeded_zones() -> list[tuple[str, str, str, str, bool]]:
-    """The fee table straight out of the migration, so the two cannot drift."""
+    """The fee table straight out of the migrations, so they cannot drift.
+
+    Two migrations, layered in the order Alembic applies them: `125` publishes
+    the map with every zone still naming the courier that carries it today, and
+    `127` moves six of them to Slider. Only the courier moves — a fee that
+    changed here would mean the routing migration had reached past the one thing
+    it is allowed to touch.
+    """
     namespace: dict[str, object] = {
         "OUTER_FEE": OUTER_FEE,
         "OUTER_THRESHOLD": OUTER_THRESHOLD,
@@ -66,7 +93,11 @@ def _seeded_zones() -> list[tuple[str, str, str, str, bool]]:
     # has brackets of its own and would close the slice three characters in.
     end = source.index("\n]", source.index("= [", start)) + 2
     exec(source[start:end], namespace)  # noqa: S102 — our own file, no input
-    return namespace["ZONES"]  # type: ignore[return-value]
+    overrides = _routing_overrides()
+    return [
+        (name, fee, threshold, overrides.get(name, provider), free)
+        for name, fee, threshold, provider, free in namespace["ZONES"]  # type: ignore[union-attr]
+    ]
 
 
 @pytest.fixture(scope="module")
@@ -95,7 +126,18 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
 @pytest.mark.parametrize(
     "label,lat,lng,expected,fee,threshold,provider",
     [
-        # ── Sharjah, inside noon Send's 20 km reach: free, at any basket ─────
+        # The `provider` column is the courier *the map names*, which since
+        # `127` is Slider on six of these zones. It is not necessarily the
+        # courier that carries any given order: the pilot gate in
+        # `courier_service.carrier_for` hands a Slider zone back to noon Send
+        # inside Sharjah and to Lalamove outside it for everyone who is not on
+        # the list. That is `test_courier_routing`'s business, not this file's —
+        # here the question is only what the map says.
+        # ── Sharjah Core: the 3.5 km ring, free at any basket ────────────────
+        # Split out of Sharjah Central because a car from a courier that prices
+        # road distance beats noon Send's bike inside it — by about AED 1 an
+        # order, which is not the reason. Dispatch reliability is.
+        #
         # The fee is zero rather than waived, so the threshold is 0.00 and not
         # NULL. NULL would mean "use the national number"; zero means there is
         # no bar to clear, and confusing the two starts charging the one zone
@@ -104,22 +146,40 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "Melting Moments itself",
             25.3304139,
             55.3736131,
-            "Sharjah Central",
+            "Sharjah Core",
             "0.00",
             "0.00",
-            NOON_SEND,
+            SLIDER,
         ),
         (
             "Al Majaz Waterfront",
             25.3213,
             55.3820,
+            "Sharjah Core",
+            "0.00",
+            "0.00",
+            SLIDER,
+        ),
+        ("Al Khan", 25.3306, 55.3600, "Sharjah Core", "0.00", "0.00", SLIDER),
+        ("Rolla", 25.3560, 55.3870, "Sharjah Core", "0.00", "0.00", SLIDER),
+        # Inside the radius and *not* one of the areas the split was drawn for:
+        # 2.9 km straight is 5 km of road to Al Nud and 7 to the industrial
+        # area, and a courier that prices road distance loses on both. A radial
+        # band cannot exclude them, which is the honest cost of drawing this
+        # one as a circle. Pinned so that nobody later reads the zone as "the
+        # set where the new courier wins" — it is not, quite.
+        ("Al Nud", 25.3390, 55.4020, "Sharjah Core", "0.00", "0.00", SLIDER),
+        # ── Sharjah Central: out to noon Send's 20 km road ceiling ───────────
+        ("Maysaloon", 25.3220, 55.4250, "Sharjah Central", "0.00", "0.00", NOON_SEND),
+        (
+            "Sharjah Industrial Area",
+            25.3110,
+            55.4090,
             "Sharjah Central",
             "0.00",
             "0.00",
             NOON_SEND,
         ),
-        ("Al Khan", 25.3306, 55.3600, "Sharjah Central", "0.00", "0.00", NOON_SEND),
-        ("Maysaloon", 25.3220, 55.4250, "Sharjah Central", "0.00", "0.00", NOON_SEND),
         (
             "Muwaileh Commercial",
             25.3120,
@@ -139,15 +199,15 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "0.00",
             NOON_SEND,
         ),
-        # Al Taawun belongs here too and does not resolve — see
-        # `test_al_taawun_is_in_a_hole_in_the_source_outlines` below.
+        # Al Taawun belongs to the Core and is served through a gap in the
+        # source outlines — see `test_al_taawun_is_served...` below.
         # ── Sharjah, past noon Send's ceiling ────────────────────────────────
         # 21.1 road km. noon Send would be cheaper here too; it is not allowed
         # to be, so the boundary sits at the ceiling and not where prices cross.
         # Priced as Dubai: a car run at AED 32 of cost.
         ("Al Rahmaniya", 25.2760, 55.5200, "Sharjah Outer", "20.00", "75.00", LALAMOVE),
         # ── Another emirate, so never noon Send whatever the distance ────────
-        ("Ajman Corniche", 25.4052, 55.4384, "Ajman City", "10.00", "75.00", LALAMOVE),
+        ("Ajman Corniche", 25.4052, 55.4384, "Ajman City", "10.00", "75.00", SLIDER),
         (
             "Emirates City, Ajman",
             25.4180,
@@ -155,10 +215,10 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "Ajman City",
             "10.00",
             "75.00",
-            LALAMOVE,
+            SLIDER,
         ),
-        # ── Dubai: three bands, one fee, so the far half can be repriced later
-        #    without redrawing anything ─────────────────────────────────────
+        # ── Dubai: bands carrying one fee, so the far half can be repriced
+        #    later without redrawing anything ─────────────────────────────────
         (
             "Deira City Centre",
             25.2530,
@@ -166,9 +226,9 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "Dubai Near",
             "20.00",
             "75.00",
-            LALAMOVE,
+            SLIDER,
         ),
-        ("Burj Khalifa", 25.1972, 55.2744, "Dubai Near", "20.00", "75.00", LALAMOVE),
+        ("Burj Khalifa", 25.1972, 55.2744, "Dubai Near", "20.00", "75.00", SLIDER),
         (
             "Dubai Silicon Oasis",
             25.1200,
@@ -176,13 +236,13 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "Dubai Mid",
             "20.00",
             "75.00",
-            LALAMOVE,
+            SLIDER,
         ),
-        ("Dubai Marina", 25.0805, 55.1403, "Dubai Far", "20.00", "75.00", LALAMOVE),
-        ("Palm Jumeirah", 25.1304, 55.1170, "Dubai Far", "20.00", "75.00", LALAMOVE),
+        ("Dubai Marina", 25.0805, 55.1403, "Dubai Far", "20.00", "75.00", SLIDER),
+        ("Palm Jumeirah", 25.1304, 55.1170, "Dubai Far", "20.00", "75.00", SLIDER),
         # Jebel Ali used to fall outside the served circle and pay the
         # third-party 80. A Lalamove car reaches it for 56, so it is inside now.
-        ("Jebel Ali", 24.9500, 55.1500, "Dubai Far", "20.00", "75.00", LALAMOVE),
+        ("Jebel Ali", 24.9500, 55.1500, "Dubai Far", "20.00", "75.00", SLIDER),
         # ── Emirates that now have a served band of their own ────────────────
         # A car costs 44 here against the third-party 80, so it is worth serving.
         (
@@ -192,7 +252,7 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "Umm al-Quwain City",
             "30.00",
             "75.00",
-            LALAMOVE,
+            SLIDER,
         ),
         # 89 road km. A car costs 80 — level with the third party — and the
         # threshold is 100 rather than 75 because the run is three times a
@@ -206,15 +266,31 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "100.00",
             LALAMOVE,
         ),
+        # The one fee this re-split moves, and the only one. Al Rams sat in the
+        # Ras al-Khaimah leftover at 80 because the old single band stopped at
+        # 78 km; the emirate's own bands now reach it, and it pays what the rest
+        # of Ras al-Khaimah pays. A fee going down, on a courier that will
+        # actually carry it.
+        (
+            "Al Rams",
+            25.8790,
+            56.0330,
+            "Ras al-Khaimah North",
+            "50.00",
+            "100.00",
+            LALAMOVE,
+        ),
         # ── Ours to deliver, but not on a courier's price ────────────────────
         # All of these look like "Sharjah" or "Dubai" on an address form and
         # cost three to six times a city run. This is the whole reason the
-        # emirate outlines were cut up.
+        # emirate outlines were cut up — and the reason the leftovers are now
+        # cut up again: Al Dhaid at 25 km and Khor Fakkan at 98 used to share
+        # one shape, one name and one price.
         (
             "Al Dhaid (inland Sharjah)",
             25.2880,
             55.8810,
-            "Sharjah",
+            "Sharjah Inland",
             OUTER_FEE,
             OUTER_THRESHOLD,
             THIRD_PARTY,
@@ -223,7 +299,7 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "Khor Fakkan (east coast)",
             25.3390,
             56.3560,
-            "Sharjah",
+            "Sharjah East Coast",
             OUTER_FEE,
             OUTER_THRESHOLD,
             THIRD_PARTY,
@@ -232,7 +308,7 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "Kalba (east coast)",
             25.0400,
             56.3500,
-            "Sharjah",
+            "Sharjah East Coast",
             OUTER_FEE,
             OUTER_THRESHOLD,
             THIRD_PARTY,
@@ -241,7 +317,7 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "Masfout (Ajman exclave)",
             24.8200,
             56.0500,
-            "Ajman",
+            "Ajman Masfout",
             OUTER_FEE,
             OUTER_THRESHOLD,
             THIRD_PARTY,
@@ -250,7 +326,25 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "Manama (Ajman exclave)",
             25.3100,
             55.9800,
-            "Ajman",
+            "Ajman Masfout",
+            OUTER_FEE,
+            OUTER_THRESHOLD,
+            THIRD_PARTY,
+        ),
+        (
+            "Falaj Al Mualla (inland UAQ)",
+            25.3760,
+            55.8590,
+            "Umm al-Quwain Inland",
+            OUTER_FEE,
+            OUTER_THRESHOLD,
+            THIRD_PARTY,
+        ),
+        (
+            "Dubai Industrial City",
+            24.8720,
+            55.0300,
+            "Dubai Outer",
             OUTER_FEE,
             OUTER_THRESHOLD,
             THIRD_PARTY,
@@ -260,7 +354,7 @@ def resolve(zones: list[dict], lat: float, lng: float) -> dict | None:
             "Hatta (Dubai exclave)",
             24.7967,
             56.1180,
-            "Dubai",
+            "Dubai Hatta",
             OUTER_FEE,
             OUTER_THRESHOLD,
             THIRD_PARTY,
@@ -339,14 +433,21 @@ def test_a_city_is_still_listed_ahead_of_its_own_emirate(zones):
     """
     order = [z["name"] for z in zones]
     for inner, outer in (
+        ("Sharjah Core", "Sharjah Central"),
         ("Sharjah Central", "Sharjah Outer"),
-        ("Sharjah Outer", "Sharjah"),
-        ("Ajman City", "Ajman"),
+        ("Sharjah Outer", "Sharjah Inland"),
+        ("Sharjah Inland", "Sharjah East Coast"),
+        ("Ajman City", "Ajman Inland"),
+        ("Ajman Inland", "Ajman Masfout"),
         ("Dubai Near", "Dubai Mid"),
         ("Dubai Mid", "Dubai Far"),
-        ("Dubai Far", "Dubai"),
-        ("Umm al-Quwain City", "Umm al-Quwain"),
-        ("Ras al-Khaimah City", "Ras al-Khaimah"),
+        ("Dubai Far", "Dubai Outer"),
+        ("Dubai Outer", "Dubai Hatta"),
+        ("Umm al-Quwain City", "Umm al-Quwain Inland"),
+        ("Umm al-Quwain Inland", "Umm al-Quwain"),
+        ("Ras al-Khaimah South", "Ras al-Khaimah City"),
+        ("Ras al-Khaimah City", "Ras al-Khaimah North"),
+        ("Ras al-Khaimah North", "Ras al-Khaimah"),
     ):
         assert order.index(inner) < order.index(outer)
 
@@ -366,7 +467,7 @@ def test_al_taawun_is_served_even_though_no_emirate_claims_it(zones):
     """
     zone = resolve(zones, 25.3160, 55.3720)
     assert zone is not None, "Al Taawun matched no zone"
-    assert zone["name"] == "Sharjah Central"
+    assert zone["name"] == "Sharjah Core"
     assert zone["fee"] == Decimal("0.00")
 
 
@@ -400,7 +501,84 @@ def test_every_courier_zone_is_cheaper_than_the_third_party_fee(zones):
 
 
 def test_every_zone_names_a_known_courier(zones):
-    assert {z["provider"] for z in zones} <= {LALAMOVE, NOON_SEND, THIRD_PARTY}
+    assert {z["provider"] for z in zones} <= {LALAMOVE, NOON_SEND, SLIDER, THIRD_PARTY}
+
+
+def test_slider_only_claims_the_emirates_its_fares_were_measured_over(zones):
+    """
+    Slider was priced over Sharjah, Ajman, Dubai and Umm al-Quwain and nowhere
+    else. Ras al-Khaimah came out at +4.18 an order against Lalamove and the far
+    field at +8.4 to +12.1, so a Slider zone reaching into either would be
+    routing on a fare nobody measured.
+
+    Checked against the emirate outlines rather than the zone's name, for the
+    same reason the noon Send version below is: a name is a label and an outline
+    is a fact.
+    """
+    outlines = json.loads(
+        (
+            Path(__file__).resolve().parents[2]
+            / "app"
+            / "data"
+            / "uae_emirates.geojson.json"
+        ).read_text()
+    )
+    priced = {"Sharjah", "Ajman", "Dubai", "Umm al-Quwain"}
+    slider_zones = [z for z in zones if z["provider"] == SLIDER]
+    assert slider_zones, "no zone is served by Slider"
+
+    checked = 0
+    for zone in slider_zones:
+        lats = [c[1] for poly in zone["geometry"]["coordinates"] for c in poly[0]]
+        lngs = [c[0] for poly in zone["geometry"]["coordinates"] for c in poly[0]]
+        lat = min(lats)
+        while lat <= max(lats):
+            lng = min(lngs)
+            while lng <= max(lngs):
+                if point_in_geometry(lat, lng, zone["geometry"]):
+                    checked += 1
+                    trespass = [
+                        name
+                        for name, outline in outlines.items()
+                        if name not in priced and point_in_geometry(lat, lng, outline)
+                    ]
+                    assert not trespass, (
+                        f"{zone['name']} reaches into {trespass} at {lat}, {lng}"
+                    )
+                lng += 0.004
+            lat += 0.004
+
+    assert checked > 100
+
+
+def test_the_routing_migration_moves_nothing_but_the_courier(zones):
+    """
+    `127` is allowed to change `fulfilment_provider` and nothing else.
+
+    Read straight out of both files rather than off the fixture, because the
+    fixture is what layers them — a bug there would agree with itself.
+    """
+    published = {}
+    namespace: dict[str, object] = {
+        "OUTER_FEE": OUTER_FEE,
+        "OUTER_THRESHOLD": OUTER_THRESHOLD,
+    }
+    source = (VERSIONS / LIVE_MIGRATION).read_text()
+    start = source.index("ZONES: list[tuple[str, str, str, str, bool]] = [")
+    end = source.index("\n]", source.index("= [", start)) + 2
+    exec(source[start:end], namespace)  # noqa: S102 — our own file, no input
+    for name, fee, threshold, _provider, free in namespace["ZONES"]:  # type: ignore[union-attr]
+        published[name] = (fee, threshold, free)
+
+    for zone in zones:
+        fee, threshold, free = published[zone["name"]]
+        assert zone["fee"] == Decimal(fee), zone["name"]
+        assert zone["threshold"] == Decimal(threshold), zone["name"]
+
+    moved = _routing_overrides()
+    assert set(moved) <= set(published), (
+        f"{sorted(set(moved) - set(published))} is not a zone on the published map"
+    )
 
 
 def test_noon_send_only_ever_claims_sharjah(zones):
