@@ -38,6 +38,7 @@ from app.models.delivery_settings import DeliverySettings
 from app.models.order import DeliveryMethodEnum
 from app.services import delivery_service, trial_customer
 from app.services.delivery_zone_service import Zone
+from app.services.lalamove_service import Estimate
 
 TRIAL_EMAIL = "h_abbasi97@hotmail.com"
 USER_ID = uuid.uuid4()
@@ -63,19 +64,50 @@ AJMAN_CITY = Zone(
 )
 
 
-@pytest.fixture(autouse=True)
-def trial_list(monkeypatch):
+#: What Slider answered for this pin, when Slider is answering at all. The
+#: figures are the sandbox's own for Sharjah kitchen to Ajman City.
+SLIDER_ESTIMATE = Estimate(
+    cost=Decimal("23.60"),
+    currency="AED",
+    distance_m=15270,
+    quotation_id=None,
+)
+
+
+@pytest.fixture(params=["courier unconfigured", "courier configured"], autouse=True)
+def regime(request, monkeypatch):
+    """Every case in this module, run once with the courier off and once with it on.
+
+    `slider_service.is_enabled()` turns on the presence of a key, and
+    `price` asks the courier for an estimate on **every** quote — including in
+    the fixed-fee zones, where the number is kept for the margin report and must
+    never reach the price. So the pilot being configured moves real code.
+
+    These tests used to read whatever key the developer had in a gitignored
+    `.env`: with the pilot set up locally they took the configured branch and
+    failed, and CI, which has no key, only ever ran the other one. The branch
+    that is live in production was the branch nothing tested.
+
+    Both are pinned here instead, and the assertions are identical across them —
+    which is the actual invariant. What a customer is charged, and whether the
+    waiver applies, cannot depend on whether a courier credential happens to be
+    present. A zone's fee is a property of the zone.
+
+    The estimate is stubbed at the seam between pricing and couriers rather than
+    inside Slider, because that is the boundary this module cares about;
+    `test_slider_service` owns what happens on the far side of it.
+    """
     monkeypatch.setattr(settings, "SLIDER_TRIAL_EMAILS", TRIAL_EMAIL)
-    # Pinned, not inherited. `slider_service.is_enabled()` turns on the presence
-    # of a key, and these tests read the real `settings` — so on a developer's
-    # machine with the pilot configured in `.env` they took a different branch
-    # and failed, while CI, which has no key, never noticed.
-    #
-    # A test whose result depends on a gitignored file is not a test. This pins
-    # the fee arithmetic to the courier-disabled branch, which is what these
-    # cases are actually about; the enabled branch wants coverage of its own
-    # rather than to arrive here by accident.
-    monkeypatch.setattr(settings, "SLIDER_API_KEY", "")
+    if request.param == "courier unconfigured":
+        monkeypatch.setattr(settings, "SLIDER_API_KEY", "")
+    else:
+        monkeypatch.setattr(settings, "SLIDER_API_KEY", "sk_test_pinned_by_fixture")
+        monkeypatch.setattr(
+            delivery_service.courier_service,
+            "estimate_for_point",
+            AsyncMock(return_value=(SLIDER_ESTIMATE, None)),
+        )
+    return request.param
 
 
 # ── the membership test itself ────────────────────────────────────────────────
@@ -161,6 +193,52 @@ async def test_the_pilot_account_is_charged_nothing():
 async def test_everyone_else_is_charged_the_zone_fee():
     assert await _fee(USER_ID, "someone@example.com") == Decimal("10.00")
     assert await _fee(None, None) == Decimal("10.00")
+
+
+async def test_a_courier_estimate_never_becomes_a_fixed_zone_s_price(regime):
+    """A configured courier must not change what a fixed-fee zone charges.
+
+    `price` asks the courier on every quote, fixed zones included — the answer
+    is evidence for the margin report, not a price. Ajman City charges AED 10
+    off its own row while Slider quotes AED 23.60 for the same pin, so if the
+    estimate ever leaked into the fee it would more than double the charge in
+    exactly the zones the pilot is running in, and it would do it the moment a
+    credential was added rather than at a deploy anyone was watching.
+
+    Deliberately asserted against the estimate's own figure rather than "not
+    the fee": a test that only knows the right answer cannot tell you which
+    wrong answer it got.
+    """
+    if regime != "courier configured":
+        pytest.skip("nothing is estimating in the unconfigured regime")
+    fee = await _fee(USER_ID, "someone@example.com")
+    assert fee == AJMAN_CITY.delivery_fee == Decimal("10.00")
+    assert fee != SLIDER_ESTIMATE.cost
+
+
+async def test_the_zone_is_still_costed_when_the_courier_is_configured(regime):
+    """And the estimate is actually asked for.
+
+    The counterpart to the test above. Having established the number must not
+    reach the price, the way to satisfy that cheaply would be to stop asking —
+    which silently ends the only record of what these zones cost to serve. The
+    call is the point; ignoring the answer for pricing is the point.
+    """
+    if regime != "courier configured":
+        pytest.skip("nothing is estimating in the unconfigured regime")
+    await _fee(USER_ID, TRIAL_EMAIL)
+    delivery_service.courier_service.estimate_for_point.assert_awaited()
+
+
+async def test_the_waiver_survives_the_courier_being_configured(regime):
+    """The pilot account pays nothing whether or not Slider has credentials.
+
+    Both halves of the switch are granted by one setting, and neither is
+    conditional on the courier being reachable. A waiver that quietly stopped
+    applying when a key was added — or when one expired — would charge the
+    pilot account for a delivery the pilot exists to give away.
+    """
+    assert await _fee(USER_ID, TRIAL_EMAIL) == Decimal("0.00")
 
 
 async def test_a_guest_at_the_pilot_address_is_charged():
