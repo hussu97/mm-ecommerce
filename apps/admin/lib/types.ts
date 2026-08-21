@@ -648,9 +648,75 @@ export interface DeliveryZone {
    * `free_delivery_eligible` says.
    */
   free_delivery_threshold: number;
+  /**
+   * The courier this zone's orders are priced and dispatched against.
+   *
+   * The *preferred* one. `alternate_providers` is what makes that word mean
+   * something.
+   */
   fulfilment_provider: FulfilmentProvider;
+  /**
+   * Where an order in this zone may be *moved* when the preferred courier will
+   * not carry it — a booking nobody picks up, a fleet that has gone quiet.
+   *
+   * Deliberately not "every other courier". noon Send cannot cross an emirate
+   * boundary or carry a run past 20 km, so a Dubai zone lists a third party and
+   * not them.
+   */
+  alternate_providers: FulfilmentProvider[];
   display_order: number;
   point_count: number;
+}
+
+/** One courier an order could be moved to, and whether it actually can. */
+export interface FulfilmentTarget {
+  provider: FulfilmentProvider;
+  available: boolean;
+  /** Why not, in words for the person reading them. Null when available. */
+  reason: string | null;
+}
+
+/**
+ * Whether calling off the current booking is likely to cost anything.
+ *
+ * Carries no figure on purpose: neither courier quotes a cancellation fee over
+ * an API, and a number worked out from a published tariff would sit next to
+ * real quoted costs and read as one of them.
+ */
+export interface CancellationExposure {
+  will_be_charged: boolean;
+  reason: string;
+}
+
+/** Where this order may go, and what stands in the way. */
+export interface FulfilmentOptions {
+  current: FulfilmentProvider;
+  /** What the zone chose. The gap between this and `current` is the interesting part. */
+  preferred: FulfilmentProvider;
+  targets: FulfilmentTarget[];
+  /** An order-level refusal, which blocks every target at once. */
+  blocked: string | null;
+  /** The one refusal a person can clear, by abandoning the booking in the way. */
+  must_abandon_first: boolean;
+  exposure: CancellationExposure | null;
+}
+
+/** What moving this order to one courier would cost **us**. */
+export interface FulfilmentQuote {
+  provider: FulfilmentProvider;
+  /** Null for a third party, whom we neither book nor price. */
+  cost: number | null;
+  currency: string | null;
+  distance_m: number | null;
+  /**
+   * Lalamove issue one and will only book against it. noon Send price from a
+   * rate card, so this is null — which is not an error.
+   */
+  quotation_id: string | null;
+  expires_at: string | null;
+  fee_charged: number | null;
+  margin: number | null;
+  cancels_booking: string | null;
 }
 
 /**

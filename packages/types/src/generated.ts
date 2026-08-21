@@ -3710,6 +3710,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orders/{order_number}/delivery/abandon-booking": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Abandon Order Booking
+         * @description Give up on the courier holding this order, without replacing them.
+         *
+         *     The way out of the one refusal `fulfilment_reassignment.refuse` makes on
+         *     purpose: a driver has been matched and has stopped moving. Its own action
+         *     rather than folded into the move, because calling off a booking with a
+         *     driver on it can cost a fee, and a press whose headline is "change courier"
+         *     should not spend money as a side effect.
+         *
+         *     Leaves the order on the same provider with no booking — a state every
+         *     dispatch path already understands. `needs_attention` picks it up, re-dispatch
+         *     works, and a move to a different courier is now allowed.
+         */
+        post: operations["abandon_order_booking_api_v1_orders__order_number__delivery_abandon_booking_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orders/{order_number}/delivery/dispatch": {
         parameters: {
             query?: never;
@@ -3734,6 +3764,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orders/{order_number}/delivery/fulfilment-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Order Fulfilment Options
+         * @description Which couriers this order may be moved to, and why the others are refused.
+         *
+         *     Reads and writes nothing. Every refusal comes back as a sentence rather than
+         *     a missing option, because a greyed-out button that will not say why is how
+         *     somebody ends up ringing a courier to ask a question the screen already knew
+         *     the answer to.
+         */
+        get: operations["order_fulfilment_options_api_v1_orders__order_number__delivery_fulfilment_options_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orders/{order_number}/delivery/fulfilment-quote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Quote Order Fulfilment
+         * @description What moving this order to one courier would cost us.
+         *
+         *     Spends nothing and writes nothing — it exists so a person sees the number
+         *     before any money does. A Lalamove quotation is valid for five minutes and
+         *     the confirm books at that exact one; a noon Send figure is a rate card and
+         *     cannot go stale.
+         */
+        post: operations["quote_order_fulfilment_api_v1_orders__order_number__delivery_fulfilment_quote_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orders/{order_number}/delivery/lalamove/assign": {
         parameters: {
             query?: never;
@@ -3747,19 +3827,11 @@ export interface paths {
          * Assign Order To Lalamove
          * @description Hand this packed third-party order to Lalamove, at the price just quoted.
          *
-         *     **The customer's delivery fee does not change.** They paid the zone's
-         *     published fee and that is what they paid; the quote is our cost. It lands in
-         *     `quoted_cost` / `cost_total`, and the difference shows as `margin` — which
-         *     is the number the person pressing the button is accepting, and the only one
-         *     that moves.
-         *
-         *     From here the order is on the existing Lalamove path. Its status updates
-         *     arrive over the webhook, the customer gets the out-for-delivery email with a
-         *     live tracking link, and nothing further is manual.
-         *
-         *     A lapsed quotation is a **409 carrying the new price**, not a silent
-         *     re-book: five minutes is easy to miss and the whole point of the two steps
-         *     is that a person agreed to a figure.
+         *     **Superseded by `/delivery/reassign`** with `provider="lalamove"`, which is
+         *     what this now calls. The gates are the general ones from that path rather
+         *     than this endpoint's old `packed`-and-third-party-only pair — deliberately:
+         *     two sets of rules about when an order may change hands is one set too many,
+         *     and the newer set is the argued one.
          */
         post: operations["assign_order_to_lalamove_api_v1_orders__order_number__delivery_lalamove_assign_post"];
         delete?: never;
@@ -3781,11 +3853,46 @@ export interface paths {
          * Quote Lalamove For Order
          * @description What Lalamove would charge to carry this third-party order.
          *
-         *     Reads nothing and writes nothing — it exists so a human sees the number
-         *     before any money is spent. The quotation is valid for five minutes and
-         *     `assign` will only book at this exact one.
+         *     **Superseded by `/delivery/fulfilment-quote`,** which asks the same question
+         *     of any courier the order's zone allows. Kept, and kept behaving exactly as it
+         *     did, because an admin tab opened before the new dialog shipped is still a
+         *     perfectly ordinary thing to press — and because a narrowing of scope is not
+         *     something a stale client should discover as a 404.
          */
         post: operations["quote_lalamove_for_order_api_v1_orders__order_number__delivery_lalamove_quote_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orders/{order_number}/delivery/reassign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reassign Order Fulfilment
+         * @description Move this order to a different courier.
+         *
+         *     **The customer's delivery fee does not change.** They paid their zone's
+         *     published fee and that is what they paid; the quote is our cost. The gap
+         *     shows as `margin`, and it is the only number that moves — which makes it the
+         *     thing the person pressing the button is actually agreeing to.
+         *
+         *     Where the order may go is the map's business, not this endpoint's: each zone
+         *     names a preferred courier and the alternates its orders may be moved to, so
+         *     a Dubai order cannot be handed to a fleet that cannot reach Dubai. See
+         *     `fulfilment_reassignment`.
+         *
+         *     A lapsed Lalamove quotation is a **409 carrying the new price**, not a quiet
+         *     re-book at a figure nobody agreed to.
+         */
+        post: operations["reassign_order_fulfilment_api_v1_orders__order_number__delivery_reassign_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6549,6 +6656,14 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AbandonBookingRequest */
+        AbandonBookingRequest: {
+            /**
+             * Acknowledged Charge
+             * @default false
+             */
+            acknowledged_charge: boolean;
+        };
         /** AcceptTransfer */
         AcceptTransfer: {
             /** Lines */
@@ -7723,6 +7838,19 @@ export interface components {
             orders: components["schemas"]["CustomOrderResponse"][];
             /** Remaining */
             remaining: number;
+        };
+        /**
+         * CancellationExposureResponse
+         * @description Whether calling off the current booking is likely to cost anything.
+         *
+         *     Carries no figure. Neither courier quotes a cancellation fee over an API —
+         *     see `fulfilment_reassignment.Exposure`.
+         */
+        CancellationExposureResponse: {
+            /** Reason */
+            reason: string;
+            /** Will Be Charged */
+            will_be_charged: boolean;
         };
         /** CartItemCreate */
         CartItemCreate: {
@@ -9000,6 +9128,65 @@ export interface components {
             /** Name */
             name: string;
         };
+        /**
+         * FulfilmentOptionsResponse
+         * @description Where this order may go, and what stands in the way. **Admin only.**
+         */
+        FulfilmentOptionsResponse: {
+            /** Blocked */
+            blocked?: string | null;
+            /** Current */
+            current: string;
+            exposure?: components["schemas"]["CancellationExposureResponse"] | null;
+            /**
+             * Must Abandon First
+             * @default false
+             */
+            must_abandon_first: boolean;
+            /** Preferred */
+            preferred: string;
+            /** Targets */
+            targets: components["schemas"]["FulfilmentTargetResponse"][];
+        };
+        /** FulfilmentQuoteRequest */
+        FulfilmentQuoteRequest: {
+            /** Provider */
+            provider: string;
+        };
+        /**
+         * FulfilmentQuoteResponse
+         * @description What moving this order to one courier would cost **us**.
+         *
+         *     The customer's fee never changes — see `reassign_order_fulfilment`. `cost`
+         *     is ours, and `margin` is what we would keep of what they already paid.
+         */
+        FulfilmentQuoteResponse: {
+            /** Cancels Booking */
+            cancels_booking?: string | null;
+            /** Cost */
+            cost: number | null;
+            /** Currency */
+            currency: string | null;
+            /** Distance M */
+            distance_m: number | null;
+            /** Expires At */
+            expires_at: string | null;
+            /** Fee Charged */
+            fee_charged: number | null;
+            /** Margin */
+            margin: number | null;
+            /** Provider */
+            provider: string;
+            /** Quotation Id */
+            quotation_id: string | null;
+        };
+        /** FulfilmentReassignRequest */
+        FulfilmentReassignRequest: {
+            /** Provider */
+            provider: string;
+            /** Quotation Id */
+            quotation_id?: string | null;
+        };
         /** FulfilmentResponse */
         FulfilmentResponse: {
             branch?: components["schemas"]["PickupBranchResponse"] | null;
@@ -9029,6 +9216,18 @@ export interface components {
             tracking_by_sms: boolean;
             /** Tracking Url */
             tracking_url?: string | null;
+        };
+        /**
+         * FulfilmentTargetResponse
+         * @description One courier this order could be moved to.
+         */
+        FulfilmentTargetResponse: {
+            /** Available */
+            available: boolean;
+            /** Provider */
+            provider: string;
+            /** Reason */
+            reason?: string | null;
         };
         /** FunnelData */
         FunnelData: {
@@ -11318,6 +11517,8 @@ export interface components {
         };
         /** PolygonResponse */
         PolygonResponse: {
+            /** Alternate Providers */
+            alternate_providers: string[];
             /** Branch Id */
             branch_id: string | null;
             /** Delivery Fee */
@@ -11341,6 +11542,8 @@ export interface components {
         };
         /** PolygonUpdate */
         PolygonUpdate: {
+            /** Alternate Providers */
+            alternate_providers?: string[] | null;
             /** Branch Id */
             branch_id?: string | null;
             /** Delivery Fee */
@@ -22988,6 +23191,41 @@ export interface operations {
             };
         };
     };
+    abandon_order_booking_api_v1_orders__order_number__delivery_abandon_booking_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_number: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AbandonBookingRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderDeliveryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     dispatch_order_delivery_api_v1_orders__order_number__delivery_dispatch_post: {
         parameters: {
             query?: never;
@@ -23006,6 +23244,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrderDeliveryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    order_fulfilment_options_api_v1_orders__order_number__delivery_fulfilment_options_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_number: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FulfilmentOptionsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    quote_order_fulfilment_api_v1_orders__order_number__delivery_fulfilment_quote_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_number: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FulfilmentQuoteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FulfilmentQuoteResponse"];
                 };
             };
             /** @description Validation Error */
@@ -23072,6 +23376,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LalamoveQuoteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reassign_order_fulfilment_api_v1_orders__order_number__delivery_reassign_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_number: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FulfilmentReassignRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderDeliveryResponse"];
                 };
             };
             /** @description Validation Error */

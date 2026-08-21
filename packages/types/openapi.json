@@ -1,6 +1,17 @@
 {
   "components": {
     "schemas": {
+      "AbandonBookingRequest": {
+        "properties": {
+          "acknowledged_charge": {
+            "default": false,
+            "title": "Acknowledged Charge",
+            "type": "boolean"
+          }
+        },
+        "title": "AbandonBookingRequest",
+        "type": "object"
+      },
       "AcceptTransfer": {
         "properties": {
           "lines": {
@@ -3767,6 +3778,25 @@
           "orders"
         ],
         "title": "CalendarDay",
+        "type": "object"
+      },
+      "CancellationExposureResponse": {
+        "description": "Whether calling off the current booking is likely to cost anything.\n\nCarries no figure. Neither courier quotes a cancellation fee over an API \u2014\nsee `fulfilment_reassignment.Exposure`.",
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "will_be_charged": {
+            "title": "Will Be Charged",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "will_be_charged",
+          "reason"
+        ],
+        "title": "CancellationExposureResponse",
         "type": "object"
       },
       "CartItemCreate": {
@@ -7650,6 +7680,206 @@
         "title": "EventCount",
         "type": "object"
       },
+      "FulfilmentOptionsResponse": {
+        "description": "Where this order may go, and what stands in the way. **Admin only.**",
+        "properties": {
+          "blocked": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked"
+          },
+          "current": {
+            "title": "Current",
+            "type": "string"
+          },
+          "exposure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CancellationExposureResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "must_abandon_first": {
+            "default": false,
+            "title": "Must Abandon First",
+            "type": "boolean"
+          },
+          "preferred": {
+            "title": "Preferred",
+            "type": "string"
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/FulfilmentTargetResponse"
+            },
+            "title": "Targets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "current",
+          "preferred",
+          "targets"
+        ],
+        "title": "FulfilmentOptionsResponse",
+        "type": "object"
+      },
+      "FulfilmentQuoteRequest": {
+        "properties": {
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "title": "FulfilmentQuoteRequest",
+        "type": "object"
+      },
+      "FulfilmentQuoteResponse": {
+        "description": "What moving this order to one courier would cost **us**.\n\nThe customer's fee never changes \u2014 see `reassign_order_fulfilment`. `cost`\nis ours, and `margin` is what we would keep of what they already paid.",
+        "properties": {
+          "cancels_booking": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancels Booking"
+          },
+          "cost": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost"
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
+          "distance_m": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Distance M"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "fee_charged": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fee Charged"
+          },
+          "margin": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Margin"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "quotation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quotation Id"
+          }
+        },
+        "required": [
+          "provider",
+          "cost",
+          "currency",
+          "distance_m",
+          "quotation_id",
+          "expires_at",
+          "fee_charged",
+          "margin"
+        ],
+        "title": "FulfilmentQuoteResponse",
+        "type": "object"
+      },
+      "FulfilmentReassignRequest": {
+        "properties": {
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "quotation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quotation Id"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "title": "FulfilmentReassignRequest",
+        "type": "object"
+      },
       "FulfilmentResponse": {
         "properties": {
           "branch": {
@@ -7756,6 +7986,36 @@
           "stage"
         ],
         "title": "FulfilmentResponse",
+        "type": "object"
+      },
+      "FulfilmentTargetResponse": {
+        "description": "One courier this order could be moved to.",
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "provider",
+          "available"
+        ],
+        "title": "FulfilmentTargetResponse",
         "type": "object"
       },
       "FunnelData": {
@@ -14485,6 +14745,13 @@
       },
       "PolygonResponse": {
         "properties": {
+          "alternate_providers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Alternate Providers",
+            "type": "array"
+          },
           "branch_id": {
             "anyOf": [
               {
@@ -14541,6 +14808,7 @@
           "free_delivery_eligible",
           "free_delivery_threshold",
           "fulfilment_provider",
+          "alternate_providers",
           "branch_id",
           "display_order",
           "point_count"
@@ -14550,6 +14818,20 @@
       },
       "PolygonUpdate": {
         "properties": {
+          "alternate_providers": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alternate Providers"
+          },
           "branch_id": {
             "anyOf": [
               {
@@ -39121,6 +39403,64 @@
         ]
       }
     },
+    "/api/v1/orders/{order_number}/delivery/abandon-booking": {
+      "post": {
+        "description": "Give up on the courier holding this order, without replacing them.\n\nThe way out of the one refusal `fulfilment_reassignment.refuse` makes on\npurpose: a driver has been matched and has stopped moving. Its own action\nrather than folded into the move, because calling off a booking with a\ndriver on it can cost a fee, and a press whose headline is \"change courier\"\nshould not spend money as a side effect.\n\nLeaves the order on the same provider with no booking \u2014 a state every\ndispatch path already understands. `needs_attention` picks it up, re-dispatch\nworks, and a move to a different courier is now allowed.",
+        "operationId": "abandon_order_booking_api_v1_orders__order_number__delivery_abandon_booking_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_number",
+            "required": true,
+            "schema": {
+              "title": "Order Number",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AbandonBookingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderDeliveryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Abandon Order Booking",
+        "tags": [
+          "Orders"
+        ]
+      }
+    },
     "/api/v1/orders/{order_number}/delivery/dispatch": {
       "post": {
         "description": "Book the courier again after a failed or abandoned dispatch.\n\nThe normal path books automatically when the order is packed. This exists\nfor the cases that path cannot handle on its own: the wallet was empty, the\ncourier was unreachable, or every driver rejected the job.",
@@ -39169,9 +39509,115 @@
         ]
       }
     },
+    "/api/v1/orders/{order_number}/delivery/fulfilment-options": {
+      "get": {
+        "description": "Which couriers this order may be moved to, and why the others are refused.\n\nReads and writes nothing. Every refusal comes back as a sentence rather than\na missing option, because a greyed-out button that will not say why is how\nsomebody ends up ringing a courier to ask a question the screen already knew\nthe answer to.",
+        "operationId": "order_fulfilment_options_api_v1_orders__order_number__delivery_fulfilment_options_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_number",
+            "required": true,
+            "schema": {
+              "title": "Order Number",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FulfilmentOptionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Order Fulfilment Options",
+        "tags": [
+          "Orders"
+        ]
+      }
+    },
+    "/api/v1/orders/{order_number}/delivery/fulfilment-quote": {
+      "post": {
+        "description": "What moving this order to one courier would cost us.\n\nSpends nothing and writes nothing \u2014 it exists so a person sees the number\nbefore any money does. A Lalamove quotation is valid for five minutes and\nthe confirm books at that exact one; a noon Send figure is a rate card and\ncannot go stale.",
+        "operationId": "quote_order_fulfilment_api_v1_orders__order_number__delivery_fulfilment_quote_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_number",
+            "required": true,
+            "schema": {
+              "title": "Order Number",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FulfilmentQuoteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FulfilmentQuoteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Quote Order Fulfilment",
+        "tags": [
+          "Orders"
+        ]
+      }
+    },
     "/api/v1/orders/{order_number}/delivery/lalamove/assign": {
       "post": {
-        "description": "Hand this packed third-party order to Lalamove, at the price just quoted.\n\n**The customer's delivery fee does not change.** They paid the zone's\npublished fee and that is what they paid; the quote is our cost. It lands in\n`quoted_cost` / `cost_total`, and the difference shows as `margin` \u2014 which\nis the number the person pressing the button is accepting, and the only one\nthat moves.\n\nFrom here the order is on the existing Lalamove path. Its status updates\narrive over the webhook, the customer gets the out-for-delivery email with a\nlive tracking link, and nothing further is manual.\n\nA lapsed quotation is a **409 carrying the new price**, not a silent\nre-book: five minutes is easy to miss and the whole point of the two steps\nis that a person agreed to a figure.",
+        "description": "Hand this packed third-party order to Lalamove, at the price just quoted.\n\n**Superseded by `/delivery/reassign`** with `provider=\"lalamove\"`, which is\nwhat this now calls. The gates are the general ones from that path rather\nthan this endpoint's old `packed`-and-third-party-only pair \u2014 deliberately:\ntwo sets of rules about when an order may change hands is one set too many,\nand the newer set is the argued one.",
         "operationId": "assign_order_to_lalamove_api_v1_orders__order_number__delivery_lalamove_assign_post",
         "parameters": [
           {
@@ -39229,7 +39675,7 @@
     },
     "/api/v1/orders/{order_number}/delivery/lalamove/quote": {
       "post": {
-        "description": "What Lalamove would charge to carry this third-party order.\n\nReads nothing and writes nothing \u2014 it exists so a human sees the number\nbefore any money is spent. The quotation is valid for five minutes and\n`assign` will only book at this exact one.",
+        "description": "What Lalamove would charge to carry this third-party order.\n\n**Superseded by `/delivery/fulfilment-quote`,** which asks the same question\nof any courier the order's zone allows. Kept, and kept behaving exactly as it\ndid, because an admin tab opened before the new dialog shipped is still a\nperfectly ordinary thing to press \u2014 and because a narrowing of scope is not\nsomething a stale client should discover as a 404.",
         "operationId": "quote_lalamove_for_order_api_v1_orders__order_number__delivery_lalamove_quote_post",
         "parameters": [
           {
@@ -39270,6 +39716,64 @@
           }
         ],
         "summary": "Quote Lalamove For Order",
+        "tags": [
+          "Orders"
+        ]
+      }
+    },
+    "/api/v1/orders/{order_number}/delivery/reassign": {
+      "post": {
+        "description": "Move this order to a different courier.\n\n**The customer's delivery fee does not change.** They paid their zone's\npublished fee and that is what they paid; the quote is our cost. The gap\nshows as `margin`, and it is the only number that moves \u2014 which makes it the\nthing the person pressing the button is actually agreeing to.\n\nWhere the order may go is the map's business, not this endpoint's: each zone\nnames a preferred courier and the alternates its orders may be moved to, so\na Dubai order cannot be handed to a fleet that cannot reach Dubai. See\n`fulfilment_reassignment`.\n\nA lapsed Lalamove quotation is a **409 carrying the new price**, not a quiet\nre-book at a figure nobody agreed to.",
+        "operationId": "reassign_order_fulfilment_api_v1_orders__order_number__delivery_reassign_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_number",
+            "required": true,
+            "schema": {
+              "title": "Order Number",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FulfilmentReassignRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderDeliveryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Reassign Order Fulfilment",
         "tags": [
           "Orders"
         ]

@@ -189,7 +189,7 @@ async def test_packed_is_the_come_and_get_it_email_for_a_collection_order(sent):
         precision="exact",
         branch=BRANCH,
     )
-    assert email_service.should_send_packed(order) is True
+    assert await email_service.should_send_packed(order) is True
     assert await email_service.notify_status_change(order) == "packed"
     assert "Ready to collect" in sent[0]["subject"]
 
@@ -201,7 +201,7 @@ async def test_packed_is_the_last_word_for_a_third_party_delivery(sent):
     customer would ever get — which is exactly why it has to be sent.
     """
     order = _order(status=OrderStatusEnum.PACKED, stage="ready", courier_managed=False)
-    assert email_service.should_send_packed(order) is True
+    assert await email_service.should_send_packed(order) is True
     assert await email_service.notify_status_change(order) == "packed"
     assert "On its way" in sent[0]["subject"]
 
@@ -214,7 +214,7 @@ async def test_packed_says_nothing_when_a_rider_will_be_the_news(sent):
     both turns the useful one into the second of two.
     """
     order = _order(status=OrderStatusEnum.PACKED, stage="ready", courier_managed=True)
-    assert email_service.should_send_packed(order) is False
+    assert await email_service.should_send_packed(order) is False
     assert await email_service.notify_status_change(order) is None
     assert sent == []
 
@@ -613,13 +613,38 @@ async def test_a_cancelled_order_names_the_refund_it_actually_sent(sent):
     assert "delivery charge isn't included" in html, "why it is not the total"
 
 
-async def test_an_undelivered_order_says_the_same_thing(sent):
+async def test_an_undelivered_order_refunded_under_the_old_rule_still_says_so(sent):
+    """
+    A failed handover does not pay anybody back any more. But the orders written
+    while it did really were refunded, automatically, and this email is the only
+    place that tells that customer where their money went.
+    """
     await email_service.notify_status_change(
         _order(status=OrderStatusEnum.UNDELIVERED, refunded_amount=225.0)
     )
     html = body(sent[0])
     assert "225" in html
     assert "delivery charge isn't included" in html
+
+
+async def test_an_undelivered_order_never_promises_a_refund_nobody_will_send(sent):
+    """
+    The bug that removing the automatic refund would otherwise have introduced,
+    pinned.
+
+    The template used to fall through to "we're returning your payment" whenever
+    a paid order carried no recorded refund — which, now that reaching
+    `undelivered` refunds nothing, is *every* one of them. It would have printed
+    that promise directly beneath the line saying somebody will ring to arrange
+    another attempt: two sentences, in one email, contradicting each other, and
+    only one of them true.
+    """
+    await email_service.notify_status_change(
+        _order(status=OrderStatusEnum.UNDELIVERED, refunded_amount=0.0)
+    )
+    html = body(sent[0])
+    assert "returning your payment" not in html
+    assert "arrange another" in html, "what actually happens next"
 
 
 async def test_a_paid_order_we_could_not_refund_promises_without_a_figure(sent):

@@ -58,6 +58,14 @@ class Zone:
     #: is promised its group's next window close, a zone without one is promised
     #: its courier's own answer.
     batch_group_id: uuid.UUID | None = None
+    #: The couriers an order here may be *moved* to when `fulfilment_provider`
+    #: will not carry it. Read by `fulfilment_reassignment`, and only on the
+    #: fallback path — an order normally answers this from the polygon its own
+    #: `polygon_id` points at, which is the map it was actually priced against.
+    #:
+    #: Defaults to empty, so a zone built by hand in a test offers no
+    #: reassignment rather than silently offering every courier.
+    alternate_providers: tuple[str, ...] = ()
 
     @property
     def is_lalamove(self) -> bool:
@@ -211,6 +219,7 @@ def _to_zone(p: DeliveryPolygon) -> Zone:
             else Decimal(str(p.free_delivery_threshold))
         ),
         branch_id=p.branch_id,
+        alternate_providers=tuple(p.alternate_providers or ()),
         min_lat=float(p.min_lat),
         max_lat=float(p.max_lat),
         min_lng=float(p.min_lng),

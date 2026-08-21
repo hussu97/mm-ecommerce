@@ -11,6 +11,7 @@ import type {
   PaginatedWebhookLogs, WebhookLogDetail, WebhookLogFacets,
   PaymentGateway, PaymentGatewayUpdate,
   LalamoveQuote, OrderStatusEvent,
+  FulfilmentOptions, FulfilmentQuote,
   BranchProductAvailability, StockDuration,
   UrlRedirect,
 } from './types';
@@ -360,6 +361,55 @@ export const ordersApi = {
       quotation_id: quotationId,
     }),
 
+  /**
+   * Which couriers this order may be moved to, and why the others are refused.
+   *
+   * Every refusal comes back as a sentence rather than a missing option: a
+   * greyed-out button that will not say why is how somebody ends up ringing a
+   * courier to ask a question the screen already knew the answer to.
+   */
+  fulfilmentOptions: (orderNumber: string) =>
+    api.get<FulfilmentOptions>(`/orders/${orderNumber}/delivery/fulfilment-options`),
+
+  /**
+   * What moving this order to one courier would cost us. Spends nothing.
+   *
+   * A Lalamove quote carries an id and expires in five minutes; a noon Send one
+   * is a rate card and carries no id, which is not an error.
+   */
+  quoteFulfilment: (orderNumber: string, provider: FulfilmentProvider) =>
+    api.post<FulfilmentQuote>(`/orders/${orderNumber}/delivery/fulfilment-quote`, {
+      provider,
+    }),
+
+  /**
+   * Move the order to a different courier.
+   *
+   * A 409 means the Lalamove quote lapsed; its `detail.quote` carries the
+   * current price to re-confirm against.
+   */
+  reassignFulfilment: (
+    orderNumber: string,
+    provider: FulfilmentProvider,
+    quotationId?: string | null,
+  ) =>
+    api.post<OrderDelivery>(`/orders/${orderNumber}/delivery/reassign`, {
+      provider,
+      quotation_id: quotationId ?? null,
+    }),
+
+  /**
+   * Give up on the courier holding this order, without replacing them.
+   *
+   * `acknowledged` has to be true when the exposure says a fee is likely — the
+   * API refuses otherwise, so that "somebody was told" is a fact rather than a
+   * thing the dialog claims.
+   */
+  abandonBooking: (orderNumber: string, acknowledged: boolean) =>
+    api.post<OrderDelivery>(`/orders/${orderNumber}/delivery/abandon-booking`, {
+      acknowledged_charge: acknowledged,
+    }),
+
   /** Every status this order has been through, and who moved it. */
   statusEvents: (orderNumber: string) =>
     api.get<OrderStatusEvent[]>(`/orders/${orderNumber}/status-events`),
@@ -385,6 +435,12 @@ export const deliveryZonesApi = {
       pricing_mode?: DeliveryPricingMode;
       free_delivery_eligible?: boolean;
       fulfilment_provider?: FulfilmentProvider;
+      /**
+       * Where this zone's orders may be moved when the preferred courier will
+       * not carry them. Replaces the list wholesale — the API rejects a courier
+       * that is already the zone's own.
+       */
+      alternate_providers?: FulfilmentProvider[];
       /** Null hands the zone back to the default pickup branch. */
       branch_id?: string | null;
       display_order?: number;

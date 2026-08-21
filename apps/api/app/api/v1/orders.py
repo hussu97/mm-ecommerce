@@ -36,7 +36,6 @@ from app.core.exceptions import (
     BadRequestError,
     ConflictError,
     NotFoundError,
-    ServiceUnavailableError,
 )
 from app.core.limiter import limiter
 from app.core.permissions import require
@@ -47,6 +46,7 @@ from app.services import (
     driver_proximity,
     order_economics,
     email_service,
+    fulfilment_reassignment,
     fulfilment_service,
     lalamove_service,
     noon_send_service,
@@ -335,25 +335,46 @@ async def list_all_orders(
 
 #: Orders that are not going anywhere, whatever their delivery row still says.
 #:
-#: `cancelled` and `undelivered` are both endings — the second is cancellation
-#: after the box was made. `refunded` and `disputed` are what follows either.
+#: `cancelled` is the ending; `refunded` and `disputed` are what follows it.
 #: None of them may call a driver or ask a courier for an update, and the point
 #: of refusing here rather than only hiding the buttons is that hiding a control
 #: is not enforcement: the admin screen is one client, and a stale tab holding
 #: yesterday's order is a perfectly ordinary way to press it anyway.
+#:
+#: `undelivered` was here and is not any more. A failed handover is a cake on a
+#: shelf that did not get in today, and the shop can try again — by hand, with a
+#: different courier, or with the same one tomorrow. What stops *that* order is
+#: the refund guard below, not the status.
 _SETTLED_STATUSES = {
     OrderStatusEnum.CANCELLED,
-    OrderStatusEnum.UNDELIVERED,
     OrderStatusEnum.REFUNDED,
     OrderStatusEnum.DISPUTED,
 }
 
 
 def _assert_still_going_somewhere(order: Order, verb: str) -> None:
+    """
+    Refuse anything that would spend a courier on an order that is over.
+
+    Two questions, and the second is the one that carries the history. Orders
+    that reached `undelivered` before it stopped being an ending were refunded
+    automatically on the way in — the money is at a bank, and no column we could
+    write now would take it back. Re-dispatching one would be delivering a cake
+    the customer has already been paid for.
+
+    Asked of `refunded_amount` rather than of the status, so it also covers an
+    order refunded by hand in a gateway dashboard, and so it needs no backfill
+    to be true of every row already in the table.
+    """
     if order.status in _SETTLED_STATUSES:
         raise ConflictError(
             f"An order that is {order.status.value} cannot be {verb} — it is "
             "not going anywhere. Refund it if the customer is owed money."
+        )
+    if (order.refunded_amount or 0) > 0:
+        raise ConflictError(
+            f"An order that has been refunded cannot be {verb} — "
+            f"{order.refunded_amount} has already gone back to the customer."
         )
 
 
@@ -721,33 +742,299 @@ def _quote_response(
 
 def _assert_assignable(order: Order, delivery: OrderDelivery) -> None:
     """
-    Whether this order may be handed to Lalamove at all.
+    Whether this order may be handed to Lalamove, for the superseded endpoints.
 
-    `packed` and nothing else. Earlier is wrong because the box does not exist
-    yet and a driver would arrive at a kitchen still baking. Later is wrong
-    because somebody has already sent it out with the third party, and booking a
-    second courier for a parcel that has left is worse than the problem this
-    solves.
-
-    `packed` is also what keeps the emails right. `should_send_packed` suppresses
-    the packed email for a courier-managed order on the grounds that the
-    out-for-delivery one is the real news — so flipping the provider *before*
-    that decision was made would silence an email the customer should have had.
-    By the time we get here it has been sent.
+    Kept only so `/delivery/lalamove/quote` and `/delivery/lalamove/assign` keep
+    behaving exactly as they did while an admin tab open on the old dialog is
+    still out there. Everything new goes through `fulfilment_reassignment`,
+    which asks a broader and better-argued set of questions.
     """
-    if order.status != OrderStatusEnum.PACKED:
-        raise ConflictError(
-            f"An order that is {order.status.value} cannot be assigned to a "
-            "courier — only a packed one can."
-        )
     if delivery.provider != FulfilmentProviderEnum.THIRD_PARTY.value:
         raise ConflictError(f"This order is already carried by {delivery.provider}.")
-    if delivery.courier_order_id:
-        raise ConflictError("This order already has a courier booking.")
-    if not lalamove_service.is_enabled():
-        raise ServiceUnavailableError(
-            "The courier is not configured, so this order cannot be assigned to it."
+
+
+class FulfilmentTargetResponse(BaseModel):
+    """One courier this order could be moved to."""
+
+    provider: str
+    available: bool
+    #: Why not, in words for the admin. None when available.
+    reason: str | None = None
+
+
+class CancellationExposureResponse(BaseModel):
+    """Whether calling off the current booking is likely to cost anything.
+
+    Carries no figure. Neither courier quotes a cancellation fee over an API —
+    see `fulfilment_reassignment.Exposure`.
+    """
+
+    will_be_charged: bool
+    reason: str
+
+
+class FulfilmentOptionsResponse(BaseModel):
+    """Where this order may go, and what stands in the way. **Admin only.**"""
+
+    current: str
+    #: What the zone chose. Equal to `current` on most orders; the difference is
+    #: the interesting part.
+    preferred: str
+    targets: list[FulfilmentTargetResponse]
+    blocked: str | None = None
+    must_abandon_first: bool = False
+    exposure: CancellationExposureResponse | None = None
+
+
+class FulfilmentQuoteResponse(BaseModel):
+    """What moving this order to one courier would cost **us**.
+
+    The customer's fee never changes — see `reassign_order_fulfilment`. `cost`
+    is ours, and `margin` is what we would keep of what they already paid.
+    """
+
+    provider: str
+    #: None for a third party, whom we neither book nor price.
+    cost: float | None
+    currency: str | None
+    distance_m: int | None
+    #: Lalamove issue one and will only book against it, so it travels back to
+    #: the confirm. noon Send price from a rate card, so there is nothing to pin
+    #: and this is null — a client must not treat that as an error.
+    quotation_id: str | None
+    expires_at: datetime | None
+    fee_charged: float | None
+    margin: float | None
+    #: The booking this move would call off, if there is one.
+    cancels_booking: str | None = None
+
+
+def _options_response(
+    options: fulfilment_reassignment.Options,
+) -> FulfilmentOptionsResponse:
+    return FulfilmentOptionsResponse(
+        current=options.current,
+        preferred=options.preferred,
+        targets=[
+            FulfilmentTargetResponse(
+                provider=t.provider, available=t.available, reason=t.reason
+            )
+            for t in options.targets
+        ],
+        blocked=options.blocked,
+        must_abandon_first=options.must_abandon_first,
+        exposure=(
+            None
+            if options.exposure is None
+            else CancellationExposureResponse(
+                will_be_charged=options.exposure.will_be_charged,
+                reason=options.exposure.reason,
+            )
+        ),
+    )
+
+
+def _fulfilment_quote_response(
+    quote: fulfilment_reassignment.Quote,
+) -> FulfilmentQuoteResponse:
+    return FulfilmentQuoteResponse(
+        provider=quote.provider,
+        cost=None if quote.cost is None else float(quote.cost),
+        currency=quote.currency,
+        distance_m=quote.distance_m,
+        quotation_id=quote.quotation_id,
+        expires_at=quote.expires_at,
+        fee_charged=(None if quote.fee_charged is None else float(quote.fee_charged)),
+        margin=None if quote.margin is None else float(quote.margin),
+        cancels_booking=quote.cancels_booking,
+    )
+
+
+@router.get(
+    "/{order_number}/delivery/fulfilment-options",
+    response_model=FulfilmentOptionsResponse,
+)
+async def order_fulfilment_options(
+    order_number: str,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require("orders.manage")),
+):
+    """
+    Which couriers this order may be moved to, and why the others are refused.
+
+    Reads and writes nothing. Every refusal comes back as a sentence rather than
+    a missing option, because a greyed-out button that will not say why is how
+    somebody ends up ringing a courier to ask a question the screen already knew
+    the answer to.
+    """
+    order = await _load_order(db, order_number)
+    delivery = await _load_delivery(db, order_number)
+    return _options_response(
+        await fulfilment_reassignment.options_for(db, order, delivery)
+    )
+
+
+class FulfilmentQuoteRequest(BaseModel):
+    provider: str
+
+
+@router.post(
+    "/{order_number}/delivery/fulfilment-quote",
+    response_model=FulfilmentQuoteResponse,
+)
+async def quote_order_fulfilment(
+    order_number: str,
+    data: FulfilmentQuoteRequest,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require("orders.manage")),
+):
+    """
+    What moving this order to one courier would cost us.
+
+    Spends nothing and writes nothing — it exists so a person sees the number
+    before any money does. A Lalamove quotation is valid for five minutes and
+    the confirm books at that exact one; a noon Send figure is a rate card and
+    cannot go stale.
+    """
+    order = await _load_order(db, order_number)
+    quote, error = await fulfilment_reassignment.quote(db, order, target=data.provider)
+    if quote is None:
+        # 502 rather than 500: this is a courier declining or unreachable, and
+        # the message is written for the admin reading it.
+        raise BadGatewayError(error or "No price available")
+    return _fulfilment_quote_response(quote)
+
+
+class FulfilmentReassignRequest(BaseModel):
+    provider: str
+    #: The id from the quote just agreed to. Required for Lalamove, who will
+    #: only book at a price a person actually saw. Ignored for noon Send and a
+    #: third party, neither of whom issues one.
+    quotation_id: str | None = None
+
+
+@router.post("/{order_number}/delivery/reassign", response_model=OrderDeliveryResponse)
+async def reassign_order_fulfilment(
+    order_number: str,
+    data: FulfilmentReassignRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require("orders.manage")),
+):
+    """
+    Move this order to a different courier.
+
+    **The customer's delivery fee does not change.** They paid their zone's
+    published fee and that is what they paid; the quote is our cost. The gap
+    shows as `margin`, and it is the only number that moves — which makes it the
+    thing the person pressing the button is actually agreeing to.
+
+    Where the order may go is the map's business, not this endpoint's: each zone
+    names a preferred courier and the alternates its orders may be moved to, so
+    a Dubai order cannot be handed to a fleet that cannot reach Dubai. See
+    `fulfilment_reassignment`.
+
+    A lapsed Lalamove quotation is a **409 carrying the new price**, not a quiet
+    re-book at a figure nobody agreed to.
+    """
+    order = await _load_order(db, order_number)
+    before = (await _load_delivery(db, order_number)).provider
+
+    delivery = await fulfilment_reassignment.move(
+        db, order, target=data.provider, quotation_id=data.quotation_id
+    )
+
+    await audit_service.log_action(
+        db,
+        action="UPDATE",
+        entity_type="order_delivery",
+        entity_id=order_number,
+        entity_label=order_number,
+        admin=admin,
+        changes={
+            "provider": {"from": before, "to": delivery.provider},
+            "quoted_cost": (
+                float(delivery.quoted_cost)
+                if delivery.quoted_cost is not None
+                else None
+            ),
+            "courier_reference": delivery.courier_reference,
+            "courier_order_id": delivery.courier_order_id,
+        },
+        request=request,
+    )
+    return await _delivery_payload(db, order, delivery)
+
+
+class AbandonBookingRequest(BaseModel):
+    #: Set by a client that has shown the operator `exposure.reason`. Checked
+    #: server-side rather than trusted to a dialog: this is the one action here
+    #: that can cost money, and "the UI asked" is not a record that anybody was
+    #: told.
+    acknowledged_charge: bool = False
+
+
+@router.post(
+    "/{order_number}/delivery/abandon-booking",
+    response_model=OrderDeliveryResponse,
+)
+async def abandon_order_booking(
+    order_number: str,
+    data: AbandonBookingRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require("orders.manage")),
+):
+    """
+    Give up on the courier holding this order, without replacing them.
+
+    The way out of the one refusal `fulfilment_reassignment.refuse` makes on
+    purpose: a driver has been matched and has stopped moving. Its own action
+    rather than folded into the move, because calling off a booking with a
+    driver on it can cost a fee, and a press whose headline is "change courier"
+    should not spend money as a side effect.
+
+    Leaves the order on the same provider with no booking — a state every
+    dispatch path already understands. `needs_attention` picks it up, re-dispatch
+    works, and a move to a different courier is now allowed.
+    """
+    order = await _load_order(db, order_number)
+    delivery = await _load_delivery(db, order_number)
+
+    exposure = fulfilment_reassignment.exposure_of(delivery)
+    if exposure.will_be_charged and not data.acknowledged_charge:
+        raise ConflictError(
+            exposure.reason,
+            payload={
+                "message": exposure.reason,
+                "requires_acknowledgement": True,
+            },
         )
+
+    booking = delivery.courier_order_id
+    provider = delivery.provider
+    delivery = await fulfilment_reassignment.abandon_booking(db, order)
+
+    await audit_service.log_action(
+        db,
+        action="UPDATE",
+        entity_type="order_delivery",
+        entity_id=order_number,
+        entity_label=order_number,
+        admin=admin,
+        changes={
+            "abandoned_booking": {"provider": provider, "courier_order_id": booking},
+            "may_be_charged": exposure.will_be_charged,
+        },
+        request=request,
+    )
+    return await _delivery_payload(db, order, delivery)
+
+
+class LalamoveAssignRequest(BaseModel):
+    #: The id from the quote the admin just agreed to. Required, and checked,
+    #: so a client cannot book at a price nobody was shown.
+    quotation_id: str
 
 
 @router.post(
@@ -761,9 +1048,11 @@ async def quote_lalamove_for_order(
     """
     What Lalamove would charge to carry this third-party order.
 
-    Reads nothing and writes nothing — it exists so a human sees the number
-    before any money is spent. The quotation is valid for five minutes and
-    `assign` will only book at this exact one.
+    **Superseded by `/delivery/fulfilment-quote`,** which asks the same question
+    of any courier the order's zone allows. Kept, and kept behaving exactly as it
+    did, because an admin tab opened before the new dialog shipped is still a
+    perfectly ordinary thing to press — and because a narrowing of scope is not
+    something a stale client should discover as a 404.
     """
     order = await _load_order(db, order_number)
     delivery = await _load_delivery(db, order_number)
@@ -771,16 +1060,8 @@ async def quote_lalamove_for_order(
 
     quote, error = await lalamove_service.quote_for_order(db, order)
     if quote is None:
-        # 502 rather than 500: this is the courier declining or unreachable, and
-        # the message is written for the admin reading it, not for a log.
         raise BadGatewayError(error or "No price available")
     return _quote_response(quote, delivery)
-
-
-class LalamoveAssignRequest(BaseModel):
-    #: The id from the quote the admin just agreed to. Required, and checked,
-    #: so a client cannot book at a price nobody was shown.
-    quotation_id: str
 
 
 @router.post(
@@ -796,88 +1077,22 @@ async def assign_order_to_lalamove(
     """
     Hand this packed third-party order to Lalamove, at the price just quoted.
 
-    **The customer's delivery fee does not change.** They paid the zone's
-    published fee and that is what they paid; the quote is our cost. It lands in
-    `quoted_cost` / `cost_total`, and the difference shows as `margin` — which
-    is the number the person pressing the button is accepting, and the only one
-    that moves.
-
-    From here the order is on the existing Lalamove path. Its status updates
-    arrive over the webhook, the customer gets the out-for-delivery email with a
-    live tracking link, and nothing further is manual.
-
-    A lapsed quotation is a **409 carrying the new price**, not a silent
-    re-book: five minutes is easy to miss and the whole point of the two steps
-    is that a person agreed to a figure.
+    **Superseded by `/delivery/reassign`** with `provider="lalamove"`, which is
+    what this now calls. The gates are the general ones from that path rather
+    than this endpoint's old `packed`-and-third-party-only pair — deliberately:
+    two sets of rules about when an order may change hands is one set too many,
+    and the newer set is the argued one.
     """
-    order = await _load_order(db, order_number)
-    delivery = await _load_delivery(db, order_number)
-    _assert_assignable(order, delivery)
-
-    quote, error = await lalamove_service.quote_for_order(db, order)
-    if quote is None:
-        raise BadGatewayError(error or "No price available")
-
-    # The quotation moves on every call, so this cannot compare ids and expect a
-    # match — it compares what was agreed against what is available now. Same
-    # price, book it; different price, show the new one and ask again.
-    #
-    # These two 409s carry a structured body — the dialog reads `message` and
-    # `quote` out of `detail` — which is what `AppError.payload` exists for:
-    # the payload takes the `detail` slot on the wire, exactly as the dict
-    # passed to `HTTPException(detail=...)` did before.
-    if quote.estimate.quotation_id != data.quotation_id:
-        raise ConflictError(
-            "The quoted price has expired.",
-            payload={
-                "message": (
-                    "The quoted price has expired. Here is the current one — "
-                    "confirm again to book."
-                ),
-                "quote": _quote_response(quote, delivery).model_dump(mode="json"),
-            },
-        )
-
-    try:
-        delivery = await lalamove_service.assign_and_dispatch(db, order, quote=quote)
-    except lalamove_service.QuotationExpired:
-        # It lapsed between our quote and the booking. Nothing was written.
-        raise ConflictError(
-            "The quoted price expired before the booking.",
-            payload={
-                "message": "The quoted price expired before the booking. Try again.",
-            },
-        ) from None
-
-    await audit_service.log_action(
+    return await reassign_order_fulfilment(
+        order_number,
+        FulfilmentReassignRequest(
+            provider=FulfilmentProviderEnum.LALAMOVE.value,
+            quotation_id=data.quotation_id,
+        ),
+        request,
         db,
-        action="UPDATE",
-        entity_type="order_delivery",
-        entity_id=order_number,
-        entity_label=order_number,
-        admin=admin,
-        changes={
-            "provider": {
-                "from": delivery.original_provider,
-                "to": delivery.provider,
-            },
-            "quoted_cost": (
-                float(delivery.quoted_cost)
-                if delivery.quoted_cost is not None
-                else None
-            ),
-            "courier_reference": delivery.courier_reference,
-            "courier_order_id": delivery.courier_order_id,
-            "error": delivery.last_error,
-        },
-        request=request,
+        admin,
     )
-    if delivery.last_error:
-        # The provider has been put back, so the order is still deliverable by
-        # hand. Reported as a failure rather than returned as a success with an
-        # error field the UI might not read.
-        raise BadGatewayError(delivery.last_error)
-    return await _delivery_payload(db, order, delivery)
 
 
 class OrderStatusEventResponse(BaseModel):

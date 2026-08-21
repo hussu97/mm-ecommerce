@@ -4,7 +4,15 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { ordersApi, ApiError } from '@/lib/api';
-import type { LalamoveQuote, Order, OrderDelivery, OrderEconomics, OrderStatus } from '@/lib/types';
+import type {
+  FulfilmentOptions,
+  FulfilmentProvider,
+  FulfilmentQuote,
+  Order,
+  OrderDelivery,
+  OrderEconomics,
+  OrderStatus,
+} from '@/lib/types';
 import { Badge, Button } from '@/components/ui';
 import { useConfirm, useToast } from '@/components/ui/feedback';
 import { cn, formatCurrency, formatDateTime, formatTimeAgo, ordinal } from '@/lib/utils';
@@ -12,12 +20,32 @@ import { cn, formatCurrency, formatDateTime, formatTimeAgo, ordinal } from '@/li
 /**
  * Orders that are not going anywhere, whatever the delivery row still says.
  *
- * `undelivered` belongs here and did not used to: it is cancellation after the
- * box was made, and the API now treats it as an ending — no second van, no
- * status check, only a refund conversation. Mirrors `_SETTLED_STATUSES` in
- * `app/api/v1/orders.py`, which is what actually enforces it.
+ * `undelivered` was here and is not any more. A rider bringing the box back is
+ * not a decision to stop selling somebody a cake: it is paid for, it exists,
+ * and the shop can try again — with the same courier, a different one, or its
+ * own car. Cancelling is what ends an order, and cancelling is what refunds it.
+ *
+ * Mirrors `_SETTLED_STATUSES` in `app/api/v1/orders.py`, which is what actually
+ * enforces it — and which also refuses anything already refunded, so the
+ * undelivered orders written while it *was* an ending stay where they are.
  */
-const SETTLED_STATUSES: OrderStatus[] = ['cancelled', 'undelivered'];
+const SETTLED_STATUSES: OrderStatus[] = ['cancelled'];
+
+/**
+ * Where an order may be standing and still be handed to a different courier.
+ *
+ * Mirrors `MOVABLE_STATUSES` in `fulfilment_reassignment`, which is what
+ * actually enforces it — this only decides whether to show the door. The API
+ * asks a great deal more (a rider already holding the box, a driver on the way,
+ * money already refunded), and answers with a sentence, which is why the dialog
+ * opens on statuses where the move may still turn out to be refused.
+ */
+const MOVABLE_STATUSES: OrderStatus[] = [
+  'confirmed',
+  'arrived_at_pos',
+  'packed',
+  'undelivered',
+];
 
 const STATUS_STEPS: OrderStatus[] = [
   'created',
@@ -138,9 +166,19 @@ export default function OrderDetailPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [notes, setNotes] = useState('');
   const [error, setError] = useState('');
-  // The Lalamove quote awaiting a yes. Non-null means the dialog is open; the
-  // price in it is the price that will be booked, and nothing else.
-  const [quote, setQuote] = useState<LalamoveQuote | null>(null);
+  // Where this order may go. Non-null means the dialog is open — it is fetched
+  // on opening rather than with the order, because every answer in it depends
+  // on where the order is right now and a value cached from page load would be
+  // stale by exactly the amount that matters.
+  const [options, setOptions] = useState<FulfilmentOptions | null>(null);
+  // The courier picked in the dialog, and its price. The quote is what will be
+  // booked and nothing else.
+  const [target, setTarget] = useState<FulfilmentProvider | null>(null);
+  const [quote, setQuote] = useState<FulfilmentQuote | null>(null);
+  // A courier that would not price the job — out of range, unreachable. Shown
+  // in the dialog rather than as a toast, because it is an answer about the
+  // option they just picked and belongs next to it.
+  const [quoteError, setQuoteError] = useState<string | null>(null);
   // Set when a quote lapsed and a fresh one replaced it mid-dialog, so the
   // second confirm is visibly a second decision rather than the same click
   // going through at a different number.
@@ -194,12 +232,17 @@ export default function OrderDetailPage() {
 
   async function updateStatus(newStatus: OrderStatus) {
     if (!order) return;
-    // Cancelling goes through on the first click — it is the one status the
-    // counter changes while the customer is still on the phone. Every other
-    // move still asks.
-    if (newStatus !== 'cancelled' && !(await confirmDialog(
+    // Cancelling a live order goes through on the first click — it is the one
+    // status the counter changes while the customer is still on the phone.
+    //
+    // Cancelling an *undelivered* one does not, and the difference is money.
+    // That is the write-off: it is where the refund happens now, and a refund
+    // is not something to fire off a single click on a screen somebody is
+    // scrolling. Every other move still asks too.
+    const straightThrough = newStatus === 'cancelled' && !isUndelivered;
+    if (!straightThrough && !(await confirmDialog(
       // Correcting a settled order is not the same act as advancing a live
-      // one, and the difference is money: both endings refund automatically,
+      // one, and the difference is money: cancelling refunds automatically,
       // and marking one delivered afterwards does not take the refund back.
       // Say so here rather than let somebody find it in a reconciliation.
       SETTLED_STATUSES.includes(order.status as OrderStatus)
@@ -211,6 +254,29 @@ export default function OrderDetailPage() {
               'corrects that record. Any refund already issued stays issued — ' +
               'check it before continuing.',
             confirmLabel: 'Mark delivered',
+          }
+      // A second attempt at a failed handover. Worth its own words because the
+      // one thing that can refuse it is invisible from here: an order refunded
+      // while `undelivered` was still an ending is not ours to deliver, and the
+      // API says so rather than this screen guessing at it.
+      : isUndelivered && newStatus === 'packed'
+        ? {
+            title: 'Try this order again',
+            message:
+              `${order.order_number} goes back to packed and a courier is asked ` +
+              'for again. The customer is charged nothing more. If the order was ' +
+              'already refunded this will be refused — they have their money.',
+            confirmLabel: 'Try again',
+          }
+      // Writing one off, which is where the refund actually happens now.
+      : isUndelivered && newStatus === 'cancelled'
+        ? {
+            title: 'Write this order off',
+            message:
+              `${order.order_number} is cancelled and the customer is refunded ` +
+              'for the goods. The delivery and small-order fees are kept — the ' +
+              'van was booked and usually already drove.',
+            confirmLabel: 'Write off & refund',
           }
         : {
             title: 'Change status',
@@ -246,11 +312,20 @@ export default function OrderDetailPage() {
     }
   }
 
-  async function quoteLalamove() {
+  async function openFulfilment() {
     setActionLoading(true);
     setQuoteExpired(false);
+    setQuote(null);
+    setQuoteError(null);
+    setTarget(null);
     try {
-      setQuote(await ordersApi.quoteLalamove(orderNumber));
+      const found = await ordersApi.fulfilmentOptions(orderNumber);
+      setOptions(found);
+      // One option and nothing in the way is the overwhelmingly common case —
+      // a third-party order going to Lalamove, or the reverse. Pricing it
+      // straight away saves a click that has no decision in it.
+      const only = found.targets.filter(t => t.available);
+      if (only.length === 1 && !found.blocked) await pickTarget(only[0].provider);
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -258,28 +333,79 @@ export default function OrderDetailPage() {
     }
   }
 
-  async function assignLalamove() {
-    if (!quote) return;
+  async function pickTarget(provider: FulfilmentProvider) {
+    setTarget(provider);
+    setQuote(null);
+    setQuoteError(null);
+    setQuoteExpired(false);
     setActionLoading(true);
     try {
-      setDelivery(await ordersApi.assignLalamove(orderNumber, quote.quotation_id));
+      setQuote(await ordersApi.quoteFulfilment(orderNumber, provider));
+    } catch (err) {
+      setQuoteError((err as Error).message);
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function confirmFulfilment() {
+    if (!target) return;
+    setActionLoading(true);
+    try {
+      setDelivery(
+        await ordersApi.reassignFulfilment(orderNumber, target, quote?.quotation_id),
+      );
       // The order itself does not move — it stays `packed` until a rider
       // collects — but its history has, and the stepper reads that.
       setOrder(await ordersApi.get(orderNumber));
+      setOptions(null);
+      setTarget(null);
       setQuote(null);
       setQuoteExpired(false);
+      toast.success(`Moved to ${PROVIDER_LABEL[target] ?? target}.`);
     } catch (err) {
       // A lapsed quotation comes back as a 409 carrying the current price.
       // Showing it and requiring another click is the whole point of the two
       // steps: nothing gets booked at a number nobody agreed to.
-      const fresh = (err as ApiError)?.detail as { quote?: LalamoveQuote } | undefined;
+      const fresh = (err as ApiError)?.detail as { quote?: FulfilmentQuote } | undefined;
       if (err instanceof ApiError && err.status === 409 && fresh?.quote) {
         setQuote(fresh.quote);
         setQuoteExpired(true);
       } else {
-        toast.error((err as Error).message);
-        setQuote(null);
+        // Kept in the dialog rather than closed behind a toast: the message is
+        // usually a reason the move was refused, and the person reading it is
+        // about to pick a different courier.
+        setQuoteError((err as Error).message);
       }
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function abandonBooking() {
+    const exposure = options?.exposure;
+    const confirmed = await confirmDialog({
+      title: 'Abandon this booking?',
+      message: exposure
+        ? `${exposure.reason} The order stays where it is and keeps its courier, but loses the booking — so it can then be moved.`
+        : 'The order keeps its courier but loses the booking, and can then be moved.',
+      confirmLabel: 'Abandon booking',
+    });
+    if (!confirmed) return;
+    setActionLoading(true);
+    try {
+      setDelivery(
+        // The acknowledgement is a fact the API records, not a thing the dialog
+        // claims — it refuses without it whenever a fee is likely.
+        await ordersApi.abandonBooking(orderNumber, exposure?.will_be_charged ?? false),
+      );
+      setOrder(await ordersApi.get(orderNumber));
+      // Re-read rather than closed: the whole point was to unblock the move, and
+      // the person is still standing in the dialog waiting to make it.
+      setOptions(await ordersApi.fulfilmentOptions(orderNumber));
+      toast.success('Booking abandoned. This order now needs a courier.');
+    } catch (err) {
+      toast.error((err as Error).message);
     } finally {
       setActionLoading(false);
     }
@@ -343,14 +469,22 @@ export default function OrderDetailPage() {
 
   return (
     <div className="max-w-3xl">
-      {quote && (
-        <AssignLalamoveDialog
+      {options && (
+        <ChangeFulfilmentDialog
+          options={options}
           quote={quote}
+          target={target}
           expired={quoteExpired}
           busy={actionLoading}
-          onConfirm={assignLalamove}
+          error={quoteError}
+          onPick={pickTarget}
+          onConfirm={confirmFulfilment}
+          onAbandon={abandonBooking}
           onCancel={() => {
+            setOptions(null);
+            setTarget(null);
             setQuote(null);
+            setQuoteError(null);
             setQuoteExpired(false);
           }}
         />
@@ -470,11 +604,28 @@ export default function OrderDetailPage() {
             Mark Undelivered
           </Button>
         )}
-        {/* "Return To Packed" and cancelling an undelivered order used to sit
-            here. Both were left behind when `undelivered` became an ending:
-            the API refuses either, so the buttons could only ever produce a
-            red toast. What follows an undelivered order is the refund it has
-            already started, or the correction above. */}
+        {/* The two ways out of a failed handover, and they are a pair: try
+            again, or stop. Both were removed while `undelivered` was an ending
+            — the API refused either, so they could only produce a red toast —
+            and both come back with it.
+
+            "Try Again" rather than "Return To Packed": the second describes our
+            column, the first describes what the shop is doing. It goes to
+            `packed` because that is where the box actually is and where
+            dispatch hangs off, so a second attempt runs through the ordinary
+            machinery rather than a path of its own. */}
+        {isUndelivered && (
+          <Button size="sm" onClick={() => updateStatus('packed')} loading={actionLoading}>
+            <span className="material-icons text-[14px]">replay</span>
+            Try Again
+          </Button>
+        )}
+        {isUndelivered && (
+          <Button variant="danger" size="sm" onClick={() => updateStatus('cancelled')} loading={actionLoading}>
+            <span className="material-icons text-[14px]">cancel</span>
+            Write Off &amp; Refund
+          </Button>
+        )}
         {(order.status === 'created' || order.status === 'confirmed') && (
           <Button variant="danger" size="sm" onClick={() => updateStatus('cancelled')} loading={actionLoading}>
             <span className="material-icons text-[14px]">cancel</span>
@@ -568,8 +719,8 @@ export default function OrderDetailPage() {
           delivery={delivery}
           busy={actionLoading}
           onRedispatch={redispatch}
-          onAssignLalamove={quoteLalamove}
-          canAssignLalamove={order.status === 'packed'}
+          onChangeFulfilment={openFulfilment}
+          canChangeFulfilment={MOVABLE_STATUSES.includes(order.status)}
           isSettled={SETTLED_STATUSES.includes(order.status)}
           onRefresh={refreshCourier}
         />
@@ -705,29 +856,47 @@ const DELIVERED_STATUSES = new Set(['COMPLETED', 'delivered']);
  * cannot carry them legibly. It stays local to this file — the shared confirm
  * takes a message, and stretching it to render arbitrary quote tables for a
  * single caller would be guessing at the second caller's requirements.
+ *
+ * It used to ask one question — Lalamove, yes or no — because that was the only
+ * move the API allowed. It now picks a courier first, from whichever ones the
+ * order's zone permits, and the quote table redraws underneath. The refusals
+ * are rendered as sentences rather than as missing rows: a courier that is
+ * absent tells somebody nothing, and the reason they need is usually "a driver
+ * is already on the way", which has a button of its own.
  */
-function AssignLalamoveDialog({
+function ChangeFulfilmentDialog({
+  options,
   quote,
+  target,
   expired,
   busy,
+  error,
+  onPick,
   onConfirm,
+  onAbandon,
   onCancel,
 }: {
-  quote: LalamoveQuote;
+  options: FulfilmentOptions;
+  quote: FulfilmentQuote | null;
+  target: FulfilmentProvider | null;
   expired: boolean;
   busy: boolean;
+  error: string | null;
+  onPick: (provider: FulfilmentProvider) => void;
   onConfirm: () => void;
+  onAbandon: () => void;
   onCancel: () => void;
 }) {
-  const currency = quote.currency || 'AED';
-  const losesMoney = quote.margin !== null && quote.margin < 0;
+  const currency = quote?.currency || 'AED';
+  const losesMoney = quote?.margin != null && quote.margin < 0;
+  const priced = quote != null && quote.cost != null;
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       role="dialog"
       aria-modal="true"
-      aria-labelledby="assign-lalamove-title"
+      aria-labelledby="change-fulfilment-title"
       // Clicking away cancels; clicking the card must not. Nothing is booked
       // either way — the booking is the button.
       onClick={onCancel}
@@ -737,15 +906,78 @@ function AssignLalamoveDialog({
         onClick={e => e.stopPropagation()}
       >
         <h2
-          id="assign-lalamove-title"
+          id="change-fulfilment-title"
           className="font-display text-lg text-primary mb-1"
         >
-          Assign to Lalamove
+          Change fulfilment
         </h2>
         <p className="text-xs text-gray-500 font-body mb-4">
-          A courier is booked immediately. The customer is not charged anything
-          more — this is what the delivery costs us.
+          Currently with {PROVIDER_LABEL[options.current] ?? options.current}. The
+          customer is not charged anything more — what changes is what the
+          delivery costs us.
         </p>
+
+        {options.blocked && (
+          <div className="text-xs font-body text-amber-800 bg-amber-50 border border-amber-200 p-2 mb-3">
+            <p>{options.blocked}</p>
+            {options.must_abandon_first && (
+              <button
+                type="button"
+                onClick={onAbandon}
+                disabled={busy}
+                className="mt-1.5 underline text-amber-900 disabled:opacity-50"
+              >
+                Abandon this booking
+              </button>
+            )}
+          </div>
+        )}
+
+        {options.targets.length === 0 && !options.blocked && (
+          // Not an error, and worth saying rather than showing an empty box:
+          // it means the map has no alternate for this zone, which is a thing
+          // somebody can go and change.
+          <p className="text-xs font-body text-gray-500 mb-3">
+            This order&apos;s zone names no other courier it may be moved to.
+          </p>
+        )}
+
+        {options.targets.length > 0 && (
+          <div className="flex flex-col gap-1 mb-4">
+            {options.targets.map(option => (
+              <label
+                key={option.provider}
+                className={cn(
+                  'flex items-start gap-2 p-2 border text-sm font-body',
+                  option.available
+                    ? 'border-gray-200 cursor-pointer hover:border-primary/40'
+                    : 'border-gray-100 text-gray-400',
+                  target === option.provider && 'border-primary bg-primary/5',
+                )}
+              >
+                <input
+                  type="radio"
+                  name="fulfilment-target"
+                  disabled={!option.available || busy}
+                  checked={target === option.provider}
+                  onChange={() => onPick(option.provider)}
+                  className="mt-0.5 accent-primary"
+                />
+                <span>
+                  {PROVIDER_LABEL[option.provider] ?? option.provider}
+                  {option.provider === options.preferred && (
+                    <span className="text-gray-400"> · this zone&apos;s courier</span>
+                  )}
+                  {option.reason && (
+                    <span className="block text-[11px] text-gray-400">
+                      {option.reason}
+                    </span>
+                  )}
+                </span>
+              </label>
+            ))}
+          </div>
+        )}
 
         {expired && (
           <p className="text-xs font-body text-amber-700 bg-amber-50 border border-amber-200 p-2 mb-3">
@@ -754,41 +986,82 @@ function AssignLalamoveDialog({
           </p>
         )}
 
-        <dl className="text-sm font-body border-t border-gray-100">
-          <div className="flex justify-between py-2 border-b border-gray-100">
-            <dt className="text-gray-500">Lalamove quote</dt>
-            <dd className="text-gray-900">
-              {currency} {quote.cost.toFixed(2)}
-              {quote.distance_m !== null && (
-                <span className="text-gray-400">
-                  {' '}
-                  · {(quote.distance_m / 1000).toFixed(1)} km
-                </span>
-              )}
-            </dd>
-          </div>
-          <div className="flex justify-between py-2 border-b border-gray-100">
-            <dt className="text-gray-500">Customer paid</dt>
-            <dd className="text-gray-900">
-              {quote.fee_charged === null
-                ? '—'
-                : `${currency} ${quote.fee_charged.toFixed(2)}`}
-            </dd>
-          </div>
-          <div className="flex justify-between py-2 border-b border-gray-100">
-            <dt className="text-gray-500">Margin</dt>
-            <dd className={cn(losesMoney ? 'text-red-600' : 'text-gray-900')}>
-              {quote.margin === null
-                ? '—'
-                : `${quote.margin < 0 ? '\u2212' : ''}${currency} ${Math.abs(quote.margin).toFixed(2)}`}
-            </dd>
-          </div>
-        </dl>
+        {error && (
+          <p className="text-xs font-body text-red-700 bg-red-50 border border-red-200 p-2 mb-3">
+            {error}
+          </p>
+        )}
+
+        {priced && (
+          <dl className="text-sm font-body border-t border-gray-100">
+            <div className="flex justify-between py-2 border-b border-gray-100">
+              <dt className="text-gray-500">
+                {PROVIDER_LABEL[quote!.provider] ?? quote!.provider} quote
+              </dt>
+              <dd className="text-gray-900">
+                {currency} {quote!.cost!.toFixed(2)}
+                {quote!.distance_m !== null && (
+                  <span className="text-gray-400">
+                    {' '}
+                    · {(quote!.distance_m / 1000).toFixed(1)} km
+                  </span>
+                )}
+              </dd>
+            </div>
+            <div className="flex justify-between py-2 border-b border-gray-100">
+              <dt className="text-gray-500">Customer paid</dt>
+              <dd className="text-gray-900">
+                {quote!.fee_charged === null
+                  ? '—'
+                  : `${currency} ${quote!.fee_charged.toFixed(2)}`}
+              </dd>
+            </div>
+            <div className="flex justify-between py-2 border-b border-gray-100">
+              <dt className="text-gray-500">Margin</dt>
+              <dd className={cn(losesMoney ? 'text-red-600' : 'text-gray-900')}>
+                {quote!.margin === null
+                  ? '—'
+                  : `${quote!.margin < 0 ? '−' : ''}${currency} ${Math.abs(quote!.margin).toFixed(2)}`}
+              </dd>
+            </div>
+          </dl>
+        )}
+
+        {/* No quotation id means a rate card rather than a live quotation. Worth
+            saying: the number is real but it is our arithmetic, not a figure
+            noon Send has committed to. */}
+        {priced && quote!.quotation_id === null && (
+          <p className="text-xs font-body text-gray-500 mt-3">
+            Rate-card estimate. noon Send bill what the run turns out to be.
+          </p>
+        )}
+
+        {target === 'third_party' && (
+          <p className="text-xs font-body text-gray-600 mt-3">
+            No courier is booked and nothing further is automatic — somebody we
+            already use collects the box.
+            {/* The register only prints a driver slip when a courier matches a
+                driver, and a third party never will. So the paper on the bag
+                keeps naming whoever was carrying it before. Cheaper to say than
+                to invent a print trigger for a driver who does not exist. */}
+            <span className="block mt-1 text-gray-500">
+              No new driver slip will print. Pull the one already on the bag —
+              it names the previous courier.
+            </span>
+          </p>
+        )}
+
+        {quote?.cancels_booking && (
+          <p className="text-xs font-body text-gray-600 mt-3">
+            This calls off booking {quote.cancels_booking}.
+            {options.exposure && ` ${options.exposure.reason}`}
+          </p>
+        )}
 
         {losesMoney && (
           <p className="text-xs font-body text-red-600 mt-3">
-            This delivery loses money. Assign it anyway only if the order needs
-            to go out today.
+            This delivery loses money. Move it anyway only if the order needs to
+            go out today.
           </p>
         )}
 
@@ -796,8 +1069,12 @@ function AssignLalamoveDialog({
           <Button size="sm" variant="ghost" onClick={onCancel} disabled={busy}>
             Cancel
           </Button>
-          <Button size="sm" onClick={onConfirm} disabled={busy}>
-            {busy ? 'Booking…' : 'Confirm & book'}
+          <Button
+            size="sm"
+            onClick={onConfirm}
+            disabled={busy || target === null || options.blocked !== null}
+          >
+            {busy ? 'Moving…' : 'Confirm & move'}
           </Button>
         </div>
       </div>
@@ -823,17 +1100,17 @@ function DeliveryPanel({
   busy,
   onRedispatch,
   onRefresh,
-  onAssignLalamove,
-  canAssignLalamove,
+  onChangeFulfilment,
+  canChangeFulfilment,
   isSettled,
 }: {
   delivery: OrderDelivery;
   busy: boolean;
   onRedispatch: () => void;
   onRefresh: () => void;
-  onAssignLalamove: () => void;
+  onChangeFulfilment: () => void;
   /** Packed and nothing else — see `_assert_assignable` on the API side. */
-  canAssignLalamove: boolean;
+  canChangeFulfilment: boolean;
   /**
    * The order is not going anywhere: cancelled, undelivered, refunded or
    * disputed. Every control that would call a driver or ask a courier for an
@@ -1081,13 +1358,20 @@ function DeliveryPanel({
               Check status
             </Button>
           )}
-          {/* A third-party zone has no integration — somebody we already use
-              collects the box. This is the escape hatch for the day that is not
-              good enough: quote Lalamove, look at the number, and decide. */}
-          {!isSettled && !isCourier && canAssignLalamove && !delivery.courier_order_id && (
-            <Button size="sm" variant="ghost" onClick={onAssignLalamove} disabled={busy}>
+          {/* The escape hatch for a courier that will not carry this order —
+              one that has gone quiet, or one that never had a chance. Where it
+              may go is the zone's business, so the dialog asks the API rather
+              than deciding here; this only decides whether asking is worth it.
+
+              Shown for a booked order too, unlike the Lalamove-only button it
+              replaces. A booking sitting at ASSIGNING_DRIVER for forty minutes
+              is the commonest reason anybody wants this, and hiding the door
+              because a booking exists was hiding it exactly when it was
+              needed. */}
+          {!isSettled && canChangeFulfilment && (
+            <Button size="sm" variant="ghost" onClick={onChangeFulfilment} disabled={busy}>
               <span className="material-icons text-[14px]">local_shipping</span>
-              Assign to Lalamove
+              Change fulfilment
             </Button>
           )}
           {isCourier && !isSettled && (

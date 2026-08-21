@@ -38,17 +38,24 @@
 {{ parts.alert(t('undelivered.next_label'), t('undelivered.next_body')) }}
 
 {#
-  Same block as the cancellation, for the same reason and in the same words.
+  Only ever a refund that has actually happened.
 
-  A failed handover used to end in "somebody will arrange another attempt", and
-  the shop's answer now is that it does not: `undelivered` is an ending, the
-  money goes back, and saying so here is the difference between a customer who
-  knows where they stand and one who waits for a van that is not coming.
+  A failed handover does not pay anybody back any more — `_REFUNDABLE_ENDINGS`
+  is `cancelled` alone — so on every order written from here on this block
+  renders nothing at all, which is correct: the copy above says somebody will
+  ring to arrange another attempt, and an alert promising a refund underneath it
+  says the opposite in the same breath.
+
+  The old "was paid but nothing refunded yet" branch is gone for exactly that
+  reason. It said "your refund is on its way" whenever no refund had been
+  recorded — which, now, is always.
+
+  What survives is the `refund_amount` branch, for the orders refunded
+  automatically while `undelivered` was an ending. Their money really did go
+  back and this email is the only place that says so.
 #}
 {% if refund_amount %}
 {{ parts.alert(t('refund.label'), t('refund.issued', amount=refund_amount) ~ ' ' ~ t('refund.fees_kept')) }}
-{% elif was_paid %}
-{{ parts.alert(t('refund.label'), t('refund.pending')) }}
 {% endif %}
 
 {{ parts.address_card(address, address_line, recipient_name) }}

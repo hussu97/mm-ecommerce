@@ -128,21 +128,28 @@ VALID_TRANSITIONS: dict[OrderStatusEnum, set[OrderStatusEnum]] = {
         OrderStatusEnum.REFUNDED,
         OrderStatusEnum.DISPUTED,
     },
-    # An ending, not a detour. This used to lead back into the journey —
-    # `packed` again, then `out_for_delivery` when a new rider collected — on
-    # the reasoning that the cake exists and is paid for, so the usual answer is
-    # a second attempt.
+    # A failed handover, and a place an order can leave again.
     #
-    # The shop's answer is that it is not. `undelivered` is what a person writes
-    # down when a handover has definitively failed; it is cancellation after the
-    # box was made, and treating it as recoverable meant a driver could be sent
-    # again for something already written off, automatically, by a sweep. What
-    # follows is a refund conversation, not another van.
+    # This was briefly an ending — refund the money, close the order — because
+    # treating it as recoverable had let a *sweep* send a second driver for
+    # something a person had written off. That was the real fault, and closing
+    # the status was too broad a fix: it also meant the shop could not drive a
+    # box over itself, could not hand a stuck order to a different courier, and
+    # could not act on the commonest case of all, which is a driver reporting no
+    # answer at the door and the customer ringing back ten minutes later.
     #
-    # Only the two money outcomes remain, and they are the same two `cancelled`
-    # now carries. Neither returns the order to fulfilment: they record what
-    # happened to the payment for an order that is not going anywhere.
+    # So the status reopens and the *refund* is what moves. Nothing is paid back
+    # here any more; `_REFUNDABLE_ENDINGS` is `cancelled` alone, and cancelling
+    # is how somebody says this order is over. Until they do, the cake exists,
+    # it is paid for, and it is still ours to deliver.
+    #
+    # `packed` rather than `out_for_delivery` is the way back in. That is where
+    # the box actually is — on a shelf, made — and it is where dispatch hangs
+    # off, so a second attempt runs through `assign_or_dispatch` like any other
+    # packed order instead of down a path of its own.
     OrderStatusEnum.UNDELIVERED: {
+        OrderStatusEnum.PACKED,
+        OrderStatusEnum.CANCELLED,
         OrderStatusEnum.REFUNDED,
         OrderStatusEnum.DISPUTED,
     },
@@ -178,12 +185,17 @@ _OPEN_ON_THE_REGISTER = frozenset(
 )
 
 
-#: The two ways an order stops being deliverable with the customer's money still
+#: The one way an order stops being deliverable with the customer's money still
 #: in our account. `refunded` and `disputed` are not here: by the time an order
 #: reaches either, the money has already moved.
+#:
+#: `undelivered` used to be here too, and that is what made a failed handover a
+#: write-off — the money went back the moment a driver reported no answer at the
+#: door, so there was nothing left to deliver even though the cake was on a
+#: shelf. Paying back is a decision somebody makes, not a consequence of a
+#: courier's status push, and `cancelled` is where somebody makes it.
 _REFUNDABLE_ENDINGS = {
     OrderStatusEnum.CANCELLED,
-    OrderStatusEnum.UNDELIVERED,
 }
 
 
@@ -450,7 +462,13 @@ async def _consequences(
     ):
         await _move_stock(db, order, -1)
 
-    if new_status == OrderStatusEnum.DELIVERED and previous in _REFUNDABLE_ENDINGS:
+    # Keyed on the money, not on which status the order is coming back from.
+    # It used to ask `previous in _REFUNDABLE_ENDINGS`, which was the same
+    # question only while that set held every status a refund could have
+    # happened in. It no longer does — an `undelivered` order refunded under the
+    # old rule is exactly the case this warning is for, and narrowing by the set
+    # would step past it in silence. `refunded_amount` is the fact; ask it.
+    if new_status == OrderStatusEnum.DELIVERED:
         refunded = order.refunded_amount or 0
         if refunded:
             logger.warning(
@@ -465,12 +483,16 @@ async def _consequences(
     # An order that is not going to arrive, that was paid for by card, gets the
     # money back without anybody pressing anything else.
     #
-    # Both endings, because they are the same fact to a customer: the cake is
-    # not coming. Automatic rather than a second admin step, because the second
-    # step is the one that gets forgotten and the cost of forgetting it is
-    # somebody who paid for nothing. The fees stay — see
-    # `payment_service.refundable_amount` — since the van was booked and, on an
-    # undelivered order, usually already drove.
+    # Cancellation alone. Automatic rather than a second admin step, because the
+    # second step is the one that gets forgotten and the cost of forgetting it
+    # is somebody who paid for nothing. The fees stay — see
+    # `payment_service.refundable_amount` — since the van was booked and often
+    # already drove.
+    #
+    # A failed handover is deliberately not here any more. It is not the same
+    # fact to a customer: `cancelled` means the cake is not coming, and
+    # `undelivered` means it did not get in today. Paying back the second one
+    # automatically is what stopped anybody trying again.
     #
     # Never allowed to fail the transition. Cancelling is a fact about the
     # kitchen and refunding is a fact about a bank; holding the first hostage to

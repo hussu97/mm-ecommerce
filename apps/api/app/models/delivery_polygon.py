@@ -45,6 +45,37 @@ class FulfilmentProviderEnum(str, enum.Enum):
     THIRD_PARTY = "third_party"
 
 
+#: What a zone may move an order to, when nobody has said otherwise.
+#:
+#: Keyed on the zone's preferred courier, because that is what decides which
+#: alternates are even plausible:
+#:
+#: * **Lalamove** zones get third party and *not* noon Send. noon Send cannot
+#:   cross an emirate boundary and will not carry a run past 20 km, so a zone we
+#:   gave to Lalamove is a zone they probably cannot reach at all.
+#: * **third party** zones get Lalamove — the escape that already existed, and
+#:   the reason this whole thing was built.
+#: * **noon Send** zones get both. They are inside Sharjah by construction, so
+#:   Lalamove reaches them and a van reaches them.
+#:
+#: The same policy `courier_service._dispatch_once` already applies to automatic
+#: dispatch, which falls noon Send back to Lalamove and never the reverse. This
+#: is that rule made explicit, per zone, and editable in the console.
+#:
+#: Seeded into `delivery_polygons.alternate_providers` by migration
+#: `125_zone_alternates`, which carries its own copy — a migration has to keep
+#: describing the database as it was, so it cannot import this. The two are held
+#: together by `tests/unit/test_zone_alternate_defaults.py`.
+DEFAULT_ALTERNATES: dict[str, list[str]] = {
+    FulfilmentProviderEnum.LALAMOVE.value: [FulfilmentProviderEnum.THIRD_PARTY.value],
+    FulfilmentProviderEnum.THIRD_PARTY.value: [FulfilmentProviderEnum.LALAMOVE.value],
+    FulfilmentProviderEnum.NOON_SEND.value: [
+        FulfilmentProviderEnum.THIRD_PARTY.value,
+        FulfilmentProviderEnum.LALAMOVE.value,
+    ],
+}
+
+
 class DeliveryPricingEnum(str, enum.Enum):
     """Where a zone's delivery fee comes from.
 
@@ -177,11 +208,43 @@ class DeliveryPolygon(Base, UUIDMixin):
     # Which courier serves this zone. Third party is the safe default: it means
     # "do what we have always done", so a zone added without thinking about
     # dispatch cannot start booking real couriers by accident.
+    #
+    # The *preferred* one. It is what every order placed here is priced and
+    # dispatched against, and it is unchanged — the column below is what makes
+    # the word "preferred" mean anything.
     fulfilment_provider: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
         default=FulfilmentProviderEnum.THIRD_PARTY.value,
         server_default=FulfilmentProviderEnum.THIRD_PARTY.value,
+    )
+    #: The couriers an order in this zone may be *moved* to when the preferred
+    #: one will not carry it.
+    #:
+    #: A courier declining a job is ordinary and a courier going quiet is not
+    #: rare, and until this existed a stuck order had exactly one escape — third
+    #: party onto Lalamove, in that direction only. Everything else needed a
+    #: phone call. This is the same decision written down per zone: what may
+    #: this order become, here.
+    #:
+    #: Emphatically not "every other courier". noon Send cannot cross an emirate
+    #: boundary and will not take a run past 20 km, so offering a Dubai order to
+    #: them produces a refusal at best and a booking nobody can service at worst
+    #: — which is why a Lalamove zone lists third party and not noon Send. The
+    #: seeded defaults say exactly what `courier_service` already does
+    #: automatically; this makes the same policy true of the manual path, and
+    #: editable without a deploy.
+    #:
+    #: JSONB rather than a join table because a map version is drafted by
+    #: cloning its polygons wholesale, and an array clones with the row. The
+    #: values are checked against `FulfilmentProviderEnum` in the zones router
+    #: rather than by a native enum, for the reason given above it.
+    #:
+    #: Empty by default, which reads as "no alternates" and is the safe answer:
+    #: a zone drawn without anyone thinking about this cannot have its orders
+    #: moved anywhere.
+    alternate_providers: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
     )
     geometry: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
 

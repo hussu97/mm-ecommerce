@@ -795,3 +795,92 @@ and `CHASE_FOR` is the backstop for the case where even that fails.
 `apply_webhook`. That is wiring, not behaviour, and a docstring claiming it
 proves the order reaches `delivered` would be false. The claim about the order
 belongs in a test that runs the real handler — which is where it now is.
+
+---
+
+## A status that refuses everything is a decision hiding inside a bug fix
+
+**2026-08-21.** `undelivered` was closed to every transition but `refunded` and
+`disputed`, and reaching it refunded the order automatically. The reasoning in
+the file was sound as far as it went — treating a failed handover as recoverable
+had let an unattended *sweep* send a second driver for something a person had
+written off.
+
+But the fix was aimed at the wrong thing. The fault was that a sweep could act
+on it, not that the order could recover. Closing the status also stopped the shop
+driving a box over itself, handing a stuck order to a different courier, and
+acting on the commonest case there is: a driver reports no answer at the door and
+the customer rings back ten minutes later. Hussain's answer was the narrow one —
+*add an undelivered → cancelled transition, and auto-refund only on cancelled.*
+The status reopens; the money moves to the press that means "this order is over".
+
+**Two pieces of the codebase had already voted.** `email_copy.undelivered.next_body`
+says *"Someone from our team will contact you shortly to arrange another
+attempt"*, and the template header says the next step is *"a person arranging
+another attempt rather than a refund"*. Neither was updated when the refund was
+made automatic, so the shop had been emailing a promise the code had stopped
+keeping. The copy was not stale — it was the requirement, still sitting there.
+
+**Rule:** when a status is closed off, write down which of its *legitimate* exits
+are being closed with it. "A sweep must not do X automatically" and "a person may
+never do X" are different sentences, and only the first was ever the problem. The
+fix for an unattended actor is to constrain the actor.
+
+**Rule:** before reversing a behaviour, grep the customer-facing copy for what it
+currently promises. Copy that contradicts the code is evidence about which of the
+two is wrong, and it is usually the newer one — the copy was written when somebody
+was thinking about the customer.
+
+**Corollary, and the trap in the reversal:** removing the auto-refund made
+`order_undelivered.html` fall through to its `{% elif was_paid %}` branch —
+*"we're returning your payment"* — on every order, because no refund is ever
+recorded now. The false promise would have printed directly beneath the line
+saying somebody will ring to arrange another attempt. **Deleting the cause of a
+value does not delete the branch that renders its absence.** Grep for every
+reader of a field you have just stopped writing.
+
+## A dedupe that never matches is indistinguishable from no dedupe at all
+
+Same change. `already_sent()` asked `email_logs` for `template == "order_packed.html"`
+so a reassignment would not re-send an email the customer already had. The column
+holds `order_packed`: `_send_order_email` logs `template.removesuffix(".html")`.
+
+Every test passed. They passed *because* the query matched nothing — the helper
+answered "never sent", the email went, and the assertion was that the email went.
+The failure mode only appears on the second send, to a real customer, in
+production. A guard that is wired backwards fails open and open is the happy path.
+
+**Rule:** when you query a column another function writes, read the writer, not
+the model. `template=template` at the call site and `template.removesuffix(...)`
+at the write are four lines apart and say different things.
+
+**Rule:** a deduplication test must assert the *suppression*, not the send —
+seed the row it should match, then assert nothing went. A test that only proves
+the first send works cannot tell a working dedupe from an absent one.
+
+## Copying a row means copying every column, and the compensating code may be dead
+
+`create_version` clones every polygon into a draft map. Its copy list carries
+name, fee, pricing mode, both free-delivery fields, provider, branch, geometry,
+bbox and display order — each with a comment explaining what breaks if it is
+dropped. It does not carry `batch_group_id`, so **publishing a draft silently
+stops batching**: the same orders, one van each, at several times the cost.
+
+The block that looks like it compensates is dead. It calls
+`_windows_of(db, polygon.id)` against a function that filters
+`DeliveryBatchWindow.group_id`, so it always returns empty; and it constructs
+`DeliveryBatchWindow(polygon_id=...)`, a column that has not existed since
+windows moved onto groups. If it ever did return a row it would raise.
+
+The comment beneath it warns about exactly the outcome the missing line causes.
+The warning was written, the assignment was not, and the dead loop made the gap
+look filled.
+
+**Rule:** when adding a column to a table something clones, add it to the clone
+in the same commit and write the test that publishes a draft and reads the value
+back. Every field already in that list is there because somebody found out the
+hard way.
+
+**Rule:** a loop that never executes reads exactly like a loop that works. When
+a copy path has a compensating block, check its filter actually matches — pass it
+a real id and count the rows — before trusting that it covers anything.

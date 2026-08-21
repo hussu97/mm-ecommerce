@@ -44,6 +44,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionFactory
 from app.models.delivery_batch import DELIVERY_TIMEZONE
 from app.models.email_log import EmailLog
+from app.models.order import OrderStatusEnum
 from app.models.pos_order import OrderSourceEnum
 from app.services import address_format
 from app.services.email_copy import DIRECTION, translator
@@ -781,7 +782,7 @@ async def send_order_packed(order: OrderResponse) -> None:
     is_pickup = order.delivery_method.value == "pickup"
     await _send_order_email(
         order,
-        template="order_packed.html",
+        template=PACKED_TEMPLATE,
         subject=_subject(
             "packed.subject_pickup" if is_pickup else "packed.subject_delivery",
             order,
@@ -789,11 +790,81 @@ async def send_order_packed(order: OrderResponse) -> None:
     )
 
 
-def should_send_packed(order: OrderResponse) -> bool:
-    """Whether `packed` is news for this order. See `send_order_packed`."""
-    if order.delivery_method.value == "pickup":
-        return True
-    return not (order.fulfilment is not None and order.fulfilment.courier_managed)
+PACKED_TEMPLATE = "order_packed.html"
+
+#: Statuses in which the box demonstrably exists, so a packed email is still a
+#: true thing to say.
+#:
+#: `undelivered` is in here, and that is not an oversight: a rider carried the
+#: box to a door and brought it back, which is about as packed as an order gets.
+#: An order moved to a third party out of `undelivered` is exactly the customer
+#: who has heard nothing and is owed something.
+_PACKED_OR_LATER = frozenset(
+    {
+        OrderStatusEnum.PACKED,
+        OrderStatusEnum.OUT_FOR_DELIVERY,
+        OrderStatusEnum.UNDELIVERED,
+    }
+)
+
+
+async def already_sent(order_number: str | None, template: str) -> bool:
+    """
+    Whether this order has already had this email, successfully, at least once.
+
+    Read on its own session because that is where the rows are: the journal is
+    written through `AsyncSessionFactory` so an entry survives a rolled-back
+    request, and a caller's transaction is the wrong place to ask.
+
+    **The suffix comes off.** `_send_order_email` logs
+    `template.removesuffix(".html")`, so the column holds `order_packed` and a
+    query for `order_packed.html` matches nothing — which would make this
+    function answer "never sent" for every order ever sent one. Stripped here
+    from the same constant the sender uses, rather than by writing the short
+    form out a second time, so the two cannot drift apart.
+
+    **Fails open.** A database we cannot reach answers "no", so the email goes.
+    The two failures are not symmetric: a duplicate is an annoyance, and a
+    silently dropped packed email is a customer who hears nothing between paying
+    and their doorbell — which is the whole thing `repair_after_reassignment`
+    exists to prevent.
+    """
+    if not order_number:
+        return False
+    try:
+        async with AsyncSessionFactory() as db:
+            found = (
+                await db.execute(
+                    select(EmailLog.id)
+                    .where(
+                        EmailLog.order_number == order_number,
+                        EmailLog.template == template.removesuffix(".html"),
+                        EmailLog.status == "sent",
+                    )
+                    .limit(1)
+                )
+            ).first()
+        return found is not None
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.error("EmailLog lookup failed for %s: %s", order_number, exc)
+        return False
+
+
+async def should_send_packed(order: OrderResponse) -> bool:
+    """
+    Whether `packed` is news for this order. See `send_order_packed`.
+
+    Two reasons it might not be. The order is carried by a courier we book, so
+    the news worth an email is the next event rather than this one. Or this
+    order has been through `packed` before — which it now can be, since
+    `undelivered` leads back there for a second attempt, and a customer who is
+    told twice that their cake is boxed learns nothing the second time.
+    """
+    if order.delivery_method.value != "pickup" and (
+        order.fulfilment is not None and order.fulfilment.courier_managed
+    ):
+        return False
+    return not await already_sent(order.order_number, PACKED_TEMPLATE)
 
 
 async def send_order_out_for_delivery(order: OrderResponse) -> None:
@@ -932,7 +1003,7 @@ async def notify_status_change(order: OrderResponse) -> str | None:
     handler = _EMAIL_FOR_STATUS.get(status)
     if handler is None:
         return None
-    if handler is send_order_packed and not should_send_packed(order):
+    if handler is send_order_packed and not await should_send_packed(order):
         logger.info(
             "Packed email skipped for %s — a rider will be the news", order.order_number
         )
@@ -969,6 +1040,59 @@ async def notify_order(db, order) -> str | None:
         # day; noon Send would not retry at all.
         logger.error(
             "Could not notify %s about its new status: %s",
+            getattr(order, "order_number", "?"),
+            exc,
+            exc_info=True,
+        )
+        return None
+
+
+async def repair_after_reassignment(db, order) -> str | None:
+    """
+    Make good the email a reassignment leaves owing.
+
+    Emails hang off status transitions, and moving an order to a different
+    courier is not one — so by default a reassignment sends nothing. That is the
+    right answer for three of the four directions, and wrong for one.
+
+    `should_send_packed` suppresses the packed email for an order we book
+    ourselves, on the sound reasoning that the news worth having is the next
+    event: a rider actually carrying the box. Move that order onto a third party
+    at `packed` and the next event never comes — nobody reports back from a
+    third-party zone — so the customer hears nothing at all between paying and
+    their doorbell. The suppressed email has to be sent late rather than never.
+
+    The other three need nothing. Third party to a courier: the packed email
+    already went, and `out_for_delivery` with a tracking link is the next news.
+    Between the two couriers: suppressed on both sides, so there is nothing
+    owing.
+
+    Idempotent through `already_sent`, which is also what stops this racing the
+    ordinary packed email on an order that is about to get one anyway.
+
+    Never raises. A reassignment has already cancelled one booking and made
+    another, and failing that on a mail server would be the worst outcome
+    available.
+    """
+    from app.services import order_service
+
+    try:
+        loaded = await order_service.get_for_notification(db, order.id) or order
+        if loaded.status not in _PACKED_OR_LATER:
+            return None
+        payload = await order_service.to_response(db, loaded)
+        if not await should_send_packed(payload):
+            return None
+        await send_order_packed(payload)
+        logger.info(
+            "Sent %s the packed email it never got — it is no longer carried by "
+            "a courier that reports back",
+            payload.order_number,
+        )
+        return "packed"
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.error(
+            "Could not repair the packed email for %s: %s",
             getattr(order, "order_number", "?"),
             exc,
             exc_info=True,

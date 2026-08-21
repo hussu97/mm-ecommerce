@@ -35,6 +35,99 @@ const PROVIDER_OPTIONS = [
   { value: 'third_party', label: PROVIDER_LABEL.third_party },
 ];
 
+/**
+ * Where a zone's orders may be moved when its own courier will not carry them.
+ *
+ * Mirrors `DEFAULT_ALTERNATES` in the API, and applied here only when somebody
+ * changes a zone's preferred courier — the stored value is what the server
+ * actually reads. Deliberately not "every other courier": noon Send cannot
+ * cross an emirate boundary or carry a run past 20 km, so a Lalamove zone is
+ * offered a third party and not them.
+ */
+const DEFAULT_ALTERNATES: Record<FulfilmentProvider, FulfilmentProvider[]> = {
+  lalamove: ['third_party'],
+  third_party: ['lalamove'],
+  noon_send: ['third_party', 'lalamove'],
+};
+
+const ALL_PROVIDERS: FulfilmentProvider[] = ['lalamove', 'noon_send', 'third_party'];
+
+/** The alternates of a zone nobody is editing, as a sentence rather than controls. */
+function AlternateSummary({ zone }: { zone: { alternate_providers?: FulfilmentProvider[] } }) {
+  const alternates = zone.alternate_providers ?? [];
+  if (alternates.length === 0) {
+    return (
+      <span className="text-[11px] font-body text-gray-400">
+        no alternates — orders here cannot be moved
+      </span>
+    );
+  }
+  return (
+    <span className="text-[11px] font-body text-gray-500">
+      or {alternates.map(p => PROVIDER_LABEL[p] ?? p).join(', ')}
+    </span>
+  );
+}
+
+/**
+ * Which couriers this zone's orders may be moved to.
+ *
+ * Checkboxes rather than a multi-select: there are three couriers, one of them
+ * is always disabled, and the whole control is smaller than the dropdown it
+ * would otherwise be. The preferred courier is shown greyed rather than hidden,
+ * so the list reads as "these three, and this one is already carrying it"
+ * instead of silently having two rows in one zone and three in another.
+ */
+function AlternatePicker({
+  preferred,
+  chosen,
+  onChange,
+}: {
+  preferred: FulfilmentProvider;
+  chosen: FulfilmentProvider[];
+  onChange: (next: FulfilmentProvider[]) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+      {ALL_PROVIDERS.map(provider => {
+        const isPreferred = provider === preferred;
+        const ticked = chosen.includes(provider);
+        return (
+          <label
+            key={provider}
+            title={
+              isPreferred
+                ? 'Already carries this zone, so it cannot also be an alternate'
+                : `Allow orders here to be moved to ${PROVIDER_LABEL[provider] ?? provider}`
+            }
+            className={cn(
+              'flex items-center gap-1 text-[11px] font-body',
+              isPreferred ? 'text-gray-300' : 'text-gray-600 cursor-pointer',
+            )}
+          >
+            <input
+              type="checkbox"
+              disabled={isPreferred}
+              checked={ticked && !isPreferred}
+              onChange={() =>
+                onChange(
+                  ticked
+                    ? chosen.filter(p => p !== provider)
+                    // Rebuilt in a fixed order rather than appended, so two
+                    // zones with the same alternates always read the same way.
+                    : ALL_PROVIDERS.filter(p => p === provider || chosen.includes(p)),
+                )
+              }
+              className="h-3 w-3 accent-primary"
+            />
+            {PROVIDER_LABEL[provider] ?? provider}
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
 const PROVIDER_BADGE: Record<FulfilmentProvider, 'info' | 'success' | 'neutral'> = {
   lalamove: 'info',
   noon_send: 'success',
@@ -257,6 +350,7 @@ interface VersionCardProps {
       free_delivery_eligible?: boolean;
       free_delivery_threshold?: number;
       fulfilment_provider?: FulfilmentProvider;
+      alternate_providers?: FulfilmentProvider[];
       branch_id?: string;
     },
   ) => void;
@@ -409,6 +503,7 @@ function ZoneRow({
     free_delivery_eligible?: boolean;
     free_delivery_threshold?: number;
     fulfilment_provider?: FulfilmentProvider;
+    alternate_providers?: FulfilmentProvider[];
     branch_id?: string;
   }) => void;
 }) {
@@ -486,18 +581,37 @@ function ZoneRow({
       </td>
       <td className="px-4 py-2.5">
         {readOnly ? (
-          <Badge variant={PROVIDER_BADGE[zone.fulfilment_provider] ?? 'neutral'}>
-            {PROVIDER_LABEL[zone.fulfilment_provider] ?? zone.fulfilment_provider}
-          </Badge>
+          <div className="flex flex-col gap-1">
+            <Badge variant={PROVIDER_BADGE[zone.fulfilment_provider] ?? 'neutral'}>
+              {PROVIDER_LABEL[zone.fulfilment_provider] ?? zone.fulfilment_provider}
+            </Badge>
+            <AlternateSummary zone={zone} />
+          </div>
         ) : (
-          <Select
-            value={zone.fulfilment_provider}
-            options={PROVIDER_OPTIONS}
-            onChange={e =>
-              onChange({ fulfilment_provider: e.target.value as FulfilmentProvider })
-            }
-            className="w-36"
-          />
+          <div className="flex flex-col gap-1.5">
+            <Select
+              value={zone.fulfilment_provider}
+              options={PROVIDER_OPTIONS}
+              onChange={e => {
+                // Changing the preferred courier resets the alternates rather
+                // than keeping them. Half of them are usually wrong by then —
+                // the outgoing courier is now a perfectly good alternate and the
+                // incoming one cannot be its own — and a list that is quietly
+                // half-wrong is worse than one that is obviously fresh.
+                const preferred = e.target.value as FulfilmentProvider;
+                onChange({
+                  fulfilment_provider: preferred,
+                  alternate_providers: DEFAULT_ALTERNATES[preferred] ?? [],
+                });
+              }}
+              className="w-36"
+            />
+            <AlternatePicker
+              preferred={zone.fulfilment_provider}
+              chosen={zone.alternate_providers ?? []}
+              onChange={alternate_providers => onChange({ alternate_providers })}
+            />
+          </div>
         )}
       </td>
       <td className="px-4 py-2.5">

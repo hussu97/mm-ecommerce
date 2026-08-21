@@ -278,7 +278,7 @@ async def test_delivered_closes_the_order():
 
 
 @pytest.mark.asyncio
-async def test_undelivered_moves_the_order_flags_a_human_and_starts_the_refund(
+async def test_undelivered_moves_the_order_and_flags_a_human_without_refunding(
     monkeypatch,
 ):
     """
@@ -290,11 +290,12 @@ async def test_undelivered_moves_the_order_flags_a_human_and_starts_the_refund(
     nobody was bringing it. The status moves now; the flag stays, because
     somebody still has to decide what the shop says to the customer.
 
-    The refund assertion is the newest fact here, and the most expensive one to
-    lose: `undelivered` used to trigger the automatic refund only when an admin
-    clicked it — the courier's own webhook skipped it while the email it sent
-    promised the money back. Routed through `order_lifecycle.transition`, the
-    rider's push starts the same refund the click always did.
+    **And it does not refund.** For a while it did, from here — a rider's push
+    paid the customer back automatically, which quietly made every failed
+    handover a write-off: the money was gone before anybody had looked at the
+    cake still sitting on the shelf. A courier's status push is not a decision
+    to stop selling somebody a cake. The flag is what asks a person to make
+    that decision, and cancelling is where they make it.
     """
     from app.services import payment_service
 
@@ -314,7 +315,7 @@ async def test_undelivered_moves_the_order_flags_a_human_and_starts_the_refund(
     assert order.status == OrderStatusEnum.UNDELIVERED
     assert delivery.needs_attention
     assert "re-dispatch" in delivery.last_error
-    assert refunded == [order]
+    assert refunded == [], "a rider's push must not hand the money back"
 
 
 @pytest.mark.asyncio

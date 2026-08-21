@@ -74,6 +74,9 @@ class PolygonResponse(BaseModel):
     #: Zero is different from null: it means free at any basket.
     free_delivery_threshold: float
     fulfilment_provider: str
+    #: Where an order in this zone may be moved when the preferred courier will
+    #: not carry it. See `DeliveryPolygon.alternate_providers`.
+    alternate_providers: list[str]
     #: The kitchen that bakes this zone's orders and hands them to the courier.
     #: Null falls back to the single configured pickup branch.
     branch_id: str | None
@@ -92,6 +95,7 @@ class PolygonResponse(BaseModel):
             free_delivery_eligible=p.free_delivery_eligible,
             free_delivery_threshold=float(p.free_delivery_threshold),
             fulfilment_provider=p.fulfilment_provider,
+            alternate_providers=list(p.alternate_providers or []),
             branch_id=str(p.branch_id) if p.branch_id else None,
             display_order=p.display_order,
             point_count=_point_count(p.geometry),
@@ -141,6 +145,10 @@ class PolygonUpdate(BaseModel):
     #: to tell them apart rather than testing `is not None`.
     free_delivery_threshold: Decimal | None = Field(None, ge=0)
     fulfilment_provider: str | None = None
+    #: The couriers this zone's orders may be moved to. Replaces the list
+    #: wholesale rather than merging — "these are the alternates" is one
+    #: decision, and a merge would make removing the last one impossible.
+    alternate_providers: list[str] | None = None
     branch_id: uuid.UUID | None = None
     display_order: int | None = None
 
@@ -577,6 +585,15 @@ async def create_version(
             # on screen to say the map changed.
             free_delivery_threshold=polygon.free_delivery_threshold,
             fulfilment_provider=polygon.fulfilment_provider,
+            # And the alternates with it, for the fourth time in this list and
+            # the same reason as the three above. A draft that loses them does
+            # not fail: it publishes a map on which no order can be moved to
+            # another courier at all, so the escape hatch is simply gone the
+            # next time one is needed — with nothing on screen to say the map
+            # changed. `list(...)` because the JSONB value is a mutable list
+            # and sharing one between two rows makes editing the draft edit the
+            # published map.
+            alternate_providers=list(polygon.alternate_providers or []),
             # The kitchen travels with the zone for the same reason the schedule
             # does: a draft published without it points every zone at nothing,
             # and every website order lands on no register at all — silently,
@@ -660,6 +677,7 @@ async def update_polygon(
             else float(polygon.free_delivery_threshold)
         ),
         "fulfilment_provider": polygon.fulfilment_provider,
+        "alternate_providers": list(polygon.alternate_providers or []),
         "branch_id": str(polygon.branch_id) if polygon.branch_id else None,
         "display_order": polygon.display_order,
     }
@@ -692,6 +710,27 @@ async def update_polygon(
                 f"Choose one of: {', '.join(sorted(allowed))}",
             )
         polygon.fulfilment_provider = data.fulfilment_provider
+    if data.alternate_providers is not None:
+        allowed = {p.value for p in FulfilmentProviderEnum}
+        unknown = [c for c in data.alternate_providers if c not in allowed]
+        if unknown:
+            raise BadRequestError(
+                f"Unknown courier '{unknown[0]}'. "
+                f"Choose from: {', '.join(sorted(allowed))}",
+            )
+        # Read against the value the zone is *ending up* with, not the one it
+        # started with: a request that changes both at once would otherwise be
+        # judged against a courier that is on its way out.
+        preferred = data.fulfilment_provider or polygon.fulfilment_provider
+        if preferred in data.alternate_providers:
+            raise BadRequestError(
+                f"'{preferred}' already carries this zone, so it cannot also be "
+                "an alternate. Alternates are where an order goes when that "
+                "courier will not take it.",
+            )
+        # Order-preserving, because the admin picks the order they want to be
+        # offered and `dict.fromkeys` keeps it while `set` would not.
+        polygon.alternate_providers = list(dict.fromkeys(data.alternate_providers))
     if data.branch_id is not None:
         branch = await db.get(Branch, data.branch_id)
         if branch is None or branch.deleted_at is not None:
@@ -720,6 +759,7 @@ async def update_polygon(
                 # the national number it used to fall back to is gone.
                 "free_delivery_threshold": float(polygon.free_delivery_threshold),
                 "fulfilment_provider": polygon.fulfilment_provider,
+                "alternate_providers": list(polygon.alternate_providers or []),
                 "branch_id": str(polygon.branch_id) if polygon.branch_id else None,
                 "display_order": polygon.display_order,
             },

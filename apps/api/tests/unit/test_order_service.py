@@ -588,19 +588,41 @@ class TestStatusTransitionLogic:
         ):
             assert status not in allowed
 
-    def test_undelivered_is_an_ending_not_a_detour(self):
+    def test_a_failed_handover_is_somewhere_an_order_can_leave(self):
         """
-        It used to lead back to `packed` for a second attempt. The shop's answer
-        is that a failed handover is cancellation after the box was made — what
-        follows is a refund conversation, not another van — and leaving the way
-        back open meant an unattended sweep could send one.
+        `undelivered` was briefly an ending, on the reasoning that a failed
+        handover is cancellation after the box was made. That closed it to
+        everything, which also stopped the shop driving a box over itself,
+        handing a stuck order to a different courier, or acting on the
+        commonest case there is — a driver reporting no answer at the door and
+        the customer ringing back ten minutes later.
+
+        So the status reopens and the *refund* is what moved: nothing is paid
+        back here, and `cancelled` is where somebody decides it should be.
         """
         allowed = VALID_TRANSITIONS[OrderStatusEnum.UNDELIVERED]
-        assert allowed == {OrderStatusEnum.REFUNDED, OrderStatusEnum.DISPUTED}
-        assert OrderStatusEnum.CANCELLED not in allowed, (
-            "cancelling it again is not a thing"
+        assert allowed == {
+            OrderStatusEnum.PACKED,
+            OrderStatusEnum.CANCELLED,
+            OrderStatusEnum.REFUNDED,
+            OrderStatusEnum.DISPUTED,
+        }
+        assert OrderStatusEnum.PACKED in allowed, "a second attempt"
+        assert OrderStatusEnum.CANCELLED in allowed, "or a decision to stop"
+        assert OrderStatusEnum.OUT_FOR_DELIVERY not in allowed, (
+            "the way back in is `packed`, where the box is and where dispatch "
+            "hangs off — not straight onto a van nobody has booked"
         )
-        assert OrderStatusEnum.PACKED not in allowed, "no second van"
+
+    def test_only_cancelling_pays_the_customer_back(self):
+        """
+        The rule the reopening depends on. If reaching `undelivered` still
+        refunded, a second attempt would be delivering a cake we had already
+        handed the money back for.
+        """
+        from app.services.order_lifecycle import _REFUNDABLE_ENDINGS
+
+        assert _REFUNDABLE_ENDINGS == {OrderStatusEnum.CANCELLED}
 
     def test_refunded_is_terminal(self):
         assert VALID_TRANSITIONS[OrderStatusEnum.REFUNDED] == set()

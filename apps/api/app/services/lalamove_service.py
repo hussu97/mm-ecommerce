@@ -735,10 +735,19 @@ async def assign_and_dispatch(
     placed — but here a person is looking at a figure and pressing a button, and
     the two must be the same figure.
 
-    On failure the provider is put back. A row left saying `lalamove` with no
-    booking is the one state that stalls a paid, packed order: every dispatch
-    path would then believe a courier is coming, and the third-party flow that
-    was actually going to deliver it no longer applies.
+    On failure the row lands on **third party**, not on whatever it said before.
+    A row reading `lalamove` with no booking is the one state that stalls a
+    paid, boxed order: every dispatch path then believes a courier is coming and
+    nothing manual applies.
+
+    It used to restore the previous provider, which was right while the only
+    caller moved orders *from* third party — the old value was third party, and
+    putting it back was the same thing. It is not right for
+    `fulfilment_reassignment.move`, which cancels the outgoing booking before
+    getting here: restoring `noon_send` would leave the order claiming a courier
+    whose task we had just called off. Third party is the honest floor in both
+    cases — somebody we already use can carry it, and `last_error` says why they
+    have to.
     """
     delivery = await get_delivery(db, order.id)
     if delivery is None:
@@ -779,20 +788,28 @@ async def assign_and_dispatch(
             # Not a failure of ours and not the order's fault. Nothing has been
             # written, so the caller can re-quote and ask again.
             raise QuotationExpired(str(exc)) from exc
-        delivery.provider = was
+        delivery.provider = FulfilmentProviderEnum.THIRD_PARTY.value
         delivery.last_error = str(exc)
         logger.warning(
             "Lalamove reassignment failed for %s: %s", order.order_number, exc
         )
         return delivery
     except Exception as exc:  # pragma: no cover — defensive
-        delivery.provider = was
+        delivery.provider = FulfilmentProviderEnum.THIRD_PARTY.value
         delivery.last_error = f"Courier dispatch failed: {exc}"
         logger.exception("Unexpected error reassigning %s", order.order_number)
         return delivery
 
     # Booked. Only now does the row change hands.
-    delivery.original_provider = was
+    #
+    # `original_provider` is set once and never overwritten. It means "what the
+    # map chose for this order", so on an order moved twice — third party to
+    # Lalamove, back, and out again — the first value is the true one and each
+    # later hop must leave it alone. `fulfilment_reassignment.move` has usually
+    # set it already by the time we get here; this is the path for the caller
+    # that has not.
+    if delivery.original_provider is None:
+        delivery.original_provider = was
     delivery.provider = FulfilmentProviderEnum.LALAMOVE.value
     # Third-party orders never reach `assign_or_dispatch`, so this has been null
     # for the life of the order and the timeline's "packed" stamp with it. The

@@ -3,9 +3,9 @@
 
 The consequence tests pin the property the refactor exists for: what a status
 makes happen is keyed off the transition, not off who asked for it. The refund
-on `undelivered`, the register void and restock on `cancelled`, the publish on
-`arrived_at_pos` — each fires identically for the console, a webhook, the
-checkout and the till, because they all run this function.
+and register void and restock on `cancelled`, the publish on `arrived_at_pos` —
+each fires identically for the console, a webhook, the checkout and the till,
+because they all run this function.
 """
 
 from __future__ import annotations
@@ -198,11 +198,40 @@ async def test_packing_asks_for_a_van(quiet_consequences):
 
 
 @pytest.mark.asyncio
-async def test_undelivered_refunds_whoever_reports_it(quiet_consequences):
-    """The P0 gap: this used to fire only when an admin clicked."""
+async def test_a_failed_handover_does_not_pay_anybody_back(quiet_consequences):
+    """
+    A rider bringing the box back is not a decision to refund.
+
+    This used to refund automatically, which made `undelivered` a write-off:
+    the money went the moment a courier reported no answer at the door, so the
+    cake on the shelf had already been paid for by the time anybody looked at
+    it. Paying back is somebody's decision now, and `cancelled` is where they
+    make it.
+    """
     order = _order(OrderStatusEnum.OUT_FOR_DELIVERY)
     await order_lifecycle.transition(_Db(), order, OrderStatusEnum.UNDELIVERED)
+    assert quiet_consequences["refund"] == []
+
+
+@pytest.mark.asyncio
+async def test_writing_off_a_failed_handover_is_what_refunds_it(quiet_consequences):
+    """The decision, and the money, in one place: cancelling."""
+    order = _order(OrderStatusEnum.UNDELIVERED)
+    await order_lifecycle.transition(_Db(), order, OrderStatusEnum.CANCELLED)
     assert quiet_consequences["refund"] == [order]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_handover_can_be_tried_again(quiet_consequences):
+    """
+    Back to `packed`, which is both where the box actually is and where dispatch
+    hangs off — so a second attempt runs through the ordinary machinery rather
+    than a path of its own.
+    """
+    order = _order(OrderStatusEnum.UNDELIVERED)
+    assert await order_lifecycle.transition(_Db(), order, OrderStatusEnum.PACKED)
+    assert order.status == OrderStatusEnum.PACKED
+    assert quiet_consequences["refund"] == []
 
 
 @pytest.mark.asyncio

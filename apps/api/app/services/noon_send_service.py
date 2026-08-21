@@ -500,6 +500,20 @@ def build_task(
     )
 
 
+def _idempotency_key(order: Order, delivery: OrderDelivery) -> str:
+    """
+    A stable name for *this* attempt at booking *this* order.
+
+    Bare order number for the first task, so every key already in flight at
+    noon's end keeps meaning what it meant. A suffix from there on, counting the
+    bookings this order has outlived.
+    """
+    superseded = len(delivery.previous_courier_order_ids or [])
+    return (
+        order.order_number if not superseded else f"{order.order_number}-{superseded}"
+    )
+
+
 async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None:
     """
     Create one noon Send task for one order.
@@ -553,8 +567,22 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
             delivery_notes=task.delivery_notes,
             tags=task.tags,
             # The order number, so a retry after a timeout is the same request
-            # to them rather than a second rider to us.
-            idempotency_key=order.order_number,
+            # to them rather than a second rider to us — plus how many bookings
+            # this order has already been through, so a *deliberate* second one
+            # is a different request.
+            #
+            # It was the order number alone, which was a complete answer while
+            # an order could only ever have one task. It cannot any more:
+            # `fulfilment_reassignment` can move an order off noon Send and back
+            # on, and under a key that never changes the second create would
+            # return the first, cancelled task instead of making a new one —
+            # leaving the row holding a task number nobody is working.
+            #
+            # `previous_courier_order_ids` is the right discriminator because it
+            # only grows when a booking is actually superseded. Two retries of
+            # one failed dispatch see the same length and so send the same key,
+            # which is the property the original was protecting.
+            idempotency_key=_idempotency_key(order, delivery),
         )
     except NoonSendError as exc:
         delivery.last_error = f"noon Send: {exc}"
