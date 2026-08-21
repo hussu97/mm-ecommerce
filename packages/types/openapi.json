@@ -6534,6 +6534,18 @@
             ],
             "title": "App Version"
           },
+          "build_number": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Build Number"
+          },
           "model_identifier": {
             "anyOf": [
               {
@@ -6563,6 +6575,18 @@
             "minLength": 4,
             "title": "Pairing Code",
             "type": "string"
+          },
+          "platform": {
+            "anyOf": [
+              {
+                "maxLength": 10,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform"
           }
         },
         "required": [
@@ -6614,6 +6638,17 @@
             "format": "uuid",
             "title": "Branch Id",
             "type": "string"
+          },
+          "build_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Build Number"
           },
           "category_ids": {
             "items": {
@@ -6706,6 +6741,17 @@
             ],
             "title": "Pairing Code Expires At"
           },
+          "platform": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform"
+          },
           "reference": {
             "title": "Reference",
             "type": "string"
@@ -6735,6 +6781,8 @@
           "pairing_code_expires_at",
           "last_seen_at",
           "app_version",
+          "build_number",
+          "platform",
           "os_version",
           "model_identifier",
           "category_ids",
@@ -32713,6 +32761,54 @@
               ],
               "title": "X-Device-Token"
             }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Build",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Build"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Platform",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Platform"
+            }
           }
         ],
         "responses": {
@@ -43330,6 +43426,54 @@
                 }
               ],
               "title": "X-Device-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Build",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Build"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Platform",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Platform"
             }
           }
         ],

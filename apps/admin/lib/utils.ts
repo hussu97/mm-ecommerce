@@ -78,6 +78,26 @@ export function formatTimeAgo(iso: string): string {
   return formatTime(iso);
 }
 
+/**
+ * How long ago, when the gap can be days — "2 min", "5 h", "4 days".
+ *
+ * `formatTimeAgo` gives a clock time past an hour, which is right for a driver
+ * position nobody looks at once it is that stale and wrong for a terminal: a
+ * till that has been off since Tuesday would read "14:32", which is not a fact
+ * about Tuesday. This one keeps counting.
+ *
+ * No "ago" in the string, so a caller can put it after its own word — "seen
+ * 4 days" reads better than "seen 4 days ago" once the label is already there.
+ */
+export function formatAge(iso: string): string {
+  const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)} h`;
+  const days = Math.round(seconds / 86400);
+  return `${days} ${days === 1 ? 'day' : 'days'}`;
+}
+
 /** `1` → `1st`. For "the 2nd driver on this order". */
 export function ordinal(value: number): string {
   const suffix =

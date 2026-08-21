@@ -6,6 +6,7 @@ import hashlib
 import logging
 import secrets
 import uuid
+from dataclasses import dataclass
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, Header, Request, status
@@ -65,9 +66,92 @@ def _generate_pairing_code() -> str:
 SEEN_REFRESH_SECONDS = 60
 
 
-async def _stamp_last_seen(device_id: uuid.UUID, now) -> None:
+#: The platforms `devices.platform` may hold. Mirrors the CHECK in
+#: `124_device_build_platform` and in `Device.__table_args__`; a header naming
+#: anything else is dropped rather than written, because the alternative is a
+#: constraint violation inside a best-effort stamp.
+ALLOWED_PLATFORMS = ("ios", "android")
+
+#: Column widths from the model. A header is client-supplied and arrives at
+#: whatever length the client felt like; truncating is kinder than a 500 from a
+#: bookkeeping write, and the first 30 characters of a version string are the
+#: version string.
+_MAX_APP_VERSION = 30
+_MAX_BUILD_NUMBER = 20
+
+
+@dataclass(frozen=True)
+class ReportedBuild:
     """
-    Write `last_seen_at` on a session of its own, and never complain.
+    What the `X-App-*` headers said, cleaned up enough to store.
+
+    Every field optional and independently so: a terminal on a build that
+    predates one of these headers still sends the others, and half an answer is
+    worth more than none. `None` means *the device said nothing*, which is why
+    `changed_from` below treats it as "no news" rather than "cleared" — a
+    missing header must never blank a column that a previous request filled.
+    """
+
+    app_version: str | None = None
+    build_number: str | None = None
+    platform: str | None = None
+
+    @classmethod
+    def from_headers(
+        cls,
+        app_version: str | None,
+        build_number: str | None,
+        platform: str | None,
+    ) -> ReportedBuild:
+        def clean(value: str | None, limit: int) -> str | None:
+            if value is None:
+                return None
+            trimmed = value.strip()[:limit]
+            return trimmed or None
+
+        normalised = (platform or "").strip().lower()
+        return cls(
+            app_version=clean(app_version, _MAX_APP_VERSION),
+            build_number=clean(build_number, _MAX_BUILD_NUMBER),
+            platform=normalised if normalised in ALLOWED_PLATFORMS else None,
+        )
+
+    def changed_from(self, device: Device) -> bool:
+        """
+        Whether any of this is news.
+
+        Compared against a row already in memory, so asking costs nothing — and
+        a terminal ringing up sales all afternoon on an unchanged build writes
+        nothing beyond its ordinary `last_seen_at` throttle.
+        """
+        return any(
+            value is not None and value != getattr(device, field)
+            for field, value in (
+                ("app_version", self.app_version),
+                ("build_number", self.build_number),
+                ("platform", self.platform),
+            )
+        )
+
+    def as_updates(self) -> dict[str, str]:
+        """Only what was actually reported. See the note on `None` above."""
+        return {
+            field: value
+            for field, value in (
+                ("app_version", self.app_version),
+                ("build_number", self.build_number),
+                ("platform", self.platform),
+            )
+            if value is not None
+        }
+
+
+async def _stamp_last_seen(
+    device_id: uuid.UUID, now, build: ReportedBuild | None = None
+) -> None:
+    """
+    Write `last_seen_at`, and whatever the app said about itself, on a session
+    of its own — and never complain.
 
     Its own session because this runs inside an auth *dependency*, and a
     dependency that commits the request session commits whatever the request
@@ -83,16 +167,21 @@ async def _stamp_last_seen(device_id: uuid.UUID, now) -> None:
     column would invert what matters.
     """
     try:
+        values: dict = {"last_seen_at": now}
+        if build is not None:
+            values.update(build.as_updates())
         async with AsyncSessionFactory() as session:
             await session.execute(
-                update(Device).where(Device.id == device_id).values(last_seen_at=now)
+                update(Device).where(Device.id == device_id).values(**values)
             )
             await session.commit()
     except Exception as exc:  # noqa: BLE001 — see the docstring
         logger.warning("Could not stamp last_seen_at for device %s: %s", device_id, exc)
 
 
-async def authenticate_device(db: AsyncSession, token: str | None) -> Device:
+async def authenticate_device(
+    db: AsyncSession, token: str | None, build: ReportedBuild | None = None
+) -> Device:
     """
     Resolve the `X-Device-Token` header to a paired device, and record that we
     heard from it.
@@ -106,6 +195,16 @@ async def authenticate_device(db: AsyncSession, token: str | None) -> Device:
 
     Throttled to one write a minute per device. Without that a till mid-service
     would write a row per tap.
+
+    The build the app reports rides along on the same write. It is the same kind
+    of fact — something true about the terminal rather than about its request —
+    and it has the same failure budget, which is none: a version column is not
+    worth failing a sale over.
+
+    A *change* of build skips the throttle. That is the moment worth catching,
+    it happens once per update rather than once per tap, and waiting up to a
+    minute to record it would mean a terminal that updates and then goes quiet
+    reports the old build until it next speaks.
     """
     if not token:
         raise UnauthorizedError("Device token required")
@@ -133,17 +232,23 @@ async def authenticate_device(db: AsyncSession, token: str | None) -> Device:
         raise UnauthorizedError("This device has been disabled")
 
     now = utcnow()
-    if (
+    seen_is_stale = (
         device.last_seen_at is None
         or (now - device.last_seen_at).total_seconds() >= SEEN_REFRESH_SECONDS
-    ):
+    )
+    build_is_news = build is not None and build.changed_from(device)
+
+    if seen_is_stale or build_is_news:
         # The in-memory copy is refreshed too, so the throttle above and
         # anything else this request reads off the row agree with what was
         # just written. The durable write goes through `_stamp_last_seen` —
         # never `db.commit()` here, which used to commit the whole request
         # session from inside an auth dependency.
         device.last_seen_at = now
-        await _stamp_last_seen(device.id, now)
+        if build is not None:
+            for field, value in build.as_updates().items():
+                setattr(device, field, value)
+        await _stamp_last_seen(device.id, now, build)
 
     return device
 
@@ -151,6 +256,12 @@ async def authenticate_device(db: AsyncSession, token: str | None) -> Device:
 async def get_current_device(
     request: Request,
     x_device_token: str | None = Header(None, alias="X-Device-Token"),
+    # Optional, every one of them. A terminal on a build that predates these
+    # headers authenticates exactly as before and simply reports nothing, which
+    # is what lets this ship ahead of the app.
+    x_app_version: str | None = Header(None, alias="X-App-Version"),
+    x_app_build: str | None = Header(None, alias="X-App-Build"),
+    x_app_platform: str | None = Header(None, alias="X-App-Platform"),
     db: AsyncSession = Depends(get_db),
 ) -> Device:
     """
@@ -172,7 +283,11 @@ async def get_current_device(
             "Device token used against the storefront API — point this terminal "
             "at the register host, then set POS_REQUIRE_POS_HOST=true"
         )
-    return await authenticate_device(db, x_device_token)
+    return await authenticate_device(
+        db,
+        x_device_token,
+        ReportedBuild.from_headers(x_app_version, x_app_build, x_app_platform),
+    )
 
 
 # ─── Devices (admin) ──────────────────────────────────────────────────────────
@@ -370,7 +485,14 @@ async def pair_device(
     device.pairing_code = None
     device.pairing_code_expires_at = None
     device.status = DeviceStatusEnum.USED.value
-    device.app_version = data.app_version
+    # Through the same sanitiser the headers use, so a pairing body cannot put a
+    # platform in the column that the CHECK will not accept, or a version longer
+    # than the column holds.
+    reported = ReportedBuild.from_headers(
+        data.app_version, data.build_number, data.platform
+    )
+    for field, value in reported.as_updates().items():
+        setattr(device, field, value)
     device.os_version = data.os_version
     device.model_identifier = data.model_identifier
     device.last_seen_at = utcnow()

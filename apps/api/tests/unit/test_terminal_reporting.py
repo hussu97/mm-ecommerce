@@ -181,7 +181,7 @@ async def test_a_device_that_talks_to_us_is_recorded_as_seen(monkeypatch):
 
     stamped = []
 
-    async def _record_stamp(device_id, now):
+    async def _record_stamp(device_id, now, build=None):
         stamped.append((device_id, now))
 
     monkeypatch.setattr(devices_api, "_stamp_last_seen", _record_stamp)
@@ -213,7 +213,7 @@ async def test_a_busy_till_does_not_write_a_row_per_request(monkeypatch):
 
     stamped = []
 
-    async def _record_stamp(device_id, now):
+    async def _record_stamp(device_id, now, build=None):
         stamped.append(device_id)
 
     monkeypatch.setattr(devices_api, "_stamp_last_seen", _record_stamp)

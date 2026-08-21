@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -36,6 +36,16 @@ class Device(Base, UUIDMixin, TimestampMixin):
     """
 
     __tablename__ = "devices"
+
+    #: Mirrors `124_device_build_platform`. The two app stores, spelled out —
+    #: not a lifecycle, so not `status_vocabulary`, and adding a third should be
+    #: a deliberate migration rather than an enum member nobody notices.
+    __table_args__ = (
+        CheckConstraint(
+            "platform IS NULL OR platform IN ('ios', 'android')",
+            name="ck_devices_platform_allowed",
+        ),
+    )
 
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     reference: Mapped[str] = mapped_column(
@@ -68,7 +78,20 @@ class Device(Base, UUIDMixin, TimestampMixin):
     last_seen_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    #: All four are refreshed by `authenticate_device` on the terminal's own
+    #: requests, from the `X-App-*` headers. Before that they were written once
+    #: by pairing and never again, so an iPad paired months ago reported the
+    #: build it was set up with rather than the one it is running.
+    #:
+    #: Nullable throughout: a terminal on a build that predates those headers
+    #: keeps working and simply says nothing, which is what makes the server
+    #: safe to deploy ahead of the app.
     app_version: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    #: `CFBundleVersion` on iOS, `versionCode` on Android. Text, because iOS
+    #: permits `36.1` and CI produces those — see the migration.
+    build_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    #: `ios` or `android`. Constrained by `__table_args__` above.
+    platform: Mapped[str | None] = mapped_column(String(10), nullable=True)
     os_version: Mapped[str | None] = mapped_column(String(30), nullable=True)
     model_identifier: Mapped[str | None] = mapped_column(String(60), nullable=True)
 

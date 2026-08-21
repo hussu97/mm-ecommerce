@@ -8652,12 +8652,16 @@ export interface components {
         DevicePairRequest: {
             /** App Version */
             app_version?: string | null;
+            /** Build Number */
+            build_number?: string | null;
             /** Model Identifier */
             model_identifier?: string | null;
             /** Os Version */
             os_version?: string | null;
             /** Pairing Code */
             pairing_code: string;
+            /** Platform */
+            platform?: string | null;
         };
         /** DevicePairResponse */
         DevicePairResponse: {
@@ -8680,6 +8684,8 @@ export interface components {
              * Format: uuid
              */
             branch_id: string;
+            /** Build Number */
+            build_number: string | null;
             /** Category Ids */
             category_ids: string[];
             /**
@@ -8706,6 +8712,8 @@ export interface components {
             pairing_code: string | null;
             /** Pairing Code Expires At */
             pairing_code_expires_at: string | null;
+            /** Platform */
+            platform: string | null;
             /** Reference */
             reference: string;
             /** Status */
@@ -19215,6 +19223,9 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Device-Token"?: string | null;
+                "X-App-Version"?: string | null;
+                "X-App-Build"?: string | null;
+                "X-App-Platform"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -25174,6 +25185,9 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Device-Token"?: string | null;
+                "X-App-Version"?: string | null;
+                "X-App-Build"?: string | null;
+                "X-App-Platform"?: string | null;
             };
             path?: never;
             cookie?: never;

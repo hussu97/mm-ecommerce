@@ -204,7 +204,16 @@ export interface Device {
   pairing_code: string | null;
   pairing_code_expires_at: string | null;
   last_seen_at: string | null;
+  /**
+   * What the terminal is running, as of `last_seen_at`.
+   *
+   * Refreshed from the `X-App-*` headers on every request the device makes, so
+   * unlike before it describes the build on the iPad now rather than the one it
+   * was paired with. Null on a terminal whose build predates those headers.
+   */
   app_version: string | null;
+  build_number: string | null;
+  platform: 'ios' | 'android' | null;
   model_identifier: string | null;
   /**
    * Takes those orders and prints them without anyone pressing Accept. For a

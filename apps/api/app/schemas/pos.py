@@ -599,7 +599,12 @@ class DeviceResponse(ORMModel):
     pairing_code: str | None
     pairing_code_expires_at: datetime | None
     last_seen_at: datetime | None
+    #: Refreshed from the `X-App-*` headers on every request the terminal makes,
+    #: so these describe what it is running now rather than what it was paired
+    #: with. Null on a terminal whose build predates those headers.
     app_version: str | None
+    build_number: str | None
+    platform: str | None
     os_version: str | None
     model_identifier: str | None
     category_ids: list[UUID]
@@ -615,6 +620,11 @@ class DeviceResponse(ORMModel):
 class DevicePairRequest(BaseModel):
     pairing_code: str = Field(min_length=4, max_length=12)
     app_version: str | None = Field(None, max_length=30)
+    #: Sent at pairing as well as on every later request, so a freshly paired
+    #: terminal is complete in the console immediately rather than blank until
+    #: its first authenticated call.
+    build_number: str | None = Field(None, max_length=20)
+    platform: str | None = Field(None, max_length=10)
     os_version: str | None = Field(None, max_length=30)
     model_identifier: str | None = Field(None, max_length=60)
 

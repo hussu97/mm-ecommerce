@@ -4,8 +4,15 @@ import { useCallback, useEffect, useState } from 'react';
 import { branchesApi, devicesApi, printersApi } from '@/lib/pos-api';
 import type { Branch, Device, Printer } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
+import { formatAge } from '@/lib/utils';
 import { Badge, Button, TabBar } from '@/components/ui';
 import { Modal, ResourcePage, StatusBadge } from '@/components/pos/ResourcePage';
+
+/** How each platform spells itself. `text-transform` cannot produce "iOS". */
+const PLATFORM_LABELS: Record<string, string> = {
+  ios: 'iOS',
+  android: 'Android',
+};
 
 export default function DevicesPage() {
   const [tab, setTab] = useState<'devices' | 'printers'>('devices');
@@ -96,7 +103,49 @@ function DevicesTab({
               <span className="text-xs text-gray-500">Needs accepting</span>
             ),
         },
-        { header: 'App', render: (d) => d.app_version ?? '—' },
+        {
+          // Version, build and platform in one cell rather than three columns:
+          // the table already has seven, and `DataTable` turns each column into
+          // a labelled line on a phone.
+          //
+          // The age underneath is the part that matters. This used to be the
+          // version captured at pairing and never updated, so it read as
+          // current and could be thirty builds out of date. It is now refreshed
+          // on every request the terminal makes — which means it is exactly as
+          // fresh as the last time the terminal spoke, and saying so is the
+          // difference between a number you can act on and one you cannot.
+          header: 'App',
+          render: (d) => {
+            if (!d.app_version && !d.build_number) {
+              return (
+                <span className="text-xs text-gray-400">
+                  {d.status === 'used' ? 'not reported yet' : '—'}
+                </span>
+              );
+            }
+            return (
+              <div className="leading-tight">
+                <div className="text-xs text-gray-700">
+                  {d.app_version ?? '—'}
+                  {d.build_number && <span className="text-gray-500"> ({d.build_number})</span>}
+                  {/* The label is mapped, not CSS-transformed: `uppercase`
+                      gives "IOS" and `capitalize` gives it too, because both
+                      only touch the first letter or all of them. */}
+                  {d.platform && (
+                    <span className="ml-1.5 text-gray-400">
+                      {PLATFORM_LABELS[d.platform] ?? d.platform}
+                    </span>
+                  )}
+                </div>
+                {d.last_seen_at && (
+                  <div className="text-[11px] text-gray-400">
+                    seen {formatAge(d.last_seen_at)} ago
+                  </div>
+                )}
+              </div>
+            );
+          },
+        },
       ]}
       fields={[
         { name: 'name', label: 'Name', required: true },
