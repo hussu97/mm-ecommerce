@@ -10,8 +10,12 @@ import { useToast } from '@/components/ui/feedback';
 const NAMESPACES = [
   'common', 'nav', 'home', 'product', 'category', 'cart', 'checkout',
   'confirmation', 'auth', 'account', 'order', 'search', 'footer', 'seo',
-  'promo_banner', 'faq', 'about', 'contact', 'privacy', 'terms', 'error',
+  'faq', 'about', 'contact', 'privacy', 'terms', 'error',
 ];
+// `promo_banner` was here and held one key that nothing rendered. Somebody
+// edited it in the console expecting a banner to change, which is the cost of
+// listing a namespace the storefront does not read: the screen looked like the
+// place to fix the text, and it was not. Migration 122 removed the key.
 
 type TranslationMap = Record<string, Record<string, string>>; // locale -> key -> value
 

@@ -7,13 +7,23 @@ and nothing in `cms_pages` points at it.
 
     ui_translations   promo_banner.text   en + ar   (seeded by `007`)
 
-It is the worst place for it to have survived. `promo_banner.text` is the strip
-across the top of every page on the site, in both languages — the most-read
-sentence the shop publishes — and it was still saying "Free delivery over 150
-AED in selected areas" while the checkout gave it away at 75. Found by walking
-the public endpoints the site actually reads (`/cms/public`, `/i18n/translations`,
-`/blog/public`) rather than by grepping the repo, which is how `109` found its
-own and is evidently the only method that works here.
+**Superseded by `122`, and wrong about why it mattered.** This file originally
+said `promo_banner.text` was "the strip across the top of every page, the
+most-read sentence the shop publishes". It is not. Nothing renders it — the top
+strip is `promo.new_customer_title`, the home delivery line is
+`usp.free_delivery_*`, and this key reaches the browser only inside the
+serialized translations blob. I read the key's name instead of looking for its
+consumer, which is the same shortcut that made `118` miss this table in the
+first place.
+
+It also did not work: this migration deployed green and updated no rows, for a
+reason never established. `122` deletes the key instead, matching on the
+flattened `namespace || '.' || key` — the only spelling of the row's name that
+has been confirmed against production.
+
+Left in the chain because it is already applied. The rest of this file is
+accurate about `ui_translations` being a table `cms_pages` sweeps miss, which is
+worth keeping.
 
 **Why this one is hard-coded at all.** Every other delivery string in
 `ui_translations` is a template — `checkout.delivery_free_note` is "Free delivery
