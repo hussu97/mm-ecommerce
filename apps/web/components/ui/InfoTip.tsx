@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { Icon } from '@/components/ui/Icon';
 
@@ -56,9 +56,59 @@ interface InfoTipProps {
 export function InfoTip({ label, children, className }: InfoTipProps) {
   const panelId = useId();
   const wrapperRef = useRef<HTMLSpanElement>(null);
+  const panelRef = useRef<HTMLSpanElement>(null);
   const [pinned, setPinned] = useState(false);
   const [hovered, setHovered] = useState(false);
   const open = pinned || hovered;
+
+  /**
+   * Nudge the panel back inside the viewport.
+   *
+   * The panel hangs off the trigger's end edge and is 16rem wide, which is fine
+   * on a desktop summary and wrong on a phone: the small-order-fee tip sits
+   * about a third of the way across a 390px screen, so 256px of panel extending
+   * back from it started 140px off the left edge and the first two words of
+   * every line were cut off. `max-w-[calc(100vw-2rem)]` did not help — it caps
+   * the width, and the panel was not too wide, it was in the wrong place.
+   *
+   * Measured rather than guessed, because where the trigger lands depends on
+   * the label beside it, the language (`end-0` flips under RTL) and the width of
+   * the screen. `translateX` is in physical pixels, so one calculation covers
+   * both directions.
+   *
+   * `useLayoutEffect` so the correction lands in the same paint as the panel; a
+   * `useEffect` here shows one frame of the clipped position first, which reads
+   * as a flinch. Written straight onto the node rather than held in state,
+   * because that is what this is — a measurement pushed back into the DOM — and
+   * routing it through `setState` inside a layout effect buys a second render
+   * per open for a value no other code reads. The panel unmounts when it
+   * closes, so every open starts from a clean node.
+   */
+  useLayoutEffect(() => {
+    if (!open) return;
+    const reposition = () => {
+      const el = panelRef.current;
+      if (!el) return;
+      // Cleared before measuring, so the box read is always the panel's natural
+      // position rather than one that already carries a correction — otherwise
+      // a resize would shift an already-shifted panel.
+      el.style.transform = '';
+      const box = el.getBoundingClientRect();
+      const GUTTER = 12;
+      const dx =
+        box.left < GUTTER
+          ? GUTTER - box.left
+          : box.right > window.innerWidth - GUTTER
+            ? window.innerWidth - GUTTER - box.right
+            : 0;
+      if (dx) el.style.transform = `translateX(${dx}px)`;
+    };
+    reposition();
+    // A phone rotating with the tip open is rare and cheap to handle; leaving it
+    // out means the panel stays measured against a screen that no longer exists.
+    window.addEventListener('resize', reposition);
+    return () => window.removeEventListener('resize', reposition);
+  }, [open]);
 
   const dismiss = useCallback(() => {
     setPinned(false);
@@ -117,9 +167,10 @@ export function InfoTip({ label, children, className }: InfoTipProps) {
 
       {open && (
         <span
+          ref={panelRef}
           id={panelId}
           role="tooltip"
-          className="absolute top-full end-0 z-30 mt-1.5 w-64 max-w-[calc(100vw-2rem)] rounded-sm border border-gray-200 bg-white px-3 py-2.5 text-start font-body text-xs font-normal leading-relaxed text-gray-600 shadow-lg"
+          className="absolute top-full end-0 z-30 mt-1.5 w-64 max-w-[calc(100vw-1.5rem)] rounded-sm border border-gray-200 bg-white px-3 py-2.5 text-start font-body text-xs font-normal leading-relaxed text-gray-600 shadow-lg"
         >
           {children}
         </span>
