@@ -386,7 +386,7 @@ export function HomeEditor({ content, onChange }: Props) {
                 label="Category slug"
                 value={tile.slug ?? ''}
                 onChange={slug => set({ slug })}
-                placeholder="cat-brownies"
+                placeholder="brownies"
               />
               <Field
                 label="Label override"

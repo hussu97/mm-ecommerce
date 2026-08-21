@@ -6,7 +6,7 @@ import type { Category } from '@/lib/types';
 import { Icon } from '@/components/ui/Icon';
 
 export interface CategoryTile {
-  /** Category slug, e.g. `cat-brownies`. Also drives the link target. */
+  /** Category slug, e.g. `brownies`. Also drives the link target. */
   slug?: string;
   label?: string;
   image?: string;

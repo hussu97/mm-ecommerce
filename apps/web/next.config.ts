@@ -24,29 +24,6 @@ const nextConfig: NextConfig = {
       static: 180,
     },
   },
-  async redirects() {
-    return [
-      // `/about-me` is the Wix site's URL for the about page, and Google still
-      // has it. It is not a route here, so it fell through `[locale]/[category]`
-      // to the 404 — which returns 200 (the static shell is flushed before
-      // `notFound()` runs), so Google kept it as a live page and indexed it as a
-      // second, contentless "about" competing with the real one.
-      //
-      // A permanent redirect is the fix for the duplicate specifically: it
-      // collapses the two URLs into one and passes the old page's links to it.
-      // `permanent: true` emits a 308 rather than a 301 — same meaning to a
-      // search engine, and it keeps the method on the way through. Both shapes are
-      // listed because `/about-me` is what the old links say and
-      // `/en/about-me` is what `proxy.ts` turns them into, and the two run in
-      // an order that is not worth depending on.
-      { source: "/about-me", destination: "/en/about", permanent: true },
-      {
-        source: "/:locale(en|ar)/about-me",
-        destination: "/:locale/about",
-        permanent: true,
-      },
-    ];
-  },
   async rewrites() {
     return [
       // Proxy API requests through Next.js so auth cookies are same-origin.

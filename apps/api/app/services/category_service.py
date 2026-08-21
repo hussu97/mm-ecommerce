@@ -13,8 +13,53 @@ from app.services.availability_service import (
 from app.schemas.category import CategoryCreate, CategoryResponse, CategoryUpdate
 from app.services import menu_group_service
 
+# Imported from the module, not the package: `app.services.__init__` is still
+# executing this file when it runs, so `from app.services import
+# redirect_service` would look for an attribute that is not set yet.
+from app.services.redirect_service import record_rename
+
 #: Not a selling channel: the console's view of the whole catalogue.
 ALL_CHANNELS = "all"
+
+#: Slugs a category may not take, because the storefront already answers there.
+#:
+#: Category pages live at `/{locale}/{slug}` — the same level as `/en/about` and
+#: `/en/checkout`. Until migration 120 every slug was `cat-`-prefixed and a
+#: collision was arithmetically impossible; readable slugs give that up, so the
+#: guarantee has to be stated instead of inherited. A category called "Search"
+#: would otherwise take the search page's URL, and Next resolves the static
+#: segment first, so the symptom is a category that exists in the console,
+#: appears in the nav, and leads to a search box.
+#:
+#: Every directory under `apps/web/app/[locale]/` except `[category]` itself.
+RESERVED_SLUGS = frozenset(
+    {
+        "about",
+        "account",
+        "all-products",
+        "blog",
+        "cart",
+        "checkout",
+        "contact",
+        "faq",
+        "forgot-password",
+        "login",
+        "privacy",
+        "reset-password",
+        "search",
+        "signup",
+        "track",
+    }
+)
+
+
+def _reject_reserved(slug: str) -> None:
+    if slug.lower() in RESERVED_SLUGS:
+        raise ConflictError(
+            f"'{slug}' is a page on the storefront, so a category cannot use it "
+            "as its URL. Pick another slug."
+        )
+
 
 __all__ = [
     "create",
@@ -159,6 +204,7 @@ async def get_by_slug(
 
 
 async def create(db: AsyncSession, data: CategoryCreate) -> CategoryResponse:
+    _reject_reserved(data.slug)
     existing = await db.execute(select(Category).where(Category.slug == data.slug))
     if existing.scalar_one_or_none():
         raise ConflictError(f"Category with slug '{data.slug}' already exists")
@@ -181,13 +227,24 @@ async def update(db: AsyncSession, slug: str, data: CategoryUpdate) -> CategoryR
 
     updates = data.model_dump(exclude_unset=True)
     new_slug = updates.get("slug")
+    renamed_from: str | None = None
     if new_slug and new_slug != slug:
+        _reject_reserved(new_slug)
         existing = await db.execute(select(Category).where(Category.slug == new_slug))
         if existing.scalar_one_or_none():
             raise ConflictError(f"Category with slug '{new_slug}' already exists")
+        renamed_from = slug
 
     for key, val in updates.items():
         setattr(cat, key, val)
+
+    # Keep the old URL working. In this transaction on purpose: a rename that
+    # does not commit must not leave behind a redirect claiming it did, and a
+    # redirect that cannot be written must take the rename down with it rather
+    # than quietly dropping every link to the category. Prefix rule, so the
+    # products underneath move with it — see `redirect_service.record_rename`.
+    if renamed_from:
+        await record_rename(db, renamed_from, new_slug)
 
     await db.flush()
 

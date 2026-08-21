@@ -1,82 +1,113 @@
-# The shop tells everyone the same delivery price
+# Readable category URLs, and a redirects table that keeps the old ones alive
 
 ## Goal
 
-A shopper reading the site, an answer engine reading `llms.txt`, and a shopping
-surface reading our JSON-LD should all be told what the checkout will actually
-charge. Today they are told three different things, and two of them are wrong.
+`/en/cat-brownies` is what the Foodics importer left behind — production derives
+slugs from the POS `reference`, so `cat_brownies` became `cat-brownies`. Nobody
+searches for it, no answer engine repeats it, and `/en/brownies` was not a page
+on this site. Renaming breaks every indexed URL, so the rename ships with a
+redirect table an operator can edit without a deploy.
 
-## What is actually true
+Two other defects came with it, because the rename could not be done correctly
+without the first and the second lives in the same file.
 
-`085_cost_banded_map` is the live map, and its zone table is the only authority.
-`delivery_service.price` reads `zone.free_delivery_threshold` per zone and
-qualifies on `subtotal >= threshold` — so the honest word is "from", not "over".
+## The three defects
 
-| Zone | Fee | Free from |
+**1. Unknown URLs answered 200, and in-page redirects never happened.**
+Not PPR — that is not enabled. `loading.tsx`. The implicit Suspense boundary made
+Next commit a 200 and stream the shell before the page component ran, so
+`notFound()` and `permanentRedirect()` arrived after the status was already sent.
+Measured on production, and the segment without a `loading.tsx` is the control:
+
+| URL | `loading.tsx` | before |
 |---|---|---|
-| Sharjah Central | 0 | always |
-| Sharjah Outer | 20 | 75 |
-| Ajman City | 10 | 75 |
-| Dubai Near / Mid / Far | 20 | 75 |
-| Umm al-Quwain City | 30 | 75 |
-| Ras al-Khaimah City | 50 | 100 |
-| Everywhere else | 80 | 200 |
+| `/en/blog/zzz-nope` | no | 404 ✓ |
+| `/en/zzz-nope` | yes | 200 ✗ |
+| `/en/cat-brownies/mix-cookies-box-of-9` | yes | 200, rendered the product ✗ |
 
-## What each surface says instead
+**2. The bare domain served Arabic to crawlers.** `FALLBACK_LOCALE` answered both
+"we cannot serve what you asked for" and "you did not ask", and the second is how
+Googlebot crawls. Every page declares `x-default` as its English URL, so the
+markup and the redirect disagreed — which is why the English brand result on
+Google carried an Arabic description.
 
-- **CMS copy** (home, about, FAQ — EN and AR): "free over AED 150 in the Dubai,
-  Sharjah and Ajman city areas". This is `058_free_delivery_scope`, which was
-  correct when written. `085` moved every threshold and never touched the copy,
-  so the site has been quoting a dead number since. Verified present verbatim on
-  production, so no admin has edited it.
-- **`llms.txt` / `llms-full.txt`**: right on everything except Ajman, which it
-  prints as AED 20 (it is 10), and it omits Sharjah Outer entirely — so a
-  Sharjah address past the noon Send radius reads "free" and is charged 20.
-- **JSON-LD `SHIPPING_BY_REGION`**: same Ajman error, banded in with Dubai.
+**3. `cat-` slugs.** As above.
 
 ## Plan
 
-- [x] Establish the source of truth from `085` and `delivery_service.price`
-- [x] Confirm the stale strings are live and unedited
-- [x] `118_delivery_copy_matches_map` — guarded exact-string CMS rewrite, EN+AR,
-      home / about / faq. Guard means an admin edit wins and the migration
-      no-ops, per convention 7
-- [x] `llms.txt` + `llms-full.txt`: Ajman 10, add Sharjah Outer, "from" not "over"
-- [x] `schema.ts`: split Ajman out of the Dubai band at 10.00
-- [x] `/about-me` → permanent redirect to `/about` (legacy Wix URL, indexed as
-      a duplicate)
-- [x] Verify: migration applies to a throwaway Postgres, is idempotent, and
-      matches nothing on a second run
-
-## Out of scope, flagged
-
-- Every unknown URL returns **HTTP 200** with the 404 body (`noindex` is set, and
-  the title is the homepage's). PPR flushes the static shell before
-  `notFound()` runs, so the status is already sent. Real defect, separate change.
-- Category slugs are `cat-brownies`, `cat-cookies`. `/en/brownies` is not a page.
-  This is most of why nothing ranks on unbranded queries.
+- [x] Split the boundary below the existence check so `notFound()` can set a
+      status, without losing the category skeleton
+- [x] `url_redirects` — locale-agnostic paths, `is_prefix` for the 36 product
+      URLs nested under the eight categories, 301/308 only
+- [x] Resolve in `proxy.ts`, before the response commits. Module-scope map on a
+      short TTL, fails open
+- [x] Collapse chains and refuse loops on write, in `redirect_service`
+- [x] Renaming a category in the console writes its own rule
+- [x] Reserved-slug guard, now that `/en/brownies` and `/en/about` are the same shape
+- [x] `hit_count` / `last_hit_at`, reported from `waitUntil` after the redirect
+- [x] Console screen under Online store
+- [x] Split "no Accept-Language" from "a language we do not serve"
 
 ## Review
 
-Verified on a throwaway Postgres 17 (the API suite mocks the DB, so a broken
-migration passes every test):
+**Migrations, on a throwaway Postgres 17** — the API suite mocks the DB, so a
+broken migration passes every test:
 
-- `001` → `118` applies clean.
-- Seeded with the exact strings `058` wrote, `118` rewrote all eight — four
-  English, four Arabic — and the two FAQ answers still read as sentences where
-  the replacement runs on into the clause after it.
-- `stamp 117 && upgrade head` a second time changed nothing: md5 of the three
-  rows identical before and after.
-- Guard holds. A row hand-edited to "Fatema says: free delivery over AED 150 if
-  you are in town, ask us." was left exactly as written — the phrase no longer
-  matches, so the migration passed over it.
-- No `AED 150` / `150 درهم` survives anywhere in `cms_pages`.
+- `001` → `120` clean.
+- All eight slugs renamed, `reference` untouched (`brownies` still `cat_brownies`),
+  so the Foodics upsert key and the register survive.
+- Nine redirect rows seeded; the eight category ones are prefix rules.
+- CMS hrefs followed the rename, including the nested one:
+  `/ar/cat-mixboxes/mix-cookies-box-of-9` → `/ar/mix-boxes/mix-cookies-box-of-9`.
+  `/all-products` untouched.
+- Re-running `120` after `stamp 119` changed nothing (identical md5).
+- Guard holds: a category hand-renamed to `fudgy-brownies` first was left exactly
+  as the operator set it.
 
-Frontend: `tsc --noEmit` clean, 453/453 vitest pass, eslint 0 errors (13
-pre-existing warnings, none in the touched files). On the dev server
-`/about-me`, `/en/about-me` and `/ar/about-me` all answer 308 to the right
-locale's `/about`, and `/en/about` still answers 200.
+**Tests.** 1831 API tests pass, including 20 new ones — chain collapse both ways,
+self-redirect refused, target cleared, rename-and-rename-back proven loop-free,
+`record_hit` never raising. `test_the_reserved_list_matches_the_storefront_routes`
+reads `app/[locale]/` and fails if a new page is added without a line in
+`RESERVED_SLUGS`, which is the drift this change creates. Web 465, admin 51,
+`tsc` clean on both, eslint 0 errors, `@mm/types` regenerated with all four
+redirect endpoints.
 
-`llms-full.txt` inlines the FAQ straight from `cms_pages`, so it picks up the
-corrected wording from the migration rather than needing its own edit — only its
-hand-written fee table did.
+**Status codes, end to end on a dev server** — the assertion is the code, because
+that is what the old build could not produce:
+
+```
+/en/zzz-nope                            404   (was 200)
+/en/brownies/zzz-nope                   404   (was 200)
+/en/brownies/mix-cookies-box-of-9       308 → /en/mix-boxes/...   (was 200)
+/en/cat-brownies                        308 → /en/brownies
+/ar/cat-brownies                        308 → /ar/brownies
+/cat-brownies                           308 → /en/brownies        (one hop)
+/en/cat-mixboxes/mix-cookies-box-of-9   308 → /en/mix-boxes/mix-cookies-box-of-9
+/en/cat-brownies?sort=price_asc         308 → /en/brownies?sort=price_asc
+/en/about-me                            308 → /en/about           (no next.config rule)
+/ with no Accept-Language               307 → /en                 (was /ar)
+/ with Accept-Language: fr              307 → /ar                 (unchanged)
+```
+
+`hit_count` incremented for each — the `waitUntil` report reaches the API. The
+category page still paints its skeleton and renders correctly under the new slug.
+
+**Not clicked through:** the console rename → auto-redirect flow was verified at
+the service level rather than through the admin UI, because the throwaway
+database has no admin user. The HTTP wiring between them is one call in
+`category_service.update`.
+
+## Trade-off taken
+
+The product route loses its loading skeleton. Everything on that page needs the
+product, so there was nothing to stream behind a boundary — the skeleton was
+buying a paint, not a fetch, and it cost every 404 and every cross-category
+redirect on the route. The category route keeps its skeleton via an in-page
+`<Suspense>` around the grid, which genuinely can stream.
+
+## Still open
+
+- Third-party citations. Melting Moments is in none of the Sharjah/Dubai bakery
+  listicles that answer engines synthesise from, and the Google Business Profile
+  is unclaimed. Neither is a code change.
+- Zomato still shows the shop as "Temporarily closed".
