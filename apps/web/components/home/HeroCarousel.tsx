@@ -12,6 +12,13 @@ export interface HeroSlide {
   image?: string;
   /** Portrait banner, ~4:5, used under the `sm` breakpoint. */
   image_mobile?: string;
+  /**
+   * What the photograph shows, for a crawler and a screen reader. Optional in
+   * the CMS because the headline is a usable stand-in, but it is the better
+   * answer whenever somebody writes one: the headline sells the slide, the alt
+   * describes the picture, and they are not always the same sentence.
+   */
+  image_alt?: string;
   eyebrow?: string;
   headline?: string;
   /** Second line of the headline, set in the brand plum. */
@@ -48,6 +55,21 @@ const FALLBACK_SLIDES: HeroSlide[] = [
     cta_href: '/all-products',
   },
 ];
+
+/**
+ * The alt text for a slide's photograph.
+ *
+ * The CMS field wins where it is filled in. Otherwise the headline is the
+ * closest thing the row holds to a description of what is in the frame — it was
+ * written about this photograph — and the shop name is the floor, because a
+ * banner with no copy at all is still a picture of the product, and `alt=""` on
+ * the largest image on the page is what got the home page reported.
+ */
+function slideAlt(slide: HeroSlide): string {
+  if (slide.image_alt) return slide.image_alt;
+  const headline = [slide.headline, slide.highlight].filter(Boolean).join(' ').trim();
+  return headline || 'Desserts by Melting Moments Cakes';
+}
 
 function slidesFrom(c: HeroContent): HeroSlide[] {
   if (c.slides?.length) return c.slides;
@@ -218,6 +240,7 @@ export function HeroCarousel({
                 <BannerPicture
                   wide={wide}
                   tall={tall}
+                  alt={slideAlt(slide)}
                   decoding={i === 0 ? 'sync' : 'async'}
                   loading="eager"
                   fetchPriority={i === 0 ? 'high' : 'low'}

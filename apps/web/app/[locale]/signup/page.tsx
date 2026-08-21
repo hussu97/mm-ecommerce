@@ -123,10 +123,13 @@ export default function SignupPage() {
           </Button>
         </form>
 
+        {/* Only the privacy policy: there is no terms page and there never was
+            one, so this line spent its life pointing at a 404 that Bing found
+            and reported. A link to a page that does not exist is worse than no
+            link — it is the one the customer clicks precisely because they
+            wanted to read it before agreeing. */}
         <p className="text-center text-xs text-gray-400 mt-4 font-body">
           {t('auth.tos_text')}{' '}
-          <Link href="/terms" className="underline">{t('auth.tos_terms')}</Link>{' '}
-          {t('auth.tos_and')}{' '}
           <Link href="/privacy" className="underline">{t('auth.tos_privacy')}</Link>.
         </p>
 

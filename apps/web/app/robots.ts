@@ -5,21 +5,20 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscake
 export default function robots(): MetadataRoute.Robots {
   return {
     rules: [
-      // Every route lives under a locale segment (/en/cart, /ar/cart), so the
-      // bare prefixes matched nothing. Keep both shapes: the unprefixed ones
-      // still cover any legacy link, the wildcard ones cover what we serve.
-      {
-        userAgent: '*',
-        allow: '/',
-        disallow: [
-          '/account',
-          '/checkout',
-          '/cart',
-          '/*/account',
-          '/*/checkout',
-          '/*/cart',
-        ],
-      },
+      // The basket, the checkout and the account pages used to be listed here
+      // as `Disallow`, and that was the wrong instrument. `Disallow` says "do
+      // not fetch this", not "do not list this" — a URL that is linked from the
+      // header of every page on the site gets indexed as a bare URL anyway,
+      // with no title and no description, because the crawler was never allowed
+      // to read the page and find out it should not. Bing reported `/en/cart`
+      // for exactly this.
+      //
+      // `robots: { index: false, follow: false }` on the routes themselves is
+      // the directive that actually keeps them out, and it can only be obeyed
+      // by a crawler that is permitted to fetch the page and read it. So this
+      // file allows the fetch and the route metadata does the excluding — see
+      // the `layout.tsx` next to each of those three pages.
+      { userAgent: '*', allow: '/' },
       // AI / LLM crawlers.
       //
       // Named individually even though `User-Agent: *` above already allows

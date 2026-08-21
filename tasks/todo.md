@@ -89,3 +89,66 @@ Ras al-Khaimah beyond 78 km — Al Rams and the northern tip — was leftover at
 Lalamove. That is what the plan's routing table asks for (all eight measured RAK
 areas go by Lalamove car) and it is a fee going **down**. Everything else on the
 map is identical: verified over 98k grid points, nothing lost coverage.
+
+---
+
+## Bing Site Scan fixes (mm-scan-210826) — 2026-08-21
+
+- [x] **ERROR Broken redirects** `/terms`, `/en/terms` — no `terms` route ever existed.
+      The signup page linked to `/terms`, the proxy 307'd it to `/en/terms`, and that
+      404'd. Decision: no terms page is wanted, so the link goes rather than the page
+      arriving.
+  - [x] Drop the `/terms` link from `app/[locale]/signup/page.tsx`; the sentence now
+        names the privacy policy alone
+  - [x] Delete `auth.tos_terms` / `auth.tos_and` from `scripts/seed_i18n.py` — the seed
+        is the source of truth for UI strings and runs on every boot
+  - [x] Migration `126_retire_terms_strings` to remove the rows the seed already wrote,
+        guarded on the exact retired values
+- [x] **ERROR Blocked by robots.txt** `/en/cart` — `Disallow` forbids the fetch, not the
+      listing, and the basket is linked from the header of every page. A URL a crawler
+      may not read is one it can only index as a bare link.
+  - [x] `robots.ts` allows `/` with no disallow list
+  - [x] `robots: { index: false, follow: false }` in a `layout.tsx` beside cart,
+        checkout and account
+  - [x] `account/layout.tsx` split into a server layout + `AccountShell` client
+        component — metadata cannot be exported from `'use client'`
+  - [x] `robots.test.ts` now asserts the disallow list is *empty*, with the reason
+- [x] **WARNING Alt attribute missing** `/en` — `BannerPicture` hard-coded `alt=""` plus
+      `aria-hidden`, covering every hero slide and promo band on the home page.
+  - [x] `alt` is a required prop; `aria-hidden` follows it instead of pre-empting it
+  - [x] `image_alt` on `HeroSlide` / `PromoItem`, falling back to headline / title
+  - [x] `banner-alt.test.tsx` — asserted from rendered output, because `alt=""` is
+        valid and nothing else in the toolchain objects to it
+- [x] **WARNING Title too long** `/en/about` — 56-char CMS `seo.title` plus the 24-char
+      `| Melting Moments Cakes` template = 80, and "Melting Moments" was in it twice.
+  - [x] Migration `127_about_title_70`, guarded on the exact string `054` wrote.
+        35 chars now, rendering at 59. Arabic was 69 and is untouched.
+- [x] **NOTICE H1 missing** `/en/login` — `useSearchParams()` inside a fallback-less
+      `<Suspense>` deferred the whole page to the client, so the served HTML was an
+      empty shell.
+  - [x] Server `page.tsx` owns the `<h1>` and the metadata; `LoginForm.tsx` is the
+        client half and the only thing that needs the search params
+
+### Review
+
+Verified rather than assumed:
+
+* **Migrations** — run to head against a throwaway Postgres (`initdb` + `pg_ctl` on
+  :55433, UTF8/C). This caught a real bug: `to_jsonb(:new::text)` in `127` failed with
+  a syntax error, because SQLAlchemy's `text()` will not bind a parameter followed by
+  `::`. Now `CAST(:new AS text)`, matching migration `010`. Both guards were then
+  exercised directly: an admin-edited about title and a hand-edited `tos_terms` row
+  both survived a downgrade/upgrade cycle untouched, while the unedited rows went.
+* **`next build`** — `/en/login` is prerendered as static HTML and the built
+  `login.html` contains the `<h1>`; `cart.html`, `checkout.html` and `account.html`
+  each carry `<meta name="robots" content="noindex, nofollow">`; `signup.html` has no
+  `/terms` link left.
+* **Tests** — 473 web unit tests pass (5 new), 2046 API tests pass. The banner-alt
+  test was confirmed to fail when `alt` is reverted to `""`, so it is testing what it
+  claims to. Two web test files would not load at first on an unresolvable
+  `client-only` import; that was a stale `pnpm install` in the worktree, not the
+  change — `client-only` is declared in `apps/web/package.json` and was simply not
+  present. Installing fixed it and the pre-push hook went green.
+
+Not done, deliberately: the `/terms` URL now 404s rather than redirecting, which is
+correct — it never named a real page, and nothing links to it any more.

@@ -8,6 +8,8 @@ import { Icon } from '@/components/ui/Icon';
 export interface PromoItem {
   image?: string;
   image_mobile?: string;
+  /** What the photograph shows. Falls back to the band's title — see below. */
+  image_alt?: string;
   eyebrow?: string;
   title?: string;
   body?: string;
@@ -60,6 +62,12 @@ export function PromoBanners({
               <BannerPicture
                 wide={wide}
                 tall={tall}
+                /* The band's own title is the fallback: it is a sentence
+                   somebody wrote about this photograph, which is more than
+                   `alt=""` was saying. The section is already labelled with the
+                   same words, so a screen reader hearing both is hearing a
+                   heading and then a picture, not a stutter. */
+                alt={promo.image_alt ?? promo.title ?? 'Desserts by Melting Moments Cakes'}
                 loading="lazy"
                 decoding="async"
                 className="absolute inset-0 h-full w-full object-cover transition-transform duration-[1200ms] ease-out hover:scale-[1.04]"

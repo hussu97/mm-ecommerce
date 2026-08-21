@@ -1119,3 +1119,31 @@ The same review found two more of these, and neither is a courier call:
 supply it. A parameter with a `None` default is a rule that quietly stops
 applying, and the caller that cannot fill it is usually the one that matters —
 here, the one the customer is looking at.
+
+## A broken link to a page that never existed is two different bugs
+
+Bing reported `/terms` and `/en/terms` as broken redirects. I traced it
+correctly — the signup page linked to `/terms`, the proxy 307'd it to the
+locale, Next 404'd — and then went straight to building the missing page:
+a CMS migration with drafted English and Arabic terms & conditions, a route, a
+sitemap entry, a footer link, a new `nav.terms` string. Hussain's answer was one
+line: *do we need a terms page? I'd say let's just remove it altogether.*
+
+He was right, and the tell was in the evidence I had already gathered. A page
+with no route, no CMS row, no footer link and no sitemap entry, reachable only
+from one sentence on the signup form, is not a page that went missing. It is a
+link that was never backed by anything. "Restore it" and "remove it" fix the
+crawler equally well, and only one of them commits the shop to legal copy that
+a human then has to own.
+
+**Rule:** when a link 404s, establish whether the target ever existed before
+deciding which end to fix. If the only evidence for the page is the link
+itself, the link is the bug — and if the page would carry commercial or legal
+meaning, that is a decision to put to Hussain in a sentence, not a deliverable
+to draft on his behalf.
+
+A smaller one from the same change: `to_jsonb(:new::text)` in a migration fails
+with a bare `syntax error at or near ":"`, because SQLAlchemy's `text()` will
+not bind a parameter that is followed by `::`. Spell the cast `CAST(:new AS
+text)`, the way `010` already does. Nothing catches this without a real
+database — the API suite mocks it, and the migration file imports fine.

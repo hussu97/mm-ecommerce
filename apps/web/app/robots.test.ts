@@ -54,15 +54,22 @@ describe('robots.txt', () => {
     expect(agents()).toContain('Claude-Web');
   });
 
-  it("still keeps crawlers out of the pages that are nobody else's business", () => {
-    const wildcard = (robots().rules as { userAgent: string; disallow?: string[] }[]).find(
-      (r) => r.userAgent === '*',
-    )!;
-    // Both shapes, because every route lives under a locale segment and the
-    // bare prefixes on their own matched nothing we actually serve.
-    for (const path of ['/account', '/checkout', '/cart', '/*/account', '/*/checkout', '/*/cart']) {
-      expect(wildcard.disallow).toContain(path);
-    }
+  it('does not try to hide the basket, the checkout or the account here', () => {
+    // These were `Disallow`, and that is the wrong instrument: it forbids the
+    // fetch, not the listing. The basket is linked from the header of every
+    // page, so its URL is well known — and a URL a crawler may not read is one
+    // it can only index as a naked link, with no title and nothing to say. Bing
+    // reported `/en/cart` for precisely that.
+    //
+    // Keeping them out is `robots: { index: false, follow: false }` on the
+    // routes, in the `layout.tsx` beside each page, and a crawler can only obey
+    // a directive it was allowed to fetch. Blocking here would put the old
+    // failure straight back.
+    const wildcard = (
+      robots().rules as { userAgent: string; allow?: string; disallow?: string[] }[]
+    ).find((r) => r.userAgent === '*')!;
+    expect(wildcard.disallow ?? []).toEqual([]);
+    expect(wildcard.allow).toBe('/');
   });
 
   it('points at both sitemaps', () => {
