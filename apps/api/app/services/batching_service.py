@@ -52,7 +52,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -451,15 +451,34 @@ async def shared_run_booking(
     have called off the run — four other customers' deliveries cancelled to
     stop one, with nothing anywhere saying that had happened.
 
-    Returns None for the ordinary case: no run, no booking, or a booking the
-    delivery owns outright.
+    **A run of one is not shared.** A window that closed with a single order in
+    it still produces a batch and still books through `_book_chunk`, so the
+    delivery and the batch carry the same id — and cancelling it harms nobody,
+    because there is nobody else on it. Counted rather than read off
+    `batch.stop_count`: that column is what was *booked*, and it does not move
+    when an order later leaves a dispatched run, so trusting it would keep
+    protecting a van that is down to one stop.
+
+    Returns None for the ordinary case: no run, no booking, a booking the
+    delivery owns outright, or a run carrying only this order.
     """
     if not delivery.batch_id or not delivery.courier_order_id:
         return None
     batch = await db.get(DeliveryBatch, delivery.batch_id)
     if batch is None or batch.courier_order_id != delivery.courier_order_id:
         return None
-    return batch
+
+    others = (
+        await db.execute(
+            select(func.count())
+            .select_from(OrderDelivery)
+            .where(
+                OrderDelivery.courier_order_id == delivery.courier_order_id,
+                OrderDelivery.id != delivery.id,
+            )
+        )
+    ).scalar() or 0
+    return batch if others else None
 
 
 async def cancel_assignment(db: AsyncSession, delivery: OrderDelivery) -> None:

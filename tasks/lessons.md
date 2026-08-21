@@ -980,3 +980,35 @@ from where the damage happens.
 everything" but "leave the run alone and take this order off it". The van keeps a
 stop and arrives to find nothing, which costs one wasted drop; the alternative
 cost four deliveries.
+
+## A guard that fires on a set of one was asking the wrong question
+
+**2026-08-21, hours after the guard above shipped.** The refusal meant to stop
+one order cancelling a shared van fired on a run carrying a single order, and
+said so in its own message: *"already been booked with 0 other order(s)."* The
+arithmetic was reading out the bug. A window that closes with one order in it
+still makes a batch and still books through `_book_chunk`, so the delivery and
+the batch carry the same id — and there is nobody else on it to protect.
+
+The predicate was "does this delivery's booking belong to a run", when the
+question that actually mattered was "does anybody else hold this booking".
+Those are the same for every run of two or more and differ for a run of one,
+which is the commonest run there is on a quiet morning.
+
+**Rule:** when a guard exists to protect *other* rows, count the other rows.
+Deriving it from the structure — there is a batch, therefore there are
+neighbours — is an assumption, and `stop_count` is worse than counting because
+it records what was booked and never moves when an order later leaves.
+
+**The larger mistake was refusing at all.** `courier_service.cancel` had already
+been taught to leave a shared booking alone, so the move was safe: the order
+leaves the run, the van keeps its stop, nobody else is touched. Blocking it
+turned "the run was dispatched and the driver never came" — precisely the
+situation the whole feature exists for — into a dead end, on the one screen
+somebody opens when they are trying to rescue a paid order.
+
+**Rule:** having built the safe path, check whether the guard in front of it is
+still guarding anything. A refusal and a mitigation for the same hazard means one
+of them is redundant, and it is usually the refusal — which is also the one the
+user feels. Where a real consequence remains, say it (the van will still call for
+a parcel that has gone) and let the person decide.

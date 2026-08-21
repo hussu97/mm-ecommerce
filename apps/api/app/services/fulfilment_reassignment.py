@@ -159,13 +159,26 @@ class Exposure:
     reason: str
 
 
-def exposure_of(delivery: OrderDelivery) -> Exposure:
-    """Which side of the courier's cancellation rule this booking is on."""
+async def exposure_of(db: AsyncSession, delivery: OrderDelivery) -> Exposure:
+    """What calling this booking off would cost, and whether it happens at all."""
     if not delivery.courier_order_id:
         return Exposure(False, "There is no booking to call off.")
     if is_failed(delivery.provider, delivery.courier_status):
         return Exposure(
             False, "This booking already failed, so there is nothing to cancel."
+        )
+
+    run = await batching_service.shared_run_booking(db, delivery)
+    if run is not None:
+        # The booking is a van carrying other people's cakes, so it is not
+        # called off — this order leaves the run and the van keeps its stop.
+        # Said plainly because it is a real consequence somebody pays for: a
+        # driver will arrive for a box that has gone out with somebody else.
+        return Exposure(
+            False,
+            "This order is on a shared run, so the courier booking stays as it "
+            "is — the van will still call for a parcel that has gone with "
+            "somebody else. Nobody else's delivery is affected.",
         )
     if delivery.driver_id or delivery.driver_name:
         return Exposure(
@@ -270,23 +283,14 @@ async def refuse(db: AsyncSession, order: Order, delivery: OrderDelivery) -> str
     moved", and on an order whose webhook is lagging it is also the only one of
     the two that is true yet.
     """
-    run = await batching_service.shared_run_booking(db, delivery)
-    if run is not None:
-        # A booked run is one Lalamove order carrying up to fifteen stops, and
-        # every delivery on it holds that same id. There is no way to withdraw
-        # one drop: the booking is the van. Moving this order would either
-        # cancel everybody's delivery or leave a driver coming for a parcel
-        # that has gone out with somebody else.
-        #
-        # First, ahead of every other reason, because it is the one a person
-        # cannot work around by waiting — and because the answer is about a
-        # different object entirely. What they want is the run.
-        return (
-            f"This order is on a run that has already been booked with "
-            f"{max((run.stop_count or 1) - 1, 0)} other order(s). The booking is "
-            "the van, so one drop cannot be withdrawn from it — move the whole "
-            "run, or wait for this one to fail."
-        )
+    # A booked run used to be refused outright here, and that was wrong twice
+    # over. It caught runs of a single order, which share a booking with nobody;
+    # and even on a real shared run the move is safe — `courier_service.cancel`
+    # leaves such a booking alone rather than cancelling the van, so the order
+    # simply leaves the run. Refusing turned "the run was dispatched and the
+    # driver never came" — the exact situation this feature exists for — into a
+    # dead end. What the shop needs there is a warning, and it gets one through
+    # `exposure_of`.
 
     if order.delivery_method != DeliveryMethodEnum.DELIVERY:
         return "A collection order is not carried by anybody, so there is nothing to change."
@@ -347,7 +351,7 @@ async def options_for(
         targets=tuple(targets),
         blocked=blocked,
         must_abandon_first=(blocked is not None and delivery.is_driver_on_the_way_here),
-        exposure=exposure_of(delivery),
+        exposure=await exposure_of(db, delivery),
     )
 
 

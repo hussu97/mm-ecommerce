@@ -1001,7 +1001,7 @@ async def abandon_order_booking(
     order = await _load_order(db, order_number)
     delivery = await _load_delivery(db, order_number)
 
-    exposure = fulfilment_reassignment.exposure_of(delivery)
+    exposure = await fulfilment_reassignment.exposure_of(db, delivery)
     if exposure.will_be_charged and not data.acknowledged_charge:
         raise ConflictError(
             exposure.reason,

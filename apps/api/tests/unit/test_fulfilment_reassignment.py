@@ -58,6 +58,11 @@ class _Db:
         self.delivery = delivery
         self.polygon = polygon
         self.batch = None
+        #: How many *other* deliveries share this one's courier booking.
+        #: `shared_run_booking` counts rather than trusting `batch.stop_count`,
+        #: because that column records what was booked and does not move when an
+        #: order later leaves a dispatched run.
+        self.shared_count = 0
         self.pending: list = []
         self.rows: list = []
         self.locked = False
@@ -80,7 +85,8 @@ class _Db:
         if getattr(stmt, "_for_update_arg", None) is not None:
             self.locked = True
         return SimpleNamespace(
-            scalars=lambda: SimpleNamespace(first=lambda: self.delivery)
+            scalars=lambda: SimpleNamespace(first=lambda: self.delivery),
+            scalar=lambda: self.shared_count,
         )
 
     async def commit(self):
@@ -319,38 +325,44 @@ async def test_a_failed_handover_that_was_not_refunded_can_be_tried_elsewhere():
 # ── what abandoning would cost ────────────────────────────────────────────────
 
 
-def test_a_booking_with_no_driver_yet_is_free_to_call_off():
-    exposure = reassign.exposure_of(
+@pytest.mark.asyncio
+async def test_a_booking_with_no_driver_yet_is_free_to_call_off():
+    exposure = await reassign.exposure_of(
+        _Db(),
         _delivery(
             provider=LALAMOVE, courier_order_id="L1", courier_status="ASSIGNING_DRIVER"
-        )
+        ),
     )
     assert exposure.will_be_charged is False
     assert "free" in exposure.reason
 
 
-def test_a_booking_with_a_driver_may_cost_and_never_says_how_much():
+@pytest.mark.asyncio
+async def test_a_booking_with_a_driver_may_cost_and_never_says_how_much():
     """
     No figure, ever. Neither courier quotes a cancellation fee over an API, and
     a number worked out from a published tariff would sit on screen next to
     real quoted costs and read as one of them — then be wrong the first time an
     invoice disagreed.
     """
-    exposure = reassign.exposure_of(
+    exposure = await reassign.exposure_of(
+        _Db(),
         _delivery(
             provider=LALAMOVE,
             courier_order_id="L1",
             courier_status="ON_GOING",
             driver_name="Imran",
-        )
+        ),
     )
     assert exposure.will_be_charged is True
     assert not any(ch.isdigit() for ch in exposure.reason)
 
 
-def test_a_failed_booking_costs_nothing_to_abandon():
-    exposure = reassign.exposure_of(
-        _delivery(provider=LALAMOVE, courier_order_id="L1", courier_status="EXPIRED")
+@pytest.mark.asyncio
+async def test_a_failed_booking_costs_nothing_to_abandon():
+    exposure = await reassign.exposure_of(
+        _Db(),
+        _delivery(provider=LALAMOVE, courier_order_id="L1", courier_status="EXPIRED"),
     )
     assert exposure.will_be_charged is False
 
@@ -708,7 +720,7 @@ async def test_the_dialog_and_the_move_agree_about_a_failed_booking():
     delivery = _delivery(
         provider=LALAMOVE, courier_order_id="L-1", courier_status="EXPIRED"
     )
-    exposure = reassign.exposure_of(delivery)
+    exposure = await reassign.exposure_of(_Db(), delivery)
     assert exposure.will_be_charged is False
     assert "nothing to cancel" in exposure.reason
     # And the move agrees: no cancel is attempted for such a booking.
@@ -719,16 +731,44 @@ async def test_the_dialog_and_the_move_agree_about_a_failed_booking():
 
 
 @pytest.mark.asyncio
-async def test_an_order_on_a_booked_run_cannot_be_moved_on_its_own():
+async def test_a_run_carrying_only_this_order_is_not_a_shared_booking():
     """
-    A batched dispatch books **one** Lalamove order for up to fifteen stops and
-    writes that same id onto every delivery in it. So calling off "this order's
-    booking" would call off the van — four other customers' deliveries
-    cancelled to move one, silently, with each of those orders still reading
-    packed and nothing coming.
+    A window that closes with one order in it still makes a batch and still
+    books through `_book_chunk`, so the delivery and the batch carry the same
+    id — and cancelling it harms nobody, because there is nobody else on it.
 
-    There is no way to withdraw one drop from a booking. The refusal names the
-    run, because what the person actually wants is the run.
+    This blocked a real order. The dialog refused with "already been booked with
+    0 other order(s)", which is the arithmetic saying out loud that it had got
+    the question wrong.
+    """
+    batch = DeliveryBatch(
+        id=uuid.uuid4(), status="dispatched", courier_order_id="LM-SOLO", stop_count=1
+    )
+    delivery = _delivery(
+        provider=LALAMOVE,
+        courier_order_id="LM-SOLO",
+        courier_status="ASSIGNING_DRIVER",
+        batch_id=batch.id,
+    )
+    db = _Db(delivery, _polygon(LALAMOVE, ["third_party"]))
+    db.batch = batch
+    db.shared_count = 0  # nobody else on the booking
+
+    assert await reassign.refuse(db, _order(), delivery) is None
+    exposure = await reassign.exposure_of(db, delivery)
+    assert "shared run" not in exposure.reason
+
+
+@pytest.mark.asyncio
+async def test_an_order_on_a_shared_run_may_still_be_moved_with_a_warning():
+    """
+    The situation the whole feature exists for: a run was dispatched and the
+    driver never came for it.
+
+    Refusing here was wrong. The booking is not cancelled — `courier_service`
+    leaves a shared one alone — so the order simply leaves the run and nobody
+    else's delivery is touched. What the shop needs is to be told the van will
+    still call for a parcel that has gone, not to be stopped.
     """
     batch = DeliveryBatch(
         id=uuid.uuid4(),
@@ -744,10 +784,13 @@ async def test_an_order_on_a_booked_run_cannot_be_moved_on_its_own():
     )
     db = _Db(delivery, _polygon(LALAMOVE, ["third_party"]))
     db.batch = batch
+    db.shared_count = 4
 
-    reason = await reassign.refuse(db, _order(), delivery)
-    assert reason is not None
-    assert "already been booked with 4 other order(s)" in reason
+    assert await reassign.refuse(db, _order(), delivery) is None, "not a refusal"
+    exposure = await reassign.exposure_of(db, delivery)
+    assert exposure.will_be_charged is False
+    assert "shared run" in exposure.reason
+    assert "Nobody else's delivery is affected" in exposure.reason
 
 
 @pytest.mark.asyncio
