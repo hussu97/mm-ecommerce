@@ -106,6 +106,7 @@ __all__ = [
     "assign_or_dispatch",
     "reserve",
     "cancel_assignment",
+    "shared_run_booking",
     "dispatch_batch",
     "dispatch_due_batches",
     "find_window",
@@ -430,6 +431,34 @@ async def reserve(
         batch.window_label,
         batch.dispatch_at.isoformat(),
     )
+    return batch
+
+
+async def shared_run_booking(
+    db: AsyncSession, delivery: OrderDelivery
+) -> DeliveryBatch | None:
+    """
+    The run whose booking this delivery is riding, if the booking is not its own.
+
+    A batched dispatch books **one** Lalamove order for up to fifteen stops and
+    writes that single `orderId` onto every delivery in the chunk — see
+    `_book_chunk`. So `delivery.courier_order_id` is ambiguous by design: on an
+    order that went out alone it identifies that order's booking, and on a
+    batched one it identifies a van carrying other people's cakes too.
+
+    Nothing used to ask which. `cancel_delivery` takes that id straight to
+    `DELETE /v3/orders/{id}`, so calling off one order on a booked run would
+    have called off the run — four other customers' deliveries cancelled to
+    stop one, with nothing anywhere saying that had happened.
+
+    Returns None for the ordinary case: no run, no booking, or a booking the
+    delivery owns outright.
+    """
+    if not delivery.batch_id or not delivery.courier_order_id:
+        return None
+    batch = await db.get(DeliveryBatch, delivery.batch_id)
+    if batch is None or batch.courier_order_id != delivery.courier_order_id:
+        return None
     return batch
 
 

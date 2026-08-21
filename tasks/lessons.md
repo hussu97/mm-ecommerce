@@ -919,3 +919,64 @@ a fix makes previously-dead validation reachable, wire it up in the same commit;
 and when you choose to degrade rather than refuse, check the operator can *see*
 what was dropped — a silent detach is the same class of bug as the silent drop
 being fixed.
+
+## Do not read the outcome of your call out of a field your call may not have written
+
+**2026-08-21.** MM-20260821-001 could not be moved off Lalamove. The dialog said
+both things at once, a few pixels apart:
+
+> The lalamove booking could not be called off — Courier rejected the booking —
+> re-dispatch required.
+>
+> This booking already failed, so there is nothing to cancel.
+
+`_release` called `courier_service.cancel` and then decided whether it had worked
+by reading `delivery.last_error`. That is right on the two paths where
+`cancel_delivery` writes the field — it fills it on failure and clears it on
+success — and wrong on the three where it returns early without touching it: no
+booking, courier not configured, **and a booking the courier had already ended**.
+So the sentence sitting in `last_error` was from the dispatch that had failed
+hours earlier, and the move read somebody else's old complaint as its own answer.
+
+The tell was on screen the whole time. `exposure_of` asked
+`is_failed(provider, courier_status)` and got the right answer; `_release` asked
+a different question of a different field and got a different one. **Two pieces
+of code describing one booking in one panel have to be reading the same field.**
+
+**Rule:** after calling something that reports through shared mutable state,
+either clear that state first so what you read back is yours, or do not read it
+at all — return a result. Both, here: the failed-booking case now skips the call
+entirely (there is nothing to cancel), and the live case nulls `last_error`
+before calling so the check afterwards can only be about this attempt.
+
+**Rule:** when a function has one write path and several early returns, the early
+returns are the contract too. `cancel_delivery`'s docstring described what it
+does when it cancels; nothing said what it leaves behind when it does not.
+
+## One booking id, five customers
+
+Same change, found while asking a related question: what happens to the *batch*
+when one order leaves it.
+
+A batched dispatch books **one** Lalamove order for up to fifteen stops and
+writes that single `orderId` onto every delivery in the chunk. So
+`courier_order_id` is ambiguous by design — on a solo order it is that order's
+booking, and on a batched one it is a van carrying other people's cakes.
+
+Nothing asked which. `cancel_delivery` takes that id straight to
+`DELETE /v3/orders/{id}`, so calling off one order on a booked run called off the
+run: four other customers' deliveries cancelled to stop one, silently, each of
+those orders still reading `packed` with nothing coming. Reachable from two
+places — a reassignment, and simply cancelling an order — and reachable in the
+window before a driver is matched, which is exactly when somebody is most likely
+to be fiddling with it.
+
+**Rule:** a foreign key you did not mint is not a key to one of your rows. Before
+acting on a provider's id, ask how many of your rows carry it. Here the answer is
+"as many as fifteen", and it is written down in `_book_chunk` two hundred lines
+from where the damage happens.
+
+**Corollary:** the safe degradation was not "cancel it anyway" or "refuse
+everything" but "leave the run alone and take this order off it". The van keeps a
+stop and arrives to find nothing, which costs one wasted drop; the alternative
+cost four deliveries.

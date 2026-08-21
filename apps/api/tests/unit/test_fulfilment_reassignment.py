@@ -27,9 +27,10 @@ from types import SimpleNamespace
 import pytest
 
 from app.core.exceptions import ConflictError
+from app.models.delivery_batch import DeliveryBatch
 from app.models.delivery_polygon import DeliveryPolygon
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
-from app.models.order_delivery import OrderDelivery
+from app.models.order_delivery import OrderDelivery, is_failed
 from app.services import fulfilment_reassignment as reassign
 
 NOW = datetime(2026, 8, 21, 9, 0, tzinfo=timezone.utc)
@@ -56,6 +57,7 @@ class _Db:
     def __init__(self, delivery=None, polygon=None):
         self.delivery = delivery
         self.polygon = polygon
+        self.batch = None
         self.pending: list = []
         self.rows: list = []
         self.locked = False
@@ -68,7 +70,11 @@ class _Db:
         self.pending.clear()
 
     async def get(self, model, pk):
-        return self.polygon if model is DeliveryPolygon else None
+        if model is DeliveryPolygon:
+            return self.polygon
+        if model is DeliveryBatch:
+            return self.batch
+        return None
 
     async def execute(self, stmt):
         if getattr(stmt, "_for_update_arg", None) is not None:
@@ -210,9 +216,10 @@ async def test_a_moved_order_with_no_zone_remembers_what_the_map_chose():
 # ── whether it may move at all ────────────────────────────────────────────────
 
 
-def test_a_collection_order_has_nobody_to_change():
+@pytest.mark.asyncio
+async def test_a_collection_order_has_nobody_to_change():
     order = _order(delivery_method=DeliveryMethodEnum.PICKUP)
-    assert "collection" in reassign.refuse(order, _delivery())
+    assert "collection" in await reassign.refuse(_Db(), order, _delivery())
 
 
 @pytest.mark.parametrize(
@@ -227,8 +234,9 @@ def test_a_collection_order_has_nobody_to_change():
         OrderStatusEnum.CREATED,
     ],
 )
-def test_an_order_that_has_left_or_ended_cannot_be_moved(status):
-    assert reassign.refuse(_order(status), _delivery()) is not None
+@pytest.mark.asyncio
+async def test_an_order_that_has_left_or_ended_cannot_be_moved(status):
+    assert await reassign.refuse(_Db(), _order(status), _delivery()) is not None
 
 
 @pytest.mark.parametrize(
@@ -240,11 +248,13 @@ def test_an_order_that_has_left_or_ended_cannot_be_moved(status):
         OrderStatusEnum.UNDELIVERED,
     ],
 )
-def test_an_order_still_in_the_kitchen_or_back_from_a_door_can_be_moved(status):
-    assert reassign.refuse(_order(status), _delivery()) is None
+@pytest.mark.asyncio
+async def test_an_order_still_in_the_kitchen_or_back_from_a_door_can_be_moved(status):
+    assert await reassign.refuse(_Db(), _order(status), _delivery()) is None
 
 
-def test_a_collected_parcel_is_refused_even_while_the_order_status_lags():
+@pytest.mark.asyncio
+async def test_a_collected_parcel_is_refused_even_while_the_order_status_lags():
     """
     The courier's word beats ours here, and that is the whole point of asking.
     A `PICKED_UP` push that has not yet moved the order still means a rider is
@@ -252,23 +262,25 @@ def test_a_collected_parcel_is_refused_even_while_the_order_status_lags():
     second one.
     """
     delivery = _delivery(provider=LALAMOVE, courier_status="PICKED_UP")
-    reason = reassign.refuse(_order(OrderStatusEnum.PACKED), delivery)
+    reason = await reassign.refuse(_Db(), _order(OrderStatusEnum.PACKED), delivery)
     assert reason is not None and "already has this order" in reason
 
 
-def test_a_driver_on_the_way_blocks_the_move_and_names_the_way_out():
+@pytest.mark.asyncio
+async def test_a_driver_on_the_way_blocks_the_move_and_names_the_way_out():
     delivery = _delivery(
         provider=LALAMOVE,
         courier_status="ASSIGNING_DRIVER",
         driver_id="d1",
         driver_name="Imran",
     )
-    reason = reassign.refuse(_order(), delivery)
+    reason = await reassign.refuse(_Db(), _order(), delivery)
     assert reason is not None
     assert "Imran" in reason and "Abandon the booking" in reason
 
 
-def test_a_dead_booking_does_not_count_as_a_driver_on_the_way():
+@pytest.mark.asyncio
+async def test_a_dead_booking_does_not_count_as_a_driver_on_the_way():
     """
     The case the whole feature exists for. Lalamove rejected or expired the
     booking, so whatever name the row still carries, nobody is coming — and
@@ -280,10 +292,11 @@ def test_a_dead_booking_does_not_count_as_a_driver_on_the_way():
         driver_id="d1",
         driver_name="Imran",
     )
-    assert reassign.refuse(_order(), delivery) is None
+    assert await reassign.refuse(_Db(), _order(), delivery) is None
 
 
-def test_an_order_whose_money_went_back_is_not_ours_to_deliver():
+@pytest.mark.asyncio
+async def test_an_order_whose_money_went_back_is_not_ours_to_deliver():
     """
     The guard that carries the history. Orders that reached `undelivered` while
     it was still an ending were refunded automatically on the way in; the money
@@ -292,14 +305,15 @@ def test_an_order_whose_money_went_back_is_not_ours_to_deliver():
     """
     order = _order(OrderStatusEnum.UNDELIVERED)
     order.refunded_amount = Decimal("120.00")
-    reason = reassign.refuse(order, _delivery())
+    reason = await reassign.refuse(_Db(), order, _delivery())
     assert reason is not None and "120.00" in reason
 
 
-def test_a_failed_handover_that_was_not_refunded_can_be_tried_elsewhere():
+@pytest.mark.asyncio
+async def test_a_failed_handover_that_was_not_refunded_can_be_tried_elsewhere():
     order = _order(OrderStatusEnum.UNDELIVERED)
     order.refunded_amount = Decimal("0")
-    assert reassign.refuse(order, _delivery()) is None
+    assert await reassign.refuse(_Db(), order, _delivery()) is None
 
 
 # ── what abandoning would cost ────────────────────────────────────────────────
@@ -623,3 +637,156 @@ async def test_a_collected_parcel_cannot_have_its_booking_abandoned(quiet):
     db = _Db(delivery, _polygon(LALAMOVE, ["third_party"]))
     with pytest.raises(ConflictError):
         await reassign.abandon_booking(db, _order())
+
+
+# ── two ways a booking can already be over ────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_booking_the_courier_already_rejected_is_not_cancelled_again(quiet):
+    """
+    MM-20260821-001, and the reason the dialog contradicted itself.
+
+    Lalamove had already rejected the booking, so `exposure_of` told the admin
+    "this booking already failed, so there is nothing to cancel" — and the move
+    refused in the same panel with "the booking could not be called off".
+
+    `cancel_delivery` returns early on a failed booking **without touching
+    `last_error`**, so the field still held "Courier rejected the booking —
+    re-dispatch required" from the dispatch that failed hours before. Reading it
+    after the call treated somebody else's old sentence as this call's answer.
+    """
+    delivery = _delivery(
+        provider=LALAMOVE,
+        courier_order_id="3566947931254911171",
+        courier_status="REJECTED",
+        last_error="Courier rejected the booking — re-dispatch required",
+    )
+    db = _Db(delivery, _polygon(LALAMOVE, ["third_party"]))
+
+    result = await reassign.move(db, _order(), target=THIRD_PARTY)
+
+    assert result.provider == THIRD_PARTY
+    assert "cancel_courier" not in quiet, "there was nothing left to call off"
+    assert result.last_error is None, "the old failure is not this move's problem"
+    assert "3566947931254911171" in result.previous_courier_order_ids
+
+
+@pytest.mark.asyncio
+async def test_a_live_booking_that_will_not_cancel_still_stops_the_move(
+    quiet, monkeypatch
+):
+    """
+    The guard the fix must not have removed. A booking the courier still holds,
+    that we could not call off, means a driver may yet come for the box.
+    """
+    from app.services import courier_service
+
+    async def failing_cancel(db, order):
+        quiet.append("cancel_courier")
+        db.delivery.last_error = "Could not cancel with the courier: 503"
+        return db.delivery
+
+    monkeypatch.setattr(courier_service, "cancel", failing_cancel)
+    delivery = _delivery(
+        provider=LALAMOVE, courier_order_id="L-LIVE", courier_status="ASSIGNING_DRIVER"
+    )
+    db = _Db(delivery, _polygon(LALAMOVE, ["third_party"]))
+
+    with pytest.raises(ConflictError) as caught:
+        await reassign.move(db, _order(), target=THIRD_PARTY)
+    assert "Cancel it with lalamove directly" in str(caught.value)
+    assert delivery.provider == LALAMOVE, "nothing moved"
+
+
+@pytest.mark.asyncio
+async def test_the_dialog_and_the_move_agree_about_a_failed_booking():
+    """
+    One booking, one answer. These two are read a few pixels apart on the same
+    panel, so they have to be asking the same question of the same field.
+    """
+    delivery = _delivery(
+        provider=LALAMOVE, courier_order_id="L-1", courier_status="EXPIRED"
+    )
+    exposure = reassign.exposure_of(delivery)
+    assert exposure.will_be_charged is False
+    assert "nothing to cancel" in exposure.reason
+    # And the move agrees: no cancel is attempted for such a booking.
+    assert is_failed(delivery.provider, delivery.courier_status)
+
+
+# ── a run is one booking, and it is not this order's ──────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_an_order_on_a_booked_run_cannot_be_moved_on_its_own():
+    """
+    A batched dispatch books **one** Lalamove order for up to fifteen stops and
+    writes that same id onto every delivery in it. So calling off "this order's
+    booking" would call off the van — four other customers' deliveries
+    cancelled to move one, silently, with each of those orders still reading
+    packed and nothing coming.
+
+    There is no way to withdraw one drop from a booking. The refusal names the
+    run, because what the person actually wants is the run.
+    """
+    batch = DeliveryBatch(
+        id=uuid.uuid4(),
+        status="dispatched",
+        courier_order_id="LM-RUN-7788",
+        stop_count=5,
+    )
+    delivery = _delivery(
+        provider=LALAMOVE,
+        courier_order_id="LM-RUN-7788",
+        courier_status="ASSIGNING_DRIVER",
+        batch_id=batch.id,
+    )
+    db = _Db(delivery, _polygon(LALAMOVE, ["third_party"]))
+    db.batch = batch
+
+    reason = await reassign.refuse(db, _order(), delivery)
+    assert reason is not None
+    assert "already been booked with 4 other order(s)" in reason
+
+
+@pytest.mark.asyncio
+async def test_an_order_on_a_run_that_has_not_left_moves_freely():
+    """
+    A pending run has no booking at all — nothing has been sent to the courier —
+    so the order simply leaves it, and `cancel_assignment` recounts the stops.
+    This is the common case and it must not be caught by the guard above.
+    """
+    batch = DeliveryBatch(
+        id=uuid.uuid4(), status="pending", courier_order_id=None, stop_count=3
+    )
+    delivery = _delivery(provider=LALAMOVE, batch_id=batch.id)
+    db = _Db(delivery, _polygon(LALAMOVE, ["third_party"]))
+    db.batch = batch
+
+    assert await reassign.refuse(db, _order(), delivery) is None
+
+
+@pytest.mark.asyncio
+async def test_an_orders_own_booking_is_not_mistaken_for_a_run():
+    """
+    An order that went out alone while still attached to a run it never left
+    holds a booking id of its own. That is not the batch's, so it is cancellable
+    and the guard must not fire.
+    """
+    batch = DeliveryBatch(
+        id=uuid.uuid4(),
+        status="dispatched",
+        courier_order_id="LM-RUN-7788",
+        stop_count=5,
+    )
+    delivery = _delivery(
+        provider=LALAMOVE,
+        courier_order_id="LM-MINE-0001",
+        courier_status="ASSIGNING_DRIVER",
+        batch_id=batch.id,
+    )
+    db = _Db(delivery, _polygon(LALAMOVE, ["third_party"]))
+    db.batch = batch
+
+    assert await reassign.refuse(db, _order(), delivery) is None

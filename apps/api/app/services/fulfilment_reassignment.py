@@ -261,7 +261,7 @@ async def allowed_targets(
     return preferred, tuple(sorted(allowed))
 
 
-def refuse(order: Order, delivery: OrderDelivery) -> str | None:
+async def refuse(db: AsyncSession, order: Order, delivery: OrderDelivery) -> str | None:
     """
     Why this order may not be moved at all, or None if it may.
 
@@ -270,6 +270,24 @@ def refuse(order: Order, delivery: OrderDelivery) -> str | None:
     moved", and on an order whose webhook is lagging it is also the only one of
     the two that is true yet.
     """
+    run = await batching_service.shared_run_booking(db, delivery)
+    if run is not None:
+        # A booked run is one Lalamove order carrying up to fifteen stops, and
+        # every delivery on it holds that same id. There is no way to withdraw
+        # one drop: the booking is the van. Moving this order would either
+        # cancel everybody's delivery or leave a driver coming for a parcel
+        # that has gone out with somebody else.
+        #
+        # First, ahead of every other reason, because it is the one a person
+        # cannot work around by waiting — and because the answer is about a
+        # different object entirely. What they want is the run.
+        return (
+            f"This order is on a run that has already been booked with "
+            f"{max((run.stop_count or 1) - 1, 0)} other order(s). The booking is "
+            "the van, so one drop cannot be withdrawn from it — move the whole "
+            "run, or wait for this one to fail."
+        )
+
     if order.delivery_method != DeliveryMethodEnum.DELIVERY:
         return "A collection order is not carried by anybody, so there is nothing to change."
 
@@ -309,7 +327,7 @@ async def options_for(
 ) -> Options:
     """Everything the dialog renders: where this order may go, and where it may not."""
     preferred, allowed = await allowed_targets(db, order, delivery)
-    blocked = refuse(order, delivery)
+    blocked = await refuse(db, order, delivery)
 
     targets = []
     for provider in allowed:
@@ -337,7 +355,7 @@ async def _assert_may_move(
     db: AsyncSession, order: Order, delivery: OrderDelivery, target: str
 ) -> None:
     """Every gate, as exceptions. The single place `quote` and `move` agree."""
-    blocked = refuse(order, delivery)
+    blocked = await refuse(db, order, delivery)
     if blocked is not None:
         raise ConflictError(blocked)
 
@@ -493,25 +511,54 @@ async def _release(db: AsyncSession, order: Order, delivery: OrderDelivery) -> N
         previous = list(delivery.previous_courier_order_ids or [])
         booking = delivery.courier_order_id
         provider = delivery.provider
-        await courier_service.cancel(db, order)
 
-        # A cancel that did not work stops everything, and this is the one place
-        # in the module that refuses rather than degrades.
-        #
-        # `cancel_delivery` clears `last_error` when it succeeds and fills it
-        # when it does not, so the field is the answer. Carrying on regardless
-        # would leave a live booking on a courier's system for a parcel that has
-        # just gone out with somebody else — a rider arriving at the kitchen for
-        # a box that is not there, or worse, a second one sent to the customer.
-        #
-        # The shop is not stuck: the message says to call the courier, and once
-        # they have, the booking reads as failed and this passes.
-        if delivery.last_error:
-            raise ConflictError(
-                f"The {provider} booking could not be called off — "
-                f"{delivery.last_error}. Cancel it with {provider} directly "
-                "before moving this order, or a driver may still come for it."
+        if is_failed(provider, delivery.courier_status):
+            # The courier has already ended it — rejected, expired, cancelled
+            # their side. There is nothing to call off, and asking would be
+            # asking about somebody else's finished business.
+            #
+            # This branch is the same question `exposure_of` answers for the
+            # dialog, and it has to be, or the two disagree on screen: the
+            # dialog said "this booking already failed, so there is nothing to
+            # cancel" while the move refused with "the booking could not be
+            # called off". Both sentences about one booking, in one panel.
+            logger.info(
+                "Order %s left a %s booking that had already failed (%s)",
+                order.order_number,
+                provider,
+                delivery.courier_status,
             )
+        else:
+            # Cleared before the call, so what is read afterwards is *this*
+            # call's answer and not something left lying about.
+            #
+            # That was the bug. `cancel_delivery` fills `last_error` when it
+            # fails and clears it when it succeeds — but it returns early
+            # without touching the field at all when there is nothing to
+            # cancel. So a booking that had already been rejected still carried
+            # "Courier rejected the booking — re-dispatch required" from the
+            # dispatch that failed hours earlier, and this read it as the
+            # cancellation refusing. MM-20260821-001 could not be moved off a
+            # courier that had already let it go.
+            delivery.last_error = None
+            await courier_service.cancel(db, order)
+
+            # A cancel that did not work stops everything, and this is the one
+            # place in the module that refuses rather than degrades. Carrying on
+            # would leave a live booking on a courier's system for a parcel that
+            # has just gone out with somebody else — a rider arriving at the
+            # kitchen for a box that is not there, or a second one sent to the
+            # customer.
+            #
+            # The shop is not stuck: the message says to call the courier, and
+            # once they have, the booking reads as failed and the branch above
+            # takes it.
+            if delivery.last_error:
+                raise ConflictError(
+                    f"The {provider} booking could not be called off — "
+                    f"{delivery.last_error}. Cancel it with {provider} directly "
+                    "before moving this order, or a driver may still come for it."
+                )
 
         if booking not in previous:
             previous.append(booking)

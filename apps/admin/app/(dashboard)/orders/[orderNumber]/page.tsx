@@ -1051,9 +1051,15 @@ function ChangeFulfilmentDialog({
           </p>
         )}
 
+        {/* Names the booking, then lets the exposure say what happens to it.
+            It used to open with "This calls off booking X" and then append the
+            exposure — which, on a booking the courier had already rejected,
+            put "this calls off" directly above "there is nothing to cancel".
+            Two sentences about one booking, contradicting each other, a few
+            pixels apart. The id is a label now, not a claim. */}
         {quote?.cancels_booking && (
           <p className="text-xs font-body text-gray-600 mt-3">
-            This calls off booking {quote.cancels_booking}.
+            Booking {quote.cancels_booking}.
             {options.exposure && ` ${options.exposure.reason}`}
           </p>
         )}

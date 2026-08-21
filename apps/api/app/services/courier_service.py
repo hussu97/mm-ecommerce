@@ -273,10 +273,48 @@ def _retry_at(
 
 
 async def cancel(db: AsyncSession, order: Order) -> OrderDelivery | None:
-    """Call off whichever courier is holding this order."""
+    """
+    Call off whichever courier is holding this order.
+
+    **Never calls off a run.** A batched dispatch books one Lalamove order for
+    up to fifteen stops and writes that single id onto every delivery in it, so
+    `courier_order_id` on a batched order names a van carrying other people's
+    cakes. Taking that id to `DELETE /v3/orders/{id}` would cancel every drop on
+    it — four other customers' deliveries called off to stop one, silently,
+    with each of those orders still reading `packed` and nothing coming.
+
+    Such an order simply leaves the run instead. The van keeps its stop and
+    arrives to find nothing there, which costs a wasted drop; the alternative
+    costs four deliveries. `cancel_assignment` is what takes it off the batch,
+    and the caller has already run it.
+    """
     delivery = await lalamove_service.get_delivery(db, order.id)
     if delivery is None:
         return None
+
+    # Imported here rather than at module scope: `batching_service` imports this
+    # module at load time, and a top-level import would close the cycle.
+    from app.services import batching_service
+
+    run = await batching_service.shared_run_booking(db, delivery)
+    if run is not None:
+        logger.info(
+            "Order %s was not cancelled with the courier — its booking %s is a "
+            "shared run of %s stops. It has left the run instead.",
+            order.order_number,
+            delivery.courier_order_id,
+            run.stop_count,
+        )
+        # Detached from the booking on our side so nothing later mistakes the
+        # run's id for this order's own and tries again.
+        delivery.courier_previous_status = delivery.courier_status
+        delivery.courier_order_id = None
+        delivery.courier_status = None
+        delivery.share_link = None
+        delivery.stop_id = None
+        delivery.stop_sequence = None
+        return delivery
+
     if delivery.provider == NOON_SEND:
         return await noon_send_service.cancel_delivery(db, order)
     return await lalamove_service.cancel_delivery(db, order)
