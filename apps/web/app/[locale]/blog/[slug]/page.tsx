@@ -31,21 +31,50 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscake
  * `dynamicParams` stays at its default of true, so a post published after the
  * build still renders; it just does not start warm.
  */
+/**
+ * The most posts `/blog/public` will hand over at once.
+ *
+ * Its ceiling, not a preference — the endpoint declares `per_page` as
+ * `le=50`. This asked for 200, which is not a large page, it is a 422: the
+ * fetch failed, `!res.ok` returned no params at all, and **nothing on this
+ * route was prerendered**. The ISR the docstring above describes has therefore
+ * never happened; every post has been rendering cold on first request since the
+ * day it shipped, and the only trace was four `GET /blog/public 422`s a day in
+ * the API log.
+ *
+ * Paged rather than raised, and paged the same way `sitemap.ts` already pages
+ * this endpoint, so a shop that one day writes a fifty-first post prerenders it
+ * instead of quietly dropping it.
+ */
+const BLOG_PAGE_SIZE = 50;
+
 export async function generateStaticParams() {
   const locales = (process.env.NEXT_PUBLIC_SUPPORTED_LOCALES ?? 'en,ar').split(',');
+  const slugs: string[] = [];
+
   try {
-    const res = await fetch(`${RSC_API_BASE}/blog/public?per_page=200`, {
-      next: { revalidate: BLOG_TTL },
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!res.ok) return [];
-    const data = (await res.json()) as { items?: { slug: string }[] };
-    return (data.items ?? []).flatMap((post) =>
-      locales.map((locale) => ({ locale, slug: post.slug })),
-    );
+    let page = 1;
+    for (;;) {
+      const res = await fetch(
+        `${RSC_API_BASE}/blog/public?per_page=${BLOG_PAGE_SIZE}&page=${page}`,
+        { next: { revalidate: BLOG_TTL }, signal: AbortSignal.timeout(15000) },
+      );
+      if (!res.ok) break;
+
+      const data = (await res.json()) as { items?: { slug: string }[]; pages?: number };
+      slugs.push(...(data.items ?? []).map((post) => post.slug));
+
+      if (!data.pages || page >= data.pages) break;
+      page++;
+    }
   } catch {
-    return [];
+    // Whatever was collected before the failure still prerenders. The old code
+    // answered `[]` on any error, which turned one slow request into a build
+    // that warms nothing; `dynamicParams` stays true, so anything missed here
+    // still renders on demand.
   }
+
+  return slugs.flatMap((slug) => locales.map((locale) => ({ locale, slug })));
 }
 
 async function fetchPost(slug: string, locale: string): Promise<BlogPost | null> {
