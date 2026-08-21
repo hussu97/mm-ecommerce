@@ -66,6 +66,7 @@ __all__ = [
     "delete",
     "get_all",
     "get_by_slug",
+    "product_slugs",
     "update",
 ]
 
@@ -217,6 +218,25 @@ async def create(db: AsyncSession, data: CategoryCreate) -> CategoryResponse:
     response = CategoryResponse.model_validate(cat)
     response.product_count = 0
     return response
+
+
+async def product_slugs(db: AsyncSession, slug: str) -> list[str]:
+    """
+    Every live product slug under a category.
+
+    Exists for the search-engine ping after a rename: the listing page is one
+    URL and the products beneath it are the other 36, and an engine told only
+    about the listing re-crawls the products whenever it gets round to them.
+
+    Active only — a hidden product's URL is a 404, and asking a crawler to come
+    and look at one is asking to be marked down for it.
+    """
+    result = await db.execute(
+        select(Product.slug)
+        .join(Category, Category.id == Product.category_id)
+        .where(Category.slug == slug, Product.is_active.is_(True))
+    )
+    return list(result.scalars().all())
 
 
 async def update(db: AsyncSession, slug: str, data: CategoryUpdate) -> CategoryResponse:

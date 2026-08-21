@@ -10,7 +10,7 @@ from app.core.permissions import require
 from app.core.exceptions import ForbiddenError
 from app.models.user import User
 from app.schemas.category import CategoryCreate, CategoryResponse, CategoryUpdate
-from app.services import audit_service, category_service
+from app.services import audit_service, category_service, indexnow_service
 
 router = APIRouter()
 
@@ -142,6 +142,21 @@ async def update_category(
     """Update a category (admin only)."""
     result = await category_service.update(db, slug, data)
     await _invalidate()
+    # A rename moves the listing page and every product URL beneath it. The old
+    # addresses are handled by the redirect `record_rename` wrote; this is the
+    # other half — telling the engines the new ones exist, rather than waiting
+    # for a crawler to follow a 308 to find out.
+    if data.slug and data.slug != slug:
+        indexnow_service.submit_in_background(
+            indexnow_service.category_urls(result.slug)
+            + [
+                url
+                for product_slug in await category_service.product_slugs(
+                    db, result.slug
+                )
+                for url in indexnow_service.product_urls(result.slug, product_slug)
+            ]
+        )
     await audit_service.log_action(
         db,
         action="UPDATE",

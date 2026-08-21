@@ -37,6 +37,7 @@ from app.services import (
     audit_service,
     availability_service,
     catalogue_cache,
+    indexnow_service,
     product_service,
 )
 
@@ -250,6 +251,22 @@ async def get_product(
     return await product_service.get_by_slug(db, slug, branch_id=branch)
 
 
+def _announce(product: ProductResponse) -> None:
+    """
+    Tell Bing and friends this product page changed.
+
+    Beside `_invalidate_catalogue_caches` because it is the same kind of thing —
+    an external copy of this page that is now out of date — and it fails the same
+    way, which is silently and without troubling the admin who clicked save. A
+    product with no category has no public URL yet, so there is nothing to
+    announce.
+    """
+    if product.category and product.category.slug:
+        indexnow_service.submit_in_background(
+            indexnow_service.product_urls(product.category.slug, product.slug)
+        )
+
+
 @router.post("", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
 async def create_product(
     request: Request,
@@ -260,6 +277,7 @@ async def create_product(
     """Create a new product (admin only)."""
     result = await product_service.create(db, data)
     await _invalidate_catalogue_caches()
+    _announce(result)
     await audit_service.log_action(
         db,
         action="CREATE",
@@ -284,6 +302,7 @@ async def update_product(
     """Update a product (admin only)."""
     result = await product_service.update(db, slug, data)
     await _invalidate_catalogue_caches()
+    _announce(result)
     await audit_service.log_action(
         db,
         action="UPDATE",
