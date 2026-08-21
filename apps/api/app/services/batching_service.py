@@ -375,9 +375,17 @@ async def reserve(
         # A third-party zone. Somebody else's van, on somebody else's schedule.
         return None
 
-    if delivery.provider != FulfilmentProviderEnum.LALAMOVE.value:
+    # Who will *actually* carry it, which is not always what the zone says: a
+    # Slider zone falls back to Lalamove for every customer outside the pilot,
+    # and those orders must keep riding the run they have always ridden.
+    # Asking `delivery.provider` here instead would take every Dubai and Ajman
+    # order off its batch the day the map named Slider, and send each one alone
+    # at roughly three times the cost with nothing on screen to say why.
+    carrier, _ = courier_service.carrier_for(order, delivery)
+    if carrier != FulfilmentProviderEnum.LALAMOVE.value:
         # noon Send books one order at a time against a different endpoint with
-        # a cap of three drops. It is not a run and cannot be shared.
+        # a cap of three drops, and Slider has no multi-stop product at all.
+        # Neither is a run and neither can be shared.
         return None
 
     if not lalamove_service.is_enabled():

@@ -1012,3 +1012,57 @@ still guarding anything. A refusal and a mitigation for the same hazard means on
 of them is redundant, and it is usually the refusal — which is also the one the
 user feels. Where a real consequence remains, say it (the van will still call for
 a parcel that has gone) and let the person decide.
+
+---
+
+## A courier gate that only the dispatcher knows about is not a gate
+
+*Slider integration, August 2026.*
+
+The plan said: put the "who actually carries this" swap in
+`courier_service._dispatch_once`, mirroring the noon Send → Lalamove fallback
+that already lives there. That is where a reader looks for it, and it is the
+right place — it is just not the *only* place that asks the question.
+
+`batching_service.reserve` runs at **order confirmation**, hours before anything
+is dispatched, and it decides whether the order joins a shared run by testing
+`delivery.provider != "lalamove"`. A zone that starts saying `slider` therefore
+takes every order in it off the batch run immediately, whoever ends up carrying
+it — silently, at roughly three times the courier cost, with the Runs tab simply
+showing fewer stops.
+
+**Rule:** when a provider becomes something other than what the map says, find
+every read of `delivery.provider` and ask which of them is deciding something.
+Give the swap one function — `courier_service.carrier_for(order, delivery)` —
+and make each of them call it. A gate that two call sites compute differently is
+two gates.
+
+**Rule:** a rollout described as "a no-op for everybody but one account" has to
+be checked against the things that are *not* the routing. Three of them moved
+here and none is a courier call:
+
+* the **batch run** the zone rides (above),
+* the **delivery promise**, which `delivery_promise.resolve` reads off the
+  zone's declared courier and its group — so detaching a zone from its group, or
+  giving the new courier a shorter `unbatched_promise_minutes` than the courier
+  that will actually carry it, changes what every customer is told,
+* the **speed label** in `delivery.py:_speed_of`.
+
+The promise one is the nastiest: under-promising costs nothing and
+over-promising produces late orders, so the new courier's row carries the
+*fallback's* figure until the gate comes off, not its own.
+
+**Rule:** pin a "this changes nothing" claim with a test that reads the
+migrations, not with a comment. `test_slider_rollout_is_a_no_op.py` asserts the
+group survived and the promise did not get shorter; both would otherwise be
+invisible until a customer complained.
+
+## Verify a map re-split by sweeping it, not by listing landmarks
+
+Every band inherits its parent's fee by convention, and a convention is not a
+guarantee. `scripts/compare_delivery_maps.py` resolves both maps over a 98,000
+point grid and prints every fee that moved, every courier that changed and every
+point the new map does not claim — the last being the fatal one, since `088`
+removed the national default fee and an unmatched pin is now a hard checkout
+failure. Named landmarks check the places somebody thought of; the sweep checks
+the places nobody did, which is where a sliver hides.

@@ -493,6 +493,7 @@ async def test_the_outlet_code_comes_from_the_branch_and_nowhere_else(
         name="Melting Moments Cakes",
         reference="K001",
         address="Al Majaz 3, Sharjah",
+        city="Sharjah",
         latitude=Decimal("25.3304139"),
         longitude=Decimal("55.3736131"),
         phone="+971501234567",
@@ -511,6 +512,10 @@ async def test_the_outlet_code_comes_from_the_branch_and_nowhere_else(
     assert pickup.reference == "K001"
     # The driver's number is the branch's, with nothing able to override it.
     assert pickup.phone == "+971501234567"
+    # And the emirate, which Slider's vehicle rule turns on — a bike may not
+    # cross a boundary, so "which emirate is the kitchen in" has to travel with
+    # the pickup rather than be re-derived from the address line.
+    assert pickup.emirate == "Sharjah"
 
 
 @pytest.mark.asyncio

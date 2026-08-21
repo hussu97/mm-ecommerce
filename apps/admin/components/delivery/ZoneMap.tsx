@@ -34,6 +34,7 @@ import { formatCurrency } from '@/lib/utils';
 const PROVIDER_STYLE: Record<string, { fill: string; stroke: string; label: string }> = {
   noon_send: { fill: '#16a34a', stroke: '#15803d', label: 'noon Send' },
   lalamove: { fill: '#2563eb', stroke: '#1d4ed8', label: 'Lalamove' },
+  slider: { fill: '#f59e0b', stroke: '#d97706', label: 'Slider' },
   third_party: { fill: '#94a3b8', stroke: '#64748b', label: 'Third party' },
 };
 

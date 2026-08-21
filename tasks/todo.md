@@ -1,113 +1,57 @@
-# Readable category URLs, and a redirects table that keeps the old ones alive
+# Slider integration — done
 
-## Goal
+Plan: `tasks/slider-integration.md`. Branch `claude/slider-integration-4b4113`,
+worktree `.claude/worktrees/sms-verification-branding-bab18e`, off `main@4ee22ad`.
 
-`/en/cat-brownies` is what the Foodics importer left behind — production derives
-slugs from the POS `reference`, so `cat_brownies` became `cat-brownies`. Nobody
-searches for it, no answer engine repeats it, and `/en/brownies` was not a page
-on this site. Renaming breaks every indexed URL, so the rename ships with a
-redirect table an operator can edit without a deploy.
+## Phase A — map re-split ("Cost-banded map v2")
+- [x] New `BANDS` (22 zones from 15) + `REMAINDER_NAMES` in `scripts/build_delivery_zones.py`
+- [x] Regenerated `uae_delivery_zones.geojson.json`, froze `.v4.`
+- [x] `125_cost_banded_map_v2` — one transaction, fees carried through, batch groups restated
+- [x] Fixed `create_version`: copies `batch_group_id`; the dead window loop is gone
+      (`_windows_of` has taken a *group* id since 088 and was returning `[]`)
+- [x] `LIVE_MIGRATION` + expectations in `tests/unit/test_delivery_zone_map.py`
+- [x] `scripts/compare_delivery_maps.py` — 37 landmarks + a 98k-point grid sweep
 
-Two other defects came with it, because the rename could not be done correctly
-without the first and the second lives in the same file.
+## Phase B — Slider as a third courier
+- [x] `providers/slider_provider.py` — User-Agent, non-JSON is an error, 4xx is not retried
+- [x] `slider_service.py` — one pure `vehicle_for`, called by estimate and dispatch
+- [x] `SLIDER` provider, `SliderStatusEnum`, status sets, rank
+- [x] `courier_service.carrier_for`, `driver_assignment.Driver.from_slider`
+- [x] `fulfilment_service._BOOKED_BY_US`; `126_slider_courier`
+- [x] Admin TS + `packages/types` regenerated from OpenAPI
 
-## The three defects
+## Phase C — gated rollout
+- [x] `trial_customer.py` recovered from `c47aab7^`, on `SLIDER_TRIAL_EMAILS`
+- [x] Swap in `_dispatch_once`, and **in `batching_service.reserve`** — see below
+- [x] Free-delivery waiver in `calculate_fee`, `quote_priced`, `compute_order_totals`
+- [x] `test_trial_customer_free_delivery.py` recovered; the agreement test kept
 
-**1. Unknown URLs answered 200, and in-page redirects never happened.**
-Not PPR — that is not enabled. `loading.tsx`. The implicit Suspense boundary made
-Next commit a 200 and stream the shell before the page component ran, so
-`notFound()` and `permanentRedirect()` arrived after the status was already sent.
-Measured on production, and the segment without a `loading.tsx` is the control:
+## Phase D — webhooks + config
+- [x] `POST /webhooks/slider` (token enforced) and `/webhooks/slider/staging` (inert)
+- [x] Eleven `SLIDER_*` settings in all five locations
 
-| URL | `loading.tsx` | before |
-|---|---|---|
-| `/en/blog/zzz-nope` | no | 404 ✓ |
-| `/en/zzz-nope` | yes | 200 ✗ |
-| `/en/cat-brownies/mix-cookies-box-of-9` | yes | 200, rendered the product ✗ |
+## Three departures from the plan, each to protect its own "no-op" guarantee
 
-**2. The bare domain served Arabic to crawlers.** `FALLBACK_LOCALE` answered both
-"we cannot serve what you asked for" and "you did not ask", and the second is how
-Googlebot crawls. Every page declares `x-default` as its English URL, so the
-markup and the redirect disagreed — which is why the English brand result on
-Google carried an Arabic description.
+1. **`batching_service.reserve` asks `carrier_for` too.** The plan put the swap
+   only in `_dispatch_once`, but `reserve` runs at confirmation and keys off the
+   literal string `lalamove`. Left alone, every Dubai and Ajman order would have
+   skipped its batch window the day the map named Slider and gone out alone at
+   roughly three times the courier cost.
+2. **The Slider zones keep their `batch_group_id`.** A grouped zone is promised
+   its group's next window close; an ungrouped one is promised its courier's own
+   answer. Detaching them would have changed what every customer in those zones
+   is told while their orders carried on riding the run.
+3. **`couriers.unbatched_promise_minutes` is 90, not the plan's 60.** The promise
+   is read off the zone's courier while the gate hands all but one account back
+   to noon Send, who promise 90. Sixty would have promised `Sharjah Core` an hour
+   and delivered in an hour and a half. One admin edit when the gate comes off.
 
-**3. `cat-` slugs.** As above.
+Pinned by `tests/unit/test_slider_rollout_is_a_no_op.py`.
 
-## Plan
+## One fee moves, deliberately
 
-- [x] Split the boundary below the existence check so `notFound()` can set a
-      status, without losing the category skeleton
-- [x] `url_redirects` — locale-agnostic paths, `is_prefix` for the 36 product
-      URLs nested under the eight categories, 301/308 only
-- [x] Resolve in `proxy.ts`, before the response commits. Module-scope map on a
-      short TTL, fails open
-- [x] Collapse chains and refuse loops on write, in `redirect_service`
-- [x] Renaming a category in the console writes its own rule
-- [x] Reserved-slug guard, now that `/en/brownies` and `/en/about` are the same shape
-- [x] `hit_count` / `last_hit_at`, reported from `waitUntil` after the redirect
-- [x] Console screen under Online store
-- [x] Split "no Accept-Language" from "a language we do not serve"
-
-## Review
-
-**Migrations, on a throwaway Postgres 17** — the API suite mocks the DB, so a
-broken migration passes every test:
-
-- `001` → `120` clean.
-- All eight slugs renamed, `reference` untouched (`brownies` still `cat_brownies`),
-  so the Foodics upsert key and the register survive.
-- Nine redirect rows seeded; the eight category ones are prefix rules.
-- CMS hrefs followed the rename, including the nested one:
-  `/ar/cat-mixboxes/mix-cookies-box-of-9` → `/ar/mix-boxes/mix-cookies-box-of-9`.
-  `/all-products` untouched.
-- Re-running `120` after `stamp 119` changed nothing (identical md5).
-- Guard holds: a category hand-renamed to `fudgy-brownies` first was left exactly
-  as the operator set it.
-
-**Tests.** 1831 API tests pass, including 20 new ones — chain collapse both ways,
-self-redirect refused, target cleared, rename-and-rename-back proven loop-free,
-`record_hit` never raising. `test_the_reserved_list_matches_the_storefront_routes`
-reads `app/[locale]/` and fails if a new page is added without a line in
-`RESERVED_SLUGS`, which is the drift this change creates. Web 465, admin 51,
-`tsc` clean on both, eslint 0 errors, `@mm/types` regenerated with all four
-redirect endpoints.
-
-**Status codes, end to end on a dev server** — the assertion is the code, because
-that is what the old build could not produce:
-
-```
-/en/zzz-nope                            404   (was 200)
-/en/brownies/zzz-nope                   404   (was 200)
-/en/brownies/mix-cookies-box-of-9       308 → /en/mix-boxes/...   (was 200)
-/en/cat-brownies                        308 → /en/brownies
-/ar/cat-brownies                        308 → /ar/brownies
-/cat-brownies                           308 → /en/brownies        (one hop)
-/en/cat-mixboxes/mix-cookies-box-of-9   308 → /en/mix-boxes/mix-cookies-box-of-9
-/en/cat-brownies?sort=price_asc         308 → /en/brownies?sort=price_asc
-/en/about-me                            308 → /en/about           (no next.config rule)
-/ with no Accept-Language               307 → /en                 (was /ar)
-/ with Accept-Language: fr              307 → /ar                 (unchanged)
-```
-
-`hit_count` incremented for each — the `waitUntil` report reaches the API. The
-category page still paints its skeleton and renders correctly under the new slug.
-
-**Not clicked through:** the console rename → auto-redirect flow was verified at
-the service level rather than through the admin UI, because the throwaway
-database has no admin user. The HTTP wiring between them is one call in
-`category_service.update`.
-
-## Trade-off taken
-
-The product route loses its loading skeleton. Everything on that page needs the
-product, so there was nothing to stream behind a boundary — the skeleton was
-buying a paint, not a fetch, and it cost every 404 and every cross-category
-redirect on the route. The category route keeps its skeleton via an in-page
-`<Suspense>` around the grid, which genuinely can stream.
-
-## Still open
-
-- Third-party citations. Melting Moments is in none of the Sharjah/Dubai bakery
-  listicles that answer engines synthesise from, and the Google Business Profile
-  is unclaimed. Neither is a code change.
-- Zomato still shows the shop as "Temporarily closed".
+Ras al-Khaimah beyond 78 km — Al Rams and the northern tip — was leftover at
+80.00/200.00 third-party and is now `Ras al-Khaimah North` at 50.00/100.00 on
+Lalamove. That is what the plan's routing table asks for (all eight measured RAK
+areas go by Lalamove car) and it is a fee going **down**. Everything else on the
+map is identical: verified over 98k grid points, nothing lost coverage.

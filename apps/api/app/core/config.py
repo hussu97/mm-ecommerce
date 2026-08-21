@@ -292,6 +292,80 @@ class Settings(BaseSettings):
     NOON_SEND_WEBHOOK_API_KEY: str = ""
     NOON_SEND_TIMEOUT_SECONDS: float = 8.0
 
+    # ── Slider (courier) ──────────────────────────────────────────────────────
+    #: The third courier, and the same contract as the other two: an empty key
+    #: means a `slider` zone prices and sells exactly as it does today and
+    #: dispatches through somebody else, so a missing credential is a fallback
+    #: rather than an outage.
+    #:
+    #: Slider is here for dispatch accuracy rather than for price. Across the
+    #: Ajman, Dubai and Umm al-Quwain zones its car costs about AED 0.94 an
+    #: order more than Lalamove; Ajman alone is cheaper on every measured area,
+    #: because Lalamove's 17 AED base is high and Ajman is close.
+    SLIDER_API_KEY: str = ""
+    #: The account the deliveries are booked against, sent as `X-Account-Id`.
+    SLIDER_ACCOUNT_ID: str = ""
+    #: `staging` or `production` — or an absolute `https://` origin, which wins
+    #: over both. The override exists because their hostnames are the one part
+    #: of this integration that cannot be checked from inside the repository,
+    #: and a wrong one fails as DNS on the first real booking. Fixing that
+    #: should not need a deploy.
+    SLIDER_ENV: str = "staging"
+    SLIDER_TIMEOUT_SECONDS: float = 8.0
+    #: The vehicle rule, and the whole of it: **a bike may not cross an emirate
+    #: boundary**, so from the Sharjah kitchen the bike tier is usable inside
+    #: Sharjah and only there. Both conditions, not just distance — same emirate
+    #: as the pickup *and* no more than this many **road** kilometres.
+    #:
+    #: ⚠️ This contradicts what Slider's API says. `/deliveries/fare` returned
+    #: `bike: is_available: true` for Sharjah→Ajman at 12 km and for nine
+    #: Sharjah→Dubai routes out to 34.4 km. Either they do allow cross-emirate
+    #: bikes, or their API is offering a vehicle they cannot dispatch. Until
+    #: somebody at Slider answers that in writing, we assume the stricter
+    #: reading — it is worth roughly AED 5 an order across Ajman and Dubai, and
+    #: the wrong guess in this direction costs money while the wrong guess in
+    #: the other strands a cake.
+    #:
+    #: Road kilometres. Never compare this against a straight-line figure: the
+    #: fare survey measured the real ratio at 1.44 mean, so 35 road km is about
+    #: 24 km crow-flies.
+    SLIDER_BIKE_MAX_KM: float = 35.0
+    #: Straight-line to road-distance multiplier, measured across the 97 areas
+    #: of the Slider fare survey: 1.44 mean, 1.24 median. Used only when Slider
+    #: has not told us a distance themselves — their fare response carries the
+    #: road distance they bill against, and that is always preferred.
+    SLIDER_DETOUR_FACTOR: float = 1.44
+    #: The static token Slider presents on the production webhook, and the
+    #: header they present it in. They do not sign requests, so this pair is the
+    #: entire check — which is why it is enforced here rather than merely
+    #: recorded. (Contrast `NOON_SEND_ENFORCE_WEBHOOK_KEY`, which is false in
+    #: production and leaves that endpoint effectively open.)
+    #:
+    #: Both halves matter. A token with no header name may not be sent at all,
+    #: or may arrive in a header nobody is reading.
+    SLIDER_WEBHOOK_TOKEN: str = ""
+    SLIDER_WEBHOOK_HEADER: str = "X-Slider-Token"
+    #: The same pair for the **staging** webhook, which their dashboard
+    #: configures separately and which we point at production on purpose: real
+    #: Slider traffic then gets acknowledged and journalled where it can be
+    #: watched. That endpoint writes nothing else — see
+    #: `POST /api/v1/webhooks/slider/staging`.
+    SLIDER_STAGING_WEBHOOK_TOKEN: str = ""
+    SLIDER_STAGING_WEBHOOK_HEADER: str = "X-Slider-Token"
+    #: The accounts running the Slider pilot on production. Comma-separated, and
+    #: matched against a **signed-in** customer's own address — a guest checkout
+    #: never qualifies, because an email is a string anybody may type.
+    #:
+    #: Two things follow from being on this list and they are two halves of one
+    #: decision: Slider carries the order, and delivery is free. See
+    #: `app/services/trial_customer.py`. Emptying it ends the pilot — Slider
+    #: opens to its zones and nobody gets free delivery, both at once.
+    #:
+    #: This list is the *only* thing gating Slider. It applies in every
+    #: environment, deliberately: an environment-shaped gate opens a trial to
+    #: everybody the moment the environment changes.
+    SLIDER_TRIAL_EMAILS: str = ""
+
     # ── Apple Push (the POS registers) ────────────────────────────────────────
     #: The APNs auth key, as `.p8` PEM. Team-scoped and account-wide: one key
     #: serves every app in the Apple team and both the sandbox and production

@@ -614,7 +614,7 @@ export interface PaginatedEmailLogs {
 }
 
 /** Who carries an order out of the kitchen. */
-export type FulfilmentProvider = 'lalamove' | 'noon_send' | 'third_party';
+export type FulfilmentProvider = 'lalamove' | 'noon_send' | 'slider' | 'third_party';
 
 /**
  * Where a zone's fee comes from. `static` charges the zone's own published

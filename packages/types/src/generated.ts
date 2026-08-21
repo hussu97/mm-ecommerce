@@ -6569,6 +6569,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/webhooks/slider": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Slider Webhook
+         * @description Slider delivery status pushes: rider assigned, picked up, delivered, returned.
+         *
+         *     Answers 200 to everything, for the same reason both routes above do — a
+         *     retried-then-disabled webhook URL would leave every later order with no
+         *     status at all, which is worse than swallowing one bad event. A push that
+         *     fails the token check is journalled and dropped rather than acted on.
+         */
+        post: operations["slider_webhook_api_v1_webhooks_slider_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/webhooks/slider/staging": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Slider Staging Webhook
+         * @description Slider's **staging** pushes, pointed at production on purpose, and inert.
+         *
+         *     Their dashboard configures a staging and a production webhook separately.
+         *     Pointing the staging one here means real Slider traffic can be watched while
+         *     the integration is still being proved — acknowledged, journalled, and
+         *     nothing else.
+         *
+         *     It writes **nothing**: no `webhook_events` row, no `order_deliveries` update,
+         *     no `apply_webhook`, not even an order lookup. A staging delivery id is
+         *     meaningless against production data, and a staging `delivered` that moved a
+         *     real order would refund a cake that is sitting on a shelf.
+         *
+         *     That is enforced by `test_the_staging_webhook_writes_nothing`, which posts a
+         *     well-formed `delivered` payload naming a real order and asserts the order and
+         *     its delivery row are byte-identical afterwards. A comment saying "staging
+         *     does nothing" would not stop somebody wiring it up later; a test does.
+         *
+         *     Rows land in the admin's Webhook logs as `provider = "slider"`,
+         *     `endpoint = "staging"`. Note `LOG_RETENTION_DAYS` is 7, so this is a window
+         *     on live traffic rather than an archive.
+         *
+         *     `db` is taken so the recorder's own session is opened alongside the request's
+         *     in the ordinary way; nothing here reads or writes through it. The journal
+         *     goes to `webhook_log_service.Recorder`, which runs on a dedicated session
+         *     that survives a rollback — exactly the property wanted for a record of "this
+         *     arrived".
+         */
+        post: operations["slider_staging_webhook_api_v1_webhooks_slider_staging_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/webhooks/stripe": {
         parameters: {
             query?: never;
@@ -28680,6 +28750,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    slider_webhook_api_v1_webhooks_slider_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    slider_staging_webhook_api_v1_webhooks_slider_staging_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

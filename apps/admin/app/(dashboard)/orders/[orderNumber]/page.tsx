@@ -1091,6 +1091,7 @@ function ChangeFulfilmentDialog({
 const PROVIDER_LABEL: Record<string, string> = {
   lalamove: 'Lalamove',
   noon_send: 'noon Send',
+  slider: 'Slider',
   third_party: 'Third party',
 };
 
@@ -1136,6 +1137,10 @@ function DeliveryPanel({
   // noon Send publishes a rate card and no quotation API, so their number is
   // computed here rather than billed. Saying so stops it being read as an
   // invoice line.
+  // noon Send publishes a rate card and no quotation API, so their number is
+  // computed here rather than billed. Slider and Lalamove both quote, so
+  // theirs is not an estimate — a Slider booking whose fare call failed
+  // records no cost at all rather than a guessed one.
   const costIsEstimate = delivery.provider === 'noon_send';
 
   return (
@@ -1153,9 +1158,11 @@ function DeliveryPanel({
           variant={
             delivery.provider === 'noon_send'
               ? 'success'
-              : isCourier
-                ? 'info'
-                : 'neutral'
+              : delivery.provider === 'slider'
+                ? 'warning'
+                : isCourier
+                  ? 'info'
+                  : 'neutral'
           }
         >
           {PROVIDER_LABEL[delivery.provider] ?? delivery.provider}

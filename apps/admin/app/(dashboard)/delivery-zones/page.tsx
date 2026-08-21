@@ -21,17 +21,20 @@ import { DeliveryEstimates } from '@/components/delivery/DeliveryEstimates';
 import { ZoneMap } from '@/components/delivery/ZoneMap';
 import { cn, formatCurrency, formatDate } from '@/lib/utils';
 
-// Named rather than called "Courier API": there are two of them now, they cost
-// different amounts, and only one can be batched — so which is which matters.
+// Named rather than called "Courier API": there are three of them now, they
+// cost different amounts, and only one can be batched — so which is which
+// matters.
 const PROVIDER_LABEL: Record<FulfilmentProvider, string> = {
   lalamove: 'Lalamove',
   noon_send: 'noon Send',
+  slider: 'Slider',
   third_party: 'Third party',
 };
 
 const PROVIDER_OPTIONS = [
   { value: 'lalamove', label: PROVIDER_LABEL.lalamove },
   { value: 'noon_send', label: PROVIDER_LABEL.noon_send },
+  { value: 'slider', label: PROVIDER_LABEL.slider },
   { value: 'third_party', label: PROVIDER_LABEL.third_party },
 ];
 
@@ -48,9 +51,20 @@ const DEFAULT_ALTERNATES: Record<FulfilmentProvider, FulfilmentProvider[]> = {
   lalamove: ['third_party'],
   third_party: ['lalamove'],
   noon_send: ['third_party', 'lalamove'],
+  // Slider is offered Lalamove, which has none of noon Send's limits, and a
+  // third party as the manual escape. Not noon Send by default: five of the six
+  // Slider zones are outside Sharjah, where noon Send cannot go. `Sharjah Core`
+  // is the exception and is seeded with them explicitly, which is exactly what
+  // the pilot gate falls back to there.
+  slider: ['lalamove', 'third_party'],
 };
 
-const ALL_PROVIDERS: FulfilmentProvider[] = ['lalamove', 'noon_send', 'third_party'];
+const ALL_PROVIDERS: FulfilmentProvider[] = [
+  'lalamove',
+  'noon_send',
+  'slider',
+  'third_party',
+];
 
 /** The alternates of a zone nobody is editing, as a sentence rather than controls. */
 function AlternateSummary({ zone }: { zone: { alternate_providers?: FulfilmentProvider[] } }) {
@@ -72,11 +86,11 @@ function AlternateSummary({ zone }: { zone: { alternate_providers?: FulfilmentPr
 /**
  * Which couriers this zone's orders may be moved to.
  *
- * Checkboxes rather than a multi-select: there are three couriers, one of them
+ * Checkboxes rather than a multi-select: there are four couriers, one of them
  * is always disabled, and the whole control is smaller than the dropdown it
  * would otherwise be. The preferred courier is shown greyed rather than hidden,
- * so the list reads as "these three, and this one is already carrying it"
- * instead of silently having two rows in one zone and three in another.
+ * so the list reads as "these four, and this one is already carrying it"
+ * instead of silently having three rows in one zone and four in another.
  */
 function AlternatePicker({
   preferred,
@@ -128,9 +142,10 @@ function AlternatePicker({
   );
 }
 
-const PROVIDER_BADGE: Record<FulfilmentProvider, 'info' | 'success' | 'neutral'> = {
+const PROVIDER_BADGE: Record<FulfilmentProvider, 'info' | 'success' | 'warning' | 'neutral'> = {
   lalamove: 'info',
   noon_send: 'success',
+  slider: 'warning',
   third_party: 'neutral',
 };
 

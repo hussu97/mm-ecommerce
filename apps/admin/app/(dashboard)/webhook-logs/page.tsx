@@ -38,6 +38,7 @@ const PROVIDER_OPTIONS = [
   { value: '', label: 'All Senders' },
   { value: 'noon_send', label: 'noon Send' },
   { value: 'lalamove', label: 'Lalamove' },
+  { value: 'slider', label: 'Slider' },
   { value: 'stripe', label: 'Stripe' },
   { value: 'ziina', label: 'Ziina' },
 ];
@@ -51,6 +52,10 @@ const ENDPOINT_OPTIONS = [
   { value: '', label: 'All Endpoints' },
   { value: 'status', label: 'Status (courier)' },
   { value: 'tracking', label: 'Tracking (courier)' },
+  // Slider's dashboard configures a staging webhook separately, and ours is
+  // pointed at production on purpose: those pushes are acknowledged and
+  // journalled here and change nothing at all.
+  { value: 'staging', label: 'Staging (Slider, inert)' },
   { value: 'payments', label: '/payments/webhooks/…' },
   { value: 'webhooks', label: '/webhooks/…' },
 ];
@@ -65,6 +70,7 @@ const OUTCOME_OPTIONS = [
 const PROVIDER_LABEL: Record<string, string> = {
   noon_send: 'noon Send',
   lalamove: 'Lalamove',
+  slider: 'Slider',
   stripe: 'Stripe',
   ziina: 'Ziina',
 };

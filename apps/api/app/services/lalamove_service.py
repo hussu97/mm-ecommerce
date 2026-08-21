@@ -140,6 +140,12 @@ class PickupPoint:
     longitude: float
     #: Which branch this is, for logging and for a courier that needs to name it.
     reference: str = ""
+    #: The emirate this kitchen stands in, off `branches.city`. Carried because
+    #: one courier's vehicle rule turns on whether the drop is in the *same*
+    #: emirate as the pickup — a bike may not cross a boundary — and deriving
+    #: that from the address line would be guessing at the last comma-separated
+    #: fragment, which is exactly what `branches.city` exists to avoid.
+    emirate: str = ""
     #: What noon Send calls this branch. Empty means it is not registered with
     #: them, so it can be a Lalamove pickup but not a noon Send one. Lalamove
     #: needs no equivalent — it takes coordinates and an address.
@@ -230,6 +236,7 @@ async def resolve_pickup(
         latitude=float(branch.latitude),
         longitude=float(branch.longitude),
         reference=branch.reference,
+        emirate=(branch.city or "").strip(),
         # Off the branch and nowhere else. A second kitchen is a row in the
         # admin — `scripts/register_noon_send_pickup.py` writes the code there.
         noon_send_outlet_code=branch.noon_send_outlet_code or "",

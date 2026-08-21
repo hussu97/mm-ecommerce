@@ -1,10 +1,10 @@
 """
 Which courier carries an order, and what happens when the first choice will not.
 
-Two couriers now book themselves — Lalamove and noon Send — and the code that
-triggers a dispatch (an order being packed, an admin pressing re-dispatch, a
-batch window closing) should not have to know which. Everything provider-shaped
-lives here; the call sites just ask for the order to go out.
+Three couriers now book themselves — Lalamove, noon Send and Slider — and the
+code that triggers a dispatch (an order being packed, an admin pressing
+re-dispatch, a batch window closing) should not have to know which. Everything
+provider-shaped lives here; the call sites just ask for the order to go out.
 
 **noon Send is the preferred courier where a zone names it**, because on a bike
 it is cheaper than Lalamove at every distance it can reach, surge included: AED
@@ -22,6 +22,20 @@ not strand a paid, packed order — so it books Lalamove instead and records why
 The reverse does not apply: a Lalamove zone is never handed to noon Send,
 because noon Send probably cannot reach it.
 
+**Slider is gated to one account while the pilot runs.** A `slider` zone is
+carried by Slider only for a signed-in customer on `SLIDER_TRIAL_EMAILS`. For
+everybody else the zone resolves to whoever carries them today — noon Send in
+Sharjah, Lalamove everywhere else — which is *exactly* today's behaviour, since
+every Slider zone was carved out of one of those two. That is what makes it safe
+to publish the map before the courier is proven: the rollout is a no-op for
+every customer except the trial account.
+
+The list is deliberately not tied to `APP_ENV` or `SLIDER_ENV`. An
+environment-shaped gate opens a trial to everyone the moment the environment
+changes, which is the mistake the noon Send trial was written to avoid.
+Emptying the list is how this trial ends — and that one setting ends both halves
+at once, because it also grants the free delivery in `trial_customer`.
+
 Third-party zones fall through everything here untouched, exactly as before.
 """
 
@@ -38,13 +52,19 @@ from app.models.branch import Branch
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import Order
 from app.models.order_delivery import OrderDelivery
-from app.services import lalamove_service, noon_send_service
+from app.services import (
+    lalamove_service,
+    noon_send_service,
+    slider_service,
+    trial_customer,
+)
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "books_itself",
     "cancel",
+    "carrier_for",
     "dispatch",
     "estimate_for_point",
     "is_enabled",
@@ -53,12 +73,13 @@ __all__ = [
 
 LALAMOVE = FulfilmentProviderEnum.LALAMOVE.value
 NOON_SEND = FulfilmentProviderEnum.NOON_SEND.value
+SLIDER = FulfilmentProviderEnum.SLIDER.value
 THIRD_PARTY = FulfilmentProviderEnum.THIRD_PARTY.value
 
 
 def books_itself(provider: str | None) -> bool:
     """Whether this provider is one we dispatch over an API."""
-    return provider in {LALAMOVE, NOON_SEND}
+    return provider in {LALAMOVE, NOON_SEND, SLIDER}
 
 
 def is_enabled(provider: str | None) -> bool:
@@ -67,6 +88,8 @@ def is_enabled(provider: str | None) -> bool:
         return noon_send_service.is_enabled()
     if provider == LALAMOVE:
         return lalamove_service.is_enabled()
+    if provider == SLIDER:
+        return slider_service.is_enabled()
     return False
 
 
@@ -83,6 +106,62 @@ def may_use_noon_send(order: Order) -> tuple[bool, str | None]:
     if not noon_send_service.is_enabled():
         return False, "noon Send is not configured"
     return True, None
+
+
+def carrier_for(order: Order, delivery: OrderDelivery) -> tuple[str, str | None]:
+    """
+    Who will actually carry this order, and why it is not the zone's choice.
+
+    The zone decides for two of the three couriers and nothing here changes
+    that. For a `slider` zone it decides only for the trial account: everybody
+    else is handed to whoever carried that ground before the zone existed —
+    noon Send inside Sharjah, Lalamove outside it — which is what makes
+    publishing the new map a no-op for every customer but one.
+
+    **One function, and two callers that must not disagree.** `_dispatch_once`
+    asks it to decide who to book, and `batching_service.reserve` asks it, at
+    confirmation, to decide whether the order joins a shared run. If only the
+    dispatcher knew about the swap, then every Dubai and Ajman order would skip
+    its batch window — `reserve` keys off the literal string `lalamove` — and go
+    out alone at roughly three times the courier cost, with nothing on any
+    screen to say why. The gate is meant to change who carries the trial
+    account's cake, not how the rest of Dubai is routed.
+
+    The fallback is chosen from the **zone**, not from the address, and by name.
+    `Sharjah Core` was carved out of `Sharjah Central`, which is noon Send's; the
+    Ajman, Dubai and Umm al-Quwain Slider zones were carved out of Lalamove's.
+    The zone name is therefore a statement about who used to carry this ground,
+    which is exactly the question being asked — where the address's `city` is a
+    string a customer typed and can say "Dubai" for a pin in Sharjah. The
+    address is consulted only for a delivery row too old to carry a zone name.
+
+    Returns the provider to book and, when it is not the zone's, the reason.
+    """
+    provider = delivery.provider
+    if provider != SLIDER:
+        return provider, None
+
+    if not slider_service.is_enabled():
+        # The same contract the other two have: an absent credential is a
+        # fallback, never an outage.
+        reason = "Slider is not configured"
+    elif order.user_id is None:
+        reason = "Slider is limited to signed-in pilot accounts"
+    elif not trial_customer.is_trial_customer(order.user_id, order.email):
+        reason = "Slider is limited to the pilot account"
+    else:
+        return SLIDER, None
+
+    return (NOON_SEND if _was_noon_send_ground(order, delivery) else LALAMOVE), reason
+
+
+def _was_noon_send_ground(order: Order, delivery: OrderDelivery) -> bool:
+    """Whether this drop is in Sharjah, and so was noon Send's before Slider."""
+    zone = (delivery.zone_name or "").strip().lower()
+    if zone:
+        return zone.startswith("sharjah")
+    city = str((order.shipping_address_snapshot or {}).get("city") or "")
+    return city.strip().lower().startswith("sharjah")
 
 
 # ── dispatch ──────────────────────────────────────────────────────────────────
@@ -114,9 +193,41 @@ async def _dispatch_once(
     db: AsyncSession, order: Order, delivery: OrderDelivery
 ) -> OrderDelivery | None:
     """One attempt, on whichever courier ends up carrying it."""
-    # The zone decides, and nothing else does. A `lalamove` zone is never
-    # offered to noon Send — their fleet probably cannot reach it.
-    if delivery.provider != NOON_SEND:
+    carrier, gated = carrier_for(order, delivery)
+
+    if carrier == SLIDER:
+        allowed, refusal = await slider_service.may_serve(db, order)
+        if allowed:
+            result = await slider_service.dispatch_order(db, order)
+            if result is not None and result.courier_order_id:
+                return result
+            refusal = result.last_error if result is not None else "Slider failed"
+        # Slider publishes no serviceability endpoint, so an address outside
+        # their area is only ever discovered here. Falling through rather than
+        # reporting it is what stops that discovery stranding a paid order.
+        carrier = NOON_SEND if _was_noon_send_ground(order, delivery) else LALAMOVE
+        gated = refusal
+
+    if gated is not None:
+        # A swap the zone did not choose. The reason goes to the log and **not**
+        # to `last_error`: a booking that succeeded is not a problem, and
+        # `last_error` drives `needs_attention`, so filling it here would put
+        # every gated order on the admin's needs-a-human list. What makes the
+        # swap visible afterwards is `original_provider` on the row.
+        logger.info(
+            "Order %s is in a %s zone and is going by %s: %s",
+            order.order_number,
+            delivery.provider,
+            carrier,
+            gated,
+        )
+        if not delivery.original_provider:
+            delivery.original_provider = delivery.provider
+        delivery.provider = carrier
+
+    # The zone decides for the rest, and nothing else does. A `lalamove` zone is
+    # never offered to noon Send — their fleet probably cannot reach it.
+    if carrier != NOON_SEND:
         return await lalamove_service.dispatch_order(db, order)
 
     allowed, reason = may_use_noon_send(order)
@@ -317,6 +428,8 @@ async def cancel(db: AsyncSession, order: Order) -> OrderDelivery | None:
 
     if delivery.provider == NOON_SEND:
         return await noon_send_service.cancel_delivery(db, order)
+    if delivery.provider == SLIDER:
+        return await slider_service.cancel_delivery(db, order)
     return await lalamove_service.cancel_delivery(db, order)
 
 
@@ -334,10 +447,11 @@ async def estimate_for_point(
     Never raises and never blocks a sale: this runs inside the pricing call the
     checkout makes on every pin move.
 
-    A noon Send zone is estimated on noon Send's rate card even when the
-    allow-list will later send the order to Lalamove. The estimate describes the
-    zone's economics, which is what the number is for; the per-order swap is
-    recorded on the delivery row where it belongs.
+    A zone is estimated on its **own** courier, even when the per-order gate
+    will later hand the delivery to somebody else — a Slider zone is quoted
+    against Slider whether or not the customer is on the pilot list. The
+    estimate describes the zone's economics, which is what the number is for;
+    the per-order swap is recorded on the delivery row where it belongs.
 
     Everything else — including third-party zones and pins outside every zone —
     is still quoted against Lalamove, unchanged. Those quotes are not used to
@@ -347,6 +461,10 @@ async def estimate_for_point(
     """
     if provider == NOON_SEND and noon_send_service.is_enabled():
         return await noon_send_service.estimate_for_point(
+            db, latitude, longitude, address, branch_id
+        )
+    if provider == SLIDER and slider_service.is_enabled():
+        return await slider_service.estimate_for_point(
             db, latitude, longitude, address, branch_id
         )
     return await lalamove_service.estimate_for_point(

@@ -41,6 +41,13 @@ class FulfilmentProviderEnum(str, enum.Enum):
     #: to Lalamove whenever it will not take a job — including, deliberately, for
     #: every customer outside the trial while it runs against noon's staging.
     NOON_SEND = "noon_send"
+    #: Booked over Slider's API. A third courier, brought in for dispatch
+    #: accuracy rather than for price — across Ajman, Dubai and Umm al-Quwain
+    #: its car costs about AED 0.94 an order more than Lalamove, and Ajman
+    #: alone is cheaper on every area. It books one delivery at a time and
+    #: cannot be batched, so a Slider zone never joins a shared run. Like the
+    #: other two, an unconfigured key is a fallback and not an outage.
+    SLIDER = "slider"
     #: Whoever we already use. No integration: the same manual flow as today.
     THIRD_PARTY = "third_party"
 
