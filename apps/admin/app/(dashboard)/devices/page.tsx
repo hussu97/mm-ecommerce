@@ -84,17 +84,6 @@ function DevicesTab({
             ),
         },
         {
-          header: 'Last seen',
-          render: (d) =>
-            d.last_seen_at ? (
-              <span className="text-xs text-gray-500">
-                {new Date(d.last_seen_at).toLocaleString()}
-              </span>
-            ) : (
-              '—'
-            ),
-        },
-        {
           header: 'Online orders',
           render: (d) =>
             d.auto_accept_online_orders ? (
@@ -108,35 +97,50 @@ function DevicesTab({
           // the table already has seven, and `DataTable` turns each column into
           // a labelled line on a phone.
           //
-          // The age underneath is the part that matters. This used to be the
-          // version captured at pairing and never updated, so it read as
-          // current and could be thirty builds out of date. It is now refreshed
-          // on every request the terminal makes — which means it is exactly as
-          // fresh as the last time the terminal spoke, and saying so is the
-          // difference between a number you can act on and one you cannot.
+          // The age underneath is the part that matters, and it is why the
+          // separate "Last seen" column is gone: that showed the same instant
+          // as an absolute timestamp — "8/21/2026, 2:51:13 PM" — which makes
+          // the reader do the subtraction to answer the only question they had.
+          // One fact, in the place it qualifies.
+          //
+          // Because the version used to be captured at pairing and never
+          // updated, it read as current while being potentially thirty builds
+          // stale. It is now refreshed on every request the terminal makes,
+          // which means it is exactly as fresh as the last time that terminal
+          // spoke — and saying so is the difference between a number somebody
+          // can act on and one they cannot.
           header: 'App',
           render: (d) => {
-            if (!d.app_version && !d.build_number) {
-              return (
-                <span className="text-xs text-gray-400">
-                  {d.status === 'used' ? 'not reported yet' : '—'}
-                </span>
-              );
-            }
+            const version = d.app_version || d.build_number ? (
+              <div className="text-xs text-gray-700">
+                {d.app_version ?? '—'}
+                {d.build_number && <span className="text-gray-500"> ({d.build_number})</span>}
+                {/* The label is mapped, not CSS-transformed: `uppercase` gives
+                    "IOS" and `capitalize` gives it too, because both only touch
+                    the first letter or all of them. */}
+                {d.platform && (
+                  <span className="ml-1.5 text-gray-400">
+                    {PLATFORM_LABELS[d.platform] ?? d.platform}
+                  </span>
+                )}
+              </div>
+            ) : (
+              // Paired but silent: every terminal looks like this until the
+              // build that sends the headers reaches it. Distinguished from a
+              // terminal that has never paired, which has nothing to report.
+              <div className="text-xs text-gray-400">
+                {d.status === 'used' ? 'not reported yet' : '—'}
+              </div>
+            );
+
             return (
               <div className="leading-tight">
-                <div className="text-xs text-gray-700">
-                  {d.app_version ?? '—'}
-                  {d.build_number && <span className="text-gray-500"> ({d.build_number})</span>}
-                  {/* The label is mapped, not CSS-transformed: `uppercase`
-                      gives "IOS" and `capitalize` gives it too, because both
-                      only touch the first letter or all of them. */}
-                  {d.platform && (
-                    <span className="ml-1.5 text-gray-400">
-                      {PLATFORM_LABELS[d.platform] ?? d.platform}
-                    </span>
-                  )}
-                </div>
+                {version}
+                {/* Unconditional, not tied to the version above. Dropping the
+                    "Last seen" column means this line is now the only place the
+                    console says when a terminal last spoke, and a till that has
+                    not reported a build yet is exactly the one somebody needs
+                    that for. */}
                 {d.last_seen_at && (
                   <div className="text-[11px] text-gray-400">
                     seen {formatAge(d.last_seen_at)} ago
