@@ -185,12 +185,20 @@ export const SHIPPING_DETAILS = {
 /**
  * What each part of the country actually pays, as structured data.
  *
- * One `shippingRate` cannot describe this shop. Sharjah is free at any basket,
- * Dubai is AED 20 and free over 75, and the far emirates are 80 and free over
- * 200 — a single figure is wrong for five of the seven emirates whichever one
- * you pick. `shippingDestination` accepts a list of regions, so each band gets
- * its own entry and a shopping surface reading this can tell a customer in
- * Ajman something true.
+ * One `shippingRate` cannot describe this shop. Sharjah city is free at any
+ * basket, Dubai is AED 20 free from 75, Ajman is 10 free from 75, Umm al-Quwain
+ * 30 free from 75, Ras al-Khaimah 50 free from 100, and Abu Dhabi and Fujairah
+ * are 80 free from 200 — a single figure is wrong for six of the seven emirates
+ * whichever one you pick. So each band gets its own entry, and a shopping
+ * surface reading this can tell a customer in Ajman something true.
+ *
+ * The emirate is as fine as `DefinedRegion` goes, and `085` is finer than that:
+ * inside Sharjah, Dubai, Ajman, Umm al-Quwain and Ras al-Khaimah there is a
+ * served city band and an outer remainder that pays the flat 80. Each entry
+ * here publishes the city band, because that is the address nearly every order
+ * goes to and it is the number the checkout will quote them. An outer-band
+ * address sees the real figure at checkout, which is the only place it can be
+ * worked out from a pin.
  *
  * The numbers here are the published zone fees, not courier costs, and they
  * have to move when the map does — `085_cost_banded_map` is where they come
@@ -219,16 +227,19 @@ export const SHIPPING_BY_REGION = [
   },
   {
     '@type': 'OfferShippingDetails' as const,
-    name: 'Dubai and Ajman',
-    shippingDestination: [
-      { '@type': 'DefinedRegion' as const, addressCountry: 'AE', addressRegion: 'Dubai' },
-      { '@type': 'DefinedRegion' as const, addressCountry: 'AE', addressRegion: 'Ajman' },
-    ],
+    name: 'Dubai',
+    shippingDestination: {
+      '@type': 'DefinedRegion' as const,
+      addressCountry: 'AE',
+      addressRegion: 'Dubai',
+    },
     shippingRate: {
       '@type': 'MonetaryAmount' as const,
       value: '20.00',
       currency: 'AED',
-      // Free above this, which is the part a shopper actually acts on.
+      // Free at or above this, which is the part a shopper actually acts on.
+      // `minPrice` is inclusive and so is the checkout — `delivery_service.price`
+      // qualifies on `subtotal >= threshold`, so 75 exactly delivers free.
       eligibleTransactionVolume: {
         '@type': 'PriceSpecification' as const,
         minPrice: '75.00',
@@ -242,12 +253,90 @@ export const SHIPPING_BY_REGION = [
     },
   },
   {
+    // Its own entry, not banded in with Dubai. Ajman City is AED 10 in `085`
+    // and always has been; publishing it at Dubai's 20 quoted every Ajman
+    // shopper double what the checkout charges them.
     '@type': 'OfferShippingDetails' as const,
-    name: 'Rest of the UAE',
+    name: 'Ajman',
+    shippingDestination: {
+      '@type': 'DefinedRegion' as const,
+      addressCountry: 'AE',
+      addressRegion: 'Ajman',
+    },
+    shippingRate: {
+      '@type': 'MonetaryAmount' as const,
+      value: '10.00',
+      currency: 'AED',
+      eligibleTransactionVolume: {
+        '@type': 'PriceSpecification' as const,
+        minPrice: '75.00',
+        priceCurrency: 'AED',
+      },
+    },
+    deliveryTime: {
+      '@type': 'ShippingDeliveryTime' as const,
+      handlingTime: { '@type': 'QuantitativeValue' as const, minValue: 0, maxValue: 0, unitCode: 'DAY' },
+      transitTime: { '@type': 'QuantitativeValue' as const, minValue: 0, maxValue: 1, unitCode: 'DAY' },
+    },
+  },
+  {
+    // Umm al-Quwain and Ras al-Khaimah each have a served city band in `085`
+    // that a Lalamove car reaches for well under the third-party flat 80, so
+    // they get their own entries rather than the outer rate. Abu Dhabi (which
+    // is where Al Ain sits) and Fujairah have no city band — 80 is the only
+    // price either of them has.
+    '@type': 'OfferShippingDetails' as const,
+    name: 'Umm al-Quwain',
+    shippingDestination: {
+      '@type': 'DefinedRegion' as const,
+      addressCountry: 'AE',
+      addressRegion: 'Umm al-Quwain',
+    },
+    shippingRate: {
+      '@type': 'MonetaryAmount' as const,
+      value: '30.00',
+      currency: 'AED',
+      eligibleTransactionVolume: {
+        '@type': 'PriceSpecification' as const,
+        minPrice: '75.00',
+        priceCurrency: 'AED',
+      },
+    },
+    deliveryTime: {
+      '@type': 'ShippingDeliveryTime' as const,
+      handlingTime: { '@type': 'QuantitativeValue' as const, minValue: 0, maxValue: 1, unitCode: 'DAY' },
+      transitTime: { '@type': 'QuantitativeValue' as const, minValue: 0, maxValue: 1, unitCode: 'DAY' },
+    },
+  },
+  {
+    '@type': 'OfferShippingDetails' as const,
+    name: 'Ras al-Khaimah',
+    shippingDestination: {
+      '@type': 'DefinedRegion' as const,
+      addressCountry: 'AE',
+      addressRegion: 'Ras al-Khaimah',
+    },
+    shippingRate: {
+      '@type': 'MonetaryAmount' as const,
+      value: '50.00',
+      currency: 'AED',
+      eligibleTransactionVolume: {
+        '@type': 'PriceSpecification' as const,
+        minPrice: '100.00',
+        priceCurrency: 'AED',
+      },
+    },
+    deliveryTime: {
+      '@type': 'ShippingDeliveryTime' as const,
+      handlingTime: { '@type': 'QuantitativeValue' as const, minValue: 0, maxValue: 1, unitCode: 'DAY' },
+      transitTime: { '@type': 'QuantitativeValue' as const, minValue: 0, maxValue: 1, unitCode: 'DAY' },
+    },
+  },
+  {
+    '@type': 'OfferShippingDetails' as const,
+    name: 'Abu Dhabi, Al Ain and Fujairah',
     shippingDestination: [
       { '@type': 'DefinedRegion' as const, addressCountry: 'AE', addressRegion: 'Abu Dhabi' },
-      { '@type': 'DefinedRegion' as const, addressCountry: 'AE', addressRegion: 'Ras al-Khaimah' },
-      { '@type': 'DefinedRegion' as const, addressCountry: 'AE', addressRegion: 'Umm al-Quwain' },
       { '@type': 'DefinedRegion' as const, addressCountry: 'AE', addressRegion: 'Fujairah' },
     ],
     shippingRate: {
