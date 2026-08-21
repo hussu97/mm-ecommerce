@@ -16,6 +16,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { render } from '@testing-library/react';
 
 import { HeroCarousel, type HeroContent } from './HeroCarousel';
+import { MeetTheBaker, type BakerContent } from './MeetTheBaker';
 import { PromoBanners, type PromosContent } from './PromoBanners';
 import type { Category } from '@/lib/types';
 
@@ -88,6 +89,28 @@ describe('home page banner alt text', () => {
     };
     const { container } = render(<PromoBanners c={c} locale="en" categories={CATEGORIES} />);
     expect(altsOf(container)).toEqual(['Straight from the fridge']);
+  });
+
+  it('describes the baker backdrop and her kitchen shots', () => {
+    // The backdrop sits under an 80% plum wash, which is why it was `alt=""`
+    // plus `aria-hidden`. It is still the only photograph of the baker on the
+    // home page, and it is what kept `/en` reported after the banners were
+    // fixed. The gallery's `?? ''` had the same shape: a CMS row with no alt
+    // written yet produced an unlabelled kitchen shot.
+    const c: BakerContent = {
+      quote: 'Baked the morning it goes out',
+      gallery: [
+        { image: '/images/photos/kitchen-1.jpg', alt: 'Cookies cooling on a rack' },
+        { image: '/images/photos/kitchen-2.jpg' },
+      ],
+    };
+    const { container } = render(<MeetTheBaker c={c} locale="en" />);
+    const alts = altsOf(container);
+    expect(alts).toContain('Cookies cooling on a rack');
+    expect(alts.length).toBe(3);
+    for (const alt of alts) {
+      expect(alt).toBeTruthy();
+    }
   });
 
   it('never leaves a banner with an empty alt', () => {

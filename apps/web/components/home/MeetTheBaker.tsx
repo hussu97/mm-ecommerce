@@ -23,6 +23,21 @@ export interface BakerContent {
 
 const DEFAULT_IMAGE = '/images/photos/person_shot_1.jpg';
 
+/**
+ * The backdrop and the gallery both used to fall back to `alt=""`, and the
+ * backdrop paired it with `aria-hidden`. For a texture behind a colour wash
+ * that is the textbook-correct markup — except this texture is a photograph of
+ * the person the section is about, and Bing reported `/en` for a missing alt
+ * attribute with it still on the page after the banners were fixed.
+ *
+ * So they are described now. The wash sits at 80% over the backdrop, which
+ * makes the image quiet rather than absent: it is still the only picture of
+ * the baker on the home page, and it is still what image search has to go on.
+ * The CMS `alt` wins wherever somebody has written one.
+ */
+const BACKDROP_ALT = 'Fatema Abbasi, the baker behind Melting Moments, in her Sharjah kitchen';
+const GALLERY_ALT = 'Baking at Melting Moments in Sharjah';
+
 export function MeetTheBaker({ c, locale }: { c: BakerContent; locale: string }) {
   const gallery = (c.gallery ?? []).filter(g => g.image).slice(0, 3);
 
@@ -34,8 +49,7 @@ export function MeetTheBaker({ c, locale }: { c: BakerContent; locale: string })
         <div className="absolute inset-0">
           <Image
             src={c.image || DEFAULT_IMAGE}
-            alt=""
-            aria-hidden="true"
+            alt={BACKDROP_ALT}
             fill
             sizes="100vw"
             className="object-cover object-center"
@@ -92,7 +106,7 @@ export function MeetTheBaker({ c, locale }: { c: BakerContent; locale: string })
                   <div className="group relative aspect-square overflow-hidden">
                     <Image
                       src={shot.image!}
-                      alt={shot.alt ?? ''}
+                      alt={shot.alt || GALLERY_ALT}
                       fill
                       loading="lazy"
                       sizes="(max-width: 640px) 33vw, 300px"
