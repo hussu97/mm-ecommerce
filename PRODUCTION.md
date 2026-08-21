@@ -880,7 +880,7 @@ The rest fall back in the deploy workflow:
 
 | Secret | Falls back to | Notes |
 |--------|---------------|-------|
-| `SLIDER_ENV` | `staging` | `staging`, `production`, or an absolute `https://` origin which wins over both. **Confirm the hostnames with Slider before the pilot** — they are the one part of this integration that could not be verified from the repository, and a wrong one fails as DNS on the first real booking |
+| `SLIDER_ENV` | `staging` | `staging` = `https://api-sandbox.slider-app.com/v1`, `production` = `https://api.slider-app.com/v1`, or an absolute `https://` origin which wins over both. Both confirmed live 2026-08-21 (`POST /v1/deliveries/fare` answers 401 unauthenticated). The override stays for the day those move — a wrong host fails as DNS on the first real booking |
 | `SLIDER_TIMEOUT_SECONDS` | `8` | |
 | `SLIDER_BIKE_MAX_KM` | `35` | **Road** kilometres, and half of the vehicle rule: a bike only if the drop is in the *same emirate* as the kitchen **and** within this. See the open question below |
 | `SLIDER_DETOUR_FACTOR` | `1.44` | Straight line to road distance, measured over the 97 areas of the fare survey. Used only when Slider has not told us a distance itself |
@@ -933,6 +933,14 @@ so it is a window rather than an archive.
 > Sharjah→Ajman at 12 km and for nine Sharjah→Dubai routes out to 34.4 km. The
 > code assumes no. It is worth about AED 5 an order across Ajman and Dubai, and
 > if the answer is yes the only change is in `slider_service.vehicle_for`.
+>
+> **Resolved 2026-08-21 — the hostnames.** They were guessed as
+> `api.staging.slider.ae` / `api.slider.ae`, and the whole `slider.ae` zone
+> SERVFAILs, apex included: every booking would have failed as DNS. The real
+> pair is `https://api-sandbox.slider-app.com/v1` and
+> `https://api.slider-app.com/v1`, now the defaults in
+> `slider_provider.HOSTS`. Note the `/v1`: `_call` concatenates rather than
+> `urljoin`, so a versioned base keeps its prefix.
 
 **Registering a branch.** Which outlet a rider collects from is a property of the
 branch, not of the deployment — Lalamove already reads the pickup coordinates and

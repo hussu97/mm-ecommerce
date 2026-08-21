@@ -306,10 +306,10 @@ class Settings(BaseSettings):
     #: The account the deliveries are booked against, sent as `X-Account-Id`.
     SLIDER_ACCOUNT_ID: str = ""
     #: `staging` or `production` — or an absolute `https://` origin, which wins
-    #: over both. The override exists because their hostnames are the one part
-    #: of this integration that cannot be checked from inside the repository,
-    #: and a wrong one fails as DNS on the first real booking. Fixing that
-    #: should not need a deploy.
+    #: over both. The two names resolve in `slider_provider.HOSTS`, confirmed
+    #: live on 2026-08-21. The override stays for the day those move: a wrong
+    #: host fails as DNS on the first real booking, and fixing that should not
+    #: need a deploy.
     SLIDER_ENV: str = "staging"
     SLIDER_TIMEOUT_SECONDS: float = 8.0
     #: The vehicle rule, and the whole of it: **a bike may not cross an emirate

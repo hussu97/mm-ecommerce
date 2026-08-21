@@ -55,16 +55,21 @@ __all__ = [
     "provider",
 ]
 
-#: Their two environments.
+#: Their two environments, including the `/v1` prefix every path we call sits
+#: under. `_call` concatenates (`config.host + path`) rather than `urljoin`,
+#: which is what lets a versioned base carry its prefix — `urljoin` would
+#: discard the `/v1` and every call would 404.
+#:
+#: Confirmed live on 2026-08-21: both answer `POST /v1/deliveries/fare` with a
+#: 401 unauthenticated, so the host and the path layout are right. They replace
+#: `api.staging.slider.ae` / `api.slider.ae`, which were guessed and never
+#: resolved — the whole `slider.ae` zone SERVFAILs, apex included.
 #:
 #: `SLIDER_ENV` may also be an absolute `http(s)://` origin, which wins over
-#: both. That is not a convenience: these hostnames are the one part of this
-#: integration that cannot be verified from inside the repository, and a wrong
-#: one fails as a DNS error on the first real booking. An origin in the
-#: environment is the fix that does not need a deploy.
+#: both and remains the fix that does not need a deploy if these ever move.
 HOSTS = {
-    "staging": "https://api.staging.slider.ae",
-    "production": "https://api.slider.ae",
+    "staging": "https://api-sandbox.slider-app.com/v1",
+    "production": "https://api.slider-app.com/v1",
 }
 
 #: Errors worth trying again. A courier that is briefly unreachable should not
