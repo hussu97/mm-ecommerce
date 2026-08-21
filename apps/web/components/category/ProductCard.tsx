@@ -1,6 +1,7 @@
 'use client';
 
 import Image from 'next/image';
+import { PRODUCT_IMAGE_BLUR } from '@/lib/image-placeholder';
 import Link from 'next/link';
 import { DeliveryEstimate } from '@/components/product/DeliveryEstimate';
 import { AddToCartControl } from '@/components/product/AddToCartControl';
@@ -104,6 +105,8 @@ export function ProductCard({
               fill
               sizes="(max-width: 640px) 50vw, (max-width: 1024px) 50vw, 33vw"
               priority={priority}
+              placeholder="blur"
+              blurDataURL={PRODUCT_IMAGE_BLUR}
               className="object-cover group-hover:scale-105 transition-transform duration-500"
             />
           ) : (

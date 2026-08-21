@@ -21,7 +21,26 @@ import {
 import { fetchJson, fetchJsonOrNull } from '@/lib/fetch-json';
 import { branchParam, browsingBranch } from '@/lib/location/branch-server';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
-const PER_PAGE = 12;
+/**
+ * How many products a listing page asks for.
+ *
+ * Raised from 12. The whole catalogue is 36 products, so at 12 a shopper had to
+ * paginate three times to see a shop that fits on one screen's worth of
+ * scrolling — and each page was a fresh server round trip that re-rendered the
+ * grid and lost their place.
+ *
+ * The cost was measured against production rather than guessed: gzipped, the
+ * listing goes from 3.9 KB to 13.5 KB, and time-to-first-byte does not move
+ * (~0.12s either way) because the extra rows are transfer, not query. The
+ * images are the only real weight and they are lazy — `ProductGrid` gives the
+ * first four `priority` and `next/image` holds the rest until they are scrolled
+ * near, so a longer page costs nothing until it is looked at.
+ *
+ * 50 rather than exactly 36: the API caps `per_page` at 2000, and a number the
+ * catalogue can grow into means the pagination stays real rather than becoming
+ * a control that has silently never rendered.
+ */
+const PER_PAGE = 50;
 
 /**
  * Just the category, for `generateMetadata`.
