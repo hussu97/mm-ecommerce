@@ -1,6 +1,24 @@
 """
 Idempotent seed script for i18n — Language records + UI translations.
 Run: cd apps/api && python -m scripts.seed_i18n
+
+**This file is the source of truth for every UI string, not the database.**
+`app_setup` runs `seed()` in the API's lifespan hook, so it executes on every
+boot, and it overwrites any row whose value differs from the constant below.
+Two consequences that are easy to learn the hard way:
+
+* **A migration cannot change a UI string.** It will apply, the API will
+  restart, and the seed will put the old text straight back — then invalidate
+  the Redis cache, so the restored value is serving within seconds. Migrations
+  `121` and `122` were both written before anyone noticed this, deployed green,
+  and changed nothing that lasted. Edit the string here instead.
+* **The same is true of the console.** The Translations screen writes to the
+  database, and this overwrites it on the next deploy. That is why the value
+  here and the value a human last typed can disagree.
+
+Removing a key from `ALL_TRANSLATIONS` does *not* delete it — `seed()` only adds
+and updates. Retiring a key needs both: delete the line here so it stops being
+restored, and a migration to remove the row that already exists.
 """
 
 from __future__ import annotations
@@ -740,8 +758,6 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("error", "back_to_home", "Back to Home"),
     ("error", "contact_us", "Contact Us"),
     ("error", "tagline", "Made with 100% Love"),
-    # promo_banner
-    ("promo_banner", "text", "Free delivery over 150 AED in selected areas"),
     # address labels
     ("address", "pin_location", "Pin Location"),
     ("address", "search_location", "Search for a location…"),
@@ -1400,8 +1416,6 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("error", "back_to_home", "العودة للرئيسية"),
     ("error", "contact_us", "تواصل معنا"),
     ("error", "tagline", "مصنوعة بـ 100% حب"),
-    # promo_banner
-    ("promo_banner", "text", "توصيل مجاني للطلبات فوق 150 درهم في مناطق مختارة"),
     # address labels
     ("address", "pin_location", "تحديد الموقع على الخريطة"),
     ("address", "search_location", "ابحث عن موقع…"),

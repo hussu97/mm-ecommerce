@@ -655,3 +655,45 @@ assert it against the public endpoint the site reads rather than the table.
 its own leftovers and it is the only method that has worked here. Grepping the
 repo finds the seed migrations, which are history — several have been superseded
 and the console has edited rows since.
+
+---
+
+## A migration cannot change a UI string, and the answer was already in this file
+
+**2026-08-21.** Two migrations — `121` then `122` — went to production to change
+one line of `ui_translations`. Both applied. Both deployed green. Neither
+changed anything that lasted more than a few seconds.
+
+`app_setup` runs `scripts.seed_i18n` in the API's lifespan hook, so it executes
+on **every boot** and overwrites any row whose value differs from its constant.
+The deploy order is migrate → restart → seed, so each migration edited the row
+and the seed restored it before anyone could look. Then the seed invalidated the
+Redis cache, so the restored text was serving immediately. Nothing about this
+appears in the migration's own output: it prints `Running upgrade …` and exits 0.
+
+I spent an hour ruling out Redis TTLs, CDN caching, the namespace/key split, the
+locale codes, and byte-level differences in the string — and comparing values
+against an API whose answer the seed had already put back. Every measurement was
+consistent with "the WHERE clause matched nothing", and none of them could
+distinguish that from "it matched, and was reverted".
+
+**The rule was already written above, in April**: "`main.py` lifespan hook
+imports `seed_i18n` and runs it on every startup". I did not read this file at
+the start of the session, which CLAUDE.md asks for, and then wrote a lesson
+about verifying against production without noticing the one already there.
+
+**Rule:** `scripts/seed_i18n.py` is the source of truth for UI strings, not the
+database. To change one, edit that file. A migration against `ui_translations`
+is undone on the next boot — as is an edit made in the console's Translations
+screen, which is why a value there can disagree with the seed.
+
+**Rule:** to *retire* a key, both halves are needed. `seed()` only adds and
+updates, never deletes, so removing the line stops it being restored but leaves
+the existing row; the row needs a migration. One without the other looks like it
+worked and does not.
+
+**Rule:** when a content change deploys green and the site is unchanged, ask
+what else writes that table before investigating what could be caching it. A
+seed, a webhook or a sync job re-asserting the old value looks exactly like a
+stale cache from the outside, and the two are told apart by reading the writers,
+not by measuring the reads.

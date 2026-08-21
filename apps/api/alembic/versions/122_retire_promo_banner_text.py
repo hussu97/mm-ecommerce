@@ -28,12 +28,23 @@ someone who expected it to appear.
 `downgrade` puts back exactly what production held, so nothing is lost that
 cannot be restored.
 
-**Matched on the flattened identity**, `namespace || '.' || key`, rather than on
-the two columns separately. That is the form the API returns and the form the
-console's Translations screen displays, and it is therefore the only spelling of
-this row's name that has been verified against production — `121` matched
-`namespace = 'promo_banner' AND key = 'text'`, deployed green, and updated
-nothing, for a reason I never established.
+**Why `121` appeared to do nothing, and why this migration is only half the
+fix.** `app_setup` runs `scripts.seed_i18n` in the API's lifespan hook, so it
+executes on every boot and overwrites any row whose value differs from its
+constant. The deploy order is migrate, restart, seed — so `121` updated the row
+and the seed restored it seconds later, then invalidated the Redis cache so the
+restored text was serving immediately. Nothing about that is visible in the
+migration's own output, which is why it looked like a `WHERE` clause that
+matched nothing.
+
+This migration therefore ships alongside the removal of `promo_banner.text` from
+`ALL_TRANSLATIONS`. The seed only ever adds and updates, never deletes, so
+retiring a key genuinely needs both halves: the line gone from the seed so it
+stops being restored, and this `DELETE` for the row already in the table.
+
+Matched on `namespace || '.' || key` regardless — that is the form the API
+returns and the console displays, so it is the spelling verified against
+production.
 
 Revision ID: 122_retire_promo_banner
 Revises: 121_promo_banner_figure
