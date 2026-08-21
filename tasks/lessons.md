@@ -746,3 +746,52 @@ the same second before believing the sender never called.
 deliveries `WHERE driver_id IS NOT NULL`, so the one order whose driver write
 was lost is precisely the one the sweep will never revisit. A backstop keyed off
 the value the bug destroys is not a backstop.
+
+---
+
+## Owning a transition is not the same as receiving one
+
+**2026-08-21, following the driver-ledger bug above.** Closing that one exposed
+two more of the same shape, and the shape is the lesson.
+
+`driver_tracking` deliberately left every terminal transition to the webhook —
+correct about ownership, and silent about what happens when the webhook does
+not arrive. We had just proved they can be lost: the route answers `200` before
+`get_db` commits, so Lalamove logs a delivery for a transaction that rolled
+back, and there is no retry to wait for. A lost `COMPLETED` leaves a cake in
+the customer's hands and the order at `packed` until a person notices.
+
+The sweep already held the authoritative answer — it reads the booking on every
+tick — and was throwing it away with an early `return False`.
+
+**Rule:** if a push owns a transition, something that polls must be able to
+apply the same transition when the push is missing. "The webhook owns it" is an
+answer about *who writes it*, never about *whether it gets written*.
+
+**Rule:** reconcile by feeding a fabricated payload through the real handler,
+never by writing the columns again beside it. Ending a booking here is the
+order's transition, the customer's email, the refund path, the price, the
+proof, the cancellation reason — a second copy of that is a second thing to
+keep in step with `VALID_TRANSITIONS`, and it will drift. `apply_webhook`
+already takes an optional delivery precisely so a caller holding one can reuse
+it.
+
+**Rule:** a fabricated payload must not borrow a real event name. Their names
+promise a body — `DRIVER_ASSIGNED` means a whole person is described — and
+`last_payload` is the first thing anybody reads when asking what the courier
+said. Name it for where it came from and let the branches fall through.
+
+**Rule:** stamp a reconciliation *now*, not with the courier's own moment. The
+out-of-order guard drops anything older than the last applied update, and the
+genuine event may well predate a push we did receive — so the honest stamp is
+also the only one that works.
+
+**Rule:** when a filter is opened up, ask what now keeps it bounded. Removing
+`driver_id IS NOT NULL` and admitting `ASSIGNING_DRIVER` meant rows could sit
+in the live set indefinitely; the reconciliation is what lets them leave it,
+and `CHASE_FOR` is the backstop for the case where even that fails.
+
+**Corollary, on tests:** the mocked version of this asserts the sweep *calls*
+`apply_webhook`. That is wiring, not behaviour, and a docstring claiming it
+proves the order reaches `delivered` would be false. The claim about the order
+belongs in a test that runs the real handler — which is where it now is.

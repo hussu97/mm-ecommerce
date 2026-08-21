@@ -884,3 +884,155 @@ async def test_a_booking_still_being_matched_costs_one_call_and_no_more(monkeypa
 
 async def _noop():
     return None
+
+
+# ── the ending nobody was told about ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_lost_completed_still_delivers_the_order(monkeypatch):
+    """
+    The gap under the gap.
+
+    Terminal transitions belong to the webhook, and that is right until the
+    webhook does not come — and then it owns nothing. A `COMPLETED` lost the way
+    MM-20260821-001's driver push was lost leaves the cake in the customer's
+    hands and the order at `packed`: wrong in the reports, wrong in the
+    customer's timeline, and with no retry from Lalamove to wait for.
+
+    This asserts the wiring only — that the ending goes through `apply_webhook`
+    rather than being reimplemented here, carrying the delivery already in hand.
+    The claim that actually matters, that the *order* reaches `delivered`, is
+    made against the real `apply_webhook` in
+    `test_lalamove_service.test_a_completed_nobody_pushed_still_delivers_the_order`;
+    a mock cannot make it and should not appear to.
+    """
+    from app.services import driver_tracking, lalamove_service
+    from app.services.providers import lalamove_provider
+
+    delivery = _delivery(
+        courier_status="ON_GOING",
+        driver_id="4827243",
+        driver_name="Ali",
+        driver_assignment_count=1,
+    )
+
+    applied: list = []
+
+    async def _order(_id):
+        return {"data": {"status": "COMPLETED", "driverId": "4827243"}}
+
+    async def _apply(_db, payload, d=None):
+        applied.append((payload, d))
+        return d
+
+    monkeypatch.setattr(lalamove_provider.provider, "get_order", _order)
+    monkeypatch.setattr(lalamove_service, "apply_webhook", _apply)
+
+    assert await driver_tracking._refresh_one(_Db(), delivery, at=NOW) is True
+
+    assert applied, "the ending was noticed and then dropped on the floor"
+    payload, passed = applied[0]
+    # Through the same door a push uses, carrying the delivery it already holds
+    # so `apply_webhook` does not go looking for it again.
+    assert passed is delivery
+    assert payload["data"]["order"]["status"] == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_an_ending_we_already_recorded_costs_nothing(monkeypatch):
+    """
+    The ordinary case: the push arrived, did its work, and this tick is simply
+    the one that noticed. Reapplying it would rewrite `last_payload` with a
+    fabricated body and re-run the consequences of a transition already made.
+    """
+    from app.services import driver_tracking, lalamove_service
+    from app.services.providers import lalamove_provider
+
+    delivery = _delivery(courier_status="COMPLETED", driver_id="4827243")
+
+    async def _order(_id):
+        return {"data": {"status": "COMPLETED", "driverId": "4827243"}}
+
+    async def _boom(*a, **k):  # pragma: no cover — must not be reached
+        raise AssertionError("reapplied an ending that was already recorded")
+
+    monkeypatch.setattr(lalamove_provider.provider, "get_order", _order)
+    monkeypatch.setattr(lalamove_service, "apply_webhook", _boom)
+
+    assert await driver_tracking._refresh_one(_Db(), delivery, at=NOW) is False
+
+
+@pytest.mark.asyncio
+async def test_a_lost_pickup_is_reconciled_too(monkeypatch):
+    """
+    `PICKED_UP` is collected rather than terminal, and it moves the order to
+    `out_for_delivery`. Losing it strands the customer's timeline just as badly,
+    so it goes through the same door.
+    """
+    from app.services import driver_tracking, lalamove_service
+    from app.services.providers import lalamove_provider
+
+    delivery = _delivery(courier_status="ON_GOING", driver_id="4827243")
+
+    applied: list = []
+
+    async def _order(_id):
+        return {"data": {"status": "PICKED_UP", "driverId": "4827243"}}
+
+    async def _apply(_db, payload, d=None):
+        applied.append(payload)
+        return d
+
+    monkeypatch.setattr(lalamove_provider.provider, "get_order", _order)
+    monkeypatch.setattr(lalamove_service, "apply_webhook", _apply)
+
+    assert await driver_tracking._refresh_one(_Db(), delivery, at=NOW) is True
+    assert applied[0]["data"]["order"]["status"] == "PICKED_UP"
+
+
+def test_the_fabricated_payload_does_not_borrow_a_courier_event_name():
+    """
+    Their event names carry promises about the body — `DRIVER_ASSIGNED` means a
+    whole person is described, `POD_STATUS_CHANGED` means a proof is attached —
+    and the order endpoint makes neither. Borrowing one to get past a branch
+    would put a lie in `last_payload`, which is the first thing anybody reads
+    when asking what the courier actually said.
+    """
+    from app.models.order_delivery import CourierStatusEnum
+    from app.services import driver_tracking
+
+    payload = driver_tracking._as_payload({"status": "COMPLETED"}, at=NOW)
+
+    assert payload["eventType"] not in {
+        "DRIVER_ASSIGNED",
+        "ORDER_STATUS_CHANGED",
+        "POD_STATUS_CHANGED",
+        "ORDER_REPLACED",
+        "WALLET_BALANCE_CHANGED",
+    }
+    assert "POLL" in payload["eventType"].upper()
+    # Readable by `webhook_time`, which takes an epoch and not a string.
+    assert payload["timestamp"] == NOW.timestamp()
+    assert CourierStatusEnum.COMPLETED.value == payload["data"]["order"]["status"]
+
+
+@pytest.mark.asyncio
+async def test_the_fabricated_payload_clears_the_out_of_order_guard(monkeypatch):
+    """
+    `apply_webhook` drops anything stamped earlier than the last update it
+    applied, so a reconciliation stamped with the courier's own moment could be
+    refused by the very guard that protects the order — the genuine event may
+    well predate a later push we did receive. Stamped with now, it is always
+    the newest thing we know.
+    """
+    from app.services import driver_tracking, lalamove_service
+
+    delivery = _delivery(
+        courier_status="ON_GOING",
+        status_updated_at=NOW - timedelta(minutes=1),
+    )
+    payload = driver_tracking._as_payload({"status": "COMPLETED"}, at=NOW)
+
+    assert lalamove_service.webhook_time(payload) == NOW
+    assert lalamove_service.webhook_time(payload) > delivery.status_updated_at

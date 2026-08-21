@@ -19,6 +19,15 @@ is the only thing that sees it.
 So one sweep, on the minute, doing both: read the booking, notice if the driver
 id moved, and refresh the position of whoever is on it now.
 
+**And, having read it, notice when the booking has ended without us.** Owning
+terminal transitions is the webhook's job and still is — but a push that never
+arrives owns nothing. A lost `COMPLETED` leaves an order at `packed` after the
+cake is in someone's hands: wrong in the shop's reports, wrong in the
+customer's timeline, and invisible until a person goes looking, because there
+is no retry from Lalamove to wait for. The poll already has the authoritative
+answer in hand; `_reconcile_ending` feeds it through `apply_webhook` so the
+ending is applied by the same code that would have applied the push.
+
 **Bounded on purpose.** Only bookings that have not yet been collected — after
 pickup the distance-from-the-kitchen stops meaning anything, and paying for an
 API call to compute it would be paying to mislead — and only for as long as one
@@ -83,13 +92,13 @@ _LIVE_LALAMOVE = (
 
 #: How long after booking the sweep keeps asking about a delivery.
 #:
-#: A bound rather than a forever, because a row can only leave `_LIVE_LALAMOVE`
-#: when something writes a later status onto it, and the sweep deliberately
-#: leaves terminal transitions to the webhook. Without this, a booking whose
-#: `COMPLETED` push was lost would be polled once a minute until somebody
-#: noticed. Long enough that no real delivery reaches it: a cake still
-#: uncollected six hours after its van was booked is a person's problem, not a
-#: sweep's.
+#: A backstop rather than the brake. A row normally leaves `_LIVE_LALAMOVE` the
+#: moment the sweep reads an ending off the booking and applies it, so nothing
+#: healthy runs anywhere near this. What it bounds is the pathological case —
+#: a booking Lalamove never resolves, or one whose ending we cannot apply — so
+#: that "poll it again next minute" cannot become forever. Long enough that no
+#: real delivery reaches it: a cake still uncollected six hours after its van
+#: was booked is a person's problem, not a sweep's.
 CHASE_FOR = timedelta(hours=6)
 
 
@@ -158,13 +167,18 @@ async def _refresh_one(
     db: AsyncSession, delivery: OrderDelivery, *, at: datetime
 ) -> bool:
     """
-    One booking: has the driver changed, and where are they now.
+    One booking: has it ended, has the driver changed, and where are they now.
 
     The booking is read before the driver, and that order matters. Asking for a
     driver id we already hold would answer perfectly well about a person who
     handed the job on an hour ago — the courier is happy to describe them — so
     the swap has to be settled first and the position asked of whoever the
     answer names.
+
+    Ending is settled before either, for the same reason: there is no driver to
+    chase and no position worth paying for on a booking that is already over,
+    and if nobody told us it was over then that is the most important thing this
+    call learned.
     """
     from app.services import lalamove_service
     from app.services.providers.lalamove_provider import provider
@@ -177,10 +191,15 @@ async def _refresh_one(
     if is_terminal(delivery.provider, status) or is_collected(
         delivery.provider, status
     ):
-        # It ended, or the parcel is already on the bike, between the query and
-        # the call. Nothing to track; the status webhook owns the transition,
-        # because those are the ones that move the order and refund money.
-        return False
+        # It ended, or the parcel is already on the bike. Nothing left to track
+        # either way — but whether anybody *told* us is a separate question from
+        # whether it happened, and this is the only place both answers are in
+        # hand at once.
+        if status == delivery.courier_status:
+            # The push arrived and did its work; we are simply the tick that
+            # noticed. The ordinary case, and the cheap one.
+            return False
+        return await _reconcile_ending(db, delivery, data, status, at=at)
 
     # Our copy of a *live* status, corrected against the booking itself. Safe
     # here and nowhere else: the two statuses left after the guard above are
@@ -222,3 +241,68 @@ async def _refresh_one(
             delivery.driver_name or delivery.driver_id or "?",
         )
     return True
+
+
+async def _reconcile_ending(
+    db: AsyncSession,
+    delivery: OrderDelivery,
+    order: dict,
+    status: str | None,
+    *,
+    at: datetime,
+) -> bool:
+    """
+    Apply an ending the webhook for it never delivered.
+
+    The sweep used to return here and leave every terminal transition to the
+    push, which is right about *ownership* and wrong about what to do when the
+    push does not come. A `COMPLETED` that goes missing leaves an order sitting
+    at `packed` — delivered in the world, undelivered in the shop's reports, in
+    the customer's timeline and in the till — until a person happens to look.
+    There is no retry from Lalamove's side to wait for: a webhook we answered
+    `200` to, or one that never left them, is equally gone.
+
+    **Through `apply_webhook`, not around it.** Ending a booking is not one
+    column. It is the order's own transition and the email that rides on it, a
+    refund path for the failures, the price breakdown, the proof of delivery,
+    the cancellation reason an admin reads. Writing a second copy of that here
+    would be a second thing to keep in step with `VALID_TRANSITIONS`, and the
+    first copy is already correct. So this fabricates the push that should have
+    arrived and feeds it through the same door.
+
+    The payload is stamped *now* rather than with the courier's `updatedAt`,
+    which is Gulf local time wearing a `Z` and is the reason `webhook_time`
+    exists. Now is both honest — this is when we learned it — and the only
+    stamp that reliably clears the out-of-order guard, since the genuine event
+    may be older than the last push we did receive.
+    """
+    from app.services import lalamove_service
+
+    logger.warning(
+        "Booking %s is %s and nothing told us; reconciling from the poll (we had %s)",
+        delivery.courier_order_id,
+        status,
+        delivery.courier_status,
+    )
+    await lalamove_service.apply_webhook(db, _as_payload(order, at=at), delivery)
+    return True
+
+
+def _as_payload(order: dict, *, at: datetime) -> dict:
+    """
+    A polled booking in the shape `apply_webhook` reads.
+
+    `eventType` is deliberately not one of Lalamove's own. Their names carry
+    promises about the body — `DRIVER_ASSIGNED` means a whole person is
+    described, `POD_STATUS_CHANGED` means a proof is attached — and the order
+    endpoint makes neither. Borrowing a name to get past a branch would put a
+    lie in `last_payload`, which is the first thing anybody reads when asking
+    what the courier actually said. This says where it came from instead, and
+    `apply_webhook` falls through both branches, which is the correct handling
+    of a body that has neither.
+    """
+    return {
+        "eventType": "POLLED_ORDER_STATUS",
+        "timestamp": at.timestamp(),
+        "data": {"order": order},
+    }

@@ -551,3 +551,105 @@ async def test_a_completion_is_stamped_when_it_happened():
         "the delivered stamp drifted — the local-time `updatedAt` is being "
         "read again in place of the epoch"
     )
+
+
+# ── the ending nobody pushed ──────────────────────────────────────────────────
+
+
+async def test_a_completed_nobody_pushed_still_delivers_the_order(monkeypatch):
+    """
+    The sweep's reconciliation, through the real `apply_webhook` rather than a
+    stand-in for it — because the only claim worth making is about the *order*.
+
+    Terminal transitions belong to the webhook, and that is right until the
+    webhook does not arrive; then it owns nothing and there is no retry from
+    Lalamove to wait for. The cake is in the customer's hands and the order is
+    still `packed`: wrong in the shop's reports, wrong in the customer's
+    timeline, and invisible until somebody goes looking.
+
+    Asserting on `courier_status` alone would pass on a version that moved the
+    column and left the order behind, which is the failure this is guarding.
+    """
+    from app.services import driver_tracking
+    from app.services.providers import lalamove_provider
+
+    delivery = _delivery(courier_status="ON_GOING", driver_id="4827243")
+    order = _order(OrderStatusEnum.PACKED)
+
+    async def _polled(_id):
+        return {"data": {"status": "COMPLETED", "driverId": "4827243"}}
+
+    monkeypatch.setattr(lalamove_provider.provider, "get_order", _polled)
+
+    moved = await driver_tracking._refresh_one(
+        _FakeDb(order), delivery, at=NOW + timedelta(minutes=40)
+    )
+
+    assert moved is True
+    assert delivery.courier_status == "COMPLETED"
+    assert order.status == OrderStatusEnum.DELIVERED
+    assert [e[0] for e in pending_events(order)] == ["delivered"]
+
+
+async def test_a_failed_booking_found_by_the_sweep_still_needs_a_human(monkeypatch):
+    """
+    The other kind of ending, and it must not become a delivery.
+
+    An `EXPIRED` nobody pushed is a box nobody collected. Reconciling it has to
+    reach the same answer the push would: the delivery flagged, the order left
+    exactly where it is so an admin re-dispatches rather than the customer being
+    told anything happened.
+    """
+    from app.services import driver_tracking
+    from app.services.providers import lalamove_provider
+
+    delivery = _delivery(courier_status="ASSIGNING_DRIVER")
+    order = _order(OrderStatusEnum.PACKED)
+
+    async def _polled(_id):
+        return {"data": {"status": "EXPIRED"}}
+
+    monkeypatch.setattr(lalamove_provider.provider, "get_order", _polled)
+
+    await driver_tracking._refresh_one(
+        _FakeDb(order), delivery, at=NOW + timedelta(minutes=40)
+    )
+
+    assert delivery.courier_status == "EXPIRED"
+    assert delivery.needs_attention is True
+    assert order.status == OrderStatusEnum.PACKED
+    assert pending_events(order) == []
+
+
+async def test_a_sweep_cannot_rewind_an_order_the_push_already_settled(monkeypatch):
+    """
+    The out-of-order guard still applies to a fabricated payload, and has to.
+
+    A booking read mid-flight can answer with a status older than the push we
+    already applied. Stamping the reconciliation *now* is what clears the guard
+    for a genuine ending — it must not also let a stale reading walk a delivered
+    order backwards.
+    """
+    from app.services import driver_tracking
+    from app.services.providers import lalamove_provider
+
+    delivered_at = NOW + timedelta(minutes=30)
+    delivery = _delivery(
+        courier_status="COMPLETED",
+        status_updated_at=delivered_at,
+    )
+    order = _order(OrderStatusEnum.DELIVERED)
+
+    async def _polled(_id):
+        return {"data": {"status": "COMPLETED", "driverId": "4827243"}}
+
+    monkeypatch.setattr(lalamove_provider.provider, "get_order", _polled)
+
+    moved = await driver_tracking._refresh_one(
+        _FakeDb(order), delivery, at=delivered_at + timedelta(minutes=5)
+    )
+
+    # Already recorded, so it never reaches `apply_webhook` at all.
+    assert moved is False
+    assert order.status == OrderStatusEnum.DELIVERED
+    assert pending_events(order) == []
