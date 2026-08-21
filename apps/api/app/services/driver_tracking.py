@@ -19,13 +19,24 @@ is the only thing that sees it.
 So one sweep, on the minute, doing both: read the booking, notice if the driver
 id moved, and refresh the position of whoever is on it now.
 
-**Bounded on purpose.** Only bookings with a driver who has not yet collected —
-after pickup the distance-from-the-kitchen stops meaning anything, and paying
-for an API call to compute it would be paying to mislead. Ordered by the stalest
-position first and capped per tick, so a shop with an unusual number of live
-orders spends a predictable number of calls rather than an unbounded one. A row
-that errors is logged and skipped: this runs inside the batch sweep, and cakes
-waiting for a van matter more than a kilometre on a screen.
+**Bounded on purpose.** Only bookings that have not yet been collected — after
+pickup the distance-from-the-kitchen stops meaning anything, and paying for an
+API call to compute it would be paying to mislead — and only for as long as one
+could still be in progress. Ordered by the stalest position first and capped per
+tick, so a shop with an unusual number of live orders spends a predictable
+number of calls rather than an unbounded one. A row that errors is logged and
+skipped: this runs inside the batch sweep, and cakes waiting for a van matter
+more than a kilometre on a screen.
+
+**Not bounded on having a driver, which it used to be.** The query asked for
+`driver_id IS NOT NULL`, so the one booking whose driver we had failed to
+record was precisely the one this could never revisit — a backstop keyed off
+the value the failure destroys. MM-20260821-001 spent its delivery that way:
+a webhook naming its rider rolled back at commit, and both the driver and the
+`ON_GOING` that came with it were lost, leaving a row that no sweep would look
+at again. `_refresh_one` never needed the id — it reads the booking first and
+learns the driver from that — so the filter bought nothing and cost the only
+case it mattered in.
 """
 
 from __future__ import annotations
@@ -47,7 +58,7 @@ from app.services.driver_assignment import Change, Driver
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["STALE_AFTER", "refresh_live_drivers"]
+__all__ = ["CHASE_FOR", "STALE_AFTER", "refresh_live_drivers"]
 
 #: How old a position has to be before it is worth an API call to replace.
 #:
@@ -56,9 +67,30 @@ __all__ = ["STALE_AFTER", "refresh_live_drivers"]
 #: rather than one that blinks out between sweeps.
 STALE_AFTER = timedelta(seconds=75)
 
-#: The statuses in which a Lalamove driver is matched and still coming to us.
-#: `ASSIGNING_DRIVER` is excluded because there is nobody to ask about yet.
-_LIVE_LALAMOVE = (CourierStatusEnum.ON_GOING.value,)
+#: The statuses in which a booking is still coming to us.
+#:
+#: `ASSIGNING_DRIVER` used to be excluded, on the reasoning that there is nobody
+#: to ask about yet. That is true of the status and not of the row: our copy of
+#: it comes from the same webhooks that can be lost, so a booking sitting here
+#: is either genuinely waiting for a rider or one whose assignment we dropped,
+#: and those two are indistinguishable without asking. Reading the booking is
+#: what tells them apart, and it is one call a minute against an order that is
+#: already paid for.
+_LIVE_LALAMOVE = (
+    CourierStatusEnum.ON_GOING.value,
+    CourierStatusEnum.ASSIGNING_DRIVER.value,
+)
+
+#: How long after booking the sweep keeps asking about a delivery.
+#:
+#: A bound rather than a forever, because a row can only leave `_LIVE_LALAMOVE`
+#: when something writes a later status onto it, and the sweep deliberately
+#: leaves terminal transitions to the webhook. Without this, a booking whose
+#: `COMPLETED` push was lost would be polled once a minute until somebody
+#: noticed. Long enough that no real delivery reaches it: a cake still
+#: uncollected six hours after its van was booked is a person's problem, not a
+#: sweep's.
+CHASE_FOR = timedelta(hours=6)
 
 
 async def refresh_live_drivers(
@@ -90,11 +122,15 @@ async def refresh_live_drivers(
                 .where(
                     OrderDelivery.provider == lalamove_service.PROVIDER,
                     OrderDelivery.courier_order_id.is_not(None),
-                    OrderDelivery.driver_id.is_not(None),
                     OrderDelivery.courier_status.in_(_LIVE_LALAMOVE),
                     or_(
                         OrderDelivery.driver_location_at.is_(None),
                         OrderDelivery.driver_location_at < cutoff,
+                    ),
+                    # Only while it could still be a delivery in progress.
+                    or_(
+                        OrderDelivery.booked_at.is_(None),
+                        OrderDelivery.booked_at > moment - CHASE_FOR,
                     ),
                 )
                 .order_by(OrderDelivery.driver_location_at.asc().nullsfirst())
@@ -142,8 +178,25 @@ async def _refresh_one(
         delivery.provider, status
     ):
         # It ended, or the parcel is already on the bike, between the query and
-        # the call. Nothing to track; the status webhook owns the transition.
+        # the call. Nothing to track; the status webhook owns the transition,
+        # because those are the ones that move the order and refund money.
         return False
+
+    # Our copy of a *live* status, corrected against the booking itself. Safe
+    # here and nowhere else: the two statuses left after the guard above are
+    # `ASSIGNING_DRIVER` and `ON_GOING`, and neither advances the order, so this
+    # writes a column rather than triggering a transition. It matters because a
+    # lost webhook takes the status with it — MM-20260821-001 read
+    # `ASSIGNING_DRIVER` for its whole delivery while Lalamove had said
+    # `ON_GOING` — and a status nothing ever corrects is one every later sweep
+    # filters on and gets wrong.
+    if status and status != delivery.courier_status:
+        delivery.courier_previous_status = delivery.courier_status
+        delivery.courier_status = status
+        # Stamped with it, as every other writer of this column does. A status
+        # that moves without its timestamp leaves the column quietly claiming
+        # the last webhook's moment for a change this sweep made.
+        delivery.status_updated_at = at
 
     driver_id = data.get("driverId")
     change = await driver_assignment.record(
@@ -151,6 +204,8 @@ async def _refresh_one(
     )
 
     if change is Change.UNCHANGED and not delivery.driver_id:
+        # Nobody is on it yet — the ordinary state of a booking still being
+        # matched. There is no driver to name and no position to ask for.
         return False
 
     # Names and numbers live on the driver endpoint, not the order — so a swap

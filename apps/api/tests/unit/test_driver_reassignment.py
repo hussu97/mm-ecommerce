@@ -720,3 +720,167 @@ async def test_a_swap_never_has_two_live_stints_at_the_flush():
     assert db.active[0].courier_driver_id == "80112"
     assert len(db.drivers) == 2
     assert delivery.driver_assignment_count == 2
+
+
+# ── the sweep's blind spot ────────────────────────────────────────────────────
+
+
+def _compiled(stmt) -> str:
+    """The SELECT as Postgres would receive it, literals and all."""
+    return str(
+        stmt.compile(
+            dialect=__import__(
+                "sqlalchemy.dialects.postgresql", fromlist=["dialect"]
+            ).dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_sweep_looks_at_bookings_with_no_driver_on_them(monkeypatch):
+    """
+    The backstop used to be keyed off the value the failure destroys.
+
+    `refresh_live_drivers` asked for `driver_id IS NOT NULL`, so a booking whose
+    driver write was lost — the only kind that needs recovering — was the exact
+    kind it filtered out. MM-20260821-001 sat through its whole delivery inside
+    that gap: nothing would look at it again, and every later webhook took the
+    same doomed path.
+
+    `_refresh_one` reads the booking before the driver and learns the id from
+    it, so the filter never bought anything either.
+    """
+    from app.services import driver_tracking, lalamove_service
+
+    monkeypatch.setattr(lalamove_service, "is_enabled", lambda: True)
+
+    executed: list = []
+
+    class _QueryingDb(_Db):
+        async def execute(self, stmt):
+            executed.append(stmt)
+            return SimpleNamespace(
+                scalars=lambda: SimpleNamespace(all=lambda: [], first=lambda: None)
+            )
+
+    await driver_tracking.refresh_live_drivers(_QueryingDb(), now=NOW)
+
+    sql = _compiled(executed[0])
+    assert "driver_id IS NOT NULL" not in sql
+    # And the status it was stuck in is one the sweep now asks about.
+    assert "ASSIGNING_DRIVER" in sql
+    assert "ON_GOING" in sql
+
+
+@pytest.mark.asyncio
+async def test_the_sweep_stops_chasing_a_booking_that_is_old_enough_to_be_somebody_else(
+    monkeypatch,
+):
+    """
+    The cost of opening the filter, bounded.
+
+    A row leaves `_LIVE_LALAMOVE` only when something writes a later status onto
+    it, and the sweep leaves terminal transitions to the webhook — so a booking
+    whose `COMPLETED` push was lost would otherwise be polled once a minute
+    forever.
+    """
+    from app.services import driver_tracking, lalamove_service
+
+    monkeypatch.setattr(lalamove_service, "is_enabled", lambda: True)
+
+    executed: list = []
+
+    class _QueryingDb(_Db):
+        async def execute(self, stmt):
+            executed.append(stmt)
+            return SimpleNamespace(
+                scalars=lambda: SimpleNamespace(all=lambda: [], first=lambda: None)
+            )
+
+    await driver_tracking.refresh_live_drivers(_QueryingDb(), now=NOW)
+
+    sql = _compiled(executed[0])
+    # Rendered the way Postgres receives it: a space, not an ISO "T".
+    horizon = (NOW - driver_tracking.CHASE_FOR).strftime("%Y-%m-%d %H:%M:%S")
+    assert "booked_at" in sql
+    assert horizon in sql, f"expected the six-hour horizon {horizon} in:\n{sql}"
+
+
+@pytest.mark.asyncio
+async def test_the_sweep_recovers_a_driver_the_webhook_dropped(monkeypatch):
+    """
+    The whole point, end to end: a booking we believe has nobody on it, which
+    Lalamove says has been ON_GOING with a rider for some time.
+    """
+    from app.services import driver_tracking, lalamove_service
+    from app.services.providers import lalamove_provider
+
+    delivery = _delivery(
+        courier_status="ASSIGNING_DRIVER",
+        driver_id=None,
+        driver_name=None,
+        driver_assignment_count=0,
+    )
+    db = _Db()
+
+    async def _order(_id):
+        return {"data": {"status": "ON_GOING", "driverId": "4827243"}}
+
+    filled: list = []
+
+    async def _fill(_db, d, *, at=None):
+        filled.append(d)
+        d.driver_name = "Ali Gohar Muhammad Idrees"
+
+    monkeypatch.setattr(lalamove_provider.provider, "get_order", _order)
+    monkeypatch.setattr(lalamove_service, "fill_driver_details", _fill)
+    monkeypatch.setattr(lalamove_service, "announce_driver", lambda *a, **k: _noop())
+
+    assert await driver_tracking._refresh_one(db, delivery, at=NOW) is True
+    await db.flush()
+
+    assert delivery.driver_id == "4827243"
+    assert delivery.driver_assignment_count == 1
+    assert len(db.active) == 1
+    # The status came back with the driver, and had been frozen without it.
+    assert delivery.courier_status == "ON_GOING"
+    assert delivery.courier_previous_status == "ASSIGNING_DRIVER"
+    assert delivery.status_updated_at == NOW
+    assert filled, "the shop still needs a name, not just an id"
+
+
+@pytest.mark.asyncio
+async def test_a_booking_still_being_matched_costs_one_call_and_no_more(monkeypatch):
+    """
+    The ordinary `ASSIGNING_DRIVER` case, now that it is swept.
+
+    There is genuinely nobody on it. The sweep must not go on to ask the driver
+    endpoint about an id it does not have, or announce a rider to the counter.
+    """
+    from app.services import driver_tracking, lalamove_service
+    from app.services.providers import lalamove_provider
+
+    delivery = _delivery(
+        courier_status="ASSIGNING_DRIVER", driver_id=None, driver_assignment_count=0
+    )
+    db = _Db()
+
+    async def _order(_id):
+        return {"data": {"status": "ASSIGNING_DRIVER", "driverId": None}}
+
+    async def _boom(*a, **k):  # pragma: no cover — must not be reached
+        raise AssertionError("asked about a driver that does not exist")
+
+    monkeypatch.setattr(lalamove_provider.provider, "get_order", _order)
+    monkeypatch.setattr(lalamove_service, "fill_driver_details", _boom)
+
+    assert await driver_tracking._refresh_one(db, delivery, at=NOW) is False
+    await db.flush()
+
+    assert delivery.driver_id is None
+    assert db.active == []
+
+
+async def _noop():
+    return None
