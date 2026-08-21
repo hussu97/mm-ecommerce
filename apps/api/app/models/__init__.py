@@ -14,6 +14,7 @@ from .promo_code import PromoCode, DiscountTypeEnum  # noqa: F401
 from .refresh_token import RefreshToken  # noqa: F401
 from .language import Language, UiTranslation  # noqa: F401
 from .cms import CmsPage  # noqa: F401
+from .url_redirect import UrlRedirect  # noqa: F401
 from .blog import BlogPost  # noqa: F401
 from .webhook_event import WebhookEvent  # noqa: F401
 from .payment_gateway import (  # noqa: F401

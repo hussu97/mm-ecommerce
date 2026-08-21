@@ -21,6 +21,7 @@ from .bulk import router as bulk_router
 from .export_data import router as export_router
 from .i18n import router as i18n_router
 from .cms import router as cms_router
+from .redirects import router as redirects_router
 from .custom_orders import (
     admin_router as custom_orders_admin_router,
     router as custom_orders_router,
@@ -76,6 +77,7 @@ api_router = APIRouter()
 
 api_router.include_router(auth_router, prefix="/auth", tags=["Authentication"])
 api_router.include_router(categories_router, prefix="/categories", tags=["Categories"])
+api_router.include_router(redirects_router, prefix="/redirects", tags=["Redirects"])
 api_router.include_router(products_router, prefix="/products", tags=["Products"])
 api_router.include_router(modifiers_router, prefix="/modifiers", tags=["Modifiers"])
 api_router.include_router(import_router, prefix="/import", tags=["Import"])

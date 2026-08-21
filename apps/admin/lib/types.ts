@@ -1071,3 +1071,28 @@ export const STOCK_DURATIONS: { value: StockDuration; label: string }[] = [
   { value: 'end_of_day', label: 'Until tomorrow' },
   { value: 'indefinite', label: 'Until I put it back' },
 ];
+
+/**
+ * One old URL and where it goes now.
+ *
+ * `from_path` and `to_path` are stored without a locale prefix — `/cat-brownies`,
+ * not `/en/cat-brownies` — and apply to both languages, because a slug rename
+ * breaks both at once. A rule that genuinely concerns one language can still be
+ * written out in full, and the storefront tries that exact form first.
+ */
+export interface UrlRedirect {
+  id: string;
+  from_path: string;
+  to_path: string;
+  /** Whether everything below `from_path` moves with it — see the model docstring. */
+  is_prefix: boolean;
+  status_code: 301 | 308;
+  is_active: boolean;
+  /** 'manual' | 'category_rename' | 'seed'. Renaming a category writes its own. */
+  source: string;
+  note: string | null;
+  hit_count: number;
+  last_hit_at: string | null;
+  created_at: string;
+  updated_at: string;
+}

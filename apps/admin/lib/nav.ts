@@ -51,6 +51,11 @@ export const NAV: Array<
   // because it is the same question asked one step earlier in the funnel.
   { href: '/analytics/carts', label: 'Live Baskets',  icon: 'shopping_basket' },
   { href: '/content',       label: 'Content',         icon: 'edit_note' },
+  // Beside Content because it is the same job: what a URL says and where it
+  // leads. Renaming a category writes its own rule here, so this screen is
+  // mostly somewhere to look — and the place to add the ones nothing else knows
+  // about, like a URL from the Wix site or a printed card.
+  { href: '/redirects',     label: 'Redirects',       icon: 'alt_route' },
   { href: '/languages',     label: 'Languages',       icon: 'translate' },
   { href: '/translations',  label: 'Translations',    icon: 'text_fields' },
 

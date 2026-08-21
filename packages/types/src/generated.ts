@@ -5567,6 +5567,103 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/redirects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Redirects
+         * @description Every rule, live or retired, newest first.
+         */
+        get: operations["list_redirects_api_v1_redirects_get"];
+        put?: never;
+        /** Create Redirect */
+        post: operations["create_redirect_api_v1_redirects_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/redirects/hit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record Hit
+         * @description Report that a rule fired. Best effort, and deliberately toothless.
+         *
+         *     The storefront calls this from `waitUntil` *after* the redirect has gone to
+         *     the visitor, so nothing is waiting on the answer and there is nothing left to
+         *     break. Unauthenticated for the same reason `/map` is — and the worst a bad
+         *     actor achieves is an inflated count on a URL that has already moved.
+         *
+         *     No `get_db`: the write runs on its own session inside the service, because a
+         *     counter must not join, or roll back with, anything else. Convention 2.
+         */
+        post: operations["record_hit_api_v1_redirects_hit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/redirects/map": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Redirect Map
+         * @description Every live rule, for the storefront's middleware to hold in memory.
+         *
+         *     Unauthenticated on purpose: it is a list of URLs that have moved, which is
+         *     the least secret thing the shop owns, and the caller is `proxy.ts` running
+         *     before any cookie has been read. Ordered longest-path-first by the service
+         *     so the middleware can take the first match.
+         *
+         *     Cached twice over. Redis spares the database a query per cold edge instance,
+         *     and `Cache-Control` lets the CDN answer most of them without reaching us at
+         *     all — five minutes being the longest anyone should wait for a redirect they
+         *     just added in the console to start firing.
+         */
+        get: operations["redirect_map_api_v1_redirects_map_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/redirects/{redirect_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Redirect */
+        put: operations["update_redirect_api_v1_redirects__redirect_id__put"];
+        post?: never;
+        /** Delete Redirect */
+        delete: operations["delete_redirect_api_v1_redirects__redirect_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/roles": {
         parameters: {
             query?: never;
@@ -12724,6 +12821,115 @@ export interface components {
         RecipeUpsert: {
             /** Ingredients */
             ingredients?: components["schemas"]["RecipeLine"][];
+        };
+        /** RedirectCreate */
+        RedirectCreate: {
+            /** From Path */
+            from_path: string;
+            /**
+             * Is Active
+             * @default true
+             */
+            is_active: boolean;
+            /**
+             * Is Prefix
+             * @default false
+             */
+            is_prefix: boolean;
+            /** Note */
+            note?: string | null;
+            /**
+             * Status Code
+             * @default 308
+             * @enum {integer}
+             */
+            status_code: 301 | 308;
+            /** To Path */
+            to_path: string;
+        };
+        /**
+         * RedirectHit
+         * @description What the middleware reports after it has already sent the redirect.
+         */
+        RedirectHit: {
+            /** From Path */
+            from_path: string;
+        };
+        /** RedirectMap */
+        RedirectMap: {
+            /** Rules */
+            rules: components["schemas"]["RedirectRule"][];
+        };
+        /** RedirectResponse */
+        RedirectResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** From Path */
+            from_path: string;
+            /** Hit Count */
+            hit_count: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Active */
+            is_active: boolean;
+            /** Is Prefix */
+            is_prefix: boolean;
+            /** Last Hit At */
+            last_hit_at: string | null;
+            /** Note */
+            note: string | null;
+            /** Source */
+            source: string;
+            /** Status Code */
+            status_code: number;
+            /** To Path */
+            to_path: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * RedirectRule
+         * @description One rule as the storefront's middleware wants it.
+         *
+         *     Deliberately not `RedirectResponse`: this is fetched on a cold edge instance
+         *     and held in memory, so it carries the four fields the match needs and none of
+         *     the console's bookkeeping. At eight-plus rows the difference is small; the
+         *     reason to keep it small is that it is the shape a public, uncached-by-anyone
+         *     endpoint hands to every deployment region.
+         */
+        RedirectRule: {
+            /** From Path */
+            from_path: string;
+            /** Is Prefix */
+            is_prefix: boolean;
+            /** Status Code */
+            status_code: number;
+            /** To Path */
+            to_path: string;
+        };
+        /** RedirectUpdate */
+        RedirectUpdate: {
+            /** From Path */
+            from_path?: string | null;
+            /** Is Active */
+            is_active?: boolean | null;
+            /** Is Prefix */
+            is_prefix?: boolean | null;
+            /** Note */
+            note?: string | null;
+            /** Status Code */
+            status_code?: (301 | 308) | null;
+            /** To Path */
+            to_path?: string | null;
         };
         /** RefreshRequest */
         RefreshRequest: {
@@ -26073,6 +26279,174 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ReasonResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_redirects_api_v1_redirects_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RedirectResponse"][];
+                };
+            };
+        };
+    };
+    create_redirect_api_v1_redirects_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RedirectCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RedirectResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    record_hit_api_v1_redirects_hit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RedirectHit"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    redirect_map_api_v1_redirects_map_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RedirectMap"];
+                };
+            };
+        };
+    };
+    update_redirect_api_v1_redirects__redirect_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                redirect_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RedirectUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RedirectResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_redirect_api_v1_redirects__redirect_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                redirect_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

@@ -19226,6 +19226,285 @@
         "title": "RecipeUpsert",
         "type": "object"
       },
+      "RedirectCreate": {
+        "properties": {
+          "from_path": {
+            "maxLength": 500,
+            "pattern": "^/[A-Za-z0-9\\-._~/%]*$",
+            "title": "From Path",
+            "type": "string"
+          },
+          "is_active": {
+            "default": true,
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "is_prefix": {
+            "default": false,
+            "title": "Is Prefix",
+            "type": "boolean"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "status_code": {
+            "default": 308,
+            "enum": [
+              301,
+              308
+            ],
+            "title": "Status Code",
+            "type": "integer"
+          },
+          "to_path": {
+            "maxLength": 500,
+            "pattern": "^/[A-Za-z0-9\\-._~/%]*$",
+            "title": "To Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from_path",
+          "to_path"
+        ],
+        "title": "RedirectCreate",
+        "type": "object"
+      },
+      "RedirectHit": {
+        "description": "What the middleware reports after it has already sent the redirect.",
+        "properties": {
+          "from_path": {
+            "maxLength": 500,
+            "pattern": "^/[A-Za-z0-9\\-._~/%]*$",
+            "title": "From Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from_path"
+        ],
+        "title": "RedirectHit",
+        "type": "object"
+      },
+      "RedirectMap": {
+        "properties": {
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/RedirectRule"
+            },
+            "title": "Rules",
+            "type": "array"
+          }
+        },
+        "required": [
+          "rules"
+        ],
+        "title": "RedirectMap",
+        "type": "object"
+      },
+      "RedirectResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "from_path": {
+            "title": "From Path",
+            "type": "string"
+          },
+          "hit_count": {
+            "title": "Hit Count",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "is_prefix": {
+            "title": "Is Prefix",
+            "type": "boolean"
+          },
+          "last_hit_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Hit At"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "status_code": {
+            "title": "Status Code",
+            "type": "integer"
+          },
+          "to_path": {
+            "title": "To Path",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "from_path",
+          "to_path",
+          "is_prefix",
+          "status_code",
+          "is_active",
+          "source",
+          "note",
+          "hit_count",
+          "last_hit_at",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "RedirectResponse",
+        "type": "object"
+      },
+      "RedirectRule": {
+        "description": "One rule as the storefront's middleware wants it.\n\nDeliberately not `RedirectResponse`: this is fetched on a cold edge instance\nand held in memory, so it carries the four fields the match needs and none of\nthe console's bookkeeping. At eight-plus rows the difference is small; the\nreason to keep it small is that it is the shape a public, uncached-by-anyone\nendpoint hands to every deployment region.",
+        "properties": {
+          "from_path": {
+            "title": "From Path",
+            "type": "string"
+          },
+          "is_prefix": {
+            "title": "Is Prefix",
+            "type": "boolean"
+          },
+          "status_code": {
+            "title": "Status Code",
+            "type": "integer"
+          },
+          "to_path": {
+            "title": "To Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from_path",
+          "to_path",
+          "is_prefix",
+          "status_code"
+        ],
+        "title": "RedirectRule",
+        "type": "object"
+      },
+      "RedirectUpdate": {
+        "properties": {
+          "from_path": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "pattern": "^/[A-Za-z0-9\\-._~/%]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Path"
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          },
+          "is_prefix": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Prefix"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "status_code": {
+            "anyOf": [
+              {
+                "enum": [
+                  301,
+                  308
+                ],
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Code"
+          },
+          "to_path": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "pattern": "^/[A-Za-z0-9\\-._~/%]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Path"
+          }
+        },
+        "title": "RedirectUpdate",
+        "type": "object"
+      },
       "RefreshRequest": {
         "properties": {
           "refresh_token": {
@@ -44972,6 +45251,235 @@
         "summary": "Restore Item",
         "tags": [
           "Reasons"
+        ]
+      }
+    },
+    "/api/v1/redirects": {
+      "get": {
+        "description": "Every rule, live or retired, newest first.",
+        "operationId": "list_redirects_api_v1_redirects_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RedirectResponse"
+                  },
+                  "title": "Response List Redirects Api V1 Redirects Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Redirects",
+        "tags": [
+          "Redirects"
+        ]
+      },
+      "post": {
+        "operationId": "create_redirect_api_v1_redirects_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedirectCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RedirectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Create Redirect",
+        "tags": [
+          "Redirects"
+        ]
+      }
+    },
+    "/api/v1/redirects/hit": {
+      "post": {
+        "description": "Report that a rule fired. Best effort, and deliberately toothless.\n\nThe storefront calls this from `waitUntil` *after* the redirect has gone to\nthe visitor, so nothing is waiting on the answer and there is nothing left to\nbreak. Unauthenticated for the same reason `/map` is \u2014 and the worst a bad\nactor achieves is an inflated count on a URL that has already moved.\n\nNo `get_db`: the write runs on its own session inside the service, because a\ncounter must not join, or roll back with, anything else. Convention 2.",
+        "operationId": "record_hit_api_v1_redirects_hit_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedirectHit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Hit",
+        "tags": [
+          "Redirects"
+        ]
+      }
+    },
+    "/api/v1/redirects/map": {
+      "get": {
+        "description": "Every live rule, for the storefront's middleware to hold in memory.\n\nUnauthenticated on purpose: it is a list of URLs that have moved, which is\nthe least secret thing the shop owns, and the caller is `proxy.ts` running\nbefore any cookie has been read. Ordered longest-path-first by the service\nso the middleware can take the first match.\n\nCached twice over. Redis spares the database a query per cold edge instance,\nand `Cache-Control` lets the CDN answer most of them without reaching us at\nall \u2014 five minutes being the longest anyone should wait for a redirect they\njust added in the console to start firing.",
+        "operationId": "redirect_map_api_v1_redirects_map_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RedirectMap"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Redirect Map",
+        "tags": [
+          "Redirects"
+        ]
+      }
+    },
+    "/api/v1/redirects/{redirect_id}": {
+      "delete": {
+        "operationId": "delete_redirect_api_v1_redirects__redirect_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "redirect_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Redirect Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Delete Redirect",
+        "tags": [
+          "Redirects"
+        ]
+      },
+      "put": {
+        "operationId": "update_redirect_api_v1_redirects__redirect_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "redirect_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Redirect Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedirectUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RedirectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Update Redirect",
+        "tags": [
+          "Redirects"
         ]
       }
     },

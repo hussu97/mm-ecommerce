@@ -12,6 +12,7 @@ import type {
   PaymentGateway, PaymentGatewayUpdate,
   LalamoveQuote, OrderStatusEvent,
   BranchProductAvailability, StockDuration,
+  UrlRedirect,
 } from './types';
 import type {
   PublicKeyCredentialCreationOptionsJSON,
@@ -496,6 +497,15 @@ export const promoApi = {
   create: (data: object) => api.post<PromoCode>('/promo-codes', data),
   update: (code: string, data: object) => api.put<PromoCode>(`/promo-codes/${code}`, data),
   delete: (code: string) => api.delete<void>(`/promo-codes/${code}`),
+};
+
+// ─── URL Redirects ────────────────────────────────────────────────────────────
+
+export const redirectApi = {
+  list: () => api.get<UrlRedirect[]>('/redirects'),
+  create: (data: object) => api.post<UrlRedirect>('/redirects', data),
+  update: (id: string, data: object) => api.put<UrlRedirect>(`/redirects/${id}`, data),
+  delete: (id: string) => api.delete<void>(`/redirects/${id}`),
 };
 
 // ─── Bulk Actions ─────────────────────────────────────────────────────────────
