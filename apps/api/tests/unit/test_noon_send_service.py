@@ -71,6 +71,18 @@ class _FakeDb:
         # `autoflush=False` and `driver_assignment` depends on knowing it.
         self.pending.append(row)
 
+    async def get(self, model, pk):
+        """Primary-key load, which is how `route_now` resolves the order.
+
+        It reads the order by id rather than through `delivery.order`: an
+        unloaded relationship raises under asyncpg instead of reading as
+        absent, so the attribute was never safe to touch. `get` consults the
+        identity map first, which is what this stands in for.
+        """
+        if model is Order:
+            return self.order
+        return None
+
     async def flush(self):
         self.drivers.extend(self.pending)
         self.pending.clear()

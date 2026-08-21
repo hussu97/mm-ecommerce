@@ -837,16 +837,24 @@ def _event_id(payload: dict[str, Any]) -> str:
 async def _delivery_for(
     db: AsyncSession, payload: dict[str, Any]
 ) -> OrderDelivery | None:
-    """The delivery this push is about, by Slider's id or by our own reference."""
+    """The delivery this push is about, by Slider's id or by our own reference.
+
+    Every lookup carries the order with it. Downstream of a match, `route_now`
+    and the order transition both want it, and a relationship that is merely
+    *not loaded* raises under asyncpg rather than reading as absent — so
+    fetching it here is what stops that being a question at all.
+    """
     delivery_id = payload.get("order_number")
     if delivery_id:
         found = (
             (
                 await db.execute(
-                    select(OrderDelivery).where(
+                    select(OrderDelivery)
+                    .where(
                         OrderDelivery.courier_order_id == str(delivery_id),
                         OrderDelivery.provider == PROVIDER,
                     )
+                    .options(selectinload(OrderDelivery.order))
                 )
             )
             .scalars()
@@ -864,10 +872,12 @@ async def _delivery_for(
     found = (
         (
             await db.execute(
-                select(OrderDelivery).where(
+                select(OrderDelivery)
+                .where(
                     OrderDelivery.courier_reference == reference,
                     OrderDelivery.provider == PROVIDER,
                 )
+                .options(selectinload(OrderDelivery.order))
             )
         )
         .scalars()
@@ -885,6 +895,7 @@ async def _delivery_for(
                     Order.order_number == reference,
                     OrderDelivery.provider == PROVIDER,
                 )
+                .options(selectinload(OrderDelivery.order))
             )
         )
         .scalars()

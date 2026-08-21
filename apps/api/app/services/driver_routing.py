@@ -153,12 +153,22 @@ async def route_now(db: AsyncSession, delivery: OrderDelivery) -> bool:
     if not delivery.is_driver_on_the_way_here:
         return False
 
-    order = (
-        delivery.order
-        or (await db.execute(select(Order).where(Order.id == delivery.order_id)))
-        .scalars()
-        .first()
-    )
+    # `db.get` rather than `delivery.order`. The relationship read used to be
+    # the first half of an `or`, written to mean "use it if we have it, else
+    # fetch it" — but an unloaded relationship under asyncpg does not evaluate
+    # falsy, it raises MissingGreenlet, so the fallback was unreachable and the
+    # expression meant to make the read safe was the thing that threw.
+    #
+    # It threw *conditionally*, which is why it survived review and the suite:
+    # if anything earlier in the request had already pulled the order into the
+    # session's identity map the attribute resolved with no IO and the same code
+    # passed. Whether a rider assignment survived depended on what had run
+    # before it.
+    #
+    # `db.get` consults that identity map first and only queries when the order
+    # really is absent, so it is the cheap read the relationship was meant to be
+    # and cannot depend on load state.
+    order = await db.get(Order, delivery.order_id)
     if order is None or order.branch_id is None:
         return False
 

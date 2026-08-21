@@ -66,6 +66,16 @@ AJMAN_CITY = Zone(
 @pytest.fixture(autouse=True)
 def trial_list(monkeypatch):
     monkeypatch.setattr(settings, "SLIDER_TRIAL_EMAILS", TRIAL_EMAIL)
+    # Pinned, not inherited. `slider_service.is_enabled()` turns on the presence
+    # of a key, and these tests read the real `settings` — so on a developer's
+    # machine with the pilot configured in `.env` they took a different branch
+    # and failed, while CI, which has no key, never noticed.
+    #
+    # A test whose result depends on a gitignored file is not a test. This pins
+    # the fee arithmetic to the courier-disabled branch, which is what these
+    # cases are actually about; the enabled branch wants coverage of its own
+    # rather than to arrive here by accident.
+    monkeypatch.setattr(settings, "SLIDER_API_KEY", "")
 
 
 # ── the membership test itself ────────────────────────────────────────────────
