@@ -214,7 +214,7 @@ async def record(
             # Opened from the merged row rather than from *driver*, because this
             # payload may know less than the row does and a stint must not be
             # opened with a name blanked out.
-            _open_stint(
+            await _open_stint(
                 db, delivery, _live(delivery), at=delivery.driver_assigned_at or moment
             )
             return Change.ASSIGNED
@@ -226,6 +226,11 @@ async def record(
         # finished stints sit beside exactly one live one.
         current.is_active = None
         current.replaced_at = moment
+        # Flushed here rather than left to the caller's commit: one flush would
+        # emit this UPDATE after `_open_stint`'s INSERT, and for the moment in
+        # between there would be two active stints on one order — which is the
+        # exact pair `uq_order_driver_active` exists to refuse.
+        await db.flush()
         logger.info(
             "Driver swapped on order %s: %s → %s",
             delivery.order_id,
@@ -233,7 +238,7 @@ async def record(
             driver.name or driver.driver_id or "?",
         )
 
-    _open_stint(db, delivery, driver, at=moment)
+    await _open_stint(db, delivery, driver, at=moment)
     return Change.REASSIGNED if known else Change.ASSIGNED
 
 
@@ -263,14 +268,28 @@ def _fill_gaps(
         current.courier_order_id = delivery.courier_order_id or current.courier_order_id
 
 
-def _open_stint(
+async def _open_stint(
     db: AsyncSession,
     delivery: OrderDelivery,
     driver: Driver,
     *,
     at: datetime,
 ) -> OrderDriver:
-    """Start a new row for *driver* and point the delivery's live copy at it."""
+    """
+    Start a new row for *driver* and point the delivery's live copy at it.
+
+    **Flushed before it returns, and that is not tidiness.** The session is
+    built with `autoflush=False`, so a row that is only `add`ed is invisible to
+    every later `SELECT` in the same transaction — including `active_driver`'s.
+    One webhook opened a stint here, called `fill_driver_details` to put a name
+    to the id, and that came back through `record` a second time; the second
+    call read no active driver, believed it was the first, and opened a stint
+    of its own. Both rows reached the flush together and `uq_order_driver_active`
+    refused the pair, taking the whole request down at commit — by which point
+    the route had already answered 200, so Lalamove never sent it again and
+    MM-20260821-001 spent its delivery with no driver on record and a courier
+    status frozen at `ASSIGNING_DRIVER`.
+    """
     sequence = (delivery.driver_assignment_count or 0) + 1
     row = OrderDriver(
         order_id=delivery.order_id,
@@ -285,6 +304,9 @@ def _open_stint(
         is_active=True,
     )
     db.add(row)
+    # Before the live columns below, so that a failure here leaves the delivery
+    # describing the driver it still has rather than one that was never written.
+    await db.flush()
 
     # Overwritten wholesale rather than merged. A different person's row must not
     # keep the last one's number plate because the new payload did not mention

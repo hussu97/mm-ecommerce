@@ -21,6 +21,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.models.branch import Branch
 from app.models.order_delivery import OrderDelivery
@@ -37,16 +38,47 @@ class _Db:
 
     The ledger lives in a list rather than a database because every rule under
     test is about which row is active and what the counter is told — none of it
-    is about SQL. The one thing the database enforces that this cannot, the
-    unique constraint on `(order_id, is_active)`, is asserted here as "exactly
-    one row is active" after every move.
+    is about SQL.
+
+    **Two things it models on purpose, because the version that did not let a
+    production bug through.** The real sessionmaker is built `autoflush=False`,
+    so a row that has only been `add`ed is invisible to every later `SELECT`
+    until something flushes; and `uq_order_driver_active` refuses a second live
+    stint on one order at the moment of the flush, not at the moment of the
+    `add`. The first fake had `add` append straight onto the visible list, which
+    made every read here read-your-own-writes and every double-open impossible —
+    so ten green tests sat on top of a `record()` that opened two stints on one
+    order and took the whole request down at commit.
     """
 
     def __init__(self, drivers: list[OrderDriver] | None = None) -> None:
         self.drivers: list[OrderDriver] = list(drivers or [])
+        self.pending: list[OrderDriver] = []
+        self.flushes = 0
 
     def add(self, row) -> None:
-        self.drivers.append(row)
+        # Held back, not published. This is `autoflush=False`.
+        self.pending.append(row)
+
+    async def flush(self) -> None:
+        self.flushes += 1
+        self.drivers.extend(self.pending)
+        self.pending.clear()
+        live = [d for d in self.drivers if d.is_active]
+        by_order: dict[uuid.UUID, int] = {}
+        for row in live:
+            by_order[row.order_id] = by_order.get(row.order_id, 0) + 1
+        clash = [oid for oid, n in by_order.items() if n > 1]
+        if clash:
+            # What Postgres would raise, at the point it would raise it.
+            raise IntegrityError(
+                "INSERT INTO order_drivers",
+                {},
+                Exception(
+                    "duplicate key value violates unique constraint "
+                    f'"uq_order_driver_active" (order_id={clash[0]}, is_active=t)'
+                ),
+            )
 
     async def execute(self, stmt):
         active = next((d for d in self.drivers if d.is_active), None)
@@ -596,3 +628,95 @@ async def test_the_routing_sweep_builds_its_query_too(monkeypatch):
     assert routed == 0
     assert executed, "the sweep returned before it ever asked the database"
     assert str(executed[0]).startswith("SELECT")
+
+
+# ── the double open ───────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_naming_the_driver_we_just_recorded_does_not_open_a_second_stint():
+    """
+    MM-20260821-001, 21 August 2026, and the shape of it matters more than the
+    order number.
+
+    Lalamove's status push carries a bare `driverId`. `record` opens a stint for
+    it; because that is news, the webhook then calls `fill_driver_details` to put
+    a name to the id, and the answer comes back through `record` a second time —
+    same person, better described. In the same session, with no flush between.
+
+    The second call used to read no active driver, because `autoflush=False`
+    keeps the first stint out of its own `SELECT`, and took that as "a driver on
+    the row with no ledger behind them" — the adoption branch, meant for
+    bookings older than this table. It opened a stint of its own. Both rows met
+    at the commit `get_db` does after the route has already answered 200, so
+    Lalamove logged a delivered webhook, the transaction rolled back whole, and
+    the order kept no driver and a `courier_status` frozen where it stood.
+
+    Once per assignment, whatever the payload arrives as.
+    """
+    db, delivery = _Db(), _delivery(courier_status="ASSIGNING_DRIVER")
+
+    bare = Driver(driver_id="4827243", name=None, phone=None, plate=None)
+    assert await driver_assignment.record(db, delivery, bare, at=NOW) is Change.ASSIGNED
+
+    named = Driver(
+        driver_id="4827243",
+        name="Ali Gohar Muhammad Idrees",
+        phone="+971527334372",
+        plate="**3182*",
+    )
+    # The same person the row already holds, so nothing is news.
+    assert (
+        await driver_assignment.record(db, delivery, named, at=NOW) is Change.UNCHANGED
+    )
+
+    await db.flush()  # the commit that used to blow up
+
+    assert len(db.active) == 1
+    assert db.active[0].sequence == 1
+    assert delivery.driver_assignment_count == 1
+    # The second payload knew more, and the row kept what it learned.
+    assert delivery.driver_name == "Ali Gohar Muhammad Idrees"
+    assert delivery.driver_phone == "+971527334372"
+
+
+@pytest.mark.asyncio
+async def test_a_stint_is_visible_to_the_next_read_in_its_own_session():
+    """
+    The invariant underneath the test above, stated on its own.
+
+    `record` decides what to do by asking `active_driver`, so a stint it has
+    just opened has to be something that question can see. Without the flush it
+    is not, and every caller that records twice before a commit — the Lalamove
+    webhook, `driver_tracking`'s sweep, anything reached through
+    `fill_driver_details` — silently gets the adoption branch.
+    """
+    db, delivery = _Db(), _delivery()
+
+    await driver_assignment.record(db, delivery, ALI, at=NOW)
+
+    assert db.flushes >= 1
+    assert await driver_assignment.active_driver(db, delivery) is not None
+
+
+@pytest.mark.asyncio
+async def test_a_swap_never_has_two_live_stints_at_the_flush():
+    """
+    The other way to land two active rows on one order.
+
+    Closing the old stint and opening the new one are an UPDATE and an INSERT,
+    and SQLAlchemy emits inserts before updates within a flush. Left to one
+    flush the new row lands while the old one is still `is_active = true`, which
+    is the exact pair the constraint exists to refuse. The close is flushed
+    first, so the slot is free before anything takes it.
+    """
+    db, delivery = _Db(), _delivery()
+
+    await driver_assignment.record(db, delivery, ALI, at=NOW)
+    await driver_assignment.record(db, delivery, SAMEER, at=NOW + timedelta(minutes=5))
+    await db.flush()
+
+    assert len(db.active) == 1
+    assert db.active[0].courier_driver_id == "80112"
+    assert len(db.drivers) == 2
+    assert delivery.driver_assignment_count == 2

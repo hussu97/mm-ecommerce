@@ -697,3 +697,52 @@ what else writes that table before investigating what could be caching it. A
 seed, a webhook or a sync job re-asserting the old value looks exactly like a
 stale cache from the outside, and the two are told apart by reading the writers,
 not by measuring the reads.
+
+---
+
+## A test double that autoflushes hides every read-your-own-writes bug
+
+**2026-08-21.** MM-20260821-001 dispatched correctly at its 15:00 window — batch
+sent, register told, Lalamove booked — and then lost its driver entirely. The
+webhook that named the rider rolled back at commit on
+`uq_order_driver_active`, having already answered **200**, so Lalamove never
+resent it. The order sat through its whole delivery with no driver on the
+ledger, no name on the register's slip, and a `courier_status` frozen at
+`ASSIGNING_DRIVER` — because every later webhook hit the identical path and
+rolled back identically.
+
+The mechanism: `AsyncSessionFactory` is built `autoflush=False`. A row that is
+only `db.add`ed is invisible to any later `SELECT` in the same transaction.
+`driver_assignment.record()` opens a stint, the caller then reaches
+`fill_driver_details()` which comes back through `record()` a second time, and
+that second call's `active_driver()` could not see the row the first had just
+added. It read `current is None` as "a booking older than this table" — the
+adoption branch — and opened a second live stint. Two rows, one flush, one
+constraint.
+
+Ten unit tests covered `record()` and all ten were green, because the fake
+session appended straight onto the list its `execute()` read from. **The double
+was read-your-own-writes when the real session is not.** Making it faithful —
+`add()` holds a row pending, `flush()` publishes it and raises on two live
+stints — turned six of those existing tests red immediately, without touching
+their assertions.
+
+**Rule:** a fake session must model `autoflush=False`, because that is what the
+app runs. `add()` goes to a pending list; only `flush()` publishes. Any fake
+whose `add()` is immediately visible is asserting a database we do not have.
+
+**Rule:** where a table has a unique constraint the code depends on, the fake
+enforces it at `flush()`. It is the one line that turns "these objects look
+right" into "Postgres would accept these" — and it is cheap next to the real-DB
+test the constraint would otherwise need.
+
+**Rule:** `commit()` happening in `get_db`'s teardown means an IntegrityError
+surfaces *after* the route has returned its status line. A 200 in the access log
+is not evidence the transaction committed. When a webhook's effect is missing
+and the log says 200, check for an unhandled exception with no `request_id` at
+the same second before believing the sender never called.
+
+**Corollary:** recovery sweeps inherit the hole. `driver_tracking` refreshes only
+deliveries `WHERE driver_id IS NOT NULL`, so the one order whose driver write
+was lost is precisely the one the sweep will never revisit. A backstop keyed off
+the value the bug destroys is not a backstop.

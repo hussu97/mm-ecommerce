@@ -51,9 +51,16 @@ class _FakeDb:
     def __init__(self, order, drivers=None):
         self.order = order
         self.drivers = list(drivers or [])
+        self.pending = []
 
     def add(self, row):
-        self.drivers.append(row)
+        # Pending until flushed, because the real sessionmaker is
+        # `autoflush=False` and `driver_assignment` depends on knowing it.
+        self.pending.append(row)
+
+    async def flush(self):
+        self.drivers.extend(self.pending)
+        self.pending.clear()
 
     async def execute(self, stmt):
         if any(
