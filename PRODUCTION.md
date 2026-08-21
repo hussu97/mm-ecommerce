@@ -950,6 +950,23 @@ so it is a window rather than an archive.
    setting grants both halves at once.
 6. Empty the list to end it.
 
+> **Verified end-to-end 2026-08-21 — create, fetch and cancel all work.** Run
+> against the sandbox from a permitted IP: `POST /deliveries` returned
+> `order_number` 62056867, `GET /deliveries/{order_number}` read it back, and
+> `DELETE /deliveries/{order_number}` cancelled it. The booking path is proven,
+> not merely spec-conformant.
+>
+> **They validate `vehicle_type` and then override it.** `banana` is refused
+> with a 422 ("The selected vehicle type is invalid"), but `bike` and `any`
+> both came back as `car`, priced as a car — on a route their own fare call had
+> just offered a bike for. So the vehicle we ask for is a request, never a
+> fact. `dispatch_order` records `vehicle_type` off the **create response** and
+> prices off its `fare` for that reason: pricing off the tier we asked for
+> would book a car, record a bike, and under-record the cost by the difference
+> (AED 3.98 on the measured run). Whether this is a sandbox artefact or their
+> real behaviour is worth asking them — it decides whether the bike tier is
+> reachable at all, and with it whether the emirate rule below matters.
+
 > **Answered 2026-08-21 — the bike does cross an emirate boundary.** Their live
 > sandbox quotes Sharjah→Ajman (15.27 km) as `{"vehicle_type": "bike",
 > "is_available": true, "delivery_fee": 19.62}`, and their published reference

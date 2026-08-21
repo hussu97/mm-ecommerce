@@ -578,14 +578,17 @@ def booked(monkeypatch, pickup):
 
     async def create_delivery(**kwargs):
         sent.update(kwargs)
-        # Their create response: `order_number` is the handle, and there is no
-        # `id` field anywhere in it.
+        # Their create response: `order_number` is the handle, there is no `id`
+        # field anywhere in it, and `vehicle_type` is what they *assigned*. This
+        # stub assigns what was asked for — the substituting case has a test of
+        # its own, because it is the one that moves the money.
+        asked = kwargs.get("vehicle")
         return {
             "order_number": 4820193,
             "order_id": "4820193",
             "status": "searching_rider",
-            "vehicle_type": "bike",
-            "fare": 18.50,
+            "vehicle_type": asked,
+            "fare": 18.50 if asked == "bike" else 26.00,
             "currency": "AED",
             "distance_km": 12.4,
             "tracking_url": "https://track.slider.test/4820193",
@@ -726,11 +729,50 @@ async def test_a_failed_fare_call_still_books_and_prices_off_the_booking(
     delivery = await slider_service.dispatch_order(db, _order())
 
     assert delivery.courier_order_id == "4820193"
-    # Off the create response, not off the quote that never arrived.
-    assert delivery.cost_total == Decimal("18.50")
+    # Off the create response, not off the quote that never arrived. This run
+    # goes to Ajman, so it books — and is billed for — a car.
+    assert delivery.cost_total == Decimal("26.00")
+    assert delivery.price_breakdown["vehicle"] == "car"
     assert delivery.price_breakdown["is_estimate"] is False
     # And the vehicle still had to be chosen, from the fitted distance.
     assert booked["vehicle"] == "car"
+
+
+@pytest.mark.asyncio
+async def test_the_vehicle_they_assigned_beats_the_one_we_asked_for(
+    booked, monkeypatch
+):
+    """
+    Slider validates `vehicle_type` and then overrides it. Asking for a bike on
+    a route their own fare call offers a bike for returns a booking that says
+    `car`, priced as a car — verified against their sandbox on 2026-08-21,
+    where `bike` and `any` both came back `car` at the car fare while `banana`
+    was refused with a 422.
+
+    So the request is not evidence of anything. Pricing off the tier we asked
+    for would book a car, record a bike, and under-record the cost by the
+    difference — in the sandbox, AED 3.98 a run — which lands directly in the
+    margin figure this pilot exists to produce.
+    """
+
+    async def substituting(**kwargs):
+        return {
+            "order_number": 4820193,
+            "order_id": "4820193",
+            "status": "searching_rider",
+            # Asked for a bike; given a car.
+            "vehicle_type": "car",
+            "fare": 26.00,
+            "distance_km": 12.4,
+        }
+
+    monkeypatch.setattr(slider_service.provider, "create_delivery", substituting)
+    db = _Db(_row())
+    await slider_service.dispatch_order(db, _order(delivery_emirate="Sharjah"))
+
+    # Theirs, both of them.
+    assert db.delivery.cost_total == Decimal("26.00")
+    assert db.delivery.price_breakdown["vehicle"] == "car"
 
 
 @pytest.mark.asyncio

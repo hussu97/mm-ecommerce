@@ -650,31 +650,58 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
             delivery.courier_order_id,
         ]
 
-    # Slider's own number or nothing. A fare call that failed leaves the cost
-    # columns empty rather than filling them with something computed: unlike
-    # noon Send, who publish a rate card and no API, Slider quotes — so a figure
-    # on this row is always one of theirs, and the margin report can be read as
-    # billed rather than guessed.
-    cost, _ = _fare(quoted, vehicle)
-    cost = cost or aed(created.get("fare") or created.get("total"))
+    # **What they assigned, not what we asked for.** `vehicle_type` on the
+    # create response is authoritative: asking for a bike and being given a car
+    # is a booking they accepted, not one they refused, and it is priced as a
+    # car. Recording the request would put "bike" on a row carrying a car's
+    # fare — an inconsistency that lands squarely in the margin figure the
+    # pilot exists to produce.
+    assigned = str(created.get("vehicle_type") or "").strip().lower() or vehicle
+
+    # Slider's own number or nothing. A booking that priced nowhere leaves the
+    # cost columns empty rather than filling them with something computed:
+    # unlike noon Send, who publish a rate card and no API, Slider quotes — so a
+    # figure on this row is always one of theirs, and the margin report can be
+    # read as billed rather than guessed.
+    #
+    # The create response wins over the quote. The quote priced the tier we
+    # asked for; the create says what they will actually bill, and when those
+    # two disagree it is because they substituted the vehicle underneath us.
+    cost = aed(created.get("fare") or created.get("total"))
+    if cost is None:
+        cost, _ = _fare(quoted, assigned)
+    # Theirs is measured; ours is a straight line times a fitted factor.
+    billed_km = created.get("distance_km", created.get("distance"))
+    try:
+        billed_km = float(billed_km) if billed_km is not None else None
+    except (TypeError, ValueError):
+        billed_km = None
+    recorded_km = billed_km or distance_km
     if cost is not None:
         delivery.quoted_cost = cost
         delivery.quoted_currency = "AED"
-        delivery.quoted_distance_m = int(distance_km * 1000)
+        delivery.quoted_distance_m = int(recorded_km * 1000)
         delivery.quoted_at = datetime.now(timezone.utc)
         delivery.cost_total = cost
         delivery.price_breakdown = {
             "source": "slider_fare",
-            "vehicle": vehicle,
-            "distance_km": round(distance_km, 2),
+            "vehicle": assigned,
+            "distance_km": round(recorded_km, 2),
             "total": str(cost),
             "currency": "AED",
             "is_estimate": False,
             # Whether the distance beside it is Slider's measured road figure or
             # our straight line times the fitted factor. The fare is theirs
             # either way; only this number can be ours.
-            "distance_is_estimated": not (bike_km or car_km),
+            "distance_is_estimated": not (billed_km or bike_km or car_km),
         }
+        if assigned != vehicle:
+            logger.info(
+                "Slider assigned %s for %s where %s was asked for",
+                assigned,
+                order.order_number,
+                vehicle,
+            )
 
     delivery.provider = PROVIDER
     delivery.courier_order_id = str(delivery_id)
