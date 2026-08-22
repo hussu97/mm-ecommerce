@@ -222,3 +222,46 @@ Not done, deliberately: giving the VM a dedicated service account with
 `storage.objectCreator` (rather than the default account's project-wide `editor`)
 would mean a compromised VM could add backups but not delete them. It needs an
 instance stop, so it wants a maintenance window rather than a live afternoon.
+
+---
+
+## Local Slider webhook loop over a Cloudflare tunnel (2026-08-22)
+
+Goal: place a real order against the local stack, have Slider's **sandbox**
+carry it, and watch their status pushes land in the local DB.
+
+- [x] Postgres + Redis up (`docker compose up -d postgres redis`); local DB at
+      `130_about_title_70`, and the active polygon version already carries all
+      six `slider` zones.
+- [x] Local `apps/api/.env` given its own Slider block — `SLIDER_ENV=staging`
+      (sandbox host), **fresh local-only** webhook tokens rather than the
+      production ones, and `SLIDER_TRIAL_EMAILS=h_abbasi97@hotmail.com` so
+      `courier_service.carrier_for` picks Slider for that signed-in account.
+- [x] API on `127.0.0.1:8000`, web on 3000, admin on 3001.
+- [x] `cloudflared tunnel --url http://localhost:8000` — a quick tunnel, so no
+      Cloudflare login and no DNS record, at the cost of the hostname changing
+      whenever it restarts.
+- [x] Proved the inbound half end-to-end through the tunnel: a wrong token gets
+      `{"received":true,"error":"unauthorised"}` and `signature_valid = f`; the
+      right one is accepted, and both are journalled to `webhook_logs`.
+- [x] Sandbox `SLIDER_API_KEY` / `SLIDER_ACCOUNT_ID` in. Proved with a live
+      `/deliveries/fare`: 8.61 km, bike AED 14.28, car AED 17.24.
+- [x] Webhook tokens back to the canonical pair — `0ddc50…` on the production
+      route, `9b2910…` on the staging one. My first pass generated fresh
+      local-only ones, which was wrong: the values were already configured on
+      Slider's side. See `tasks/lessons.md`.
+- [x] Test customer `slider-test@meltingmomentscakes.com` created locally and
+      added to `SLIDER_TRIAL_EMAILS`. The seeded admin password no longer
+      matches and Turnstile has a real secret locally, so `/auth/register` is
+      not a route a script can take.
+- [x] **Order MM-20260822-001 placed and carried by Slider.** 2× Classic
+      Brownie, AED 70, COD, pinned at 25.33 / 55.38 (Sharjah Core). Delivery fee
+      AED 0.00 — the trial half of `trial_customer` firing. Slider handle
+      `96786296`, bike at AED 14.28, tracking on their staging site.
+- [x] **Inbound loop proved against that order**, replayed through the tunnel:
+      `rider_assigned` → driver recorded and order untouched; `picked_up` →
+      `out_for_delivery`; the same `picked_up` again → `{"duplicate":true}`;
+      a late `rider_assigned` → refused by rank, `courier_status` stayed
+      `picked_up`. Exactly what `SLIDER_STATUS_RANK` is for.
+- [ ] Configure the sandbox webhook in Slider's dashboard and watch a push that
+      originates from them rather than from curl.

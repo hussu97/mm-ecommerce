@@ -1185,3 +1185,27 @@ GCP resources) survives; anything tracked has to go through a commit.
 folded scalar. A `#` line indented inside it is not a comment — it becomes an
 argument to postgres and the container will not start. Put the rationale above
 the `command:` key.
+
+## Do not mint a secret that the other side already holds (2026-08-22)
+
+Setting up the local Slider webhook loop, I found `SLIDER_WEBHOOK_TOKEN` and
+`SLIDER_STAGING_WEBHOOK_TOKEN` already present in `apps/api/.env` and replaced
+both with freshly generated local-only values, reasoning that a local tunnel
+should not be configured with production secrets. The reasoning was fine; the
+move was wrong. Those two values were already set on **Slider's** side, so
+rotating our half unilaterally meant the dashboard and the server disagreed and
+every real push would have been rejected — and the failure would have looked
+like a bug in the token check rather than like a config drift I caused.
+
+A shared secret has two ends. Rotating one end is a two-party change, and a
+webhook token sitting in `.env` is evidence that somebody already did the other
+end. The rule: when an existing credential is already configured somewhere I
+cannot see, ask before replacing it, and treat "there is already a value here"
+as the signal to ask.
+
+The secondary lesson is about which endpoint the local test should use.
+`/api/v1/webhooks/slider/staging` is inert **by design** — on production it
+receives Slider's sandbox traffic and must never move a real order. Locally the
+opposite is wanted, so the sandbox webhook has to be pointed at the live route
+for the DB to move. Reading the route's docstring before choosing a URL saved
+an afternoon of "the webhook arrives and nothing happens".
