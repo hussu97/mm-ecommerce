@@ -15,7 +15,8 @@ from decimal import Decimal
 from typing import Any, Sequence
 
 import sqlalchemy as sa
-from sqlalchemy import Numeric, Select, func, select
+from sqlalchemy import Numeric, Select, case, func, select
+from sqlalchemy import null as sa_null
 from sqlalchemy import true as sa_true
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,7 +51,7 @@ from app.models.tag import Tag, TaggedEntity
 from app.models.product import Product
 from app.models.till import DrawerOperation, Till
 from app.models.user import User
-from app.services import business_day_service
+from app.services import business_day_service, courier_catalog
 
 ZERO = Decimal("0.00")
 
@@ -256,6 +257,24 @@ async def sales_by_dimension(
         tz = await business_day_service.resolve_timezone(db)
         column = func.to_char(func.timezone(tz.key, Order.closed_at), "HH24")
 
+    # What the group cost us, beside what it took. Every dimension here groups
+    # whole orders, so the two stamped fee columns sum cleanly against the same
+    # rows — which is the entire point of `order_fees` storing them: a manager
+    # can now see that a channel took the most and kept the least without
+    # anybody exporting a spreadsheet.
+    #
+    # `sum` over a nullable column skips the nulls, so a channel whose rate is
+    # not configured contributes its orders to `net_sales` and nothing to
+    # `fees`. That understates the cost rather than inventing one, and
+    # `fees_known` below is what lets the client say so instead of implying the
+    # margin is real.
+    fees = func.coalesce(
+        func.sum(func.coalesce(Order.aggregator_fee, 0)), 0
+    ) + func.coalesce(func.sum(func.coalesce(Order.payment_fee, 0)), 0)
+    # How many of the orders in this group actually carry a costed fee. Equal to
+    # the order count when every one is priced; lower when some are not.
+    fees_known = func.count(Order.payment_fee)
+
     stmt = (
         _scope(
             select(
@@ -263,6 +282,8 @@ async def sales_by_dimension(
                 func.count(Order.id),
                 func.coalesce(func.sum(Order.total), 0),
                 func.coalesce(func.sum(Order.discount_amount), 0),
+                fees,
+                fees_known,
             ),
             branch_id=branch_id,
             date_from=date_from,
@@ -283,15 +304,54 @@ async def sales_by_dimension(
             "orders": int(count or 0),
             "net_sales": _q(total),
             "discounts": _q(discount),
+            "fees": _q(fee_total),
+            "net_after_fees": _q(total - fee_total),
+            # False when any order in the group has no costed fee, so the client
+            # can mark the figure as partial rather than quoting a margin that
+            # is missing a quarter of its costs.
+            "fees_complete": int(known or 0) >= int(count or 0),
+            # The marketplace's badge, on the channel breakdown only. A list of
+            # channels is scanned, not read, and the logo is what the eye finds
+            # — the same badge the order list, the register board and the
+            # kitchen ticket already carry, from the same table.
+            "image_url": _channel_logo(key) if dimension == "channel" else None,
         }
-        for key, count, total, discount in rows
+        for key, count, total, discount, fee_total, known in rows
     ]
 
+
+def _channel_logo(key: Any) -> str | None:
+    """The badge for a channel row, or None for the shop's own two channels."""
+    if key is None or str(key) in {"online", "cashier"}:
+        return None
+    code = courier_catalog.code_for_channel(str(key))
+    return courier_catalog.logo_url_for(code) if code else None
+
+
+#: How an order's channel is grouped once each marketplace counts separately.
+#:
+#: `source` alone answers `online` / `cashier` / `aggregator`, and that third
+#: bucket is the problem: it is five different businesses charging five
+#: different commissions, reported as one line. A manager comparing what the
+#: shop keeps per channel — the question the fee columns exist to answer — needs
+#: Talabat apart from Noon Food, because that is the comparison that decides
+#: which of them is worth being on.
+#:
+#: Grouped on the marketplace's own display name rather than our courier code,
+#: because that is what the column holds; `_channel_labels` maps it to the code
+#: and its badge on the way out, through the same `courier_catalog` the receipt
+#: and the order list use, so all three agree about which marketplace an order
+#: came from.
+_CHANNEL_COLUMN = case(
+    (Order.source == "aggregator", Order.aggregator_channel),
+    else_=Order.source,
+)
 
 #: Dimensions that group the order rows themselves.
 _ORDER_DIMENSIONS = {
     "order_type": Order.order_type,
     "source": Order.source,
+    "channel": _CHANNEL_COLUMN,
     "business_date": Order.business_date,
     # Foodics separates "cashier" (who closed it) from "creator" (who rang it
     # up); on a single-terminal shift they are the same person, on a busy one
@@ -352,10 +412,40 @@ async def _staff_labels(db: AsyncSession, rows: Sequence[Any]) -> dict[str, str]
     return {str(u.id): (u.display_name or u.email) for u in users}
 
 
+def _channel_labels(rows: Sequence[Any]) -> dict[str, str]:
+    """
+    Channel keys in the words the shop uses out loud.
+
+    `online` and `cashier` are ours and are simply renamed. Everything else is a
+    marketplace display name straight from GrubOps — "Keeta 2.0", "Noon" — and
+    is resolved through `courier_catalog`, the one place that knows those names
+    map to `keeta` and `noon_food`. An unrecognised marketplace keeps its own
+    name rather than becoming "Unknown": a new aggregator nobody has mapped yet
+    is still a real row of real money.
+    """
+    out: dict[str, str] = {}
+    for row in rows:
+        key = row[0]
+        if key is None:
+            continue
+        key = str(key)
+        if key == "online":
+            out[key] = "Website"
+        elif key == "cashier":
+            out[key] = "Counter"
+        else:
+            code = courier_catalog.code_for_channel(key)
+            out[key] = courier_catalog.COURIER_NAMES.get(code or "", key)
+    return out
+
+
 async def _labels_for(
     db: AsyncSession, dimension: str, rows: Sequence[Any]
 ) -> dict[str, str]:
     """Turn grouped foreign keys into names a human recognises."""
+    if dimension == "channel":
+        return _channel_labels(rows)
+
     ids = {r[0] for r in rows if r[0] is not None}
     if not ids:
         return {}
@@ -460,27 +550,60 @@ async def _sales_by_item(
     quantity = func.sum(OrderItem.quantity - OrderItem.returned_quantity)
     revenue = func.sum(OrderItem.total_price)
 
+    # The picture, so a best-sellers list can be scanned rather than read. Taken
+    # from the catalogue in the same query rather than fetched per row: the
+    # phone renders a hundred of these and a round trip each would make the
+    # thumbnails cost more than the report.
+    #
+    # `image_urls` is a JSON array on the product; the first entry is the one
+    # every other screen shows, so this is the same picture the products list
+    # and the storefront use rather than a second opinion about which is the
+    # main one.
+    thumbnail = Product.image_urls[0].astext
+
     if group_by_category:
         key, label = Category.id, Category.name
+        # A category has no picture of its own. Borrowing one product's would be
+        # picking a favourite; the row shows its name and its share instead.
         stmt = (
-            select(key, label, quantity, revenue, func.sum(OrderItem.discount_amount))
+            select(
+                key,
+                label,
+                quantity,
+                revenue,
+                func.sum(OrderItem.discount_amount),
+                sa_null().label("image_url"),
+            )
             .select_from(OrderItem)
             .join(Order, Order.id == OrderItem.order_id)
             .join(Product, Product.id == OrderItem.product_id)
             .join(Category, Category.id == Product.category_id)
         )
+        group_columns = (key, label)
     else:
         key, label = OrderItem.product_id, OrderItem.product_name
         stmt = (
-            select(key, label, quantity, revenue, func.sum(OrderItem.discount_amount))
+            select(
+                key,
+                label,
+                quantity,
+                revenue,
+                func.sum(OrderItem.discount_amount),
+                func.min(thumbnail).label("image_url"),
+            )
             .select_from(OrderItem)
             .join(Order, Order.id == OrderItem.order_id)
+            # Outer, so a line whose product has since been deleted still
+            # reports its sales. It loses its thumbnail, which is the right
+            # trade: a missing picture is a gap, a missing row is a wrong total.
+            .outerjoin(Product, Product.id == OrderItem.product_id)
         )
+        group_columns = (key, label)
 
     stmt = _scope(stmt, branch_id=branch_id, date_from=date_from, date_to=date_to)
     stmt = (
         stmt.where(Order.pos_status == CLOSED, OrderItem.status != "void")
-        .group_by(key, label)
+        .group_by(*group_columns)
         .order_by(revenue.desc())
         .limit(limit)
     )
@@ -492,8 +615,9 @@ async def _sales_by_item(
             "quantity": int(qty or 0),
             "net_sales": _q(total),
             "discounts": _q(discount),
+            "image_url": image_url,
         }
-        for k, name, qty, total, discount in (await db.execute(stmt)).all()
+        for k, name, qty, total, discount, image_url in (await db.execute(stmt)).all()
     ]
 
 
