@@ -10,12 +10,13 @@ import {
   useState,
 } from 'react';
 
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 
 import { addressesApi, deliveryApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { guestAddresses } from '@/lib/guest-addresses';
 import { readBranch, rememberBranch } from './branch-cookie';
+import { MAX_FIX_AGE_MS, shouldReplaceWithBrowserFix } from './refresh';
 import {
   DEFAULT_LOCATION,
   LOCATION_ASKED_KEY,
@@ -39,11 +40,12 @@ interface LocationContextValue {
   /**
    * Re-read the customer's default address and move the location to it.
    *
-   * Call after saving, deleting or re-defaulting an address. The seed runs once
-   * and prefers whatever is in `localStorage`, which is right for a page load
-   * and wrong for the moment somebody changes where they live: without this the
-   * new default was invisible until the browser storage was cleared, and every
-   * delivery estimate on the site kept answering for the old address.
+   * Call after saving, deleting or re-defaulting an address. Resolution runs
+   * per sign-in and prefers whatever is in `localStorage`, which is right for a
+   * page load and wrong for the moment somebody changes where they live:
+   * without this the new default was invisible until the browser storage was
+   * cleared, and every delivery estimate on the site kept answering for the old
+   * address.
    */
   refreshFromAddresses: () => Promise<void>;
 }
@@ -74,19 +76,67 @@ function persist(location: Location) {
   }
 }
 
+function forget() {
+  try {
+    window.localStorage.removeItem(LOCATION_STORAGE_KEY);
+  } catch {
+    /* storage unavailable — the in-memory reset below is what actually matters */
+  }
+}
+
+/**
+ * Whether this browser has already said yes, without asking it anything.
+ *
+ * The Permissions API is the only way to find out; `getCurrentPosition` itself
+ * answers the question by prompting, which is exactly what a background
+ * refresh must never do. A browser without the API therefore reports "not
+ * granted" and simply never refreshes silently — the safe direction to fail,
+ * because the other one is an unexplained permission prompt on page load.
+ */
+async function geolocationGranted(): Promise<boolean> {
+  if (typeof navigator === 'undefined' || !navigator.geolocation) return false;
+  if (!navigator.permissions?.query) return false;
+  try {
+    const status = await navigator.permissions.query({ name: 'geolocation' });
+    return status.state === 'granted';
+  } catch {
+    // Some browsers reject the descriptor rather than support it. Same answer.
+    return false;
+  }
+}
+
 export function LocationProvider({ children }: { children: React.ReactNode }) {
   const { user, isLoading: authLoading } = useAuth();
   const [location, setLocationState] = useState<Location>(DEFAULT_LOCATION);
   const [area, setArea] = useState<DeliveryArea | null>(null);
   const router = useRouter();
+  const pathname = usePathname();
   const [loading, setLoading] = useState(false);
 
-  // Guards the seed so it runs once. Without it, `user` arriving a beat after
-  // mount re-runs the whole chain and can overwrite a location the customer
-  // has already changed by hand.
-  const seeded = useRef(false);
+  /**
+   * Which account the location on screen was resolved for.
+   *
+   * `undefined` means never resolved, `null` means resolved as a signed-out
+   * visitor, and a string is a user id. Comparing against it is what makes
+   * resolution re-run on sign-in and sign-out and *only* then: a plain boolean
+   * ran once for the lifetime of the tab, so signing in never promoted the
+   * account's saved address, and signing out left the previous customer's
+   * neighbourhood on screen for whoever used the device next.
+   */
+  const seededFor = useRef<string | null | undefined>(undefined);
+
+  /** True once resolution has settled, so the refresh below cannot race it. */
+  const [resolved, setResolved] = useState(false);
+
+  /**
+   * The current pin, readable from a callback that must not re-create itself
+   * every time it moves. Every write goes through `setLocation`, so this and
+   * the state cannot drift.
+   */
+  const locationRef = useRef<Location>(DEFAULT_LOCATION);
 
   const setLocation = useCallback((next: Location) => {
+    locationRef.current = next;
     setLocationState(next);
     persist(next);
   }, []);
@@ -101,6 +151,8 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
     return new Promise<boolean>((resolve) => {
       navigator.geolocation.getCurrentPosition(
         (position) => {
+          // No distance guard here, unlike the silent refresh: somebody who has
+          // just pressed "use my location" is owed the reading they asked for.
           setLocation({
             latitude: position.coords.latitude,
             longitude: position.coords.longitude,
@@ -112,6 +164,40 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
         // Declining is a normal answer, not an error. We keep whatever we had.
         () => resolve(false),
         { enableHighAccuracy: false, timeout: 10_000, maximumAge: 600_000 },
+      );
+    });
+  }, [setLocation]);
+
+  /**
+   * Take a fresh reading, but only from a browser that has already agreed to
+   * give one, and only when it changes the answer.
+   *
+   * This is what stops the pin freezing on the day it was first set. A reading
+   * is a snapshot of where a handset was at one moment, and we were storing it
+   * and then treating it as settled fact forever — the customer moved emirate
+   * and the site went on quoting Sharjah's free-delivery threshold at them.
+   * Resolves true when the pin actually moved.
+   */
+  const refreshFromBrowser = useCallback(async () => {
+    if (!(await geolocationGranted())) return false;
+    return new Promise<boolean>((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const fix = {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          };
+          if (!shouldReplaceWithBrowserFix(locationRef.current, fix)) {
+            resolve(false);
+            return;
+          }
+          setLocation({ ...fix, source: 'geolocation', label: null });
+          resolve(true);
+        },
+        // Granted and still failed — no signal indoors, radio off. Keep what
+        // we have; a stale pin beats none.
+        () => resolve(false),
+        { enableHighAccuracy: false, timeout: 10_000, maximumAge: MAX_FIX_AGE_MS },
       );
     });
   }, [setLocation]);
@@ -132,7 +218,7 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
     }
   }, [setLocation]);
 
-  // ── seed, best source first ────────────────────────────────────────────────
+  // ── resolve, best source first, and again whenever the account changes ─────
   //
   // Order matters and is the opposite of "most recent wins". A saved address is
   // the strongest signal we have — the customer typed it and orders go there —
@@ -141,23 +227,42 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
   // prompt, and prompting somebody whose address we already know is a prompt
   // that buys nothing.
   useEffect(() => {
-    // Nothing may be seeded until we know whether there is an account, because
-    // the seed runs once and the answer changes which source wins. `user` is
-    // null on the first render of every page load — the session is restored a
-    // beat later — so seeding on it would mean a signed-in customer's saved
-    // address never won, and every one of them met a geolocation prompt for a
-    // location we already had on file. The ordering below is only real if the
-    // strongest source has actually arrived before the choice is made.
+    // Nothing may be resolved until we know whether there is an account,
+    // because the answer changes which source wins. `user` is null on the first
+    // render of every page load — the session is restored a beat later — so
+    // resolving on it would mean a signed-in customer's saved address never
+    // won, and every one of them met a geolocation prompt for a location we
+    // already had on file.
     if (authLoading) return;
-    if (seeded.current) return;
-    seeded.current = true;
+
+    const identity = user?.id ?? null;
+    if (seededFor.current === identity) return;
+    const previous = seededFor.current;
+    const firstRun = previous === undefined;
+    seededFor.current = identity;
 
     let cancelled = false;
+    let completed = false;
 
     (async () => {
-      const stored = readStored();
-      if (stored) {
-        setLocationState(stored);
+      let stored = readStored();
+
+      // Signing out takes the account's address book with it, and a pin derived
+      // from one is that customer's home. It must not survive into whoever uses
+      // the device next. A pin the *device* owns — its own browser reading, its
+      // own dropped marker — is not the account's to take away.
+      if (!firstRun && !user && stored?.source === 'address') {
+        forget();
+        stored = null;
+        setLocationState(DEFAULT_LOCATION);
+        locationRef.current = DEFAULT_LOCATION;
+      }
+
+      // A page load trusts what it already knows. A sign-in does not: the
+      // account that just arrived may name a stronger source than whatever the
+      // visitor was browsing with, and finding that out is the point.
+      if (firstRun && stored) {
+        setLocation(stored);
         return;
       }
 
@@ -166,7 +271,8 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
           const addresses = await addressesApi.list();
           const preferred =
             addresses.find((a) => a.is_default) ?? addresses[0] ?? null;
-          if (preferred && !cancelled) {
+          if (cancelled) return;
+          if (preferred) {
             setLocation({
               latitude: Number(preferred.latitude),
               longitude: Number(preferred.longitude),
@@ -178,11 +284,12 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
         } catch {
           /* not signed in after all, or the call failed — try the next source */
         }
+        if (cancelled) return;
       }
 
       const guest = guestAddresses.list();
       const lastOrdered = guest.find((a) => a.is_default) ?? guest[0] ?? null;
-      if (lastOrdered && !cancelled) {
+      if (lastOrdered) {
         setLocation({
           latitude: Number(lastOrdered.latitude),
           longitude: Number(lastOrdered.longitude),
@@ -192,8 +299,27 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // Nothing on file. Ask once, ever — `LOCATION_ASKED_KEY` is what makes it
-      // once rather than every visit.
+      // No address anywhere. Someone signing in to an account with an empty
+      // address book keeps the pin they were already browsing with rather than
+      // being thrown back to the shop's coordinates for the crime of logging
+      // in — but a reading is still worth taking, since it may have moved.
+      if (stored) setLocation(stored);
+
+      // A browser that has already granted permission can answer without a
+      // prompt, and does so however we got here.
+      if (await refreshFromBrowser()) return;
+      if (cancelled || stored) return;
+
+      // Asking outright is reserved for a page load. Springing a permission
+      // dialog on somebody the instant they press "log out" is a prompt nobody
+      // invited, and the banner's own "use my location" button is right there
+      // for whoever does want it.
+      if (!firstRun) return;
+
+      // Asked once, ever — `LOCATION_ASKED_KEY` is what makes it once rather
+      // than every visit, because asking again on every visit is how a
+      // permission prompt turns into a reason to leave.
+
       let asked = false;
       try {
         asked = window.localStorage.getItem(LOCATION_ASKED_KEY) === '1';
@@ -203,12 +329,31 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
       if (!asked && !cancelled) {
         await requestBrowserLocation();
       }
-    })();
+    })().finally(() => {
+      completed = true;
+      if (!cancelled) setResolved(true);
+    });
 
     return () => {
       cancelled = true;
+      // React's development double-invoke tears this effect down between its
+      // two runs. Without rolling the marker back, the cancelled first run
+      // would be the only one that ever happened and nothing would resolve.
+      if (!completed) seededFor.current = previous;
     };
-  }, [authLoading, user, setLocation, requestBrowserLocation]);
+  }, [authLoading, user, setLocation, refreshFromBrowser, requestBrowserLocation]);
+
+  // ── a new screen is a new chance to notice they have moved ─────────────────
+  //
+  // Costs nothing when they have not: `maximumAge` lets the browser answer from
+  // its own cache, and a reading inside `MOVE_THRESHOLD_M` of the current pin
+  // is dropped without touching state, so no delivery lookup and no re-render.
+  // Gated on `resolved` so it cannot race the chain above and overwrite an
+  // address that is still in flight.
+  useEffect(() => {
+    if (!resolved) return;
+    void refreshFromBrowser();
+  }, [pathname, resolved, refreshFromBrowser]);
 
   /**
    * Record the kitchen, and redraw the page when it has actually changed.
