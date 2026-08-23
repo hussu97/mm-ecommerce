@@ -106,25 +106,53 @@ Our "Size" group (73 options) has no counterpart: GrubOps models size as
 separate recipes, "Cookie Melt (250 grams)" against "(500 grams)". Those
 options are reported unmatched, which is correct.
 
-## Open: confirm the write body
+## The writes, confirmed
 
-One thing is still inferred from the compiled bundle rather than observed. The
-field *names* in `unavailable_body` / `available_body` come from the bundle's
-own mappers and the response side corroborates them, but no write has been sent
-to confirm the full shape or the format `unavailableTill` wants.
+Sent against the live account on 2026-08-23 and verified by reading the state
+back. **The two endpoints do not take the same shape**, which is the thing
+worth knowing before touching either.
 
-**To confirm:** signed in to the GrubOps console as the service user, with the
-browser network tab open, mark one test item out of stock and put it back.
-Record the two XHRs to `items-availability/*`, then adjust
-`grubops_service.unavailable_body` / `available_body` to match.
+`unavailable` takes the identity in an envelope:
 
-A cheaper alternative, if a live write is acceptable: re-assert the state of an
-item that is *already* unavailable until further notice. That is a no-op for
-anything a customer sees and proves the payload is accepted.
+```json
+{"itemInfo": {"partnerId":"…","locationId":"…","brandId":"…",
+              "recipeId":"…","modifierId":null,"childModifierId":null,
+              "type":"RECIPE"},
+ "source": "MELTING_MOMENTS_POS",
+ "status": "UNAVAILABLE_UNTIL_FURTHER_NOTICE",
+ "unavailabilityInfo": {"unavailableTill": null,
+                        "unavailableReason": "Out of stock (POS)"}}
+```
 
-Until then, leave `GRUBOPS_SYNC_ENABLED` off. Everything else — login, token
-refresh, location discovery, the branch switch, the item map, the reconcile
-diff — is working and tested against the live account.
+`available` takes the bare identity, **flat, with no `source`**:
+
+```json
+{"partnerId":"…","locationId":"…","brandId":"…","recipeId":"…",
+ "modifierId":null,"childModifierId":null,"type":"RECIPE"}
+```
+
+Send the envelope to `available` and every field of the identity comes back as
+`must not be null`, because they are being looked for at the top level.
+
+**A modifier must carry its recipe.** `{"recipeId": ["must not be null"]}` is
+the answer to a `type: MODIFIER` write that names only the modifier. So
+`grubops_item_map` stores the parent recipe on option rows as well as the
+modifier's own id — the same pairing the matcher needed, for the same reason.
+
+**Putting back something already back is a 400**, with the message
+*"is/are not currently marked as unavailable in the database"*. That is not a
+failure — it happens when somebody clears the item in the GrubOps console
+between two ticks, and the end state is the one we wanted — so `push_deltas`
+records it as pushed rather than retrying it for ever.
+
+**Their reads lag their writes** by a second or two. Anything that writes and
+then verifies has to retry the read; a single read straight after a write shows
+the previous state and will convince you the write failed.
+
+None of this changed the schema. `grubops_item_map` already held
+`grubops_recipe_id`, `grubops_modifier_id`, `grubops_child_modifier_id` and
+`grubops_type` as separate columns, which is exactly the identity GrubOps
+takes.
 
 ## Why it is a loop and not a push
 
@@ -164,12 +192,18 @@ shop's whole menu back on sale.
    a secret only reaches the containers once the deploy rewrites the VM's `.env`.
 3. In the console, press **Sync from GrubOps**. Branches appear under the
    Branches tab; item suggestions appear under Needs approval.
-4. Work through the queue. Fuzzy matches show a score; anything below about 95%
-   is worth reading twice. Correct an id inline if the guess is wrong — that
-   marks the row `manual` and the matcher will not touch it again.
+4. Work through the queue. Against today's catalogue every row comes out
+   `exact` — 45 products and 147 options, measured — so this is a read rather
+   than a repair. Fuzzy matches show a score; anything below about 95% is worth
+   reading twice. Correct an id inline if a guess is wrong: that marks the row
+   `manual` and the matcher will not touch it again.
 5. Turn on the branches whose registers are live.
 6. Set `GRUBOPS_SYNC_ENABLED=true` and redeploy. The loop picks it up within
    `GRUBOPS_RECONCILE_TICK_SECONDS` (120 by default).
+
+The first tick after switching a branch on sends its whole approved map, since
+nothing has been pushed for it yet. Expect one burst and then near-silence:
+after that only differences go.
 
 Nothing is ever sent for an unapproved row, so steps 1–4 are safe to do at
 leisure with the flag off.

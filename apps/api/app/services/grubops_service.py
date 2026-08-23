@@ -61,6 +61,14 @@ _pending: set[asyncio.Task] = set()
 #: console, so it is worth it saying where the change came from.
 _REASON = "Out of stock (POS)"
 
+#: What GrubOps says when asked to put back something it never took away.
+#:
+#: Not a failure. The reconcile loop only sends differences, so this appears
+#: when GrubOps already agrees — somebody cleared the item in their console
+#: between two ticks, most often. Treating it as an error would leave the row
+#: marked failing for ever over a race whose outcome was the one we wanted.
+_ALREADY_AVAILABLE = "not currently marked as unavailable"
+
 #: How much a return time has to move before it is worth resending. `end_of_day`
 #: resolves to a very slightly different instant on every tick, and without a
 #: tolerance the loop would push the same fact all evening.
@@ -139,11 +147,19 @@ def unavailable_body(
 def available_body(
     desired: Desired, *, partner_id: str, location_id: str, source: str
 ) -> dict[str, Any]:
-    """One item, coming back."""
-    return {
-        "itemInfo": _item_info(desired, partner_id=partner_id, location_id=location_id),
-        "source": source,
-    }
+    """One item, coming back.
+
+    The bare identity, flat — **not** the `{itemInfo, source, …}` envelope its
+    sibling takes, and no `source` at all. The two endpoints genuinely differ:
+    their bundle builds the unavailable call from one mapper and this one from
+    another, and sending the wrapped shape here is answered with
+    `{"partnerId": ["must not be null"], …}` for every field of the identity,
+    because they are being looked for at the top level.
+
+    `source` is accepted as an argument and ignored so the two builders stay
+    interchangeable to their callers.
+    """
+    return _item_info(desired, partner_id=partner_id, location_id=location_id)
 
 
 def _moved(previous: datetime | None, current: datetime | None) -> bool:
@@ -209,14 +225,25 @@ async def push_deltas(
             ]
         )
     if coming_back:
-        await provider.mark_available(
-            [
-                available_body(
-                    d, partner_id=partner_id, location_id=location_id, source=source
-                )
-                for d in coming_back
-            ]
-        )
+        try:
+            await provider.mark_available(
+                [
+                    available_body(
+                        d, partner_id=partner_id, location_id=location_id, source=source
+                    )
+                    for d in coming_back
+                ]
+            )
+        except GrubOpsError as exc:
+            # See `_ALREADY_AVAILABLE`. The end state is the one we asked for,
+            # so it is recorded as pushed rather than retried for ever.
+            if _ALREADY_AVAILABLE not in str(exc):
+                raise
+            logger.info(
+                "GrubOps: %d item(s) were already available at %s",
+                len(coming_back),
+                location_id,
+            )
 
     await record_pushed(db, branch_id=location.branch_id, deltas=deltas)
     return len(deltas)

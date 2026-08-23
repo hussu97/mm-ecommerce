@@ -521,7 +521,14 @@ def _upsert(
             product_id=product_id,
             modifier_option_id=option_id,
             grubops_brand_id=candidate.brand_id,
-            grubops_recipe_id=candidate.item_id if is_recipe else None,
+            # A modifier keeps its recipe as well as its own id. GrubOps takes
+            # the whole identity on a write and answers `{"recipeId": ["must
+            # not be null"]}` without it — a modifier is only meaningful under
+            # the recipe it belongs to, which is the same reason it took both
+            # to match in the first place.
+            grubops_recipe_id=(
+                candidate.item_id if is_recipe else candidate.parent_recipe_id
+            ),
             grubops_modifier_id=None if is_recipe else candidate.item_id,
             grubops_child_modifier_id=None,
             grubops_type=candidate.grubops_type,

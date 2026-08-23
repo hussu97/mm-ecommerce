@@ -97,9 +97,15 @@ def test_a_timed_window_sends_the_moment_it_returns():
 
 
 def test_the_identity_names_every_id_even_when_null():
-    """An absent key is not a null one to the service on the other end."""
-    body = svc.available_body(
-        _desired(available=True),
+    """An absent key is not a null one to the service on the other end.
+
+    Checked on the `unavailable` side, where the identity sits under
+    `itemInfo`; the `available` side sends the same fields flat, which
+    `test_taking_an_item_off_wraps_the_identity_and_putting_it_back_does_not`
+    covers.
+    """
+    body = svc.unavailable_body(
+        _desired(available=False),
         partner_id=PARTNER,
         location_id=LOCATION,
         source="POS",
@@ -452,3 +458,130 @@ def test_the_english_name_is_taken_from_the_translation_bundle():
     )
     # `serving-brands` uses a different shape for the same idea.
     assert _name_of({"name": {"text": "Melting Moments"}}) == "Melting Moments"
+
+
+# ── the two writes are not the same shape ─────────────────────────────────────
+
+
+def test_taking_an_item_off_wraps_the_identity_and_putting_it_back_does_not():
+    """
+    The two endpoints disagree, and only one of them says so politely.
+
+    `unavailable` takes `{itemInfo, source, status, unavailabilityInfo}`;
+    `available` takes the bare identity, flat, with no source at all. Sending
+    the envelope to `available` is answered with `{"partnerId": ["must not be
+    null"], …}` for every field of the identity — they are being looked for at
+    the top level. Confirmed against the live account.
+    """
+    out = svc.unavailable_body(
+        _desired(available=False),
+        partner_id=PARTNER,
+        location_id=LOCATION,
+        source="POS",
+    )
+    assert set(out) == {"itemInfo", "source", "status", "unavailabilityInfo"}
+
+    back = svc.available_body(
+        _desired(available=True), partner_id=PARTNER, location_id=LOCATION, source="POS"
+    )
+    assert "itemInfo" not in back
+    assert "source" not in back
+    assert back["partnerId"] == PARTNER
+    assert back["recipeId"] == "recipe-1"
+    assert back["type"] == "RECIPE"
+
+
+def test_a_modifier_carries_its_recipe_as_well_as_itself():
+    """
+    GrubOps answers `{"recipeId": ["must not be null"]}` without it.
+
+    A modifier is only meaningful under the recipe it hangs off — the same
+    reason it took both to match one in the first place — so the mapping row
+    stores the parent recipe and the payload sends it.
+    """
+    desired = svc.Desired(
+        item_map_id=uuid.uuid4(),
+        brand_id=BRAND,
+        recipe_id="recipe-1",
+        modifier_id="mod-1",
+        child_modifier_id=None,
+        grubops_type="MODIFIER",
+        available=False,
+        until=None,
+    )
+    info = svc.unavailable_body(
+        desired, partner_id=PARTNER, location_id=LOCATION, source="POS"
+    )["itemInfo"]
+    assert info["recipeId"] == "recipe-1"
+    assert info["modifierId"] == "mod-1"
+    assert info["type"] == "MODIFIER"
+
+
+@pytest.mark.asyncio
+async def test_putting_back_something_already_back_is_not_a_failure():
+    """
+    GrubOps 400s when asked to clear an item it does not hold as unavailable.
+
+    That happens whenever somebody clears the item in their console between two
+    ticks — the end state is the one we wanted. Raising would leave the row
+    marked failing for ever over a race we won.
+    """
+    from unittest.mock import AsyncMock
+
+    location = type(
+        "L",
+        (),
+        {
+            "branch_id": uuid.uuid4(),
+            "grubops_partner_id": PARTNER,
+            "grubops_location_id": LOCATION,
+        },
+    )()
+
+    with (
+        patch.object(
+            svc.provider,
+            "mark_available",
+            new=AsyncMock(
+                side_effect=GrubOpsError(
+                    "GrubOps returned 400: is/are not currently marked as "
+                    "unavailable in the database",
+                    status=400,
+                )
+            ),
+        ),
+        patch.object(svc, "record_pushed", new=AsyncMock()) as recorded,
+    ):
+        sent = await svc.push_deltas(
+            None, location=location, deltas=[_desired(available=True)]
+        )
+
+    assert sent == 1
+    # Recorded as pushed, so the next tick sees no delta and does not retry.
+    assert recorded.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_real_failure_still_raises():
+    """The tolerance above must not swallow anything else."""
+    from unittest.mock import AsyncMock
+
+    location = type(
+        "L",
+        (),
+        {
+            "branch_id": uuid.uuid4(),
+            "grubops_partner_id": PARTNER,
+            "grubops_location_id": LOCATION,
+        },
+    )()
+
+    with patch.object(
+        svc.provider,
+        "mark_available",
+        new=AsyncMock(side_effect=GrubOpsError("GrubOps returned 500", status=500)),
+    ):
+        with pytest.raises(GrubOpsError):
+            await svc.push_deltas(
+                None, location=location, deltas=[_desired(available=True)]
+            )
