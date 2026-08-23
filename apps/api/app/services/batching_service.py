@@ -730,6 +730,12 @@ async def dispatch_due_batches(db: AsyncSession, *, limit: int = 20) -> list[uui
     dispatched: list[uuid.UUID] = []
     for batch in due:
         batch.status = BatchStatusEnum.DISPATCHING.value
+        # Safe to commit a session this function was handed, because the only
+        # caller is `batch_scheduler`, which opens one for the sweep and owns
+        # it — there is no request waiting on `get_db` to commit. And it has to
+        # be committed *here*: the claim above is what stops a second worker
+        # taking the same batch, and a claim held open in an uncommitted
+        # transaction claims nothing outside it.
         await db.commit()
         try:
             await dispatch_batch(db, batch)

@@ -659,6 +659,13 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
         delivery.cost_total if delivery.cost_total is not None else "-",
     )
 
+    # Committed here rather than left to the end of the request, for the same
+    # reason as `lalamove_service.dispatch_order`: a rider has been engaged and
+    # the wallet debited, outside our transaction and beyond its rollback. If
+    # anything later in the request failed we would lose the courier's id while
+    # their job kept existing, and the next dispatch would book a second rider
+    # for the same cake. The status change this was triggered by is already on
+    # the session, so committing both together is the state we want on disk.
     await db.commit()
     return delivery
 

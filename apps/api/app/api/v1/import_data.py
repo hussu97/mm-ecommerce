@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import io
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db
@@ -24,7 +24,6 @@ async def _parse_csv(upload: UploadFile) -> list[dict]:
 
 @router.post("/categories", response_model=ImportResult)
 async def import_categories(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require("admin.data.manage")),
@@ -32,13 +31,12 @@ async def import_categories(
     """Import categories from Foodics CSV export."""
     rows = await _parse_csv(file)
     result = await import_service.import_categories(db, rows)
-    background_tasks.add_task(image_warm_service.warm_quietly, result.image_urls)
+    image_warm_service.warm_in_background(result.image_urls)
     return result
 
 
 @router.post("/products", response_model=ImportResult)
 async def import_products(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require("admin.data.manage")),
@@ -48,7 +46,7 @@ async def import_products(
     result = await import_service.import_products(db, rows)
     # A Foodics export brings in the whole catalogue at once, which is exactly
     # the case that used to leave every product cold until a customer opened it.
-    background_tasks.add_task(image_warm_service.warm_quietly, result.image_urls)
+    image_warm_service.warm_in_background(result.image_urls)
     return result
 
 
