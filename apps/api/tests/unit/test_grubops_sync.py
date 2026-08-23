@@ -27,7 +27,6 @@ import pytest
 from app.services import grubops_service as svc
 from app.services.providers.grubops_provider import (
     STATUS_UNTIL_FURTHER_NOTICE,
-    STATUS_UNTIL_SPECIFIC_DATE,
     GrubOpsClient,
     GrubOpsConfig,
     GrubOpsError,
@@ -105,25 +104,6 @@ def test_indefinite_out_of_stock_carries_no_date():
     assert body["itemInfo"]["type"] == "RECIPE"
 
 
-def test_a_timed_window_sends_the_moment_it_returns():
-    """
-    The instant, not the duration.
-
-    `availability_service` has already turned "until close" into the branch's
-    own rollover — sending a duration would ask GrubOps to reinterpret a
-    decision that has already been made correctly.
-    """
-    until = datetime(2026, 8, 23, 20, 0, tzinfo=timezone.utc)
-    body = svc.unavailable_body(
-        _desired(available=False, until=until),
-        partner_id=PARTNER,
-        location_id=LOCATION,
-        source="POS",
-    )
-    assert body["status"] == STATUS_UNTIL_SPECIFIC_DATE
-    assert body["unavailabilityInfo"]["unavailableTill"].startswith("2026-08-23T20:00")
-
-
 def test_the_identity_names_every_id_even_when_null():
     """An absent key is not a null one to the service on the other end.
 
@@ -175,30 +155,6 @@ def test_a_mapping_never_pushed_is_always_pushed():
     """
     assert svc.needs_push(None, _desired(available=True)) is True
     assert svc.needs_push(_state(available=None), _desired(available=True)) is True
-
-
-def test_end_of_day_drift_does_not_resend_all_evening():
-    """
-    `end_of_day` resolves a few milliseconds differently every tick.
-
-    Without a tolerance the loop would push the same fact every two minutes
-    from the moment an item went out until closing time.
-    """
-    first = datetime(2026, 8, 23, 20, 0, tzinfo=timezone.utc)
-    later = first + timedelta(seconds=5)
-    state = _state(available=False, until=first)
-    assert svc.needs_push(state, _desired(available=False, until=later)) is False
-
-
-def test_a_real_change_of_return_time_is_pushed():
-    """An hour becoming until-close is a different promise to the customer."""
-    first = datetime(2026, 8, 23, 18, 0, tzinfo=timezone.utc)
-    later = first + timedelta(hours=2)
-    state = _state(available=False, until=first)
-    assert svc.needs_push(state, _desired(available=False, until=later)) is True
-
-
-# ── the token ─────────────────────────────────────────────────────────────────
 
 
 def _client() -> GrubOpsClient:
@@ -615,43 +571,52 @@ async def test_a_real_failure_still_raises():
             )
 
 
-def test_the_return_time_is_spelled_the_way_their_client_spells_it():
+# ── GrubOps cannot hold a return time ─────────────────────────────────────────
+
+
+def test_a_timed_window_still_goes_out_until_further_notice():
     """
-    `...Z` with milliseconds, never `+00:00`.
+    Their `unavailableTill` is date-only in practice, so we do not send one.
 
-    The same instant either way, and GrubOps accepts both — but it only stores
-    one of them correctly. Sent `2026-08-23T13:00:52+00:00` in production and
-    read back `2026-08-23T02:00:00Z`: eleven hours early, seconds discarded,
-    and already in the past, so an hour-long out-of-stock arrived as one that
-    had already lapsed. Nothing rejected it and nothing logged it.
+    Measured against the live account: the day survives and the clock does not,
+    replaced by 02:00Z — six in the morning, Dubai.
 
-    Their client is Dart, and `toUtc().toIso8601String()` produces the `Z`
-    form, which is what every timestamp their service has ever been given
-    looks like.
+        sent 2026-08-26T12:19:11Z  ->  stored 2026-08-26T02:00:00Z
+        sent 2026-08-23T12:49:11Z  ->  stored 2026-08-23T02:00:00Z
+
+    An hour-long out-of-stock therefore lands as "came back at six this
+    morning", a moment already past, and the item never leaves the aggregators
+    at all. Sending no time and letting the reconcile loop put the item back is
+    both accurate and safe: the loop recomputes every tick and pushes the
+    return the moment `out_of_stock_until` lapses.
     """
-    from app.services.grubops_service import _iso8601_z
-
-    moment = datetime(2026, 8, 23, 13, 0, 52, 213441, tzinfo=timezone.utc)
-    assert _iso8601_z(moment) == "2026-08-23T13:00:52.213Z"
-
+    until = datetime(2026, 8, 23, 20, 0, tzinfo=timezone.utc)
     body = svc.unavailable_body(
-        _desired(available=False, until=moment),
+        _desired(available=False, until=until),
         partner_id=PARTNER,
         location_id=LOCATION,
         source="grubOps 2.0",
     )
-    till = body["unavailabilityInfo"]["unavailableTill"]
-    assert till.endswith("Z")
-    assert "+00:00" not in till
+    assert body["status"] == STATUS_UNTIL_FURTHER_NOTICE
+    assert body["unavailabilityInfo"]["unavailableTill"] is None
 
 
-def test_a_return_time_in_another_zone_is_converted_not_relabelled():
-    """A branch rollover is a real instant; the `Z` must be earned, not asserted."""
-    from datetime import timedelta
-    from app.services.grubops_service import _iso8601_z
+def test_the_diff_ignores_a_moved_return_time():
+    """
+    Nothing on their side depends on it, so a call would change nothing.
 
-    gulf = timezone(timedelta(hours=4))
-    # 02:00 in Dubai is 22:00 UTC the day before.
-    assert _iso8601_z(datetime(2026, 8, 24, 2, 0, tzinfo=gulf)) == (
-        "2026-08-23T22:00:00.000Z"
+    `end_of_day` also recomputes a few milliseconds off on every tick, so
+    pushing on it would have meant a call every two minutes until closing.
+    """
+    first = datetime(2026, 8, 23, 18, 0, tzinfo=timezone.utc)
+    state = _state(available=False, until=first)
+    moved = _desired(available=False, until=first + timedelta(hours=2))
+    assert svc.needs_push(state, moved) is False
+
+
+def test_the_return_itself_is_still_pushed():
+    """The half that matters: the loop is what puts a lapsed item back."""
+    was_out = _state(
+        available=False, until=datetime(2026, 8, 23, 18, 0, tzinfo=timezone.utc)
     )
+    assert svc.needs_push(was_out, _desired(available=True)) is True

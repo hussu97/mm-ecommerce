@@ -151,15 +151,34 @@ the answer to a `type: MODIFIER` write that names only the modifier. So
 `grubops_item_map` stores the parent recipe on option rows as well as the
 modifier's own id — the same pairing the matcher needed, for the same reason.
 
-**`unavailableTill` must be spelled `...Z`, not `+00:00`.** Their client is
-Dart and sends `toUtc().toIso8601String()` — `2026-08-23T13:00:52.213Z`.
-Python's `isoformat()` writes the same instant as `+00:00`, and their service
-accepts it, stores it, and mangles it: `13:00:52+00:00` was read back as
-`02:00:00Z`, eleven hours early with the seconds discarded and the moment
-already past, so an hour-long out-of-stock arrived as one that had already
-lapsed. Nothing rejected it and nothing logged it — the only way to see it was
-to read the value back. `_iso8601_z` in `grubops_service` is the fix and the
-test carries the real numbers.
+**GrubOps cannot hold a return *time*, so we never send one.** `unavailableTill`
+is date-only in practice: their service keeps the day and discards the clock,
+substituting 02:00Z — 06:00 in Dubai, the day-start for these outlets.
+Measured against the live account:
+
+```
+sent 2026-08-26T12:19:11Z  ->  stored 2026-08-26T02:00:00Z
+sent 2026-08-23T12:49:11Z  ->  stored 2026-08-23T02:00:00Z
+sent 2027-08-23T12:19:11Z  ->  stored 2027-08-23T02:00:00Z
+```
+
+Their own console only offers "until next day", so a date is all it has ever
+needed. Ours offers an hour — and an hour becomes *this morning at six*, a
+moment already past, so the item never leaves the aggregators. A one-hour
+out-of-stock was silently a no-op.
+
+So every out-of-stock goes out as `UNAVAILABLE_UNTIL_FURTHER_NOTICE`, whatever
+the terminal said, and **the reconcile loop owns the clock**: it recomputes
+effective availability every tick and pushes the return the moment
+`out_of_stock_until` lapses. A tick's granularity, against a field they would
+have rounded to the nearest morning anyway — and it fails in the safe
+direction, since an app that stops pushing leaves items out rather than
+letting them return on GrubOps' clock with nobody watching.
+
+(This also retires an earlier theory. The first symptom was a mangled
+timestamp, which looked like a formatting problem — Python writes `+00:00`
+where Dart writes `Z` — and matching the spelling changed nothing. The clock
+was never being read.)
 
 **Their writes are patch-like on an existing record.** Creating an
 unavailability stores exactly what is sent; *updating* one ignores a null, so a

@@ -46,7 +46,6 @@ from app.models.grubops import (
 )
 from app.services.providers.grubops_provider import (
     STATUS_UNTIL_FURTHER_NOTICE,
-    STATUS_UNTIL_SPECIFIC_DATE,
     GrubOpsError,
     provider,
 )
@@ -71,11 +70,6 @@ _REASON = None
 #: between two ticks, most often. Treating it as an error would leave the row
 #: marked failing for ever over a race whose outcome was the one we wanted.
 _ALREADY_AVAILABLE = "not currently marked as unavailable"
-
-#: How much a return time has to move before it is worth resending. `end_of_day`
-#: resolves to a very slightly different instant on every tick, and without a
-#: tolerance the loop would push the same fact all evening.
-_UNTIL_EPSILON_SECONDS = 60
 
 
 def _now() -> datetime:
@@ -104,26 +98,33 @@ class Desired:
     until: datetime | None
 
 
-def _iso8601_z(moment: datetime) -> str:
-    """UTC, milliseconds, and a literal `Z` — the exact spelling their client uses.
-
-    Not cosmetic. Dart's `toUtc().toIso8601String()` produces
-    `2026-08-23T13:00:52.213Z`, and that is what every timestamp GrubOps has
-    ever been sent looks like. Python's `isoformat()` writes the same instant as
-    `...+00:00`, which their service accepts, stores, and silently mangles:
-    `13:00:52+00:00` came back as `02:00:00Z` — eleven hours early, seconds
-    discarded, and in the past. An item marked out for an hour would have been
-    recorded as already back.
-
-    Nothing rejected it and nothing logged it. The only way to see it was to
-    read the value back, which is why the test for this carries the real
-    numbers.
-    """
-    return (
-        moment.astimezone(timezone.utc)
-        .isoformat(timespec="milliseconds")
-        .replace("+00:00", "Z")
-    )
+#: Why every out-of-stock we send is "until further notice", whatever the
+#: terminal said.
+#:
+#: GrubOps cannot hold a return *time*. `unavailableTill` is date-only in
+#: practice: their service keeps the day and throws the clock away, replacing
+#: it with 02:00Z — 06:00 in Dubai, the day-start for these outlets. Measured
+#: against the live account:
+#:
+#:     sent 2026-08-26T12:19:11Z  ->  stored 2026-08-26T02:00:00Z
+#:     sent 2026-08-23T12:49:11Z  ->  stored 2026-08-23T02:00:00Z
+#:     sent 2027-08-23T12:19:11Z  ->  stored 2027-08-23T02:00:00Z
+#:
+#: Their own console only offers "until next day", so a date is all it has ever
+#: needed to express. Ours offers an hour, and an hour becomes *this morning at
+#: six* — a moment already past, which puts the item straight back on sale. The
+#: shop marks the kunafa out for an hour and nothing happens.
+#:
+#: So the clock stays on this side. Everything goes out as
+#: UNAVAILABLE_UNTIL_FURTHER_NOTICE and the reconcile loop puts it back: it
+#: recomputes effective availability every tick, and the moment
+#: `out_of_stock_until` lapses the item reads as available and an `available`
+#: call goes. That is a tick's granularity rather than a second's, against a
+#: field they would have rounded to the nearest morning anyway.
+#:
+#: It also fails in the safe direction. If this app stops pushing, items stay
+#: out until it comes back, rather than returning to sale on GrubOps' clock
+#: with nobody watching.
 
 
 def _item_info(
@@ -149,20 +150,19 @@ def _item_info(
 def unavailable_body(
     desired: Desired, *, partner_id: str, location_id: str, source: str
 ) -> dict[str, Any]:
-    """One item, going off the menu."""
-    timed = desired.until is not None
+    """One item, going off the menu — always until further notice.
+
+    `desired.until` is deliberately not sent. See the note above: GrubOps
+    rounds a return time to the morning of that date, which turns "out for an
+    hour" into "came back at six this morning". The loop owns the clock
+    instead.
+    """
     return {
         "itemInfo": _item_info(desired, partner_id=partner_id, location_id=location_id),
         "source": source,
-        "status": (
-            STATUS_UNTIL_SPECIFIC_DATE if timed else STATUS_UNTIL_FURTHER_NOTICE
-        ),
+        "status": STATUS_UNTIL_FURTHER_NOTICE,
         "unavailabilityInfo": {
-            # `availability_service` has already turned "until close" into the
-            # branch's own rollover, so this is a real instant rather than a
-            # duration GrubOps would have to interpret. The spelling of it
-            # matters as much as the value — see `_iso8601_z`.
-            "unavailableTill": _iso8601_z(desired.until) if timed else None,
+            "unavailableTill": None,
             "unavailableReason": _REASON,
         },
     }
@@ -186,30 +186,22 @@ def available_body(
     return _item_info(desired, partner_id=partner_id, location_id=location_id)
 
 
-def _moved(previous: datetime | None, current: datetime | None) -> bool:
-    """Whether a return time has changed by enough to be worth a call."""
-    if (previous is None) != (current is None):
-        return True
-    if previous is None or current is None:
-        return False
-    return abs((current - previous).total_seconds()) > _UNTIL_EPSILON_SECONDS
-
-
 def needs_push(state: GrubOpsSyncState | None, desired: Desired) -> bool:
     """Whether GrubOps has been told this already.
 
     A missing row means "never told", which is not the same as "told it was
     available" — the first tick after a mapping is approved has to say
     something, or an item that is already out would stay on the aggregators.
+
+    Only the flip matters. A moved return time used to count as a change, back
+    when the return time was sent; it is not sent any more, so pushing on it
+    would be a call that could not alter anything on their side — and
+    `end_of_day` recomputes a few milliseconds off on every tick, so it would
+    have been a call every two minutes until closing.
     """
     if state is None or state.last_pushed_available is None:
         return True
-    if state.last_pushed_available != desired.available:
-        return True
-    # Only a thing that is *out* has a return time worth comparing.
-    if not desired.available and _moved(state.last_pushed_until, desired.until):
-        return True
-    return False
+    return state.last_pushed_available != desired.available
 
 
 async def push_deltas(
