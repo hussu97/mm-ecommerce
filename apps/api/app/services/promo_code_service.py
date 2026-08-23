@@ -6,6 +6,8 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from app.core.money import money
+
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,9 +37,7 @@ __all__ = [
 
 def _calc_discount(promo: PromoCode, subtotal: Decimal) -> Decimal:
     if promo.discount_type == DiscountTypeEnum.PERCENTAGE:
-        amount = (subtotal * promo.discount_value / Decimal("100")).quantize(
-            Decimal("0.01")
-        )
+        amount = money(subtotal * promo.discount_value / Decimal("100"))
     else:
         amount = min(promo.discount_value, subtotal)
     # A percentage scales with the basket, which is fine at 60 dirhams and not
@@ -60,7 +60,7 @@ def _money(amount: Decimal) -> str:
     Only ever used inside a refusal the customer reads. "Add AED 50.00 more"
     reads like a system talking; the fils are noise unless there are any.
     """
-    amount = amount.quantize(Decimal("0.01"))
+    amount = money(amount)
     return str(
         amount.to_integral_value() if amount == amount.to_integral_value() else amount
     )

@@ -25,7 +25,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
+
+from app.core.money import money, to_decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,7 +47,6 @@ __all__ = [
 ]
 
 _ZERO = Decimal("0")
-_CENTS = Decimal("0.01")
 
 #: The share of menu-price goods an order has to keep to be worth taking.
 #:
@@ -55,14 +56,6 @@ _CENTS = Decimal("0.01")
 #: single number that has never had a second opinion; the day it needs one it
 #: belongs on `business_settings`, not scattered through call sites.
 DIRECT_COST_THRESHOLD = Decimal("50")
-
-
-def _money(value: object) -> Decimal:
-    return Decimal(str(value or 0))
-
-
-def _round(value: Decimal) -> Decimal:
-    return value.quantize(_CENTS, rounding=ROUND_HALF_UP)
 
 
 @dataclass(frozen=True)
@@ -111,7 +104,7 @@ class OrderEconomics:
     @property
     def net(self) -> Decimal:
         """What the shop keeps."""
-        return _round(
+        return money(
             self.charged
             - (self.courier_cost or _ZERO)
             - (self.aggregator_fee or _ZERO)
@@ -178,7 +171,7 @@ class OrderEconomics:
         # question does not apply".
         if base <= 0:
             return None
-        return _round(self.net / base * 100)
+        return money(self.net / base * 100)
 
 
 def processing_fee(
@@ -207,10 +200,10 @@ def processing_fee(
     """
     if charged <= 0:
         return _ZERO, False
-    percent = _money(gateway.fee_percent) if gateway else Decimal("2.9")
-    fixed = _money(gateway.fee_fixed) if gateway else Decimal("1")
+    percent = to_decimal(gateway.fee_percent) if gateway else Decimal("2.9")
+    fixed = to_decimal(gateway.fee_fixed) if gateway else Decimal("1")
     before_tax = charged * _as_fraction(percent) + fixed
-    return _round(before_tax * (Decimal("1") + VAT_RATE)), True
+    return money(before_tax * (Decimal("1") + VAT_RATE)), True
 
 
 def _as_fraction(percent: Decimal) -> Decimal:
@@ -237,14 +230,14 @@ async def for_order(db: AsyncSession, order: Order) -> OrderEconomics:
     softer rather than taking the page down. The admin reads this beside the
     order it describes, and a 500 there is worse than an estimate.
     """
-    charged = _money(order.total)
-    fees = _money(order.delivery_fee) + _money(order.low_order_fee)
+    charged = to_decimal(order.total)
+    fees = to_decimal(order.delivery_fee) + to_decimal(order.low_order_fee)
     items_value = max(charged - fees, _ZERO)
     # The goods at menu price. `subtotal` is written before any discount comes
     # off (see `order_pricing.compute`), which is exactly what the direct-cost
     # check wants: a 40% coupon should show up as a cost, not disappear into a
     # smaller denominator.
-    items_before_discount = _money(order.subtotal)
+    items_before_discount = to_decimal(order.subtotal)
 
     delivery = (
         await db.execute(
@@ -263,7 +256,7 @@ async def for_order(db: AsyncSession, order: Order) -> OrderEconomics:
             if delivery.cost_total is not None
             else delivery.quoted_cost
         )
-        courier_cost = _money(raw) if raw is not None else None
+        courier_cost = to_decimal(raw) if raw is not None else None
 
     # ── The two fees, preferring what was written down ───────────────────────
     #
@@ -279,7 +272,7 @@ async def for_order(db: AsyncSession, order: Order) -> OrderEconomics:
     is_aggregator = (order.source or "") == "aggregator"
 
     if order.payment_fee is not None:
-        fee, estimated = _money(order.payment_fee), True
+        fee, estimated = to_decimal(order.payment_fee), True
     elif is_aggregator:
         # An aggregator order whose channel has no configured rate. Unknown, and
         # said so rather than guessed at — a marketplace charges *something* for
@@ -303,18 +296,18 @@ async def for_order(db: AsyncSession, order: Order) -> OrderEconomics:
         fee, estimated = processing_fee(charged, gateway)
 
     aggregator_fee = (
-        _money(order.aggregator_fee) if order.aggregator_fee is not None else None
+        to_decimal(order.aggregator_fee) if order.aggregator_fee is not None else None
     )
 
     return OrderEconomics(
-        charged=_round(charged),
-        items_value=_round(items_value),
-        items_before_discount=_round(items_before_discount),
-        courier_cost=_round(courier_cost) if courier_cost is not None else None,
-        aggregator_fee=_round(aggregator_fee) if aggregator_fee is not None else None,
+        charged=money(charged),
+        items_value=money(items_value),
+        items_before_discount=money(items_before_discount),
+        courier_cost=money(courier_cost) if courier_cost is not None else None,
+        aggregator_fee=money(aggregator_fee) if aggregator_fee is not None else None,
         processing_fee=fee,
         processing_fee_is_estimated=estimated,
-        refunded=_round(_money(order.refunded_amount)),
+        refunded=money(to_decimal(order.refunded_amount)),
         # A marketplace sold it, or a courier carried it. Either way somebody
         # took a cut and the order screen should say so — even when the figure
         # itself is still unknown.

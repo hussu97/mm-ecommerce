@@ -38,7 +38,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
+
+from app.core.money import money_or_none
 from typing import Any
 
 import httpx
@@ -111,12 +113,7 @@ def aed(value: Any) -> Decimal | None:
     figure across the endpoints we have seen, so the caller tries several keys
     and this only has to answer "is this one a number".
     """
-    if value is None or value == "":
-        return None
-    try:
-        return Decimal(str(value)).quantize(Decimal("0.01"))
-    except (InvalidOperation, ValueError, TypeError):
-        return None
+    return money_or_none(value)
 
 
 @dataclass(frozen=True)

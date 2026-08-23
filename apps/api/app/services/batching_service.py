@@ -50,6 +50,8 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
+
+from app.core.money import money
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, func, or_, select
@@ -1076,9 +1078,7 @@ async def _book_chunk(
             batch.distance_m = (batch.distance_m or 0) + (estimate.distance_m or 0)
 
     share_of_cost = (
-        (estimate.cost / len(chunk)).quantize(Decimal("0.01"))
-        if estimate is not None and chunk
-        else None
+        money(estimate.cost / len(chunk)) if estimate is not None and chunk else None
     )
 
     for delivery, stop_id, sequence in routed:

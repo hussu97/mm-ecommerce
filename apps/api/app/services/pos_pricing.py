@@ -19,6 +19,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_HALF_UP
 
+from app.core.money import CENTS, ZERO, money
+
 __all__ = [
     "CENT",
     "ChargeInput",
@@ -32,15 +34,10 @@ __all__ = [
     "split_inclusive_tax",
 ]
 
-CENT = Decimal("0.01")
-ZERO = Decimal("0.00")
-
-
-def money(value: Decimal | int | float | str | None) -> Decimal:
-    """Quantise to two decimal places, rounding half away from zero."""
-    if value is None:
-        return ZERO
-    return Decimal(str(value)).quantize(CENT, rounding=ROUND_HALF_UP)
+#: Re-exported so the ~45 call sites that already say `pos_pricing.money` keep
+#: working. The implementation is `app/core/money.py` — one rounding mode for
+#: the whole codebase, per CLAUDE.md rule 10.
+CENT = CENTS
 
 
 def split_inclusive_tax(gross: Decimal, rate: Decimal) -> tuple[Decimal, Decimal]:

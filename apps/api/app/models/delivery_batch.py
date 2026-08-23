@@ -4,6 +4,8 @@ import enum
 import uuid
 from datetime import datetime
 from decimal import Decimal
+
+from app.core.money import money
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
@@ -314,9 +316,7 @@ class DeliveryBatch(Base, UUIDMixin, TimestampMixin):
     def cost_per_delivery(self) -> Decimal | None:
         if self.cost_total is None or not self.stop_count:
             return None
-        return (Decimal(str(self.cost_total)) / self.stop_count).quantize(
-            Decimal("0.01")
-        )
+        return money(Decimal(str(self.cost_total)) / self.stop_count)
 
     def __repr__(self) -> str:
         return (

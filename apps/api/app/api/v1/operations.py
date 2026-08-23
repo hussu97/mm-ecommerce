@@ -11,6 +11,8 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
+
+from app.core.money import money
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, status
@@ -742,7 +744,7 @@ async def inventory_dashboard(
 
     return {
         "items_tracked": tracked,
-        "stock_value": total_value.quantize(Decimal("0.01")),
+        "stock_value": money(total_value),
         "below_minimum": below,
         "out_of_stock": out_of_stock,
     }

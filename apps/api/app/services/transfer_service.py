@@ -22,6 +22,12 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
+# Aliased to the existing private names: the implementation is shared,
+# the call sites stay put, and `quantity` is already a local variable in
+# both of these files.
+from app.core.money import quantity as _q
+from app.core.money import unit_cost as _c
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -54,13 +60,6 @@ __all__ = [
     "submit_transfer_order",
 ]
 
-QUANTITY = Decimal("0.0001")
-COST = Decimal("0.000001")
-
-
-def _q(value) -> Decimal:
-    return Decimal(str(value or 0)).quantize(QUANTITY)
-
 
 def production_output(quantity: Decimal, yield_percentage: Decimal) -> Decimal:
     """
@@ -84,8 +83,8 @@ def production_unit_cost(input_cost: Decimal, net_output: Decimal) -> Decimal:
     reports a *higher* cost per unit rather than silently losing the value.
     """
     if net_output <= 0:
-        return Decimal("0").quantize(COST)
-    return (Decimal(str(input_cost)) / Decimal(str(net_output))).quantize(COST)
+        return _c(0)
+    return _c(Decimal(str(input_cost)) / Decimal(str(net_output)))
 
 
 async def next_transfer_reference(db: AsyncSession) -> str:

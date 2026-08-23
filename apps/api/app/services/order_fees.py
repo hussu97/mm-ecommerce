@@ -37,7 +37,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
+
+from app.core.money import money, to_decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,7 +55,6 @@ logger = logging.getLogger(__name__)
 __all__ = ["OrderFees", "compute", "stamp"]
 
 _ZERO = Decimal("0")
-_CENTS = Decimal("0.01")
 
 #: The card processor's published rate, used when the `payment_gateways` row for
 #: an order's provider cannot be found. Both processors charge this today. A
@@ -61,14 +62,6 @@ _CENTS = Decimal("0.01")
 #: zero would flatter every card order on the screen.
 _DEFAULT_CARD_PERCENT = Decimal("2.9")
 _DEFAULT_CARD_FIXED = Decimal("1")
-
-
-def _money(value: object) -> Decimal:
-    return Decimal(str(value or 0))
-
-
-def _round(value: Decimal) -> Decimal:
-    return value.quantize(_CENTS, rounding=ROUND_HALF_UP)
 
 
 def _with_vat(before_tax: Decimal) -> Decimal:
@@ -82,7 +75,7 @@ def _with_vat(before_tax: Decimal) -> Decimal:
     thirteen fils on a fifty-dirham order and a reconciliation nobody can close
     across a year of them.
     """
-    return _round(before_tax * (Decimal("1") + VAT_RATE))
+    return money(before_tax * (Decimal("1") + VAT_RATE))
 
 
 def _as_fraction(percent: Decimal) -> Decimal:
@@ -123,7 +116,7 @@ async def compute(db: AsyncSession, order: Order) -> OrderFees:
     rather than taking down the path that called it. Ingest and checkout both
     reach here, and neither should fail because a rate has not been seeded.
     """
-    charged = _money(order.total)
+    charged = to_decimal(order.total)
     if charged <= 0:
         # A zero-total order — a full-discount staff order, a replacement sent
         # out for free. Nobody took a cut of nothing.
@@ -194,7 +187,7 @@ def _rate_pair(charged: Decimal, percent: object, fixed: object) -> Decimal | No
     """
     if percent is None and fixed is None:
         return None
-    before_tax = charged * _as_fraction(_money(percent)) + _money(fixed)
+    before_tax = charged * _as_fraction(to_decimal(percent)) + to_decimal(fixed)
     return _with_vat(before_tax)
 
 
@@ -222,9 +215,13 @@ async def _own_channel_fees(
         ).scalar_one_or_none()
 
     percent = (
-        _money(gateway.fee_percent) if gateway is not None else _DEFAULT_CARD_PERCENT
+        to_decimal(gateway.fee_percent)
+        if gateway is not None
+        else _DEFAULT_CARD_PERCENT
     )
-    fixed = _money(gateway.fee_fixed) if gateway is not None else _DEFAULT_CARD_FIXED
+    fixed = (
+        to_decimal(gateway.fee_fixed) if gateway is not None else _DEFAULT_CARD_FIXED
+    )
     return OrderFees(
         aggregator_fee=None,
         payment_fee=_with_vat(charged * _as_fraction(percent) + fixed),

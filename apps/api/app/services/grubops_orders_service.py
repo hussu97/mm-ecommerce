@@ -28,6 +28,8 @@ import re
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+
+from app.core.money import money
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -131,10 +133,6 @@ def _num(value: Any, default: str = "0") -> Decimal:
         return Decimal(str(value))
     except (InvalidOperation, ValueError, TypeError):
         return Decimal(default)
-
-
-def _q2(value: Decimal) -> Decimal:
-    return value.quantize(Decimal("0.01"))
 
 
 #: Pulls a marketplace short code out of the order instructions, e.g.
@@ -400,7 +398,7 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
     subtotal = header.get("subtotal")
     subtotal = _num(subtotal) if subtotal is not None else _num(header.get("unitPrice"))
     net = header.get("netPrice")
-    total_excl_vat = _num(net) if net is not None else _q2(total - vat_amount)
+    total_excl_vat = _num(net) if net is not None else money(total - vat_amount)
     taxes = info.get("orderTaxes") or []
     vat_rate = _num(taxes[0].get("rate")) / Decimal("100") if taxes else Decimal("0.05")
 
@@ -433,14 +431,14 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
         # freight report counts it; carry what the customer paid on the
         # aggregator-only column, for the receipt alone.
         delivery_fee=Decimal("0"),
-        aggregator_delivery_fee=_q2(_num(header.get("deliveryTotalPrice"))),
+        aggregator_delivery_fee=money(_num(header.get("deliveryTotalPrice"))),
         low_order_fee=Decimal("0"),
-        subtotal=_q2(subtotal),
-        discount_amount=_q2(_num(header.get("discountAmount"))),
-        total=_q2(total),
+        subtotal=money(subtotal),
+        discount_amount=money(_num(header.get("discountAmount"))),
+        total=money(total),
         vat_rate=vat_rate.quantize(Decimal("0.0001")),
-        vat_amount=_q2(vat_amount),
-        total_excl_vat=_q2(total_excl_vat),
+        vat_amount=money(vat_amount),
+        total_excl_vat=money(total_excl_vat),
         status=OrderStatusEnum.CREATED,
         source=OrderSourceEnum.AGGREGATOR.value,
         aggregator_channel=channel,
@@ -512,12 +510,12 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
                 product_sku=(recipe_id or "")[:100],
                 product_translations={},
                 quantity=quantity,
-                base_price=_q2(base_price),
-                options_price=_q2(options_price),
-                unit_price=_q2(base_price + options_price),
-                total_price=_q2(_num(item.get("totalPrice"), str(base_price))),
+                base_price=money(base_price),
+                options_price=money(options_price),
+                unit_price=money(base_price + options_price),
+                total_price=money(_num(item.get("totalPrice"), str(base_price))),
                 selected_options_snapshot=snapshot,
-                tax_amount=_q2(_num(item.get("taxAmount"))),
+                tax_amount=money(_num(item.get("taxAmount"))),
                 # What the customer said about *this line*. GrubOps carries it
                 # per order line and we were dropping it on the floor: a
                 # "no nuts" against one cake in a basket of four arrived at the
@@ -538,8 +536,8 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
                 tax_id=None,
                 name="VAT",
                 rate=vat_rate.quantize(Decimal("0.0001")),
-                taxable_amount=_q2(total_excl_vat),
-                amount=_q2(vat_amount),
+                taxable_amount=money(total_excl_vat),
+                amount=money(vat_amount),
             )
         )
 

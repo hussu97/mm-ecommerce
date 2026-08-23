@@ -12,6 +12,8 @@ from __future__ import annotations
 import uuid
 from datetime import timedelta
 from decimal import Decimal
+
+from app.core.money import money
 from typing import Any, Sequence
 
 import sqlalchemy as sa
@@ -54,10 +56,6 @@ from app.models.user import User
 from app.services import business_day_service, courier_catalog
 
 ZERO = Decimal("0.00")
-
-
-def _q(value: Any) -> Decimal:
-    return Decimal(str(value or 0)).quantize(Decimal("0.01"))
 
 
 def _scope(
@@ -159,21 +157,21 @@ async def sales_summary(
     ).scalar_one()
 
     order_count = int(orders or 0)
-    net_sales = _q(total)
+    net_sales = money(total)
     return {
         "orders_count": order_count,
-        "gross_sales": _q(subtotal),
-        "discounts": _q(discounts),
-        "charges": _q(charges),
-        "returns": _q(returns),
-        "taxes": _q(vat),
-        "net_sales_excl_tax": _q(net_excl),
-        "rounding": _q(rounding),
-        "tips": _q(tips),
+        "gross_sales": money(subtotal),
+        "discounts": money(discounts),
+        "charges": money(charges),
+        "returns": money(returns),
+        "taxes": money(vat),
+        "net_sales_excl_tax": money(net_excl),
+        "rounding": money(rounding),
+        "tips": money(tips),
         "net_sales": net_sales,
-        "average_order_value": _q(net_sales / order_count) if order_count else ZERO,
+        "average_order_value": money(net_sales / order_count) if order_count else ZERO,
         "voided_orders": int(voided[0] or 0),
-        "voided_value": _q(voided[1]),
+        "voided_value": money(voided[1]),
     }
 
 
@@ -302,10 +300,10 @@ async def sales_by_dimension(
             "key": str(key) if key is not None else "unknown",
             "label": labels.get(str(key), str(key) if key is not None else "Unknown"),
             "orders": int(count or 0),
-            "net_sales": _q(total),
-            "discounts": _q(discount),
-            "fees": _q(fee_total),
-            "net_after_fees": _q(total - fee_total),
+            "net_sales": money(total),
+            "discounts": money(discount),
+            "fees": money(fee_total),
+            "net_after_fees": money(total - fee_total),
             # False when any order in the group has no costed fee, so the client
             # can mark the figure as partial rather than quoting a margin that
             # is missing a quarter of its costs.
@@ -531,8 +529,8 @@ async def _sales_by_related(
             # For these dimensions the money *is* the discount or charge, so
             # it is reported under both keys rather than inventing a new one
             # the admin table would have to special-case.
-            "net_sales": _q(total),
-            "discounts": _q(total) if dimension == "discount" else _q(0),
+            "net_sales": money(total),
+            "discounts": money(total) if dimension == "discount" else money(0),
         }
         for name, count, total in rows
     ]
@@ -613,8 +611,8 @@ async def _sales_by_item(
             "key": str(k) if k is not None else "unknown",
             "label": name or "Unknown",
             "quantity": int(qty or 0),
-            "net_sales": _q(total),
-            "discounts": _q(discount),
+            "net_sales": money(total),
+            "discounts": money(discount),
             "image_url": image_url,
         }
         for k, name, qty, total, discount, image_url in (await db.execute(stmt)).all()
@@ -660,7 +658,7 @@ async def payments_report(
         .where(OrderPayment.is_refund.is_(True))
         .group_by(OrderPayment.payment_method_id)
     )
-    refunds = {str(k): _q(v) for k, v in (await db.execute(refunds_stmt)).all()}
+    refunds = {str(k): money(v) for k, v in (await db.execute(refunds_stmt)).all()}
 
     return [
         {
@@ -668,10 +666,10 @@ async def payments_report(
             "name": name,
             "type": ptype,
             "transactions": int(count or 0),
-            "amount": _q(amount),
+            "amount": money(amount),
             "refunds": refunds.get(str(pid), ZERO),
-            "net": _q(Decimal(str(amount or 0)) - refunds.get(str(pid), ZERO)),
-            "tips": _q(tips),
+            "net": money(Decimal(str(amount or 0)) - refunds.get(str(pid), ZERO)),
+            "tips": money(tips),
         }
         for pid, name, ptype, count, amount, tips in (await db.execute(stmt)).all()
     ]
@@ -706,8 +704,8 @@ async def tax_report(
             "name": name,
             "rate": float(rate or 0),
             "rate_percent": round(float(rate or 0) * 100, 2),
-            "taxable_amount": _q(base),
-            "tax_amount": _q(amount),
+            "taxable_amount": money(base),
+            "tax_amount": money(amount),
         }
         for name, rate, base, amount in (await db.execute(stmt)).all()
     ]
@@ -760,7 +758,7 @@ async def voids_and_returns(
             "product_name": r.product_name,
             "quantity": r.quantity,
             "returned_quantity": r.returned_quantity,
-            "value": _q(
+            "value": money(
                 Decimal(str(r.unit_price)) * (r.returned_quantity or r.quantity or 0)
             ),
             "status": r.status,
@@ -819,12 +817,12 @@ async def tills_report(
             "device_name": device_names.get(str(t.device_id)) if t.device_id else None,
             "opened_at": t.opened_at,
             "closed_at": t.closed_at,
-            "opening_amount": _q(t.opening_amount),
-            "estimated_cash": _q(t.estimated_cash),
-            "closing_amount": _q(t.closing_amount)
+            "opening_amount": money(t.opening_amount),
+            "estimated_cash": money(t.estimated_cash),
+            "closing_amount": money(t.closing_amount)
             if t.closing_amount is not None
             else None,
-            "variance": _q(t.variance),
+            "variance": money(t.variance),
             "totals": t.totals or {},
         }
         for t in tills
@@ -856,7 +854,7 @@ async def drawer_operations_report(
     stmt = stmt.group_by(DrawerOperation.type)
 
     return [
-        {"type": op_type, "count": int(count or 0), "amount": _q(amount)}
+        {"type": op_type, "count": int(count or 0), "amount": money(amount)}
         for op_type, count, amount in (await db.execute(stmt)).all()
     ]
 
@@ -890,11 +888,11 @@ async def inventory_valuation(
                     "item_id": str(item.id),
                     "sku": item.sku,
                     "name": item.name,
-                    "quantity": _q(level.quantity),
-                    "minimum_level": _q(item.minimum_level),
-                    "par_level": _q(item.par_level),
+                    "quantity": money(level.quantity),
+                    "minimum_level": money(item.minimum_level),
+                    "par_level": money(item.par_level),
                     "unit": item.ingredient_unit,
-                    "shortfall": _q(
+                    "shortfall": money(
                         Decimal(str(item.par_level)) - Decimal(str(level.quantity))
                     ),
                 }
@@ -902,7 +900,7 @@ async def inventory_valuation(
 
     return {
         "items_tracked": item_count,
-        "total_value": _q(total_value),
+        "total_value": money(total_value),
         "below_minimum_count": len(below),
         "below_minimum": below,
     }
@@ -940,12 +938,12 @@ async def cost_of_goods(
     if date_to:
         stmt = stmt.where(InventoryTransaction.business_date <= date_to)
 
-    cogs = _q((await db.execute(stmt)).scalar_one())
+    cogs = money((await db.execute(stmt)).scalar_one())
     sales = await sales_summary(
         db, branch_id=branch_id, date_from=date_from, date_to=date_to
     )
     net = sales["net_sales_excl_tax"]
-    margin = _q(net - cogs)
+    margin = money(net - cogs)
     return {
         "cost_of_goods": cogs,
         "net_sales_excl_tax": net,
@@ -989,8 +987,8 @@ async def menu_engineering(
         )
         cost = Decimal(str(product.cost)) if product and product.cost else ZERO
         revenue = row["net_sales"]
-        item_cost = _q(cost * row["quantity"])
-        margin = _q(revenue - item_cost)
+        item_cost = money(cost * row["quantity"])
+        margin = money(revenue - item_cost)
         margin_percent = float(margin / revenue) if revenue else 0.0
         enriched.append(
             {
@@ -1088,7 +1086,7 @@ async def speed_of_service(
     ) = (await db.execute(stmt)).one()
 
     def minutes(value) -> Decimal:
-        return _q(Decimal(str(value or 0)) / Decimal(60))
+        return money(Decimal(str(value or 0)) / Decimal(60))
 
     return {
         "tickets": int(tickets or 0),
@@ -1154,8 +1152,8 @@ async def _sales_by_modifier_option(
             "label": key,
             "quantity": int(qty or 0),
             "orders": int(qty or 0),
-            "net_sales": _q(total),
-            "discounts": _q(0),
+            "net_sales": money(total),
+            "discounts": money(0),
         }
         for key, qty, total in rows
     ]
@@ -1219,8 +1217,8 @@ async def _sales_by_seating(
             "key": k or "unknown",
             "label": k or "Unknown",
             "orders": int(c or 0),
-            "net_sales": _q(t),
-            "discounts": _q(d),
+            "net_sales": money(t),
+            "discounts": money(d),
         }
         for k, c, t, d in rows
     ]
@@ -1316,8 +1314,8 @@ async def _sales_by_tag(
             "key": k,
             "label": k,
             "orders": int(c or 0),
-            "net_sales": _q(t),
-            "discounts": _q(0),
+            "net_sales": money(t),
+            "discounts": money(0),
         }
         for k, c, t in rows
     ]
@@ -1361,8 +1359,8 @@ async def branches_trend(
             "branch": name,
             "business_date": day,
             "orders": int(count or 0),
-            "net_sales": _q(total),
-            "average_order_value": _q(Decimal(str(total or 0)) / count)
+            "net_sales": money(total),
+            "average_order_value": money(Decimal(str(total or 0)) / count)
             if count
             else ZERO,
         }
@@ -1416,9 +1414,11 @@ async def table_utilization(
             # "Turns" is covers per seat: how many parties that seat served.
             "turns": int(turns or 0),
             "covers": int(covers or 0),
-            "net_sales": _q(total),
-            "average_minutes": _q(Decimal(str(avg_minutes or 0))),
-            "sales_per_seat": _q(Decimal(str(total or 0)) / seats) if seats else ZERO,
+            "net_sales": money(total),
+            "average_minutes": money(Decimal(str(avg_minutes or 0))),
+            "sales_per_seat": money(Decimal(str(total or 0)) / seats)
+            if seats
+            else ZERO,
         }
         for section, table, seats, turns, covers, total, avg_minutes in rows
     ]
@@ -1454,7 +1454,7 @@ async def suppliers_analysis(
         {
             "supplier": name,
             "purchase_orders": int(count or 0),
-            "total_spend": _q(total),
+            "total_spend": money(total),
         }
         for name, count, total in rows
     ]
@@ -1518,9 +1518,9 @@ async def cost_adjustment_history(
             "business_date": day,
             "item": name,
             "sku": sku,
-            "quantity": _q(qty),
-            "unit_cost": _q(unit),
-            "total_cost": _q(total),
+            "quantity": money(qty),
+            "unit_cost": money(unit),
+            "total_cost": money(total),
             "notes": notes,
         }
         for ref, day, notes, name, sku, qty, unit, total in rows
@@ -1589,9 +1589,9 @@ async def purchase_orders_report(
             "business_date": day,
             "supplier": supplier or "Unknown",
             "lines": int(lines or 0),
-            "ordered_value": _q(ordered_value),
-            "received_value": _q(received_value),
-            "outstanding_value": _q(
+            "ordered_value": money(ordered_value),
+            "received_value": money(received_value),
+            "outstanding_value": money(
                 Decimal(str(ordered_value or 0)) - Decimal(str(received_value or 0))
             ),
         }
@@ -1664,7 +1664,7 @@ async def transfers_report(
             "business_date": day,
             "branch": branch or "Unknown",
             "lines": int(lines or 0),
-            "value": _q(value),
+            "value": money(value),
         }
         for ref, kind, status, day, branch, lines, value in rows
     ]
@@ -1716,9 +1716,9 @@ async def _sales_by_delivery_zone(
             "key": key,
             "label": key,
             "orders": int(count or 0),
-            "net_sales": _q(total),
-            "discounts": _q(0),
-            "delivery_fees": _q(fees),
+            "net_sales": money(total),
+            "discounts": money(0),
+            "delivery_fees": money(fees),
         }
         for key, count, total, fees in rows
     ]
@@ -1771,7 +1771,7 @@ async def sales_predictions(
         day_count = int(days or 0) or 1
         daily[dow] = {
             "days_observed": int(days or 0),
-            "avg_daily_sales": _q(Decimal(str(total or 0)) / day_count),
+            "avg_daily_sales": money(Decimal(str(total or 0)) / day_count),
             "avg_daily_orders": int((orders or 0) / day_count),
         }
 

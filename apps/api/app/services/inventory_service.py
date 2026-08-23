@@ -29,6 +29,12 @@ import uuid
 from dataclasses import dataclass
 from decimal import Decimal
 
+# Aliased to the existing private names: the implementation is shared,
+# the call sites stay put, and `quantity` is already a local variable in
+# both of these files.
+from app.core.money import quantity as _q
+from app.core.money import unit_cost as _c
+
 from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -76,17 +82,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-QUANTITY = Decimal("0.0001")
-COST = Decimal("0.000001")
-
-
-def _q(value) -> Decimal:
-    return Decimal(str(value or 0)).quantize(QUANTITY)
-
-
-def _c(value) -> Decimal:
-    return Decimal(str(value or 0)).quantize(COST)
 
 
 REFERENCE_PREFIX = {

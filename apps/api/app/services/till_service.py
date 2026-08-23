@@ -16,6 +16,8 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
+from app.core.money import money
+
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -47,10 +49,6 @@ __all__ = [
 ]
 
 ZERO = Decimal("0.00")
-
-
-def _q(value: Decimal | float | int | str | None) -> Decimal:
-    return Decimal(str(value or 0)).quantize(Decimal("0.01"))
 
 
 async def get_open_till(
@@ -172,8 +170,8 @@ async def open_till(
         business_date=day.business_date,
         status=TillStatusEnum.OPEN.value,
         opened_at=utcnow(),
-        opening_amount=_q(opening_amount),
-        estimated_cash=_q(opening_amount),
+        opening_amount=money(opening_amount),
+        estimated_cash=money(opening_amount),
         variance=ZERO,
         notes=notes,
     )
@@ -193,10 +191,10 @@ async def estimated_cash(db: AsyncSession, till: Till) -> Decimal:
         )
     ).all()
 
-    total = _q(till.opening_amount)
+    total = money(till.opening_amount)
     for op_type, amount in rows:
-        total += _q(amount) * DRAWER_SIGN.get(op_type, 0)
-    return _q(total)
+        total += money(amount) * DRAWER_SIGN.get(op_type, 0)
+    return money(total)
 
 
 async def add_drawer_operation(
@@ -217,7 +215,7 @@ async def add_drawer_operation(
 
     # A no-sale drawer open carries no money; forcing zero keeps the ledger honest.
     recorded_amount = (
-        ZERO if op_type == DrawerOperationTypeEnum.OPEN_DRAWER.value else _q(amount)
+        ZERO if op_type == DrawerOperationTypeEnum.OPEN_DRAWER.value else money(amount)
     )
 
     operation = DrawerOperation(
@@ -289,11 +287,11 @@ async def close_till(
         )
 
     expected = await estimated_cash(db, till)
-    counted = _q(closing_amount)
+    counted = money(closing_amount)
 
     till.estimated_cash = expected
     till.closing_amount = counted
-    till.variance = _q(counted - expected)
+    till.variance = money(counted - expected)
     till.closed_at = utcnow()
     till.closed_by_id = closed_by.id
     till.status = TillStatusEnum.CLOSED.value
@@ -337,7 +335,7 @@ async def build_report(db: AsyncSession, till: Till) -> dict:
         )
     ).all()
     drawer_totals: dict[str, Decimal] = {
-        op_type: _q(amount) for op_type, amount in drawer_rows
+        op_type: money(amount) for op_type, amount in drawer_rows
     }
 
     payments_by_method, sales = await _payment_breakdown(db, till)
@@ -349,12 +347,12 @@ async def build_report(db: AsyncSession, till: Till) -> dict:
         "user_id": till.user_id,
         "opened_at": till.opened_at,
         "closed_at": till.closed_at,
-        "opening_amount": _q(till.opening_amount),
+        "opening_amount": money(till.opening_amount),
         "estimated_cash": await estimated_cash(db, till),
         "closing_amount": (
-            _q(till.closing_amount) if till.closing_amount is not None else None
+            money(till.closing_amount) if till.closing_amount is not None else None
         ),
-        "variance": _q(till.variance) if till.closed_at else None,
+        "variance": money(till.variance) if till.closed_at else None,
         "orders_count": sales["orders_count"],
         "gross_sales": sales["gross_sales"],
         "discounts": sales["discounts"],
@@ -401,7 +399,7 @@ async def _payment_breakdown(
     ).one()
     orders_count, subtotal, discounts, charges, vat, tips, total = row
 
-    returns = _q(
+    returns = money(
         (
             await db.execute(
                 select(
@@ -446,16 +444,16 @@ async def _payment_breakdown(
         )
     ).all()
 
-    payments_by_method = {name: _q(amount) for name, amount in tender_rows}
+    payments_by_method = {name: money(amount) for name, amount in tender_rows}
     sales = {
         "orders_count": int(orders_count or 0),
-        "gross_sales": _q(subtotal),
-        "discounts": _q(discounts),
+        "gross_sales": money(subtotal),
+        "discounts": money(discounts),
         "returns": returns,
-        "charges": _q(charges),
-        "taxes": _q(vat),
-        "net_sales": _q(total),
-        "tips": _q(tips),
+        "charges": money(charges),
+        "taxes": money(vat),
+        "net_sales": money(total),
+        "tips": money(tips),
     }
     return payments_by_method, sales
 
