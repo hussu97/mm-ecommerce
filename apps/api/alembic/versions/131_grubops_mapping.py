@@ -46,13 +46,22 @@ depends_on: Union[str, Sequence[str], None] = None
 #: row rather than in settings so a second brand needs no schema change.
 PARTNER_ID = "6922fe267f5b1c6d208c634f"
 
-#: branch reference -> the id GrubOps knows that branch by. Read from their
-#: location API against the live account, 2026-08-23. Karama and DSO are absent
-#: on purpose: they do not trade on GrubOps, and a branch with no row here is
-#: simply never synced.
-LOCATIONS: dict[str, str] = {
-    "K001": "692300947f5b1c6d208c6352",  # Sharjah
-    "B001": "692300c0323715175fede66c",  # Barsha Heights
+#: branch reference -> (GrubOps location id, synced from the start).
+#:
+#: Ids read from their location API against the live account, 2026-08-23.
+#: Karama and DSO are absent on purpose: they do not trade on GrubOps, and a
+#: branch with no row here is simply never synced.
+#:
+#: Barsha Heights is mapped but starts **inactive**, because the register is
+#: only running in Sharjah today. A branch whose staff are not marking things
+#: out on the terminal has nothing true to say about its stock, and syncing it
+#: would push a permanent "everything is available" over whatever the Barsha
+#: counter is maintaining in the GrubOps console by hand. The id is recorded
+#: now so that turning it on later is a switch in the admin console rather than
+#: another migration.
+LOCATIONS: dict[str, tuple[str, bool]] = {
+    "K001": ("692300947f5b1c6d208c6352", True),  # Sharjah — register live
+    "B001": ("692300c0323715175fede66c", False),  # Barsha Heights — not yet
 }
 
 
@@ -206,13 +215,13 @@ def upgrade() -> None:
     # nothing is written when the reference is absent, and the NOT EXISTS makes
     # a re-run — or a restore of a database that already has the row — a no-op
     # rather than a unique violation.
-    for reference, location_id in LOCATIONS.items():
+    for reference, (location_id, is_active) in LOCATIONS.items():
         op.execute(
             sa.text(
                 """
                 INSERT INTO grubops_location_map
-                    (branch_id, grubops_location_id, grubops_partner_id)
-                SELECT b.id, :location_id, :partner_id
+                    (branch_id, grubops_location_id, grubops_partner_id, is_active)
+                SELECT b.id, :location_id, :partner_id, :is_active
                   FROM branches b
                  WHERE b.reference = :reference
                    AND NOT EXISTS (
@@ -223,6 +232,7 @@ def upgrade() -> None:
             ).bindparams(
                 location_id=location_id,
                 partner_id=PARTNER_ID,
+                is_active=is_active,
                 reference=reference,
             )
         )

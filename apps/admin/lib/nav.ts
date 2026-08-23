@@ -56,6 +56,10 @@ export const NAV: Array<
   // mostly somewhere to look — and the place to add the ones nothing else knows
   // about, like a URL from the Wix site or a printed card.
   { href: '/redirects',     label: 'Redirects',       icon: 'alt_route' },
+  // Under "Online store" because that is what it changes: this is the menu the
+  // aggregators show. The register is what marks things out; this screen only
+  // decides which branches that reaches and which item is which.
+  { href: '/grubops',       label: 'GrubOps',         icon: 'restaurant_menu' },
   { href: '/languages',     label: 'Languages',       icon: 'translate' },
   { href: '/translations',  label: 'Translations',    icon: 'text_fields' },
 

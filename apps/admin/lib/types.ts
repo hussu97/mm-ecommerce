@@ -1169,3 +1169,55 @@ export interface UrlRedirect {
   created_at: string;
   updated_at: string;
 }
+
+
+// ─── GrubOps (aggregator out-of-stock sync) ───────────────────────────────────
+
+/** One branch, and whether its stock is mirrored onto the aggregators. */
+export interface GrubOpsLocation {
+  id: string;
+  branch_id: string;
+  branch_name: string | null;
+  branch_reference: string | null;
+  grubops_location_id: string;
+  grubops_partner_id: string;
+  is_active: boolean;
+}
+
+/** One pairing between our catalogue and theirs, suggested or confirmed. */
+export interface GrubOpsMapping {
+  id: string;
+  mm_kind: 'product' | 'option';
+  product_id: string | null;
+  modifier_option_id: string | null;
+  mm_name: string | null;
+  mm_parent_name: string | null;
+  grubops_brand_id: string;
+  grubops_recipe_id: string | null;
+  grubops_modifier_id: string | null;
+  grubops_child_modifier_id: string | null;
+  grubops_type: 'RECIPE' | 'MODIFIER' | 'NESTED_MODIFIER';
+  grubops_name: string | null;
+  match_method: 'exact' | 'fuzzy' | 'manual';
+  match_score: number | null;
+  approved: boolean;
+  approved_by: string | null;
+  notes: string | null;
+  last_pushed_at: string | null;
+  last_error: string | null;
+}
+
+export interface GrubOpsMappingList {
+  items: GrubOpsMapping[];
+  total: number;
+  approved_count: number;
+  pending_count: number;
+}
+
+export interface GrubOpsSyncSummary {
+  created: number;
+  refreshed: number;
+  unmatched_ours: string[];
+  unmatched_theirs: string[];
+  errors: string[];
+}
