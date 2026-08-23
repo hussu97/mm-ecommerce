@@ -6,22 +6,25 @@ gets forgotten at half past four on a Friday. These three tables are what the
 sync needs in order to say it automatically. Their shapes and the reasoning
 behind them are on the models in `app/models/grubops.py`.
 
-Two rows of content ride along with the schema: the branch to GrubOps-location
-map, which is two rows and will not change unless the shop opens somewhere new.
-It goes here rather than in a script for the reason every content migration in
-this tree does — a script is only as good as somebody remembering to run it, and
-until they do the sync has no idea which location is which and does nothing.
+Schema only. Neither map is seeded here, and the branch one is the interesting
+case: an earlier draft of this migration hardcoded branch references (`K001`,
+`B001`) read out of migration 070, and inserted nothing at all when it was run
+against a database whose Sharjah kitchen is called `SHJ`. A migration that
+silently seeds nothing is worse than one that does not try, because the feature
+it feeds then does nothing for a reason nobody can see.
 
-Guarded on `reference`, and inserted only where the branch exists and has no row
-yet. So a database that has already been seeded gets nothing, a branch somebody
-has since pointed at a different GrubOps location keeps that pointing, and a
-deployment where K001/B001 do not exist gets no rows rather than an error.
+So both maps are discovered instead. `POST /grubops/mappings/sync` reads
+GrubOps' own location list, matches it to branches by name, and writes the rows
+— which works whatever the local references happen to be, and is re-runnable
+when a shop opens somewhere new.
 
-The **item** map is deliberately not seeded here. Matching our catalogue to
-GrubOps' is a live call to their API plus a fuzzy name match, which is neither
-deterministic nor offline and has to be re-runnable as menus change; it belongs
-to `POST /grubops/mappings/sync` and the admin screen over it, not to a
-migration that must produce the same database every time it runs.
+Every branch it creates starts **inactive**, and that is the important half.
+Turning sync on for a branch is a decision about whether the people standing in
+that shop are marking things out on the terminal: where they are not, syncing
+would push a permanent "everything is available" over whatever that counter
+maintains in the GrubOps console by hand. Today that means Sharjah on and
+Barsha Heights off. Somebody makes that call per branch in the console, and a
+migration is not the place to guess it.
 
 Revision ID: 131_grubops_mapping
 Revises: 130_about_title_70
@@ -40,29 +43,6 @@ revision: str = "131_grubops_mapping"
 down_revision: Union[str, None] = "130_about_title_70"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
-
-
-#: The partner this console belongs to. One shop, one partner; carried on each
-#: row rather than in settings so a second brand needs no schema change.
-PARTNER_ID = "6922fe267f5b1c6d208c634f"
-
-#: branch reference -> (GrubOps location id, synced from the start).
-#:
-#: Ids read from their location API against the live account, 2026-08-23.
-#: Karama and DSO are absent on purpose: they do not trade on GrubOps, and a
-#: branch with no row here is simply never synced.
-#:
-#: Barsha Heights is mapped but starts **inactive**, because the register is
-#: only running in Sharjah today. A branch whose staff are not marking things
-#: out on the terminal has nothing true to say about its stock, and syncing it
-#: would push a permanent "everything is available" over whatever the Barsha
-#: counter is maintaining in the GrubOps console by hand. The id is recorded
-#: now so that turning it on later is a switch in the admin console rather than
-#: another migration.
-LOCATIONS: dict[str, tuple[str, bool]] = {
-    "K001": ("692300947f5b1c6d208c6352", True),  # Sharjah — register live
-    "B001": ("692300c0323715175fede66c", False),  # Barsha Heights — not yet
-}
 
 
 def upgrade() -> None:
@@ -209,33 +189,6 @@ def upgrade() -> None:
             "branch_id", "grubops_item_map_id", name="uq_grubops_sync_state"
         ),
     )
-
-    # ── the two locations ────────────────────────────────────────────────────
-    # INSERT ... SELECT so the branch lookup and the guard are one statement:
-    # nothing is written when the reference is absent, and the NOT EXISTS makes
-    # a re-run — or a restore of a database that already has the row — a no-op
-    # rather than a unique violation.
-    for reference, (location_id, is_active) in LOCATIONS.items():
-        op.execute(
-            sa.text(
-                """
-                INSERT INTO grubops_location_map
-                    (branch_id, grubops_location_id, grubops_partner_id, is_active)
-                SELECT b.id, :location_id, :partner_id, :is_active
-                  FROM branches b
-                 WHERE b.reference = :reference
-                   AND NOT EXISTS (
-                       SELECT 1 FROM grubops_location_map m
-                        WHERE m.branch_id = b.id
-                   )
-                """
-            ).bindparams(
-                location_id=location_id,
-                partner_id=PARTNER_ID,
-                is_active=is_active,
-                reference=reference,
-            )
-        )
 
 
 def downgrade() -> None:

@@ -50,6 +50,7 @@ from app.models.grubops import (
     GrubOpsItemMap,
     GrubOpsLocationMap,
 )
+from app.models.branch import Branch
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.product import WEB_CHANNEL, Product, sells_on
 from app.services.providers.grubops_provider import GrubOpsError, provider
@@ -145,6 +146,48 @@ def best_match(
     return best, best_score, MATCH_FUZZY
 
 
+def match_branch(name: str, branches: list) -> object | None:
+    """
+    The branch a GrubOps location is.
+
+    Not `best_match`: that one compares two names for a *menu item*, where a
+    length difference usually means two different cakes. Here it usually means
+    the same shop written two ways — GrubOps says "Sharjah", the branch is
+    called "Sharjah Kitchen", and a plain similarity ratio scores that pair
+    below the item threshold and matches nothing at all.
+
+    So a location matches when its name **is** the branch's name or city, or
+    when every word of it appears in one of them. "Sharjah" finds "Sharjah
+    Kitchen"; "Barsha Heights" finds a branch in Barsha Heights; neither finds
+    the other, which is the property that matters with four shops in two
+    emirates.
+    """
+    target = normalise(name)
+    if not target:
+        return None
+
+    words = set(target.split())
+    best = None
+    best_score = 0.0
+
+    for branch in branches:
+        for field_value in (branch.name, branch.city):
+            candidate = normalise(field_value or "")
+            if not candidate:
+                continue
+            if candidate == target:
+                return branch
+            if words and words.issubset(set(candidate.split())):
+                # Every word of theirs is in ours: "Sharjah" ⊂ "Sharjah Kitchen".
+                score = 0.95
+            else:
+                score = similarity(target, candidate)
+            if score > best_score:
+                best, best_score = branch, score
+
+    return best if best_score >= MATCH_THRESHOLD else None
+
+
 async def _fetch_catalogue(
     location: GrubOpsLocationMap,
 ) -> tuple[list[Candidate], list[Candidate]]:
@@ -224,6 +267,62 @@ async def _our_menu(
     return products, options
 
 
+async def sync_locations(db: AsyncSession) -> tuple[int, list[str]]:
+    """
+    Make sure every GrubOps location we can recognise has a branch row.
+
+    Matched on name, like the items — GrubOps calls them "Sharjah" and "Barsha
+    Heights" and so do we, near enough. Hardcoding branch references was the
+    first attempt and it seeded nothing on a database whose Sharjah kitchen is
+    called `SHJ` rather than `K001`; discovering them works whatever the local
+    references are.
+
+    **Every row is created inactive.** Whether a branch should sync is a
+    question about whether its staff are marking things out on the terminal,
+    and pushing a confident "everything is available" from a shop that is not
+    doing that would overwrite what its counter maintains in GrubOps by hand.
+    Somebody turns each one on in the console.
+
+    Existing rows are never touched, so this cannot flip a branch somebody has
+    already decided about.
+    """
+    theirs = await provider.list_locations()
+    if not theirs:
+        return 0, ["GrubOps reports no locations on this account"]
+
+    branches = list((await db.execute(select(Branch))).scalars().all())
+    existing = {
+        row.branch_id
+        for row in (await db.execute(select(GrubOpsLocationMap))).scalars().all()
+    }
+
+    created = 0
+    unmatched: list[str] = []
+    for location in theirs:
+        name = _name_of(location)
+        branch = match_branch(name, branches)
+        if branch is None:
+            unmatched.append(f"GrubOps location {name!r} matched no branch")
+            continue
+        if branch.id in existing:
+            continue
+        db.add(
+            GrubOpsLocationMap(
+                branch_id=branch.id,
+                grubops_location_id=str(location.get("id") or ""),
+                grubops_partner_id=str(
+                    location.get("partnerId") or provider.config.partner_id
+                ),
+                is_active=False,
+            )
+        )
+        existing.add(branch.id)
+        created += 1
+
+    await db.flush()
+    return created, unmatched
+
+
 async def sync_mappings(db: AsyncSession) -> SyncSummary:
     """
     Refresh the suggested item map from GrubOps' live menu.
@@ -234,15 +333,23 @@ async def sync_mappings(db: AsyncSession) -> SyncSummary:
     """
     summary = SyncSummary()
 
+    # Branches first: a location discovered now is one the item map can be
+    # read against in the same press of the button.
+    try:
+        created, unmatched = await sync_locations(db)
+        summary.created += created
+        summary.errors.extend(unmatched)
+    except GrubOpsError as exc:
+        summary.errors.append(f"Could not read GrubOps locations: {exc}")
+
+    # Any mapped location will do, active or not: the catalogue is the same for
+    # every location on the account, and the item map has to be reviewable
+    # before any branch is switched on.
     location = (
-        await db.execute(
-            select(GrubOpsLocationMap)
-            .where(GrubOpsLocationMap.is_active.is_(True))
-            .limit(1)
-        )
+        await db.execute(select(GrubOpsLocationMap).limit(1))
     ).scalar_one_or_none()
     if location is None:
-        summary.errors.append("No active GrubOps location is mapped to a branch")
+        summary.errors.append("No GrubOps location could be matched to a branch")
         return summary
 
     recipes, modifiers = await _fetch_catalogue(location)

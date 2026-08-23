@@ -300,3 +300,74 @@ def test_the_immediate_push_is_inert_while_the_flag_is_off():
             branch_id=uuid.uuid4(), product_ids=[uuid.uuid4()], in_stock=False
         )
     assert not svc._pending
+
+
+# ── matching two catalogues ───────────────────────────────────────────────────
+
+
+class _Branch:
+    def __init__(self, name, city=None):
+        self.id = uuid.uuid4()
+        self.name = name
+        self.city = city
+
+
+def test_a_location_matches_the_branch_it_names():
+    """
+    "Sharjah" is "Sharjah Kitchen".
+
+    The first version of this reused the item matcher and matched nothing:
+    a plain similarity ratio scores that pair at about a half, because most of
+    the difference is a word GrubOps simply does not bother saying. Seeding
+    nothing, silently, is the failure this test exists to prevent.
+    """
+    from app.services.grubops_mapping import match_branch
+
+    sharjah = _Branch("Sharjah Kitchen", "Sharjah")
+    barsha = _Branch("Barsha Heights Counter", "Dubai")
+    assert match_branch("Sharjah", [sharjah, barsha]) is sharjah
+    assert match_branch("Barsha Heights", [sharjah, barsha]) is barsha
+
+
+def test_a_location_that_is_no_branch_of_ours_matches_nothing():
+    """Better an unmatched row somebody reads than a confident wrong one."""
+    from app.services.grubops_mapping import match_branch
+
+    assert (
+        match_branch("Abu Dhabi Mall", [_Branch("Sharjah Kitchen", "Sharjah")]) is None
+    )
+
+
+def test_names_match_across_case_accents_and_punctuation():
+    """Two systems typed into by two people on two days."""
+    from app.services.grubops_mapping import normalise
+
+    assert normalise("Crème Brûlée  Tart!") == normalise("creme brulee tart")
+
+
+def test_a_weak_item_match_is_not_offered_at_all():
+    """
+    An unmatched item costs somebody a minute; a wrong one takes the wrong
+    cake off Talabat.
+    """
+    from app.services.grubops_mapping import Candidate, best_match
+
+    candidates = [
+        Candidate(
+            item_id="r1", name="Pistachio Kunafa", brand_id="b", grubops_type="RECIPE"
+        )
+    ]
+    match, _score, _method = best_match("Chocolate Fudge Brownie", candidates)
+    assert match is None
+
+
+def test_an_exact_item_match_is_marked_exact():
+    from app.services.grubops_mapping import Candidate, best_match
+
+    candidates = [
+        Candidate(
+            item_id="r1", name="Pistachio Kunafa", brand_id="b", grubops_type="RECIPE"
+        )
+    ]
+    match, score, method = best_match("pistachio kunafa", candidates)
+    assert match is not None and score == 1.0 and method == "exact"
