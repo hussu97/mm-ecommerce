@@ -118,10 +118,9 @@ worth knowing before touching either.
 {"itemInfo": {"partnerId":"…","locationId":"…","brandId":"…",
               "recipeId":"…","modifierId":null,"childModifierId":null,
               "type":"RECIPE"},
- "source": "MELTING_MOMENTS_POS",
+ "source": "grubOps 2.0",
  "status": "UNAVAILABLE_UNTIL_FURTHER_NOTICE",
- "unavailabilityInfo": {"unavailableTill": null,
-                        "unavailableReason": "Out of stock (POS)"}}
+ "unavailabilityInfo": {"unavailableTill": null, "unavailableReason": null}}
 ```
 
 `available` takes the bare identity, **flat, with no `source`**:
@@ -134,10 +133,31 @@ worth knowing before touching either.
 Send the envelope to `available` and every field of the identity comes back as
 `must not be null`, because they are being looked for at the top level.
 
+**We write what their console writes.** `source` is `grubOps 2.0` — the GrubOps
+app name, the string already stamped on every record on the account — and
+`unavailableReason` is null, because their client hardcodes it null and offers
+no way to set it. A record of ours is therefore indistinguishable from one
+somebody made in the console.
+
+That is deliberate, and it costs nothing. The tempting alternative was a marker
+of our own so our writes were identifiable; it would also have made them
+*different* — an unknown source, on a private API with no contract, in a field
+their UI renders. Nothing here needed the marker: the reconcile loop takes
+desired state from our own database and never adopts theirs, so it cannot
+mistake their writes for ours however they are labelled.
+
 **A modifier must carry its recipe.** `{"recipeId": ["must not be null"]}` is
 the answer to a `type: MODIFIER` write that names only the modifier. So
 `grubops_item_map` stores the parent recipe on option rows as well as the
 modifier's own id — the same pairing the matcher needed, for the same reason.
+
+**Their writes are patch-like on an existing record.** Creating an
+unavailability stores exactly what is sent; *updating* one ignores a null, so a
+field that already has a value cannot be cleared by sending null for it — an
+empty string works, and only clearing the record entirely gets back to null.
+This matters for nothing in normal operation, because the ordinary case is an
+item going out of stock, which creates a record and stores our null reason
+verbatim. It matters a great deal when tidying up after a test.
 
 **Putting back something already back is a 400**, with the message
 *"is/are not currently marked as unavailable in the database"*. That is not a

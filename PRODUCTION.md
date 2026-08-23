@@ -885,7 +885,7 @@ it here and redeploying.
 | `GRUBOPS_COGNITO_REGION` | `eu-west-2` | |
 | `GRUBOPS_API_BASE` | `https://internal-api.grubtech.io` | Availability writes |
 | `GRUBOPS_CATALOG_API_BASE` | `https://api-grubone.grubtech.io` | Brands and menu listing — a different host, which is their split |
-| `GRUBOPS_SOURCE` | `MELTING_MOMENTS_POS` | Stamped on our changes so they are distinguishable in their console |
+| `GRUBOPS_SOURCE` | `grubOps 2.0` | Stamped on every record we write, and deliberately the same string their own console stamps. Leave it alone |
 | `GRUBOPS_TIMEOUT_SECONDS` | `8` | |
 | `GRUBOPS_RECONCILE_TICK_SECONDS` | `120` | How often the loop recomputes and pushes differences |
 

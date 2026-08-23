@@ -57,9 +57,12 @@ logger = logging.getLogger(__name__)
 #: The same reason `indexnow_service` keeps a set; see the note there.
 _pending: set[asyncio.Task] = set()
 
-#: What GrubOps is told the reason was. They take free text and show it in the
-#: console, so it is worth it saying where the change came from.
-_REASON = "Out of stock (POS)"
+#: Their own client hardcodes this null — `unavailableReason` is a literal
+#: `null` in the bundle's builder, with no way to set it from the console — so
+#: a write of ours that carried text would be a write no human could have made.
+#: Sent null for the same reason `GRUBOPS_SOURCE` says "grubOps 2.0": these
+#: records should be indistinguishable from the ones the console writes.
+_REASON = None
 
 #: What GrubOps says when asked to put back something it never took away.
 #:

@@ -318,9 +318,18 @@ class Settings(BaseSettings):
     #: writes answer on `GRUBOPS_API_BASE`. Two bases rather than one because
     #: GrubTech split them, not because we wanted the choice.
     GRUBOPS_CATALOG_API_BASE: str = "https://api-grubone.grubtech.io"
-    #: Stamped on every change we make, so an availability edit of ours is
-    #: distinguishable from one somebody made in the console by hand.
-    GRUBOPS_SOURCE: str = "MELTING_MOMENTS_POS"
+    #: Stamped on every availability record we write, and deliberately the same
+    #: string their own console stamps — it is the GrubOps app name, and every
+    #: record on the account already carries it.
+    #:
+    #: The alternative was a marker of our own, which would have made our writes
+    #: identifiable. It also would have made them *different*: a source nothing
+    #: else in their system produces, on a private API with no contract, sitting
+    #: in a field their UI renders. Blending in is the smaller risk, and nothing
+    #: here needed the marker — the reconcile loop takes desired state from our
+    #: database and never from theirs, so it cannot mistake their writes for
+    #: ours whatever they are labelled.
+    GRUBOPS_SOURCE: str = "grubOps 2.0"
     GRUBOPS_TIMEOUT_SECONDS: float = 8.0
     #: How often the reconcile loop recomputes. Availability changes are
     #: human-paced, and a shorter tick would only spend somebody else's quota.

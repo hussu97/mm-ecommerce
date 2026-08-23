@@ -414,7 +414,7 @@ jobs:
           GRUBOPS_COGNITO_REGION=${{ secrets.GRUBOPS_COGNITO_REGION || 'eu-west-2' }}
           GRUBOPS_API_BASE=${{ secrets.GRUBOPS_API_BASE || 'https://internal-api.grubtech.io' }}
           GRUBOPS_CATALOG_API_BASE=${{ secrets.GRUBOPS_CATALOG_API_BASE || 'https://api-grubone.grubtech.io' }}
-          GRUBOPS_SOURCE=${{ secrets.GRUBOPS_SOURCE || 'MELTING_MOMENTS_POS' }}
+          GRUBOPS_SOURCE=${{ secrets.GRUBOPS_SOURCE || 'grubOps 2.0' }}
           GRUBOPS_TIMEOUT_SECONDS=${{ secrets.GRUBOPS_TIMEOUT_SECONDS || '8' }}
           GRUBOPS_RECONCILE_TICK_SECONDS=${{ secrets.GRUBOPS_RECONCILE_TICK_SECONDS || '120' }}
           SLIDER_API_KEY=${{ secrets.SLIDER_API_KEY }}

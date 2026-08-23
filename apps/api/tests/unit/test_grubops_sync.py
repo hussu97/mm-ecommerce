@@ -62,6 +62,34 @@ def _state(*, available: bool | None, until: datetime | None = None):
 # ── the payload ───────────────────────────────────────────────────────────────
 
 
+def test_a_write_of_ours_looks_like_a_write_of_theirs():
+    """
+    Same `source`, same null reason as the console produces.
+
+    Their client hardcodes `unavailableReason` to null — the bundle has the
+    literal, and there is no way to set it from the console — so a record
+    carrying text is a record no human could have made. On a private API with
+    no contract, in a field their UI renders, resembling the ordinary traffic
+    is the smaller risk. Nothing needed a marker of our own: the reconcile loop
+    takes desired state from our database and never from theirs.
+    """
+    body = svc.unavailable_body(
+        _desired(available=False),
+        partner_id=PARTNER,
+        location_id=LOCATION,
+        source="grubOps 2.0",
+    )
+    assert body["source"] == "grubOps 2.0"
+    assert body["unavailabilityInfo"]["unavailableReason"] is None
+
+
+def test_the_configured_source_is_the_consoles_own():
+    """The default ships matching theirs; a deploy that overrides it is a bug."""
+    from app.core.config import settings
+
+    assert settings.GRUBOPS_SOURCE == "grubOps 2.0"
+
+
 def test_indefinite_out_of_stock_carries_no_date():
     """ "Until somebody says so" is the absence of a moment, not a far-off one."""
     body = svc.unavailable_body(
