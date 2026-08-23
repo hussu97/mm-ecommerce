@@ -14,6 +14,10 @@ import type {
   FulfilmentOptions, FulfilmentQuote,
   BranchProductAvailability, StockDuration,
   UrlRedirect,
+  GrubOpsLocation,
+  GrubOpsMapping,
+  GrubOpsMappingList,
+  GrubOpsSyncSummary,
 } from './types';
 import type {
   PublicKeyCredentialCreationOptionsJSON,
@@ -562,6 +566,31 @@ export const redirectApi = {
   create: (data: object) => api.post<UrlRedirect>('/redirects', data),
   update: (id: string, data: object) => api.put<UrlRedirect>(`/redirects/${id}`, data),
   delete: (id: string) => api.delete<void>(`/redirects/${id}`),
+};
+
+// ─── GrubOps (aggregator out-of-stock sync) ───────────────────────────────────
+
+export const grubopsApi = {
+  /** Every branch GrubOps knows, and whether its stock is being mirrored. */
+  locations: () => api.get<GrubOpsLocation[]>('/grubops/locations'),
+  /** The per-branch switch. Off for a branch whose register is not live yet. */
+  updateLocation: (id: string, data: { is_active?: boolean; grubops_location_id?: string }) =>
+    api.put<GrubOpsLocation>(`/grubops/locations/${id}`, data),
+  mappings: (params: {
+    approved?: boolean;
+    kind?: string;
+    page?: number;
+    page_size?: number;
+  }) => api.get<GrubOpsMappingList>(`/grubops/mappings${buildQs(params)}`),
+  updateMapping: (id: string, data: object) =>
+    api.put<GrubOpsMapping>(`/grubops/mappings/${id}`, data),
+  /**
+   * Re-read their menu and propose mappings for anything new.
+   *
+   * Safe to press twice: an approved or hand-corrected row is never
+   * overwritten, only its display name is refreshed.
+   */
+  sync: () => api.post<GrubOpsSyncSummary>('/grubops/mappings/sync', {}),
 };
 
 // ─── Bulk Actions ─────────────────────────────────────────────────────────────

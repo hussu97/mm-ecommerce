@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from .auth import router as auth_router
 from .categories import router as categories_router
 from .products import router as products_router
+from .grubops import router as grubops_router
 from .cart import router as cart_router
 from .uploads import router as uploads_router
 from .delivery import router as delivery_router
@@ -79,6 +80,7 @@ api_router.include_router(auth_router, prefix="/auth", tags=["Authentication"])
 api_router.include_router(categories_router, prefix="/categories", tags=["Categories"])
 api_router.include_router(redirects_router, prefix="/redirects", tags=["Redirects"])
 api_router.include_router(products_router, prefix="/products", tags=["Products"])
+api_router.include_router(grubops_router, prefix="/grubops", tags=["GrubOps"])
 api_router.include_router(modifiers_router, prefix="/modifiers", tags=["Modifiers"])
 api_router.include_router(import_router, prefix="/import", tags=["Import"])
 api_router.include_router(cart_router, prefix="/cart", tags=["Cart"])

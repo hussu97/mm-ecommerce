@@ -2481,6 +2481,121 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/grubops/locations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Locations
+         * @description Every branch known to GrubOps, and whether its stock is being mirrored.
+         */
+        get: operations["list_locations_api_v1_grubops_locations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/grubops/locations/{location_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update Location
+         * @description Turn one branch's sync on or off.
+         *
+         *     Switching a branch **on** does not push anything by itself: the reconcile
+         *     loop picks it up on its next tick and sends whatever differs from what
+         *     GrubOps was last told, which for a branch that has never synced is its whole
+         *     approved map. Switching it **off** stops the pushing and leaves GrubOps
+         *     holding whatever it last heard — deliberately, because the alternative is a
+         *     switch that silently puts a shop's entire menu back on sale.
+         */
+        put: operations["update_location_api_v1_grubops_locations__location_id__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/grubops/mappings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Mappings
+         * @description The review queue, newest suggestions first.
+         */
+        get: operations["list_mappings_api_v1_grubops_mappings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/grubops/mappings/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sync Mappings
+         * @description Re-read GrubOps' menu and propose mappings for anything new.
+         *
+         *     Safe to press twice, and safe to press after a menu change: an approved or
+         *     hand-corrected row is never overwritten, only its display name is
+         *     refreshed. What comes back is what to go and look at — the counts, and the
+         *     two lists of things that matched nothing on either side.
+         */
+        post: operations["sync_mappings_api_v1_grubops_mappings_sync_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/grubops/mappings/{mapping_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update Mapping
+         * @description Correct a guess, or approve it.
+         *
+         *     Any edit to the GrubOps side marks the row `manual`, which is what stops the
+         *     next run of the matcher treating it as its own suggestion to refresh.
+         */
+        put: operations["update_mapping_api_v1_grubops_mappings__mapping_id__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/i18n/languages": {
         parameters: {
             query?: never;
@@ -9311,6 +9426,144 @@ export interface components {
             created: number;
             /** Packed */
             packed: number;
+        };
+        /**
+         * GrubOpsLocationResponse
+         * @description One branch and whether its stock is mirrored onto the aggregators.
+         */
+        GrubOpsLocationResponse: {
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /** Branch Name */
+            branch_name?: string | null;
+            /** Branch Reference */
+            branch_reference?: string | null;
+            /** Grubops Location Id */
+            grubops_location_id: string;
+            /** Grubops Partner Id */
+            grubops_partner_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Active */
+            is_active: boolean;
+        };
+        /**
+         * GrubOpsLocationUpdate
+         * @description The per-branch switch, and the location it points at.
+         *
+         *     `is_active` is the one that gets used: a branch whose register is not live
+         *     yet has nothing true to say about its stock, so it is mapped and left off
+         *     until it does.
+         */
+        GrubOpsLocationUpdate: {
+            /** Grubops Location Id */
+            grubops_location_id?: string | null;
+            /** Is Active */
+            is_active?: boolean | null;
+        };
+        /**
+         * GrubOpsMappingList
+         * @description A page of mappings, with the counts the screen puts in its tabs.
+         */
+        GrubOpsMappingList: {
+            /** Approved Count */
+            approved_count: number;
+            /** Items */
+            items: components["schemas"]["GrubOpsMappingResponse"][];
+            /** Pending Count */
+            pending_count: number;
+            /** Total */
+            total: number;
+        };
+        /**
+         * GrubOpsMappingResponse
+         * @description One suggested or confirmed pairing, as the review screen shows it.
+         */
+        GrubOpsMappingResponse: {
+            /** Approved */
+            approved: boolean;
+            /** Approved By */
+            approved_by?: string | null;
+            /** Grubops Brand Id */
+            grubops_brand_id: string;
+            /** Grubops Child Modifier Id */
+            grubops_child_modifier_id?: string | null;
+            /** Grubops Modifier Id */
+            grubops_modifier_id?: string | null;
+            /** Grubops Name */
+            grubops_name?: string | null;
+            /** Grubops Recipe Id */
+            grubops_recipe_id?: string | null;
+            /** Grubops Type */
+            grubops_type: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Last Error */
+            last_error?: string | null;
+            /** Last Pushed At */
+            last_pushed_at?: string | null;
+            /** Match Method */
+            match_method: string;
+            /** Match Score */
+            match_score?: number | null;
+            /** Mm Kind */
+            mm_kind: string;
+            /** Mm Name */
+            mm_name?: string | null;
+            /** Mm Parent Name */
+            mm_parent_name?: string | null;
+            /** Modifier Option Id */
+            modifier_option_id?: string | null;
+            /** Notes */
+            notes?: string | null;
+            /** Product Id */
+            product_id?: string | null;
+        };
+        /**
+         * GrubOpsMappingUpdate
+         * @description A correction, or an approval.
+         *
+         *     Setting `approved` is the act that puts a row into service; everything else
+         *     here exists so somebody can fix a bad guess before they do.
+         */
+        GrubOpsMappingUpdate: {
+            /** Approved */
+            approved?: boolean | null;
+            /** Grubops Child Modifier Id */
+            grubops_child_modifier_id?: string | null;
+            /** Grubops Modifier Id */
+            grubops_modifier_id?: string | null;
+            /** Grubops Recipe Id */
+            grubops_recipe_id?: string | null;
+            /** Grubops Type */
+            grubops_type?: string | null;
+            /** Notes */
+            notes?: string | null;
+        };
+        /**
+         * GrubOpsSyncSummary
+         * @description What one press of "Sync from GrubOps" did.
+         */
+        GrubOpsSyncSummary: {
+            /** Created */
+            created: number;
+            /** Errors */
+            errors: string[];
+            /** Refreshed */
+            refreshed: number;
+            /** Unmatched Ours */
+            unmatched_ours: string[];
+            /** Unmatched Theirs */
+            unmatched_theirs: string[];
         };
         /** GuestSessionRequest */
         GuestSessionRequest: {
@@ -20145,6 +20398,150 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    list_locations_api_v1_grubops_locations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GrubOpsLocationResponse"][];
+                };
+            };
+        };
+    };
+    update_location_api_v1_grubops_locations__location_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                location_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GrubOpsLocationUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GrubOpsLocationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_mappings_api_v1_grubops_mappings_get: {
+        parameters: {
+            query?: {
+                approved?: boolean | null;
+                kind?: string | null;
+                page?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GrubOpsMappingList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sync_mappings_api_v1_grubops_mappings_sync_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GrubOpsSyncSummary"];
+                };
+            };
+        };
+    };
+    update_mapping_api_v1_grubops_mappings__mapping_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                mapping_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GrubOpsMappingUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GrubOpsMappingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

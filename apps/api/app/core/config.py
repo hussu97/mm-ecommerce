@@ -292,6 +292,49 @@ class Settings(BaseSettings):
     NOON_SEND_WEBHOOK_API_KEY: str = ""
     NOON_SEND_TIMEOUT_SECONDS: float = 8.0
 
+    # ── GrubOps (GrubTech aggregator console) ─────────────────────────────────
+    #: Mirrors "mark out of stock" from the terminal onto the aggregators, so
+    #: that a counter that has run out of pistachio says so once instead of
+    #: twice. One way only: this app is the source of truth and GrubOps is told.
+    #:
+    #: Off by default and meant to stay off until the item map has been seeded
+    #: and approved — a sync with a half-built map would take the wrong things
+    #: off Talabat. See `services/grubops_reconcile.py`.
+    GRUBOPS_SYNC_ENABLED: bool = False
+    #: GrubTech publish no partner API, so the integration signs in as a console
+    #: user against their Cognito pool. A real login, with a real password, and
+    #: the reason the whole feature sits behind one provider and one flag.
+    GRUBOPS_USERNAME: str = ""
+    GRUBOPS_PASSWORD: str = ""
+    #: The account's own identifiers. Defaulted to this shop's rather than left
+    #: blank because they are not secret, they are stable, and a missing one is
+    #: a silent no-op that takes an afternoon to find.
+    GRUBOPS_PARTNER_ID: str = "6922fe267f5b1c6d208c634f"
+    GRUBOPS_COGNITO_CLIENT_ID: str = "2d8lmtmc241sviat2psomuuon8"
+    GRUBOPS_COGNITO_REGION: str = "eu-west-2"
+    GRUBOPS_API_BASE: str = "https://internal-api.grubtech.io"
+    #: The catalogue lives on a different host from the availability service.
+    #: `serving-brands` and the menu listing answer here; the availability
+    #: writes answer on `GRUBOPS_API_BASE`. Two bases rather than one because
+    #: GrubTech split them, not because we wanted the choice.
+    GRUBOPS_CATALOG_API_BASE: str = "https://api-grubone.grubtech.io"
+    #: Stamped on every availability record we write, and deliberately the same
+    #: string their own console stamps — it is the GrubOps app name, and every
+    #: record on the account already carries it.
+    #:
+    #: The alternative was a marker of our own, which would have made our writes
+    #: identifiable. It also would have made them *different*: a source nothing
+    #: else in their system produces, on a private API with no contract, sitting
+    #: in a field their UI renders. Blending in is the smaller risk, and nothing
+    #: here needed the marker — the reconcile loop takes desired state from our
+    #: database and never from theirs, so it cannot mistake their writes for
+    #: ours whatever they are labelled.
+    GRUBOPS_SOURCE: str = "grubOps 2.0"
+    GRUBOPS_TIMEOUT_SECONDS: float = 8.0
+    #: How often the reconcile loop recomputes. Availability changes are
+    #: human-paced, and a shorter tick would only spend somebody else's quota.
+    GRUBOPS_RECONCILE_TICK_SECONDS: int = 120
+
     # ── Slider (courier) ──────────────────────────────────────────────────────
     #: The third courier, and the same contract as the other two: an empty key
     #: means a `slider` zone prices and sells exactly as it does today and

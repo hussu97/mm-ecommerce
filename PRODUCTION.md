@@ -857,6 +857,44 @@ gh secret set NOON_SEND_WEBHOOK_API_KEY --repo hussu97/mm-ecommerce
 gh secret set MAPBOX_ACCESS_TOKEN --repo hussu97/mm-ecommerce
 ```
 
+#### GrubOps (aggregator out-of-stock sync)
+
+Mirrors "mark out of stock" from the register onto Noon, Talabat and Deliveroo,
+so the shop says it once instead of twice. One way only — this app is the source
+of truth and GrubOps is told.
+
+GrubTech publish no partner API, so the integration signs in as a console user
+against their Cognito pool. `GRUBOPS_PASSWORD` is a real password: it goes in
+secrets, never in the repo, and rotating it in the GrubOps console means setting
+it here and redeploying.
+
+> **Leave `GRUBOPS_SYNC_ENABLED` false until the item map is seeded and
+> approved.** The map is built by matching item names, which is a guess until a
+> human confirms it in the admin console (Integrations → GrubOps). Turning the
+> sync on with a half-built map takes the wrong things off the aggregators.
+> Nothing is ever pushed for an unapproved row, so shipping it off and seeding
+> at leisure is safe.
+
+| Secret | Falls back to | Notes |
+|--------|---------------|-------|
+| `GRUBOPS_SYNC_ENABLED` | `false` | The kill switch. Off until the map is approved |
+| `GRUBOPS_USERNAME` | — | The GrubOps console login |
+| `GRUBOPS_PASSWORD` | — | That login's password |
+| `GRUBOPS_PARTNER_ID` | `6922fe267f5b1c6d208c634f` | This account's partner id |
+| `GRUBOPS_COGNITO_CLIENT_ID` | `2d8lmtmc241sviat2psomuuon8` | Their app client; changes only if GrubTech reissue it |
+| `GRUBOPS_COGNITO_REGION` | `eu-west-2` | |
+| `GRUBOPS_API_BASE` | `https://internal-api.grubtech.io` | Availability writes |
+| `GRUBOPS_CATALOG_API_BASE` | `https://api-grubone.grubtech.io` | Brands and menu listing — a different host, which is their split |
+| `GRUBOPS_SOURCE` | `grubOps 2.0` | Stamped on every record we write, and deliberately the same string their own console stamps. Leave it alone |
+| `GRUBOPS_TIMEOUT_SECONDS` | `8` | |
+| `GRUBOPS_RECONCILE_TICK_SECONDS` | `120` | How often the loop recomputes and pushes differences |
+
+```bash
+gh secret set GRUBOPS_USERNAME --repo hussu97/mm-ecommerce
+gh secret set GRUBOPS_PASSWORD --repo hussu97/mm-ecommerce
+gh secret set GRUBOPS_SYNC_ENABLED --repo hussu97/mm-ecommerce
+```
+
 #### Slider (the third courier)
 
 Slider is gated to one account while the pilot runs. Six zones on the map name
