@@ -23,7 +23,7 @@ from app.schemas.menu_group import (
     MenuGroupResponse,
     MenuGroupUpdate,
 )
-from app.services import menu_group_service
+from app.services.catalog import menu_group_service
 
 router = APIRouter()
 

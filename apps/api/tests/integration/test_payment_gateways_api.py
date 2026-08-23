@@ -61,7 +61,7 @@ def admin_client(client):
 def registry(monkeypatch):
     """A provider registry the test owns, so a stray key cannot leak in."""
     import app.api.v1.payment_gateways as module
-    import app.services.payment_gateway_router as router
+    import app.services.payments.payment_gateway_router as router
 
     providers: dict = {}
     monkeypatch.setattr(module, "PROVIDERS", providers)

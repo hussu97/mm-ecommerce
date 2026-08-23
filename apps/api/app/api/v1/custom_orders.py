@@ -32,7 +32,8 @@ from app.models.custom_order import (
     CustomOrderStatusEnum,
 )
 from app.models.user import User
-from app.services import audit_service, business_day_service, custom_order_service
+from app.services import audit_service, custom_order_service
+from app.services.pos import business_day_service
 
 router = APIRouter()
 admin_router = APIRouter()

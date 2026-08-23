@@ -12,7 +12,7 @@
 Every "autonomous" idea below needs the same thing: something that wakes up on a
 schedule and acts. **That already exists and is proven in production.**
 
-`apps/api/app/services/batch_scheduler.py` runs a loop inside the app's own
+`apps/api/app/services/delivery/batch_scheduler.py` runs a loop inside the app's own
 lifespan, ticking once a minute, guarded by a Postgres advisory lock so exactly
 one uvicorn worker sweeps, plus `FOR UPDATE SKIP LOCKED` on the rows it claims.
 Its own docstring is explicit: *"There is no queue in this stack — no Celery, no

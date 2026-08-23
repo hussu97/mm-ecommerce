@@ -13,7 +13,7 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from app.services import business_day_service
+from app.services.pos import business_day_service
 
 logger = logging.getLogger(__name__)
 

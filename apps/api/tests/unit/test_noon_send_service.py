@@ -26,8 +26,9 @@ from app.models.order import Order, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
 from app.models.order_driver import OrderDriver
 from app.models.order_status_event import pending_events
-from app.services import driver_assignment, noon_send_service
-from app.services.lalamove_service import PickupPoint
+from app.services.couriers import noon_send_service
+from app.services.couriers.lalamove_service import PickupPoint
+from app.services.delivery import driver_assignment
 from app.services.providers import noon_send_provider
 
 NOW = datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc)
@@ -308,7 +309,7 @@ async def test_undelivered_moves_the_order_and_flags_a_human_without_refunding(
     to stop selling somebody a cake. The flag is what asks a person to make
     that decision, and cancelling is where they make it.
     """
-    from app.services import payment_service
+    from app.services.payments import payment_service
 
     refunded: list[Order] = []
 
@@ -498,7 +499,7 @@ async def test_the_outlet_code_comes_from_the_branch_and_nowhere_else(
     A branch with no code simply cannot dispatch through noon Send, which is a
     refusal an admin can fix in the field it belongs to.
     """
-    from app.services import lalamove_service
+    from app.services.couriers import lalamove_service
 
     branch = SimpleNamespace(
         name="Melting Moments Cakes",

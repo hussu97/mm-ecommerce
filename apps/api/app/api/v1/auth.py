@@ -71,7 +71,7 @@ from app.schemas.user import (
     UserUpdate,
 )
 from app.services import email_service, firebase_auth_service, turnstile_service
-from app.services.order_service import normalise_locale
+from app.services.orders.order_service import normalise_locale
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

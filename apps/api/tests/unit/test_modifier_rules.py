@@ -20,7 +20,7 @@ from uuid import uuid4
 import pytest
 
 from app.core.exceptions import BadRequestError
-from app.services import modifier_rules
+from app.services.catalog import modifier_rules
 
 
 def _option(name: str, price: str = "0", order: int = 0):

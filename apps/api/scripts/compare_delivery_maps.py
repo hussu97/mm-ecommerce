@@ -39,7 +39,7 @@ import json
 import re
 from pathlib import Path
 
-from app.services.delivery_zone_service import point_in_geometry
+from app.services.delivery.delivery_zone_service import point_in_geometry
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSIONS = ROOT / "alembic" / "versions"

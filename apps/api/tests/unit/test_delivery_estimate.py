@@ -29,8 +29,8 @@ import pytest
 
 from app.models.courier import Courier
 from app.models.delivery_batch import DeliveryBatchGroup, DeliveryBatchWindow
-from app.services.delivery_promise import _Context, resolve
-from app.services.delivery_zone_service import Zone
+from app.services.delivery.delivery_promise import _Context, resolve
+from app.services.delivery.delivery_zone_service import Zone
 
 DUBAI = ZoneInfo("Asia/Dubai")
 

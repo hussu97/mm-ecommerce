@@ -25,7 +25,7 @@ import pytest
 
 from app.models.order import Order, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
-from app.services import lalamove_service
+from app.services.couriers import lalamove_service
 from app.services.providers import lalamove_provider
 from app.services.providers.lalamove_provider import LalamoveError
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 import inspect
 from decimal import Decimal
 
-from app.services import pos_order_service
+from app.services.pos import pos_order_service
 
 
 class _Tax:

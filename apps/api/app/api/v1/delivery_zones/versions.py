@@ -30,12 +30,9 @@ from app.models.delivery_polygon import (
     FulfilmentProviderEnum,
 )
 from app.models.user import User
-from app.services import (
-    audit_service,
-    courier_service,
-    delivery_service,
-    delivery_zone_service,
-)
+from app.services import audit_service
+from app.services.couriers import courier_service
+from app.services.delivery import delivery_service, delivery_zone_service
 
 from .schemas import PolygonResponse, PolygonUpdate, VersionCreate, VersionResponse
 

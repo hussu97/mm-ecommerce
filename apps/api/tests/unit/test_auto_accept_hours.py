@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 
 from app.models.branch import Branch
 from app.models.pos_order import OrderSourceEnum
-from app.services import pos_order_service
+from app.services.pos import pos_order_service
 
 DUBAI = ZoneInfo("Asia/Dubai")
 

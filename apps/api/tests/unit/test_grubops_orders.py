@@ -15,8 +15,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.models.order import OrderStatusEnum
-from app.services import grubops_orders as loop
-from app.services import grubops_orders_service as g
+from app.services.grubops import grubops_orders as loop
+from app.services.grubops import grubops_orders_service as g
 
 
 def test_every_live_status_maps_to_a_lifecycle_state_except_on_hold():
@@ -185,11 +185,11 @@ async def test_the_ingest_loops_own_cancel_is_not_mirrored_back_out():
     # from a person's. A move attributed `aggregator` (the ingest) is GrubOps's
     # own state coming in — echoing it straight back would be a feedback loop.
     from app.models.order_status_event import StatusSourceEnum, acting_as
-    from app.services import order_lifecycle
+    from app.services.orders import order_lifecycle
 
     order = _aggregator_order()
     with patch(
-        "app.services.grubops_orders_service.push_status_out_in_background"
+        "app.services.grubops.grubops_orders_service.push_status_out_in_background"
     ) as push:
         db = _stock_db()
         with acting_as(StatusSourceEnum.AGGREGATOR):
@@ -202,14 +202,16 @@ async def test_the_ingest_loops_own_cancel_is_not_mirrored_back_out():
 @pytest.mark.asyncio
 async def test_an_admin_cancel_of_an_aggregator_order_is_mirrored_out():
     from app.models.order_status_event import StatusSourceEnum, acting_as
-    from app.services import order_lifecycle
+    from app.services.orders import order_lifecycle
 
     order = _aggregator_order()
     with (
         patch(
-            "app.services.grubops_orders_service.push_status_out_in_background"
+            "app.services.grubops.grubops_orders_service.push_status_out_in_background"
         ) as push,
-        patch("app.services.grubops_orders_service.is_enabled", return_value=True),
+        patch(
+            "app.services.grubops.grubops_orders_service.is_enabled", return_value=True
+        ),
     ):
         db = _stock_db()
         with acting_as(StatusSourceEnum.ADMIN):
@@ -276,7 +278,7 @@ def test_the_driver_code_is_never_the_long_id_when_a_short_one_exists():
 
 
 def test_channel_names_normalise_to_courier_codes():
-    from app.services import courier_catalog as cc
+    from app.services.couriers import courier_catalog as cc
 
     assert cc.code_for_channel("Talabat") == "talabat"
     assert cc.code_for_channel("Keeta 2.0") == "keeta"
@@ -289,7 +291,7 @@ def test_channel_names_normalise_to_courier_codes():
 def test_noon_food_and_noon_send_are_different_badges():
     # The marketplace and the courier are two different "noon" businesses and
     # must never share a logo.
-    from app.services import courier_catalog as cc
+    from app.services.couriers import courier_catalog as cc
 
     food = cc.badge_for_order(source="aggregator", aggregator_channel="Noon")
     send = cc.badge_for_order(source="online", delivery_provider="noon_send")
@@ -301,7 +303,7 @@ def test_noon_food_and_noon_send_are_different_badges():
 
 
 def test_a_counter_sale_has_no_courier_badge():
-    from app.services import courier_catalog as cc
+    from app.services.couriers import courier_catalog as cc
 
     assert cc.badge_for_order(source="cashier") is None
     assert cc.badge_for_order(source="online", delivery_provider=None) is None
@@ -320,7 +322,7 @@ def test_the_note_loses_the_short_code_the_box_already_carries():
     padding it with a duplicate of the largest number on the page is how it
     stops being read.
     """
-    from app.services.grubops_orders_service import _customer_note
+    from app.services.grubops.grubops_orders_service import _customer_note
 
     assert (
         _customer_note({"instructions": "No cutlery.  | Talabat-short code: 1452"})
@@ -336,7 +338,7 @@ def test_an_order_whose_note_was_only_metadata_has_no_note():
     An empty note still prints a rule and a heading on the docket — a labelled
     blank, which reads as "something was said and we lost it".
     """
-    from app.services.grubops_orders_service import _customer_note
+    from app.services.grubops.grubops_orders_service import _customer_note
 
     assert _customer_note({"instructions": "Talabat-short code: 1452"}) is None
     assert _customer_note({"instructions": ""}) is None
@@ -344,7 +346,7 @@ def test_an_order_whose_note_was_only_metadata_has_no_note():
 
 
 def test_a_real_note_survives_untouched():
-    from app.services.grubops_orders_service import _customer_note
+    from app.services.grubops.grubops_orders_service import _customer_note
 
     assert (
         _customer_note({"instructions": "Please add candles"}) == "Please add candles"
@@ -359,7 +361,7 @@ def test_the_short_code_is_still_read_from_the_raw_instructions():
     where it is useful — the two functions read the same field for different
     purposes and neither may break the other.
     """
-    from app.services.grubops_orders_service import _driver_code
+    from app.services.grubops.grubops_orders_service import _driver_code
 
     header = {"instructions": "No cutlery.  | Talabat-short code: 1452"}
     assert _driver_code(header, None, {}) == "1452"

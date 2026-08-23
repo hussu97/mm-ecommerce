@@ -27,7 +27,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import MenuGroup, MenuGroupProduct, Product
-from app.services import menu_group_service as svc
+from app.services.catalog import menu_group_service as svc
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
 

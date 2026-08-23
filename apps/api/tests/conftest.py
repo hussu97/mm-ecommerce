@@ -32,7 +32,11 @@ def reset_courier_caches():
     for the tests that remember, which is the shape of every convention this
     repo has since turned into a fixture or a guard test.
     """
-    from app.services import lalamove_service, noon_send_service, slider_service
+    from app.services.couriers import (
+        lalamove_service,
+        noon_send_service,
+        slider_service,
+    )
 
     for reset in (
         lalamove_service.clear_caches,

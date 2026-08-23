@@ -31,7 +31,7 @@ from app.models.delivery_batch import DeliveryBatch
 from app.models.delivery_polygon import DeliveryPolygon
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery, is_failed
-from app.services import fulfilment_reassignment as reassign
+from app.services.delivery import fulfilment_reassignment as reassign
 
 NOW = datetime(2026, 8, 21, 9, 0, tzinfo=timezone.utc)
 LALAMOVE = "lalamove"
@@ -380,14 +380,13 @@ def quiet(monkeypatch):
     before making a new one" is a fact about the sequence, and a fake that
     cannot see the sequence cannot check it.
     """
-    from app.services import (
-        batching_service,
+    from app.services import email_service
+    from app.services.couriers import (
         courier_service,
-        driver_assignment,
-        email_service,
         lalamove_service,
         noon_send_service,
     )
+    from app.services.delivery import batching_service, driver_assignment
 
     calls: list[str] = []
 
@@ -560,7 +559,7 @@ async def test_a_booking_we_could_not_call_off_stops_the_whole_move(quiet, monke
     leave a live booking on a courier's system for a parcel that has just gone
     out with somebody else.
     """
-    from app.services import courier_service
+    from app.services.couriers import courier_service
 
     async def failing_cancel(db, order):
         quiet.append("cancel_courier")
@@ -692,7 +691,7 @@ async def test_a_live_booking_that_will_not_cancel_still_stops_the_move(
     The guard the fix must not have removed. A booking the courier still holds,
     that we could not call off, means a driver may yet come for the box.
     """
-    from app.services import courier_service
+    from app.services.couriers import courier_service
 
     async def failing_cancel(db, order):
         quiet.append("cancel_courier")

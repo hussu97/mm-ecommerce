@@ -10,7 +10,8 @@ from app.core.exceptions import ForbiddenError
 from app.core.permissions import require
 from app.models.user import User
 from app.schemas.category import CategoryCreate, CategoryResponse, CategoryUpdate
-from app.services import audit_service, category_service, indexnow_service
+from app.services import audit_service, indexnow_service
+from app.services.catalog import category_service
 
 router = APIRouter()
 

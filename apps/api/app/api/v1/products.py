@@ -30,14 +30,9 @@ from app.schemas.product import (
     ProductResponse,
     ProductUpdate,
 )
-from app.services import (
-    audit_service,
-    availability_service,
-    catalogue_cache,
-    grubops_service,
-    indexnow_service,
-    product_service,
-)
+from app.services import audit_service, indexnow_service
+from app.services.catalog import availability_service, catalogue_cache, product_service
+from app.services.grubops import grubops_service
 
 logger = logging.getLogger(__name__)
 

@@ -7,7 +7,7 @@ from app.models.inventory import (
     InventoryLevel,
     InventoryTransactionTypeEnum,
 )
-from app.services.inventory_service import apply_movement
+from app.services.inventory.inventory_service import apply_movement
 
 D = Decimal
 

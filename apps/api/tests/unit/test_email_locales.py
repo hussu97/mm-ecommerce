@@ -21,7 +21,7 @@ from app.schemas.fulfilment import FulfilmentResponse, PickupBranchResponse
 from app.schemas.order import OrderItemResponse, OrderResponse
 from app.services import email_service
 from app.services.email_copy import STRINGS, translator
-from app.services.order_service import normalise_locale
+from app.services.orders.order_service import normalise_locale
 
 NOW = datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc)
 

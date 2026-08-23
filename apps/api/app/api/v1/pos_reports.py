@@ -11,7 +11,7 @@ from app.core.deps import get_db
 from app.core.exceptions import BadRequestError
 from app.core.permissions import require
 from app.models.user import User
-from app.services import pos_reports_service
+from app.services.pos import pos_reports_service
 
 router = APIRouter()
 

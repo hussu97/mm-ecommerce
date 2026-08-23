@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.product import Product
-from app.services import product_service as svc
+from app.services.catalog import product_service as svc
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
 

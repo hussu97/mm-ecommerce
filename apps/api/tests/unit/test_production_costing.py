@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from app.services.transfer_service import production_output, production_unit_cost
+from app.services.inventory.transfer_service import (
+    production_output,
+    production_unit_cost,
+)
 
 D = Decimal
 

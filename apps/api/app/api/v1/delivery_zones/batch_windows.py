@@ -14,7 +14,8 @@ from app.core.permissions import require
 from app.models.courier import Courier
 from app.models.delivery_batch import DeliveryBatchWindow
 from app.models.user import User
-from app.services import audit_service, batching_service
+from app.services import audit_service
+from app.services.delivery import batching_service
 
 from ._shared import _load_group, _windows_of
 from .schemas import BatchWindowResponse, BatchWindowWrite

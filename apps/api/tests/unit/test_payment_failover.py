@@ -23,8 +23,8 @@ from app.core.exceptions import BadRequestError
 from app.models.order import OrderStatusEnum
 from app.models.payment_gateway import PaymentGateway
 from app.models.payment_transaction import PaymentTransactionStatusEnum
-from app.services import payment_service
-from app.services.payment_gateway_router import GatewayChoice
+from app.services.payments import payment_service
+from app.services.payments.payment_gateway_router import GatewayChoice
 from app.services.providers.base import GatewaySession, GatewayUnavailableError
 
 

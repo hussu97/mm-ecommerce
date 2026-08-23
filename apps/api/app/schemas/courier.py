@@ -32,7 +32,7 @@ class CourierBadge(BaseModel):
         # `app.services`, and importing that package while `app.schemas.order`
         # is still initialising (it, in turn, is imported by the services during
         # their own init) is a circular import. By call time everything is up.
-        from app.services import courier_catalog
+        from app.services.couriers import courier_catalog
 
         data = courier_catalog.badge_for_order(
             source=source,

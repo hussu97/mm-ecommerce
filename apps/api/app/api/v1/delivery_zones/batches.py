@@ -15,7 +15,8 @@ from app.models.delivery_batch import BatchStatusEnum, DeliveryBatch, DeliveryBa
 from app.models.order import Order
 from app.models.order_delivery import OrderDelivery
 from app.models.user import User
-from app.services import audit_service, batching_service
+from app.services import audit_service
+from app.services.delivery import batching_service
 
 from .schemas import BatchResponse
 

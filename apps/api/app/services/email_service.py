@@ -47,7 +47,7 @@ from app.models.email_log import EmailLog
 from app.models.order import OrderStatusEnum
 from app.models.pos_order import OrderSourceEnum
 from app.schemas.order import OrderResponse
-from app.services import address_format
+from app.services.delivery import address_format
 from app.services.email_copy import DIRECTION, translator
 
 __all__ = [
@@ -1037,7 +1037,7 @@ async def notify_order(db, order) -> str | None:
     only one in this file, and it is here rather than at each courier so there
     is one of it.
     """
-    from app.services import order_service
+    from app.services.orders import order_service
 
     try:
         loaded = await order_service.get_for_notification(db, order.id) or order
@@ -1082,7 +1082,7 @@ async def repair_after_reassignment(db, order) -> str | None:
     another, and failing that on a mail server would be the worst outcome
     available.
     """
-    from app.services import order_service
+    from app.services.orders import order_service
 
     try:
         loaded = await order_service.get_for_notification(db, order.id) or order

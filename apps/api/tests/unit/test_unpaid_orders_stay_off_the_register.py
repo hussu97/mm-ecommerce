@@ -33,7 +33,8 @@ import pytest
 
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.models.pos_order import OrderSourceEnum, PosOrderStatusEnum
-from app.services import order_service, pos_order_service
+from app.services.orders import order_service
+from app.services.pos import pos_order_service
 from app.services.providers.base import GatewayEvent, PaymentEventType
 
 BRANCH = SimpleNamespace(
@@ -253,7 +254,8 @@ async def test_a_settled_payment_schedules_the_order_onto_the_kitchen(monkeypatc
     that handler is the one place both Stripe and Ziina arrive at — the point
     of `GatewayEvent` is that there is nothing below it to say twice.
     """
-    from app.services import arrival_service, payment_service
+    from app.services.delivery import arrival_service
+    from app.services.payments import payment_service
 
     order = _order()
     scheduled = AsyncMock(return_value=None)
@@ -278,7 +280,7 @@ async def test_a_settled_payment_schedules_the_order_onto_the_kitchen(monkeypatc
 
 
 async def test_a_declined_card_publishes_nothing(monkeypatch):
-    from app.services import payment_service
+    from app.services.payments import payment_service
 
     order = _order()
     published = AsyncMock()

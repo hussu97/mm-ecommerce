@@ -162,7 +162,7 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
         # carries the current logo. Best-effort — the module falls back to the
         # conventional URL if this cannot run — and cheap (one small query).
         try:
-            from app.services import courier_catalog
+            from app.services.couriers import courier_catalog
 
             async with AsyncSessionFactory() as session:
                 await courier_catalog.load(session)
@@ -171,7 +171,7 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
 
         background: list[asyncio.Task] = []
         if dispatch_batches and settings.BATCH_DISPATCHER_ENABLED:
-            from app.services import batch_scheduler
+            from app.services.delivery import batch_scheduler
 
             background.append(asyncio.create_task(batch_scheduler.run_forever()))
 
@@ -188,7 +188,7 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
             # dispatcher down with it. Storefront only, like its neighbours —
             # the register app must not run a second copy.
             if settings.GRUBOPS_SYNC_ENABLED:
-                from app.services import grubops_reconcile
+                from app.services.grubops import grubops_reconcile
 
                 background.append(asyncio.create_task(grubops_reconcile.run_forever()))
 
@@ -198,7 +198,7 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
             # syncing stock are switched on at different times and fail
             # independently. Storefront only, like its neighbours.
             if settings.GRUBOPS_ORDERS_ENABLED:
-                from app.services import grubops_orders
+                from app.services.grubops import grubops_orders
 
                 background.append(asyncio.create_task(grubops_orders.run_forever()))
 

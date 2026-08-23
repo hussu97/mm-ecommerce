@@ -1,43 +1,16 @@
-from app.services import (
-    address_service,
-    batching_service,
-    cart_service,
-    category_service,
-    courier_service,
-    delivery_service,
-    driver_assignment,
-    driver_proximity,
-    driver_routing,
-    driver_tracking,
-    email_service,
-    fulfilment_service,
-    lalamove_service,
-    noon_send_service,
-    order_service,
-    payment_service,
-    product_service,
-    promo_code_service,
-    push_service,
-)
+"""
+Business logic, grouped by domain.
 
-__all__ = [
-    "category_service",
-    "product_service",
-    "cart_service",
-    "delivery_service",
-    "driver_assignment",
-    "driver_proximity",
-    "driver_routing",
-    "driver_tracking",
-    "fulfilment_service",
-    "lalamove_service",
-    "noon_send_service",
-    "courier_service",
-    "push_service",
-    "batching_service",
-    "promo_code_service",
-    "address_service",
-    "order_service",
-    "payment_service",
-    "email_service",
-]
+This directory was 74 flat modules. It is now eight subpackages — `catalog`,
+`couriers`, `delivery`, `grubops`, `inventory`, `orders`, `payments`, `pos` —
+plus `providers/` for the HTTP clients that speak somebody else's protocol, and
+the modules that genuinely belong to no one domain (audit, email, push, cache,
+auth, the CRUD helper) at this level.
+
+**This file deliberately exports nothing.** It used to re-export nineteen of
+the seventy-four with no stated criterion, so `from app.services import
+order_service` and `from app.services.orders import order_service` were both
+correct and neither was canonical. Import the module from its domain; the
+import line then says which part of the system a file reaches into, which is
+most of what you want to know about a file you have not read.
+"""

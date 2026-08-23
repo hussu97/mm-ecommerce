@@ -71,7 +71,7 @@ def loaded(monkeypatch):
     async def to_response(db, order):
         return holder["order"]
 
-    from app.services import order_service
+    from app.services.orders import order_service
 
     monkeypatch.setattr(order_service, "get_for_notification", get_for_notification)
     monkeypatch.setattr(order_service, "to_response", to_response)

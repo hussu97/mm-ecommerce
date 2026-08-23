@@ -61,7 +61,7 @@ Two things sit beside that path rather than in it:
 ## The parts worth knowing before you touch them
 
 **Order state.** One function assigns `Order.status`:
-`app/services/order_lifecycle.transition()`. It validates against
+`app/services/orders/order_lifecycle.transition()`. It validates against
 `VALID_TRANSITIONS` *and* carries the consequences — refund, restock, register
 void, publish, dispatch. An AST test fails on any direct assignment. Three
 sibling columns (`pos_status`, `delivery_status`, `courier_status`) describe

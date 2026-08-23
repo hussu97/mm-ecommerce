@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.models.branch import Branch
-from app.services import order_service
+from app.services.orders import order_service
 
 
 def _db_returning(branch: Branch | None) -> AsyncMock:
@@ -52,7 +52,7 @@ async def test_the_branch_the_customer_chose_wins_over_every_other_rule():
     """
     chosen = _branch("B001")
     with patch(
-        "app.services.order_service.fulfilment_service.pickup_branches",
+        "app.services.orders.order_service.fulfilment_service.pickup_branches",
         new=AsyncMock(return_value=[_branch("K001"), chosen]),
     ):
         resolved = await order_service.resolve_branch(
@@ -71,11 +71,11 @@ async def test_a_branch_that_does_not_offer_collection_is_refused_not_trusted():
     fallback = _branch("K001")
     with (
         patch(
-            "app.services.order_service.fulfilment_service.pickup_branches",
+            "app.services.orders.order_service.fulfilment_service.pickup_branches",
             new=AsyncMock(return_value=[fallback]),
         ),
         patch(
-            "app.services.order_service.lalamove_service.resolve_pickup",
+            "app.services.orders.order_service.lalamove_service.resolve_pickup",
             new=AsyncMock(return_value=None),
         ),
     ):
@@ -96,11 +96,11 @@ async def test_a_delivery_order_never_consults_the_collection_list():
     pickup_branches = AsyncMock(return_value=[_branch("B001")])
     with (
         patch(
-            "app.services.order_service.fulfilment_service.pickup_branches",
+            "app.services.orders.order_service.fulfilment_service.pickup_branches",
             new=pickup_branches,
         ),
         patch(
-            "app.services.order_service.lalamove_service.resolve_pickup",
+            "app.services.orders.order_service.lalamove_service.resolve_pickup",
             new=AsyncMock(return_value=None),
         ),
     ):
@@ -118,7 +118,7 @@ async def test_the_collection_list_needs_a_pin_as_well_as_the_flag():
     so that is what is asserted — against the compiled SQL rather than a
     database, because there is no behaviour here beyond the query.
     """
-    from app.services import fulfilment_service
+    from app.services.delivery import fulfilment_service
 
     captured = {}
 

@@ -8,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_db
 from app.core.permissions import require
 from app.models.user import User
-from app.services import audit_service, delivery_service
+from app.services import audit_service
+from app.services.delivery import delivery_service
 
 from .schemas import DeliverySettingsResponse, DeliverySettingsUpdate
 

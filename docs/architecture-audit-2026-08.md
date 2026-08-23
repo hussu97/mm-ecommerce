@@ -37,7 +37,7 @@ The problem is not sloppiness. It is that **almost every convention has 2–5 co
 
 ### P0-1 · Courier-marked UNDELIVERED never refunds, but emails a refund promise — **Critical, money-losing**
 
-- `order_service.update_status` owns the consequences of a transition: `_REFUNDABLE_ENDINGS = {CANCELLED, UNDELIVERED}` → automatic `payment_service.refund_order` (`apps/api/app/services/order_service.py:1487-1494`), plus courier-cancel, batch-cancel, POS void, and restock on cancellation (`order_service.py:1443-1474`).
+- `order_service.update_status` owns the consequences of a transition: `_REFUNDABLE_ENDINGS = {CANCELLED, UNDELIVERED}` → automatic `payment_service.refund_order` (`apps/api/app/services/orders/order_service.py:1487-1494`), plus courier-cancel, batch-cancel, POS void, and restock on cancellation (`order_service.py:1443-1474`).
 - But the noon Send webhook bypasses it: `noon_send_service.py:1026-1032` assigns `order.status = OrderStatusEnum.UNDELIVERED` **directly** — no refund is attempted and nothing queues one for a human.
 - The same path then calls `email_service.notify_order` (`noon_send_service.py:1037`) → `send_order_undelivered` → `_refund_context` (`email_service.py:791-823`), which for any paid card order renders "your refund is on its way" — for a refund that was never initiated.
 - Same asymmetry: `pos_order_service.void_order` / `join_orders` set `"cancelled"` directly and skip restock.

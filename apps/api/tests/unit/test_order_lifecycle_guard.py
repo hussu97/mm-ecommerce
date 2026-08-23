@@ -28,7 +28,13 @@ from app.models.order import OrderStatusEnum
 APP_DIR = Path(__file__).resolve().parents[2] / "app"
 
 #: The one module allowed to assign the column.
-ALLOWED = {APP_DIR / "services" / "order_lifecycle.py"}
+#:
+#: Spelled out rather than globbed, and worth checking after any move: a path
+#: that no longer exists exempts nothing, and this test would then flag the one
+#: file it exists to protect. It survived `order_lifecycle` moving into
+#: `services/orders/` only because line 324 assigns a variable, which
+#: `_speaks_order_status` deliberately cannot see.
+ALLOWED = {APP_DIR / "services" / "orders" / "order_lifecycle.py"}
 
 ORDER_STATUS_WORDS = {member.value for member in OrderStatusEnum}
 
@@ -79,7 +85,7 @@ def test_transition_map_still_reachable_from_order_service():
     # The map moved to `order_lifecycle`; the re-export keeps every caller and
     # test that has always found it on `order_service` working. If this import
     # breaks, so did they.
-    from app.services.order_lifecycle import VALID_TRANSITIONS as canonical
-    from app.services.order_service import VALID_TRANSITIONS as re_exported
+    from app.services.orders.order_lifecycle import VALID_TRANSITIONS as canonical
+    from app.services.orders.order_service import VALID_TRANSITIONS as re_exported
 
     assert re_exported is canonical

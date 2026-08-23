@@ -22,7 +22,7 @@ from app.main import app as web_app
 from app.models.base import utcnow
 from app.models.order import Order
 from app.pos_main import app as pos_app
-from app.services import pos_reports_service
+from app.services.pos import pos_reports_service
 
 
 def _paths(app) -> set[str]:

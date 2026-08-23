@@ -39,13 +39,9 @@ from app.schemas.pos import (
     TableResponse,
     TableUpdate,
 )
-from app.services import (
-    audit_service,
-    branch_holiday_service,
-    business_day_service,
-    crud_service,
-    fulfilment_service,
-)
+from app.services import audit_service, branch_holiday_service, crud_service
+from app.services.delivery import fulfilment_service
+from app.services.pos import business_day_service
 
 router = APIRouter()
 

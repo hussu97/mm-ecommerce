@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import inspect
 
-from app.services import pos_order_service
+from app.services.pos import pos_order_service
 
 
 def test_an_open_price_product_cannot_be_rung_up_without_a_price():

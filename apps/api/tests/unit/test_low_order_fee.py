@@ -23,8 +23,8 @@ import pytest
 
 from app.models.delivery_settings import DeliverySettings
 from app.models.order import DeliveryMethodEnum
-from app.services import order_pricing
-from app.services.order_pricing import low_order_fee_for
+from app.services.orders import order_pricing
+from app.services.orders.order_pricing import low_order_fee_for
 
 SETTINGS = DeliverySettings(
     pickup_fee=Decimal("0.00"),

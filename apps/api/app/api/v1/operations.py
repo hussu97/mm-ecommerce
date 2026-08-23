@@ -41,11 +41,9 @@ from app.models import (
 )
 from app.models.base import utcnow
 from app.models.user import User
-from app.services import (
-    business_day_service,
-    crud_service,
-    transfer_service,
-)
+from app.services import crud_service
+from app.services.inventory import transfer_service
+from app.services.pos import business_day_service
 
 from .pos_config import build_crud_router
 

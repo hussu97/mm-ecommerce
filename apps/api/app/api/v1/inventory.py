@@ -66,12 +66,9 @@ from app.schemas.inventory import (
     WarehouseUpdate,
     WasteRequest,
 )
-from app.services import (
-    audit_service,
-    business_day_service,
-    crud_service,
-    inventory_service,
-)
+from app.services import audit_service, crud_service
+from app.services.inventory import inventory_service
+from app.services.pos import business_day_service
 
 from .pos_config import build_crud_router
 

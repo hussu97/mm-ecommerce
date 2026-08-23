@@ -5,7 +5,7 @@ the convention and agents copied the wrong one (see
 `docs/architecture-audit-2026-08.md`). When touching code that predates a rule,
 migrate it opportunistically.
 
-1. **Order status**: only `app/services/order_lifecycle.transition()` may assign
+1. **Order status**: only `app/services/orders/order_lifecycle.transition()` may assign
    `Order.status`. It validates against `VALID_TRANSITIONS` and carries the
    consequences (refund, restock, register void, publish, dispatch). An AST test
    (`test_order_lifecycle_guard.py`) fails on new direct assignments.

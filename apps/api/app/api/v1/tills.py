@@ -23,7 +23,8 @@ from app.schemas.pos import (
     TillReport,
     TillResponse,
 )
-from app.services import audit_service, crud_service, till_service
+from app.services import audit_service, crud_service
+from app.services.pos import till_service
 
 router = APIRouter()
 

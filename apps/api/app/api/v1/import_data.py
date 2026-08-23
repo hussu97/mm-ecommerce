@@ -10,7 +10,8 @@ from app.core.deps import get_db
 from app.core.permissions import require
 from app.models.user import User
 from app.schemas.import_data import ImportResult
-from app.services import image_warm_service, import_service
+from app.services import image_warm_service
+from app.services.inventory import import_service
 
 router = APIRouter()
 

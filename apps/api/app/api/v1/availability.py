@@ -32,7 +32,8 @@ from app.models.menu import BranchModifierOption, BranchProduct
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.product import WEB_CHANNEL, Product, sells_on
 from app.models.user import User
-from app.services import availability_service, catalogue_cache, grubops_service
+from app.services.catalog import availability_service, catalogue_cache
+from app.services.grubops import grubops_service
 
 from .devices import get_current_device
 

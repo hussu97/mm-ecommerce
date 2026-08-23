@@ -24,7 +24,7 @@ import pytest
 
 from app.api.v1 import products as products_api
 from app.core.exceptions import BadRequestError, ForbiddenError
-from app.services import availability_service
+from app.services.catalog import availability_service
 
 
 def _user(*permissions: str) -> SimpleNamespace:

@@ -14,10 +14,16 @@ from app.models.order import DeliveryMethodEnum, OrderStatusEnum
 from app.schemas.address import AddressCreate
 from app.schemas.order import OrderCreate
 from app.schemas.promo_code import PromoCodeValidateResponse
-from app.services import delivery_promise, lalamove_service, order_service
-from app.services.delivery_zone_service import Zone
-from app.services.fulfilment_service import Fulfilment
-from app.services.order_service import VALID_TRANSITIONS, create_order, update_status
+from app.services.couriers import lalamove_service
+from app.services.delivery import delivery_promise
+from app.services.delivery.delivery_zone_service import Zone
+from app.services.delivery.fulfilment_service import Fulfilment
+from app.services.orders import order_service
+from app.services.orders.order_service import (
+    VALID_TRANSITIONS,
+    create_order,
+    update_status,
+)
 
 DELIVERY_SETTINGS = DeliverySettings(
     pickup_fee=Decimal("0.00"),
@@ -94,26 +100,26 @@ def delivery_pricing():
     )
     with (
         patch(
-            "app.services.delivery_service.get_settings",
+            "app.services.delivery.delivery_service.get_settings",
             new=AsyncMock(return_value=DELIVERY_SETTINGS),
         ),
         patch(
-            "app.services.delivery_service.delivery_zone_service.find_zone",
+            "app.services.delivery.delivery_service.delivery_zone_service.find_zone",
             new=find_zone,
         ),
         patch(
-            "app.services.delivery_service.lalamove_service.estimate_for_point",
+            "app.services.delivery.delivery_service.lalamove_service.estimate_for_point",
             new=estimate_for_point,
         ),
         patch(
-            "app.services.delivery_service.lalamove_service.is_enabled",
+            "app.services.delivery.delivery_service.lalamove_service.is_enabled",
             return_value=True,
         ),
         # The arrival promise reads a courier row, a group, a schedule and the
         # branch's hours. None of that is what this module is about, and it has
         # its own tests.
         patch(
-            "app.services.order_service.delivery_promise.promise_for_zone",
+            "app.services.orders.order_service.delivery_promise.promise_for_zone",
             new=AsyncMock(return_value=None),
         ),
     ):
@@ -144,25 +150,25 @@ def mock_fulfilment():
         # arithmetic. Resolving it for real would mean three more queries on a
         # session whose results are a fixed script.
         patch(
-            "app.services.order_service.resolve_branch",
+            "app.services.orders.order_service.resolve_branch",
             new_callable=AsyncMock,
             return_value=branch,
         ),
         patch(
-            "app.services.order_service.pos_order_service.attach_online_order",
+            "app.services.orders.order_service.pos_order_service.attach_online_order",
             new_callable=AsyncMock,
         ),
         patch(
-            "app.services.order_service.lalamove_service.record_order_delivery",
+            "app.services.orders.order_service.lalamove_service.record_order_delivery",
             new_callable=AsyncMock,
         ),
         patch(
-            "app.services.order_service.lalamove_service.get_delivery",
+            "app.services.orders.order_service.lalamove_service.get_delivery",
             new_callable=AsyncMock,
             return_value=None,
         ),
         patch(
-            "app.services.order_service.lalamove_service.cancel_delivery",
+            "app.services.orders.order_service.lalamove_service.cancel_delivery",
             new_callable=AsyncMock,
         ),
         # Patched on the module itself: the dispatch calls moved into
@@ -170,7 +176,7 @@ def mock_fulfilment():
         # lazily, so there is no `order_service.batching_service` attribute to
         # route through any more.
         patch(
-            "app.services.batching_service.assign_or_dispatch",
+            "app.services.delivery.batching_service.assign_or_dispatch",
             new_callable=AsyncMock,
         ),
         # The two facts the arrival needs from the world, stubbed rather than
@@ -180,17 +186,17 @@ def mock_fulfilment():
         # is checking. Reading either for real would mean a branch row and a
         # holiday query on a session whose results are a fixed script.
         patch(
-            "app.services.batching_service.reserve",
+            "app.services.delivery.batching_service.reserve",
             new_callable=AsyncMock,
             return_value=None,
         ),
         patch(
-            "app.services.arrival_service._next_working_moment",
+            "app.services.delivery.arrival_service._next_working_moment",
             new_callable=AsyncMock,
             return_value=datetime.datetime.now(datetime.timezone.utc),
         ),
         patch(
-            "app.services.batching_service.cancel_assignment",
+            "app.services.delivery.batching_service.cancel_assignment",
             new_callable=AsyncMock,
         ),
         # Every customer-facing response now carries "when does this arrive",
@@ -198,7 +204,7 @@ def mock_fulfilment():
         # order, one for the branch. Both would run off the end of the scripted
         # session. `fulfilment_service` has its own tests.
         patch(
-            "app.services.order_service.fulfilment_service.for_order",
+            "app.services.orders.order_service.fulfilment_service.for_order",
             new_callable=AsyncMock,
             return_value=Fulfilment(
                 method="delivery",
@@ -499,7 +505,7 @@ class TestOnlyPaidOrdersReachTheRegister:
         db = _db_for_create(cart, _order_mock())
 
         with patch(
-            "app.services.order_service.publish_to_register",
+            "app.services.orders.order_service.publish_to_register",
             new_callable=AsyncMock,
         ) as publish:
             await create_order(db, _pickup_data(), user_id=None)
@@ -523,7 +529,7 @@ class TestOnlyPaidOrdersReachTheRegister:
         db = _db_for_create(cart, _order_mock(status=OrderStatusEnum.CONFIRMED))
 
         with patch(
-            "app.services.order_service.publish_to_register",
+            "app.services.orders.order_service.publish_to_register",
             new_callable=AsyncMock,
         ) as publish:
             await create_order(db, _cash_data(), user_id=None)
@@ -624,7 +630,7 @@ class TestStatusTransitionLogic:
         refunded, a second attempt would be delivering a cake we had already
         handed the money back for.
         """
-        from app.services.order_lifecycle import _REFUNDABLE_ENDINGS
+        from app.services.orders.order_lifecycle import _REFUNDABLE_ENDINGS
 
         assert _REFUNDABLE_ENDINGS == {OrderStatusEnum.CANCELLED}
 
@@ -1209,8 +1215,8 @@ class TestCreateOrderWithPromo:
         )
         return db
 
-    @patch("app.services.order_service.promo_code_service.validate")
-    @patch("app.services.order_service.promo_code_service.get_promo")
+    @patch("app.services.orders.order_service.promo_code_service.validate")
+    @patch("app.services.orders.order_service.promo_code_service.get_promo")
     async def test_percentage_promo_reduces_total(self, mock_get_promo, mock_validate):
         """Regression: Decimal discount_amount must not cause TypeError."""
         mock_validate.return_value = PromoCodeValidateResponse(
@@ -1229,8 +1235,8 @@ class TestCreateOrderWithPromo:
         assert order_arg.discount_amount == Decimal("15.00")
         assert order_arg.total == Decimal("85.00")
 
-    @patch("app.services.order_service.promo_code_service.validate")
-    @patch("app.services.order_service.promo_code_service.get_promo")
+    @patch("app.services.orders.order_service.promo_code_service.validate")
+    @patch("app.services.orders.order_service.promo_code_service.get_promo")
     async def test_promo_discount_no_type_error(self, mock_get_promo, mock_validate):
         """
         Explicit regression: Decimal subtotal - Decimal discount_amount must not raise.
@@ -1247,8 +1253,8 @@ class TestCreateOrderWithPromo:
         # Must not raise TypeError
         await create_order(db, _pickup_data(promo_code="MM15"), user_id=None)
 
-    @patch("app.services.order_service.promo_code_service.validate")
-    @patch("app.services.order_service.promo_code_service.get_promo")
+    @patch("app.services.orders.order_service.promo_code_service.validate")
+    @patch("app.services.orders.order_service.promo_code_service.get_promo")
     async def test_promo_stored_on_order(self, mock_get_promo, mock_validate):
         mock_validate.return_value = PromoCodeValidateResponse(
             valid=True, discount_amount=Decimal("10.00")
@@ -1265,8 +1271,8 @@ class TestCreateOrderWithPromo:
         order_arg = db.add.call_args_list[0][0][0]
         assert order_arg.promo_code_used == "SAVE10"
 
-    @patch("app.services.order_service.promo_code_service.validate")
-    @patch("app.services.order_service.promo_code_service.get_promo")
+    @patch("app.services.orders.order_service.promo_code_service.validate")
+    @patch("app.services.orders.order_service.promo_code_service.get_promo")
     async def test_the_arabic_spelling_is_stored_as_the_english_one(
         self, mock_get_promo, mock_validate
     ):
@@ -1293,8 +1299,8 @@ class TestCreateOrderWithPromo:
         order_arg = db.add.call_args_list[0][0][0]
         assert order_arg.promo_code_used == "SAVE10"
 
-    @patch("app.services.order_service.promo_code_service.validate")
-    @patch("app.services.order_service.promo_code_service.get_promo")
+    @patch("app.services.orders.order_service.promo_code_service.validate")
+    @patch("app.services.orders.order_service.promo_code_service.get_promo")
     async def test_invalid_promo_raises_bad_request(
         self, mock_get_promo, mock_validate
     ):
@@ -1319,8 +1325,8 @@ class TestCreateOrderWithPromo:
             "Add AED 50 more to your basket to use this code",
         ],
     )
-    @patch("app.services.order_service.promo_code_service.validate")
-    @patch("app.services.order_service.promo_code_service.get_promo")
+    @patch("app.services.orders.order_service.promo_code_service.validate")
+    @patch("app.services.orders.order_service.promo_code_service.get_promo")
     async def test_the_refusal_reaches_the_customer_word_for_word(
         self, mock_get_promo, mock_validate, refusal
     ):
@@ -1347,8 +1353,8 @@ class TestCreateOrderWithPromo:
 
         assert exc.value.detail == refusal
 
-    @patch("app.services.order_service.promo_code_service.validate")
-    @patch("app.services.order_service.promo_code_service.get_promo")
+    @patch("app.services.orders.order_service.promo_code_service.validate")
+    @patch("app.services.orders.order_service.promo_code_service.get_promo")
     async def test_the_delivery_method_reaches_the_gate(
         self, mock_get_promo, mock_validate
     ):
@@ -1380,8 +1386,8 @@ class TestCreateOrderWithPromo:
         # And this is the one caller that refuses rather than reports.
         assert kwargs["enforce_phone_verification"] is True
 
-    @patch("app.services.order_service.promo_code_service.validate")
-    @patch("app.services.order_service.promo_code_service.get_promo")
+    @patch("app.services.orders.order_service.promo_code_service.validate")
+    @patch("app.services.orders.order_service.promo_code_service.get_promo")
     async def test_an_unverified_delivery_order_is_refused_in_its_own_words(
         self, mock_get_promo, mock_validate
     ):
@@ -1404,8 +1410,8 @@ class TestCreateOrderWithPromo:
         with pytest.raises(BadRequestError, match="[Vv]erify your mobile number"):
             await create_order(db, _delivery_data(promo_code="NEW"), user_id=None)
 
-    @patch("app.services.order_service.promo_code_service.validate")
-    @patch("app.services.order_service.promo_code_service.get_promo")
+    @patch("app.services.orders.order_service.promo_code_service.validate")
+    @patch("app.services.orders.order_service.promo_code_service.get_promo")
     async def test_discount_brings_delivery_to_free_at_threshold(
         self, mock_get_promo, mock_validate, delivery_pricing
     ):
@@ -1438,8 +1444,8 @@ class TestCreateOrderWithPromo:
         order_arg = db.add.call_args_list[0][0][0]
         assert order_arg.delivery_fee == Decimal("0.00")
 
-    @patch("app.services.order_service.promo_code_service.validate")
-    @patch("app.services.order_service.promo_code_service.get_promo")
+    @patch("app.services.orders.order_service.promo_code_service.validate")
+    @patch("app.services.orders.order_service.promo_code_service.get_promo")
     async def test_vat_calculated_on_discounted_amount(
         self, mock_get_promo, mock_validate
     ):

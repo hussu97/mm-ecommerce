@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app.services import courier_reference
+from app.services.couriers import courier_reference
 
 
 class _Result:

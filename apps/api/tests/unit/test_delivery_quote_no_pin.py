@@ -33,7 +33,7 @@ import pytest
 
 from app.api.v1.delivery import DeliveryQuoteResponse
 from app.models.delivery_settings import DeliverySettings
-from app.services import delivery_service
+from app.services.delivery import delivery_service
 
 pytestmark = pytest.mark.asyncio
 

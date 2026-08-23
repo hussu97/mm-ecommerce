@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import inspect
 
-from app.services import product_service
+from app.services.catalog import product_service
 
 
 def test_listing_defaults_to_the_website_catalogue():

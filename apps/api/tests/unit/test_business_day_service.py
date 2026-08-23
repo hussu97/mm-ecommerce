@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.models.branch import Branch
-from app.services.business_day_service import business_date_for
+from app.services.pos.business_day_service import business_date_for
 
 DUBAI = ZoneInfo("Asia/Dubai")  # UTC+4, no DST
 

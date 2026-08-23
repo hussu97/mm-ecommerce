@@ -19,8 +19,8 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.models.delivery_batch import BatchStatusEnum, DeliveryBatch
-from app.services import batching_service
-from app.services.batching_service import (
+from app.services.delivery import batching_service
+from app.services.delivery.batching_service import (
     RETRY_BACKOFF,
     _retry_at,
     kitchen_is_open,

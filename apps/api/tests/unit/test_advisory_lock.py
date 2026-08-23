@@ -151,7 +151,8 @@ def test_no_sweep_takes_the_lock_through_a_session():
     """
     import inspect
 
-    from app.services import batch_scheduler, log_retention
+    from app.services import log_retention
+    from app.services.delivery import batch_scheduler
 
     for module in (batch_scheduler, log_retention):
         source = inspect.getsource(module)

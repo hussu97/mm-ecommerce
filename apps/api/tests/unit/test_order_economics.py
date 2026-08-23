@@ -13,7 +13,7 @@ from __future__ import annotations
 from decimal import Decimal
 from types import SimpleNamespace
 
-from app.services.order_economics import OrderEconomics, processing_fee
+from app.services.orders.order_economics import OrderEconomics, processing_fee
 
 
 def _economics(

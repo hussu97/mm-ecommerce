@@ -37,7 +37,7 @@ from app.models.order_delivery import (
     is_failed,
     is_terminal,
 )
-from app.services import slider_service
+from app.services.couriers import slider_service
 from app.services.providers import slider_provider
 from app.services.providers.slider_provider import (
     SliderClient,
@@ -838,7 +838,7 @@ def inbound(monkeypatch):
     moved: list[str] = []
 
     async def record(db, delivery, driver, at=None):
-        from app.services.driver_assignment import Change
+        from app.services.delivery.driver_assignment import Change
 
         delivery.driver_name = driver.name
         delivery.driver_phone = driver.phone

@@ -31,7 +31,7 @@ from app.models.inventory import (
 from app.models.inventory import (
     PurchaseOrderStatusEnum as PO,
 )
-from app.services import inventory_service
+from app.services.inventory import inventory_service
 
 
 def _user(user_id=None, *, is_admin=False):

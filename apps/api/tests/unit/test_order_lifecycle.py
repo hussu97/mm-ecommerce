@@ -17,11 +17,11 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import inspect
 
-import app.services.order_service  # noqa: F401 — registers the warn listener's neighbours
+import app.services.orders.order_service  # noqa: F401 — registers the warn listener's neighbours
 from app.core.exceptions import BadRequestError
 from app.models.order import Order, OrderItem, OrderStatusEnum
 from app.models.pos_order import OrderSourceEnum, PosOrderStatusEnum
-from app.services import order_lifecycle
+from app.services.orders import order_lifecycle
 
 
 def _order(status: OrderStatusEnum, **overrides) -> Order:
@@ -58,14 +58,10 @@ def quiet_consequences(monkeypatch):
     Patched on their own modules because `_consequences` imports them lazily —
     the same seam the noon Send tests use.
     """
-    from app.services import (
-        arrival_service,
-        batching_service,
-        courier_service,
-        lalamove_service,
-        order_service,
-        payment_service,
-    )
+    from app.services.couriers import courier_service, lalamove_service
+    from app.services.delivery import arrival_service, batching_service
+    from app.services.orders import order_service
+    from app.services.payments import payment_service
 
     calls: dict[str, list] = {
         "publish": [],
@@ -398,7 +394,7 @@ async def test_correcting_a_refunded_ending_says_so_in_the_log(caplog):
     order = _order(
         OrderStatusEnum.UNDELIVERED, items=[], refunded_amount=Decimal("120.00")
     )
-    with caplog.at_level("WARNING", logger="app.services.order_lifecycle"):
+    with caplog.at_level("WARNING", logger="app.services.orders.order_lifecycle"):
         await order_lifecycle.transition(
             _Db(),
             order,

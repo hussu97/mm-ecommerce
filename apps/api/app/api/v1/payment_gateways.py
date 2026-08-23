@@ -34,7 +34,7 @@ from app.core.permissions import require
 from app.models.payment_gateway import PaymentGateway
 from app.models.user import User
 from app.services import audit_service
-from app.services.payment_gateway_router import PROVIDERS
+from app.services.payments.payment_gateway_router import PROVIDERS
 
 logger = logging.getLogger(__name__)
 

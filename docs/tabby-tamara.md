@@ -361,7 +361,7 @@ Everything below is **already built** in your codebase:
 | Provider stubs | Done | `apps/api/app/services/providers/tabby_provider.py` |
 | | | `apps/api/app/services/providers/tamara_provider.py` |
 | Webhook endpoints | Done (stubs) | `apps/api/app/api/v1/payments.py` |
-| Payment service dispatch | Done | `apps/api/app/services/payment_service.py` |
+| Payment service dispatch | Done | `apps/api/app/services/payments/payment_service.py` |
 | Environment config | Done | `apps/api/app/core/config.py` + `.env.example` |
 | Frontend UI (disabled) | Done | `apps/web/app/[locale]/checkout/page.tsx` |
 | DB models | Done | `apps/api/app/models/order.py` |

@@ -39,19 +39,19 @@ from app.schemas.order import (
     OrderStatusUpdate,
 )
 from app.schemas.order_preview import OrderPreviewRequest, OrderPreviewResponse
-from app.services import (
-    audit_service,
+from app.services import audit_service, email_service
+from app.services.couriers import (
     courier_service,
-    driver_proximity,
-    email_service,
-    fulfilment_reassignment,
-    fulfilment_service,
     lalamove_service,
     noon_send_service,
-    order_economics,
-    order_service,
     slider_service,
 )
+from app.services.delivery import (
+    driver_proximity,
+    fulfilment_reassignment,
+    fulfilment_service,
+)
+from app.services.orders import order_economics, order_service
 
 router = APIRouter()
 

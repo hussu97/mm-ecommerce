@@ -16,7 +16,7 @@ import uuid
 import pytest
 
 from app.core.exceptions import ForbiddenError
-from app.services.payment_service import _assert_may_act_on
+from app.services.payments.payment_service import _assert_may_act_on
 
 
 class _Order:

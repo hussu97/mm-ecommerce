@@ -23,8 +23,8 @@ import pytest
 
 from app.core.exceptions import ConflictError
 from app.schemas.category import CategoryCreate, CategoryUpdate
-from app.services import category_service
-from app.services.category_service import RESERVED_SLUGS
+from app.services.catalog import category_service
+from app.services.catalog.category_service import RESERVED_SLUGS
 
 
 @pytest.mark.parametrize(

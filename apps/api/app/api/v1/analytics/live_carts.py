@@ -34,7 +34,9 @@ from app.core.permissions import require
 from app.models.cart import Cart, CartItem
 from app.models.order import DeliveryMethodEnum
 from app.models.user import User
-from app.services import cart_service, delivery_service, order_pricing
+from app.services import cart_service
+from app.services.delivery import delivery_service
+from app.services.orders import order_pricing
 
 router = APIRouter()
 

@@ -12,7 +12,8 @@ from app.core.permissions import require
 from app.models.courier import Courier, UnbatchedPromiseEnum
 from app.models.delivery_polygon import DeliveryPolygon
 from app.models.user import User
-from app.services import audit_service, delivery_zone_service
+from app.services import audit_service
+from app.services.delivery import delivery_zone_service
 
 from .schemas import CourierResponse, CourierUpdate
 
