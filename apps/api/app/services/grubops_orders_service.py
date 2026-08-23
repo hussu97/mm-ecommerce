@@ -40,7 +40,7 @@ from app.models.grubops import GrubOpsItemMap, GrubOpsLocationMap
 from app.models.grubops_order import GrubOpsOrderMap
 from app.models.order import Order, OrderItem, OrderStatusEnum
 from app.models.order_status_event import StatusSourceEnum, acting_as
-from app.models.pos_order import OrderSourceEnum, PosOrderStatusEnum
+from app.models.pos_order import OrderSourceEnum, OrderTax, PosOrderStatusEnum
 from app.models.product import Product
 from app.services import order_lifecycle
 from app.services.providers.grubops_provider import GrubOpsError, provider
@@ -482,6 +482,21 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
                 total_price=_q2(_num(item.get("totalPrice"), str(base_price))),
                 selected_options_snapshot=snapshot,
                 tax_amount=_q2(_num(item.get("taxAmount"))),
+            )
+        )
+
+    # One VAT row, the same shape a website order writes, so the receipt and the
+    # admin show the tax breakdown rather than a blank line. GrubOps prices
+    # tax-inclusive at 5%; `total_excl_vat` is the taxable base.
+    if vat_amount > 0:
+        db.add(
+            OrderTax(
+                order_id=order.id,
+                tax_id=None,
+                name="VAT",
+                rate=vat_rate.quantize(Decimal("0.0001")),
+                taxable_amount=_q2(total_excl_vat),
+                amount=_q2(vat_amount),
             )
         )
 
