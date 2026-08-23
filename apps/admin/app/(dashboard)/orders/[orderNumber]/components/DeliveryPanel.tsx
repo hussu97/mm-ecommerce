@@ -1,6 +1,6 @@
 'use client';
 
-import type { Order, OrderDelivery } from '@/lib/types';
+import type { OrderDelivery } from '@/lib/types';
 import { Badge, Button } from '@/components/ui';
 import { CourierLogo } from '@/components/orders/CourierLogo';
 import { cn, formatCurrency, formatDateTime, formatTimeAgo, ordinal } from '@/lib/utils';

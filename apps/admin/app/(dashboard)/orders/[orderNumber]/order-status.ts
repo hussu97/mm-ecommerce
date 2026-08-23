@@ -7,7 +7,7 @@
  */
 
 import type { Order, OrderStatus } from '@/lib/types';
-import { formatDateTime, ordinal } from '@/lib/utils';
+import { formatDateTime } from '@/lib/utils';
 
 /**
  * Orders that are not going anywhere, whatever the delivery row still says.

@@ -16,7 +16,7 @@ import type {
 import { Badge, Button } from '@/components/ui';
 import { CourierLogo } from '@/components/orders/CourierLogo';
 import { useConfirm, useToast } from '@/components/ui/feedback';
-import { cn, formatCurrency, formatDateTime, formatTimeAgo } from '@/lib/utils';
+import { cn, formatCurrency, formatDateTime } from '@/lib/utils';
 
 import {
   ADDRESS_FIELDS,

@@ -1,8 +1,8 @@
 'use client';
 
 import type { FulfilmentOptions, FulfilmentProvider, FulfilmentQuote } from '@/lib/types';
-import { Badge, Button } from '@/components/ui';
-import { cn, formatCurrency, formatDateTime, formatTimeAgo } from '@/lib/utils';
+import { Button } from '@/components/ui';
+import { cn } from '@/lib/utils';
 
 import { PROVIDER_LABEL } from './courier-labels';
 
