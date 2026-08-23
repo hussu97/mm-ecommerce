@@ -37,10 +37,24 @@ from app.services.order_pricing import VAT_RATE
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["OrderEconomics", "for_order", "processing_fee"]
+__all__ = [
+    "DIRECT_COST_THRESHOLD",
+    "OrderEconomics",
+    "for_order",
+    "processing_fee",
+]
 
 _ZERO = Decimal("0")
 _CENTS = Decimal("0.01")
+
+#: The share of menu-price goods an order has to keep to be worth taking.
+#:
+#: Not a law of accounting — it is the shop's own rule of thumb for whether an
+#: order covered its direct costs, and it is the line the orders list draws its
+#: tick and cross against. A constant rather than a setting because it is a
+#: single number that has never had a second opinion; the day it needs one it
+#: belongs on `business_settings`, not scattered through call sites.
+DIRECT_COST_THRESHOLD = Decimal("50")
 
 
 def _money(value: object) -> Decimal:
@@ -60,9 +74,23 @@ class OrderEconomics:
     #: What they paid for goods — `charged` less delivery and low-order fees.
     #: The denominator of the second percentage, and the base a refund uses.
     items_value: Decimal
+    #: The goods at menu price, before any discount. The denominator of the
+    #: direct-cost check below — a discount is a cost the shop chose to bear,
+    #: so measuring against what was actually charged would hide exactly the
+    #: orders the check exists to find.
+    items_before_discount: Decimal
     #: What the courier cost us, where a courier was involved and has told us.
     #: A batched order carries its share of the run rather than a whole booking.
     courier_cost: Decimal | None
+    #: What the marketplace took, on an aggregator order. Null on a website or
+    #: counter order (there is no marketplace) and on an aggregator whose rate
+    #: nobody has configured yet — see `order_fees`.
+    #:
+    #: This is the aggregator's analogue of `courier_cost`: an aggregator order
+    #: never has one, because MM dispatches nothing and is invoiced for no van.
+    #: Its cost of sale is the commission instead, and until this existed an
+    #: aggregator order showed no cost of sale at all.
+    aggregator_fee: Decimal | None
     #: What the processor keeps. Estimated from the gateway's rate unless the
     #: gateway has reported the real number.
     processing_fee: Decimal
@@ -72,6 +100,13 @@ class OrderEconomics:
     #: nets what is left after the money returned, and the fees on a refunded
     #: charge are usually *not* returned by the processor.
     refunded: Decimal
+    #: Whether this order should have had a cost of sale at all — somebody
+    #: carried it, or a marketplace sold it. False for a counter sale, which is
+    #: handed across a counter and rightly shows neither.
+    #:
+    #: Read only by `covers_direct_cost`, to tell "no cost of sale" apart from
+    #: "a cost of sale we have not been told about".
+    expects_cost_of_sale: bool = False
 
     @property
     def net(self) -> Decimal:
@@ -79,9 +114,46 @@ class OrderEconomics:
         return _round(
             self.charged
             - (self.courier_cost or _ZERO)
+            - (self.aggregator_fee or _ZERO)
             - self.processing_fee
             - self.refunded
         )
+
+    @property
+    def cost_cover(self) -> Decimal | None:
+        """
+        Net as a share of the goods at menu price.
+
+        The question the shop actually asks of a list of orders: *is this one
+        paying for itself?* Every other percentage here is measured against
+        something the order's own discounts and fees moved, so a heavily
+        discounted order can post a healthy-looking margin on a basket that was
+        half price. This one holds the denominator still.
+
+        Null when there were no goods — a pure delivery-fee adjustment, a
+        zero-total replacement — because there is no share of nothing.
+        """
+        return self._share_of(self.items_before_discount)
+
+    @property
+    def covers_direct_cost(self) -> bool | None:
+        """
+        Whether this order cleared the bar, or None if we cannot say.
+
+        Three-valued on purpose, and the third value is the useful one. An order
+        whose commission rate is not configured yet has an unknowable net, and
+        answering `False` would put it in the same column as an order that is
+        genuinely losing money — which is how a rate that nobody ever filled in
+        becomes a fortnight of investigating the wrong orders.
+        """
+        if self.aggregator_fee is None and self.courier_cost is None:
+            # Neither cost of sale is known. A counter sale legitimately has
+            # neither — it is handed over the counter — so the test is whether
+            # this order was *supposed* to have one.
+            if self.expects_cost_of_sale:
+                return None
+        share = self.cost_cover
+        return None if share is None else share >= DIRECT_COST_THRESHOLD
 
     @property
     def margin_on_charged(self) -> Decimal | None:
@@ -168,6 +240,11 @@ async def for_order(db: AsyncSession, order: Order) -> OrderEconomics:
     charged = _money(order.total)
     fees = _money(order.delivery_fee) + _money(order.low_order_fee)
     items_value = max(charged - fees, _ZERO)
+    # The goods at menu price. `subtotal` is written before any discount comes
+    # off (see `order_pricing.compute`), which is exactly what the direct-cost
+    # check wants: a 40% coupon should show up as a cost, not disappear into a
+    # smaller denominator.
+    items_before_discount = _money(order.subtotal)
 
     delivery = (
         await db.execute(
@@ -188,29 +265,58 @@ async def for_order(db: AsyncSession, order: Order) -> OrderEconomics:
         )
         courier_cost = _money(raw) if raw is not None else None
 
-    gateway = None
-    if order.payment_provider:
-        gateway = (
-            await db.execute(
-                select(PaymentGateway).where(
-                    PaymentGateway.code == order.payment_provider
-                )
-            )
-        ).scalar_one_or_none()
+    # ── The two fees, preferring what was written down ───────────────────────
+    #
+    # `orders.payment_fee` and `orders.aggregator_fee` are stamped by
+    # `order_fees` when the total goes final, and they are the truth: they hold
+    # the rate that applied on the day, so renegotiating a contract cannot
+    # rewrite the margin on orders the shop has already taken.
+    #
+    # The fallback below is for the rows that predate the stamp and for the
+    # narrow window between an order being created and its fees being written.
+    # It reproduces what this module did before the columns existed, so an
+    # unstamped row still shows a number rather than a blank.
+    is_aggregator = (order.source or "") == "aggregator"
 
-    # A cash order pays no processor. The money is in a drawer, and charging it
-    # a Stripe fee on this screen would make every counter sale look worse than
-    # it is.
-    if order.payment_method != "card":
+    if order.payment_fee is not None:
+        fee, estimated = _money(order.payment_fee), True
+    elif is_aggregator:
+        # An aggregator order whose channel has no configured rate. Unknown, and
+        # said so rather than guessed at — a marketplace charges *something* for
+        # taking the card, and zero here would be a claim we cannot make.
+        fee, estimated = _ZERO, True
+    elif order.payment_method != "card":
+        # A cash order pays no processor. The money is in a drawer, and charging
+        # it a Stripe fee on this screen would make every counter sale look
+        # worse than it is.
         fee, estimated = _ZERO, False
     else:
+        gateway = None
+        if order.payment_provider:
+            gateway = (
+                await db.execute(
+                    select(PaymentGateway).where(
+                        PaymentGateway.code == order.payment_provider
+                    )
+                )
+            ).scalar_one_or_none()
         fee, estimated = processing_fee(charged, gateway)
+
+    aggregator_fee = (
+        _money(order.aggregator_fee) if order.aggregator_fee is not None else None
+    )
 
     return OrderEconomics(
         charged=_round(charged),
         items_value=_round(items_value),
+        items_before_discount=_round(items_before_discount),
         courier_cost=_round(courier_cost) if courier_cost is not None else None,
+        aggregator_fee=_round(aggregator_fee) if aggregator_fee is not None else None,
         processing_fee=fee,
         processing_fee_is_estimated=estimated,
         refunded=_round(_money(order.refunded_amount)),
+        # A marketplace sold it, or a courier carried it. Either way somebody
+        # took a cut and the order screen should say so — even when the figure
+        # itself is still unknown.
+        expects_cost_of_sale=is_aggregator or delivery is not None,
     )

@@ -22,14 +22,20 @@ def _economics(
     courier="24.00",
     fee="4.05",
     refunded="0.00",
+    before_discount="85.00",
+    aggregator=None,
+    expects_cost_of_sale=True,
 ) -> OrderEconomics:
     return OrderEconomics(
         charged=Decimal(charged),
         items_value=Decimal(items),
+        items_before_discount=Decimal(before_discount),
         courier_cost=Decimal(courier) if courier is not None else None,
+        aggregator_fee=Decimal(aggregator) if aggregator is not None else None,
         processing_fee=Decimal(fee),
         processing_fee_is_estimated=True,
         refunded=Decimal(refunded),
+        expects_cost_of_sale=expects_cost_of_sale,
     )
 
 
@@ -141,3 +147,114 @@ def test_a_zero_total_order_has_no_percentage_rather_than_a_zero_one():
     assert result.margin_on_charged is None
     assert result.margin_on_items is None
     assert result.net == Decimal("-13.00"), "the van still cost us"
+
+
+# ── is the order paying for itself? ───────────────────────────────────────────
+
+
+def test_the_commission_comes_off_the_net_like_a_van_would():
+    """
+    An aggregator order has no courier cost and is not therefore free to fulfil.
+
+    Its cost of sale is the marketplace's cut, and until that was modelled every
+    Talabat order on the screen showed a net that was a quarter too high.
+    """
+    e = _economics(charged="100.00", courier=None, fee="0.00", aggregator="26.25")
+    assert e.net == Decimal("73.75")
+
+
+def test_cost_cover_is_measured_against_menu_price_not_what_was_charged():
+    """
+    The denominator is held still on purpose.
+
+    Half-price basket, and the order still nets 45 of a 100-dirham menu value.
+    Measured against the discounted 50 it would read as 90% and look excellent;
+    measured against the menu price it reads as 45% and fails — which is the
+    truth, because the discount is a cost the shop chose to bear.
+    """
+    e = _economics(
+        charged="50.00",
+        items="50.00",
+        before_discount="100.00",
+        courier="5.00",
+        fee="0.00",
+    )
+    assert e.cost_cover == Decimal("45.00")
+    assert e.covers_direct_cost is False
+
+
+def test_an_order_that_clears_the_bar_says_so():
+    e = _economics(
+        charged="100.00",
+        items="100.00",
+        before_discount="100.00",
+        courier="10.00",
+        fee="5.00",
+    )
+    assert e.cost_cover == Decimal("85.00")
+    assert e.covers_direct_cost is True
+
+
+def test_exactly_at_the_bar_counts_as_covering_it():
+    """`>=`, not `>`. Fifty percent is the bar, not the thing to beat."""
+    e = _economics(
+        charged="100.00",
+        items="100.00",
+        before_discount="100.00",
+        courier="50.00",
+        fee="0.00",
+    )
+    assert e.cost_cover == Decimal("50.00")
+    assert e.covers_direct_cost is True
+
+
+def test_an_unknown_cost_of_sale_answers_neither_yes_nor_no():
+    """
+    The three-valued answer, and the reason for it.
+
+    A Talabat order whose commission rate nobody has configured has an
+    unknowable net. Answering `False` would file it beside the orders that are
+    genuinely losing money, and a seeding gap would become a fortnight of
+    investigating the wrong orders.
+    """
+    e = _economics(
+        charged="100.00",
+        items="100.00",
+        before_discount="100.00",
+        courier=None,
+        aggregator=None,
+        fee="0.00",
+        expects_cost_of_sale=True,
+    )
+    assert e.covers_direct_cost is None
+
+
+def test_a_counter_sale_has_no_cost_of_sale_and_is_still_answerable():
+    """
+    Nobody carried it and no marketplace sold it, so "neither fee is set" is the
+    complete truth rather than a gap — and the question can be answered.
+    """
+    e = _economics(
+        charged="100.00",
+        items="100.00",
+        before_discount="100.00",
+        courier=None,
+        aggregator=None,
+        fee="0.00",
+        expects_cost_of_sale=False,
+    )
+    assert e.covers_direct_cost is True
+
+
+def test_an_order_with_no_goods_has_no_share_to_report():
+    """A zero-total replacement. There is no percentage of nothing."""
+    e = _economics(
+        charged="0.00",
+        items="0.00",
+        before_discount="0.00",
+        courier=None,
+        fee="0.00",
+        expects_cost_of_sale=False,
+    )
+    assert e.cost_cover is None
+    assert e.covers_direct_cost is None

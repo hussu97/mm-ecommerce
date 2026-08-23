@@ -8533,10 +8533,23 @@ export interface components {
         CourierResponse: {
             /** Code */
             code: string;
+            /** Commission Fixed */
+            commission_fixed?: string | null;
+            /** Commission Percent */
+            commission_percent?: string | null;
             /** Is Active */
             is_active: boolean;
+            /**
+             * Is Aggregator
+             * @default false
+             */
+            is_aggregator: boolean;
             /** Name */
             name: string;
+            /** Payment Fee Fixed */
+            payment_fee_fixed?: string | null;
+            /** Payment Fee Percent */
+            payment_fee_percent?: string | null;
             /** Supports Batching */
             supports_batching: boolean;
             /** Unbatched Promise Days */
@@ -8559,8 +8572,16 @@ export interface components {
          *     attached to a promise nothing can keep.
          */
         CourierUpdate: {
+            /** Commission Fixed */
+            commission_fixed?: number | string | null;
+            /** Commission Percent */
+            commission_percent?: number | string | null;
             /** Is Active */
             is_active?: boolean | null;
+            /** Payment Fee Fixed */
+            payment_fee_fixed?: number | string | null;
+            /** Payment Fee Percent */
+            payment_fee_percent?: number | string | null;
             /** Unbatched Promise Days */
             unbatched_promise_days?: number | null;
             /** Unbatched Promise Kind */
@@ -11104,10 +11125,20 @@ export interface components {
          *     that keeps `OrderDeliveryResponse` out of the customer's payload.
          */
         OrderEconomicsResponse: {
+            /** Aggregator Fee */
+            aggregator_fee: number | null;
             /** Charged */
             charged: number;
+            /** Cost Cover */
+            cost_cover: number | null;
             /** Courier Cost */
             courier_cost: number | null;
+            /** Covers Direct Cost */
+            covers_direct_cost: boolean | null;
+            /** Direct Cost Threshold */
+            direct_cost_threshold: number;
+            /** Items Before Discount */
+            items_before_discount: number;
             /** Items Value */
             items_value: number;
             /** Margin On Charged */
@@ -11139,7 +11170,11 @@ export interface components {
             branch_id?: string | null;
             /** Check Number */
             check_number?: number | null;
+            /** Cost Cover */
+            cost_cover?: number | null;
             courier?: components["schemas"]["CourierBadge"] | null;
+            /** Covers Direct Cost */
+            covers_direct_cost?: boolean | null;
             /**
              * Created At
              * Format: date-time
@@ -11164,6 +11199,8 @@ export interface components {
             item_count: number;
             /** Low Order Fee */
             low_order_fee?: number | null;
+            /** Net Value */
+            net_value?: number | null;
             /** Order Number */
             order_number: string;
             /** Order Type */

@@ -57,10 +57,18 @@ def main() -> None:
     # One `cp` for the whole directory — gcloud parallelises it. Content-type is
     # inferred from the .png extension; the bucket is uniformly public-read, so
     # no per-object ACL is set.
+    #
+    # **Five minutes, not the bucket's a default hour.** Replacing a logo used to
+    # mean the old one kept serving from the edge for up to an hour afterwards,
+    # with nothing wrong at the origin and nothing to do but wait — which reads
+    # exactly like a failed upload, and cost one round of re-running this script
+    # to no effect. A badge changes a handful of times in the life of the shop,
+    # so there is nothing to gain from caching it longer than it takes somebody
+    # to check their work.
     src = os.path.join(_LOGO_DIR, "*.png")
     try:
         subprocess.run(
-            f"gcloud storage cp {src} {_BUCKET}/",
+            f'gcloud storage cp --cache-control="public, max-age=300" {src} {_BUCKET}/',
             shell=True,
             check=True,
         )

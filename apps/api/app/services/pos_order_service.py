@@ -14,7 +14,7 @@ import logging
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -233,13 +233,48 @@ def _net_paid(order: Order) -> Decimal:
 # ─── Opening ──────────────────────────────────────────────────────────────────
 
 
+#: Namespace for the per-branch check-number lock, so it cannot collide with
+#: any other advisory lock this application takes. Arbitrary but fixed.
+_CHECK_NUMBER_LOCK_NS = 0x4D4D_4348
+
+
 async def _next_check_number(
     db: AsyncSession, branch_id: uuid.UUID, business_date: str, reset_daily: bool
 ) -> int:
     """
     Per-branch check number. Resets each trading day when configured, which is
     what customers expect ("order 12" rather than "order 128,431").
+
+    **One counter for all three channels, on purpose.** The counter, the website
+    and the aggregator ingest all reach here, so the first website order and the
+    first Talabat order of the day are 1 and 2 — not 1 and 1. A per-channel
+    counter would put two different orders on two tickets bearing the same
+    number, on the same bench, on the same morning.
+
+    **Serialised on the branch, because `MAX + 1` is a race.** Two writers that
+    read the same maximum both return the same number and the second insert hits
+    `uq_orders_branch_business_date_check_number` — which is exactly the pairing
+    this application runs by default: the GrubOps ingest loop polls on its own
+    schedule while a customer is checking out. The unique index is what makes
+    the failure loud rather than silent, and this lock is what stops it
+    happening; deleting either one leaves the other doing half a job.
+
+    Transaction-scoped, so it is released by the same commit that writes the row
+    the number went onto, and no path can leak it. Blocking rather than
+    `try` — a caller that could not get the lock has no useful second option,
+    and the wait is the length of one insert.
     """
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:ns, :branch)"),
+        # `pg_advisory_xact_lock(int4, int4)`, so the branch has to be squeezed
+        # into a signed 32-bit key. A hash collision between two branches costs
+        # one of them a brief wait and nothing else — the lock is a serialiser,
+        # not an identity.
+        {
+            "ns": _CHECK_NUMBER_LOCK_NS,
+            "branch": (branch_id.int & 0x7FFF_FFFF),
+        },
+    )
     stmt = select(func.max(Order.check_number)).where(Order.branch_id == branch_id)
     if reset_daily:
         stmt = stmt.where(Order.business_date == business_date)
@@ -1229,6 +1264,19 @@ async def close_order(db: AsyncSession, *, order: Order, user: User) -> Order:
 
     await _release_table(db, order)
     await db.flush()
+
+    # The counter's total is only final at close — lines get added, voided and
+    # discounted right up to it — so this is where the order's fees get stamped
+    # rather than at open. A cash sale stamps a zero payment fee, which is the
+    # true answer and not the "we do not know" a null would claim.
+    #
+    # Imported here rather than at the top because `order_fees` reads
+    # `order_pricing`, which imports this module: a module-level import closes
+    # the cycle and the whole application fails to start. Same reason, and same
+    # shape, as the deferred imports elsewhere in this package.
+    from app.services import order_fees
+
+    await order_fees.stamp(db, order)
 
     # Consume recipe ingredients. Deliberately after the order is marked closed
     # and deliberately swallowing failures: a stock problem must never strand a

@@ -70,6 +70,15 @@ export function DeliveryEstimates() {
     }
   }
 
+  // The table has always listed every `couriers` row, which was fine while they
+  // were all couriers. The marketplaces joined the table when they became
+  // carrier badges, and they have been sitting in the promises list ever since
+  // being offered a delivery promise that nothing reads — MM dispatches none of
+  // them. Split here rather than filtering in one place and forgetting the
+  // other: each half now has the columns that mean something to it.
+  const dispatched = (couriers ?? []).filter(c => !c.is_aggregator);
+  const marketplaces = (couriers ?? []).filter(c => c.is_aggregator);
+
   if (couriers === null || groups === null) {
     return (
       <div className="py-10 flex justify-center">
@@ -111,7 +120,7 @@ export function DeliveryEstimates() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {couriers.map(courier => (
+            {dispatched.map(courier => (
               <CourierRow
                 key={`${courier.code}:${courier.unbatched_promise_kind}:${courier.unbatched_promise_minutes}:${courier.unbatched_promise_days}:${courier.is_active}`}
                 courier={courier}
@@ -121,6 +130,54 @@ export function DeliveryEstimates() {
             ))}
           </tbody>
         </table>
+      </section>
+
+      <section className="bg-white border border-gray-200">
+        <header className="px-4 py-3 border-b border-gray-100">
+          <h2 className="text-sm font-body text-gray-800">Marketplace fees</h2>
+          <p className="text-[11px] font-body text-gray-400 mt-1">
+            What each aggregator takes off an order. Both are percentages
+            <strong className="font-normal text-gray-500"> before VAT</strong>,
+            the way the contracts are written — the 5% is added when the fee is
+            stamped onto the order. A blank is not a zero: it means the rate has
+            not been supplied, and those orders show no net at all rather than
+            appearing to have kept every dirham.
+          </p>
+          <p className="text-[11px] font-body text-gray-400 mt-1">
+            Changing a rate is not retrospective. Every order already taken
+            keeps the fee it was stamped with, so renegotiating a contract
+            cannot rewrite last month&rsquo;s margins.
+          </p>
+        </header>
+        {marketplaces.length === 0 ? (
+          <p className="px-4 py-4 text-xs font-body text-gray-400">
+            No marketplace channels configured.
+          </p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 bg-gray-50">
+                <Th>Marketplace</Th>
+                <Th>Commission</Th>
+                <Th>Payment fee</Th>
+                <Th>Total off an order</Th>
+                <th className="px-3 py-2" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {marketplaces.map(courier => (
+                <MarketplaceRow
+                  key={`${courier.code}:${courier.commission_percent}:${courier.payment_fee_percent}`}
+                  courier={courier}
+                  busy={busy}
+                  onSave={data =>
+                    run(() => deliveryZonesApi.updateCourier(courier.code, data))
+                  }
+                />
+              ))}
+            </tbody>
+          </table>
+        )}
       </section>
 
       <section className="bg-white border border-gray-200">
@@ -171,6 +228,211 @@ export function DeliveryEstimates() {
       </section>
     </div>
   );
+}
+
+/**
+ * One marketplace and what it takes off an order.
+ *
+ * **A blank field is a real value here**, and the whole row is built around
+ * saying so. `''` submits as `null` — "nobody has told us this rate" — and `0`
+ * submits as zero, "this channel takes nothing". Every screen downstream reads
+ * the difference: a null leaves the order's net unknown and shows a dash, while
+ * a zero claims the order kept everything. A form that collapsed the two would
+ * put a 25% commission back on the margin report as profit.
+ */
+function MarketplaceRow({
+  courier,
+  busy,
+  onSave,
+}: {
+  courier: Courier;
+  busy: boolean;
+  onSave: (data: CourierWrite) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({
+    commissionPct: asField(courier.commission_percent),
+    commissionFlat: asField(courier.commission_fixed),
+    paymentPct: asField(courier.payment_fee_percent),
+    paymentFlat: asField(courier.payment_fee_fixed),
+  });
+
+  const commission = asPair(courier.commission_percent, courier.commission_fixed);
+  const payment = asPair(courier.payment_fee_percent, courier.payment_fee_fixed);
+  // Only summable when both fees are known, and only as a percentage when
+  // neither carries a flat part — a flat amount cannot be added to a percentage
+  // without a basket to measure it against. One rate plus an unknown is not a
+  // total either, and printing the half we have as though it were the whole
+  // would understate exactly the channels whose setup is unfinished.
+  const total =
+    commission && payment && !commission.flat && !payment.flat
+      ? `${commission.percent + payment.percent}% + VAT`
+      : commission && payment
+        ? 'Mixed — see the two columns'
+        : null;
+
+  if (!editing) {
+    return (
+      <tr className={courier.is_active ? '' : 'opacity-50'}>
+        <td className="px-3 py-2.5 text-xs font-body text-gray-800">
+          {courier.name}
+          {!courier.is_active && <span className="text-gray-400"> · off</span>}
+        </td>
+        <td className="px-3 py-2.5 text-xs font-body">
+          <Rate pair={commission} />
+        </td>
+        <td className="px-3 py-2.5 text-xs font-body">
+          <Rate pair={payment} />
+        </td>
+        <td className="px-3 py-2.5 text-xs font-body text-gray-800">
+          {total === null ? <span className="text-amber-600">Not set</span> : total}
+        </td>
+        <td className="px-3 py-2.5 text-right">
+          <button
+            onClick={() => setEditing(true)}
+            disabled={busy}
+            className="text-[11px] font-body text-primary hover:underline"
+          >
+            Edit
+          </button>
+        </td>
+      </tr>
+    );
+  }
+
+  return (
+    <tr className="bg-gray-50">
+      <td className="px-3 py-2.5 text-xs font-body text-gray-800">{courier.name}</td>
+      <td className="px-3 py-2.5">
+        <RateInput
+          percent={form.commissionPct}
+          flat={form.commissionFlat}
+          onPercent={v => setForm(f => ({ ...f, commissionPct: v }))}
+          onFlat={v => setForm(f => ({ ...f, commissionFlat: v }))}
+        />
+      </td>
+      <td className="px-3 py-2.5">
+        <RateInput
+          percent={form.paymentPct}
+          flat={form.paymentFlat}
+          onPercent={v => setForm(f => ({ ...f, paymentPct: v }))}
+          onFlat={v => setForm(f => ({ ...f, paymentFlat: v }))}
+        />
+      </td>
+      <td className="px-3 py-2.5 text-[11px] font-body text-gray-400">
+        Both blank means &ldquo;not known&rdquo;
+      </td>
+      <td className="px-3 py-2.5 text-right space-x-3 whitespace-nowrap">
+        <button
+          onClick={() => {
+            onSave({
+              commission_percent: asWrite(form.commissionPct),
+              commission_fixed: asWrite(form.commissionFlat),
+              payment_fee_percent: asWrite(form.paymentPct),
+              payment_fee_fixed: asWrite(form.paymentFlat),
+            });
+            setEditing(false);
+          }}
+          disabled={busy}
+          className="text-[11px] font-body text-primary hover:underline"
+        >
+          Save
+        </button>
+        <button
+          onClick={() => setEditing(false)}
+          disabled={busy}
+          className="text-[11px] font-body text-gray-400 hover:underline"
+        >
+          Cancel
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+/** A fee's two halves, or the amber blank that says nobody has supplied one. */
+function Rate({ pair }: { pair: RatePair | null }) {
+  if (pair === null) return <span className="text-amber-600">—</span>;
+  return (
+    <span className="text-gray-800">
+      {pair.percent}%
+      {pair.flat > 0 && <span> + {pair.flat.toFixed(2)}</span>}
+    </span>
+  );
+}
+
+function RateInput({
+  percent,
+  flat,
+  onPercent,
+  onFlat,
+}: {
+  percent: string;
+  flat: string;
+  onPercent: (value: string) => void;
+  onFlat: (value: string) => void;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <input
+        type="number"
+        min={0}
+        max={100}
+        step="0.01"
+        value={percent}
+        onChange={e => onPercent(e.target.value)}
+        placeholder="—"
+        aria-label="Percentage of the order"
+        className="w-16 border border-gray-300 px-2 py-1 text-xs font-body"
+      />
+      <span className="text-[11px] font-body text-gray-400">% +</span>
+      <input
+        type="number"
+        min={0}
+        step="0.01"
+        value={flat}
+        onChange={e => onFlat(e.target.value)}
+        placeholder="—"
+        aria-label="Flat amount per order"
+        className="w-16 border border-gray-300 px-2 py-1 text-xs font-body"
+      />
+      <span className="text-[11px] font-body text-gray-400">flat</span>
+    </span>
+  );
+}
+
+/**
+ * The API sends a `Decimal` as a string; the form edits a string; the console
+ * renders a number. These three convert between them in one place so the
+ * null-versus-zero distinction cannot be lost at one of the crossings.
+ */
+function asField(value: number | string | null): string {
+  return value === null || value === undefined ? '' : String(Number(value));
+}
+
+/** One fee, once both of its halves are known to be present or absent. */
+type RatePair = { percent: number; flat: number };
+
+/**
+ * A fee's two halves as one thing, or null when neither was supplied.
+ *
+ * The rule the whole feature rests on: a fee is unknown only when **both**
+ * halves are null. One half set and the other null is a contract that quotes
+ * only a percentage — the missing half is genuinely nothing, and treating it as
+ * unknown would blank the margin on every channel with a simple contract.
+ */
+function asPair(
+  percent: number | string | null,
+  flat: number | string | null,
+): RatePair | null {
+  const hasPercent = percent !== null && percent !== undefined;
+  const hasFlat = flat !== null && flat !== undefined;
+  if (!hasPercent && !hasFlat) return null;
+  return { percent: hasPercent ? Number(percent) : 0, flat: hasFlat ? Number(flat) : 0 };
+}
+
+function asWrite(value: string): number | null {
+  return value.trim() === '' ? null : Number(value);
 }
 
 function Th({ children }: { children: React.ReactNode }) {

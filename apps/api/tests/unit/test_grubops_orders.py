@@ -305,3 +305,61 @@ def test_a_counter_sale_has_no_courier_badge():
 
     assert cc.badge_for_order(source="cashier") is None
     assert cc.badge_for_order(source="online", delivery_provider=None) is None
+
+
+# ── what the customer actually asked for ──────────────────────────────────────
+
+
+def test_the_note_loses_the_short_code_the_box_already_carries():
+    """
+    `instructions` is two things joined by a pipe, and only one of them is a note.
+
+    The docket used to read `No cutlery.  | Talabat-short code: 1452` — with
+    1452 already printed in the box at the top of the same ticket, four times
+    the size. A note is the one line on a docket somebody has to act on, and
+    padding it with a duplicate of the largest number on the page is how it
+    stops being read.
+    """
+    from app.services.grubops_orders_service import _customer_note
+
+    assert (
+        _customer_note({"instructions": "No cutlery.  | Talabat-short code: 1452"})
+        == "No cutlery."
+    )
+    assert _customer_note({"instructions": "x | short code: 1477"}) == "x"
+
+
+def test_an_order_whose_note_was_only_metadata_has_no_note():
+    """
+    None, not an empty string.
+
+    An empty note still prints a rule and a heading on the docket — a labelled
+    blank, which reads as "something was said and we lost it".
+    """
+    from app.services.grubops_orders_service import _customer_note
+
+    assert _customer_note({"instructions": "Talabat-short code: 1452"}) is None
+    assert _customer_note({"instructions": ""}) is None
+    assert _customer_note({}) is None
+
+
+def test_a_real_note_survives_untouched():
+    from app.services.grubops_orders_service import _customer_note
+
+    assert (
+        _customer_note({"instructions": "Please add candles"}) == "Please add candles"
+    )
+
+
+def test_the_short_code_is_still_read_from_the_raw_instructions():
+    """
+    Cleaning the note must not cost us the code.
+
+    `_driver_code` reads the *raw* header, so the number still reaches the box
+    where it is useful — the two functions read the same field for different
+    purposes and neither may break the other.
+    """
+    from app.services.grubops_orders_service import _driver_code
+
+    header = {"instructions": "No cutlery.  | Talabat-short code: 1452"}
+    assert _driver_code(header, None, {}) == "1452"

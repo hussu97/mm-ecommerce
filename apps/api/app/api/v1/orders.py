@@ -611,6 +611,9 @@ async def get_order_economics(
         courier_cost=(
             float(result.courier_cost) if result.courier_cost is not None else None
         ),
+        aggregator_fee=(
+            float(result.aggregator_fee) if result.aggregator_fee is not None else None
+        ),
         processing_fee=float(result.processing_fee),
         processing_fee_is_estimated=result.processing_fee_is_estimated,
         refunded=float(result.refunded),
@@ -625,6 +628,12 @@ async def get_order_economics(
             if result.margin_on_items is not None
             else None
         ),
+        items_before_discount=float(result.items_before_discount),
+        cost_cover=(
+            float(result.cost_cover) if result.cost_cover is not None else None
+        ),
+        covers_direct_cost=result.covers_direct_cost,
+        direct_cost_threshold=float(order_economics.DIRECT_COST_THRESHOLD),
     )
 
 

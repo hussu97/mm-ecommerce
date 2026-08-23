@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import (
     Integer,
+    case,
     cast,
     exists,
     func,
@@ -61,6 +62,8 @@ from app.services import (
     email_service,
     fulfilment_service,
     lalamove_service,
+    order_economics,
+    order_fees,
     order_lifecycle,
     order_pricing,
     payment_methods,
@@ -851,6 +854,11 @@ async def _persist_order(
         await db.delete(ci)
 
     await db.flush()
+
+    # What taking this money will cost, written onto the order now that the
+    # total is final. Stored rather than recomputed on every admin page view,
+    # so the shop can sum a month of it — see `order_fees`.
+    await order_fees.stamp(db, order)
     return order
 
 
@@ -1288,6 +1296,60 @@ async def _send_confirmation_emails(order: OrderResponse) -> None:
         )
 
 
+def _cost_of_sale_subquery():
+    """
+    What the courier charged for this order, as a scalar the list can subtract.
+
+    `cost_total` is the invoice and `quoted_cost` is the quote; the first is the
+    truth and arrives late, so the second stands in until it does — the same
+    preference `order_economics` applies one order at a time. Null where there
+    is no delivery row at all, which is a counter sale, and null where a
+    third-party zone bills nothing per order.
+    """
+    return (
+        select(func.coalesce(OrderDelivery.cost_total, OrderDelivery.quoted_cost))
+        .where(OrderDelivery.order_id == Order.id)
+        .correlate(Order)
+        .limit(1)
+        .scalar_subquery()
+    )
+
+
+def _net_value_expression(cost_of_sale):
+    """
+    What the shop keeps on a row, in SQL.
+
+    Mirrors `OrderEconomics.net` exactly and is tested against it. It lives here
+    rather than being borrowed from that module because the two answer the same
+    question at different scales — one order on a screen, two thousand rows in a
+    page — and a per-row service call would be two thousand round-trips for one
+    column.
+
+    **Null propagates deliberately.** An aggregator order whose commission rate
+    nobody has configured has an unknowable net, and `NULL` is how that reaches
+    the console as a dash. `coalesce`-ing it to zero would show the order
+    keeping every dirham, which is the exact misreading this column exists to
+    prevent — so the coalesce below is applied only to the parts that are
+    genuinely zero when absent (a counter sale's courier, a cash order's
+    processor), never to a fee we were simply never told.
+    """
+    known_cost = case(
+        # A marketplace order's cost of sale is its commission; nobody invoices
+        # us for a van. A dispatched order's is the courier. Neither has both.
+        (
+            Order.source == OrderSourceEnum.AGGREGATOR.value,
+            Order.aggregator_fee,
+        ),
+        else_=func.coalesce(cost_of_sale, 0),
+    )
+    return (
+        Order.total
+        - known_cost
+        - func.coalesce(Order.payment_fee, 0)
+        - func.coalesce(Order.refunded_amount, 0)
+    )
+
+
 def _list_row_load_options():
     """
     Pin the four POS collections to empty on list rows.
@@ -1343,8 +1405,19 @@ async def get_user_orders(
     )
     total = count_result.scalar() or 0
 
+    # The direct-cost column, computed in the same pass as the rows. `subtotal`
+    # is the goods at menu price *before* discount — the denominator held still
+    # on purpose, so a coupon shows up as the cost it is instead of shrinking
+    # the base it is measured against.
+    net_value = _net_value_expression(_cost_of_sale_subquery())
+    cost_cover = net_value / func.nullif(Order.subtotal, 0) * 100
+
     stmt = (
-        base_stmt.add_columns(_item_count_subquery().label("item_count"))
+        base_stmt.add_columns(
+            _item_count_subquery().label("item_count"),
+            net_value.label("net_value"),
+            cost_cover.label("cost_cover"),
+        )
         .options(*_list_row_load_options())
         .order_by(Order.created_at.desc())
         .offset((page - 1) * per_page)
@@ -1352,10 +1425,19 @@ async def get_user_orders(
     )
     result = await db.execute(stmt)
 
+    threshold = order_economics.DIRECT_COST_THRESHOLD
     items = []
-    for order, count in result.all():
+    for order, count, net, cover in result.all():
         resp = OrderListResponse.model_validate(order)
         resp.item_count = int(count or 0)
+        resp.net_value = float(net) if net is not None else None
+        resp.cost_cover = float(cover) if cover is not None else None
+        # Three-valued, and the null is the point: an unconfigured commission
+        # rate makes the answer unknowable, and rendering that as a failure is
+        # how a seeding gap becomes a fortnight of chasing the wrong orders.
+        resp.covers_direct_cost = (
+            None if cover is None else Decimal(str(cover)) >= threshold
+        )
         items.append(resp)
     return items, total
 

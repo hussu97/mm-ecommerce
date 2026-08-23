@@ -27,7 +27,7 @@ import { DataTable } from '@/components/ui/DataTable';
 import { CourierLogo } from '@/components/orders/CourierLogo';
 import { useApiList } from '@/hooks/useApiList';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { cn, formatCurrency, formatDate } from '@/lib/utils';
 
 // Carriers a row can be filtered to — the five marketplaces and the four
 // couriers MM dispatches. Codes match the API's `courier` param and the DB
@@ -86,6 +86,59 @@ const POS_STATUS_VARIANT: Record<string, 'warning' | 'info' | 'success' | 'dange
 };
 
 type Channel = '' | 'online' | 'counter' | 'aggregator';
+
+/**
+ * Whether an order kept enough of its own menu value to be worth taking.
+ *
+ * The question a list of orders is actually being scanned for, and the one the
+ * screen could not answer: the total says what came in, and nothing said what
+ * survived the commission, the van and the card fee. A shop losing money does
+ * not lose it evenly — it loses it on particular channels, particular zones and
+ * particular discounts — and this column is where that becomes visible without
+ * opening thirty orders.
+ *
+ * **Three states, and the third is the important one.** A dash means *we cannot
+ * say*: an aggregator whose commission rate nobody has configured has an
+ * unknowable net, and colouring it red would file it beside the orders that are
+ * genuinely underwater. That is how an unfilled rate turns into a fortnight of
+ * investigating the wrong orders, so the unknown gets its own, quiet, treatment
+ * and a tooltip that says what to do about it.
+ */
+function CostCover({ order }: { order: Order }) {
+  const covered = order.covers_direct_cost;
+  const share = order.cost_cover;
+
+  if (covered === null || covered === undefined || share === null || share === undefined) {
+    return (
+      <span
+        className="text-gray-300"
+        title={
+          order.source === 'aggregator'
+            ? 'No commission rate is set for this marketplace, so what the order kept cannot be worked out. Set one under Delivery → Estimates.'
+            : 'Not enough is known about this order to say.'
+        }
+      >
+        —
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className={cn(
+        'font-body text-xs tabular-nums',
+        covered ? 'text-green-700' : 'text-red-600',
+      )}
+      title={`Kept ${formatCurrency(order.net_value ?? 0)} of ${formatCurrency(
+        // The denominator: menu price before discount. Shown in the tooltip so
+        // a surprising percentage can be checked rather than argued with.
+        order.net_value != null && share !== 0 ? (order.net_value / share) * 100 : 0,
+      )} at menu price`}
+    >
+      {covered ? '✓' : '✕'} {share.toFixed(0)}%
+    </span>
+  );
+}
 
 export default function OrdersPage() {
   const router = useRouter();
@@ -268,6 +321,11 @@ export default function OrdersPage() {
               header: 'Total',
               className: 'text-right',
               render: o => formatCurrency(o.total),
+            },
+            {
+              header: 'Covers cost',
+              className: 'text-center',
+              render: o => <CostCover order={o} />,
             },
             {
               header: 'Status',

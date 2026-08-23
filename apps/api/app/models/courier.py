@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import enum
+from typing import Any
 
-from sqlalchemy import Boolean, Integer, String
+from sqlalchemy import Boolean, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, TimestampMixin, UUIDMixin
@@ -107,6 +108,52 @@ class Courier(Base, UUIDMixin, TimestampMixin):
     is_aggregator: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+
+    #: What this carrier takes off an order, as a **percentage** — `25.00` is
+    #: 25%. Quoted before VAT, because that is how every one of these contracts
+    #: is written and how the invoice arrives; the 5% is added by
+    #: `order_fees.compute`, exactly as it already is for a card processor's fee.
+    #:
+    #: Only ever set on an aggregator row: MM pays a marketplace a share of the
+    #: basket, and pays a dispatch courier a booking fee that is quoted per run
+    #: and recorded on `order_deliveries.cost_total` instead. A dispatch courier
+    #: with a commission here would be counted twice.
+    #:
+    #: **Null means "we do not know", not "zero".** Only Noon Food's rates are
+    #: agreed today; the rest are null until somebody supplies them, and a null
+    #: leaves the order's fee null so the screens say "not itemised" rather than
+    #: flattering the margin with a fee of nothing. See the `_percent` suffix
+    #: convention on `Order.vat_rate`: anything named `_percent` gets a `/ 100`.
+    commission_percent: Mapped[Any | None] = mapped_column(Numeric(5, 2), nullable=True)
+
+    #: A flat amount the same carrier takes **on top of** `commission_percent`,
+    #: in the order's currency and again before VAT. Several of these contracts
+    #: are quoted as "25% plus two dirhams a order", and a percentage-only
+    #: column silently dropped the second half of that sentence.
+    #:
+    #: Null and zero mean the same thing here and that is safe, because the
+    #: pair is read together: a fee is "not known" only when *both* parts are
+    #: null. One part set and the other null reads as "that part is nothing",
+    #: which is what a contract quoting only a percentage actually says.
+    commission_fixed: Mapped[Any | None] = mapped_column(Numeric(10, 2), nullable=True)
+
+    #: What this carrier's payment processing takes, as a **percentage**, on top
+    #: of the commission. Same conventions as `commission_percent`: before VAT,
+    #: null for unknown.
+    #:
+    #: A marketplace collects the customer's card itself and bills the merchant
+    #: for having done so, so this is the aggregator's analogue of
+    #: `payment_gateways.fee_percent` — and it lands in the same place on the
+    #: order (`orders.payment_fee`) and on the same line of the same screen. One
+    #: idea, one column, whoever took the card.
+    payment_fee_percent: Mapped[Any | None] = mapped_column(
+        Numeric(5, 2), nullable=True
+    )
+
+    #: The flat half of the payment fee, before VAT — the direct analogue of
+    #: `payment_gateways.fee_fixed`, which is exactly how a card processor's fee
+    #: has always been quoted here ("2.9% + AED 1").
+    payment_fee_fixed: Mapped[Any | None] = mapped_column(Numeric(10, 2), nullable=True)
 
     @property
     def promises_next_day(self) -> bool:

@@ -42,7 +42,7 @@ from app.models.order import Order, OrderItem, OrderStatusEnum
 from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.pos_order import OrderSourceEnum, OrderTax, PosOrderStatusEnum
 from app.models.product import Product
-from app.services import order_lifecycle
+from app.services import order_fees, order_lifecycle
 from app.services.providers.grubops_provider import GrubOpsError, provider
 
 logger = logging.getLogger(__name__)
@@ -170,6 +170,42 @@ def _driver_code(header: dict, external_id: str | None, info: dict) -> str | Non
     if ext:
         return ext[-4:]
     return None
+
+
+#: The whole "short code" clause, so it can be cut out of a note rather than
+#: only read from one. Talabat appends its own routing metadata to the
+#: customer's words with a pipe, e.g.
+#: "No cutlery.  | Talabat-short code: 1452".
+_SHORT_CODE_CLAUSE_RE = re.compile(
+    r"\s*\|?\s*[\w-]*short.?code[:\s]+\d{3,6}\s*", re.IGNORECASE
+)
+
+
+def _customer_note(header: dict) -> str | None:
+    """
+    What the customer actually asked for, with the marketplace's plumbing removed.
+
+    `instructions` is two things joined with a pipe: the customer's sentence and
+    Talabat's own routing metadata. Both used to print, so a kitchen docket read
+    `No cutlery.  | Talabat-short code: 1452` — a number that is *already* on
+    the same ticket, in the box at the top, four times the size. A note is the
+    one line on a docket somebody has to act on, and padding it with a duplicate
+    of the largest number on the page is how it stops being read.
+
+    The code itself is not lost: `_driver_code` reads it from the raw
+    instructions and puts it in the box, which is where it is useful.
+
+    Returns None when nothing but the metadata was there, so an order with no
+    real note prints no note block at all rather than an empty rule.
+    """
+    raw = (header.get("instructions") or "").strip()
+    if not raw:
+        return None
+    cleaned = _SHORT_CODE_CLAUSE_RE.sub(" ", raw)
+    # Collapse what the removal leaves behind: the double spaces Talabat sends
+    # anyway, and any orphaned separator at either end.
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" |").strip()
+    return cleaned or None
 
 
 # ── reading a GrubOps order ──────────────────────────────────────────────────
@@ -415,7 +451,7 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
         # (POSTPAID) order, and for a prepaid one still not `card` — MM never
         # took the card, so nothing here may look refundable to the register.
         payment_method="cod",
-        notes=header.get("instructions"),
+        notes=_customer_note(header),
     )
     db.add(order)
     await db.flush()
@@ -482,6 +518,13 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
                 total_price=_q2(_num(item.get("totalPrice"), str(base_price))),
                 selected_options_snapshot=snapshot,
                 tax_amount=_q2(_num(item.get("taxAmount"))),
+                # What the customer said about *this line*. GrubOps carries it
+                # per order line and we were dropping it on the floor: a
+                # "no nuts" against one cake in a basket of four arrived at the
+                # kitchen as nothing at all, while the same sentence typed on
+                # our own website printed in bold. Same column, so the docket
+                # renders both identically.
+                kitchen_notes=(item.get("instructions") or None),
             )
         )
 
@@ -501,6 +544,14 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
         )
 
     await db.flush()  # the lines must exist before stock reads them back
+
+    # What the marketplace takes off this order, from the rates on its
+    # `couriers` row. Stamped here because an aggregator total is final the
+    # moment it arrives — the marketplace priced it, and nothing downstream
+    # moves it. A channel with no rate configured leaves both columns null,
+    # which reads as "not itemised" rather than "free".
+    await order_fees.stamp(db, order)
+
     await _decrement_stock(db, order.id)
     if unmapped:
         logger.warning(

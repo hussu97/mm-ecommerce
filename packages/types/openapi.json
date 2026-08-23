@@ -5065,13 +5065,66 @@
             "title": "Code",
             "type": "string"
           },
+          "commission_fixed": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commission Fixed"
+          },
+          "commission_percent": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commission Percent"
+          },
           "is_active": {
             "title": "Is Active",
+            "type": "boolean"
+          },
+          "is_aggregator": {
+            "default": false,
+            "title": "Is Aggregator",
             "type": "boolean"
           },
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "payment_fee_fixed": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Fee Fixed"
+          },
+          "payment_fee_percent": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Fee Percent"
           },
           "supports_batching": {
             "title": "Supports Batching",
@@ -5117,6 +5170,39 @@
       "CourierUpdate": {
         "description": "What a courier promises when there is no batch to wait for.\n\n`code` and `supports_batching` are not here. The code is the join key every\npolygon and every group already holds, and whether a carrier can carry\nseveral of our orders in one booking is a fact about their product, not a\nsetting \u2014 turning it on for a courier that cannot would let a schedule be\nattached to a promise nothing can keep.",
         "properties": {
+          "commission_fixed": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commission Fixed"
+          },
+          "commission_percent": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commission Percent"
+          },
           "is_active": {
             "anyOf": [
               {
@@ -5127,6 +5213,39 @@
               }
             ],
             "title": "Is Active"
+          },
+          "payment_fee_fixed": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Fee Fixed"
+          },
+          "payment_fee_percent": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Fee Percent"
           },
           "unbatched_promise_days": {
             "anyOf": [
@@ -13057,9 +13176,31 @@
       "OrderEconomicsResponse": {
         "description": "What the shop kept on one order, for the admin who has to decide whether the\norder was worth taking.\n\nAdmin-only and deliberately its own response rather than fields on\n`OrderResponse`: what a courier cost us and what a processor keeps are not\nthe customer's business, and the separation is what keeps that a property of\nthe type rather than a rule somebody has to remember \u2014 the same reasoning\nthat keeps `OrderDeliveryResponse` out of the customer's payload.",
         "properties": {
+          "aggregator_fee": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aggregator Fee"
+          },
           "charged": {
             "title": "Charged",
             "type": "number"
+          },
+          "cost_cover": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Cover"
           },
           "courier_cost": {
             "anyOf": [
@@ -13071,6 +13212,25 @@
               }
             ],
             "title": "Courier Cost"
+          },
+          "covers_direct_cost": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Covers Direct Cost"
+          },
+          "direct_cost_threshold": {
+            "title": "Direct Cost Threshold",
+            "type": "number"
+          },
+          "items_before_discount": {
+            "title": "Items Before Discount",
+            "type": "number"
           },
           "items_value": {
             "title": "Items Value",
@@ -13119,12 +13279,17 @@
           "charged",
           "items_value",
           "courier_cost",
+          "aggregator_fee",
           "processing_fee",
           "processing_fee_is_estimated",
           "refunded",
           "net",
           "margin_on_charged",
-          "margin_on_items"
+          "margin_on_items",
+          "items_before_discount",
+          "cost_cover",
+          "covers_direct_cost",
+          "direct_cost_threshold"
         ],
         "title": "OrderEconomicsResponse",
         "type": "object"
@@ -13166,6 +13331,17 @@
             ],
             "title": "Check Number"
           },
+          "cost_cover": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Cover"
+          },
           "courier": {
             "anyOf": [
               {
@@ -13175,6 +13351,17 @@
                 "type": "null"
               }
             ]
+          },
+          "covers_direct_cost": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Covers Direct Cost"
           },
           "created_at": {
             "format": "date-time",
@@ -13230,6 +13417,17 @@
               }
             ],
             "title": "Low Order Fee"
+          },
+          "net_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Value"
           },
           "order_number": {
             "title": "Order Number",

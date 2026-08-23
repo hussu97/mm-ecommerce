@@ -317,6 +317,23 @@ export interface Order {
   /** Who is carrying it — the marketplace for an aggregator order (list); the
    * dispatched courier lives on `OrderDelivery.courier` (detail). */
   courier?: CourierBadge | null;
+
+  // ── is this order paying for itself? (list rows only) ──────────────────────
+  //
+  // Computed in SQL by the list endpoint rather than by the per-order economics
+  // route: the list serves pages of up to two thousand, and one service call
+  // per row would be two thousand round-trips for one column.
+
+  /** What is left after the cost of sale, the payment fee and any refund. */
+  net_value?: number | null;
+  /** `net_value` as a share of the goods at menu price, before discount. */
+  cost_cover?: number | null;
+  /**
+   * Whether the row cleared the shop's direct-cost bar. **Three-valued** — null
+   * means unknowable (an aggregator whose commission rate is not configured),
+   * and must render as a dash rather than a cross.
+   */
+  covers_direct_cost?: boolean | null;
 }
 
 export interface PaginatedOrders {
@@ -858,6 +875,28 @@ export interface Courier {
   is_active: boolean;
   /** Zones on the live map currently carried by this courier. */
   zone_count: number;
+  /**
+   * True for a marketplace channel (Talabat, Noon Food, Keeta…). The Estimates
+   * screen splits on it: a marketplace has rates and no delivery promise, a
+   * courier we dispatch has a promise and no rates.
+   */
+  is_aggregator: boolean;
+  /**
+   * What a marketplace takes, as percentages before VAT (`25` is 25%).
+   *
+   * **Null is an answer.** It means nobody has supplied the rate, which leaves
+   * those orders' fees — and their net — unknown rather than pretending the
+   * channel is free. Rendering a null as `0` here would put a 25% commission
+   * back on the screen as a profit.
+   */
+  commission_percent: number | string | null;
+  payment_fee_percent: number | string | null;
+  /**
+   * The flat half of each pair — several contracts read "25% plus two dirhams
+   * an order". A fee is unknown only when both of its halves are null.
+   */
+  commission_fixed: number | string | null;
+  payment_fee_fixed: number | string | null;
 }
 
 export type CourierWrite = Partial<
@@ -867,6 +906,10 @@ export type CourierWrite = Partial<
     | 'unbatched_promise_minutes'
     | 'unbatched_promise_days'
     | 'is_active'
+    | 'commission_percent'
+    | 'commission_fixed'
+    | 'payment_fee_percent'
+    | 'payment_fee_fixed'
   >
 >;
 
@@ -1124,6 +1167,12 @@ export interface OrderEconomics {
   items_value: number;
   /** Null on a third-party zone — nobody invoices us per order there. */
   courier_cost: number | null;
+  /**
+   * What the marketplace took — an aggregator order's cost of sale, in place of
+   * the courier cost it never has. Null on web/counter, and on a channel whose
+   * commission rate is not configured yet.
+   */
+  aggregator_fee: number | null;
   processing_fee: number;
   /** Whether the fee is the gateway's rate or its invoice. */
   processing_fee_is_estimated: boolean;
@@ -1132,6 +1181,16 @@ export interface OrderEconomics {
   /** Null when the base is zero — a full-discount order has no percentage. */
   margin_on_charged: number | null;
   margin_on_items: number | null;
+  /** The goods at menu price, before discount, and net as a share of it. */
+  items_before_discount: number;
+  cost_cover: number | null;
+  /**
+   * Whether the order cleared `direct_cost_threshold`. **Three-valued** — null
+   * means unknowable (an unconfigured commission rate) and must render as a
+   * dash, never a cross: an unfilled rate is not a loss-making order.
+   */
+  covers_direct_cost: boolean | null;
+  direct_cost_threshold: number;
 }
 
 // ─── Per-branch availability ──────────────────────────────────────────────────

@@ -277,6 +277,28 @@ class CourierResponse(BaseModel):
     #: none is one whose promise nobody is being quoted.
     zone_count: int
 
+    #: True for a marketplace channel (Talabat, Noon Food, …). The screen splits
+    #: on it: a marketplace has no promise to configure and nothing but rates,
+    #: and a courier we dispatch has a promise and no rates at all.
+    is_aggregator: bool = False
+
+    #: What a marketplace takes off an order, as **percentages** (`25.00` is
+    #: 25%), quoted before VAT the way the contracts are written and the
+    #: invoices arrive.
+    #:
+    #: Null is a real answer and not a missing one: it means nobody has supplied
+    #: the rate yet, and it leaves those orders' fees — and therefore their net
+    #: — unknown rather than pretending they were free. Only Noon Food's are
+    #: agreed today. Always null on a courier MM dispatches, which is billed per
+    #: booking on the order's delivery record instead.
+    #: Each fee is a **pair** — a share of the basket plus a flat amount, both
+    #: before VAT — because that is how the contracts are written ("25% plus two
+    #: dirhams an order"). A fee is unknown only when both halves are null.
+    commission_percent: Decimal | None = None
+    commission_fixed: Decimal | None = None
+    payment_fee_percent: Decimal | None = None
+    payment_fee_fixed: Decimal | None = None
+
     @classmethod
     def of(cls, c: Courier, zone_count: int) -> "CourierResponse":
         return cls(
@@ -288,6 +310,16 @@ class CourierResponse(BaseModel):
             unbatched_promise_days=c.unbatched_promise_days,
             is_active=c.is_active,
             zone_count=zone_count,
+            # `bool(...)` rather than the attribute: the column is NOT NULL
+            # with a server default, so a row added to the session but not yet
+            # flushed still reads `None` here — which is every row a test builds
+            # by hand, and every row this endpoint sees the instant after one is
+            # created. Absent means "not a marketplace".
+            is_aggregator=bool(c.is_aggregator),
+            commission_percent=c.commission_percent,
+            commission_fixed=c.commission_fixed,
+            payment_fee_percent=c.payment_fee_percent,
+            payment_fee_fixed=c.payment_fee_fixed,
         )
 
 
@@ -310,6 +342,21 @@ class CourierUpdate(BaseModel):
     #: Handover-to-door, for a courier that collects on its own schedule.
     unbatched_promise_days: int | None = Field(None, ge=1, le=30)
     is_active: bool | None = None
+
+    #: A marketplace's rates, as percentages before VAT. Refused on a courier MM
+    #: dispatches — see `_assert_rates_belong_here`.
+    #:
+    #: 100 is the ceiling because a commission above it is somebody entering a
+    #: rate they meant as something else, and it would post a negative net on
+    #: every order that channel took until a human noticed.
+    commission_percent: Decimal | None = Field(None, ge=0, le=100)
+    payment_fee_percent: Decimal | None = Field(None, ge=0, le=100)
+    #: The flat half of each pair, in the order currency and before VAT. No
+    #: upper bound that would mean anything — a large flat fee is a strange
+    #: contract, not an impossible one — but it cannot be negative, which would
+    #: be a rebate wearing a fee's name.
+    commission_fixed: Decimal | None = Field(None, ge=0)
+    payment_fee_fixed: Decimal | None = Field(None, ge=0)
 
 
 class BatchResponse(BaseModel):
@@ -1137,8 +1184,16 @@ async def update_courier(
             "number of minutes. Set one, or switch it to next-day."
         )
 
+    _assert_rates_belong_here(courier, data)
+
     before = CourierResponse.of(courier, 0).model_dump(exclude={"zone_count"})
-    for field, value in data.model_dump(exclude_none=True).items():
+    # `exclude_unset`, not `exclude_none`. A rate has three states — a number,
+    # zero, and "nobody has told us" — and under `exclude_none` the third was
+    # unreachable: having once typed 25 into Talabat by mistake, there was no
+    # way back to unknown, only to a zero that claims the channel is free. What
+    # the client did not send is still left alone, which is all `exclude_none`
+    # was ever there for.
+    for field, value in data.model_dump(exclude_unset=True).items():
         setattr(courier, field, value)
     await db.flush()
 
@@ -1157,6 +1212,37 @@ async def update_courier(
     )
     counts = await _live_zone_counts(db)
     return CourierResponse.of(courier, counts.get(courier.code, 0))
+
+
+def _assert_rates_belong_here(courier: Courier, data: "CourierUpdate") -> None:
+    """
+    Refuse a commission on a courier MM dispatches itself.
+
+    Those are billed per booking, and the amount lands on
+    `order_deliveries.cost_total`, which `order_economics` already subtracts. A
+    percentage here as well would take the same cost off the same order twice —
+    and the resulting margin would be wrong in the direction nobody checks,
+    because a figure that looks worse than expected gets believed.
+    """
+    if courier.is_aggregator:
+        return
+    sent = data.model_dump(exclude_unset=True)
+    offending = [
+        field
+        for field in (
+            "commission_percent",
+            "commission_fixed",
+            "payment_fee_percent",
+            "payment_fee_fixed",
+        )
+        if sent.get(field) is not None
+    ]
+    if offending:
+        raise BadRequestError(
+            f"{courier.name} is a courier MM dispatches, not a marketplace. "
+            "What it charges is recorded per booking on the order's delivery "
+            "record; a percentage here would subtract that cost a second time."
+        )
 
 
 @router.get(

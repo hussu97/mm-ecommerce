@@ -319,6 +319,24 @@ class OrderListResponse(BaseModel):
     #: aggregator order from its channel, so the list renders the courier logo.
     courier: CourierBadge | None = None
 
+    # ── is this order paying for itself? ─────────────────────────────────────
+    #
+    # Computed in SQL by `order_service.get_all_admin` rather than by calling
+    # `order_economics` per row: the list serves pages of up to two thousand,
+    # and a per-row service call is two thousand round-trips for one column.
+    # The arithmetic is the same, and a test pins them together.
+
+    #: What is left after the cost of sale, the payment fee and any refund.
+    #: Null when a cost of sale exists but has not been told to us — an
+    #: aggregator whose commission rate is not configured.
+    net_value: float | None = None
+    #: `net_value` as a share of the goods at menu price, before discount.
+    cost_cover: float | None = None
+    #: Whether the row cleared the shop's direct-cost bar. **Three-valued**: null
+    #: is "cannot say", and the console must render it as a dash rather than a
+    #: cross — an unconfigured rate is not a loss-making order.
+    covers_direct_cost: bool | None = None
+
     @model_validator(mode="after")
     def _fill_courier(self) -> "OrderListResponse":
         if self.courier is None:
@@ -348,6 +366,10 @@ class OrderEconomicsResponse(BaseModel):
     #: third-party zone: nobody invoices us per order there, which is a real
     #: "we do not know" rather than a zero.
     courier_cost: float | None
+    #: What the marketplace took on an aggregator order — its cost of sale, in
+    #: place of the courier cost it never has. Null on a website or counter
+    #: order, and on an aggregator channel whose rate is not configured yet.
+    aggregator_fee: float | None
     processing_fee: float
     #: Whether `processing_fee` is the gateway's published rate or its invoice.
     #: Stripe's real figure lives on the balance transaction and does not exist
@@ -360,3 +382,18 @@ class OrderEconomicsResponse(BaseModel):
     #: percentage, and 0 would read as "we kept none of it".
     margin_on_charged: float | None
     margin_on_items: float | None
+
+    #: The goods at menu price, before discount, and net as a share of it.
+    #: The denominator is held still on purpose: measuring against what was
+    #: actually charged would hide a discounted order's losses inside a smaller
+    #: base. Null when there were no goods.
+    items_before_discount: float
+    cost_cover: float | None
+    #: Whether the order cleared `direct_cost_threshold`. **Three-valued**:
+    #: null means the answer is unknowable — an aggregator whose commission
+    #: rate nobody has configured yet — and must not be rendered as a failure.
+    covers_direct_cost: bool | None
+    #: The bar `covers_direct_cost` was judged against, sent so the console
+    #: labels its own column rather than hard-coding a number that would then
+    #: exist in two places.
+    direct_cost_threshold: float

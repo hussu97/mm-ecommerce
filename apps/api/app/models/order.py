@@ -154,6 +154,40 @@ class Order(Base, UUIDMixin, TimestampMixin):
         Numeric(10, 2), nullable=False, default=0
     )
     total: Mapped[Any] = mapped_column(Numeric(10, 2), nullable=False)
+
+    # ── What the order costs us before the cake is even counted ──────────────
+    #
+    # Both are **stored**, and that is the whole point of them. They were
+    # computed on the fly by `order_economics` every time somebody opened an
+    # order, which is fine for one screen and useless for a profit-and-loss:
+    # there was no column to sum, no way to ask "what did Talabat take from us
+    # last month", and no record at all of what the rate *was* on the day, so a
+    # renegotiated contract silently rewrote the margin on every historic order.
+    #
+    # Written once by `order_fees.stamp` at the moment the total is final and
+    # left alone afterwards. `order_economics` prefers them to its own
+    # arithmetic and only falls back to computing when they are null.
+    #
+    # **Null means "we do not know" and zero means "nothing was charged"**, and
+    # the two are not interchangeable: null is an aggregator whose rate nobody
+    # has given us yet, and it makes the order's net null rather than flattering
+    # it. Zero is a cash order at the counter, where no processor was involved.
+
+    #: The marketplace's cut, VAT included, on an aggregator order. Null on
+    #: everything the website takes directly — there is no marketplace — and on
+    #: an aggregator whose `couriers.commission_percent` is still unset.
+    aggregator_fee: Mapped[Any | None] = mapped_column(Numeric(10, 2), nullable=True)
+
+    #: What taking the money cost, VAT included — the card processor's fee on a
+    #: website order, the marketplace's payment fee on an aggregator one.
+    #:
+    #: Deliberately one column for both. They are the same idea billed by
+    #: different people, they net off the same order the same way, and the admin
+    #: has always shown them on one line called "Payment processing". Two
+    #: columns would mean every reader remembering to add them up, and one of
+    #: them eventually not.
+    payment_fee: Mapped[Any | None] = mapped_column(Numeric(10, 2), nullable=True)
+
     #: How much of `total` has been sent back to the card.
     #:
     #: Not a boolean, because a partial refund is the normal case: the shop
