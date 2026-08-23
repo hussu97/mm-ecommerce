@@ -21,7 +21,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.api.v1.delivery_zones import BatchResponse, list_batches
+from app.api.v1.delivery_zones.batches import list_batches
+from app.api.v1.delivery_zones.schemas import BatchResponse
 from app.models.delivery_batch import BatchStatusEnum, DeliveryBatch
 
 
