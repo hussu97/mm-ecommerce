@@ -8,6 +8,86 @@
 - Design: dusty mauve (#8a5a64), Playfair Display + Jost, mobile-first, clean minimal
 - ~33 SKUs across 5 categories, delivery across UAE
 
+## Index
+
+71 entries. Each title is written to be the whole lesson, so
+skimming this list is usually enough to know whether the body applies to
+what you are about to do.
+
+| When | Lesson |
+|---|---|
+| 2026-08-18 | [A fix that needs somebody to run it is not a fix](#2026-08-18-a-fix-that-needs-somebody-to-run-it-is-not-a-fix) |
+| 2026-08-18 | [Counting occurrences in rendered HTML counts the framework, not the content](#2026-08-18-counting-occurrences-in-rendered-html-counts-the-framework-not-the-content) |
+| 2026-08-08 | [A sentinel that is an `Enum` will pass an `isinstance(x, Enum)` check](#2026-08-08-a-sentinel-that-is-an-enum-will-pass-an-isinstancex-enum-check) |
+| 2026-08-08 | [Two tables holding one fact are two answers to one question](#2026-08-08-two-tables-holding-one-fact-are-two-answers-to-one-question) |
+| 2026-08-08 | [A predicate that is never true reads exactly like a condition that never happens](#2026-08-08-a-predicate-that-is-never-true-reads-exactly-like-a-condition-that-never-happens) |
+| 2026-08-05 | [A promise is a fact about what was said, not a calculation to repeat](#2026-08-05-a-promise-is-a-fact-about-what-was-said-not-a-calculation-to-repeat) |
+| 2026-08-05 | [Ask what the gate is actually protecting before building around it](#2026-08-05-ask-what-the-gate-is-actually-protecting-before-building-around-it) |
+| 2026-08-05 | [SwiftUI reuses views by structure, so encoding a choice as `if let` on a closure will strand it](#2026-08-05-swiftui-reuses-views-by-structure-so-encoding-a-choice-as-if-let-on-a-closure-will-strand-it) |
+| 2026-08-04 | [A substring search over a whole HTML document is not a test of an attribute](#2026-08-04-a-substring-search-over-a-whole-html-document-is-not-a-test-of-an-attribute) |
+| 2026-08-04 | [`is_pos` is not the channel — a website order is a POS order too](#2026-08-04-is_pos-is-not-the-channel--a-website-order-is-a-pos-order-too) |
+| 2026-08-04 | [Pydantic coerces a MagicMock to `True`, so a bool default in a test fixture asserts nothing](#2026-08-04-pydantic-coerces-a-magicmock-to-true-so-a-bool-default-in-a-test-fixture-asserts-nothing) |
+| 2026-08-04 | [A `translations` column has one shape; check which one before reading it](#2026-08-04-a-translations-column-has-one-shape-check-which-one-before-reading-it) |
+| 2026-08-04 | [Check the branch is current before designing on top of it](#2026-08-04-check-the-branch-is-current-before-designing-on-top-of-it) |
+| 2026-08-05 | [`docker logs` is not the record — and "no request arrived" needs the durable one](#2026-08-05-docker-logs-is-not-the-record--and-no-request-arrived-needs-the-durable-one) |
+| 2026-08-05 | [The four-place secret checklist was missing its fifth place, and the gap is silent](#2026-08-05-the-four-place-secret-checklist-was-missing-its-fifth-place-and-the-gap-is-silent) |
+| 2026-08-04 | [An empty table must never be how a 500 looks](#2026-08-04-an-empty-table-must-never-be-how-a-500-looks) |
+| 2026-08-04 | ["Not found" from the wrong endpoint is not evidence of absence](#2026-08-04-not-found-from-the-wrong-endpoint-is-not-evidence-of-absence) |
+| 2026-08-04 | [A vendor's own timestamp is a claim, not a fact — check it against a clock you trust](#2026-08-04-a-vendors-own-timestamp-is-a-claim-not-a-fact--check-it-against-a-clock-you-trust) |
+| 2026-08-04 | [Do not hang behaviour off an event you have never received](#2026-08-04-do-not-hang-behaviour-off-an-event-you-have-never-received) |
+| 2026-08-04 | [Copying a row means copying every column, not the ones you were thinking about](#2026-08-04-copying-a-row-means-copying-every-column-not-the-ones-you-were-thinking-about) |
+| 2026-08-04 | [Read the lessons file before repeating what is in it](#2026-08-04-read-the-lessons-file-before-repeating-what-is-in-it) |
+| 2026-08-03 | [Publishing a delivery map version must publish its schedule too](#2026-08-03-publishing-a-delivery-map-version-must-publish-its-schedule-too) |
+| 2026-08-03 | [Name a zone by the property that drives the behaviour, not by its label](#2026-08-03-name-a-zone-by-the-property-that-drives-the-behaviour-not-by-its-label) |
+| 2026-08-03 | [A quote that becomes a price needs different timeouts and caching](#2026-08-03-a-quote-that-becomes-a-price-needs-different-timeouts-and-caching) |
+| 2026-08-03 | [Treat each operational branch pin as an independently verified record](#2026-08-03-treat-each-operational-branch-pin-as-an-independently-verified-record) |
+| 2026-08-03 | [Confirm a customer-provided Maps place before changing delivery coordinates](#2026-08-03-confirm-a-customer-provided-maps-place-before-changing-delivery-coordinates) |
+| 2026-08-03 | [Maps JS key checks must preserve the browser referrer error](#2026-08-03-maps-js-key-checks-must-preserve-the-browser-referrer-error) |
+| 2026-04-13 | [New env vars must be added to all 4 places](#2026-04-13-new-env-vars-must-be-added-to-all-4-places) |
+| 2026-04-14 | [i18n seed runs automatically on API startup — no manual step needed](#2026-04-14-i18n-seed-runs-automatically-on-api-startup--no-manual-step-needed) |
+| 2026-04-14 | [Stock-product items with stock_quantity=0 must be blocked at every layer](#2026-04-14-stock-product-items-with-stock_quantity0-must-be-blocked-at-every-layer) |
+| 2026-06-05 | [Admin product "Order" is display_order, not stock_quantity](#2026-06-05-admin-product-order-is-display_order-not-stock_quantity) |
+| 2026-06-06 | [Never commit admin passwords or password hashes](#2026-06-06-never-commit-admin-passwords-or-password-hashes) |
+| 2026-03-05 | [Python: Don't use passlib with Python 3.14+](#2026-03-05-python-dont-use-passlib-with-python-314) |
+| 2026-08-05 | [Check the read path before concluding the write path is broken](#2026-08-05-check-the-read-path-before-concluding-the-write-path-is-broken) |
+| 2026-08-05 | [Verify third-party client behaviour against the served file](#2026-08-05-verify-third-party-client-behaviour-against-the-served-file) |
+| 2026-08-05 | [A swallowed error is a wrong answer with a straight face](#2026-08-05-a-swallowed-error-is-a-wrong-answer-with-a-straight-face) |
+| 2026-08-06 | [A live value equal to the default proves nothing about the environment](#2026-08-06-a-live-value-equal-to-the-default-proves-nothing-about-the-environment) |
+| 2026-08-08 | [A speedup measured on this laptop is not a speedup in CI](#2026-08-08-a-speedup-measured-on-this-laptop-is-not-a-speedup-in-ci) |
+| — | [Check the machine-readable surfaces when a commercial fact changes](#check-the-machine-readable-surfaces-when-a-commercial-fact-changes) |
+| — | [Do not commit into another session's working tree without asking](#do-not-commit-into-another-sessions-working-tree-without-asking) |
+| — | [A migration is not verified until a real Postgres has run it](#a-migration-is-not-verified-until-a-real-postgres-has-run-it) |
+| — | [Price the suspect before rewriting it](#price-the-suspect-before-rewriting-it) |
+| — | [Put the guard in front of the step that spends money](#put-the-guard-in-front-of-the-step-that-spends-money) |
+| — | [A third-party tag can be present, reachable, and still dead](#a-third-party-tag-can-be-present-reachable-and-still-dead) |
+| — | [A response model is a place a 500 hides](#a-response-model-is-a-place-a-500-hides) |
+| — | [Don't narrate the machinery, and don't style waiting as failure](#dont-narrate-the-machinery-and-dont-style-waiting-as-failure) |
+| — | [An empty state is a claim, and it needs the data to make it](#an-empty-state-is-a-claim-and-it-needs-the-data-to-make-it) |
+| — | [A permission that no route checks is a lie told to whoever ticks the box](#a-permission-that-no-route-checks-is-a-lie-told-to-whoever-ticks-the-box) |
+| — | [Two statuses can be legal neighbours and still be a hole in the flow](#two-statuses-can-be-legal-neighbours-and-still-be-a-hole-in-the-flow) |
+| — | [An idempotency key is a promise about the payload, not just the endpoint](#an-idempotency-key-is-a-promise-about-the-payload-not-just-the-endpoint) |
+| — | [A guarded migration that matches nothing looks exactly like one that worked](#a-guarded-migration-that-matches-nothing-looks-exactly-like-one-that-worked) |
+| — | [A migration cannot change a UI string, and the answer was already in this file](#a-migration-cannot-change-a-ui-string-and-the-answer-was-already-in-this-file) |
+| — | [A test double that autoflushes hides every read-your-own-writes bug](#a-test-double-that-autoflushes-hides-every-read-your-own-writes-bug) |
+| — | [Owning a transition is not the same as receiving one](#owning-a-transition-is-not-the-same-as-receiving-one) |
+| — | [A status that refuses everything is a decision hiding inside a bug fix](#a-status-that-refuses-everything-is-a-decision-hiding-inside-a-bug-fix) |
+| — | [A dedupe that never matches is indistinguishable from no dedupe at all](#a-dedupe-that-never-matches-is-indistinguishable-from-no-dedupe-at-all) |
+| — | [Copying a row means copying every column, and the compensating code may be dead](#copying-a-row-means-copying-every-column-and-the-compensating-code-may-be-dead) |
+| — | [The compensating block is the first place to look, and the last place anyone does](#the-compensating-block-is-the-first-place-to-look-and-the-last-place-anyone-does) |
+| — | [Do not read the outcome of your call out of a field your call may not have written](#do-not-read-the-outcome-of-your-call-out-of-a-field-your-call-may-not-have-written) |
+| — | [One booking id, five customers](#one-booking-id-five-customers) |
+| — | [A guard that fires on a set of one was asking the wrong question](#a-guard-that-fires-on-a-set-of-one-was-asking-the-wrong-question) |
+| — | [A courier gate that only the dispatcher knows about is not a gate](#a-courier-gate-that-only-the-dispatcher-knows-about-is-not-a-gate) |
+| — | [Verify a map re-split by sweeping it, not by listing landmarks](#verify-a-map-re-split-by-sweeping-it-not-by-listing-landmarks) |
+| — | [A column that means "a human did this" must not be written by a machine](#a-column-that-means-a-human-did-this-must-not-be-written-by-a-machine) |
+| — | ["No-op" is a claim about every screen, not about the routing](#no-op-is-a-claim-about-every-screen-not-about-the-routing) |
+| — | [A broken link to a page that never existed is two different bugs](#a-broken-link-to-a-page-that-never-existed-is-two-different-bugs) |
+| 2026-08-21 | [A backup that has never been restored is a hypothesis](#a-backup-that-has-never-been-restored-is-a-hypothesis-2026-08-21) |
+| 2026-08-22 | [Do not mint a secret that the other side already holds](#do-not-mint-a-secret-that-the-other-side-already-holds-2026-08-22) |
+| 2026-08-23 | [Look for the screen before building the screen](#look-for-the-screen-before-building-the-screen-2026-08-23) |
+| 2026-08-23 | [Prominence is a proposal, not a conclusion](#prominence-is-a-proposal-not-a-conclusion-2026-08-23) |
+| 2026-08-23 | [Ask what a null means before you let it reach money](#ask-what-a-null-means-before-you-let-it-reach-money-2026-08-23) |
+
 ## Lessons
 
 ### [2026-08-18] A fix that needs somebody to run it is not a fix
@@ -347,7 +427,7 @@
   there looking like an improvement — the projection in the commit message
   would have been the only record, and it was wrong.
 
-## Check the machine-readable surfaces when a commercial fact changes
+### Check the machine-readable surfaces when a commercial fact changes
 
 Asked to fix a coupon's UX, I first treated "SEO/GEO" as the homepage. The real
 damage was in files no human opens: `llms.txt`, `llms-full.txt` and
@@ -363,7 +443,7 @@ component that renders it. If more than one surface states a commercial fact,
 they must all read it from one function (`lib/offer.ts` is the pattern), because
 the ones that drift are always the ones nobody looks at.
 
-## Do not commit into another session's working tree without asking
+### Do not commit into another session's working tree without asking
 
 The session-start git status said "clean"; by the time I ran `git diff`, six
 files I had edited also carried an unrelated in-flight feature. That snapshot is
@@ -371,7 +451,7 @@ taken once and never refreshes. **Rule:** run `git status` immediately before
 staging, and if unrelated work is present, surface it and let the user decide
 rather than sweeping it into a commit under their name.
 
-## A migration is not verified until a real Postgres has run it
+### A migration is not verified until a real Postgres has run it
 
 `092` was written with the revision id `092_cart_addons_and_personalisation`.
 `alembic_version.version_num` is `varchar(32)`; that string is 35 characters. On
@@ -390,7 +470,7 @@ throwaway Postgres, and assert the columns and indexes are present after each
 upgrade and gone after the downgrade. Keep revision ids **≤32 characters** —
 prefer `NNN_two_or_three_words` and drop the conjunctions.
 
-## Price the suspect before rewriting it
+### Price the suspect before rewriting it
 
 A $4.04 charge was reported as phone verification. I accepted the attribution,
 divided by the $0.09 UAE SMS rate, wrote "roughly 45 billed messages" into a
@@ -407,7 +487,7 @@ method, settles it in one query. Check which projects share the billing account.
 Never state a derived volume ("~45 messages") as if it were observed, and never
 write a number into a durable file that a single query could have confirmed.
 
-## Put the guard in front of the step that spends money
+### Put the guard in front of the step that spends money
 
 Verification code had no cooldown, no ceiling, and never asked whether the number
 was already proved. Little had been spent through it — but the exposure was real
@@ -437,7 +517,7 @@ over-clicking — anything the vendor enforces (region policy, App Check, fraud
 scoring) is a console setting, so "the code is fixed" is half an answer and the
 console half needs naming explicitly to whoever owns the account.
 
-## A third-party tag can be present, reachable, and still dead
+### A third-party tag can be present, reachable, and still dead
 
 Microsoft Clarity shipped as `<Script src="https://www.clarity.ms/tag/<id>">`.
 Everything an inspection would check was true: the tag was in the DOM, the
@@ -462,7 +542,7 @@ list), never by the presence of the script element. And when a minified
 `X is not a function` appears in a console, chase it: it is the only symptom this
 class of failure produces.
 
-## A response model is a place a 500 hides
+### A response model is a place a 500 hides
 
 `POST /delivery/quote` returned 500 for every call made before an address pin
 existed — which is the checkout's *first* call, on every session. The handler was
@@ -481,7 +561,7 @@ because the handler returns a `dict`. And write the regression test through the
 response model, not the service dict: a test asserting on the dict passes while
 production 500s, which is exactly what the existing delivery tests did.
 
-## Don't narrate the machinery, and don't style waiting as failure
+### Don't narrate the machinery, and don't style waiting as failure
 
 I added a Turnstile gate to the "Send code" button and, when the token had not
 arrived yet, refused the click and printed **"Still running the security check —
@@ -503,7 +583,7 @@ a comment or a log. Waiting states belong on the control that was pressed, never
 in the error slot — reserve that for something the reader can act on. This
 applies to loading, retrying and rate-limiting alike.
 
-## An empty state is a claim, and it needs the data to make it
+### An empty state is a claim, and it needs the data to make it
 
 The cart page rendered "YOUR CART IS EMPTY" on its very first paint. The guard
 was `!isLoading && items.length === 0`, and `isLoading` is the *mutation* flag —
@@ -521,7 +601,7 @@ its condition — absence of data is never on its own evidence of absence. When 
 context exposes both a mutation flag and a loaded flag, check which question each
 answers before reaching for one.
 
-## A permission that no route checks is a lie told to whoever ticks the box
+### A permission that no route checks is a lie told to whoever ticks the box
 
 The role catalogue was the Foodics authority matrix copied whole: 108 slugs, 61
 of which no `require(...)`, `ensure(...)` or `.can(...)` in the codebase ever
@@ -556,7 +636,7 @@ the deliverable, not a side note. It belongs next to the catalogue, duplicated
 into the migration that applies it (a migration must keep describing the
 database as it was), and compared by a test so the two copies cannot drift.
 
-## Two statuses can be legal neighbours and still be a hole in the flow
+### Two statuses can be legal neighbours and still be a hole in the flow
 
 `arrived_at_pos` was introduced so an order reaches the register when the van is
 booked rather than when the money lands. `confirmed → packed` stayed in
@@ -587,7 +667,7 @@ write that updates one to update the other in the same call
 (`cancel_assignment`), or the correction waits for whatever sweep happens to
 notice — hours later, if at all.
 
-## An idempotency key is a promise about the payload, not just the endpoint
+### An idempotency key is a promise about the payload, not just the endpoint
 
 `Session.create` was called with `idempotency_key=f"sess_{order_number}"` —
 correct, and the behaviour we want: one order, one payment page, whichever tab
@@ -618,7 +698,7 @@ duplicate that nothing can pay twice.
 
 ---
 
-## A guarded migration that matches nothing looks exactly like one that worked
+### A guarded migration that matches nothing looks exactly like one that worked
 
 **2026-08-21.** `118` rewrote the free-delivery figure across `cms_pages` and I
 reported it done. It was not: the same claim also sat in `ui_translations` as
@@ -658,7 +738,7 @@ and the console has edited rows since.
 
 ---
 
-## A migration cannot change a UI string, and the answer was already in this file
+### A migration cannot change a UI string, and the answer was already in this file
 
 **2026-08-21.** Two migrations — `121` then `122` — went to production to change
 one line of `ui_translations`. Both applied. Both deployed green. Neither
@@ -700,7 +780,7 @@ not by measuring the reads.
 
 ---
 
-## A test double that autoflushes hides every read-your-own-writes bug
+### A test double that autoflushes hides every read-your-own-writes bug
 
 **2026-08-21.** MM-20260821-001 dispatched correctly at its 15:00 window — batch
 sent, register told, Lalamove booked — and then lost its driver entirely. The
@@ -749,7 +829,7 @@ the value the bug destroys is not a backstop.
 
 ---
 
-## Owning a transition is not the same as receiving one
+### Owning a transition is not the same as receiving one
 
 **2026-08-21, following the driver-ledger bug above.** Closing that one exposed
 two more of the same shape, and the shape is the lesson.
@@ -798,7 +878,7 @@ belongs in a test that runs the real handler — which is where it now is.
 
 ---
 
-## A status that refuses everything is a decision hiding inside a bug fix
+### A status that refuses everything is a decision hiding inside a bug fix
 
 **2026-08-21.** `undelivered` was closed to every transition but `refunded` and
 `disputed`, and reaching it refunded the order automatically. The reasoning in
@@ -839,7 +919,7 @@ saying somebody will ring to arrange another attempt. **Deleting the cause of a
 value does not delete the branch that renders its absence.** Grep for every
 reader of a field you have just stopped writing.
 
-## A dedupe that never matches is indistinguishable from no dedupe at all
+### A dedupe that never matches is indistinguishable from no dedupe at all
 
 Same change. `already_sent()` asked `email_logs` for `template == "order_packed.html"`
 so a reassignment would not re-send an email the customer already had. The column
@@ -858,7 +938,7 @@ at the write are four lines apart and say different things.
 seed the row it should match, then assert nothing went. A test that only proves
 the first send works cannot tell a working dedupe from an absent one.
 
-## Copying a row means copying every column, and the compensating code may be dead
+### Copying a row means copying every column, and the compensating code may be dead
 
 `create_version` clones every polygon into a draft map. Its copy list carries
 name, fee, pricing mode, both free-delivery fields, provider, branch, geometry,
@@ -885,7 +965,7 @@ hard way.
 a copy path has a compensating block, check its filter actually matches — pass it
 a real id and count the rows — before trusting that it covers anything.
 
-## The compensating block is the first place to look, and the last place anyone does
+### The compensating block is the first place to look, and the last place anyone does
 
 **2026-08-21, the follow-up to the copy-every-column lesson above.** Fixing
 `create_version` turned up more than the missing `batch_group_id`.
@@ -920,7 +1000,7 @@ and when you choose to degrade rather than refuse, check the operator can *see*
 what was dropped — a silent detach is the same class of bug as the silent drop
 being fixed.
 
-## Do not read the outcome of your call out of a field your call may not have written
+### Do not read the outcome of your call out of a field your call may not have written
 
 **2026-08-21.** MM-20260821-001 could not be moved off Lalamove. The dialog said
 both things at once, a few pixels apart:
@@ -953,7 +1033,7 @@ before calling so the check afterwards can only be about this attempt.
 returns are the contract too. `cancel_delivery`'s docstring described what it
 does when it cancels; nothing said what it leaves behind when it does not.
 
-## One booking id, five customers
+### One booking id, five customers
 
 Same change, found while asking a related question: what happens to the *batch*
 when one order leaves it.
@@ -981,7 +1061,7 @@ everything" but "leave the run alone and take this order off it". The van keeps 
 stop and arrives to find nothing, which costs one wasted drop; the alternative
 cost four deliveries.
 
-## A guard that fires on a set of one was asking the wrong question
+### A guard that fires on a set of one was asking the wrong question
 
 **2026-08-21, hours after the guard above shipped.** The refusal meant to stop
 one order cancelling a shared van fired on a run carrying a single order, and
@@ -1015,7 +1095,7 @@ a parcel that has gone) and let the person decide.
 
 ---
 
-## A courier gate that only the dispatcher knows about is not a gate
+### A courier gate that only the dispatcher knows about is not a gate
 
 *Slider integration, August 2026.*
 
@@ -1057,7 +1137,7 @@ migrations, not with a comment. `test_slider_rollout_is_a_no_op.py` asserts the
 group survived and the promise did not get shorter; both would otherwise be
 invisible until a customer complained.
 
-## Verify a map re-split by sweeping it, not by listing landmarks
+### Verify a map re-split by sweeping it, not by listing landmarks
 
 Every band inherits its parent's fee by convention, and a convention is not a
 guarantee. `scripts/compare_delivery_maps.py` resolves both maps over a 98,000
@@ -1070,7 +1150,7 @@ the places nobody did, which is where a sliver hides.
 
 ---
 
-## A column that means "a human did this" must not be written by a machine
+### A column that means "a human did this" must not be written by a machine
 
 *Slider integration QA, August 2026.*
 
@@ -1100,7 +1180,7 @@ nothing — the zone says one courier, the row says another, and a `logger.info`
 explains it. That is exactly what the noon Send fallback has always done, and
 the convention was sitting four lines below the code that broke it.
 
-## "No-op" is a claim about every screen, not about the routing
+### "No-op" is a claim about every screen, not about the routing
 
 The same review found two more of these, and neither is a courier call:
 
@@ -1120,7 +1200,7 @@ supply it. A parameter with a `None` default is a rule that quietly stops
 applying, and the caller that cannot fill it is usually the one that matters —
 here, the one the customer is looking at.
 
-## A broken link to a page that never existed is two different bugs
+### A broken link to a page that never existed is two different bugs
 
 Bing reported `/terms` and `/en/terms` as broken redirects. I traced it
 correctly — the signup page linked to `/terms`, the proxy 307'd it to the
@@ -1150,7 +1230,7 @@ database — the API suite mocks it, and the migration file imports fine.
 
 ---
 
-## A backup that has never been restored is a hypothesis (2026-08-21)
+### A backup that has never been restored is a hypothesis (2026-08-21)
 
 Asked to audit VM resources and stale caches, the interesting finding was not
 disk at all. It was that the shop had been live five months with no offsite copy
@@ -1186,7 +1266,7 @@ folded scalar. A `#` line indented inside it is not a comment — it becomes an
 argument to postgres and the container will not start. Put the rationale above
 the `command:` key.
 
-## Do not mint a secret that the other side already holds (2026-08-22)
+### Do not mint a secret that the other side already holds (2026-08-22)
 
 Setting up the local Slider webhook loop, I found `SLIDER_WEBHOOK_TOKEN` and
 `SLIDER_STAGING_WEBHOOK_TOKEN` already present in `apps/api/.env` and replaced
@@ -1210,7 +1290,7 @@ opposite is wanted, so the sandbox webhook has to be pointed at the live route
 for the DB to move. Reading the route's docstring before choosing a URL saved
 an afternoon of "the webhook arrives and nothing happens".
 
-## Look for the screen before building the screen (2026-08-23)
+### Look for the screen before building the screen (2026-08-23)
 
 Asked to make aggregator commission rates editable, I wrote a whole
 `app/api/v1/couriers.py` — router, response model, update model, permission
@@ -1232,7 +1312,7 @@ call. And when the frontend already has a write type for a thing, the write
 endpoint exists; find it. Extending the endpoint that is already on a screen is
 also strictly less work than a new one nobody can reach yet.
 
-## Prominence is a proposal, not a conclusion (2026-08-23)
+### Prominence is a proposal, not a conclusion (2026-08-23)
 
 Asked to put the aggregator's name on the printout "bold + first line", I built a
 double-height channel banner above the logo on both the receipt and the docket,
@@ -1253,7 +1333,7 @@ bug; a new row shouting is a redesign, and the shop did not ask for one. Show th
 mock *before* writing the tests, not after — the mock is what made it obvious in
 about four seconds.
 
-## Ask what a null means before you let it reach money (2026-08-23)
+### Ask what a null means before you let it reach money (2026-08-23)
 
 Building marketplace commissions, the pressure at every layer was to collapse
 "nobody has told us this rate" into zero: a `coalesce(fee, 0)` in the SQL, a

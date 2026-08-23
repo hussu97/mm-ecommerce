@@ -1,5 +1,58 @@
 # Production Deployment Guide — Melting Moments Ecommerce
 
+## Contents
+
+Step 13 is 680 lines — over half this file — and 13c is the secrets table
+the five-place checklist in `CLAUDE.md` points at. Jump straight there.
+
+- [Architecture](#architecture)
+- [Monthly Cost Estimate](#monthly-cost-estimate)
+- [Prerequisites](#prerequisites)
+- [Step 1: GCP Project + Billing](#step-1-gcp-project--billing)
+- [Step 2: Create Compute Engine VM](#step-2-create-compute-engine-vm)
+- [Step 3: Configure GCP Firewall Rules](#step-3-configure-gcp-firewall-rules)
+- [Step 4: SSH into VM, Install Dependencies](#step-4-ssh-into-vm-install-dependencies)
+- [Step 5: Clone Repo + Configure Environment](#step-5-clone-repo--configure-environment)
+- [Step 6: Launch Backend Services](#step-6-launch-backend-services)
+- [Step 7: Issue SSL Certificates](#step-7-issue-ssl-certificates)
+- [Step 8: GCP Cloud Storage Bucket (offsite backups)](#step-8-gcp-cloud-storage-bucket-offsite-backups)
+- [Step 8b: Boot-Disk Snapshot Schedule](#step-8b-boot-disk-snapshot-schedule)
+- [Step 9: Schedule Automated Backups (Cron)](#step-9-schedule-automated-backups-cron)
+- [Step 10: Vercel — Web Storefront](#step-10-vercel--web-storefront)
+- [Step 11: Vercel — Admin Panel](#step-11-vercel--admin-panel)
+- [Step 11b: Cloudflare R2 (Media Storage)](#step-11b-cloudflare-r2-media-storage)
+- [Step 11c: Sentry Error Monitoring](#step-11c-sentry-error-monitoring)
+- [Step 12: DNS Configuration](#step-12-dns-configuration)
+- [Step 13: SSH Key Setup + GitHub Actions Secrets](#step-13-ssh-key-setup--github-actions-secrets)
+  - [13a: Generate a dedicated deploy key](#13a-generate-a-dedicated-deploy-key)
+  - [13b: Add the public key to GCP VM metadata](#13b-add-the-public-key-to-gcp-vm-metadata)
+  - [13c: Add secrets to GitHub Actions](#13c-add-secrets-to-github-actions)
+    - [SSH connection](#ssh-connection)
+    - [App](#app)
+    - [Database](#database)
+    - [Security](#security)
+    - [CORS & allowed hosts](#cors--allowed-hosts)
+    - [pos.meltingmomentscakes.com](#posmeltingmomentscakescom)
+    - [Stripe](#stripe)
+    - [Ziina (second card gateway — **not live**)](#ziina-second-card-gateway--not-live)
+    - [Email (Resend)](#email-resend)
+    - [Cloudflare R2 (media storage)](#cloudflare-r2-media-storage)
+    - [BNPL — Tabby](#bnpl--tabby)
+    - [BNPL — Tamara](#bnpl--tamara)
+    - [Courier — Lalamove](#courier--lalamove)
+    - [Cloudflare Turnstile — the bot check on signup](#cloudflare-turnstile--the-bot-check-on-signup)
+    - [Courier — noon Send (Rider-on-Demand)](#courier--noon-send-rider-on-demand)
+    - [GrubOps (aggregator out-of-stock sync)](#grubops-aggregator-out-of-stock-sync)
+    - [Slider (the third courier)](#slider-the-third-courier)
+    - [Apple Push — waking the POS registers](#apple-push--waking-the-pos-registers)
+    - [Frontend URLs (used in email templates & CORS)](#frontend-urls-used-in-email-templates--cors)
+    - [Backups & Observability](#backups--observability)
+    - [Log retention](#log-retention)
+    - [Timeouts and tuning](#timeouts-and-tuning)
+    - [Analytics (optional — leave empty to disable)](#analytics-optional--leave-empty-to-disable)
+- [Step 14: Post-Deployment Smoke Test](#step-14-post-deployment-smoke-test)
+- [Ongoing Maintenance](#ongoing-maintenance)
+
 ## Architecture
 
 ```
@@ -161,9 +214,10 @@ docker compose -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.prod.yml ps
 
 # Run migrations + seed admin user
-# If you get "Multiple head revisions" error, run the two commands below first:
-#   docker compose -f docker-compose.prod.yml exec api alembic upgrade heads
-#   docker compose -f docker-compose.prod.yml exec api alembic merge heads -m "merge_heads"
+# The chain is linear and has exactly one head — `test_migration_chain.py`
+# asserts it on every PR. "Multiple head revisions" here means two migrations
+# were written against the same parent and one of them needs re-parenting; do
+# not `alembic merge heads`, which would make the branch permanent.
 docker compose -f docker-compose.prod.yml exec api alembic upgrade head
 docker compose -f docker-compose.prod.yml exec api python -m scripts.seed_db
 ```
@@ -1247,7 +1301,7 @@ curl https://api.meltingmomentscakes.com/health
 
 # All backend containers healthy
 ssh <VM> "docker compose -f /opt/melting-moments-cakes/docker-compose.prod.yml ps"
-# Expected services: redis, postgres, api, nginx, certbot — all Up
+# Expected services: redis, postgres, api, pos-api, nginx, certbot — all Up
 
 # Backup script
 ssh <VM> "DEPLOY_DIR=/opt/melting-moments-cakes /opt/melting-moments-cakes/scripts/backup-db.sh"

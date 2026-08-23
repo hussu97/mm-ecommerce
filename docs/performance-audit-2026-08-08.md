@@ -43,7 +43,7 @@ everything, on demand, from the wrong continent.**
 `next build` marks **all 27 page routes `ƒ` (dynamic)**. Not one is static or
 ISR, including `/about`, `/faq`, `/privacy` and `/contact`, which are pure copy.
 
-The cause is one line — [`app/layout.tsx:69`](apps/web/app/layout.tsx#L69):
+The cause is one line — [`app/[locale]/layout.tsx:69`](../apps/web/app/[locale]/layout.tsx#L69):
 
 ```ts
 const cookieStore = await cookies();
@@ -53,11 +53,11 @@ const locale = cookieStore.get('mm_locale')?.value ?? 'en';
 Reading `cookies()` in the **root** layout opts the entire application tree out
 of static rendering. And it is reading something it already knows: the locale is
 in the URL as `[locale]`, and the inline bootstrap script at
-[`app/layout.tsx:91`](apps/web/app/layout.tsx#L91) plus
+[`app/[locale]/layout.tsx:91`](../apps/web/app/[locale]/layout.tsx#L91) plus
 `TranslationProvider`'s `useEffect` *both* already set `lang`/`dir` on the
 client. It is the third mechanism for the same job, and it is the expensive one.
 
-Compounding it, [`proxy.ts:74`](apps/web/proxy.ts#L74) sets `mm_locale` on the
+Compounding it, [`proxy.ts:74`](../apps/web/proxy.ts#L74) sets `mm_locale` on the
 response for **every** locale-prefixed request. A `Set-Cookie` on an HTML
 response makes it uncacheable by any shared cache even if Next were willing.
 
@@ -72,7 +72,7 @@ Measured in the browser via `PerformanceObserver`:
 | Cumulative origin time | **11.8 s** |
 | Average per prefetch | 407 ms |
 
-Source: [`components/layout/CategoryNav.tsx:43`](apps/web/components/layout/CategoryNav.tsx#L43)
+Source: [`components/layout/CategoryNav.tsx:43`](../apps/web/components/layout/CategoryNav.tsx#L43)
 and `:63` set `prefetch={true}` on every category link. `CategoryNav` lives in
 the **locale layout**, so it is on every page of the site. `prefetch={true}`
 forces a *full* RSC payload rather than Next's default partial prefetch — and
@@ -103,14 +103,14 @@ Counted from the API access log for one render of
 Two distinct bugs:
 
 1. **`generateMetadata` re-fetches the product list and throws it away.**
-   [`[category]/page.tsx:57`](apps/web/app/[locale]/[category]/page.tsx#L57)
+   [`[category]/page.tsx:57`](../apps/web/app/[locale]/[category]/page.tsx#L57)
    calls `getCategoryData(slug)` — which fetches *both* the category *and* a full
    page of products — but uses only `data.category`. On any page ≠ 1 or any
    non-default sort the URLs differ from the render pass, so nothing dedupes and
    the extra product query is a genuine round trip to Doha for nothing.
 
 2. **`translations` is fetched three times per render.**
-   [`lib/i18n/server.ts:23`](apps/web/lib/i18n/server.ts#L23) uses
+   [`lib/i18n/server.ts:23`](../apps/web/lib/i18n/server.ts#L23) uses
    `cache: 'no-store'`, so it is refetched in the metadata pass, the layout, and
    the page. At ~200 ms iad1↔Doha, that is ~400 ms of pure duplication.
 
@@ -122,11 +122,11 @@ Two distinct bugs:
 ### 2.4 🟠 The API is on HTTP/1.1 with no upstream keepalive
 
 `curl` reports `ver=1.1` against `api.meltingmomentscakes.com`.
-[`nginx/conf.d/ssl.conf`](nginx/conf.d/ssl.conf) has `listen 443 ssl;` with no
+[`nginx/conf.d/ssl.conf`](../nginx/conf.d/ssl.conf) has `listen 443 ssl;` with no
 `http2`. So every concurrent API call from a Vercel function needs its own TCP +
 TLS handshake — across an ocean.
 
-Worse, [`nginx/nginx.conf:54`](nginx/nginx.conf#L54) sets
+Worse, [`nginx/nginx.conf:54`](../nginx/nginx.conf#L54) sets
 `proxy_set_header Connection 'upgrade'` **globally**, and there is no `upstream`
 block with `keepalive`. That means nginx opens a fresh connection to uvicorn on
 *every single request*. The `Connection: upgrade` header is only meant for
@@ -146,11 +146,11 @@ Contributors found:
   `AddToCartControl`, `analytics` and the toast system. The modifier modal ships
   with every grid page even though it only opens on tap.
 - **`LocationPicker` (Google Maps, `@vis.gl/react-google-maps`) is statically
-  imported** by [`account/addresses/page.tsx:13`](apps/web/app/[locale]/account/addresses/page.tsx#L13).
+  imported** by [`account/addresses/page.tsx:13`](../apps/web/app/[locale]/account/addresses/page.tsx#L13).
   Checkout does it correctly with `next/dynamic` —
-  [`AddressModal.tsx:15`](apps/web/app/[locale]/checkout/components/AddressModal.tsx#L15) —
+  [`AddressModal.tsx:15`](../apps/web/app/[locale]/checkout/components/AddressModal.tsx#L15) —
   the account page does not.
-- **The whole checkout page is `'use client'`** ([`checkout/page.tsx:1`](apps/web/app/[locale]/checkout/page.tsx#L1)),
+- **The whole checkout page is `'use client'`** ([`checkout/page.tsx:1`](../apps/web/app/[locale]/checkout/page.tsx#L1)),
   so the highest-value screen in the funnel ships as an empty shell and fetches
   rates, branches and addresses only after hydration.
 - Firebase *is* already correctly lazy (`await import('firebase/auth')`) — no
@@ -171,13 +171,13 @@ between them. Mapping the built `@font-face` blocks to files on disk:
 **64 KB of Arabic fonts are preloaded on every English page**, competing with the
 LCP image for bandwidth on a mobile connection. Both `variable` class names are
 applied unconditionally to `<html>` in
-[`app/layout.tsx:74`](apps/web/app/layout.tsx#L74), so the preloads are emitted
+[`app/[locale]/layout.tsx:74`](../apps/web/app/[locale]/layout.tsx#L74), so the preloads are emitted
 regardless of locale. The CSS carries **64 `@font-face` blocks / 22 KB** for the
 same reason, inside a **97 KB render-blocking stylesheet**.
 
 ### 2.7 🟠 The rate limit will bite before the hardware does
 
-[`nginx/nginx.conf:44`](nginx/nginx.conf#L44) sets
+[`nginx/nginx.conf:44`](../nginx/nginx.conf#L44) sets
 `limit_req_zone $binary_remote_addr zone=api_limit rate=10r/s`, applied with
 `burst=20`. The key is the **client IP** — but all server-side rendering traffic
 arrives from a small pool of Vercel egress IPs in one region. Every SSR fetch
@@ -208,7 +208,7 @@ slide is `loading="eager"`, so a 3-slide CMS hero pulls three full-bleed banners
 
 46 files use `<span className="material-icons">`, across **35 distinct glyphs**.
 The stylesheet is injected by a script with `strategy="afterInteractive"`
-([`app/layout.tsx:100`](apps/web/app/layout.tsx#L100)), so:
+([`app/[locale]/layout.tsx:100`](../apps/web/app/[locale]/layout.tsx#L100)), so:
 
 - icons are invisible or show as literal text until hydration completes,
 - it costs a third-party DNS + TLS + two round trips to `fonts.googleapis.com`
@@ -231,7 +231,7 @@ Client waterfall from the live site:
 941 ms  POST /auth/refresh → (fails for a guest)
 ```
 
-[`lib/api.ts:76`](apps/web/lib/api.ts#L76) retries every 401 through
+[`lib/api.ts:76`](../apps/web/lib/api.ts#L76) retries every 401 through
 `refreshAccessToken()`. For an anonymous visitor — most first-time traffic —
 that is two guaranteed-useless round trips on every page load. A cheap check for
 the presence of a session cookie before calling `me()` removes both.
@@ -281,7 +281,7 @@ the win is.
    One project setting. Removes a ~200 ms trans-Atlantic round trip from *every*
    API call on *every* render. Biggest single win available, zero code.
 
-2. **Make the shell static.** Move `<html>`/`<body>` from `app/layout.tsx` into
+2. **Make the shell static.** Move `<html>`/`<body>` into
    `app/[locale]/layout.tsx` so locale comes from `params`, not `cookies()`.
    Drop the redundant `Set-Cookie` from `proxy.ts` on already-prefixed paths.
    Then give the content routes `export const revalidate` (`/about`, `/faq`,

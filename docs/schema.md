@@ -1,8 +1,15 @@
-# Database Schema — ER Diagram
+# Core Storefront Schema — ER Diagram
 
 Melting Moments Ecommerce — PostgreSQL 16
 
-Generated from SQLAlchemy models in `apps/api/app/models/`.
+**Scope: the thirteen storefront tables, hand-drawn.** Not generated, despite
+what this line used to claim, and not the whole schema — `app/models/` defines
+102 tables. Everything POS, inventory, delivery, courier, GrubOps, tax, till,
+branch and CMS is absent.
+
+That makes it useful for the customer-facing path and misleading for anything
+else, so: for a table not drawn below, read the model. `app/models/` is one file
+per domain and each carries the reasoning the diagram cannot.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
