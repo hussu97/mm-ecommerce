@@ -3,7 +3,7 @@ One precision and one rounding mode for every figure the shop quotes.
 
 There were eight private helpers under five names doing this, and they did not
 agree. `pos_pricing.money`, `order_economics._round` and `order_fees._round`
-rounded half away from zero; `pos_reports_service._q`, `till_service._q` and
+rounded half away from zero; `pos_reports_service._q` (now `pos_reports`), `till_service._q` and
 `grubops_orders_service._q2` called `.quantize()` with no `rounding=` and got
 Python's default, which is bankers' rounding — half to even.
 

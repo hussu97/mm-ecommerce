@@ -22,7 +22,8 @@ from app.main import app as web_app
 from app.models.base import utcnow
 from app.models.order import Order
 from app.pos_main import app as pos_app
-from app.services.pos import pos_reports_service
+from app.services.pos import pos_reports
+from app.services.pos.pos_reports import _base as pos_reports_base
 
 
 def _paths(app) -> set[str]:
@@ -287,7 +288,7 @@ def test_offline_is_decided_by_the_same_threshold_as_the_branches_dashboard():
 
 
 def test_device_is_a_supported_sales_dimension():
-    assert "device" in pos_reports_service.SUPPORTED_DIMENSIONS
+    assert "device" in pos_reports.SUPPORTED_DIMENSIONS
 
 
 def test_device_groups_by_the_order_column_that_records_the_terminal():
@@ -296,7 +297,7 @@ def test_device_groups_by_the_order_column_that_records_the_terminal():
     that shared a shift, which is exactly the comparison this dimension exists
     to make.
     """
-    assert pos_reports_service._ORDER_DIMENSIONS["device"] is Order.device_id
+    assert pos_reports_base._ORDER_DIMENSIONS["device"] is Order.device_id
 
 
 @pytest.mark.asyncio
@@ -328,7 +329,7 @@ async def test_device_rows_come_back_named_rather_than_as_uuids():
         async def execute(_stmt):
             return _Result()
 
-    labels = await pos_reports_service._labels_for(
+    labels = await pos_reports_base._labels_for(
         _DB(), "device", [(front.id,), (drive.id,)]
     )
 
@@ -348,7 +349,7 @@ def test_the_tills_report_names_the_machine_a_shift_ran_on():
     """
     import inspect
 
-    body = inspect.getsource(pos_reports_service.tills_report)
+    body = inspect.getsource(pos_reports.tills_report)
     assert '"device_id"' in body
     assert '"device_name"' in body
 

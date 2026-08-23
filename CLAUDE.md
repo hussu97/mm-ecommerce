@@ -73,12 +73,18 @@ migrate it opportunistically.
     every quantisation goes through `app/core/money.py` — one precision and one
     rounding mode. Two modes over the same figures is not a style difference:
     `ROUND_HALF_UP` makes 0.125 into 0.13 and bankers' rounding makes it 0.12.
-11. **Module layout**: a service lives in the subpackage for its domain
-    (`app/services/couriers/`, `pos/`, `orders/`, …), following
-    `app/services/providers/`. Request and response models live in
+11. **Module layout**: a service lives in the subpackage for its domain —
+    `catalog`, `couriers`, `delivery`, `grubops`, `inventory`, `orders`,
+    `payments`, `pos`, or `providers` for a client that speaks somebody else's
+    protocol. Each carries a docstring saying what belongs in it; read that
+    before adding to the two dozen genuinely cross-cutting modules still at
+    `app/services/` root. `app/services/__init__.py` exports nothing, so there
+    is one way to import a service and the import line says which part of the
+    system a file reaches into. Request and response models live in
     `app/schemas/`, not inline in a router — a schema declared beside the route
     that returns it is invisible to everything that reads `app/schemas/` to
-    learn the shape of the API.
+    learn the shape of the API, and there are 120 of them in `app/api/v1/`
+    today.
 
 ## Workflow Orchestration
 

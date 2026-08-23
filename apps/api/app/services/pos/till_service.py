@@ -377,7 +377,7 @@ async def _payment_breakdown(
     still comes from the ledger — see `estimated_cash` — because that is the
     only thing the drawer contents can be checked against.
 
-    Figures use the same definitions as `pos_reports_service.sales_summary`, so
+    Figures use the same definitions as `pos_reports.sales_summary`, so
     a Z report and the day's sales report agree.
     """
     row = (
