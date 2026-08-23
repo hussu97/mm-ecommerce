@@ -398,13 +398,16 @@ logo URL is served from the `couriers` table (cached in-process), so a logo can
 be swapped in the database without shipping an app. `noon_food` (the marketplace)
 and `noon_send` (the courier) are kept distinct, with different codes and logos.
 
-**Logos** live in the images bucket (Cloudflare R2) under a dedicated
-`couriers/` prefix, separate from `products/`. They are generated as uniform
-256×256 brand-colour badges in `scripts/courier_logos/` and pushed with
-`python -m scripts.upload_courier_logos` (run once where the R2 credentials are
-set — the production VM). To replace one with a real trademarked logo later,
-drop a new 256×256 PNG over `scripts/courier_logos/{code}.png` and re-run; nothing
-else changes because `couriers.logo_url` already points at that key.
+**Logos** live in the public GCS image bucket `mm-product-images` (the same one
+production serves product images from) under a dedicated `couriers/` prefix, kept
+clear of `menu/`. They are generated as uniform 256×256 brand-colour badges in
+`scripts/courier_logos/` and pushed with `python -m scripts.upload_courier_logos`
+(a thin wrapper over `gcloud storage cp`, run once where gcloud is authenticated
+to the project). GCS, not R2, because production's images already live there and
+the box's R2 credentials are not valid. Migration 134 sets `couriers.logo_url` to
+the GCS URL. To replace one with a real trademarked logo later, drop a new 256×256
+PNG over `scripts/courier_logos/{code}.png` and re-run; nothing else changes
+because `couriers.logo_url` already points at that key.
 
 ## Admin: a marketplace order is read-only
 

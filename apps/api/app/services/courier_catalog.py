@@ -14,7 +14,9 @@ The **logo URL is served from the `couriers` table**, not hard-coded, so a logo
 can be swapped in the database and every app follows without a release. The rows
 are cached in-process (they change almost never) and refreshed at startup by
 `load`; until then, and in tests with no database, a conventional URL
-(`{R2_PUBLIC}/couriers/{code}.png`) stands in so a badge always has *a* logo.
+(`{LOGO_BASE}/{code}.png`) stands in so a badge always has *a* logo. The badges
+live in the same public GCS image bucket the storefront's product images do,
+under a `couriers/` prefix.
 
 `noon_food` (the Noon Food marketplace) and `noon_send` (the Rider-on-Demand
 courier) are two different businesses and carry two different logos — kept apart
@@ -25,9 +27,12 @@ from __future__ import annotations
 
 import logging
 
-from app.core.config import settings
-
 logger = logging.getLogger(__name__)
+
+#: Where the badges are served from — the public GCS image bucket, under a
+#: `couriers/` prefix (migration 134). Only the fallback uses it; the real URL
+#: is read from `couriers.logo_url` so it can be swapped in the database.
+_LOGO_BASE = "https://storage.googleapis.com/mm-product-images/couriers"
 
 __all__ = [
     "COURIER_NAMES",
@@ -117,11 +122,10 @@ def code_for_channel(channel: str | None) -> str | None:
 
 def logo_url_for(code: str) -> str:
     """The logo URL for a courier code — the DB value if loaded, else the
-    conventional ``{R2_PUBLIC}/couriers/{code}.png``."""
+    conventional ``{LOGO_BASE}/{code}.png`` in the public GCS image bucket."""
     if code in _LOGO_CACHE:
         return _LOGO_CACHE[code]
-    base = (settings.CLOUDFLARE_R2_PUBLIC_URL or "").rstrip("/")
-    return f"{base}/couriers/{code}.png"
+    return f"{_LOGO_BASE}/{code}.png"
 
 
 def _badge(code: str | None) -> dict | None:
