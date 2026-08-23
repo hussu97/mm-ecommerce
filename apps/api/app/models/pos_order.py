@@ -361,6 +361,10 @@ class KitchenTicketItem(Base, UUIDMixin, TimestampMixin):
     """One order line on a kitchen ticket, bumpable on its own."""
 
     __tablename__ = "kitchen_ticket_items"
+    # Migration 138.
+    __table_args__ = (
+        status_vocabulary("kitchen_ticket_items", "status", KitchenTicketStatusEnum),
+    )
 
     ticket_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -378,8 +382,13 @@ class KitchenTicketItem(Base, UUIDMixin, TimestampMixin):
     quantity: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     modifiers_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: The parent ticket's vocabulary. Only `new` is ever written today — the
+    #: line moves with its ticket rather than on its own — but the column is
+    #: declared per item, so it is constrained per item.
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, server_default="new"
+        String(20),
+        nullable=False,
+        server_default=KitchenTicketStatusEnum.NEW.value,
     )
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

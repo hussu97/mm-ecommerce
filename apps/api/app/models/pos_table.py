@@ -9,7 +9,7 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, TimestampMixin, UUIDMixin
+from .base import Base, TimestampMixin, UUIDMixin, status_vocabulary
 
 if TYPE_CHECKING:
     from .branch import Branch
@@ -82,6 +82,9 @@ class PosTable(Base, UUIDMixin, TimestampMixin):
         nullable=False,
         index=True,
     )
+    # Migration 138.
+    __table_args__ = (status_vocabulary("tables", "status", TableStatusEnum),)
+
     name: Mapped[str] = mapped_column(String(60), nullable=False)
     seats: Mapped[int] = mapped_column(Integer, nullable=False, server_default="4")
     status: Mapped[str] = mapped_column(

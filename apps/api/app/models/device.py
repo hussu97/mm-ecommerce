@@ -9,7 +9,7 @@ from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, 
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, TimestampMixin, UUIDMixin
+from .base import Base, TimestampMixin, UUIDMixin, status_vocabulary
 
 if TYPE_CHECKING:
     from .branch import Branch
@@ -45,6 +45,8 @@ class Device(Base, UUIDMixin, TimestampMixin):
             "platform IS NULL OR platform IN ('ios', 'android')",
             name="ck_devices_platform_allowed",
         ),
+        # Migration 138.
+        status_vocabulary("devices", "status", DeviceStatusEnum),
     )
 
     name: Mapped[str] = mapped_column(String(150), nullable=False)
