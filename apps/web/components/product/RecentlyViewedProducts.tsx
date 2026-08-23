@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRecentlyViewed } from '@/hooks/useRecentlyViewed';
-import { API_BASE } from '@/lib/api';
+import { productsApi } from '@/lib/api';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { ProductCarousel } from './ProductCarousel';
 import type { Product } from '@/lib/types';
@@ -11,7 +11,6 @@ export function RecentlyViewedProducts({
   currentSlug,
 }: {
   currentSlug: string;
-  locale?: string; // kept for backward compat, unused (ProductCard reads locale from context)
 }) {
   const { t } = useTranslation();
   const slugs = useRecentlyViewed(currentSlug);
@@ -22,11 +21,11 @@ export function RecentlyViewedProducts({
     if (!slugs.length) return;
     setIsLoading(true);
     Promise.all(
-      slugs.map(slug =>
-        fetch(`${API_BASE}/products/${slug}`)
-          .then(r => (r.ok ? r.json() : null))
-          .catch(() => null)
-      )
+      // Through `productsApi` rather than a bare fetch, per convention 9. The
+      // bare one skipped the 401 refresh and — more to the point here — the
+      // `api_error` hook, so a failure on this carousel was invisible to
+      // Umami while every other endpoint's was reported.
+      slugs.map(slug => productsApi.bySlug(slug).catch(() => null))
     ).then(results => {
       setProducts(results.filter(Boolean) as Product[]);
       setIsLoading(false);

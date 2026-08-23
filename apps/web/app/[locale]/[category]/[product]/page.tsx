@@ -340,7 +340,7 @@ export default async function ProductDetailPage({
         </div>
       </div>
 
-      <RecentlyViewedProducts currentSlug={product.slug} locale={locale} />
+      <RecentlyViewedProducts currentSlug={product.slug} />
     </>
   );
 }

@@ -68,6 +68,14 @@ migrate it opportunistically.
 9. **Frontend fetch**: web uses `lib/api-client.ts` (browser) /
    `lib/api-server.ts` (RSC) — never raw `fetch` to the API. Admin uses the one
    `request()` in `lib/api.ts` (pos-api.ts is bindings only).
+   The browser half and the whole of admin are enforced. The RSC half is not
+   yet followable: `api-server.ts` exports two bindings, so every server page
+   needing a product has nothing to call and reaches for `RSC_API_BASE`. Ten
+   files are listed in `apps/web/lib/fetch-convention.test.ts` as the backlog,
+   and that list may only shrink — the fix is to add the binding, not to add an
+   eleventh way to reach the API. `lib/api.ts` in web is a compatibility shim
+   re-exporting `api-client`; 27 files still import it and none import
+   `api-client` directly, so prefer the shim's target in new code.
 10. **Money math**: computed server-side. The client renders what the API
     quotes; a client-side formula mirroring a server one is a bug. Server-side,
     every quantisation goes through `app/core/money.py` — one precision and one
