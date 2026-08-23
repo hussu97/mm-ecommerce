@@ -7,6 +7,7 @@
  * `GET /delivery/area` — every time a handset's GPS wobbles by twenty metres.
  */
 
+import type { Address } from '@/lib/types';
 import type { Location, LocationSource } from './types';
 
 /**
@@ -69,4 +70,30 @@ export function shouldReplaceWithBrowserFix(
   // reading beats them, however close it happens to land to Al Majaz.
   if (current.source === 'default') return true;
   return metresBetween(current, fix) >= MOVE_THRESHOLD_M;
+}
+
+/**
+ * The address the location should come from, or null if none of them can say.
+ *
+ * An address is only a location if somebody actually dropped a pin on it, and
+ * plenty have not: the checkout will take a typed street with no marker, and
+ * guest addresses stored before the map was mandatory carry `null` for both
+ * coordinates. Reading those through `Number()` turns them into a perfectly
+ * valid-looking `0, 0` — a spot in the Atlantic — and the site then tells a
+ * customer in Nad Al Sheba that we do not deliver to them.
+ *
+ * So the default address wins only if it has a pin, and otherwise the first
+ * one that does. Falling through to a later address is right: a customer with
+ * a pinned second address is better served from it than from the ocean.
+ */
+export function firstPinnedAddress(addresses: readonly Address[]): Address | null {
+  const pinned = addresses.filter(
+    (a) =>
+      Number.isFinite(Number(a.latitude)) &&
+      Number.isFinite(Number(a.longitude)) &&
+      // `Number(null)` is 0 and `Number('')` is 0, and both arrive here as a
+      // finite number. Nobody's home is on the equator off Ghana.
+      !(Number(a.latitude) === 0 && Number(a.longitude) === 0),
+  );
+  return pinned.find((a) => a.is_default) ?? pinned[0] ?? null;
 }

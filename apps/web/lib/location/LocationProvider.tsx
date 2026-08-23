@@ -16,7 +16,7 @@ import { addressesApi, deliveryApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { guestAddresses } from '@/lib/guest-addresses';
 import { readBranch, rememberBranch } from './branch-cookie';
-import { MAX_FIX_AGE_MS, shouldReplaceWithBrowserFix } from './refresh';
+import { MAX_FIX_AGE_MS, firstPinnedAddress, shouldReplaceWithBrowserFix } from './refresh';
 import {
   DEFAULT_LOCATION,
   LOCATION_ASKED_KEY,
@@ -204,8 +204,7 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
 
   const refreshFromAddresses = useCallback(async () => {
     try {
-      const addresses = await addressesApi.list();
-      const preferred = addresses.find(a => a.is_default) ?? addresses[0] ?? null;
+      const preferred = firstPinnedAddress(await addressesApi.list());
       if (!preferred) return;
       setLocation({
         latitude: Number(preferred.latitude),
@@ -268,9 +267,7 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
 
       if (user) {
         try {
-          const addresses = await addressesApi.list();
-          const preferred =
-            addresses.find((a) => a.is_default) ?? addresses[0] ?? null;
+          const preferred = firstPinnedAddress(await addressesApi.list());
           if (cancelled) return;
           if (preferred) {
             setLocation({
@@ -287,8 +284,7 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
         if (cancelled) return;
       }
 
-      const guest = guestAddresses.list();
-      const lastOrdered = guest.find((a) => a.is_default) ?? guest[0] ?? null;
+      const lastOrdered = firstPinnedAddress(guestAddresses.list());
       if (lastOrdered) {
         setLocation({
           latitude: Number(lastOrdered.latitude),
