@@ -5,6 +5,7 @@
     "dev": "turbo dev",
     "build": "turbo build",
     "lint": "turbo lint",
+    "type-check": "turbo type-check",
     "test": "turbo test",
     "prepare": "husky",
     "dev:web": "turbo dev --filter=web",

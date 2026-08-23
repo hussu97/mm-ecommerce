@@ -1,12 +1,6 @@
-import coreWebVitals from "eslint-config-next/core-web-vitals";
-import typescript from "eslint-config-next/typescript";
+import base from "@mm/config/eslint";
 
-export default [
-  ...coreWebVitals,
-  ...typescript,
-  {
-    rules: {
-      "react-hooks/set-state-in-effect": "warn",
-    },
-  },
-];
+/** @type {import('eslint').Linter.Config[]} */
+const config = base;
+
+export default config;

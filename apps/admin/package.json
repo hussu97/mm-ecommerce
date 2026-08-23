@@ -7,11 +7,13 @@
     "build": "next build",
     "start": "next start --port 3001",
     "lint": "eslint .",
+    "type-check": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "mobile-audit": "node scripts/mobile-audit.mjs"
   },
   "dependencies": {
+    "@mm/config": "workspace:*",
     "@mm/types": "workspace:*",
     "@sentry/nextjs": "^10.42.0",
     "@simplewebauthn/browser": "^13.3.0",

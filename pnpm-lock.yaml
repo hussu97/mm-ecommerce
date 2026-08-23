@@ -20,6 +20,9 @@ importers:
 
   apps/admin:
     dependencies:
+      '@mm/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@mm/types':
         specifier: workspace:*
         version: link:../../packages/types

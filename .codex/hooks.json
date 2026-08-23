@@ -11,8 +11,8 @@
           },
           {
             "type": "command",
-            "command": "if echo \"$CLAUDE_FILE_PATH\" | grep -qE '\\.(ts|tsx)$'; then npx tsc --noEmit 2>&1 | head -20; fi",
-            "timeout": 5000
+            "command": "case \"$CLAUDE_FILE_PATH\" in apps/web/*.ts|apps/web/*.tsx) pnpm --filter web exec tsc --noEmit 2>&1 | head -20 ;; apps/admin/*.ts|apps/admin/*.tsx) pnpm --filter admin exec tsc --noEmit 2>&1 | head -20 ;; esac",
+            "timeout": 60000
           }
         ]
       }
