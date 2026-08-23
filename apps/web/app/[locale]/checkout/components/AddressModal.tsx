@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/Input';
 import { Spinner } from '@/components/ui/Spinner';
 import { PhoneInput, isValidPhone } from '@/components/ui/PhoneInput';
 import { PhoneVerify } from '@/components/ui/PhoneVerify';
+import { isFirebaseConfigured } from '@/lib/firebase';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { analytics, failureReason } from '@/lib/analytics';
 import { addressesApi } from '@/lib/api';
@@ -174,15 +175,43 @@ export function AddressModal({
    */
   useEffect(() => {
     if (!isOpen || intent !== 'verifyPhone' || mode !== 'form') return;
-    const raf = requestAnimationFrame(() => {
-      bodyRef.current
-        ?.querySelector<HTMLElement>('[data-field="verifyPhone"]')
-        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    });
+
+    /**
+     * Attempted more than once, and instantly rather than smoothly.
+     *
+     * The map above the number is a dynamic import: it lays out after this
+     * effect runs and again when its tiles arrive, each time moving the field
+     * further down and leaving a smooth scroll stranded 20px from the top with
+     * the customer looking at Dubai. Instant scrolls cannot be interrupted
+     * mid-animation, and repeating while the sheet settles is what makes the
+     * last layout the one that counts.
+     *
+     * Each attempt after the first is skipped once the field is actually in
+     * view, so this cannot drag the sheet back from somewhere the customer
+     * scrolled to themselves.
+     */
+    const reach = () => {
+      const body = bodyRef.current;
+      const el = body?.querySelector<HTMLElement>('[data-field="verifyPhone"]');
+      if (!body || !el) return;
+      const field = el.getBoundingClientRect();
+      const frame = body.getBoundingClientRect();
+      // An unmeasurable layout — nothing laid out yet — is not the same as
+      // "already visible", and reading it as such is how this quietly does
+      // nothing. Without a height to compare against, scroll.
+      const visible =
+        frame.height > 0 && field.top >= frame.top && field.bottom <= frame.bottom;
+      if (visible) return;
+      el.scrollIntoView({ block: 'center' });
+    };
+
+    const raf = requestAnimationFrame(reach);
+    const settling = [150, 400, 800].map((ms) => setTimeout(reach, ms));
     setVerifyLit(true);
     const timer = setTimeout(() => setVerifyLit(false), HIGHLIGHT_MS);
     return () => {
       cancelAnimationFrame(raf);
+      settling.forEach(clearTimeout);
       clearTimeout(timer);
       setVerifyLit(false);
     };
@@ -345,6 +374,62 @@ export function AddressModal({
   };
 
   if (!isOpen) return null;
+
+  /**
+   * The code panel, pinned above the save button rather than under the field.
+   *
+   * It used to sit where the number is typed, which is the honest place for it
+   * and the wrong one. The number is the *last* field on this form — map,
+   * address, unit, label, two names, then the phone — so on a phone with the
+   * keyboard up, the panel is below the fold of a scrolling sheet while the
+   * footer button stays pinned in view. What the customer sees under the number
+   * they have just finished typing is "Save address", so that is what they
+   * press, and they arrive back on the checkout with the same warning they
+   * came to clear.
+   *
+   * In the footer it cannot be scrolled past. It also lands directly above the
+   * button it is competing with, which is the moment the choice is actually
+   * being made.
+   *
+   * Only ever one of these is mounted: `PhoneVerify` renders Firebase's
+   * reCAPTCHA and a Turnstile widget into the DOM, so a second copy beside the
+   * field would be two bot checks racing for one send.
+   */
+  const verifyPanel = askToVerify
+    && isValidPhone(draft.phone)
+    && verifiedPhone !== draft.phone
+    // `PhoneVerify` renders nothing on a build without the Firebase vars —
+    // a preview deploy, chiefly. Asked here as well so that build gets no
+    // card at all, rather than a heading and a promise of a code over an
+    // empty space where the button would have been.
+    && isFirebaseConfigured() ? (
+      <div
+        className={`mb-3 rounded-sm border border-amber-300 bg-amber-50 px-3.5 py-3 ${
+          verifyLit
+            ? 'ring-2 ring-primary/70 ring-offset-2 ring-offset-white transition-shadow duration-300'
+            : 'transition-shadow duration-300'
+        }`}
+      >
+        <p className="flex items-center gap-1.5 font-body text-sm font-medium text-amber-900">
+          <Icon name="verified_user" className="text-base shrink-0" />
+          {t('verify.title')}
+        </p>
+        {/* The number itself, because the field it was typed into may well be
+            scrolled out of sight behind the keyboard by the time this is read.
+            Kept unformatted — it is E.164, which is unambiguous, and a customer
+            checking their own number wants the digits rather than the styling. */}
+        <p className="font-body text-xs text-amber-800/90 mt-0.5">
+          <span dir="ltr">{draft.phone}</span> · {t('verify.subtitle')}
+        </p>
+        <PhoneVerify
+          surface="checkout"
+          phone={draft.phone}
+          onVerified={handleVerified}
+          onCodePending={setCodePending}
+          className="mt-2"
+        />
+      </div>
+    ) : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4">
@@ -528,15 +613,11 @@ export function AddressModal({
                   </div>
                 </div>
                 <div
-                  // Where the checkout scrolls to when it sends somebody here
-                  // to prove a number, and what the ring goes around.
+                  // Where the sheet scrolls to when the checkout sends somebody
+                  // here to prove a number. A scroll anchor only — the ring goes
+                  // round the panel in the footer, which is the half that acts.
                   data-field="verifyPhone"
                   data-field-error={errors.phone ? 'true' : undefined}
-                  className={
-                    verifyLit
-                      ? 'rounded-sm ring-2 ring-primary/70 ring-offset-4 ring-offset-white transition-shadow duration-300'
-                      : 'transition-shadow duration-300'
-                  }
                 >
                   <PhoneInput
                     label={t('common.phone')}
@@ -550,32 +631,14 @@ export function AddressModal({
                     // panel below is the way back.
                     disabled={codePending}
                   />
-                  {/* Where the number is being typed anyway.
-                      Verification used to live only behind a "add promo or
-                      note" toggle further down the checkout, and only after a
-                      refusal — so the guest this offer is written for had no
-                      reachable way to prove anything. It is still not required
-                      to save: an address is an address, and a customer with no
-                      coupon must never be held up by an SMS. */}
-                  {askToVerify && isValidPhone(draft.phone) && (
-                    verifiedPhone === draft.phone ? (
-                      <p className="mt-2 flex items-center gap-1.5 text-sm text-green-700">
-                        <Icon name="check_circle" className="text-[18px]" />
-                        {t('verify.verified')}
-                      </p>
-                    ) : (
-                      <div className="mt-2">
-                        <p className="font-body text-xs text-gray-500 mb-1.5">
-                          {t('verify.subtitle')}
-                        </p>
-                        <PhoneVerify
-                          surface="checkout"
-                          phone={draft.phone}
-                          onVerified={handleVerified}
-                          onCodePending={setCodePending}
-                        />
-                      </div>
-                    )
+                  {/* Only the outcome lives beside the field. The panel that
+                      sends the code is pinned to the footer instead — see
+                      `verifyPanel`. */}
+                  {askToVerify && verifiedPhone === draft.phone && isValidPhone(draft.phone) && (
+                    <p className="mt-2 flex items-center gap-1.5 text-sm text-green-700">
+                      <Icon name="check_circle" className="text-[18px]" />
+                      {t('verify.verified')}
+                    </p>
                   )}
                 </div>
               </div>
@@ -585,6 +648,7 @@ export function AddressModal({
 
         {mode === 'form' && (
           <div className="px-5 py-4 border-t border-gray-100 shrink-0">
+            {verifyPanel}
             <Button variant="primary" size="lg" fullWidth onClick={handleSubmit} loading={saving}>
               {t('address.save_and_continue')}
             </Button>

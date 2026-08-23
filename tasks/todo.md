@@ -293,3 +293,31 @@ Both were taps that looked like they should do something and did nothing.
       with an `sr-only` line saying so.
 - [x] `AddressModal.test.tsx` covers both destinations, the scroll, the
       self-close, and the two cases that must not self-close. 481 tests pass.
+
+### Follow-up: the send-code button was below the fold (2026-08-23)
+
+- [x] The number is the **last** field on the address form — map, address, unit,
+      label, two names, then the phone — so the verification panel under it sat
+      below the fold of a scrolling sheet while the footer's "Save address"
+      stayed pinned in view. What a customer saw under the number they had just
+      typed was the save button, so that is what they pressed. The panel now
+      lives *in the footer*, above that button, where it cannot be scrolled
+      past; it names the number, since the field it was typed into may be behind
+      the keyboard by then. Verified at 375×420 — a keyboard-height viewport.
+- [x] Only one `PhoneVerify` is ever mounted: it renders Firebase's reCAPTCHA
+      and a Turnstile widget into the DOM, so a second copy beside the field
+      would be two bot checks racing for one send. The field keeps the green
+      tick and nothing else.
+- [x] No card at all on a build without the Firebase vars (preview deploys),
+      where `PhoneVerify` renders nothing — otherwise it is a heading and a
+      promise of a code over an empty space.
+- [x] The scroll-to-the-number is instant and retried while the sheet settles.
+      The map above it is a dynamic import that lays out afterwards, which left
+      a single smooth scroll stranded 20px down with the customer looking at
+      Dubai. Skipped once the field is in view, so it cannot fight a customer
+      who scrolled themselves — and an unmeasurable layout counts as not-in-view
+      rather than as visible.
+- [x] Proved in the running app on a 375-wide viewport: promo `NEW` applied,
+      address added, one tap on "Verify your mobile number" lands on the form
+      scrolled to the number with SEND CODE above SAVE ADDRESS. The single
+      payment row now reads as chosen — tinted, primary border, filled tick.

@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   verifiedWith: vi.fn(),
+  firebaseOn: vi.fn(() => true),
 }));
 
 vi.mock('@/lib/api', () => ({
@@ -39,6 +40,10 @@ vi.mock('@/lib/analytics', () => ({
 }));
 
 vi.mock('@/lib/geocode', () => ({ reverseGeocode: vi.fn().mockResolvedValue(null) }));
+
+// A build with the Firebase vars in it. Without them there is no way to send a
+// code, and the card that offers one must not be drawn — see `firebaseOff`.
+vi.mock('@/lib/firebase', () => ({ isFirebaseConfigured: () => mocks.firebaseOn() }));
 
 // The map pulls in the Google SDK and answers nothing this file asks.
 vi.mock('@/components/ui/LocationPicker', () => ({
@@ -101,6 +106,7 @@ function renderSheet(over: Partial<React.ComponentProps<typeof AddressModal>> = 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.firebaseOn.mockReturnValue(true);
   vi.useRealTimers();
   // jsdom has no layout, so nothing to scroll.
   Element.prototype.scrollIntoView = vi.fn();
@@ -123,6 +129,35 @@ describe('AddressModal — which question it opens on', () => {
   it('still offers the list when there is no address to verify against', () => {
     renderSheet({ intent: 'verifyPhone', initialDraft: null });
     expect(screen.getByText('Home')).toBeInTheDocument();
+  });
+
+  it('pins the code panel to the footer, out of the scrolling body', () => {
+    // The number is the last field on this form, so a panel *under* it sits
+    // below the fold once the keyboard is up — while "Save address" stays
+    // pinned in view and gets pressed instead. Sharing the footer with that
+    // button is what makes it unmissable.
+    renderSheet({ intent: 'verifyPhone' });
+
+    const save = screen.getByRole('button', { name: 'address.save_and_continue' });
+    const panel = screen.getByText('send-code-to-+971501234567');
+    expect(save.parentElement).toContainElement(panel);
+  });
+
+  it('offers no code panel until the number is one that could receive a code', () => {
+    renderSheet({
+      intent: 'verifyPhone',
+      initialDraft: { ...toDraft(SAVED), phone: '+9715085' },
+    });
+    expect(screen.queryByText(/send-code-to/)).not.toBeInTheDocument();
+  });
+
+  it('draws no card on a build that cannot send a code', () => {
+    // `PhoneVerify` renders nothing without the Firebase vars. A heading and
+    // "we'll text you a code" over the empty space where its button would have
+    // been is a promise the build cannot keep.
+    mocks.firebaseOn.mockReturnValue(false);
+    renderSheet({ intent: 'verifyPhone' });
+    expect(screen.queryByText('verify.title')).not.toBeInTheDocument();
   });
 
   it('scrolls the panel into view rather than opening on the map', async () => {
