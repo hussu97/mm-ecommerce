@@ -1209,3 +1209,64 @@ receives Slider's sandbox traffic and must never move a real order. Locally the
 opposite is wanted, so the sandbox webhook has to be pointed at the live route
 for the DB to move. Reading the route's docstring before choosing a URL saved
 an afternoon of "the webhook arrives and nothing happens".
+
+## Look for the screen before building the screen (2026-08-23)
+
+Asked to make aggregator commission rates editable, I wrote a whole
+`app/api/v1/couriers.py` — router, response model, update model, permission
+guard, audit log — registered it, and only noticed on the first `openapi()` dump
+that `/api/v1/delivery-zones/couriers` had existed the entire time, with a screen
+already wired to it under Delivery → Estimates. Fifteen minutes of clean code,
+deleted, and the near-miss was worse than the waste: a second couriers API is
+precisely the "2–5 coexisting variants" this repo's CLAUDE.md opens by warning
+about, and it would have shipped looking tidy.
+
+The tell was there before I started. I had already read `courier_catalog.py`, the
+`Courier` model, and the admin's `Courier` / `CourierWrite` types — a
+`CourierWrite` type exists because something already writes couriers. I read it
+as background rather than as an answer.
+
+**Rule:** before adding a router, a screen or a service, grep for the *noun*
+across the layer that would own it — `grep -rn "courier" app/api/v1/` costs one
+call. And when the frontend already has a write type for a thing, the write
+endpoint exists; find it. Extending the endpoint that is already on a screen is
+also strictly less work than a new one nobody can reach yet.
+
+## Prominence is a proposal, not a conclusion (2026-08-23)
+
+Asked to put the aggregator's name on the printout "bold + first line", I built a
+double-height channel banner above the logo on both the receipt and the docket,
+wrote the tests, rendered the mock — and the answer was to take it out again and
+just bold the `Delivery by:` line, which already answered the same question in
+the place a person looks.
+
+The banner was not wrong about the problem. The docket genuinely said nothing
+about the channel, and that was the bug. It was wrong about the remedy: it added
+a *second* place to answer "who is collecting this", when the fix was to make the
+existing place correct and findable. The clue was in my own commit message —
+"the ticket used to carry four answers to the same question" — and I added a
+fifth in the same file.
+
+**Rule:** when a fact is missing from a ticket, first ask whether a line that
+should carry it already exists and is silent. A row that renders nothing is a
+bug; a new row shouting is a redesign, and the shop did not ask for one. Show the
+mock *before* writing the tests, not after — the mock is what made it obvious in
+about four seconds.
+
+## Ask what a null means before you let it reach money (2026-08-23)
+
+Building marketplace commissions, the pressure at every layer was to collapse
+"nobody has told us this rate" into zero: a `coalesce(fee, 0)` in the SQL, a
+`?? 0` in the form, a `false` in the covers-cost column. Each is a one-character
+convenience and each produces the same lie — a Talabat order reporting that the
+shop kept every dirham of it, on the exact screen built to catch orders that lose
+money.
+
+Three-valued logic had to be carried deliberately through five layers (column →
+service → schema → list SQL → two UIs), and the only reason it survived was
+writing the test that names the third state before the code.
+
+**Rule:** when a figure feeds a decision about money, enumerate its states out
+loud — known / zero / unknown — and check that the *unknown* has a rendering of
+its own before writing the happy path. "Not set" in amber and a dash in the
+column are features, not unfinished UI.
