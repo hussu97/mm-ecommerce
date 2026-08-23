@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 from httpx import ASGITransport, AsyncClient
-from unittest.mock import AsyncMock, MagicMock
 
 TEST_SECRET = "test-secret-key-for-testing-purposes-only-xyz123"
 
@@ -64,8 +65,8 @@ def mock_db():
 
 @pytest.fixture
 async def client(mock_db):
-    from app.main import app
     from app.core.deps import get_db
+    from app.main import app
 
     async def override_get_db():
         yield mock_db

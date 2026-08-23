@@ -7,8 +7,9 @@ Revises: 041_courses_and_nutrition
 from __future__ import annotations
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision = "042_zones_devices_parking"
 down_revision = "041_courses_and_nutrition"

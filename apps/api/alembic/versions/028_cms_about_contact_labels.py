@@ -11,12 +11,12 @@ Revises: 027
 Create Date: 2026-04-14
 """
 
+import json
 from typing import Sequence, Union
 
-import json
+import sqlalchemy as sa
 
 from alembic import op
-import sqlalchemy as sa
 
 revision: str = "028_cms_about_contact_labels"
 down_revision: Union[str, None] = "027_regions_delivery_settings"

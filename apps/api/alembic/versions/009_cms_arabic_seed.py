@@ -9,9 +9,9 @@ Create Date: 2026-03-06 00:00:00.000000
 import json
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 revision: str = "009_cms_arabic_seed"
 down_revision: Union[str, None] = "008_cms_pages"

@@ -10,8 +10,9 @@ Create Date: 2026-07-25
 from typing import Sequence, Union
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision: str = "034_pos_foundation"
 down_revision: Union[str, None] = "033_set_admin_initial_passwords"

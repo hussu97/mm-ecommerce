@@ -13,14 +13,19 @@ from sqlalchemy import (
     cast,
     exists,
     func,
-    inspect as sa_inspect,
     select,
+)
+from sqlalchemy import (
+    inspect as sa_inspect,
+)
+from sqlalchemy import (
     update as sql_update,
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload, selectinload
 
+from app.core import search as search_text
 from app.core.exceptions import (
     BadRequestError,
     ConflictError,
@@ -28,15 +33,14 @@ from app.core.exceptions import (
     NotFoundError,
 )
 from app.core.phone import normalise_phone
-from app.core import search as search_text
 from app.models.branch import Branch
 from app.models.cart import Cart, CartItem
 from app.models.delivery_batch import DELIVERY_TIMEZONE
 from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
 from app.models.order_status_event import StatusSourceEnum, acting_as
-from app.models.product import Product
 from app.models.pos_order import OrderSourceEnum, OrderTax
+from app.models.product import Product
 from app.models.promo_code import PromoCode
 from app.models.user import User
 from app.schemas.delivery import DeliveryQuoteResponse
@@ -71,6 +75,7 @@ from app.services import (
     promo_code_service,
     push_service,
 )
+from app.services.delivery_zone_service import Zone
 
 # Re-exported for the callers and tests that have always found it here. The
 # map itself, and the machinery that enforces it, live in `order_lifecycle` —
@@ -89,7 +94,6 @@ from app.services.order_pricing import (  # noqa: F401
     tax_breakdown,
 )
 from app.services.storefront_visibility import is_website_product_visible
-from app.services.delivery_zone_service import Zone
 
 logger = logging.getLogger(__name__)
 

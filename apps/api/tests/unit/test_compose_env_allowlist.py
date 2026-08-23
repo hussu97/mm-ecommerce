@@ -23,7 +23,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from pydantic import TypeAdapter
 
 from app.core.config import Settings

@@ -10,10 +10,10 @@ import uuid
 from datetime import datetime
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
+from alembic import op
 
 revision: str = "011_cms_home_page"
 down_revision: Union[str, None] = "010_cms_privacy_page"

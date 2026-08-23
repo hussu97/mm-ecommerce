@@ -24,8 +24,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.deps import get_db
-from app.core.permissions import require
 from app.core.exceptions import NotFoundError
+from app.core.permissions import require
 from app.models.branch import Branch
 from app.models.device import Device
 from app.models.menu import BranchModifierOption, BranchProduct

@@ -39,8 +39,9 @@ from pathlib import Path
 from typing import Sequence, Union
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+
+from alembic import op
 
 revision: str = "048_delivery_polygons"
 down_revision: Union[str, None] = "047_address_unit_number"

@@ -44,12 +44,12 @@ from app.models.cart import Cart
 from app.models.delivery_batch import DeliveryBatch
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import Order, OrderStatusEnum
-from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.order_delivery import (
     FAILED_COURIER_STATUSES,
     CourierStatusEnum,
     OrderDelivery,
 )
+from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.webhook_event import WebhookEvent
 from app.services import (
     address_format,

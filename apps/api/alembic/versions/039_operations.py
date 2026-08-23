@@ -12,8 +12,9 @@ Create Date: 2026-07-25
 from typing import Sequence, Union
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision: str = "039_operations"
 down_revision: Union[str, None] = "038_menu_marketing"

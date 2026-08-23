@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 from app.models.marketing import (
     Discount,
     Promotion,

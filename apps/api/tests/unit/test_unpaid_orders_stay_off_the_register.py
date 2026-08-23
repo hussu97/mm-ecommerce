@@ -36,7 +36,6 @@ from app.models.pos_order import OrderSourceEnum, PosOrderStatusEnum
 from app.services import order_service, pos_order_service
 from app.services.providers.base import GatewayEvent, PaymentEventType
 
-
 BRANCH = SimpleNamespace(
     id=uuid.uuid4(),
     reference="K001",

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import datetime
 import uuid
-from types import SimpleNamespace
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -18,7 +18,6 @@ from app.services import delivery_promise, lalamove_service, order_service
 from app.services.delivery_zone_service import Zone
 from app.services.fulfilment_service import Fulfilment
 from app.services.order_service import VALID_TRANSITIONS, create_order, update_status
-
 
 DELIVERY_SETTINGS = DeliverySettings(
     pickup_fee=Decimal("0.00"),

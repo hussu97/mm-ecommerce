@@ -30,11 +30,11 @@ from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.models.base import utcnow
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.models.order_status_event import StatusSourceEnum, acting_as
-from app.models.pos_order import OrderSourceEnum
 from app.models.payment_transaction import (
     PaymentTransaction,
     PaymentTransactionStatusEnum,
 )
+from app.models.pos_order import OrderSourceEnum
 from app.models.webhook_event import WebhookEvent
 from app.services import (
     email_service,

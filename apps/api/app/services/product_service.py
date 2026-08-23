@@ -8,7 +8,6 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from app.core import search as search_text
 from app.core.exceptions import ConflictError, NotFoundError
-from app.services import menu_group_service
 from app.models.category import Category
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.product import WEB_CHANNEL, Product, sells_on
@@ -18,6 +17,7 @@ from app.schemas.product import (
     ProductResponse,
     ProductUpdate,
 )
+from app.services import menu_group_service
 from app.services.storefront_visibility import (
     active_website_category_clause,
     website_product_visibility_clause,

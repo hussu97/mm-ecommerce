@@ -26,7 +26,6 @@ from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.models.pos_order import OrderSourceEnum, OrderTypeEnum, PosOrderStatusEnum
 from app.services import order_lifecycle, pos_order_service
 
-
 BRANCH = SimpleNamespace(
     id=uuid.uuid4(),
     reference="K001",

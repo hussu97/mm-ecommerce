@@ -20,16 +20,15 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
-
 from sqlalchemy import inspect
 
 from app.models.order import Order, OrderStatusEnum
-from app.models.order_status_event import pending_events
 from app.models.order_delivery import OrderDelivery
 from app.models.order_driver import OrderDriver
+from app.models.order_status_event import pending_events
 from app.services import driver_assignment, noon_send_service
-from app.services.providers import noon_send_provider
 from app.services.lalamove_service import PickupPoint
+from app.services.providers import noon_send_provider
 
 NOW = datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc)
 TASK_NR = "EHG84NNJMVG35BTDE"

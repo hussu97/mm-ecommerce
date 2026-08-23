@@ -27,8 +27,9 @@ Revises: 111
 Create Date: 2026-08-20
 """
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "112_driver_reassign"
 down_revision = "111_arrived_at_pos"

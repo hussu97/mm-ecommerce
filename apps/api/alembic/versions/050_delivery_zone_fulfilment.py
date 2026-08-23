@@ -51,6 +51,7 @@ from pathlib import Path
 from typing import Sequence, Union
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "050_delivery_zone_fulfilment"

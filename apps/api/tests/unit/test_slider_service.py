@@ -45,7 +45,6 @@ from app.services.providers.slider_provider import (
     SliderError,
 )
 
-
 # ── the vehicle rule ──────────────────────────────────────────────────────────
 
 

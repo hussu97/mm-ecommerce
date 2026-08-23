@@ -22,9 +22,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db
-from app.core.permissions import require
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.core.limiter import limiter
+from app.core.permissions import require
 from app.models.custom_order import (
     CustomOrder,
     CustomOrderBlackout,

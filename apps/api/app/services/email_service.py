@@ -46,9 +46,9 @@ from app.models.delivery_batch import DELIVERY_TIMEZONE
 from app.models.email_log import EmailLog
 from app.models.order import OrderStatusEnum
 from app.models.pos_order import OrderSourceEnum
+from app.schemas.order import OrderResponse
 from app.services import address_format
 from app.services.email_copy import DIRECTION, translator
-from app.schemas.order import OrderResponse
 
 __all__ = [
     "is_counter_sale",

@@ -17,7 +17,7 @@ Rounding is applied once per line and once per total using banker's-rounding-fre
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 
 from app.core.money import CENTS, ZERO, money
 

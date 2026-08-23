@@ -42,10 +42,11 @@ PROMO_CODES = [
 
 async def seed(session: AsyncSession) -> None:
     import bcrypt
+
     from app.models import (
-        User,
-        PromoCode,
         DiscountTypeEnum,
+        PromoCode,
+        User,
     )
 
     def _hash(pw: str) -> str:

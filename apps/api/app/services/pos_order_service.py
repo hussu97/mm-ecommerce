@@ -22,12 +22,12 @@ from sqlalchemy.orm import selectinload
 from app.core import trading_hours
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.models.base import utcnow
-from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.branch import Branch
 from app.models.business_settings import BusinessSettings
 from app.models.charge import Charge
 from app.models.kitchen_flow import KitchenFlow
 from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
+from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.payment_method import PaymentMethod, PaymentMethodTypeEnum
 from app.models.pos_order import (
     DiscountSourceEnum,

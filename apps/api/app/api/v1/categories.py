@@ -6,8 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import cache_delete_pattern, cache_get, cache_set
 from app.core.deps import browsing_branch, get_db, get_optional_user
-from app.core.permissions import require
 from app.core.exceptions import ForbiddenError
+from app.core.permissions import require
 from app.models.user import User
 from app.schemas.category import CategoryCreate, CategoryResponse, CategoryUpdate
 from app.services import audit_service, category_service, indexnow_service

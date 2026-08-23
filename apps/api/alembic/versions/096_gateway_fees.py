@@ -23,6 +23,7 @@ Create Date: 2026-08-15
 from typing import Sequence, Union
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "096_gateway_fees"

@@ -70,6 +70,7 @@ from pathlib import Path
 from typing import Sequence, Union
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "065_sharjah_central_noon_send"

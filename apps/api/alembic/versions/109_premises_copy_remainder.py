@@ -31,6 +31,7 @@ import json
 from typing import Any, Sequence, Union
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "109_premises_remainder"

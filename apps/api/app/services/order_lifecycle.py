@@ -34,9 +34,9 @@ import contextvars
 import logging
 from typing import Collection, Literal
 
+from sqlalchemy import event
 from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import event
 
 from app.core.exceptions import BadRequestError
 from app.models.order import Order, OrderStatusEnum

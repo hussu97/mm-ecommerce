@@ -39,8 +39,8 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete
 
-from app.core.config import settings
 from app.core import advisory_lock
+from app.core.config import settings
 from app.core.database import AsyncSessionFactory
 from app.models.audit_log import AuditLog
 from app.models.email_log import EmailLog

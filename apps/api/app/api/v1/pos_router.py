@@ -18,7 +18,8 @@ from .availability import router as availability_router
 from .branches import router as branches_router
 from .business_settings import router as business_settings_router
 from .categories import router as categories_router
-from .devices import printers_router, router as devices_router
+from .devices import printers_router
+from .devices import router as devices_router
 from .marketing import (
     discounts_router,
     promotions_router,
@@ -37,7 +38,8 @@ from .pos_config import (
     tax_groups_router,
     taxes_router,
 )
-from .pos_orders import kitchen_router, router as pos_orders_router
+from .pos_orders import kitchen_router
+from .pos_orders import router as pos_orders_router
 from .pos_reports import router as pos_reports_router
 from .products import router as products_router
 from .staff import router as staff_router

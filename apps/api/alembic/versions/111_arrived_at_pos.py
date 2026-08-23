@@ -8,8 +8,9 @@ Revises: 110
 Create Date: 2026-08-19
 """
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "111_arrived_at_pos"
 down_revision = "110_publish_address"

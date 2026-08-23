@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Header, Query, status
+from fastapi import APIRouter, Depends, Header, Query, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,24 +14,6 @@ from app.core.deps import (
     get_db,
     get_optional_user,
 )
-from app.models.branch import Branch
-from app.models.order import Order, OrderStatusEnum
-from app.models.order_status_event import OrderStatusEvent, StatusSourceEnum, acting_as
-from app.models.order_delivery import OrderDelivery
-from app.models.order_driver import OrderDriver
-from app.models.user import User
-from app.schemas.fulfilment import FulfilmentResponse
-from app.schemas.courier import CourierBadge
-from app.schemas.order import (
-    OrderCreate,
-    OrderEconomicsResponse,
-    OrderListResponse,
-    OrderResponse,
-    OrderStatusUpdate,
-)
-from app.schemas.order_preview import OrderPreviewRequest, OrderPreviewResponse
-from fastapi import Request
-
 from app.core.exceptions import (
     BadGatewayError,
     BadRequestError,
@@ -40,19 +22,35 @@ from app.core.exceptions import (
 )
 from app.core.limiter import limiter
 from app.core.permissions import require
+from app.models.branch import Branch
 from app.models.delivery_polygon import FulfilmentProviderEnum
+from app.models.order import Order, OrderStatusEnum
+from app.models.order_delivery import OrderDelivery
+from app.models.order_driver import OrderDriver
+from app.models.order_status_event import OrderStatusEvent, StatusSourceEnum, acting_as
+from app.models.user import User
+from app.schemas.courier import CourierBadge
+from app.schemas.fulfilment import FulfilmentResponse
+from app.schemas.order import (
+    OrderCreate,
+    OrderEconomicsResponse,
+    OrderListResponse,
+    OrderResponse,
+    OrderStatusUpdate,
+)
+from app.schemas.order_preview import OrderPreviewRequest, OrderPreviewResponse
 from app.services import (
     audit_service,
     courier_service,
     driver_proximity,
-    order_economics,
     email_service,
     fulfilment_reassignment,
     fulfilment_service,
     lalamove_service,
     noon_send_service,
-    slider_service,
+    order_economics,
     order_service,
+    slider_service,
 )
 
 router = APIRouter()

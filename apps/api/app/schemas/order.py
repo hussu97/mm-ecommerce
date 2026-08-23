@@ -15,7 +15,6 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from app.models.order import DeliveryMethodEnum, OrderStatusEnum
-from app.schemas.courier import CourierBadge
 
 # Re-exported so `from app.schemas.order import PaymentMethodEnum` keeps working.
 # It is defined next to the model rather than here because it is now a domain
@@ -23,6 +22,7 @@ from app.schemas.courier import CourierBadge
 # happens to accept. See `app/models/payment_gateway.py` for why `stripe` is
 # still in it.
 from app.models.payment_gateway import PaymentMethodEnum  # noqa: F401
+from app.schemas.courier import CourierBadge
 
 from .address import AddressCreate
 from .fulfilment import FulfilmentResponse

@@ -40,6 +40,7 @@ from difflib import SequenceMatcher
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.branch import Branch
 from app.models.grubops import (
     KIND_OPTION,
     KIND_PRODUCT,
@@ -50,7 +51,6 @@ from app.models.grubops import (
     GrubOpsItemMap,
     GrubOpsLocationMap,
 )
-from app.models.branch import Branch
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.product import WEB_CHANNEL, Product, sells_on
 from app.services.providers.grubops_provider import GrubOpsError, provider

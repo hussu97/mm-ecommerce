@@ -50,14 +50,16 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
-
-from app.core.money import money
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core import trading_hours
+from app.core.exceptions import BadRequestError
+from app.core.money import money
+from app.models.courier import Courier
 from app.models.delivery_batch import (
     DELIVERY_TIMEZONE,
     MAX_DROPS_PER_ORDER,
@@ -66,9 +68,6 @@ from app.models.delivery_batch import (
     DeliveryBatchGroup,
     DeliveryBatchWindow,
 )
-from app.core import trading_hours
-from app.core.exceptions import BadRequestError
-from app.models.courier import Courier
 from app.models.delivery_polygon import DeliveryPolygon, FulfilmentProviderEnum
 from app.models.order import Order, OrderStatusEnum
 from app.models.order_delivery import (

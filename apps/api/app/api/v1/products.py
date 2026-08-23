@@ -3,16 +3,13 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime
-
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from fastapi import Request
 
 from app.core.cache import cache_get, cache_set
 from app.core.deps import (

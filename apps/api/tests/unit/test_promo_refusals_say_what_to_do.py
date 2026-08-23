@@ -17,7 +17,6 @@ what — and is short enough to fit in a toast without an internal id in it.
 from __future__ import annotations
 
 import uuid
-
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -28,7 +27,6 @@ import pytest
 from app.models.order import DeliveryMethodEnum
 from app.models.promo_code import DiscountTypeEnum
 from app.services import promo_code_service
-
 
 _NOW = datetime.now(timezone.utc)
 

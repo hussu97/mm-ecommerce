@@ -84,8 +84,8 @@ class TestProductsEndpoints:
         assert response.status_code == 401
 
     async def test_create_product_with_invalid_payload_returns_422(self, client):
-        from app.main import app
         from app.core.deps import get_current_active_user
+        from app.main import app
 
         mock_admin = MagicMock()
         mock_admin.is_admin = True

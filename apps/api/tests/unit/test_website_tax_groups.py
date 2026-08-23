@@ -16,7 +16,6 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-
 from app.services import order_service, pos_pricing
 
 

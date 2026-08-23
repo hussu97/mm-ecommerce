@@ -13,8 +13,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import contains_eager, selectinload
 
-from app.core.cache import cache_get, cache_set, cache_delete_pattern  # noqa: F401
 from app.core import search as search_text
+from app.core.cache import cache_delete_pattern, cache_get, cache_set  # noqa: F401
 from app.core.config import settings
 from app.core.deps import get_db
 from app.core.permissions import require

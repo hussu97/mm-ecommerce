@@ -22,16 +22,16 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
+
 # Aliased to the existing private names: the implementation is shared,
 # the call sites stay put, and `quantity` is already a local variable in
 # both of these files.
 from app.core.money import quantity as _q
 from app.core.money import unit_cost as _c
-
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.models.base import utcnow
 from app.models.branch import Branch
 from app.models.inventory import (

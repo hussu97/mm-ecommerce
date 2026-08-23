@@ -5,14 +5,13 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, Request, status
-
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.deps import get_current_active_user, get_db
-from app.core.permissions import require
 from app.core.exceptions import ConflictError
+from app.core.permissions import require
 from app.models import (
     Branch,
     BranchBusinessDay,

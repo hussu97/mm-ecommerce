@@ -14,8 +14,9 @@ from datetime import datetime
 from typing import Sequence, Union
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+
+from alembic import op
 
 revision: str = "027_regions_delivery_settings"
 down_revision: Union[str, None] = "026"

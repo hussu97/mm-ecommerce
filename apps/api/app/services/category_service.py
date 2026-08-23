@@ -6,12 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import ConflictError, NotFoundError
 from app.models.category import Category
 from app.models.product import POS_CHANNEL, WEB_CHANNEL, Product, sells_on
+from app.schemas.category import CategoryCreate, CategoryResponse, CategoryUpdate
+from app.services import menu_group_service
 from app.services.availability_service import (
     out_at_every_branch_subquery,
     unsellable_at_branch_subquery,
 )
-from app.schemas.category import CategoryCreate, CategoryResponse, CategoryUpdate
-from app.services import menu_group_service
 
 # Imported from the module, not the package: `app.services.__init__` is still
 # executing this file when it runs, so `from app.services import

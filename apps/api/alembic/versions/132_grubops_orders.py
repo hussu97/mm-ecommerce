@@ -30,8 +30,9 @@ from __future__ import annotations
 from typing import Sequence, Union
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision: str = "132_grubops_orders"
 down_revision: Union[str, None] = "131_grubops_mapping"

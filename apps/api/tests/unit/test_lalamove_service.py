@@ -12,17 +12,17 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 from decimal import Decimal
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
+from sqlalchemy import inspect
 
 from app.models.order import Order, OrderStatusEnum
-from app.models.order_status_event import pending_events
-from sqlalchemy import inspect
 from app.models.order_delivery import OrderDelivery
 from app.models.order_driver import OrderDriver
+from app.models.order_status_event import pending_events
 from app.services import batching_service, lalamove_service
 
 NOW = datetime(2026, 8, 2, 12, 0, tzinfo=timezone.utc)

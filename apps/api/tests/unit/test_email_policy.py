@@ -16,15 +16,14 @@ from __future__ import annotations
 
 import inspect
 import logging
-from pathlib import Path
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 import app.api.v1.auth
 from app.services import email_service
-
 
 # ─── The policy is actually applied at the call sites ─────────────────────────
 

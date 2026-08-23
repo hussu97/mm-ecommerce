@@ -4,8 +4,6 @@ import enum
 import uuid
 from datetime import datetime
 from decimal import Decimal
-
-from app.core.money import money
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
@@ -20,6 +18,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.core.money import money
 
 from .base import Base, TimestampMixin, UUIDMixin, status_vocabulary
 

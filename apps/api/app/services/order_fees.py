@@ -39,11 +39,10 @@ import logging
 from dataclasses import dataclass
 from decimal import Decimal
 
-from app.core.money import money, to_decimal
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.money import money, to_decimal
 from app.models.courier import Courier
 from app.models.order import Order
 from app.models.payment_gateway import PaymentGateway

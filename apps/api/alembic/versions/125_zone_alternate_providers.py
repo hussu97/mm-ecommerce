@@ -52,8 +52,9 @@ from __future__ import annotations
 from typing import Sequence, Union
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision: str = "125_zone_alternates"
 down_revision: Union[str, None] = "124_device_build_platform"

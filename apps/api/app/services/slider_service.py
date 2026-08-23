@@ -40,13 +40,13 @@ from sqlalchemy.orm import selectinload
 from app.core.config import settings
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import Order, OrderStatusEnum
-from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.order_delivery import (
     SLIDER_FAILED_STATUSES,
     SLIDER_STATUS_RANK,
     OrderDelivery,
     SliderStatusEnum,
 )
+from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.webhook_event import WebhookEvent
 from app.services import (
     address_format,

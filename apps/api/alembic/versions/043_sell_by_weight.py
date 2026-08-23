@@ -7,6 +7,7 @@ Revises: 042_zones_devices_parking
 from __future__ import annotations
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "043_sell_by_weight"

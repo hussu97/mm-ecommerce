@@ -23,7 +23,6 @@ import pytest
 
 from app.services.webhook_log_service import Recorder, _jsonable
 
-
 NOW = datetime(2026, 8, 5, 8, 0, tzinfo=timezone.utc)
 
 

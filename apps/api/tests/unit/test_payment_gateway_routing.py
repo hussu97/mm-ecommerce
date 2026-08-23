@@ -25,7 +25,6 @@ from app.services.providers.base import (
     PaymentGatewayProvider,
 )
 
-
 _MIGRATION_PATH = (
     Path(__file__).resolve().parents[2]
     / "alembic"

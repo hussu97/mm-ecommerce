@@ -7,8 +7,9 @@ Revises: 040_product_web_visibility
 from __future__ import annotations
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision = "041_courses_and_nutrition"
 down_revision = "040_product_web_visibility"
