@@ -103,6 +103,11 @@ class GrubOpsConfig:
     timeout: float
 
     @property
+    def item_search_base(self) -> str:
+        """The item-search service, mounted as a prefix on the main host."""
+        return self.api_base + _ITEM_SEARCH
+
+    @property
     def cognito_host(self) -> str:
         return f"https://cognito-idp.{self.cognito_region}.amazonaws.com/"
 
@@ -348,23 +353,40 @@ class GrubOpsClient:
             json_body=bodies,
         )
 
-    async def read_availability(self, body: dict[str, Any]) -> Any:
-        """What GrubOps currently believes about a location's items.
+    async def read_availability(
+        self,
+        *,
+        location_id: str,
+        brand_id: str,
+        item_type: str = TYPE_RECIPE,
+        partner_id: str | None = None,
+        language: str = "en",
+    ) -> list[dict]:
+        """What GrubOps currently believes is *unavailable* at one location.
 
-        Used by the drift check rather than the ordinary tick — the desired
-        state always comes from our own database, never from this.
+        The same `list_items` call with the flag set, rather than the
+        `items-availability/byItems` endpoint the older screen uses — that one
+        rejects everything we have been able to build for it, and this returns
+        the state anyway, alongside the names the seeder needs.
+
+        Used by the drift check only. The desired state always comes from our
+        own database, never from this.
         """
-        return await self._call(
-            "POST",
-            f"{_AVAILABILITY}/v1.0/items-availability/byItems",
-            json_body=body,
+        return await self.list_items(
+            location_id=location_id,
+            brand_id=brand_id,
+            item_type=item_type,
+            unavailable_only=True,
+            partner_id=partner_id,
+            language=language,
         )
 
     # ── catalogue, for the seeder ────────────────────────────────────────────
     #
-    # These answer on a different host from the availability writes
-    # (`api-grubone` rather than `internal-api`), which is GrubTech's split and
-    # not ours — hence `base=` on each call rather than one base for the client.
+    # Three services on two hosts, which is GrubTech's split and not ours:
+    # locations and the item list are mounted under `internal-api`, and
+    # `serving-brands` answers only on the catalogue host. Hence `base=` per
+    # call rather than one base for the whole client.
 
     async def list_locations(self, partner_id: str | None = None) -> list[dict]:
         """Every location on the account, which is how the branch map is checked."""
@@ -391,39 +413,52 @@ class GrubOpsClient:
         )
         return payload or []
 
-    async def search_menu_items(
-        self, *, location_id: str, brand_ids: str, name: str = ""
+    async def list_items(
+        self,
+        *,
+        location_id: str,
+        brand_id: str,
+        item_type: str = TYPE_RECIPE,
+        unavailable_only: bool = False,
+        partner_id: str | None = None,
+        language: str = "en",
+        search_text: str = "",
     ) -> list[dict]:
-        """The menu as GrubOps holds it for one location — the seeder's left hand.
+        """
+        The menu as GrubOps holds it for one location, with its availability.
 
-        The exact query this wants is still to be confirmed against a captured
-        console request; see `docs/grubops-integration.md`. It is isolated here
-        so that confirming it is a one-line change rather than a hunt.
+        A **POST** to `/v2.0/items/`, which is neither of the two GET search
+        paths also present in their bundle — those answer 404 on the
+        item-search service and 500 on the catalogue host, and this is the one
+        the console actually uses. Body and response shape both come from the
+        bundle's own mappers.
+
+        Each item carries `{id, type, name.translations, parentAssociations,
+        childAssociations, unavailability, attributes}`. `unavailability` is
+        null for anything on sale, and otherwise
+        `{source, reason, status, unavailableUntil}` — note that those field
+        names are the *response* spelling and differ from the ones a write
+        takes.
+
+        `item_type` is RECIPE or MODIFIER: they are two separate calls, and a
+        location has far more of the second than the first.
         """
         payload = await self._call(
-            "GET",
-            f"/v2.0/menu-items/searchMenuItem/byLocation/"
-            f"{location_id}/byBrands/{brand_ids}",
-            params={"name": name},
-            base=self.config.catalog_api_base,
+            "POST",
+            "/v2.0/items/",
+            json_body={
+                "partnerId": partner_id or self.config.partner_id,
+                "locationId": location_id,
+                "brandIds": [brand_id],
+                "searchText": search_text,
+                "itemType": item_type,
+                "unavailableItemsOnly": unavailable_only,
+                "language": language,
+            },
+            base=self.config.item_search_base,
         )
         if isinstance(payload, dict):
-            return payload.get("content") or []
-        return payload or []
-
-    async def search_modifiers(
-        self, *, location_id: str, brand_ids: str, name: str = ""
-    ) -> list[dict]:
-        """The modifier options for one location. Same caveat as the menu above."""
-        payload = await self._call(
-            "GET",
-            f"/v2.0/modifiers/searchModifier/byLocation/"
-            f"{location_id}/byBrands/{brand_ids}",
-            params={"name": name},
-            base=self.config.catalog_api_base,
-        )
-        if isinstance(payload, dict):
-            return payload.get("content") or []
+            return payload.get("items") or []
         return payload or []
 
 

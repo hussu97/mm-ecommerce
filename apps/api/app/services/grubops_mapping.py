@@ -93,7 +93,10 @@ class Candidate:
     name: str
     brand_id: str
     grubops_type: str
-    #: Set for a modifier; the recipe it hangs off, so options can be scoped.
+    #: Set for a modifier: the normalised name of the group it sits in, and the
+    #: recipe that group belongs to. Both are needed to tell it from its
+    #: namesakes — see `_parent_of`.
+    parent_group: str | None = None
     parent_recipe_id: str | None = None
 
 
@@ -203,44 +206,98 @@ async def _fetch_catalogue(
     modifiers: list[Candidate] = []
     for brand in brands:
         brand_id = brand["id"]
-        for item in await provider.search_menu_items(
-            location_id=location.grubops_location_id, brand_ids=brand_id
+        for item in await provider.list_items(
+            location_id=location.grubops_location_id,
+            brand_id=brand_id,
+            item_type=TYPE_RECIPE,
+            partner_id=location.grubops_partner_id,
         ):
             recipes.append(
                 Candidate(
-                    item_id=str(item.get("id") or item.get("recipeId") or ""),
+                    item_id=str(item.get("id") or ""),
                     name=_name_of(item),
                     brand_id=brand_id,
                     grubops_type=TYPE_RECIPE,
                 )
             )
-        for item in await provider.search_modifiers(
-            location_id=location.grubops_location_id, brand_ids=brand_id
+        for item in await provider.list_items(
+            location_id=location.grubops_location_id,
+            brand_id=brand_id,
+            item_type=TYPE_MODIFIER,
+            partner_id=location.grubops_partner_id,
         ):
+            group, recipe_id = _parent_of(item)
             modifiers.append(
                 Candidate(
-                    item_id=str(item.get("id") or item.get("modifierId") or ""),
+                    item_id=str(item.get("id") or ""),
                     name=_name_of(item),
                     brand_id=brand_id,
                     grubops_type=TYPE_MODIFIER,
-                    parent_recipe_id=str(item.get("recipeId") or "") or None,
+                    parent_group=group,
+                    parent_recipe_id=recipe_id,
                 )
             )
     return recipes, modifiers
 
 
+def _parent_of(item: dict) -> tuple[str | None, str | None]:
+    """The group a modifier sits in, and the recipe that group belongs to.
+
+    Both, because neither identifies it alone. GrubOps duplicates a group per
+    recipe — "Your Choice of Quantity" exists seventeen times on this account,
+    once for each product that offers it — and the modifiers under those
+    seventeen copies share three names between them. So "3 Pieces" in the group
+    called "Your Choice of Quantity" describes seventeen different modifiers,
+    and only the recipe above them says which.
+
+    Our own catalogue is shaped the same way: seventeen modifier groups of that
+    name, each belonging to exactly one product. That symmetry is what makes
+    the pairing one-to-one.
+    """
+    for parent in item.get("parentAssociations") or []:
+        if parent.get("type") != "MODIFIER_GROUP":
+            continue
+        group = normalise(_name_of(parent))
+        for grandparent in parent.get("parentAssociations") or []:
+            if grandparent.get("type") == "RECIPE":
+                return group, str(grandparent.get("id") or "") or None
+        return group, None
+    return None, None
+
+
 def _name_of(item: dict) -> str:
-    """GrubOps returns either a bare string or a translated bundle."""
+    """The English name, whichever of the three shapes it arrives in.
+
+    `serving-brands` answers `{"name": {"text": ...}}`; the item list answers
+    `{"name": {"translations": {"en-US": ..., "ar-ae": ...}}}`; and a bare
+    string is possible too. English rather than the Arabic beside it, because
+    the catalogue this is matched against is written in English.
+    """
     name = item.get("name")
     if isinstance(name, dict):
+        translations = name.get("translations")
+        if isinstance(translations, dict):
+            for key in ("en-US", "en-us", "en"):
+                if translations.get(key):
+                    return str(translations[key])
+            # Any language beats nothing; an unmatched row is visible either way.
+            return str(next(iter(translations.values()), "") or "")
         return str(name.get("text") or "")
     return str(name or "")
 
 
 async def _our_menu(
     db: AsyncSession,
-) -> tuple[list[Product], dict[uuid.UUID, list[ModifierOption]]]:
-    """The products the website sells, and the options on each."""
+) -> tuple[list[Product], dict[uuid.UUID, list[tuple[ModifierOption, str]]]]:
+    """The products the website sells, and each one's options with their group.
+
+    Keyed by product because that is what tells two identically-named options
+    apart: this catalogue has seventeen modifier groups called "Your Choice of
+    Quantity", each belonging to exactly one product, and "3 Pieces" appears
+    under every one of them. GrubOps duplicates the same way, so (product,
+    group, option) is a unique key on both sides and the pairing is
+    one-to-one.
+    """
     products = list(
         (
             await db.execute(
@@ -255,15 +312,15 @@ async def _our_menu(
 
     rows = (
         await db.execute(
-            select(ProductModifier.product_id, ModifierOption)
+            select(ProductModifier.product_id, ModifierOption, Modifier.name)
             .join(Modifier, Modifier.id == ProductModifier.modifier_id)
             .join(ModifierOption, ModifierOption.modifier_id == Modifier.id)
         )
     ).all()
 
-    options: dict[uuid.UUID, list[ModifierOption]] = {}
-    for product_id, option in rows:
-        options.setdefault(product_id, []).append(option)
+    options: dict[uuid.UUID, list[tuple[ModifierOption, str]]] = {}
+    for product_id, option, group_name in rows:
+        options.setdefault(product_id, []).append((option, group_name or ""))
     return products, options
 
 
@@ -361,6 +418,7 @@ async def sync_mappings(db: AsyncSession) -> SyncSummary:
     }
 
     claimed: set[str] = set()
+    seen_options: set[uuid.UUID] = set()
 
     for product in products:
         recipe, score, method = best_match(product.name, recipes)
@@ -381,17 +439,35 @@ async def sync_mappings(db: AsyncSession) -> SyncSummary:
             method=method,
         )
 
-        # Options are compared only with the modifiers of the recipe this
-        # product matched — see the module note about "Pistachio".
-        scoped = [
-            m
-            for m in modifiers
-            if m.parent_recipe_id is None or m.parent_recipe_id == recipe.item_id
-        ]
-        for option in options_by_product.get(product.id, []):
+        # Now this product's options, scoped to the modifiers hanging off the
+        # recipe it just matched, in the group of the same name.
+        #
+        # Both halves of that scope are load-bearing. Without the recipe,
+        # "3 Pieces" describes seventeen different modifiers and the matcher
+        # picks whichever it sees first; without the group, a quantity option
+        # could pair with a filling. Together they leave exactly one candidate
+        # per option, which is why every match below comes out exact.
+        for option, group_name in options_by_product.get(product.id, []):
+            if option.id in seen_options:
+                # Defensive. Every modifier group here belongs to exactly one
+                # product today, so an option is reached once — but the unique
+                # index on `modifier_option_id` would refuse the second row
+                # rather than tolerate it, and a catalogue edit is all it would
+                # take to make that true.
+                continue
+            seen_options.add(option.id)
+
+            group = normalise(group_name)
+            scoped = [
+                m
+                for m in modifiers
+                if m.parent_recipe_id == recipe.item_id and m.parent_group == group
+            ]
             modifier, opt_score, opt_method = best_match(option.name, scoped)
             if modifier is None:
-                summary.unmatched_ours.append(f"{product.name} → {option.name}")
+                summary.unmatched_ours.append(
+                    f"{product.name} → {group_name}: {option.name}"
+                )
                 continue
             claimed.add(modifier.item_id)
             _upsert(

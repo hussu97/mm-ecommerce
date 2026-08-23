@@ -38,44 +38,93 @@ GrubTech split these, so there are two bases rather than one:
 
 | What | Base | Setting |
 |---|---|---|
-| Availability writes | `https://internal-api.grubtech.io` | `GRUBOPS_API_BASE` |
-| Brands and menu listing | `https://api-grubone.grubtech.io` | `GRUBOPS_CATALOG_API_BASE` |
+| Availability writes, locations, the item list | `https://internal-api.grubtech.io` | `GRUBOPS_API_BASE` |
+| `serving-brands`, and only that | `https://api-grubone.grubtech.io` | `GRUBOPS_CATALOG_API_BASE` |
+
+Almost everything is on the first. The second exists because `serving-brands`
+answers there and 404s on the main host, and every availability payload needs
+the `brandId` it returns — so one endpoint earns a whole second base.
 
 ## Endpoints in use
 
 ```
 POST {api}/item-availability-mgt/v1.0/items-availability/unavailable
 POST {api}/item-availability-mgt/v1.0/items-availability/available
-POST {api}/item-availability-mgt/v1.0/items-availability/byItems
+POST {api}/item-search/v2.0/items/                     ← the menu, with availability
 GET  {api}/location-mgt/v1.0/locations/search/byPartnerId?partnerId=…
 GET  {catalog}/partners/{partnerId}/locations/{locationId}/serving-brands
 ```
 
+**The item list is a POST, and that is the whole trick.** Their bundle also
+contains `GET /v2.0/menu-items/searchMenuItem/byLocation/{loc}/byBrands/{brands}`
+and a matching `…/modifiers/searchModifier/…`; both are dead ends — 404 on the
+item-search service, 500 on the catalogue host, at every combination of query
+we tried. The console uses `POST /v2.0/items/` with
+
+```json
+{"partnerId": "…", "locationId": "…", "brandIds": ["…"], "searchText": "",
+ "itemType": "RECIPE", "unavailableItemsOnly": false, "language": "en"}
+```
+
+and gets back `{"items": [...]}`, each item carrying `{id, type, name.translations,
+parentAssociations, childAssociations, unavailability, attributes}`.
+`itemType` is `RECIPE` or `MODIFIER` — two calls. `unavailableItemsOnly: true`
+makes the same call an availability read, which is why nothing here uses
+`items-availability/byItems`: that endpoint rejects every body we could build
+for it, and this returns the same facts plus the names the seeder needs.
+
+Note that `unavailability` on a **response** is
+`{source, reason, status, unavailableUntil}`, while the **request** that sets
+it takes `{unavailableTill, unavailableReason}`. Different spellings for the
+same two ideas; both are in their bundle's mappers.
+
 Their services answer a rejected payload with **HTTP 200 and an `errorCode` in
 the body**, so `_unwrap` checks both and neither alone is enough.
 
-## Open: confirm the menu listing and the write body
+## How the two catalogues are paired
 
-Two things are still inferred from the compiled Flutter bundle rather than
-observed, and both are isolated so confirming them is a small change:
+Verified against the live account and a copy of the production catalogue:
+**45 products and 147 options, every one an exact name match, one-to-one, at
+both locations, with nothing unmatched on either side.** No fuzzy guesses were
+needed at all — but the threshold and the review queue stay, because the next
+new cake is the one that will need them.
 
-1. **The menu listing.** `search_menu_items` / `search_modifiers` currently
-   return 500 from `api-grubone`, so the item half of "Sync from GrubOps"
-   cannot populate yet. The route exists — a 500 rather than a 404 says the
-   path is right and the query is not.
-2. **The exact write body.** Field *names* are recovered from the bundle's
-   mappers and are believed correct; the full shape, and the format
-   `unavailableTill` wants, are not confirmed against a real request.
+Getting there took one non-obvious step. Names alone do not identify a
+modifier: GrubOps duplicates a modifier group **per recipe**, so "Your Choice
+of Quantity" exists seventeen times and the modifiers under those copies share
+three names between them. Matching on (group, name) looked perfect — every
+match "exact" — while quietly collapsing 147 options onto 51 modifiers.
 
-**To confirm both:** open the GrubOps console signed in as the service user,
-open the browser's network tab, mark one test item out of stock and put it
-back. Record the two XHRs to `items-availability/*` and the request the item
-list makes. Then adjust `grubops_service.unavailable_body` /
-`available_body` and the two `search_*` methods on the provider to match.
+The fix is to pin a modifier by the **recipe above its group** as well as the
+group: `MODIFIER → MODIFIER_GROUP → RECIPE` in their `parentAssociations`, and
+`ModifierOption → Modifier → ProductModifier → Product` in ours. Our catalogue
+duplicates groups exactly the same way — seventeen groups of that name, one per
+product — which is what makes the pairing one-to-one. There is a test for this
+specific trap in `test_grubops_sync.py`.
+
+Our "Size" group (73 options) has no counterpart: GrubOps models size as
+separate recipes, "Cookie Melt (250 grams)" against "(500 grams)". Those
+options are reported unmatched, which is correct.
+
+## Open: confirm the write body
+
+One thing is still inferred from the compiled bundle rather than observed. The
+field *names* in `unavailable_body` / `available_body` come from the bundle's
+own mappers and the response side corroborates them, but no write has been sent
+to confirm the full shape or the format `unavailableTill` wants.
+
+**To confirm:** signed in to the GrubOps console as the service user, with the
+browser network tab open, mark one test item out of stock and put it back.
+Record the two XHRs to `items-availability/*`, then adjust
+`grubops_service.unavailable_body` / `available_body` to match.
+
+A cheaper alternative, if a live write is acceptable: re-assert the state of an
+item that is *already* unavailable until further notice. That is a no-op for
+anything a customer sees and proves the payload is accepted.
 
 Until then, leave `GRUBOPS_SYNC_ENABLED` off. Everything else — login, token
-refresh, location discovery, the branch switch, the reconcile diff — is working
-and tested.
+refresh, location discovery, the branch switch, the item map, the reconcile
+diff — is working and tested against the live account.
 
 ## Why it is a loop and not a push
 

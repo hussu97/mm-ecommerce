@@ -371,3 +371,84 @@ def test_an_exact_item_match_is_marked_exact():
     ]
     match, score, method = best_match("pistachio kunafa", candidates)
     assert match is not None and score == 1.0 and method == "exact"
+
+
+def test_a_modifier_is_pinned_by_its_recipe_as_well_as_its_group():
+    """
+    Group alone is not enough, and this is the case that proves it.
+
+    GrubOps duplicates a modifier group per recipe: "Your Choice of Quantity"
+    exists seventeen times on this account, and the modifiers under those
+    seventeen copies share three names between them. Scoping by group name
+    only, every "3 Pieces" on the menu matches whichever of the seventeen the
+    matcher happened to see first — measured against the live catalogue that
+    collapsed 147 options onto 51 modifiers, silently, with every match
+    reported as exact.
+    """
+    from app.services.grubops_mapping import Candidate, best_match, normalise
+
+    modifiers = [
+        Candidate(
+            item_id=f"mod-{recipe}",
+            name="3 Pieces",
+            brand_id="b",
+            grubops_type="MODIFIER",
+            parent_group=normalise("Your Choice of Quantity"),
+            parent_recipe_id=recipe,
+        )
+        for recipe in ("recipe-a", "recipe-b", "recipe-c")
+    ]
+
+    for recipe in ("recipe-a", "recipe-b", "recipe-c"):
+        scoped = [
+            m
+            for m in modifiers
+            if m.parent_recipe_id == recipe
+            and m.parent_group == normalise("Your Choice of Quantity")
+        ]
+        assert len(scoped) == 1
+        match, _score, method = best_match("3 Pieces", scoped)
+        assert match is not None and method == "exact"
+        assert match.item_id == f"mod-{recipe}"
+
+
+def test_the_parent_chain_yields_both_group_and_recipe():
+    """The shape GrubOps actually answers with — group, then recipe above it."""
+    from app.services.grubops_mapping import _parent_of
+
+    group, recipe_id = _parent_of(
+        {
+            "id": "mod-1",
+            "name": {"translations": {"en-US": "3 Pieces"}},
+            "parentAssociations": [
+                {
+                    "type": "MODIFIER_GROUP",
+                    "id": "grp-1",
+                    "name": {"translations": {"en-US": "Your Choice of Quantity"}},
+                    "parentAssociations": [
+                        {
+                            "type": "RECIPE",
+                            "id": "rec-1",
+                            "name": {"translations": {"en-US": "Snickers Brownies"}},
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    assert group == "your choice of quantity"
+    assert recipe_id == "rec-1"
+
+
+def test_the_english_name_is_taken_from_the_translation_bundle():
+    """`{"name": {"translations": {"en-US": ...}}}` is what the item list sends."""
+    from app.services.grubops_mapping import _name_of
+
+    assert (
+        _name_of(
+            {"name": {"translations": {"en-US": "Fudge Brownies", "ar-ae": "براوني"}}}
+        )
+        == "Fudge Brownies"
+    )
+    # `serving-brands` uses a different shape for the same idea.
+    assert _name_of({"name": {"text": "Melting Moments"}}) == "Melting Moments"
