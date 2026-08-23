@@ -568,11 +568,6 @@ def _local(moment: datetime) -> datetime:
     return moment.astimezone(TZ)
 
 
-def _end_of(moment: datetime) -> datetime:
-    """The end of that day, local. Carries a date without implying an hour."""
-    return moment.astimezone(TZ).replace(hour=23, minute=59, second=0, microsecond=0)
-
-
 def _by_hour(moment: datetime, hour: int) -> datetime:
     """
     That day, bounded at an hour.

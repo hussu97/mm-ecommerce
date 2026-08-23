@@ -32,6 +32,7 @@ from app.core.database import AsyncSessionFactory
 from app.core.deps import get_db
 from app.core.exceptions import AppError
 from app.core.limiter import limiter
+from app.services import firebase_auth_service
 from scripts.seed_i18n import seed as seed_i18n
 
 logger = logging.getLogger("mm.api")
@@ -311,6 +312,32 @@ def add_system_endpoints(app: FastAPI, *, service: str) -> None:
     @app.get("/ping", tags=["System"], summary="Liveness probe — no dependencies")
     async def ping() -> dict:
         return {"status": "ok", "service": service}
+
+    @app.get(
+        "/health/integrations",
+        tags=["System"],
+        summary="Third-party reachability — for a smoke test, not a healthcheck",
+    )
+    async def health_integrations() -> dict:
+        """
+        Whether the outside services this deploy depends on answer.
+
+        Deliberately not part of `/health`, and deliberately not what the
+        container healthcheck polls (that is `/ping`, which depends on
+        nothing). A probe that lets a third party mark the container unhealthy
+        turns their outage into our restart loop.
+
+        It exists because a misconfigured deploy is otherwise invisible until a
+        customer meets it: phone verification with an unreachable certificate
+        endpoint fails closed, quietly, and looks like nobody tried to sign up.
+        """
+        checks: dict[str, str] = {}
+        if firebase_auth_service.is_enabled():
+            reachable = await firebase_auth_service.certificates_reachable()
+            checks["firebase_certificates"] = "ok" if reachable else "unreachable"
+        else:
+            checks["firebase_certificates"] = "disabled"
+        return {"service": service, "checks": checks}
 
     @app.get(
         "/health", tags=["System"], summary="Health check — verifies DB connectivity"

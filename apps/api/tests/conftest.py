@@ -15,6 +15,39 @@ def patch_settings(monkeypatch):
     monkeypatch.setattr(cfg.settings, "APP_ENV", "test")
 
 
+@pytest.fixture(autouse=True)
+def reset_courier_caches():
+    """
+    Clear the three process-level courier caches between tests.
+
+    `lalamove_service` and `slider_service` cache quotes, and
+    `noon_send_service` caches the partner limits for the life of the process
+    — deliberately, since they are asked once per boot in production. In a test
+    run "the process" is the whole suite, so one test that populates a cache
+    hands it to every test that follows, and the leak surfaces as an order that
+    depends on test ordering.
+
+    Individual tests already called `clear_caches()` by hand. That works only
+    for the tests that remember, which is the shape of every convention this
+    repo has since turned into a fixture or a guard test.
+    """
+    from app.services import lalamove_service, noon_send_service, slider_service
+
+    for reset in (
+        lalamove_service.clear_caches,
+        slider_service.clear_caches,
+        noon_send_service.invalidate_limits,
+    ):
+        reset()
+    yield
+    for reset in (
+        lalamove_service.clear_caches,
+        slider_service.clear_caches,
+        noon_send_service.invalidate_limits,
+    ):
+        reset()
+
+
 @pytest.fixture
 def mock_db():
     session = AsyncMock()

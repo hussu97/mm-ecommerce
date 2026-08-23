@@ -1194,12 +1194,6 @@ async def _ready_deliveries(
     return list(result.scalars().all())
 
 
-async def polygon_for(
-    db: AsyncSession, polygon_id: uuid.UUID
-) -> DeliveryPolygon | None:
-    return await db.get(DeliveryPolygon, polygon_id)
-
-
 async def group_for_polygon(
     db: AsyncSession, polygon_id: uuid.UUID
 ) -> uuid.UUID | None:

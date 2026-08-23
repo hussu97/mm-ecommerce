@@ -232,7 +232,3 @@ async def _day_totals(
         "returns": _sum("returns"),
         "taxes": _sum("taxes"),
     }
-
-
-def today_iso(tz: ZoneInfo) -> date:
-    return utcnow().astimezone(tz).date()

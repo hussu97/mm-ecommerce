@@ -71,19 +71,6 @@ __all__ = [
 ]
 
 
-async def _with_product_count(db: AsyncSession, cat: Category) -> CategoryResponse:
-    count_result = await db.execute(
-        select(func.count(Product.id)).where(
-            Product.category_id == cat.id,
-            Product.is_active == True,  # noqa: E712
-        )
-    )
-    count = count_result.scalar() or 0
-    response = CategoryResponse.model_validate(cat)
-    response.product_count = count
-    return response
-
-
 def _countable_products(channel: str, branch_id=None):
     """
     The join condition that decides which products a category is counted for.
