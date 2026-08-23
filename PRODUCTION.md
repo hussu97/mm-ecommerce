@@ -849,6 +849,9 @@ The rest fall back in the deploy workflow:
 | `NOON_SEND_CLIENT_CODE` | `noon_food` | `noon_food` or `nownow` |
 | `NOON_SEND_MAX_DISTANCE_M` | `20000` | Matches the 20 km the rate card prices to and the radius `Sharjah Central` is drawn at. Never set it tighter than the zone — see the note above. `GET /public/v1/configurations` reports the real per-partner limit |
 | `NOON_SEND_DETOUR_FACTOR` | `1.49` | Straight line to road distance. Only used to estimate cost — there is no quotation API |
+| `NOON_SEND_BASE` | `12` | **A fare in dirhams, not a URL.** The bike rate off the published card, and the reason this courier is worth having — on a bike they beat Lalamove at every distance in range |
+| `NOON_SEND_BULKY_BASE` | `25` | The car tier, in dirhams. Standard cakes go by bike, so this is the exception price |
+| `NOON_SEND_SURGE_AED` | `1` | Added across all bands during 12:00–15:00 and 19:00–22:00 Dubai time |
 | `NOON_SEND_TIMEOUT_SECONDS` | `8` | |
 
 ```bash
@@ -1189,6 +1192,8 @@ distinguishes them.
 | `BACKUP_GCS_BUCKET` | `melting-moments-cakes-backups` | GCS bucket created in Step 8 |
 | `GCP_PROJECT_ID` | `melting-moments-cakes` | Used by the `gcplogs` Docker driver to ship API logs to Cloud Logging. On GCE this is auto-detected — set it anyway so the `.env` write step is explicit. |
 | `SENTRY_DSN` | `https://...@sentry.io/...` | DSN from Sentry project `mm-backend`. Used by the ecommerce API container. Frontend DSNs are configured directly in Vercel. |
+| `SENTRY_ENVIRONMENT` | `production` | Tags every event, so a staging run does not read as a production incident |
+| `SENTRY_TRACES_SAMPLE_RATE` | `0.1` | Share of requests traced for performance. `0` turns tracing off and leaves error capture alone |
 
 #### Log retention
 
@@ -1202,6 +1207,23 @@ Everything here has a working default; a secret is only needed to change one.
 Swept hourly by a loop inside the API's own lifespan (`app/services/log_retention.py`),
 which holds a Postgres advisory lock so only one worker in the deployment ever runs
 one. There is no cron in this stack, and nothing that survives the container.
+
+#### Timeouts and tuning
+
+Everything here has a working default and none of them is a secret. They are
+listed because the checklist is only useful if it is complete: a setting absent
+from this page is one nobody knows they can change, and
+`test_compose_env_allowlist.py` now fails if one is missing.
+
+| Secret | Falls back to | Notes |
+|--------|---------------|-------|
+| `FIREBASE_TIMEOUT_SECONDS` | `5.0` | Fetching Google's signing certificates |
+| `FIREBASE_MAX_AUTH_AGE_SECONDS` | `3600` | How long a phone proof stays reusable. Firebase keeps `auth_time` from the original sign-in, so without this a months-old session still looks freshly verified. `0` disables the check |
+| `PHONE_VERIFICATION_TTL_SECONDS` | `2592000` | 30 days. Stops a customer verifying twice between saving an address and paying |
+| `TURNSTILE_TIMEOUT_SECONDS` | `5` | Verifying a bot-check token with Cloudflare |
+| `MAPBOX_TIMEOUT_S` | `5.0` | One Directions call for a driver ETA |
+| `MAPBOX_MIN_ROUTE_INTERVAL_S` | `25` | Floor between route calls for one driver, so a chatty courier webhook cannot spend the Mapbox quota |
+| `POS_REQUIRE_POS_HOST` | `true` | Whether the register API refuses a request that did not arrive on the POS hostname. Leave on |
 
 #### Analytics (optional — leave empty to disable)
 
