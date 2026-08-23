@@ -23,7 +23,7 @@ import json
 import httpx
 import pytest
 
-from app.api.v1 import analytics as mod
+from app.api.v1.analytics import umami as mod
 
 
 def _response(status: int, payload) -> httpx.Response:
