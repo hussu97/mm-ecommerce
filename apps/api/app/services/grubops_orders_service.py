@@ -448,13 +448,20 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
                 unmapped += 1
             price = _num(m.get("unitPrice"))
             options_price += price
+            option_id = str(opt["modifier_option_id"]) if opt else None
+            # The canonical option-snapshot shape every reader expects — the
+            # admin's item table renders `option_name`/`option_price`, and the
+            # register reads `option_name`. Writing `name`/`price` (an older,
+            # different shape) left the admin showing "1×" with no name.
             snapshot.append(
                 {
-                    "name": m.get("name"),
-                    "price": float(price),
-                    "modifier_option_id": (
-                        str(opt["modifier_option_id"]) if opt else None
-                    ),
+                    "option_name": m.get("name"),
+                    "option_price": float(price),
+                    "option_id": option_id,
+                    #: Kept as an alias for the register, which reads either.
+                    "modifier_option_id": option_id,
+                    #: GrubOps has no per-line modifier-group name to give.
+                    "modifier_name": None,
                     "modifier_id": mid,
                     "quantity": int(_num(m.get("quantity"), "1")),
                 }
