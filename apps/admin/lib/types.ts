@@ -239,6 +239,19 @@ export interface OrderItem {
   personalisation_note?: string | null;
 }
 
+/**
+ * Who is carrying an order, as a badge: a stable code, a display name, and a
+ * logo served from the DB-backed `couriers` table (so a logo can be swapped in
+ * the database without shipping an app). Filled for a dispatched courier and
+ * for a marketplace channel alike.
+ */
+export interface CourierBadge {
+  code: string;
+  name: string;
+  logo_url: string;
+  is_aggregator: boolean;
+}
+
 export interface Order {
   id: string;
   order_number: string;
@@ -292,6 +305,18 @@ export interface Order {
   /** The short number the counter calls out — "order 12". */
   check_number?: number | null;
   customer_name?: string | null;
+  /** For an aggregator order, the marketplace it came in on ("Talabat"…). */
+  aggregator_channel?: string | null;
+  /** The delivery charge the marketplace showed the customer — theirs, print
+   * only, never part of MM sales. Null on web/counter. */
+  aggregator_delivery_fee?: number | null;
+  /** The short driver-facing pickup code for an aggregator order. */
+  aggregator_display_code?: string | null;
+  /** The marketplace's own long order id for an aggregator order. */
+  external_reference?: string | null;
+  /** Who is carrying it — the marketplace for an aggregator order (list); the
+   * dispatched courier lives on `OrderDelivery.courier` (detail). */
+  courier?: CourierBadge | null;
 }
 
 export interface PaginatedOrders {
@@ -897,6 +922,9 @@ export interface DeliveryZoneSummary {
  */
 export interface OrderDelivery {
   provider: FulfilmentProvider;
+  /** The carrier as a badge (code, name, logo), built from `provider`, so the
+   * fulfilment panel can show a courier logo. */
+  courier: CourierBadge | null;
   /**
    * Who the zone originally chose, when that is no longer who is carrying it.
    * Null on all but an order an admin moved onto Lalamove by hand.
@@ -1220,4 +1248,27 @@ export interface GrubOpsSyncSummary {
   unmatched_ours: string[];
   unmatched_theirs: string[];
   errors: string[];
+}
+
+export interface GrubOpsOrderRow {
+  id: string;
+  grubops_order_id: string;
+  external_id: string | null;
+  source_channel: string | null;
+  location_id: string | null;
+  mm_order_id: string | null;
+  mm_order_number: string | null;
+  last_grubops_status: string | null;
+  last_pushed_status: string | null;
+  last_push_error: string | null;
+  has_unmapped_lines: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GrubOpsOrderList {
+  items: GrubOpsOrderRow[];
+  total: number;
+  error_count: number;
+  unmapped_count: number;
 }

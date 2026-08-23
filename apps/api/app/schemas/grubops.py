@@ -97,3 +97,36 @@ class GrubOpsSyncSummary(BaseModel):
     unmatched_ours: list[str]
     unmatched_theirs: list[str]
     errors: list[str]
+
+
+class GrubOpsOrderRow(BaseModel):
+    """One ingested aggregator order, as the monitoring screen shows it."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    grubops_order_id: str
+    external_id: str | None = None
+    source_channel: str | None = None
+    location_id: str | None = None
+    mm_order_id: uuid.UUID | None = None
+    #: The MM order number, resolved for the link. Null until the order is
+    #: created (or if creation failed).
+    mm_order_number: str | None = None
+    last_grubops_status: str | None = None
+    last_pushed_status: str | None = None
+    last_push_error: str | None = None
+    #: Whether any line on the created order could not be matched to a product
+    #: or option — the thing worth eyeballing.
+    has_unmapped_lines: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+
+class GrubOpsOrderList(BaseModel):
+    """A page of ingested orders, with the counts the screen puts in its header."""
+
+    items: list[GrubOpsOrderRow]
+    total: int
+    error_count: int
+    unmapped_count: int

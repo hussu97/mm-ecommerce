@@ -230,6 +230,31 @@ class Order(Base, UUIDMixin, TimestampMixin):
     #: website takes directly, which today is everything.
     external_reference: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
+    #: For an aggregator order, the customer-facing channel name (`Talabat`,
+    #: `Noon`, `Careem`, `Deliveroo`, `Keeta 2.0`). Null on everything else. The
+    #: admin channel tab, the reports and the receipt read it to say which
+    #: aggregator this was rather than a bare "aggregator".
+    aggregator_channel: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+    #: For an aggregator order, the delivery charge the marketplace showed *the
+    #: customer* — theirs, not ours. Deliberately kept out of `delivery_fee`
+    #: (which feeds sales and freight-margin reports) because MM neither sets nor
+    #: collects it and it is not part of the order `total` (the aggregator's
+    #: `totalPrice` excludes it). Recorded only so the receipt/print can show
+    #: what the customer paid to have it brought. Null on everything else.
+    aggregator_delivery_fee: Mapped[Any | None] = mapped_column(
+        Numeric(10, 2), nullable=True
+    )
+
+    #: The short, driver-facing pickup code for an aggregator order — Talabat's
+    #: "1445", Noon's four digits, or the GrubOps sequence where the marketplace
+    #: has no short code of its own. Distinct from `external_reference` (the long
+    #: marketplace order id): this is what the register prints and the driver
+    #: reads. Null on everything else. Derived once at ingest.
+    aggregator_display_code: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+
     #: When the checkout told this customer their order would arrive.
     #:
     #: A record of what was said, not a calculation to repeat. Everything else

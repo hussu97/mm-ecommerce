@@ -32,6 +32,7 @@ from .grubops import (  # noqa: F401
     GrubOpsLocationMap,
     GrubOpsSyncState,
 )
+from .grubops_order import GrubOpsOrderMap  # noqa: F401
 from .email_log import EmailLog  # noqa: F401
 from .delivery_settings import DeliverySettings  # noqa: F401
 from .delivery_polygon import (  # noqa: F401

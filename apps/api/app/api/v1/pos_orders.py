@@ -26,6 +26,7 @@ from app.models import (
 )
 from app.models.base import utcnow
 from app.models.user import User
+from app.schemas.courier import CourierBadge
 from app.schemas.pos_order import (
     AddItemRequest,
     ApplyChargeRequest,
@@ -126,6 +127,20 @@ def _serialise(order: Order) -> PosOrderResponse:
         if "branch" not in inspect(order).unloaded:
             proximity = driver_proximity.to_pickup(order.delivery, order.branch)
             payload.driver_distance_km = proximity.distance_km if proximity else None
+    # An aggregator order has no MM delivery row — the marketplace's own rider
+    # carries it — so its driver-facing number is the short pickup code we
+    # derived at ingest, not a courier reference. Put it where the ticket
+    # already looks (`courier_reference` prints ahead of the long external id),
+    # so the driver reads "1445", not the 16-digit marketplace order id.
+    if order.source == "aggregator" and order.aggregator_display_code:
+        payload.courier_reference = order.aggregator_display_code
+    # Who is carrying it, for the board and cards. The marketplace for an
+    # aggregator order; the dispatched courier for a website one.
+    payload.courier = CourierBadge.for_order(
+        source=order.source,
+        aggregator_channel=order.aggregator_channel,
+        delivery_provider=payload.delivery_provider,
+    )
     # Same guard, same reason. A hint for the terminal, not the enforcement —
     # `accept_order` asks the question again with the branch definitely loaded,
     # so a payload that could not resolve the hours costs a 409 and an alarm

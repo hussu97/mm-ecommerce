@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import (
     Integer,
     cast,
+    exists,
     func,
     inspect as sa_inspect,
     select,
@@ -31,6 +32,7 @@ from app.models.branch import Branch
 from app.models.cart import Cart, CartItem
 from app.models.delivery_batch import DELIVERY_TIMEZONE
 from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
+from app.models.order_delivery import OrderDelivery
 from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.product import Product
 from app.models.pos_order import OrderSourceEnum, OrderTax
@@ -53,6 +55,7 @@ from app.schemas.order_preview import (
 from app.services import (
     availability_service,
     cart_service,
+    courier_catalog,
     delivery_promise,
     delivery_service,
     email_service,
@@ -1464,6 +1467,17 @@ async def update_status(
     return await to_response(db, result.scalar_one())
 
 
+#: An aggregator courier code → the prefix its `aggregator_channel` display name
+#: starts with, so a `courier=keeta` filter catches "Keeta 2.0" too.
+_AGGREGATOR_CHANNEL_PREFIX: dict[str, str] = {
+    "talabat": "talabat",
+    "keeta": "keeta",
+    "noon_food": "noon",
+    "deliveroo": "deliveroo",
+    "careem": "careem",
+}
+
+
 async def get_all_admin(
     db: AsyncSession,
     status: OrderStatusEnum | None = None,
@@ -1471,14 +1485,16 @@ async def get_all_admin(
     page: int = 1,
     per_page: int = 20,
     channel: str | None = None,
+    courier: str | None = None,
     branch_id: uuid.UUID | None = None,
 ) -> tuple[list[OrderListResponse], int]:
     """
-    Every order, from either channel, newest first.
+    Every order, from any channel, newest first.
 
-    `channel` narrows to one. Both are a plain equality now: `061` backfilled
-    the storefront orders that predated the column and made it `NOT NULL`, so
-    there is no third state to write around.
+    `channel` narrows to one source — `online`, `counter` or `aggregator`.
+    `courier` narrows to one carrier: an aggregator channel code matches on
+    `aggregator_channel`; a dispatch provider (`lalamove`, `noon_send`, …)
+    matches on the order's delivery record.
     """
     base_stmt = select(Order)
 
@@ -1486,6 +1502,25 @@ async def get_all_admin(
         base_stmt = base_stmt.where(Order.source == OrderSourceEnum.CASHIER.value)
     elif channel == "online":
         base_stmt = base_stmt.where(Order.source == OrderSourceEnum.ONLINE.value)
+    elif channel == "aggregator":
+        base_stmt = base_stmt.where(Order.source == OrderSourceEnum.AGGREGATOR.value)
+
+    if courier:
+        if courier in courier_catalog.AGGREGATOR_CODES:
+            # `aggregator_channel` holds a marketplace display name ("Talabat",
+            # "Keeta 2.0"); match the family by prefix.
+            prefix = _AGGREGATOR_CHANNEL_PREFIX.get(courier, courier)
+            base_stmt = base_stmt.where(
+                Order.source == OrderSourceEnum.AGGREGATOR.value,
+                Order.aggregator_channel.ilike(f"{prefix}%"),
+            )
+        else:
+            base_stmt = base_stmt.where(
+                exists().where(
+                    OrderDelivery.order_id == Order.id,
+                    OrderDelivery.provider == courier,
+                )
+            )
     if branch_id is not None:
         base_stmt = base_stmt.where(Order.branch_id == branch_id)
 

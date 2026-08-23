@@ -53,6 +53,11 @@ class OrderTypeEnum(str, enum.Enum):
 class OrderSourceEnum(str, enum.Enum):
     CASHIER = "cashier"
     ONLINE = "online"  # the Melting Moments storefront
+    #: An aggregator order (Talabat/Noon/Careem/Deliveroo/Keeta) ingested from
+    #: GrubOps. Priced and delivered by the aggregator, recorded by us — so it
+    #: is deliberately *not* treated like an `online` order by the delivery,
+    #: refund and email machinery. See `services/grubops_orders_service.py`.
+    AGGREGATOR = "aggregator"
     API = "api"
     CALL_CENTER = "call_center"
 

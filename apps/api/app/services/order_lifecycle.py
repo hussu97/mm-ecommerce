@@ -40,6 +40,7 @@ from sqlalchemy import event
 
 from app.core.exceptions import BadRequestError
 from app.models.order import Order, OrderStatusEnum
+from app.models.order_status_event import StatusSourceEnum, current_actor
 from app.models.pos_order import OrderSourceEnum, PosOrderStatusEnum
 from app.models.product import Product
 
@@ -343,7 +344,10 @@ async def _move_stock(db: AsyncSession, order: Order, direction: int) -> None:
     be free to drift, and the drift would show up as stock that is quietly
     wrong rather than as an error.
     """
-    if order.source != OrderSourceEnum.ONLINE.value:
+    if order.source not in (
+        OrderSourceEnum.ONLINE.value,
+        OrderSourceEnum.AGGREGATOR.value,
+    ):
         return
     for item in order.items:
         if not item.product_id:
@@ -354,6 +358,20 @@ async def _move_stock(db: AsyncSession, order: Order, direction: int) -> None:
             .values(stock_quantity=Product.stock_quantity + direction * item.quantity)
             .execution_options(synchronize_session=False)
         )
+
+
+def _mm_owns_fulfilment(order: Order) -> bool:
+    """Whether MM books the courier and holds the money for this order.
+
+    True only for the storefront. A counter sale is settled on the till; an
+    aggregator order is delivered by the aggregator's own rider and was paid
+    through the aggregator, so the courier, batching and refund machinery below
+    has nothing to act on and must not try — there is no MM delivery row to
+    cancel and no MM card to refund. What an aggregator order *does* still get
+    is its stock back (`_move_stock`) and its register check voided, because
+    those are facts about our own shelves and our own board.
+    """
+    return order.source == OrderSourceEnum.ONLINE.value
 
 
 async def _consequences(
@@ -387,9 +405,10 @@ async def _consequences(
     # reconciled in the morning, or a declined card the customer paid another
     # way — so this is keyed off the transition and not off the endpoint.
     if new_status == OrderStatusEnum.CONFIRMED:
-        from app.services import arrival_service
+        if _mm_owns_fulfilment(order):
+            from app.services import arrival_service
 
-        await arrival_service.schedule(db, order)
+            await arrival_service.schedule(db, order)
 
     # The register hears about it here instead, which is the point of the
     # status. For a batched zone this is hours after the money landed and the
@@ -397,9 +416,10 @@ async def _consequences(
     # minute. `publish_to_register` declines counter sales and repeats, so it is
     # safe to say twice, and the arrival sweep leans on that.
     elif new_status == OrderStatusEnum.ARRIVED_AT_POS:
-        from app.services import order_service
+        if _mm_owns_fulfilment(order):
+            from app.services import order_service
 
-        await order_service.publish_to_register(db, order)
+            await order_service.publish_to_register(db, order)
 
     # The backstop, not the trigger. Arrival is what calls a driver now, and on
     # a batched zone the run has already gone out by the time anything is
@@ -410,19 +430,25 @@ async def _consequences(
     # already booked, so on the ordinary path this is free. Nothing happens for
     # a third-party zone, exactly as before.
     elif new_status == OrderStatusEnum.PACKED:
-        from app.services import batching_service
+        if _mm_owns_fulfilment(order):
+            from app.services import batching_service
 
-        await batching_service.assign_or_dispatch(db, order)
+            await batching_service.assign_or_dispatch(db, order)
 
     elif new_status == OrderStatusEnum.CANCELLED:
-        from app.services import batching_service, courier_service, lalamove_service
+        if _mm_owns_fulfilment(order):
+            from app.services import (
+                batching_service,
+                courier_service,
+                lalamove_service,
+            )
 
-        delivery = await lalamove_service.get_delivery(db, order.id)
-        if delivery is not None:
-            # Off the run first, so a batch that is now empty does not go out
-            # to collect nothing.
-            await batching_service.cancel_assignment(db, delivery)
-        await courier_service.cancel(db, order)
+            delivery = await lalamove_service.get_delivery(db, order.id)
+            if delivery is not None:
+                # Off the run first, so a batch that is now empty does not go
+                # out to collect nothing.
+                await batching_service.cancel_assignment(db, delivery)
+            await courier_service.cancel(db, order)
 
         # And closes on the register, if it ever reached one. Without this the
         # check stays open on the iPad forever: the cashier sees a live order
@@ -499,7 +525,26 @@ async def _consequences(
     # the second would leave a shop unable to stop making a cake because Stripe
     # was slow. `refund_order` swallows its own failures and returns zero, and
     # the order then shows as unrefunded for a person to deal with.
-    if new_status in _REFUNDABLE_ENDINGS:
+    if new_status in _REFUNDABLE_ENDINGS and _mm_owns_fulfilment(order):
         from app.services import payment_service
 
         await payment_service.refund_order(db, order)
+
+    # Mirror a terminal MM move back out to GrubOps for an aggregator order —
+    # cancel or complete, via the force-* overrides. Only when the move came
+    # from *our* side: the ingest loop attributes its own moves `aggregator`,
+    # and echoing GrubOps's state straight back to GrubOps would be a feedback
+    # loop. A human (admin) cancel is attributed otherwise and does mirror out.
+    if (
+        order.source == OrderSourceEnum.AGGREGATOR.value
+        and new_status in (OrderStatusEnum.CANCELLED, OrderStatusEnum.DELIVERED)
+        and current_actor().source != StatusSourceEnum.AGGREGATOR.value
+    ):
+        from app.services import grubops_orders_service
+
+        actor = current_actor()
+        grubops_orders_service.push_status_out_in_background(
+            mm_order_id=order.id,
+            new_status=new_status,
+            actor=actor.actor_label or actor.source,
+        )

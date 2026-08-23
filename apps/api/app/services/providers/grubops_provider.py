@@ -72,6 +72,11 @@ TYPE_NESTED_MODIFIER = "NESTED_MODIFIER"
 STATUS_UNTIL_FURTHER_NOTICE = "UNAVAILABLE_UNTIL_FURTHER_NOTICE"
 STATUS_UNTIL_SPECIFIC_DATE = "UNAVAILABLE_UNTIL_SPECIFIC_DATE"
 
+#: The order-management overrides our console token can reach. The normal
+#: accept/prepare flow lives behind the KDS station pool and is not callable
+#: here — see docs/grubops-integration.md.
+_ORDERS = "/v2.0"
+
 
 class GrubOpsError(RuntimeError):
     """A call to GrubOps that did not do what we asked.
@@ -99,6 +104,7 @@ class GrubOpsConfig:
     partner_id: str
     api_base: str
     catalog_api_base: str
+    orders_base: str
     source: str
     timeout: float
 
@@ -130,6 +136,7 @@ def _config() -> GrubOpsConfig:
         partner_id=settings.GRUBOPS_PARTNER_ID,
         api_base=settings.GRUBOPS_API_BASE,
         catalog_api_base=settings.GRUBOPS_CATALOG_API_BASE,
+        orders_base=settings.GRUBOPS_ORDERS_API_BASE,
         source=settings.GRUBOPS_SOURCE,
         timeout=settings.GRUBOPS_TIMEOUT_SECONDS,
     )
@@ -460,6 +467,132 @@ class GrubOpsClient:
         if isinstance(payload, dict):
             return payload.get("items") or []
         return payload or []
+
+    # ── orders (aggregator ingest + write-back) ──────────────────────────────
+    #
+    # The order side answers on a third host, the console's own
+    # `api-grubops.grubtech.io`, hence `base=self.config.orders_base` on each.
+    # Reads are how MM learns of an aggregator sale; the three write methods are
+    # override actions (force-*), the only ones this token can reach.
+
+    async def list_orders(
+        self,
+        *,
+        statuses: list[str],
+        size: int = 100,
+        location_ids: list[str] | None = None,
+        channel_ids: list[str] | None = None,
+    ) -> list[dict]:
+        """One page of the most-recent orders in the given statuses.
+
+        `getOrderSummaryList` is a single most-recent window, not real
+        pagination — `page` above 0 answers 404 — so there is one call and one
+        `size`. An empty result comes back as HTTP 200 with an `errorCode` of
+        404 ("No orders found"), which `_unwrap` raises; the caller treats that
+        one code as an empty list rather than a failure.
+        """
+        try:
+            payload = await self._call(
+                "POST",
+                f"{_ORDERS}/getOrderSummaryList/partnerId/{self.config.partner_id}",
+                json_body={
+                    "brandIds": [],
+                    "locationIds": location_ids or [],
+                    "channelIds": channel_ids or [],
+                    "statuses": statuses,
+                    "paymentMethods": [],
+                    "orderTypes": [],
+                    "isConsiderScheduledOrders": False,
+                    "isConsiderFailedOrders": False,
+                },
+                params={"page": 0, "size": size},
+                base=self.config.orders_base,
+            )
+        except GrubOpsError as exc:
+            if exc.status == 404:
+                return []
+            raise
+        if isinstance(payload, dict):
+            return payload.get("orderSummaryList") or []
+        return payload or []
+
+    async def order_count(self, *, statuses: list[str]) -> dict:
+        """A cheap `{status: count}` probe the loop uses to skip quiet ticks."""
+        try:
+            payload = await self._call(
+                "POST",
+                f"{_ORDERS}/getOrderCount/partnerId/{self.config.partner_id}",
+                json_body={
+                    "brandIds": [],
+                    "locationIds": [],
+                    "channelIds": [],
+                    "statuses": statuses,
+                    "paymentMethods": [],
+                    "orderTypes": [],
+                    "isConsiderScheduledOrders": False,
+                    "isConsiderFailedOrders": False,
+                },
+                base=self.config.orders_base,
+            )
+        except GrubOpsError as exc:
+            if exc.status == 404:
+                return {}
+            raise
+        counts: dict[str, int] = {}
+        for row in (payload or {}).get("orderStatusCountList") or []:
+            counts[str(row.get("status"))] = int(row.get("count") or 0)
+        return counts
+
+    async def get_order(self, order_id: str) -> dict | None:
+        """The full order: header, customer, delivery, lines, taxes, history.
+
+        Returns the inner `orderInfo` object, which is what every consumer
+        wants; `None` if GrubOps no longer has it.
+        """
+        try:
+            payload = await self._call(
+                "GET",
+                f"{_ORDERS}/getOrderInfo/partnerId/{self.config.partner_id}"
+                f"/orderInternalId/{order_id}",
+                base=self.config.orders_base,
+            )
+        except GrubOpsError as exc:
+            if exc.status == 404:
+                return None
+            raise
+        if isinstance(payload, dict):
+            return payload.get("orderInfo") or payload
+        return None
+
+    async def force_complete(self, order_id: str, message: str) -> Any:
+        """Mark an order complete — an override, gated per order by
+        `orderManagementOptions.forceCompletionAllowed`."""
+        return await self._call(
+            "POST",
+            f"{_ORDERS}/order-management/order-force-complete",
+            json_body={"orderInternalId": order_id, "message": message},
+            base=self.config.orders_base,
+        )
+
+    async def force_cancel(self, order_id: str, message: str) -> Any:
+        """Cancel an order — an override, gated by
+        `orderManagementOptions.forceCancellationAllowed`."""
+        return await self._call(
+            "POST",
+            f"{_ORDERS}/order-management/order-force-cancel",
+            json_body={"orderInternalId": order_id, "message": message},
+            base=self.config.orders_base,
+        )
+
+    async def order_void(self, order_id: str, message: str) -> Any:
+        """Void an order — an override, gated by
+        `orderManagementOptions.voidAllowed`."""
+        return await self._call(
+            "POST",
+            f"{_ORDERS}/order-management/order-void",
+            json_body={"orderInternalId": order_id, "message": message},
+            base=self.config.orders_base,
+        )
 
 
 def _unwrap(response: httpx.Response) -> Any:

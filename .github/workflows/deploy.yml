@@ -417,6 +417,9 @@ jobs:
           GRUBOPS_SOURCE=${{ secrets.GRUBOPS_SOURCE || 'grubOps 2.0' }}
           GRUBOPS_TIMEOUT_SECONDS=${{ secrets.GRUBOPS_TIMEOUT_SECONDS || '8' }}
           GRUBOPS_RECONCILE_TICK_SECONDS=${{ secrets.GRUBOPS_RECONCILE_TICK_SECONDS || '120' }}
+          GRUBOPS_ORDERS_ENABLED=${{ secrets.GRUBOPS_ORDERS_ENABLED || 'false' }}
+          GRUBOPS_ORDERS_API_BASE=${{ secrets.GRUBOPS_ORDERS_API_BASE || 'https://api-grubops.grubtech.io' }}
+          GRUBOPS_ORDERS_TICK_SECONDS=${{ secrets.GRUBOPS_ORDERS_TICK_SECONDS || '60' }}
           SLIDER_API_KEY=${{ secrets.SLIDER_API_KEY }}
           SLIDER_ACCOUNT_ID=${{ secrets.SLIDER_ACCOUNT_ID }}
           SLIDER_ENV=${{ secrets.SLIDER_ENV || 'staging' }}

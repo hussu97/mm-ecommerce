@@ -14,6 +14,7 @@ import type {
   OrderStatus,
 } from '@/lib/types';
 import { Badge, Button } from '@/components/ui';
+import { CourierLogo } from '@/components/orders/CourierLogo';
 import { useConfirm, useToast } from '@/components/ui/feedback';
 import { cn, formatCurrency, formatDateTime, formatTimeAgo, ordinal } from '@/lib/utils';
 
@@ -457,6 +458,11 @@ export default function OrderDetailPage() {
 
   const isCancelled = order.status === 'cancelled';
   const isUndelivered = order.status === 'undelivered';
+  // A marketplace order is fulfilled by the aggregator's own rider and its
+  // status is mirrored in from GrubOps — MM does not drive it. So the shop
+  // neither packs, dispatches, delivers nor marks it undelivered from here; the
+  // fulfilment actions are hidden and the page is a read-only record.
+  const isAggregator = order.source === 'aggregator';
   const currentStepIdx = STATUS_STEPS.indexOf(order.status as OrderStatus);
   const promisedLabel = promisedFor(order);
   // Built here rather than in the JSX so the guard and the URL stay together:
@@ -562,7 +568,46 @@ export default function OrderDetailPage() {
         </div>
       )}
 
-      {/* Action buttons */}
+      {/* A marketplace order carries its channel, its short pickup code and the
+          delivery fee the customer paid the aggregator — none of it ours to
+          change. Shown in place of the fulfilment actions. */}
+      {isAggregator && (
+        <div className="bg-white border border-gray-200 p-4 mb-4">
+          <p className="text-[11px] font-body uppercase tracking-widest text-gray-400 mb-2">
+            Marketplace
+          </p>
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+            {order.courier && <CourierLogo courier={order.courier} size={28} showName />}
+            {order.aggregator_display_code && (
+              <span className="text-sm font-body text-gray-700">
+                Pickup code{' '}
+                <span className="font-medium text-gray-900">
+                  {order.aggregator_display_code}
+                </span>
+              </span>
+            )}
+            {order.external_reference && (
+              <span className="text-sm font-body text-gray-500">
+                Ref {order.external_reference}
+              </span>
+            )}
+            {order.aggregator_delivery_fee != null && (
+              <span className="text-sm font-body text-gray-500">
+                Customer delivery {formatCurrency(order.aggregator_delivery_fee)}
+                <span className="text-gray-400"> (theirs, not in sales)</span>
+              </span>
+            )}
+          </div>
+          <p className="mt-3 text-xs font-body text-gray-400">
+            The aggregator fulfils and delivers this order; its status is mirrored
+            in from GrubOps. There is nothing to mark from here.
+          </p>
+        </div>
+      )}
+
+      {/* Action buttons — hidden for a marketplace order, which MM does not
+          drive. */}
+      {!isAggregator && (
       <div className="flex gap-2 mb-4">
         {order.status === 'created' && (
           <Button size="sm" onClick={() => updateStatus('confirmed')} loading={actionLoading}>
@@ -633,6 +678,7 @@ export default function OrderDetailPage() {
           </Button>
         )}
       </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
         {/* Customer info */}
@@ -1154,6 +1200,9 @@ function DeliveryPanel({
         <p className="text-[11px] font-body uppercase tracking-widest text-gray-400 flex-1">
           Fulfilment
         </p>
+        {/* The courier's logo beside its name, so the carrier reads at a glance
+            — the same badge the register and the order list show. */}
+        {delivery.courier && <CourierLogo courier={delivery.courier} size={22} />}
         <Badge
           variant={
             delivery.provider === 'noon_send'

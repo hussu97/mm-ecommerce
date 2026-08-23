@@ -5029,6 +5029,35 @@
         "title": "CountLine",
         "type": "object"
       },
+      "CourierBadge": {
+        "description": "A carrier identified for display: a stable code, a name, a logo URL.\n\nBuilt by `courier_catalog.badge_for_order` from either an aggregator order's\nchannel or a delivery order's fulfilment provider, so the register and admin\nshow the same thing the same way. The `logo_url` comes from the `couriers`\ntable (cached), so a logo can be swapped in the database without touching an\napp.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "is_aggregator": {
+            "default": false,
+            "title": "Is Aggregator",
+            "type": "boolean"
+          },
+          "logo_url": {
+            "title": "Logo Url",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "name",
+          "logo_url"
+        ],
+        "title": "CourierBadge",
+        "type": "object"
+      },
       "CourierResponse": {
         "description": "A carrier and what it promises, for the admin's Estimates screen.\n\n`supports_batching` is read-only here and shown anyway: it is the reason a\ncourier does or does not appear on the batching screen, and an admin\nwondering why noon Send has no schedule deserves the answer on the same\npage as the numbers.",
         "properties": {
@@ -8432,6 +8461,164 @@
           }
         },
         "title": "GrubOpsMappingUpdate",
+        "type": "object"
+      },
+      "GrubOpsOrderList": {
+        "description": "A page of ingested orders, with the counts the screen puts in its header.",
+        "properties": {
+          "error_count": {
+            "title": "Error Count",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GrubOpsOrderRow"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "unmapped_count": {
+            "title": "Unmapped Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "error_count",
+          "unmapped_count"
+        ],
+        "title": "GrubOpsOrderList",
+        "type": "object"
+      },
+      "GrubOpsOrderRow": {
+        "description": "One ingested aggregator order, as the monitoring screen shows it.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "external_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Id"
+          },
+          "grubops_order_id": {
+            "title": "Grubops Order Id",
+            "type": "string"
+          },
+          "has_unmapped_lines": {
+            "default": false,
+            "title": "Has Unmapped Lines",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_grubops_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Grubops Status"
+          },
+          "last_push_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Push Error"
+          },
+          "last_pushed_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Pushed Status"
+          },
+          "location_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location Id"
+          },
+          "mm_order_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mm Order Id"
+          },
+          "mm_order_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mm Order Number"
+          },
+          "source_channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Channel"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "grubops_order_id",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "GrubOpsOrderRow",
         "type": "object"
       },
       "GrubOpsSyncSummary": {
@@ -12495,6 +12682,16 @@
             ],
             "title": "Cost Total"
           },
+          "courier": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CourierBadge"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "courier_order_id": {
             "anyOf": [
               {
@@ -12935,6 +13132,17 @@
       "OrderListResponse": {
         "description": "One row on the admin's orders screen, whichever channel it came from.\n\nWeb and POS orders share one table, so they share one row shape. The\nchannel-specific fields are null for the other channel rather than split\nacross two models \u2014 a single list that has to union two shapes is how the\nadmin ended up with two screens in the first place.",
         "properties": {
+          "aggregator_channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aggregator Channel"
+          },
           "branch_id": {
             "anyOf": [
               {
@@ -12957,6 +13165,16 @@
               }
             ],
             "title": "Check Number"
+          },
+          "courier": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CourierBadge"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "created_at": {
             "format": "date-time",
@@ -13395,6 +13613,49 @@
             ],
             "title": "Admin Notes"
           },
+          "aggregator_channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aggregator Channel"
+          },
+          "aggregator_delivery_fee": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aggregator Delivery Fee"
+          },
+          "aggregator_display_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aggregator Display Code"
+          },
+          "courier": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CourierBadge"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -13419,6 +13680,17 @@
             "default": false,
             "title": "Email Has Account",
             "type": "boolean"
+          },
+          "external_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Reference"
           },
           "fulfilment": {
             "anyOf": [
@@ -15364,6 +15636,29 @@
       },
       "PosOrderResponse": {
         "properties": {
+          "aggregator_channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aggregator Channel"
+          },
+          "aggregator_delivery_fee": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aggregator Delivery Fee"
+          },
           "already_accepted": {
             "default": false,
             "title": "Already Accepted",
@@ -15443,6 +15738,16 @@
               }
             ],
             "title": "Closer Id"
+          },
+          "courier": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CourierBadge"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "courier_reference": {
             "anyOf": [
@@ -34714,7 +35019,7 @@
     },
     "/api/v1/grubops/mappings": {
       "get": {
-        "description": "The review queue, newest suggestions first.",
+        "description": "The review queue \u2014 needs-decision first, or alphabetical by our name.",
         "operationId": "list_mappings_api_v1_grubops_mappings_get",
         "parameters": [
           {
@@ -34747,6 +35052,37 @@
                 }
               ],
               "title": "Kind"
+            }
+          },
+          {
+            "description": "Match on our item name, the GrubOps name, or a GrubOps id.",
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Match on our item name, the GrubOps name, or a GrubOps id.",
+              "title": "Search"
+            }
+          },
+          {
+            "description": "`queue` (needs-decision first) or `name` (alphabetical by our item name).",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "queue",
+              "description": "`queue` (needs-decision first) or `name` (alphabetical by our item name).",
+              "pattern": "^(queue|name)$",
+              "title": "Sort",
+              "type": "string"
             }
           },
           {
@@ -34887,6 +35223,135 @@
           }
         ],
         "summary": "Update Mapping",
+        "tags": [
+          "GrubOps"
+        ]
+      }
+    },
+    "/api/v1/grubops/orders": {
+      "get": {
+        "description": "The order ingest's own log: what came in, where it landed, what failed.\n\nRead-only. The ingest loop owns these rows; this screen is for spotting the\ntwo things a person needs to see \u2014 an order whose write-back errored, and an\norder carrying a line no mapping could resolve.",
+        "operationId": "list_grubops_orders_api_v1_grubops_orders_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "channel",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel"
+            }
+          },
+          {
+            "in": "query",
+            "name": "errors_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Errors Only",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "unmapped_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Unmapped Only",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Match on the external id, channel, GrubOps id or status.",
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Match on the external id, channel, GrubOps id or status.",
+              "title": "Search"
+            }
+          },
+          {
+            "description": "`recent` (newest first) or `channel` (alphabetical).",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "recent",
+              "description": "`recent` (newest first) or `channel` (alphabetical).",
+              "pattern": "^(recent|channel)$",
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrubOpsOrderList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Grubops Orders",
         "tags": [
           "GrubOps"
         ]
@@ -39760,7 +40225,7 @@
     },
     "/api/v1/orders/admin/all": {
       "get": {
-        "description": "Every order, from either channel (admin only).",
+        "description": "Every order, from any channel (admin only).",
         "operationId": "list_all_orders_api_v1_orders_admin_all_get",
         "parameters": [
           {
@@ -39798,22 +40263,40 @@
             }
           },
           {
-            "description": "`online` for the storefront, `counter` for the till. Omit for both \u2014 they are one ledger.",
+            "description": "`online` for the storefront, `counter` for the till, `aggregator` for a marketplace order. Omit for all \u2014 they are one ledger.",
             "in": "query",
             "name": "channel",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "pattern": "^(online|counter)$",
+                  "pattern": "^(online|counter|aggregator)$",
                   "type": "string"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "`online` for the storefront, `counter` for the till. Omit for both \u2014 they are one ledger.",
+              "description": "`online` for the storefront, `counter` for the till, `aggregator` for a marketplace order. Omit for all \u2014 they are one ledger.",
               "title": "Channel"
+            }
+          },
+          {
+            "description": "Narrow to one carrier by its code \u2014 a marketplace channel (`talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`) or a dispatch provider (`lalamove`, `noon_send`, `slider`, `third_party`).",
+            "in": "query",
+            "name": "courier",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Narrow to one carrier by its code \u2014 a marketplace channel (`talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`) or a dispatch provider (`lalamove`, `noon_send`, `slider`, `third_party`).",
+              "title": "Courier"
             }
           },
           {

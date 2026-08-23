@@ -1,0 +1,307 @@
+"""The order-ingest decisions, tested where they can be tested without a DB.
+
+The create path itself writes rows and is exercised against a real Postgres in
+development; what lives here is the logic that decides *what* to write and *when*
+to call GrubOps — the status mapping, the positional line grouping, the
+lifecycle ladder, the write-back gate, and the loop's change detector.
+"""
+
+from __future__ import annotations
+
+from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from app.models.order import OrderStatusEnum
+from app.services import grubops_orders as loop
+from app.services import grubops_orders_service as g
+
+
+def test_every_live_status_maps_to_a_lifecycle_state_except_on_hold():
+    # The loop asks GrubOps for these; each must resolve to an MM status, or an
+    # order sits in a state the ingest silently cannot represent. On-hold is the
+    # one deliberate omission — a hold is not a move of ours.
+    for status in loop.grubops_orders_service.LIVE_STATUSES:
+        assert status in g._STATUS_TO_MM
+    assert "OrderOnHold" not in g._STATUS_TO_MM
+
+
+def test_a_completed_order_means_delivered_and_a_rejected_one_cancelled():
+    assert g._STATUS_TO_MM["OrderCompleted"] == OrderStatusEnum.DELIVERED
+    assert g._STATUS_TO_MM["OrderRejected"] == OrderStatusEnum.CANCELLED
+    assert g._STATUS_TO_MM["OrderPrepared"] == OrderStatusEnum.PACKED
+
+
+def test_modifiers_attach_to_the_item_above_them():
+    lines = [
+        {"type": "ITEM", "name": "Box A"},
+        {"type": "MODIFIER", "name": "a1"},
+        {"type": "MODIFIER", "name": "a2"},
+        {"type": "ITEM", "name": "Box B"},
+        {"type": "MODIFIER", "name": "b1"},
+    ]
+    groups = g._group_lines(lines)
+    assert [gp["item"]["name"] for gp in groups] == ["Box A", "Box B"]
+    assert [m["name"] for m in groups[0]["modifiers"]] == ["a1", "a2"]
+    assert [m["name"] for m in groups[1]["modifiers"]] == ["b1"]
+
+
+def test_a_leading_modifier_with_no_item_is_dropped_not_crashed():
+    # A malformed payload must not take the whole order down.
+    assert g._group_lines([{"type": "MODIFIER", "name": "orphan"}]) == []
+
+
+def test_a_null_subtotal_is_read_as_zero_not_a_crash():
+    # Cash and some prepaid orders send `subtotal: null`; the ingest leans on
+    # unitPrice instead, and `_num` must never raise on the null.
+    assert g._num(None) == Decimal("0")
+    assert g._num("40.0") == Decimal("40.0")
+    assert g._num("not a number") == Decimal("0")
+
+
+@pytest.mark.asyncio
+async def test_the_ladder_climbs_created_to_delivered_one_rung_at_a_time():
+    order = SimpleNamespace(status=OrderStatusEnum.CREATED, pos_status="pending")
+    moved: list[OrderStatusEnum] = []
+
+    async def fake_transition(db, o, new_status, *, on_invalid="raise"):
+        moved.append(new_status)
+        o.status = new_status
+        return True
+
+    with patch.object(g.order_lifecycle, "transition", new=fake_transition):
+        await g._apply_status(None, order, OrderStatusEnum.DELIVERED, [])
+
+    assert moved == [
+        OrderStatusEnum.CONFIRMED,
+        OrderStatusEnum.PACKED,
+        OrderStatusEnum.DELIVERED,
+    ]
+    # Delivered closes the check on the board.
+    assert order.pos_status == g.PosOrderStatusEnum.CLOSED.value
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_is_attempted_directly_rather_than_climbed():
+    order = SimpleNamespace(status=OrderStatusEnum.CONFIRMED, pos_status="active")
+    seen: list[OrderStatusEnum] = []
+
+    async def fake_transition(db, o, new_status, *, on_invalid="raise"):
+        seen.append(new_status)
+        o.status = new_status
+        return True
+
+    with patch.object(g.order_lifecycle, "transition", new=fake_transition):
+        await g._apply_status(None, order, OrderStatusEnum.CANCELLED, [])
+
+    assert seen == [OrderStatusEnum.CANCELLED]
+    assert order.pos_status == g.PosOrderStatusEnum.VOID.value
+
+
+@pytest.mark.asyncio
+async def test_write_back_skips_and_records_when_grubops_forbids_it():
+    order_map = SimpleNamespace(
+        grubops_order_id="123", last_pushed_status=None, last_push_error=None
+    )
+    db = _fake_db(order_map)
+    fake_provider = SimpleNamespace(
+        get_order=AsyncMock(
+            return_value={"orderManagementOptions": {"forceCancellationAllowed": False}}
+        ),
+        force_cancel=AsyncMock(),
+    )
+    with patch.object(g, "provider", fake_provider):
+        await g.mirror_status_out(
+            db, mm_order_id="mm1", new_status=OrderStatusEnum.CANCELLED, actor="admin"
+        )
+    fake_provider.force_cancel.assert_not_awaited()
+    assert "forceCancellationAllowed" in order_map.last_push_error
+    assert order_map.last_pushed_status is None
+
+
+@pytest.mark.asyncio
+async def test_write_back_force_cancels_when_grubops_allows_it():
+    order_map = SimpleNamespace(
+        grubops_order_id="123", last_pushed_status=None, last_push_error="stale"
+    )
+    db = _fake_db(order_map)
+    fake_provider = SimpleNamespace(
+        get_order=AsyncMock(
+            return_value={"orderManagementOptions": {"forceCancellationAllowed": True}}
+        ),
+        force_cancel=AsyncMock(),
+    )
+    with patch.object(g, "provider", fake_provider):
+        await g.mirror_status_out(
+            db, mm_order_id="mm1", new_status=OrderStatusEnum.CANCELLED, actor="admin"
+        )
+    fake_provider.force_cancel.assert_awaited_once()
+    assert order_map.last_pushed_status == "cancelled"
+    assert order_map.last_push_error is None
+
+
+@pytest.mark.asyncio
+async def test_a_known_order_at_the_same_status_costs_no_detail_fetch():
+    # The change detector: an order already ingested at this exact status must
+    # not spend a getOrderInfo call on the busy-board common case.
+    existing = SimpleNamespace(mm_order_id="mm1", last_grubops_status="OrderStarted")
+    db = _fake_db(existing, execute_result=existing)
+    fake_provider = SimpleNamespace(get_order=AsyncMock())
+    summary = {
+        "orderId": "123",
+        "status": "OrderStarted",
+        "source": {"channel": "Talabat"},
+        "externalId": "e1",
+        "locationId": "L",
+    }
+    with patch.object(loop, "provider", fake_provider):
+        spent = await loop._ingest_one(db, summary)
+    assert spent is False
+    fake_provider.get_order.assert_not_awaited()
+
+
+# ── a minimal fake async session ────────────────────────────────────────────
+
+
+def _fake_db(scalar_one_or_none=None, execute_result=None):
+    class _Result:
+        def scalar_one_or_none(self):
+            return scalar_one_or_none
+
+        def scalar_one(self):
+            return execute_result
+
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_Result())
+    db.flush = AsyncMock()
+    return db
+
+
+@pytest.mark.asyncio
+async def test_the_ingest_loops_own_cancel_is_not_mirrored_back_out():
+    # The order_lifecycle write-back trigger must tell its own mirroring apart
+    # from a person's. A move attributed `aggregator` (the ingest) is GrubOps's
+    # own state coming in — echoing it straight back would be a feedback loop.
+    from app.models.order_status_event import StatusSourceEnum, acting_as
+    from app.services import order_lifecycle
+
+    order = _aggregator_order()
+    with patch(
+        "app.services.grubops_orders_service.push_status_out_in_background"
+    ) as push:
+        db = _stock_db()
+        with acting_as(StatusSourceEnum.AGGREGATOR):
+            await order_lifecycle.transition(
+                db, order, OrderStatusEnum.CANCELLED, on_invalid="skip"
+            )
+    push.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_an_admin_cancel_of_an_aggregator_order_is_mirrored_out():
+    from app.models.order_status_event import StatusSourceEnum, acting_as
+    from app.services import order_lifecycle
+
+    order = _aggregator_order()
+    with (
+        patch(
+            "app.services.grubops_orders_service.push_status_out_in_background"
+        ) as push,
+        patch("app.services.grubops_orders_service.is_enabled", return_value=True),
+    ):
+        db = _stock_db()
+        with acting_as(StatusSourceEnum.ADMIN):
+            await order_lifecycle.transition(
+                db, order, OrderStatusEnum.CANCELLED, on_invalid="skip"
+            )
+    push.assert_called_once()
+    assert push.call_args.kwargs["new_status"] == OrderStatusEnum.CANCELLED
+
+
+def _aggregator_order():
+    import uuid
+
+    from app.models.pos_order import OrderSourceEnum
+
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        status=OrderStatusEnum.CONFIRMED,
+        source=OrderSourceEnum.AGGREGATOR.value,
+        pos_status="active",
+        items=[],
+        refunded_amount=0,
+        order_number="AGG-1",
+    )
+
+
+def _stock_db():
+    db = AsyncMock()
+    db.execute = AsyncMock()
+    db.flush = AsyncMock()
+    return db
+
+
+# ── the driver-facing pickup code (audit: store both ids, print the short one) ──
+
+
+def test_talabat_short_code_is_pulled_from_the_instructions():
+    header = {"instructions": "No cutlery.  | Talabat-short code: 1445"}
+    assert g._driver_code(header, "3841201369", {}) == "1445"
+
+
+def test_a_short_numeric_external_id_is_the_code_itself():
+    # Noon and Deliveroo: the "external id" already is the four-digit number the
+    # customer and rider see.
+    assert g._driver_code({}, "5717", {}) == "5717"
+    assert g._driver_code({}, "0037", {}) == "0037"
+
+
+def test_a_long_external_id_falls_back_to_the_grubops_sequence():
+    # Keeta/Careem carry a long machine id and no short code; the GrubOps
+    # sequence is what the console shows the counter.
+    info = {"orderSequenceNumber": {"createdSequence": "15020"}}
+    assert g._driver_code({}, "4997841098410262", info) == "15020"
+
+
+def test_the_driver_code_is_never_the_long_id_when_a_short_one_exists():
+    # The whole point of the audit: the long external id is stored on
+    # external_reference, but the *printed* code is short.
+    header = {"instructions": "x | short code: 1477"}
+    assert g._driver_code(header, "3843227968", {}) == "1477"
+
+
+# ── the courier badge (audit: aggregators are couriers, with logos) ────────────
+
+
+def test_channel_names_normalise_to_courier_codes():
+    from app.services import courier_catalog as cc
+
+    assert cc.code_for_channel("Talabat") == "talabat"
+    assert cc.code_for_channel("Keeta 2.0") == "keeta"
+    assert cc.code_for_channel("Noon") == "noon_food"
+    assert cc.code_for_channel("Deliveroo") == "deliveroo"
+    assert cc.code_for_channel("Careem") == "careem"
+    assert cc.code_for_channel("Something else") is None
+
+
+def test_noon_food_and_noon_send_are_different_badges():
+    # The marketplace and the courier are two different "noon" businesses and
+    # must never share a logo.
+    from app.services import courier_catalog as cc
+
+    food = cc.badge_for_order(source="aggregator", aggregator_channel="Noon")
+    send = cc.badge_for_order(source="online", delivery_provider="noon_send")
+    assert food["code"] == "noon_food"
+    assert send["code"] == "noon_send"
+    assert food["logo_url"] != send["logo_url"]
+    assert food["is_aggregator"] is True
+    assert send["is_aggregator"] is False
+
+
+def test_a_counter_sale_has_no_courier_badge():
+    from app.services import courier_catalog as cc
+
+    assert cc.badge_for_order(source="cashier") is None
+    assert cc.badge_for_order(source="online", delivery_provider=None) is None

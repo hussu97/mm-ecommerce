@@ -157,6 +157,17 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
             except Exception as exc:  # noqa: BLE001 — a seed must not block boot
                 logger.warning("i18n seed failed (non-fatal): %s", exc)
 
+        # Warm the courier-logo cache from the database so every order payload
+        # carries the current logo. Best-effort — the module falls back to the
+        # conventional URL if this cannot run — and cheap (one small query).
+        try:
+            from app.services import courier_catalog
+
+            async with AsyncSessionFactory() as session:
+                await courier_catalog.load(session)
+        except Exception as exc:  # noqa: BLE001 — a cache warm must not block boot
+            logger.warning("courier logo cache warm failed (non-fatal): %s", exc)
+
         background: list[asyncio.Task] = []
         if dispatch_batches and settings.BATCH_DISPATCHER_ENABLED:
             from app.services import batch_scheduler
@@ -179,6 +190,16 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
                 from app.services import grubops_reconcile
 
                 background.append(asyncio.create_task(grubops_reconcile.run_forever()))
+
+            # The order-ingest loop, the OOS sync's mirror image: it reads
+            # aggregator orders out of the same console rather than pushing
+            # availability in. Its own flag, because ingesting orders and
+            # syncing stock are switched on at different times and fail
+            # independently. Storefront only, like its neighbours.
+            if settings.GRUBOPS_ORDERS_ENABLED:
+                from app.services import grubops_orders
+
+                background.append(asyncio.create_task(grubops_orders.run_forever()))
 
         logger.info("%s starting up [env=%s]", service, settings.APP_ENV)
         yield

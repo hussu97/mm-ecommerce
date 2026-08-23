@@ -268,3 +268,150 @@ once it is fixed.
 
 **Official partner access is the sustainable version of this.** Worth asking
 GrubTech for; the provider is the only file that would need to change.
+
+---
+
+# GrubOps order ingest (the return path)
+
+The OOS sync above pushes availability *out*. This pulls aggregator orders
+(Talabat, Noon, Careem, Deliveroo, Keeta) *in*, recording each as an ordinary
+`orders` row with `source = 'aggregator'` so MM is the single book of record for
+counter, website and aggregator sales — and so an aggregator order lands on the
+MM POS board, alarms, and prints in MMPOS styling exactly like a website order.
+
+GrubTech is wired into Foodics: Foodics auto-accepts and marks orders packed,
+and the aggregator's own rider delivers. MM does not take that over — it
+records, displays, decrements stock, and can mirror a cancel/complete back.
+
+## Where things are
+
+| Piece | File |
+|---|---|
+| Provider order methods (read + force-* write-back) | `apps/api/app/services/providers/grubops_provider.py` |
+| Ingest: create the order, map lines, decrement stock, walk the lifecycle, write-back | `apps/api/app/services/grubops_orders_service.py` |
+| The ingest poll loop | `apps/api/app/services/grubops_orders.py` |
+| Register attach (pending + check number) | `pos_order_service.attach_aggregator_order` |
+| Tables | `apps/api/app/models/grubops_order.py`, migration `132_grubops_orders` |
+| Monitoring API | `GET /grubops/orders` in `apps/api/app/api/v1/grubops.py` |
+| Monitoring screen | the "Ingested orders" tab on the GrubOps admin page |
+| iPad (mm-pos) | `PosOrder.isAggregator` / `aggregatorChannel`, receipt channel line, kitchen filter |
+
+## How orders come in
+
+There is **no webhook** — GrubTech does not push, its console polls, and its
+realtime is AppSync (GraphQL subscriptions we do not subscribe to). So ingest is
+a poll loop, `GRUBOPS_ORDERS_TICK_SECONDS` (60s), on advisory lock
+`0x6D6D_4241_5443_4804`, storefront app only.
+
+Each tick: `getOrderSummaryList` for the live statuses (a single most-recent
+window — `page > 0` is a 404, and an empty result is HTTP 200 with an
+`errorCode` of 404). For any order new or whose status moved, `getOrderInfo` for
+the full detail, then `grubops_orders_service.ingest`.
+
+Order lines carry GrubOps `recipeId` / `modifierId`, which resolve to our
+`product_id` / `modifier_option_id` through the **same approved
+`grubops_item_map`** the OOS sync maintains — validated 17/17 recipes and 20/20
+modifiers across a day of real orders, zero unmapped. An unmapped line is
+recorded (name kept, `product_id` null) and counted, never dropped.
+
+Money is taken **verbatim** from GrubOps — the aggregator priced and charged it,
+there is no cart to re-price, and re-pricing would raise on a delivery address
+GrubOps records as "Unknown". `subtotal` is null on cash (POSTPAID) and some
+prepaid orders, so it falls back to `unitPrice`.
+
+## Status: two axes
+
+- **MM lifecycle** (`orders.status`) mirrors GrubOps, walked one honest rung at
+  a time (created → confirmed → packed → delivered) so the timeline reads true,
+  every move attributed `aggregator` at GrubOps's own timestamp. On-hold is not
+  a move of ours; a cancel is attempted directly.
+- **Register** (`orders.pos_status`): `pending` at ingest (so it alarms and
+  prints on accept, via `notify_order_placed`), `active` when a cashier or the
+  auto-accept takes it, and `closed`/`void` when GrubOps finishes/cancels it.
+
+An aggregator order is deliberately **not** treated as `online`: `_mm_owns_fulfilment`
+gates off the courier, batching and refund machinery (the aggregator owns
+delivery and money), and `email_service` suppresses the customer email (the
+aggregator already sent one). Stock **is** decremented like a website order, so
+the OOS→GrubOps menu sync reacts to aggregator sales automatically.
+
+## Write-back (mirror out)
+
+Cancelling or completing an aggregator order **in MM** mirrors to GrubOps via
+`order-force-cancel` / `order-force-complete` — but only if the order's live
+`orderManagementOptions` still allow it, else it records `last_push_error` and
+leaves GrubOps alone. Guarded against a feedback loop: the ingest loop's own
+moves are attributed `aggregator` and never mirror back out; only a move from
+our side (an admin, the till) does.
+
+## The accept-flow ceiling (why we do not accept from MM)
+
+The GrubOps console API has **no accept/prepare** endpoint — only the three
+force-* overrides. The normal accept/start/prepare actions live in the **KDS**
+app behind a *separate* Cognito user pool (a per-station login), which our
+console token cannot reach. The KDS web app (`grubkds.grubtech.io`) is moreover
+decommissioned: it bootstraps its config from AWS SSM with IAM keys embedded in
+its bundle, and those keys are now rotated (`UnrecognizedClientException`), so it
+cannot even start. Foodics' own server-side scheduler auto-accepts regardless of
+the POS toggle. **Accepting an order from MM is therefore not reverse-engineerable
+— it needs official GrubTech partner API access.** Until then, MM records and
+displays (and Foodics keeps accepting/preparing), and force-complete/cancel are
+the only writes our token can make.
+
+## The order-data audit (per-channel), and what it changed
+
+A day of live orders across all five channels was audited. The findings, and how
+the ingest now handles each:
+
+| Field | What GrubOps sends | How MM handles it |
+|---|---|---|
+| Channel | `orderHeader.foodAggregatorName` / `sourceDisplayName` ("Talabat", "Keeta 2.0", "Noon", "Deliveroo", "Careem"); stable slug in `channelId` | Stored on `orders.aggregator_channel`; normalised to a courier code by `courier_catalog.code_for_channel` |
+| **Two order ids** | a long marketplace `externalId` **and** a short driver-facing code — but the short code lives in a *different place per channel* | Both stored: the long id on `external_reference`, the short one derived at ingest onto `aggregator_display_code` and printed in its place |
+| Delivery fee | `deliveryTotalPrice` — the charge the **customer** paid the marketplace; **not** part of `totalPrice` (verified: `total == net + tax`) | Kept out of `orders.delivery_fee` (which stays 0, so no sales/freight report counts it); recorded on `orders.aggregator_delivery_fee` for the receipt only |
+| Notes | `orderHeader.instructions` (order-level; no per-line notes populated) | On `orders.notes`, already printed on the receipt and kitchen ticket and shown on the incoming card |
+
+### The driver-facing pickup code
+
+There is **no single field** for it — each marketplace surfaces it differently —
+so `grubops_orders_service._driver_code` takes the surest available, in order:
+
+1. a short code embedded in the instructions (**Talabat**: `"…short code: 1445"`);
+2. the external id when it is already short and numeric (**Noon** `5717`,
+   **Deliveroo** `0037` — for these the external id *is* the customer's number);
+3. the GrubOps sequence number, which the console shows the counter for a
+   **Keeta**/**Careem** order whose own id is a long machine string;
+4. the last four of the external id, as a last resort.
+
+The long marketplace id always stays on `external_reference`; only the short code
+is printed. On the register this reuses the existing `courier_reference` →
+`foreignOrderNumber` path, so the driver reads "1445", not a 16-digit id, with no
+app change to the print logic.
+
+## Aggregators as couriers (identification on every surface)
+
+The five marketplaces are seeded as `couriers` rows flagged `is_aggregator`
+(migration 133), alongside a `logo_url` on every courier. `courier_catalog`
+resolves an order to a `CourierBadge` (code, name, logo) — from the channel for
+an aggregator order, from the fulfilment provider for a website one — which the
+POS board/cards, the admin order list and the fulfilment panel all render. The
+logo URL is served from the `couriers` table (cached in-process), so a logo can
+be swapped in the database without shipping an app. `noon_food` (the marketplace)
+and `noon_send` (the courier) are kept distinct, with different codes and logos.
+
+**Logos** live in the images bucket (Cloudflare R2) under a dedicated
+`couriers/` prefix, separate from `products/`. They are generated as uniform
+256×256 brand-colour badges in `scripts/courier_logos/` and pushed with
+`python -m scripts.upload_courier_logos` (run once where the R2 credentials are
+set — the production VM). To replace one with a real trademarked logo later,
+drop a new 256×256 PNG over `scripts/courier_logos/{code}.png` and re-run; nothing
+else changes because `couriers.logo_url` already points at that key.
+
+## Admin: a marketplace order is read-only
+
+An aggregator order is fulfilled and delivered by the marketplace and its status
+is mirrored in from GrubOps, so the admin order-detail page hides the fulfilment
+actions (mark packed / delivered / undelivered / cancel) for it and shows a
+read-only marketplace panel (channel logo, pickup code, external ref, the
+customer's delivery fee) instead. The order list gains an **Aggregator** channel
+tab and a **courier** filter, and renders the marketplace logo in the channel
+column. The GrubOps console gains search and alphabetical sort across its tabs.

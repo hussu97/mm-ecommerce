@@ -305,6 +305,11 @@ def _order_mock(
     o.email_has_account = False
     o.fulfilment = None
     o.source = "online"
+    o.aggregator_channel = None
+    o.aggregator_delivery_fee = None
+    o.aggregator_display_code = None
+    o.external_reference = None
+    o.courier = None
     o.locale = "en"
     return o
 

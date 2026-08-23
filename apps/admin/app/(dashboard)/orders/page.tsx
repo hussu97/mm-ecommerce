@@ -24,9 +24,26 @@ import type { Branch } from '@/lib/pos-types';
 import type { Order, OrderStatus } from '@/lib/types';
 import { Badge, Button, Input, Pagination, Select, TabBar, LoadError, Spinner } from '@/components/ui';
 import { DataTable } from '@/components/ui/DataTable';
+import { CourierLogo } from '@/components/orders/CourierLogo';
 import { useApiList } from '@/hooks/useApiList';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { formatCurrency, formatDate } from '@/lib/utils';
+
+// Carriers a row can be filtered to — the five marketplaces and the four
+// couriers MM dispatches. Codes match the API's `courier` param and the DB
+// `couriers.code`.
+const COURIER_OPTIONS = [
+  { value: '', label: 'All couriers' },
+  { value: 'talabat', label: 'Talabat' },
+  { value: 'keeta', label: 'Keeta' },
+  { value: 'noon_food', label: 'Noon Food' },
+  { value: 'deliveroo', label: 'Deliveroo' },
+  { value: 'careem', label: 'Careem' },
+  { value: 'lalamove', label: 'Lalamove' },
+  { value: 'noon_send', label: 'noon Send' },
+  { value: 'slider', label: 'Slider' },
+  { value: 'third_party', label: 'Third party' },
+];
 
 const STATUS_OPTIONS = [
   { value: '', label: 'All Statuses' },
@@ -68,7 +85,7 @@ const POS_STATUS_VARIANT: Record<string, 'warning' | 'info' | 'success' | 'dange
   joined: 'neutral',
 };
 
-type Channel = '' | 'online' | 'counter';
+type Channel = '' | 'online' | 'counter' | 'aggregator';
 
 export default function OrdersPage() {
   const router = useRouter();
@@ -78,6 +95,7 @@ export default function OrdersPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [branchId, setBranchId] = useState('');
+  const [courier, setCourier] = useState('');
   const [exportError, setExportError] = useState('');
   // Deep-linkable, so the old /pos-orders bookmark can land here on the right tab.
   const [channel, setChannel] = useState<Channel>(
@@ -100,11 +118,12 @@ export default function OrdersPage() {
         search: debouncedSearch || undefined,
         status: statusFilter || undefined,
         channel: channel || undefined,
+        courier: courier || undefined,
         branch_id: branchId || undefined,
         page,
         per_page: perPage,
       }),
-    [debouncedSearch, statusFilter, channel, branchId],
+    [debouncedSearch, statusFilter, channel, courier, branchId],
   );
 
   const {
@@ -121,8 +140,8 @@ export default function OrdersPage() {
     }
   }
 
-  const showCounterColumns = channel !== 'online';
-  const showOnlineColumns = channel !== 'counter';
+  const showCounterColumns = channel === '' || channel === 'counter';
+  const showOnlineColumns = channel === '' || channel === 'online';
   const branchRef = (id: string | null | undefined) =>
     branches.find(b => b.id === id)?.reference ?? '—';
 
@@ -147,6 +166,7 @@ export default function OrdersPage() {
           { key: '', label: 'All' },
           { key: 'online', label: 'Website' },
           { key: 'counter', label: 'Counter' },
+          { key: 'aggregator', label: 'Aggregator' },
         ]}
         active={channel}
         onChange={key => setChannel(key as Channel)}
@@ -165,6 +185,13 @@ export default function OrdersPage() {
             value={statusFilter}
             onChange={e => setStatusFilter(e.target.value)}
             options={STATUS_OPTIONS}
+          />
+        </div>
+        <div className="w-44">
+          <Select
+            value={courier}
+            onChange={e => setCourier(e.target.value)}
+            options={COURIER_OPTIONS}
           />
         </div>
         <div className="w-52">
@@ -216,16 +243,24 @@ export default function OrdersPage() {
                   },
                 ]
               : []),
-            ...(channel === ''
+            ...(channel === '' || channel === 'aggregator'
               ? [
                   {
                     header: 'Channel',
                     className: 'text-center',
-                    render: (o: Order) => (
-                      <Badge variant={o.source === 'cashier' ? 'neutral' : 'info'}>
-                        {o.source === 'cashier' ? 'Counter' : 'Website'}
-                      </Badge>
-                    ),
+                    // An aggregator order shows the marketplace's logo — the
+                    // thing that identifies it at a glance — in place of a bare
+                    // badge; counter and website keep their word.
+                    render: (o: Order) =>
+                      o.courier ? (
+                        <span className="inline-flex justify-center">
+                          <CourierLogo courier={o.courier} size={22} showName />
+                        </span>
+                      ) : (
+                        <Badge variant={o.source === 'cashier' ? 'neutral' : 'info'}>
+                          {o.source === 'cashier' ? 'Counter' : 'Website'}
+                        </Badge>
+                      ),
                   },
                 ]
               : []),

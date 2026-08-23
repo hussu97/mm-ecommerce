@@ -9,6 +9,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.courier import CourierBadge
+
 OrderTypeLiteral = Literal["dine_in", "pickup", "delivery", "drive_thru"]
 
 
@@ -228,6 +230,18 @@ class PosOrderResponse(ORMModel):
     #: Whoever else's number this order is also known by, printed on the ticket
     #: when set. Null on everything the website takes directly.
     external_reference: str | None = None
+    #: For an aggregator order, which app it arrived on — `Talabat`, `Noon`,
+    #: `Careem`, `Deliveroo`, `Keeta 2.0`. Null otherwise. The register prints
+    #: it and the board labels the order with it.
+    aggregator_channel: str | None = None
+    #: The delivery charge the marketplace showed the customer on an aggregator
+    #: order — printed on the receipt as what they paid to have it brought, and
+    #: never part of any MM total. Null on everything else.
+    aggregator_delivery_fee: Decimal | None = None
+    #: Who is carrying it, as a badge (code, name, logo) so the board and cards
+    #: can show a logo at every stage — the dispatched courier for a website
+    #: order, the marketplace for an aggregator one. Null on a counter sale.
+    courier: CourierBadge | None = None
     #: Where a website order is going, flattened for the ticket. Null for a
     #: counter order, which has nowhere to go but the counter.
     delivery_address: str | None = None

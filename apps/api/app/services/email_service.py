@@ -190,7 +190,15 @@ def is_counter_sale(order: OrderResponse) -> bool:
     order lands on a branch's register and is a POS order in every operational
     sense — so gating on it would silence every customer email the shop sends.
     """
-    return order.source == OrderSourceEnum.CASHIER.value
+    return order.source in (
+        OrderSourceEnum.CASHIER.value,
+        # An aggregator order already had its confirmation sent by the
+        # aggregator — the customer ordered on Talabat, not on our site. A
+        # second "your order is confirmed" from us would be a surprise about a
+        # channel they did not use, so it is suppressed the same way a counter
+        # sale's is.
+        OrderSourceEnum.AGGREGATOR.value,
+    )
 
 
 def _money(value: Any) -> str:

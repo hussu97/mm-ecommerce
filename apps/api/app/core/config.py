@@ -335,6 +335,22 @@ class Settings(BaseSettings):
     #: human-paced, and a shorter tick would only spend somebody else's quota.
     GRUBOPS_RECONCILE_TICK_SECONDS: int = 120
 
+    # ── GrubOps orders (aggregator order ingest) ──────────────────────────────
+    #: The other direction from the OOS sync: pull Talabat/Noon/Careem/Deliveroo/
+    #: Keeta orders out of GrubOps and land them in `orders` as `source=aggregator`.
+    #: Off until the ingest has been watched once in production — a wrong branch
+    #: map or a bad status mapping writes into the book of record. See
+    #: `services/grubops_orders.py`. Reuses the OOS credentials and token cache.
+    GRUBOPS_ORDERS_ENABLED: bool = False
+    #: Orders answer on the console host, which is a third GrubTech host distinct
+    #: from the availability (`GRUBOPS_API_BASE`) and catalogue
+    #: (`GRUBOPS_CATALOG_API_BASE`) ones. Their split, not ours.
+    GRUBOPS_ORDERS_API_BASE: str = "https://api-grubops.grubtech.io"
+    #: How often the ingest loop polls. Orders are time-sensitive to a customer
+    #: waiting on a cake, so this is far shorter than the availability tick; the
+    #: cheap `getOrderCount` probe keeps an unchanged tick close to free.
+    GRUBOPS_ORDERS_TICK_SECONDS: int = 60
+
     # ── Slider (courier) ──────────────────────────────────────────────────────
     #: The third courier, and the same contract as the other two: an empty key
     #: means a `slider` zone prices and sells exactly as it does today and

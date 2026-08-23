@@ -21,6 +21,7 @@ from app.models.order_delivery import OrderDelivery
 from app.models.order_driver import OrderDriver
 from app.models.user import User
 from app.schemas.fulfilment import FulfilmentResponse
+from app.schemas.courier import CourierBadge
 from app.schemas.order import (
     OrderCreate,
     OrderEconomicsResponse,
@@ -146,6 +147,10 @@ class OrderDeliveryResponse(BaseModel):
     #: who that was. Null on the overwhelming majority.
     original_provider: str | None = None
 
+    #: The carrier as a badge (code, name, logo) so the fulfilment panel can show
+    #: a logo beside the provider name. Built from `provider`.
+    courier: CourierBadge | None = None
+
     @classmethod
     def of(
         cls,
@@ -173,6 +178,9 @@ class OrderDeliveryResponse(BaseModel):
         )
         return cls(
             provider=d.provider,
+            courier=CourierBadge.for_order(
+                source="online", delivery_provider=d.provider
+            ),
             zone_name=d.zone_name,
             fee_charged=float(d.fee_charged) if d.fee_charged is not None else None,
             quoted_cost=float(d.quoted_cost) if d.quoted_cost is not None else None,
@@ -308,9 +316,16 @@ async def list_all_orders(
     ),
     channel: str | None = Query(
         None,
-        pattern="^(online|counter)$",
-        description="`online` for the storefront, `counter` for the till. "
-        "Omit for both — they are one ledger.",
+        pattern="^(online|counter|aggregator)$",
+        description="`online` for the storefront, `counter` for the till, "
+        "`aggregator` for a marketplace order. Omit for all — they are one "
+        "ledger.",
+    ),
+    courier: str | None = Query(
+        None,
+        description="Narrow to one carrier by its code — a marketplace channel "
+        "(`talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`) or a dispatch "
+        "provider (`lalamove`, `noon_send`, `slider`, `third_party`).",
     ),
     branch_id: uuid.UUID | None = Query(None),
     page: int = Query(1, ge=1),
@@ -318,7 +333,7 @@ async def list_all_orders(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require("orders.read")),
 ):
-    """Every order, from either channel (admin only)."""
+    """Every order, from any channel (admin only)."""
     items, total = await order_service.get_all_admin(
         db,
         status=status,
@@ -326,6 +341,7 @@ async def list_all_orders(
         page=page,
         per_page=per_page,
         channel=channel,
+        courier=courier,
         branch_id=branch_id,
     )
     pages = max(1, (total + per_page - 1) // per_page)

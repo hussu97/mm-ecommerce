@@ -58,6 +58,7 @@ if TYPE_CHECKING:
 __all__ = [
     "OrderStatusEvent",
     "StatusActor",
+    "current_actor",
     "StatusSourceEnum",
     "acting_as",
     "pending_events",
@@ -89,6 +90,9 @@ class StatusSourceEnum(str, enum.Enum):
     PAYMENT = "payment"
     #: A courier webhook. `actor_label` carries which one.
     COURIER = "courier"
+    #: The GrubOps aggregator ingest loop, moving an order to mirror the state
+    #: GrubTech reports. `at` carries GrubOps's own history timestamp.
+    AGGREGATOR = "aggregator"
     #: Nobody set a context. The transition is real; the hand behind it is not
     #: recorded, and guessing would be worse than saying so.
     SYSTEM = "system"
@@ -160,6 +164,16 @@ def acting_as(
         yield
     finally:
         _ACTOR.reset(token)
+
+
+def current_actor() -> "StatusActor":
+    """Who is moving orders right now, for a consequence that needs to know.
+
+    The write-back to GrubOps reads this to tell its own mirroring apart from a
+    person: an ingest move is attributed `aggregator` and must not be echoed
+    back out, where an admin cancelling the same order must.
+    """
+    return _ACTOR.get() or StatusActor(source=StatusSourceEnum.SYSTEM.value)
 
 
 class OrderStatusEvent(Base, UUIDMixin):

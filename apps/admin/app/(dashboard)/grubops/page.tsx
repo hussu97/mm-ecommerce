@@ -2,11 +2,17 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { grubopsApi, ApiError } from '@/lib/api';
-import type { GrubOpsLocation, GrubOpsMapping, GrubOpsSyncSummary } from '@/lib/types';
+import type {
+  GrubOpsLocation,
+  GrubOpsMapping,
+  GrubOpsOrderRow,
+  GrubOpsSyncSummary,
+} from '@/lib/types';
 import { Badge, Button, Input, LoadError, Pagination, Select, Spinner, TabBar } from '@/components/ui';
 import { DataTable, type DataColumn } from '@/components/ui/DataTable';
 import { useToast } from '@/components/ui/feedback';
 import { formatDateTime } from '@/lib/utils';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 
 /**
  * What the aggregators are told when something runs out.
@@ -31,7 +37,7 @@ import { formatDateTime } from '@/lib/utils';
  * suggestions; a row already approved or corrected by hand is left alone.
  */
 
-type Tab = 'pending' | 'approved' | 'branches';
+type Tab = 'pending' | 'approved' | 'branches' | 'orders';
 
 const TYPE_OPTIONS = [
   { value: 'RECIPE', label: 'Recipe (a product)' },
@@ -45,6 +51,9 @@ export default function GrubOpsPage() {
   const [tab, setTab] = useState<Tab>('pending');
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(50);
+  const [search, setSearch] = useState('');
+  const [sortAlpha, setSortAlpha] = useState(false);
+  const debouncedSearch = useDebouncedValue(search);
 
   const [rows, setRows] = useState<GrubOpsMapping[]>([]);
   const [total, setTotal] = useState(0);
@@ -56,6 +65,10 @@ export default function GrubOpsPage() {
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [summary, setSummary] = useState<GrubOpsSyncSummary | null>(null);
+  const [orders, setOrders] = useState<GrubOpsOrderRow[]>([]);
+  const [orderTotal, setOrderTotal] = useState(0);
+  const [orderErrors, setOrderErrors] = useState(0);
+  const [orderUnmapped, setOrderUnmapped] = useState(0);
 
   const loadLocations = useCallback(async () => {
     try {
@@ -72,6 +85,8 @@ export default function GrubOpsPage() {
     try {
       const data = await grubopsApi.mappings({
         approved: tab === 'approved',
+        search: debouncedSearch || undefined,
+        sort: sortAlpha ? 'name' : 'queue',
         page,
         page_size: perPage,
       });
@@ -84,7 +99,7 @@ export default function GrubOpsPage() {
     } finally {
       setLoading(false);
     }
-  }, [tab, page, perPage]);
+  }, [tab, page, perPage, debouncedSearch, sortAlpha]);
 
   useEffect(() => {
     void loadLocations();
@@ -93,6 +108,32 @@ export default function GrubOpsPage() {
   useEffect(() => {
     void loadMappings();
   }, [loadMappings]);
+
+  const loadOrders = useCallback(async () => {
+    if (tab !== 'orders') return;
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await grubopsApi.orders({
+        search: debouncedSearch || undefined,
+        sort: sortAlpha ? 'channel' : 'recent',
+        page,
+        page_size: perPage,
+      });
+      setOrders(data.items);
+      setOrderTotal(data.total);
+      setOrderErrors(data.error_count);
+      setOrderUnmapped(data.unmapped_count);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not load ingested orders');
+    } finally {
+      setLoading(false);
+    }
+  }, [tab, page, perPage, debouncedSearch, sortAlpha]);
+
+  useEffect(() => {
+    void loadOrders();
+  }, [loadOrders]);
 
   const onSync = async () => {
     setSyncing(true);
@@ -245,6 +286,7 @@ export default function GrubOpsPage() {
           { key: 'pending', label: 'Needs approval', count: pendingCount },
           { key: 'approved', label: 'Approved', count: approvedCount },
           { key: 'branches', label: 'Branches', count: locations.length },
+          { key: 'orders', label: 'Ingested orders', count: orderTotal },
         ]}
         active={tab}
         onChange={key => {
@@ -252,6 +294,39 @@ export default function GrubOpsPage() {
           setPage(1);
         }}
       />
+
+      {/* Search + alphabetical sort — on every tab but Branches (a short card
+          list that needs neither). The search runs in SQL across the whole set,
+          not just the page on screen. */}
+      {tab !== 'branches' && (
+        <div className="flex flex-wrap items-center gap-3 mb-4">
+          <div className="flex-1 min-w-[16rem] max-w-sm">
+            <Input
+              placeholder={
+                tab === 'orders'
+                  ? 'Search external id, channel, status…'
+                  : 'Search our name, GrubOps name or id…'
+              }
+              value={search}
+              onChange={e => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
+            />
+          </div>
+          <Button
+            variant={sortAlpha ? 'primary' : 'outline'}
+            size="sm"
+            onClick={() => {
+              setSortAlpha(v => !v);
+              setPage(1);
+            }}
+          >
+            <span className="material-icons text-[14px]">sort_by_alpha</span>
+            {sortAlpha ? 'Alphabetical' : 'Sort A–Z'}
+          </Button>
+        </div>
+      )}
 
       {error && <LoadError message={error} onRetry={loadMappings} />}
 
@@ -298,6 +373,63 @@ export default function GrubOpsPage() {
             told, rather than putting the whole menu back on sale.
           </p>
         </div>
+      ) : tab === 'orders' ? (
+        loading ? (
+          <Spinner />
+        ) : (
+          <div className="space-y-3">
+            <div className="flex gap-4 text-sm text-gray-600">
+              <span>{orderTotal} order(s)</span>
+              {orderErrors > 0 && (
+                <span className="text-red-600">{orderErrors} with a push error</span>
+              )}
+              {orderUnmapped > 0 && (
+                <span className="text-amber-600">{orderUnmapped} with unmapped lines</span>
+              )}
+            </div>
+            {orders.length === 0 && (
+              <p className="text-sm text-gray-500">
+                No aggregator orders ingested yet. They appear here once
+                GRUBOPS_ORDERS_ENABLED is on and orders start arriving.
+              </p>
+            )}
+            {orders.map(o => (
+              <div
+                key={o.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 p-4"
+              >
+                <div>
+                  <div className="font-medium">
+                    {o.source_channel ?? 'Aggregator'}{' '}
+                    <span className="text-xs text-gray-500">#{o.external_id}</span>
+                  </div>
+                  <div className="font-mono text-xs text-gray-500">
+                    {o.mm_order_number ?? 'not created'} · {o.last_grubops_status}
+                  </div>
+                  {o.last_push_error && (
+                    <div className="text-xs text-red-600">{o.last_push_error}</div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {o.has_unmapped_lines && <Badge variant="warning">unmapped</Badge>}
+                  {o.mm_order_id && <Badge variant="success">recorded</Badge>}
+                </div>
+              </div>
+            ))}
+            <Pagination
+              page={page}
+              pages={Math.ceil(orderTotal / perPage)}
+              total={orderTotal}
+              perPage={perPage}
+              onPageChange={setPage}
+              onPerPageChange={size => {
+                setPerPage(size);
+                setPage(1);
+              }}
+              label="orders"
+            />
+          </div>
+        )
       ) : loading ? (
         <Spinner />
       ) : (

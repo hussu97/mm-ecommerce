@@ -93,6 +93,21 @@ class Courier(Base, UUIDMixin, TimestampMixin):
         Boolean, nullable=False, default=True, server_default="true"
     )
 
+    #: A public logo for this carrier, served from the same R2 bucket product
+    #: images use (``.../couriers/{code}.png``). Null until seeded. The URL is a
+    #: convention a frontend can rebuild from ``code`` alone; the column is the
+    #: editable source of truth.
+    logo_url: Mapped[str | None] = mapped_column(String(300), nullable=True)
+
+    #: True for the marketplace channels (Talabat, Keeta, Noon Food, Deliveroo,
+    #: Careem) — couriers only in the sense of who carries the bag. MM dispatches
+    #: none of them, so they must never be offered as a fulfilment target; the
+    #: table is read only by ``code`` (never enumerated for targets), so this is
+    #: a label, not a gate, but it keeps the two kinds legible.
+    is_aggregator: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
     @property
     def promises_next_day(self) -> bool:
         return self.unbatched_promise_kind == UnbatchedPromiseEnum.NEXT_DAY.value

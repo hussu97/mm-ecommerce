@@ -2537,7 +2537,7 @@ export interface paths {
         };
         /**
          * List Mappings
-         * @description The review queue, newest suggestions first.
+         * @description The review queue — needs-decision first, or alphabetical by our name.
          */
         get: operations["list_mappings_api_v1_grubops_mappings_get"];
         put?: never;
@@ -2589,6 +2589,30 @@ export interface paths {
          *     next run of the matcher treating it as its own suggestion to refresh.
          */
         put: operations["update_mapping_api_v1_grubops_mappings__mapping_id__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/grubops/orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Grubops Orders
+         * @description The order ingest's own log: what came in, where it landed, what failed.
+         *
+         *     Read-only. The ingest loop owns these rows; this screen is for spotting the
+         *     two things a person needs to see — an order whose write-back errored, and an
+         *     order carrying a line no mapping could resolve.
+         */
+        get: operations["list_grubops_orders_api_v1_grubops_orders_get"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -3715,7 +3739,7 @@ export interface paths {
         };
         /**
          * List All Orders
-         * @description Every order, from either channel (admin only).
+         * @description Every order, from any channel (admin only).
          */
         get: operations["list_all_orders_api_v1_orders_admin_all_get"];
         put?: never;
@@ -8475,6 +8499,29 @@ export interface components {
             item_id: string;
         };
         /**
+         * CourierBadge
+         * @description A carrier identified for display: a stable code, a name, a logo URL.
+         *
+         *     Built by `courier_catalog.badge_for_order` from either an aggregator order's
+         *     channel or a delivery order's fulfilment provider, so the register and admin
+         *     show the same thing the same way. The `logo_url` comes from the `couriers`
+         *     table (cached), so a logo can be swapped in the database without touching an
+         *     app.
+         */
+        CourierBadge: {
+            /** Code */
+            code: string;
+            /**
+             * Is Aggregator
+             * @default false
+             */
+            is_aggregator: boolean;
+            /** Logo Url */
+            logo_url: string;
+            /** Name */
+            name: string;
+        };
+        /**
          * CourierResponse
          * @description A carrier and what it promises, for the admin's Estimates screen.
          *
@@ -9548,6 +9595,64 @@ export interface components {
             grubops_type?: string | null;
             /** Notes */
             notes?: string | null;
+        };
+        /**
+         * GrubOpsOrderList
+         * @description A page of ingested orders, with the counts the screen puts in its header.
+         */
+        GrubOpsOrderList: {
+            /** Error Count */
+            error_count: number;
+            /** Items */
+            items: components["schemas"]["GrubOpsOrderRow"][];
+            /** Total */
+            total: number;
+            /** Unmapped Count */
+            unmapped_count: number;
+        };
+        /**
+         * GrubOpsOrderRow
+         * @description One ingested aggregator order, as the monitoring screen shows it.
+         */
+        GrubOpsOrderRow: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** External Id */
+            external_id?: string | null;
+            /** Grubops Order Id */
+            grubops_order_id: string;
+            /**
+             * Has Unmapped Lines
+             * @default false
+             */
+            has_unmapped_lines: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Last Grubops Status */
+            last_grubops_status?: string | null;
+            /** Last Push Error */
+            last_push_error?: string | null;
+            /** Last Pushed Status */
+            last_pushed_status?: string | null;
+            /** Location Id */
+            location_id?: string | null;
+            /** Mm Order Id */
+            mm_order_id?: string | null;
+            /** Mm Order Number */
+            mm_order_number?: string | null;
+            /** Source Channel */
+            source_channel?: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /**
          * GrubOpsSyncSummary
@@ -10905,6 +11010,7 @@ export interface components {
             cancelled_at: string | null;
             /** Cost Total */
             cost_total: number | null;
+            courier?: components["schemas"]["CourierBadge"] | null;
             /** Courier Order Id */
             courier_order_id: string | null;
             /** Courier Reference */
@@ -11027,10 +11133,13 @@ export interface components {
          *     admin ended up with two screens in the first place.
          */
         OrderListResponse: {
+            /** Aggregator Channel */
+            aggregator_channel?: string | null;
             /** Branch Id */
             branch_id?: string | null;
             /** Check Number */
             check_number?: number | null;
+            courier?: components["schemas"]["CourierBadge"] | null;
             /**
              * Created At
              * Format: date-time
@@ -11198,6 +11307,13 @@ export interface components {
         OrderResponse: {
             /** Admin Notes */
             admin_notes: string | null;
+            /** Aggregator Channel */
+            aggregator_channel?: string | null;
+            /** Aggregator Delivery Fee */
+            aggregator_delivery_fee?: number | null;
+            /** Aggregator Display Code */
+            aggregator_display_code?: string | null;
+            courier?: components["schemas"]["CourierBadge"] | null;
             /**
              * Created At
              * Format: date-time
@@ -11215,6 +11331,8 @@ export interface components {
              * @default false
              */
             email_has_account: boolean;
+            /** External Reference */
+            external_reference?: string | null;
             fulfilment?: components["schemas"]["FulfilmentResponse"] | null;
             /**
              * Id
@@ -11886,6 +12004,10 @@ export interface components {
         };
         /** PosOrderResponse */
         PosOrderResponse: {
+            /** Aggregator Channel */
+            aggregator_channel?: string | null;
+            /** Aggregator Delivery Fee */
+            aggregator_delivery_fee?: string | null;
             /**
              * Already Accepted
              * @default false
@@ -11913,6 +12035,7 @@ export interface components {
             closed_at: string | null;
             /** Closer Id */
             closer_id: string | null;
+            courier?: components["schemas"]["CourierBadge"] | null;
             /** Courier Reference */
             courier_reference?: string | null;
             /**
@@ -20462,6 +20585,10 @@ export interface operations {
             query?: {
                 approved?: boolean | null;
                 kind?: string | null;
+                /** @description Match on our item name, the GrubOps name, or a GrubOps id. */
+                search?: string | null;
+                /** @description `queue` (needs-decision first) or `name` (alphabetical by our item name). */
+                sort?: string;
                 page?: number;
                 page_size?: number;
             };
@@ -20533,6 +20660,45 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GrubOpsMappingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_grubops_orders_api_v1_grubops_orders_get: {
+        parameters: {
+            query?: {
+                channel?: string | null;
+                errors_only?: boolean;
+                unmapped_only?: boolean;
+                /** @description Match on the external id, channel, GrubOps id or status. */
+                search?: string | null;
+                /** @description `recent` (newest first) or `channel` (alphabetical). */
+                sort?: string;
+                page?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GrubOpsOrderList"];
                 };
             };
             /** @description Validation Error */
@@ -23495,8 +23661,10 @@ export interface operations {
                 status?: components["schemas"]["OrderStatusEnum"] | null;
                 /** @description Order number, email, customer name or phone */
                 search?: string | null;
-                /** @description `online` for the storefront, `counter` for the till. Omit for both — they are one ledger. */
+                /** @description `online` for the storefront, `counter` for the till, `aggregator` for a marketplace order. Omit for all — they are one ledger. */
                 channel?: string | null;
+                /** @description Narrow to one carrier by its code — a marketplace channel (`talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`) or a dispatch provider (`lalamove`, `noon_send`, `slider`, `third_party`). */
+                courier?: string | null;
                 branch_id?: string | null;
                 page?: number;
                 per_page?: number;

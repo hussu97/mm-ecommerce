@@ -18,6 +18,7 @@ import type {
   GrubOpsMapping,
   GrubOpsMappingList,
   GrubOpsSyncSummary,
+  GrubOpsOrderList,
 } from './types';
 import type {
   PublicKeyCredentialCreationOptionsJSON,
@@ -314,8 +315,10 @@ export const ordersApi = {
   listAll: (params?: {
     status?: string;
     search?: string;
-    /** `online` for the storefront, `counter` for the till. Omit for both. */
+    /** `online` storefront, `counter` till, `aggregator` marketplace. Omit for all. */
     channel?: string;
+    /** One carrier by code — a marketplace (`talabat`…) or a courier (`lalamove`…). */
+    courier?: string;
     branch_id?: string;
     page?: number;
     per_page?: number;
@@ -579,6 +582,10 @@ export const grubopsApi = {
   mappings: (params: {
     approved?: boolean;
     kind?: string;
+    /** Match on our name, the GrubOps name, or a GrubOps id. */
+    search?: string;
+    /** `queue` (needs-decision first) or `name` (alphabetical by our name). */
+    sort?: 'queue' | 'name';
     page?: number;
     page_size?: number;
   }) => api.get<GrubOpsMappingList>(`/grubops/mappings${buildQs(params)}`),
@@ -591,6 +598,18 @@ export const grubopsApi = {
    * overwritten, only its display name is refreshed.
    */
   sync: () => api.post<GrubOpsSyncSummary>('/grubops/mappings/sync', {}),
+  /** The ingest log: aggregator orders that came in, and anything that failed. */
+  orders: (params: {
+    channel?: string;
+    errors_only?: boolean;
+    unmapped_only?: boolean;
+    /** Match on the external id, channel, GrubOps id or status. */
+    search?: string;
+    /** `recent` (newest first) or `channel` (alphabetical). */
+    sort?: 'recent' | 'channel';
+    page?: number;
+    page_size?: number;
+  }) => api.get<GrubOpsOrderList>(`/grubops/orders${buildQs(params)}`),
 };
 
 // ─── Bulk Actions ─────────────────────────────────────────────────────────────

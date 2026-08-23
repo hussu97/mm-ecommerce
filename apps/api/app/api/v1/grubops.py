@@ -33,7 +33,9 @@ from app.models.grubops import (
     GrubOpsLocationMap,
     GrubOpsSyncState,
 )
+from app.models.grubops_order import GrubOpsOrderMap
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
+from app.models.order import Order, OrderItem
 from app.models.product import Product
 from app.models.user import User
 from app.schemas.grubops import (
@@ -42,6 +44,8 @@ from app.schemas.grubops import (
     GrubOpsMappingList,
     GrubOpsMappingResponse,
     GrubOpsMappingUpdate,
+    GrubOpsOrderList,
+    GrubOpsOrderRow,
     GrubOpsSyncSummary,
 )
 from app.services import audit_service, grubops_mapping
@@ -240,15 +244,44 @@ async def list_mappings(
     _: User = Depends(require("catalogue.manage")),
     approved: bool | None = Query(default=None),
     kind: str | None = Query(default=None),
+    search: str | None = Query(
+        default=None,
+        description="Match on our item name, the GrubOps name, or a GrubOps id.",
+    ),
+    sort: str = Query(
+        default="queue",
+        pattern="^(queue|name)$",
+        description="`queue` (needs-decision first) or `name` (alphabetical by "
+        "our item name).",
+    ),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=2000),
 ) -> GrubOpsMappingList:
-    """The review queue, newest suggestions first."""
+    """The review queue — needs-decision first, or alphabetical by our name."""
+    # Our item's name, whichever kind it is, as a correlated scalar — so we can
+    # search and sort on it without joining two tables into the page query.
+    mm_name_expr = func.coalesce(
+        select(Product.name)
+        .where(Product.id == GrubOpsItemMap.product_id)
+        .scalar_subquery(),
+        select(ModifierOption.name)
+        .where(ModifierOption.id == GrubOpsItemMap.modifier_option_id)
+        .scalar_subquery(),
+    )
+
     query = select(GrubOpsItemMap)
     if approved is not None:
         query = query.where(GrubOpsItemMap.approved.is_(approved))
     if kind is not None:
         query = query.where(GrubOpsItemMap.mm_kind == kind)
+    if search:
+        like = f"%{search.strip()}%"
+        query = query.where(
+            mm_name_expr.ilike(like)
+            | GrubOpsItemMap.grubops_name.ilike(like)
+            | GrubOpsItemMap.grubops_recipe_id.ilike(like)
+            | GrubOpsItemMap.grubops_modifier_id.ilike(like)
+        )
 
     total = (
         await db.execute(select(func.count()).select_from(query.subquery()))
@@ -268,15 +301,19 @@ async def list_mappings(
         )
     ).scalar_one()
 
+    if sort == "name":
+        ordering = (mm_name_expr.asc().nullslast(), GrubOpsItemMap.grubops_name.asc())
+    else:
+        # Unapproved first: this is a queue, and the things needing a decision
+        # belong at the top of it.
+        ordering = (
+            GrubOpsItemMap.approved.asc(),
+            GrubOpsItemMap.match_score.asc().nullsfirst(),
+        )
     rows = list(
         (
             await db.execute(
-                query.order_by(
-                    # Unapproved first: this is a queue, and the things needing
-                    # a decision belong at the top of it.
-                    GrubOpsItemMap.approved.asc(),
-                    GrubOpsItemMap.match_score.asc().nullsfirst(),
-                )
+                query.order_by(*ordering)
                 .offset((page - 1) * page_size)
                 .limit(page_size)
             )
@@ -389,3 +426,135 @@ async def sync_mappings(
         # Their outage is not our 500 — the screen should say what happened.
         raise BadRequestError(f"GrubOps could not be read: {exc}") from exc
     return GrubOpsSyncSummary(**summary.as_dict())
+
+
+# ── ingested aggregator orders (read-only monitoring) ─────────────────────────
+
+
+@router.get("/orders", response_model=GrubOpsOrderList)
+async def list_grubops_orders(
+    channel: str | None = Query(default=None),
+    errors_only: bool = Query(default=False),
+    unmapped_only: bool = Query(default=False),
+    search: str | None = Query(
+        default=None,
+        description="Match on the external id, channel, GrubOps id or status.",
+    ),
+    sort: str = Query(
+        default="recent",
+        pattern="^(recent|channel)$",
+        description="`recent` (newest first) or `channel` (alphabetical).",
+    ),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=2000),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("catalogue.manage")),
+) -> GrubOpsOrderList:
+    """The order ingest's own log: what came in, where it landed, what failed.
+
+    Read-only. The ingest loop owns these rows; this screen is for spotting the
+    two things a person needs to see — an order whose write-back errored, and an
+    order carrying a line no mapping could resolve.
+    """
+    # An order has unmapped lines if any of its items resolved to no product.
+    unmapped_subq = (
+        select(OrderItem.order_id)
+        .where(OrderItem.product_id.is_(None))
+        .distinct()
+        .subquery()
+    )
+
+    filters = []
+    if channel:
+        filters.append(GrubOpsOrderMap.source_channel == channel)
+    if errors_only:
+        filters.append(GrubOpsOrderMap.last_push_error.isnot(None))
+    if unmapped_only:
+        filters.append(
+            GrubOpsOrderMap.mm_order_id.in_(select(unmapped_subq.c.order_id))
+        )
+    if search:
+        like = f"%{search.strip()}%"
+        filters.append(
+            GrubOpsOrderMap.external_id.ilike(like)
+            | GrubOpsOrderMap.source_channel.ilike(like)
+            | GrubOpsOrderMap.grubops_order_id.ilike(like)
+            | GrubOpsOrderMap.last_grubops_status.ilike(like)
+        )
+
+    base = select(GrubOpsOrderMap)
+    for f in filters:
+        base = base.where(f)
+
+    order_by = (
+        (
+            GrubOpsOrderMap.source_channel.asc().nullslast(),
+            GrubOpsOrderMap.created_at.desc(),
+        )
+        if sort == "channel"
+        else (GrubOpsOrderMap.created_at.desc(),)
+    )
+
+    total = (
+        await db.execute(select(func.count()).select_from(base.subquery()))
+    ).scalar_one()
+    error_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(GrubOpsOrderMap)
+            .where(GrubOpsOrderMap.last_push_error.isnot(None))
+        )
+    ).scalar_one()
+    unmapped_count = (
+        await db.execute(select(func.count(func.distinct(unmapped_subq.c.order_id))))
+    ).scalar_one()
+
+    rows = (
+        (
+            await db.execute(
+                base.order_by(*order_by).offset((page - 1) * page_size).limit(page_size)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    # Resolve MM order numbers and unmapped flags in one query each, never per
+    # row.
+    order_ids = [r.mm_order_id for r in rows if r.mm_order_id]
+    numbers: dict = {}
+    unmapped_ids: set = set()
+    if order_ids:
+        for oid, num in (
+            await db.execute(
+                select(Order.id, Order.order_number).where(Order.id.in_(order_ids))
+            )
+        ).all():
+            numbers[oid] = num
+        unmapped_ids = {
+            oid
+            for (oid,) in (
+                await db.execute(
+                    select(OrderItem.order_id)
+                    .where(
+                        OrderItem.order_id.in_(order_ids),
+                        OrderItem.product_id.is_(None),
+                    )
+                    .distinct()
+                )
+            ).all()
+        }
+
+    items = []
+    for r in rows:
+        row = GrubOpsOrderRow.model_validate(r)
+        row.mm_order_number = numbers.get(r.mm_order_id)
+        row.has_unmapped_lines = r.mm_order_id in unmapped_ids
+        items.append(row)
+
+    return GrubOpsOrderList(
+        items=items,
+        total=total,
+        error_count=error_count,
+        unmapped_count=unmapped_count,
+    )

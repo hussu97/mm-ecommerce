@@ -15,6 +15,7 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from app.models.order import DeliveryMethodEnum, OrderStatusEnum
+from app.schemas.courier import CourierBadge
 
 # Re-exported so `from app.schemas.order import PaymentMethodEnum` keeps working.
 # It is defined next to the model rather than here because it is now a domain
@@ -213,6 +214,23 @@ class OrderResponse(BaseModel):
     #: NOT NULL. Nothing customer-facing renders it; it is here because the
     #: alternative was for each of the mailer's callers to remember the rule.
     source: str | None = None
+    #: For an aggregator order (`source == "aggregator"`), the channel it came
+    #: in on. Drives the admin channel tab/badge and is null on everything else.
+    aggregator_channel: str | None = None
+    #: The delivery charge the marketplace showed the customer on an aggregator
+    #: order — theirs, not ours, and kept out of `delivery_fee`. Shown on the
+    #: receipt only; null on everything else.
+    aggregator_delivery_fee: float | None = None
+    #: The short driver-facing pickup code for an aggregator order (Talabat
+    #: "1445", the GrubOps sequence where none exists). Null on everything else.
+    aggregator_display_code: str | None = None
+    #: The marketplace's own long order id for an aggregator order, for support
+    #: and tracing. Null on everything else.
+    external_reference: str | None = None
+    #: Who is carrying it, as a badge (code, name, logo). Filled for an
+    #: aggregator order from its channel; null for a website order here (the
+    #: admin's `OrderDeliveryResponse.courier` carries the dispatched courier).
+    courier: CourierBadge | None = None
     #: The language this order was placed in, and the one every email about it
     #: is written in.
     locale: str = "en"
@@ -242,6 +260,19 @@ class OrderResponse(BaseModel):
         such an object, inside the same request that created it.
         """
         return 0 if value is None else value
+
+    @model_validator(mode="after")
+    def _fill_courier(self) -> "OrderResponse":
+        """Derive the carrier badge from the channel when nothing set it.
+
+        Only an aggregator order resolves here — a website order's courier lives
+        on the admin delivery record, not on the customer-facing order.
+        """
+        if self.courier is None:
+            self.courier = CourierBadge.for_order(
+                source=self.source, aggregator_channel=self.aggregator_channel
+            )
+        return self
 
 
 class OrderListResponse(BaseModel):
@@ -280,6 +311,21 @@ class OrderListResponse(BaseModel):
     customer_name: str | None = None
     delivery_fee: float | None = None
     low_order_fee: float | None = None
+    #: For an aggregator order, the channel it came in on ("Talabat", "Keeta
+    #: 2.0"…), so the list can show the marketplace logo in place of a bare
+    #: "Website" badge. Null on web/counter.
+    aggregator_channel: str | None = None
+    #: Who is carrying it, as a badge (code, name, logo) — filled for an
+    #: aggregator order from its channel, so the list renders the courier logo.
+    courier: CourierBadge | None = None
+
+    @model_validator(mode="after")
+    def _fill_courier(self) -> "OrderListResponse":
+        if self.courier is None:
+            self.courier = CourierBadge.for_order(
+                source=self.source, aggregator_channel=self.aggregator_channel
+            )
+        return self
 
 
 class OrderEconomicsResponse(BaseModel):

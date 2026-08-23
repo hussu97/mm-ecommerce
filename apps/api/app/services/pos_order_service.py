@@ -421,6 +421,48 @@ async def attach_online_order(db: AsyncSession, order: Order, branch: Branch) ->
     return order
 
 
+async def attach_aggregator_order(
+    db: AsyncSession, order: Order, branch: Branch
+) -> Order:
+    """Put an ingested aggregator order onto the branch's register.
+
+    The sibling of `attach_online_order`, for orders that came from GrubOps
+    rather than the storefront. Same destination — the incoming queue, alarming
+    and waiting for the counter — reached the same way: a business day, a check
+    number, `pending`, `opened_at`. The register then treats it like any other
+    waiting order, so the alarm, the auto-accept and the MMPOS-styled print all
+    work with no change to either the accept endpoint or the iPad.
+
+    What it does *not* do, unlike its sibling, is read a shipping snapshot for
+    the customer's name — an aggregator order carries no MM address, so those
+    fields are filled by the ingest from the GrubOps customer block and must not
+    be cleared here. It also leaves `source` alone: the ingest stamped
+    `aggregator` at creation, which is what keeps this off the online-only
+    courier and email paths.
+
+    Guarded on `check_number` for idempotency, exactly like the online attach:
+    the ingest loop can see the same order many times, and only the first pass
+    may hand out a number.
+    """
+    if order.check_number is not None:
+        return order
+
+    settings = await _settings(db)
+    day = await business_day_service.get_or_open(db, branch)
+    check_number = await _next_check_number(
+        db, branch.id, day.business_date, settings.order_number_reset_daily
+    )
+
+    order.is_pos = True
+    order.order_type = OrderTypeEnum.DELIVERY.value
+    order.pos_status = PosOrderStatusEnum.PENDING.value
+    order.business_date = day.business_date
+    order.check_number = check_number
+    order.opened_at = utcnow()
+    order.arrives_at = utcnow()
+    return order
+
+
 # ─── Lines ────────────────────────────────────────────────────────────────────
 
 

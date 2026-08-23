@@ -888,6 +888,9 @@ it here and redeploying.
 | `GRUBOPS_SOURCE` | `grubOps 2.0` | Stamped on every record we write, and deliberately the same string their own console stamps. Leave it alone |
 | `GRUBOPS_TIMEOUT_SECONDS` | `8` | |
 | `GRUBOPS_RECONCILE_TICK_SECONDS` | `120` | How often the loop recomputes and pushes differences |
+| `GRUBOPS_ORDERS_ENABLED` | `false` | Aggregator order ingest kill switch. Off until watched once in prod |
+| `GRUBOPS_ORDERS_API_BASE` | `https://api-grubops.grubtech.io` | The console host orders answer on |
+| `GRUBOPS_ORDERS_TICK_SECONDS` | `60` | How often the ingest loop polls GrubOps for orders |
 
 ```bash
 gh secret set GRUBOPS_USERNAME --repo hussu97/mm-ecommerce

@@ -167,6 +167,7 @@ def _client() -> GrubOpsClient:
             partner_id=PARTNER,
             api_base="https://api.example.invalid",
             catalog_api_base="https://catalog.example.invalid",
+            orders_base="https://orders.example.invalid",
             source="POS",
             timeout=1.0,
         )

@@ -164,6 +164,9 @@ services:
       GRUBOPS_SOURCE: "${GRUBOPS_SOURCE:-grubOps 2.0}"
       GRUBOPS_TIMEOUT_SECONDS: ${GRUBOPS_TIMEOUT_SECONDS:-8}
       GRUBOPS_RECONCILE_TICK_SECONDS: ${GRUBOPS_RECONCILE_TICK_SECONDS:-120}
+      GRUBOPS_ORDERS_ENABLED: ${GRUBOPS_ORDERS_ENABLED:-false}
+      GRUBOPS_ORDERS_API_BASE: ${GRUBOPS_ORDERS_API_BASE:-https://api-grubops.grubtech.io}
+      GRUBOPS_ORDERS_TICK_SECONDS: ${GRUBOPS_ORDERS_TICK_SECONDS:-60}
       # ── Slider ──────────────────────────────────────────────────────────
       # The third courier. Every one of these has to be here and not only in
       # `.env`: this block is an allow-list, and a variable the VM holds but
@@ -390,6 +393,9 @@ services:
       GRUBOPS_SOURCE: "${GRUBOPS_SOURCE:-grubOps 2.0}"
       GRUBOPS_TIMEOUT_SECONDS: ${GRUBOPS_TIMEOUT_SECONDS:-8}
       GRUBOPS_RECONCILE_TICK_SECONDS: ${GRUBOPS_RECONCILE_TICK_SECONDS:-120}
+      GRUBOPS_ORDERS_ENABLED: ${GRUBOPS_ORDERS_ENABLED:-false}
+      GRUBOPS_ORDERS_API_BASE: ${GRUBOPS_ORDERS_API_BASE:-https://api-grubops.grubtech.io}
+      GRUBOPS_ORDERS_TICK_SECONDS: ${GRUBOPS_ORDERS_TICK_SECONDS:-60}
       # Deliberately absent: BATCH_DISPATCHER_ENABLED. That starts the
       # background loop that sweeps batches out, and a second copy of it in this
       # container would race the storefront's over the same rows. The register
