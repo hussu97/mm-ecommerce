@@ -104,6 +104,28 @@ class Desired:
     until: datetime | None
 
 
+def _iso8601_z(moment: datetime) -> str:
+    """UTC, milliseconds, and a literal `Z` — the exact spelling their client uses.
+
+    Not cosmetic. Dart's `toUtc().toIso8601String()` produces
+    `2026-08-23T13:00:52.213Z`, and that is what every timestamp GrubOps has
+    ever been sent looks like. Python's `isoformat()` writes the same instant as
+    `...+00:00`, which their service accepts, stores, and silently mangles:
+    `13:00:52+00:00` came back as `02:00:00Z` — eleven hours early, seconds
+    discarded, and in the past. An item marked out for an hour would have been
+    recorded as already back.
+
+    Nothing rejected it and nothing logged it. The only way to see it was to
+    read the value back, which is why the test for this carries the real
+    numbers.
+    """
+    return (
+        moment.astimezone(timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
+
+
 def _item_info(
     desired: Desired, *, partner_id: str, location_id: str
 ) -> dict[str, Any]:
@@ -136,12 +158,11 @@ def unavailable_body(
             STATUS_UNTIL_SPECIFIC_DATE if timed else STATUS_UNTIL_FURTHER_NOTICE
         ),
         "unavailabilityInfo": {
-            # ISO-8601 in UTC. `availability_service` has already turned "until
-            # close" into the branch's own rollover, so this is a real instant
-            # rather than a duration GrubOps would have to interpret.
-            "unavailableTill": (
-                desired.until.astimezone(timezone.utc).isoformat() if timed else None
-            ),
+            # `availability_service` has already turned "until close" into the
+            # branch's own rollover, so this is a real instant rather than a
+            # duration GrubOps would have to interpret. The spelling of it
+            # matters as much as the value — see `_iso8601_z`.
+            "unavailableTill": _iso8601_z(desired.until) if timed else None,
             "unavailableReason": _REASON,
         },
     }

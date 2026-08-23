@@ -151,6 +151,16 @@ the answer to a `type: MODIFIER` write that names only the modifier. So
 `grubops_item_map` stores the parent recipe on option rows as well as the
 modifier's own id — the same pairing the matcher needed, for the same reason.
 
+**`unavailableTill` must be spelled `...Z`, not `+00:00`.** Their client is
+Dart and sends `toUtc().toIso8601String()` — `2026-08-23T13:00:52.213Z`.
+Python's `isoformat()` writes the same instant as `+00:00`, and their service
+accepts it, stores it, and mangles it: `13:00:52+00:00` was read back as
+`02:00:00Z`, eleven hours early with the seconds discarded and the moment
+already past, so an hour-long out-of-stock arrived as one that had already
+lapsed. Nothing rejected it and nothing logged it — the only way to see it was
+to read the value back. `_iso8601_z` in `grubops_service` is the fix and the
+test carries the real numbers.
+
 **Their writes are patch-like on an existing record.** Creating an
 unavailability stores exactly what is sent; *updating* one ignores a null, so a
 field that already has a value cannot be cleared by sending null for it — an

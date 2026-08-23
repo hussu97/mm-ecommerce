@@ -613,3 +613,45 @@ async def test_a_real_failure_still_raises():
             await svc.push_deltas(
                 None, location=location, deltas=[_desired(available=True)]
             )
+
+
+def test_the_return_time_is_spelled_the_way_their_client_spells_it():
+    """
+    `...Z` with milliseconds, never `+00:00`.
+
+    The same instant either way, and GrubOps accepts both — but it only stores
+    one of them correctly. Sent `2026-08-23T13:00:52+00:00` in production and
+    read back `2026-08-23T02:00:00Z`: eleven hours early, seconds discarded,
+    and already in the past, so an hour-long out-of-stock arrived as one that
+    had already lapsed. Nothing rejected it and nothing logged it.
+
+    Their client is Dart, and `toUtc().toIso8601String()` produces the `Z`
+    form, which is what every timestamp their service has ever been given
+    looks like.
+    """
+    from app.services.grubops_service import _iso8601_z
+
+    moment = datetime(2026, 8, 23, 13, 0, 52, 213441, tzinfo=timezone.utc)
+    assert _iso8601_z(moment) == "2026-08-23T13:00:52.213Z"
+
+    body = svc.unavailable_body(
+        _desired(available=False, until=moment),
+        partner_id=PARTNER,
+        location_id=LOCATION,
+        source="grubOps 2.0",
+    )
+    till = body["unavailabilityInfo"]["unavailableTill"]
+    assert till.endswith("Z")
+    assert "+00:00" not in till
+
+
+def test_a_return_time_in_another_zone_is_converted_not_relabelled():
+    """A branch rollover is a real instant; the `Z` must be earned, not asserted."""
+    from datetime import timedelta
+    from app.services.grubops_service import _iso8601_z
+
+    gulf = timezone(timedelta(hours=4))
+    # 02:00 in Dubai is 22:00 UTC the day before.
+    assert _iso8601_z(datetime(2026, 8, 24, 2, 0, tzinfo=gulf)) == (
+        "2026-08-23T22:00:00.000Z"
+    )
