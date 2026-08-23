@@ -6844,6 +6844,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/health/integrations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Third-party reachability — for a smoke test, not a healthcheck
+         * @description Whether the outside services this deploy depends on answer.
+         *
+         *     Deliberately not part of `/health`, and deliberately not what the
+         *     container healthcheck polls (that is `/ping`, which depends on
+         *     nothing). A probe that lets a third party mark the container unhealthy
+         *     turns their outage into our restart loop.
+         *
+         *     It exists because a misconfigured deploy is otherwise invisible until a
+         *     customer meets it: phone verification with an unreachable certificate
+         *     endpoint fails closed, quietly, and looks like nobody tried to sign up.
+         */
+        get: operations["health_integrations_health_integrations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ping": {
         parameters: {
             query?: never;
@@ -29437,6 +29466,28 @@ export interface operations {
         };
     };
     health_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    health_integrations_health_integrations_get: {
         parameters: {
             query?: never;
             header?: never;

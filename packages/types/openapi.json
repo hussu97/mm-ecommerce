@@ -50806,6 +50806,30 @@
         ]
       }
     },
+    "/health/integrations": {
+      "get": {
+        "description": "Whether the outside services this deploy depends on answer.\n\nDeliberately not part of `/health`, and deliberately not what the\ncontainer healthcheck polls (that is `/ping`, which depends on\nnothing). A probe that lets a third party mark the container unhealthy\nturns their outage into our restart loop.\n\nIt exists because a misconfigured deploy is otherwise invisible until a\ncustomer meets it: phone verification with an unreachable certificate\nendpoint fails closed, quietly, and looks like nobody tried to sign up.",
+        "operationId": "health_integrations_health_integrations_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Health Integrations Health Integrations Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Third-party reachability \u2014 for a smoke test, not a healthcheck",
+        "tags": [
+          "System"
+        ]
+      }
+    },
     "/ping": {
       "get": {
         "operationId": "ping_ping_get",
