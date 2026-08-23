@@ -27,6 +27,11 @@ from .payment_transaction import (  # noqa: F401
     PaymentTransactionStatusEnum,
 )
 from .webhook_log import WebhookLog  # noqa: F401
+from .grubops import (  # noqa: F401
+    GrubOpsItemMap,
+    GrubOpsLocationMap,
+    GrubOpsSyncState,
+)
 from .email_log import EmailLog  # noqa: F401
 from .delivery_settings import DeliverySettings  # noqa: F401
 from .delivery_polygon import (  # noqa: F401

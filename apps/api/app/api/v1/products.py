@@ -37,6 +37,7 @@ from app.services import (
     audit_service,
     availability_service,
     catalogue_cache,
+    grubops_service,
     indexnow_service,
     product_service,
 )
@@ -488,5 +489,16 @@ async def set_branch_availability(
             "price": str(row.price) if row.price is not None else None,
         },
         request=request,
+    )
+
+    # The aggregators are fed from the same fact. Effective availability rather
+    # than the flag that was sent: this route can also deactivate the row, and
+    # `availability_service` counts an inactive branch-product as unavailable —
+    # pushing `is_in_stock` alone would leave a deactivated item on Talabat.
+    grubops_service.push_change_in_background(
+        branch_id=branch.id,
+        product_ids=[product_id],
+        in_stock=bool(row.is_in_stock and row.is_active),
+        until=row.out_of_stock_until,
     )
     return BranchProductResponse.model_validate(row)

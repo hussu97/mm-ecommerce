@@ -406,6 +406,17 @@ jobs:
           NOON_SEND_WEBHOOK_API_KEY=${{ secrets.NOON_SEND_WEBHOOK_API_KEY }}
           NOON_SEND_ENFORCE_WEBHOOK_KEY=${{ secrets.NOON_SEND_ENFORCE_WEBHOOK_KEY || 'false' }}
           NOON_SEND_TIMEOUT_SECONDS=${{ secrets.NOON_SEND_TIMEOUT_SECONDS || '8' }}
+          GRUBOPS_SYNC_ENABLED=${{ secrets.GRUBOPS_SYNC_ENABLED || 'false' }}
+          GRUBOPS_USERNAME=${{ secrets.GRUBOPS_USERNAME }}
+          GRUBOPS_PASSWORD=${{ secrets.GRUBOPS_PASSWORD }}
+          GRUBOPS_PARTNER_ID=${{ secrets.GRUBOPS_PARTNER_ID || '6922fe267f5b1c6d208c634f' }}
+          GRUBOPS_COGNITO_CLIENT_ID=${{ secrets.GRUBOPS_COGNITO_CLIENT_ID || '2d8lmtmc241sviat2psomuuon8' }}
+          GRUBOPS_COGNITO_REGION=${{ secrets.GRUBOPS_COGNITO_REGION || 'eu-west-2' }}
+          GRUBOPS_API_BASE=${{ secrets.GRUBOPS_API_BASE || 'https://internal-api.grubtech.io' }}
+          GRUBOPS_CATALOG_API_BASE=${{ secrets.GRUBOPS_CATALOG_API_BASE || 'https://api-grubone.grubtech.io' }}
+          GRUBOPS_SOURCE=${{ secrets.GRUBOPS_SOURCE || 'MELTING_MOMENTS_POS' }}
+          GRUBOPS_TIMEOUT_SECONDS=${{ secrets.GRUBOPS_TIMEOUT_SECONDS || '8' }}
+          GRUBOPS_RECONCILE_TICK_SECONDS=${{ secrets.GRUBOPS_RECONCILE_TICK_SECONDS || '120' }}
           SLIDER_API_KEY=${{ secrets.SLIDER_API_KEY }}
           SLIDER_ACCOUNT_ID=${{ secrets.SLIDER_ACCOUNT_ID }}
           SLIDER_ENV=${{ secrets.SLIDER_ENV || 'staging' }}

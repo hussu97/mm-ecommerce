@@ -32,7 +32,7 @@ from app.models.menu import BranchModifierOption, BranchProduct
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.product import WEB_CHANNEL, Product, sells_on
 from app.models.user import User
-from app.services import availability_service, catalogue_cache
+from app.services import availability_service, catalogue_cache, grubops_service
 
 from .devices import get_current_device
 
@@ -221,6 +221,27 @@ async def list_availability(
 # ─── Writing ──────────────────────────────────────────────────────────────────
 
 
+async def _option_ids_of(db: AsyncSession, product_id: uuid.UUID) -> list[uuid.UUID]:
+    """Every option on one product — the ids `set_all_options_stock` just wrote.
+
+    That helper returns a count rather than the ids, and the GrubOps push needs
+    to name each one. Asked here rather than changing its signature, because a
+    counter is what the terminal's response wants.
+    """
+    return list(
+        (
+            await db.execute(
+                select(ModifierOption.id)
+                .join(Modifier, Modifier.id == ModifierOption.modifier_id)
+                .join(ProductModifier, ProductModifier.modifier_id == Modifier.id)
+                .where(ProductModifier.product_id == product_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
 @router.put("/products/{product_id}", response_model=ProductAvailability)
 async def set_product_availability(
     product_id: uuid.UUID,
@@ -242,13 +263,14 @@ async def set_product_availability(
     if product is None or not product.is_active:
         raise NotFoundError("Product not found")
 
-    await availability_service.set_product_stock(
+    row = await availability_service.set_product_stock(
         db,
         branch=branch,
         product_id=product_id,
         in_stock=data.in_stock,
         duration=data.duration,
     )
+    option_ids: list[uuid.UUID] = []
     if data.include_options:
         await availability_service.set_all_options_stock(
             db,
@@ -257,11 +279,21 @@ async def set_product_availability(
             in_stock=data.in_stock,
             duration=data.duration,
         )
+        option_ids = list(await _option_ids_of(db, product_id))
 
     # The website answers per branch now, so this is a change it is supposed to
     # show — and its featured rail, add-on tray and category counts are all
     # cached against the very branch that just changed.
     await catalogue_cache.retire()
+    # And the aggregators are supposed to show it too. Fire-and-forget: the
+    # reconcile loop is what guarantees this lands, so nobody waits on it.
+    grubops_service.push_change_in_background(
+        branch_id=branch.id,
+        product_ids=[product_id],
+        option_ids=option_ids,
+        in_stock=data.in_stock,
+        until=row.out_of_stock_until,
+    )
     return await _one(db, device, product_id)
 
 
@@ -287,7 +319,7 @@ async def set_option_availability(
     if option is None:
         raise NotFoundError("Option not found")
 
-    await availability_service.set_option_stock(
+    option_row = await availability_service.set_option_stock(
         db,
         branch=branch,
         option_id=option_id,
@@ -309,4 +341,10 @@ async def set_option_availability(
     # Same reason as the product write: the last filling going out is what makes
     # a box unsellable on the website too.
     await catalogue_cache.retire()
+    grubops_service.push_change_in_background(
+        branch_id=branch.id,
+        option_ids=[option_id],
+        in_stock=data.in_stock,
+        until=option_row.out_of_stock_until,
+    )
     return await _one(db, device, product_id)

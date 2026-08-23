@@ -171,6 +171,15 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
 
             background.append(asyncio.create_task(log_retention.run_forever()))
 
+            # Same reasoning, its own flag: this one talks to somebody else's
+            # private API, so it has to be switchable off without taking the
+            # dispatcher down with it. Storefront only, like its neighbours —
+            # the register app must not run a second copy.
+            if settings.GRUBOPS_SYNC_ENABLED:
+                from app.services import grubops_reconcile
+
+                background.append(asyncio.create_task(grubops_reconcile.run_forever()))
+
         logger.info("%s starting up [env=%s]", service, settings.APP_ENV)
         yield
         for task in background:

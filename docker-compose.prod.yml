@@ -153,6 +153,17 @@ services:
       NOON_SEND_MAX_DISTANCE_M: ${NOON_SEND_MAX_DISTANCE_M:-20000}
       NOON_SEND_DETOUR_FACTOR: ${NOON_SEND_DETOUR_FACTOR:-1.49}
       NOON_SEND_TIMEOUT_SECONDS: ${NOON_SEND_TIMEOUT_SECONDS:-8}
+      GRUBOPS_SYNC_ENABLED: ${GRUBOPS_SYNC_ENABLED:-false}
+      GRUBOPS_USERNAME: ${GRUBOPS_USERNAME:-}
+      GRUBOPS_PASSWORD: ${GRUBOPS_PASSWORD:-}
+      GRUBOPS_PARTNER_ID: ${GRUBOPS_PARTNER_ID:-6922fe267f5b1c6d208c634f}
+      GRUBOPS_COGNITO_CLIENT_ID: ${GRUBOPS_COGNITO_CLIENT_ID:-2d8lmtmc241sviat2psomuuon8}
+      GRUBOPS_COGNITO_REGION: ${GRUBOPS_COGNITO_REGION:-eu-west-2}
+      GRUBOPS_API_BASE: ${GRUBOPS_API_BASE:-https://internal-api.grubtech.io}
+      GRUBOPS_CATALOG_API_BASE: ${GRUBOPS_CATALOG_API_BASE:-https://api-grubone.grubtech.io}
+      GRUBOPS_SOURCE: ${GRUBOPS_SOURCE:-MELTING_MOMENTS_POS}
+      GRUBOPS_TIMEOUT_SECONDS: ${GRUBOPS_TIMEOUT_SECONDS:-8}
+      GRUBOPS_RECONCILE_TICK_SECONDS: ${GRUBOPS_RECONCILE_TICK_SECONDS:-120}
       # ── Slider ──────────────────────────────────────────────────────────
       # The third courier. Every one of these has to be here and not only in
       # `.env`: this block is an allow-list, and a variable the VM holds but
@@ -363,6 +374,22 @@ services:
       NOON_SEND_BASE: ${NOON_SEND_BASE:-12}
       NOON_SEND_BULKY_BASE: ${NOON_SEND_BULKY_BASE:-25}
       NOON_SEND_SURGE_AED: ${NOON_SEND_SURGE_AED:-1}
+      # The register marks things out of stock, so it needs the credentials to
+      # tell GrubOps about it. GRUBOPS_SYNC_ENABLED is here too because the
+      # immediate push honours the same flag — but the reconcile *loop* is
+      # started only by the storefront, in `app_setup`, so a second copy of it
+      # cannot run here however this is set.
+      GRUBOPS_SYNC_ENABLED: ${GRUBOPS_SYNC_ENABLED:-false}
+      GRUBOPS_USERNAME: ${GRUBOPS_USERNAME:-}
+      GRUBOPS_PASSWORD: ${GRUBOPS_PASSWORD:-}
+      GRUBOPS_PARTNER_ID: ${GRUBOPS_PARTNER_ID:-6922fe267f5b1c6d208c634f}
+      GRUBOPS_COGNITO_CLIENT_ID: ${GRUBOPS_COGNITO_CLIENT_ID:-2d8lmtmc241sviat2psomuuon8}
+      GRUBOPS_COGNITO_REGION: ${GRUBOPS_COGNITO_REGION:-eu-west-2}
+      GRUBOPS_API_BASE: ${GRUBOPS_API_BASE:-https://internal-api.grubtech.io}
+      GRUBOPS_CATALOG_API_BASE: ${GRUBOPS_CATALOG_API_BASE:-https://api-grubone.grubtech.io}
+      GRUBOPS_SOURCE: ${GRUBOPS_SOURCE:-MELTING_MOMENTS_POS}
+      GRUBOPS_TIMEOUT_SECONDS: ${GRUBOPS_TIMEOUT_SECONDS:-8}
+      GRUBOPS_RECONCILE_TICK_SECONDS: ${GRUBOPS_RECONCILE_TICK_SECONDS:-120}
       # Deliberately absent: BATCH_DISPATCHER_ENABLED. That starts the
       # background loop that sweeps batches out, and a second copy of it in this
       # container would race the storefront's over the same rows. The register
