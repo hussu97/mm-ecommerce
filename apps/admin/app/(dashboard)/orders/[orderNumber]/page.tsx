@@ -141,6 +141,9 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
   delivered: 'delivered',
   undelivered: 'undelivered',
   cancelled: 'cancelled',
+  payment_failed: 'payment failed',
+  refunded: 'refunded',
+  disputed: 'disputed',
 };
 
 const STATUS_VARIANT: Record<OrderStatus, 'warning' | 'info' | 'success' | 'danger'> = {
@@ -152,6 +155,9 @@ const STATUS_VARIANT: Record<OrderStatus, 'warning' | 'info' | 'success' | 'dang
   delivered: 'success',
   undelivered: 'danger',
   cancelled: 'danger',
+  payment_failed: 'danger',
+  refunded: 'warning',
+  disputed: 'danger',
 };
 
 export default function OrderDetailPage() {
@@ -839,11 +845,16 @@ export default function OrderDetailPage() {
             <span>Delivery</span>
             <span>{order.delivery_fee > 0 ? formatCurrency(order.delivery_fee) : 'Free'}</span>
           </div>
+          {order.low_order_fee > 0 && (
+            <div className="flex justify-between text-xs font-body text-gray-500">
+              <span>Small order fee</span><span>{formatCurrency(order.low_order_fee)}</span>
+            </div>
+          )}
           <div className="flex justify-between text-sm font-body font-medium text-gray-800 pt-1 border-t border-gray-100">
             <span>Total</span><span>{formatCurrency(order.total)}</span>
           </div>
           <div className="flex justify-between text-xs font-body text-gray-400 mt-1">
-            <span>VAT included (5%)</span><span>{formatCurrency(order.vat_amount)}</span>
+            <span>VAT included ({Math.round(order.vat_rate * 100)}%)</span><span>{formatCurrency(order.vat_amount)}</span>
           </div>
         </div>
         {economics && <NetPayment economics={economics} order={order} />}

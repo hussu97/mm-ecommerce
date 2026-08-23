@@ -28,6 +28,11 @@ function addressFromOrder(order: Order): import('@/lib/types').AddressCreate | n
   const a = order.shipping_address_snapshot;
   if (!a || !a.address_line_1) return null;
   const num = (v: unknown) => (v === null || v === undefined || v === '' ? null : Number(v));
+  // No pin, no address: the create endpoint requires one and zone pricing is
+  // derived from it, so offering to save this would only earn a 422.
+  const latitude = num(a.latitude);
+  const longitude = num(a.longitude);
+  if (latitude === null || longitude === null) return null;
   return {
     label: (a.label as string) || DEFAULT_ADDRESS_LABEL,
     first_name: (a.first_name as string) || '',
@@ -36,8 +41,8 @@ function addressFromOrder(order: Order): import('@/lib/types').AddressCreate | n
     address_line_1: a.address_line_1 as string,
     address_line_2: (a.address_line_2 as string) || undefined,
     unit_number: (a.unit_number as string) || undefined,
-    latitude: num(a.latitude),
-    longitude: num(a.longitude),
+    latitude,
+    longitude,
     is_default: true,
   };
 }

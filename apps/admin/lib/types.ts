@@ -198,7 +198,13 @@ export type OrderStatus =
   // A rider reached the door and could not hand it over. Paid for and still
   // ours to deliver, so it leads back into the journey rather than ending it.
   | 'undelivered'
-  | 'cancelled';
+  | 'cancelled'
+  // Terminal money states. The gateway declined, the shop refunded, or the
+  // cardholder raised a chargeback. Reachable from the storefront and the
+  // webhooks, so the console has to be able to render them.
+  | 'payment_failed'
+  | 'refunded'
+  | 'disputed';
 
 export interface SelectedOptionSnapshot {
   modifier_id: string;
@@ -257,8 +263,17 @@ export interface Order {
   order_number: string;
   user_id: string | null;
   email: string;
+  /** Whether that email belongs to a registered account rather than a guest. */
+  email_has_account: boolean;
+  /** The language the order was placed in; drives the customer's emails. */
+  locale: string;
   delivery_method: 'delivery' | 'pickup';
   delivery_fee: number;
+  /**
+   * The small-basket surcharge. Part of `total`, so a totals panel that omits
+   * it shows a subtotal and a total that do not reconcile.
+   */
+  low_order_fee: number;
   subtotal: number;
   discount_amount: number;
   total: number;

@@ -740,8 +740,10 @@ function CheckoutContent() {
                 address_line_1: form.addressLine1,
                 address_line_2: form.addressLine2 || undefined,
                 unit_number: form.unitNumber || undefined,
-                latitude: form.locationLat ?? undefined,
-                longitude: form.locationLng ?? undefined,
+                // Non-null for a delivery: `checkout-gate` returns `address`
+                // and the button stays unpressable until a pin is dropped.
+                latitude: form.locationLat as number,
+                longitude: form.locationLng as number,
               }
             : undefined,
           pickup_branch_id: isDelivery ? undefined : pickupBranchId || undefined,

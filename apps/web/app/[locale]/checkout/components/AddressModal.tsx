@@ -239,6 +239,7 @@ export function AddressModal({
    */
   const handlePin = useCallback(async (lat: number, lng: number, selectedAddress?: string) => {
     setDraft((prev) => ({ ...prev, latitude: lat, longitude: lng }));
+    setErrors((prev) => { const next = { ...prev }; delete next.latitude; return next; });
     if (selectedAddress) {
       setDraft((prev) => ({ ...prev, addressLine1: selectedAddress }));
       setErrors((prev) => {
@@ -274,6 +275,12 @@ export function AddressModal({
     if (!d.lastName.trim()) e.lastName = t('checkout.last_name_required');
     if (!d.phone.trim() || !isValidPhone(d.phone)) e.phone = t('checkout.valid_phone_required');
     if (!d.addressLine1.trim()) e.addressLine1 = t('checkout.address_required');
+    // The API requires the pin and zone pricing is derived from it. The
+    // checkout's own gate already refuses to submit without one; this stops
+    // the sheet from saving an address that could never be delivered to.
+    if (d.latitude === null || d.longitude === null) {
+      e.latitude = t('checkout.address_pin_required');
+    }
     return e;
   }
 
@@ -318,8 +325,9 @@ export function AddressModal({
       address_line_1: draft.addressLine1.trim(),
       address_line_2: draft.addressLine2.trim() || undefined,
       unit_number: draft.unitNumber.trim() || undefined,
-      latitude: draft.latitude,
-      longitude: draft.longitude,
+      // Non-null by `validate()` above, which returns early without a pin.
+      latitude: draft.latitude as number,
+      longitude: draft.longitude as number,
     };
 
     try {
@@ -553,6 +561,14 @@ export function AddressModal({
                 {geocoding && (
                   <p className="mt-2 flex items-center gap-2 text-xs text-gray-400 font-body">
                     <Spinner size="sm" /> {t('address.finding_address')}
+                  </p>
+                )}
+                {errors.latitude && (
+                  <p
+                    data-field-error="true"
+                    className="mt-1.5 text-xs text-red-500"
+                  >
+                    {errors.latitude}
                   </p>
                 )}
               </div>

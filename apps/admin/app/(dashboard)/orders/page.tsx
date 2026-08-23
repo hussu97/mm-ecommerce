@@ -70,6 +70,11 @@ const STATUS_VARIANT: Record<OrderStatus, 'warning' | 'info' | 'success' | 'dang
   // and it should be as loud on the list as a cancellation.
   undelivered: 'danger',
   cancelled: 'danger',
+  payment_failed: 'danger',
+  // Amber, not red: the money is settled and nothing is owed: it is a closed
+  // order, not one that needs somebody's afternoon.
+  refunded: 'warning',
+  disputed: 'danger',
 };
 
 // The counter lifecycle, which is a different shape from `status` and is shown

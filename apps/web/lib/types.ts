@@ -420,9 +420,20 @@ export interface AddressCreate {
   unit_number?: string;
   country?: string;
   is_default?: boolean;
-  latitude?: number | null;
-  longitude?: number | null;
+  /**
+   * The pin is required, not optional — Pydantic rejects a create without it
+   * and zone pricing is derived from it. A form that may not have one yet
+   * holds `AddressFormDraft` and narrows to this only on submit.
+   */
+  latitude: number;
+  longitude: number;
 }
+
+/** `AddressCreate` while the customer has not dropped a pin yet. */
+export type AddressFormDraft = Omit<AddressCreate, 'latitude' | 'longitude'> & {
+  latitude: number | null;
+  longitude: number | null;
+};
 
 // ─── Order (create) ───────────────────────────────────────────────────────────
 

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { analytics, failureReason } from '@/lib/analytics';
 import { addressesApi, authApi, ApiError } from '@/lib/api';
 import { DEFAULT_ADDRESS_LABEL } from '@/lib/guest-addresses';
-import { Address, AddressCreate } from '@/lib/types';
+import { Address, AddressCreate, AddressFormDraft } from '@/lib/types';
 import { Input } from '@/components/ui/Input';
 import { PhoneInput, isValidPhone } from '@/components/ui/PhoneInput';
 import { PhoneVerify } from '@/components/ui/PhoneVerify';
@@ -39,7 +39,7 @@ const LocationPicker = dynamic(
  * customer a different shape of the same thing, so this one now mirrors the
  * checkout: the map leads, then the address, then who receives it.
  */
-const BLANK_FORM: AddressCreate = {
+const BLANK_FORM: AddressFormDraft = {
   label: DEFAULT_ADDRESS_LABEL,
   first_name: '',
   last_name: '',
@@ -61,8 +61,8 @@ export default function AddressesPage() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
-  const [form, setForm] = useState<AddressCreate>(BLANK_FORM);
-  const [errors, setErrors] = useState<Partial<Record<keyof AddressCreate, string>>>({});
+  const [form, setForm] = useState<AddressFormDraft>(BLANK_FORM);
+  const [errors, setErrors] = useState<Partial<Record<keyof AddressFormDraft, string>>>({});
   // The number most recently proved, so the tick disappears the moment the
   // field is edited to something else.
   const [verifiedPhone, setVerifiedPhone] = useState<string | null>(null);
@@ -124,7 +124,7 @@ export default function AddressesPage() {
   }
 
   function validate() {
-    const e: Partial<Record<keyof AddressCreate, string>> = {};
+    const e: Partial<Record<keyof AddressFormDraft, string>> = {};
     if (!form.first_name.trim()) e.first_name = t('checkout.first_name_required');
     if (!form.last_name.trim()) e.last_name = t('checkout.last_name_required');
     // Same bar as checkout: a number that is merely non-empty still strands a
@@ -133,6 +133,11 @@ export default function AddressesPage() {
       e.phone = t('checkout.valid_phone_required');
     }
     if (!form.address_line_1.trim()) e.address_line_1 = t('checkout.address_required');
+    // The API requires the pin and delivery zones are priced off it. Without
+    // this the form posted `latitude: null` and took a 422 back.
+    if (form.latitude === null || form.longitude === null) {
+      e.latitude = t('checkout.address_pin_required');
+    }
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -141,7 +146,12 @@ export default function AddressesPage() {
     if (!validate()) return;
     setSaving(true);
     try {
-      const data = { ...form, unit_number: form.unit_number || undefined };
+      const data: AddressCreate = {
+        ...form,
+        unit_number: form.unit_number || undefined,
+        latitude: form.latitude as number,
+        longitude: form.longitude as number,
+      };
       if (editId) {
         const updated = await addressesApi.update(editId, data);
       void refreshFromAddresses();
@@ -238,6 +248,9 @@ export default function AddressesPage() {
                 }))}
                 placeholder={t('address.search_location')}
               />
+              {errors.latitude && (
+                <p className="mt-1.5 text-xs text-red-500">{errors.latitude}</p>
+              )}
             </div>
 
             <div className="h-px bg-secondary/30" />
