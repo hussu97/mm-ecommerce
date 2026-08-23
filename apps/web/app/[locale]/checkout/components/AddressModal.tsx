@@ -39,6 +39,23 @@ const EMPTY: AddressDraft = {
   latitude: null, longitude: null,
 };
 
+/**
+ * How long the verification panel stays lit after the checkout points at it.
+ *
+ * The same figure the checkout uses for its own ring, so the two halves of one
+ * gesture — scroll the page, then scroll the sheet — fade together.
+ */
+const HIGHLIGHT_MS = 1800;
+
+/** How long the green tick is left on screen before the sheet closes itself. */
+const VERIFIED_CLOSE_MS = 900;
+
+/** Is this the address the checkout is already carrying, untouched? */
+function sameDraft(a: AddressDraft, b: AddressDraft | null | undefined): boolean {
+  if (!b) return false;
+  return (Object.keys(a) as (keyof AddressDraft)[]).every((k) => a[k] === b[k]);
+}
+
 export function toDraft(a: Address): AddressDraft {
   return {
     id: a.id,
@@ -88,12 +105,27 @@ interface AddressModalProps {
   verifiedPhone?: string | null;
   /** Called with the number the *server* confirmed, not the one typed. */
   onVerified?: (phone: string) => void;
+  /**
+   * Why the sheet was opened.
+   *
+   * `'select'` is the ordinary case: choose an address, or write a new one.
+   *
+   * `'verifyPhone'` is the checkout saying "prove this number", and it is a
+   * different errand with a different destination. It used to land on the list
+   * anyway — and the list has no verification on it, so the only thing a
+   * customer could do there was tap the address they had already chosen, which
+   * re-selects it and closes the sheet. Three taps to arrive back where they
+   * started, none of them wrong. On this intent the sheet opens straight on the
+   * form for the address the checkout is already carrying, where the panel
+   * lives, and points at it.
+   */
+  intent?: 'select' | 'verifyPhone';
 }
 
 export function AddressModal({
   isOpen, onClose, onSave, isAuthenticated,
   savedAddresses, onSavedAddressesChange, selectedAddressId, initialDraft,
-  askToVerify = false, verifiedPhone = null, onVerified,
+  askToVerify = false, verifiedPhone = null, onVerified, intent = 'select',
 }: AddressModalProps) {
   const { t } = useTranslation();
   const [mode, setMode] = useState<'list' | 'form'>('list');
@@ -104,19 +136,57 @@ export function AddressModal({
   const [codePending, setCodePending] = useState(false);
   const [saving, setSaving] = useState(false);
   const [geocoding, setGeocoding] = useState(false);
+  /** The verification panel, lit for a moment because the checkout pointed here. */
+  const [verifyLit, setVerifyLit] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
+  /** The self-close after a successful verification — cleared if the sheet goes first. */
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Reopening should not resume a half-finished edit from last time.
   useEffect(() => {
     if (!isOpen) return;
     setErrors({});
-    if (savedAddresses.length > 0) {
+    // Sent here to prove a number: skip the list, which cannot do it. Only
+    // when there is an address to prove it against — with none chosen yet,
+    // picking one is genuinely the next step and the list is right.
+    if (intent === 'verifyPhone' && initialDraft) {
+      setDraft(initialDraft);
+      setMode('form');
+    } else if (savedAddresses.length > 0) {
       setMode('list');
     } else {
       setDraft(initialDraft ?? EMPTY);
       setMode('form');
     }
+    // A sheet closed by hand before the self-close lands must not reopen the
+    // question by firing `onClose` at whatever is on screen a second later.
+    return () => { if (closeTimer.current) clearTimeout(closeTimer.current); };
   }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * Scroll the sheet to the verification panel and light it up.
+   *
+   * The address form is a map, five inputs and then the number, so on a phone
+   * the thing the customer was sent here for is below the fold — and a sheet
+   * that opens on a map when you asked to verify a number reads as the wrong
+   * sheet. Keyed on the mode as well as the intent so it fires again if they
+   * detour to the list and come back.
+   */
+  useEffect(() => {
+    if (!isOpen || intent !== 'verifyPhone' || mode !== 'form') return;
+    const raf = requestAnimationFrame(() => {
+      bodyRef.current
+        ?.querySelector<HTMLElement>('[data-field="verifyPhone"]')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    setVerifyLit(true);
+    const timer = setTimeout(() => setVerifyLit(false), HIGHLIGHT_MS);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timer);
+      setVerifyLit(false);
+    };
+  }, [isOpen, intent, mode]);
 
   // Scroll lock + Escape, matching the shared Modal's behaviour.
   useEffect(() => {
@@ -177,6 +247,26 @@ export function AddressModal({
     if (!d.addressLine1.trim()) e.addressLine1 = t('checkout.address_required');
     return e;
   }
+
+  /**
+   * The number came back proved.
+   *
+   * When this sheet was opened for that and nothing else, and the customer has
+   * not touched the address while they were here, there is nothing left to
+   * save — the checkout is already carrying this exact address, and the only
+   * thing that changed lives on the checkout's own state. So it hands the
+   * result up and closes, after a beat with the green tick on screen. Pressing
+   * "Save and continue" would spend an API round trip to write back the
+   * address that was already there.
+   *
+   * Any edit at all keeps the sheet open: the address on the checkout is then
+   * stale, and closing on it would throw the edit away.
+   */
+  const handleVerified = (confirmed: string) => {
+    onVerified?.(confirmed);
+    if (intent !== 'verifyPhone' || !sameDraft(draft, initialDraft)) return;
+    closeTimer.current = setTimeout(onClose, VERIFIED_CLOSE_MS);
+  };
 
   const handleSubmit = async () => {
     const found = validate(draft);
@@ -437,7 +527,17 @@ export function AddressModal({
                     />
                   </div>
                 </div>
-                <div data-field-error={errors.phone ? 'true' : undefined}>
+                <div
+                  // Where the checkout scrolls to when it sends somebody here
+                  // to prove a number, and what the ring goes around.
+                  data-field="verifyPhone"
+                  data-field-error={errors.phone ? 'true' : undefined}
+                  className={
+                    verifyLit
+                      ? 'rounded-sm ring-2 ring-primary/70 ring-offset-4 ring-offset-white transition-shadow duration-300'
+                      : 'transition-shadow duration-300'
+                  }
+                >
                   <PhoneInput
                     label={t('common.phone')}
                     value={draft.phone}
@@ -471,7 +571,7 @@ export function AddressModal({
                         <PhoneVerify
                           surface="checkout"
                           phone={draft.phone}
-                          onVerified={(confirmed) => onVerified?.(confirmed)}
+                          onVerified={handleVerified}
                           onCodePending={setCodePending}
                         />
                       </div>

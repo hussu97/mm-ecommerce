@@ -243,6 +243,15 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "cash_on_delivery", "Cash on Collection"),
     ("checkout", "cod_sublabel", "Pay in cash when your order arrives"),
     ("checkout", "cod_pickup_sublabel", "Pay in cash when you collect your order"),
+    # Read only by a screen reader. The row it sits on is not a choice — there
+    # is one way to pay for a delivery — and sighted customers are told that by
+    # the tick and the chosen-state border. Neither of those says anything out
+    # loud, so this does.
+    (
+        "checkout",
+        "only_payment_method",
+        "Selected — the only payment method for this order",
+    ),
     ("checkout", "place_order", "Place Order · {total} AED"),
     ("checkout", "coming_soon", "Coming soon"),
     (
@@ -946,6 +955,11 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("checkout", "cash_on_delivery", "الدفع نقداً عند الاستلام"),
     ("checkout", "cod_sublabel", "ادفع نقداً عند وصول طلبك"),
     ("checkout", "cod_pickup_sublabel", "ادفع نقداً عند استلام طلبك"),
+    (
+        "checkout",
+        "only_payment_method",
+        "محددة — طريقة الدفع الوحيدة لهذا الطلب",
+    ),
     ("checkout", "place_order", "تأكيد الطلب · {total} درهم"),
     ("checkout", "coming_soon", "قريباً"),
     (

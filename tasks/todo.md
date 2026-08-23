@@ -265,3 +265,31 @@ carry it, and watch their status pushes land in the local DB.
       `picked_up`. Exactly what `SLIDER_STATUS_RANK` is for.
 - [ ] Configure the sandbox webhook in Slider's dashboard and watch a push that
       originates from them rather than from curl.
+
+## Two dead clicks in the checkout (2026-08-23)
+
+Both were taps that looked like they should do something and did nothing.
+
+- [x] **"Verify your mobile number" landed on the wrong screen.** The prompt
+      under the address — and the Place Order button when the gate turns it into
+      "Verify your phone" — both opened the address sheet, which opens on the
+      *list*. The list has no verification on it, so the only thing to tap was
+      the address already chosen, which re-selects it and closes the sheet: three
+      taps back to where they started. `AddressModal` now takes an `intent`, and
+      `verifyPhone` opens straight on the form for the address the checkout is
+      carrying, scrolls to the number, and rings it the way the checkout rings
+      its own sections.
+- [x] **The sheet self-closes once the number is proved**, when it was opened
+      for that and the address was not touched — there is nothing left to save,
+      and "Save and continue" would spend a round trip rewriting what is already
+      there. Any edit keeps it open, because closing would discard the edit.
+- [x] **Pressing Place Order when the SMS is the only thing missing** now opens
+      that panel instead of ringing a link to it. Only when it is the only thing
+      outstanding — a sheet over an unfilled email hides the other half.
+- [x] **The single payment row read as unselected.** Card-on-delivery is the
+      only option, and it was drawn grey-on-grey — pixel for pixel the
+      *unselected* state of the delivery-method rows one section above — so
+      people tapped it to select it. It now wears the chosen state and a tick,
+      with an `sr-only` line saying so.
+- [x] `AddressModal.test.tsx` covers both destinations, the scroll, the
+      self-close, and the two cases that must not self-close. 481 tests pass.

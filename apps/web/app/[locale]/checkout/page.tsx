@@ -193,6 +193,16 @@ function CheckoutContent() {
   const [deliveryRates, setDeliveryRates] = useState<DeliveryRates | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [addressOpen, setAddressOpen] = useState(false);
+  /**
+   * Why the address sheet was opened, which decides where it lands.
+   *
+   * "Verify your mobile number" and "change my address" are two different
+   * errands that happen to share one sheet, and the sheet cannot tell them
+   * apart from `isOpen` alone. Sent along so the verification errand skips the
+   * address list — a screen with no verification on it — and arrives at the
+   * panel that answers it.
+   */
+  const [addressIntent, setAddressIntent] = useState<'select' | 'verifyPhone'>('select');
   const [showExtras, setShowExtras] = useState(false);
   const [pickupBranches, setPickupBranches] = useState<PickupBranch[]>([]);
   /**
@@ -311,6 +321,12 @@ function CheckoutContent() {
 
   // A timer that outlives the page would call `setHighlight` on nothing.
   useEffect(() => () => { if (highlightTimer.current) clearTimeout(highlightTimer.current); }, []);
+
+  /** Open the address sheet, saying what it was opened for. */
+  const openAddress = useCallback((intent: 'select' | 'verifyPhone' = 'select') => {
+    setAddressIntent(intent);
+    setAddressOpen(true);
+  }, []);
 
   /**
    * Take the customer to a coupon the server just refused.
@@ -672,6 +688,12 @@ function CheckoutContent() {
           error_count: fields.length,
           delivery_method: form.deliveryMethod,
         });
+        // Nothing left but the SMS: put the panel that sends it in front of
+        // them rather than a ring around a link to it. The press was "place my
+        // order" and this is the whole of what stands between the two.
+        // Only when it is the *only* thing outstanding — a sheet over an email
+        // field that is also empty hides the other half of the answer.
+        if (fields.length === 1 && fields[0] === 'verifyPhone') openAddress('verifyPhone');
         revealField(fields[0]);
         return;
       }
@@ -810,6 +832,8 @@ function CheckoutContent() {
         // to be the one write that skipped the `sessionStorage` copy.
         onChange({ promoNeedsVerify: true });
         setErrors({ verifyPhone: t('checkout.verify_phone_required') });
+        openAddress('verifyPhone');
+        // Behind the sheet, so closing it lands on the line that explains why.
         revealField('verifyPhone');
       } else if (stage === 'create_order' && isPromoRefusal(err, form.promoDiscount > 0)) {
         // A coupon refused at the last step, said where the coupon is.
@@ -931,7 +955,10 @@ function CheckoutContent() {
       });
     }
     if (action.kind === 'address') {
-      setAddressOpen(true);
+      // Two different reasons share this action. "Choose another address" and
+      // "Complete address details" want the list; "Verify your phone" wants the
+      // panel that does it, which is on the form and never on the list.
+      openAddress(errorField === 'verifyPhone' ? 'verifyPhone' : 'select');
       return;
     }
     revealField(action.field);
@@ -1058,7 +1085,7 @@ function CheckoutContent() {
           >
             <button
               type="button"
-              onClick={() => setAddressOpen(true)}
+              onClick={() => openAddress('select')}
               className={`w-full text-start border rounded-sm px-3.5 py-3 flex items-center gap-3 transition-colors hover:border-primary/50 ${
                 errors.address ? 'border-red-400' : 'border-gray-200'
               }`}
@@ -1094,7 +1121,7 @@ function CheckoutContent() {
               <button
                 type="button"
                 data-field="verifyPhone"
-                onClick={() => setAddressOpen(true)}
+                onClick={() => openAddress('verifyPhone')}
                 className="mt-1.5 w-full text-start flex items-start gap-1.5 text-xs font-body text-amber-800"
               >
                 <Icon name="verified_user" className="text-sm shrink-0" />
@@ -1118,7 +1145,7 @@ function CheckoutContent() {
                 makes pointless to fill in. */}
             {unserviceable && (
               <UnserviceableNotice
-                onChangeAddress={() => setAddressOpen(true)}
+                onChangeAddress={() => openAddress('select')}
                 onSwitchToPickup={() => {
                   analytics.selectDeliveryMethod({ method: 'pickup', fee: 0 });
                   onChange({ deliveryMethod: 'pickup' });
@@ -1241,8 +1268,22 @@ function CheckoutContent() {
               </>
             );
             return only ? (
-              <div key={id} className="flex items-center gap-3 px-3.5 py-3 border border-gray-200 rounded-sm bg-gray-50/60">
+              // A statement, not an option — and dressed as the answer rather
+              // than as the question. It used to be a grey, grey-bordered row:
+              // pixel for pixel the *unselected* state of the choice rows a
+              // customer meets one section above, so it read as "pick me" and
+              // was tapped, and tapping it did nothing because there is nothing
+              // to pick. Wearing the chosen state, with the tick that goes with
+              // it, the row answers that question before it is asked.
+              <div
+                key={id}
+                className="flex items-center gap-3 px-3.5 py-3 border border-primary rounded-sm bg-primary/5 cursor-default"
+              >
                 {row}
+                <Icon name="check_circle" className="text-lg text-primary shrink-0" aria-hidden="true" />
+                <span className="sr-only">
+                  {withFallback(t, 'checkout.only_payment_method', 'Selected — the only payment method for this order')}
+                </span>
               </div>
             ) : (
               <button
@@ -1372,6 +1413,7 @@ function CheckoutContent() {
         askToVerify={isDelivery && form.promoDiscount > 0 && form.promoNeedsVerify}
         verifiedPhone={verifiedPhone}
         onVerified={setVerifiedPhone}
+        intent={addressIntent}
       />
     </div>
   );
