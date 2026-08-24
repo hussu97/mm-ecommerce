@@ -192,7 +192,7 @@ async def till_report(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("pos.register.access")),
 ):
-    """X-report while open, Z-report once closed."""
+    """The till report — a read while open, the close report once closed."""
     till = await till_service.require_till(db, till_id)
     _assert_can_touch(till, user)
     return await till_service.build_report(db, till)

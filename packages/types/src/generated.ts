@@ -4971,26 +4971,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/pos/reports/branches-trend": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Branches Trend
-         * @description Sales per branch per business day.
-         */
-        get: operations["branches_trend_api_v1_pos_reports_branches_trend_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/pos/reports/cost-adjustment-history": {
         parameters: {
             query?: never;
@@ -5057,26 +5037,6 @@ export interface paths {
          * @description Stock value on hand plus everything below its reorder point.
          */
         get: operations["inventory_valuation_api_v1_pos_reports_inventory_valuation_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/pos/reports/menu-engineering": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Menu Engineering
-         * @description Star / plough-horse / puzzle / dog classification by volume and margin.
-         */
-        get: operations["menu_engineering_api_v1_pos_reports_menu_engineering_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5207,26 +5167,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/pos/reports/speed-of-service": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Speed Of Service
-         * @description Kitchen acknowledge, prep and total times over the window.
-         */
-        get: operations["speed_of_service_api_v1_pos_reports_speed_of_service_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/pos/reports/suppliers-analysis": {
         parameters: {
             query?: never;
@@ -5239,26 +5179,6 @@ export interface paths {
          * @description Purchase-order count and spend per supplier.
          */
         get: operations["suppliers_analysis_api_v1_pos_reports_suppliers_analysis_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/pos/reports/table-utilization": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Table Utilization
-         * @description Covers, turns, dwell time and sales per seat, for dine-in only.
-         */
-        get: operations["table_utilization_api_v1_pos_reports_table_utilization_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7527,6 +7447,11 @@ export interface components {
              * @default 04:00
              */
             business_day_start: string;
+            /**
+             * Cash Enabled
+             * @default true
+             */
+            cash_enabled: boolean;
             /** City */
             city?: string | null;
             /** City Localized */
@@ -7722,6 +7647,8 @@ export interface components {
             address_localized: string | null;
             /** Business Day Start */
             business_day_start: string;
+            /** Cash Enabled */
+            cash_enabled: boolean;
             /** City */
             city: string | null;
             /** City Localized */
@@ -7808,6 +7735,8 @@ export interface components {
             address_localized?: string | null;
             /** Business Day Start */
             business_day_start?: string | null;
+            /** Cash Enabled */
+            cash_enabled?: boolean | null;
             /** City */
             city?: string | null;
             /** City Localized */
@@ -8376,6 +8305,26 @@ export interface components {
         ChangeTableRequest: {
             /** Table Id */
             table_id?: string | null;
+        };
+        /**
+         * ChannelRevenue
+         * @description One sales channel's takings for a till's shift.
+         *
+         *     `key` is the raw grouping value (`online`, `cashier`, or a marketplace's
+         *     display name); `label` is what the receipt prints (`Website`, `Counter`,
+         *     `Talabat`…).
+         */
+        ChannelRevenue: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Orders */
+            orders: number;
+            /** Refunds */
+            refunds: string;
+            /** Revenue */
+            revenue: string;
         };
         /** ChargeCreate */
         ChargeCreate: {
@@ -14744,7 +14693,8 @@ export interface components {
         };
         /**
          * TillReport
-         * @description X-report (till still open) or Z-report (till closed).
+         * @description A till's report: the channel revenue summary, plus — for a branch that
+         *     handles cash — its drawer reconciliation. Printed mid-shift or at close.
          */
         TillReport: {
             /**
@@ -14754,6 +14704,10 @@ export interface components {
             branch_id: string;
             /** Business Date */
             business_date: string;
+            /** Cash Enabled */
+            cash_enabled: boolean;
+            /** Channels */
+            channels: components["schemas"]["ChannelRevenue"][];
             /** Charges */
             charges: string;
             /** Closed At */
@@ -14770,6 +14724,8 @@ export interface components {
             estimated_cash: string;
             /** Gross Sales */
             gross_sales: string;
+            /** Net Payments */
+            net_payments: string;
             /** Net Sales */
             net_sales: string;
             /**
@@ -14796,6 +14752,12 @@ export interface components {
             till_id: string;
             /** Tips */
             tips: string;
+            /** Total Orders */
+            total_orders: number;
+            /** Total Refunds */
+            total_refunds: string;
+            /** Total Revenue */
+            total_revenue: string;
             /**
              * User Id
              * Format: uuid
@@ -25710,39 +25672,6 @@ export interface operations {
             };
         };
     };
-    branches_trend_api_v1_pos_reports_branches_trend_get: {
-        parameters: {
-            query?: {
-                branch_id?: string | null;
-                date_from?: string | null;
-                date_to?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     cost_adjustment_history_api_v1_pos_reports_cost_adjustment_history_get: {
         parameters: {
             query?: {
@@ -25846,40 +25775,6 @@ export interface operations {
         parameters: {
             query?: {
                 branch_id?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    menu_engineering_api_v1_pos_reports_menu_engineering_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-                branch_id?: string | null;
-                date_from?: string | null;
-                date_to?: string | null;
             };
             header?: never;
             path?: never;
@@ -26106,75 +26001,9 @@ export interface operations {
             };
         };
     };
-    speed_of_service_api_v1_pos_reports_speed_of_service_get: {
-        parameters: {
-            query?: {
-                branch_id?: string | null;
-                date_from?: string | null;
-                date_to?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     suppliers_analysis_api_v1_pos_reports_suppliers_analysis_get: {
         parameters: {
             query?: {
-                date_from?: string | null;
-                date_to?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    table_utilization_api_v1_pos_reports_table_utilization_get: {
-        parameters: {
-            query?: {
-                branch_id?: string | null;
                 date_from?: string | null;
                 date_to?: string | null;
             };

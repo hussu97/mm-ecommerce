@@ -6,15 +6,11 @@ import type { Branch } from '@/lib/pos-types';
 import { Input, Select, TabBar } from '@/components/ui';
 
 import { defaultWindow, type TabKey } from './report-window';
-import { BranchesTrendTab } from './tabs/BranchesTrendTab';
 import { EmailTab } from './tabs/EmailTab';
 import { InventoryTab } from './tabs/InventoryTab';
-import { MenuTab } from './tabs/MenuTab';
 import { PaymentsTab } from './tabs/PaymentsTab';
 import { SalesTab } from './tabs/SalesTab';
-import { SpeedOfServiceTab } from './tabs/SpeedOfServiceTab';
 import { SuppliersTab } from './tabs/SuppliersTab';
-import { TableUtilizationTab } from './tabs/TableUtilizationTab';
 import { TaxesTab } from './tabs/TaxesTab';
 
 export default function PosReportsPage() {
@@ -69,10 +65,6 @@ export default function PosReportsPage() {
             { key: 'sales', label: 'Sales' },
             { key: 'payments', label: 'Payments' },
             { key: 'taxes', label: 'Taxes' },
-            { key: 'menu', label: 'Menu Engineering' },
-            { key: 'service', label: 'Speed of Service' },
-            { key: 'branches', label: 'Branches Trend' },
-            { key: 'tables', label: 'Tables' },
             { key: 'inventory', label: 'Inventory' },
             { key: 'suppliers', label: 'Suppliers' },
             { key: 'email', label: 'Email Report' },
@@ -86,10 +78,6 @@ export default function PosReportsPage() {
         {tab === 'sales' && <SalesTab window={window} />}
         {tab === 'payments' && <PaymentsTab window={window} />}
         {tab === 'taxes' && <TaxesTab window={window} />}
-        {tab === 'menu' && <MenuTab window={window} />}
-        {tab === 'service' && <SpeedOfServiceTab window={window} />}
-        {tab === 'branches' && <BranchesTrendTab window={window} />}
-        {tab === 'tables' && <TableUtilizationTab window={window} />}
         {tab === 'suppliers' && <SuppliersTab window={window} />}
         {tab === 'inventory' && <InventoryTab window={window} branchId={branchId} />}
         {tab === 'email' && <EmailTab window={window} />}

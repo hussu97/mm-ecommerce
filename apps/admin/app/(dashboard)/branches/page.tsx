@@ -27,6 +27,7 @@ export default function BranchesPage() {
         business_day_start: '04:00',
         receives_online_orders: true,
         offers_pickup: false,
+        cash_enabled: true,
         accepts_reservations: false,
         is_active: true,
         display_order: 0,
@@ -112,6 +113,13 @@ export default function BranchesPage() {
           type: 'checkbox',
           helper:
             'Puts this branch on the checkout as a collection point. Needs a pin, an address and a city — a kitchen that bakes online orders is not automatically somewhere to send a customer.',
+        },
+        {
+          name: 'cash_enabled',
+          label: 'Handles cash (has a till drawer)',
+          type: 'checkbox',
+          helper:
+            'Turn off for a cashless kitchen — the POS then skips the opening float and end-of-shift cash count.',
         },
         { name: 'accepts_reservations', label: 'Accepts reservations', type: 'checkbox' },
         { name: 'display_order', label: 'Display order', type: 'number' },

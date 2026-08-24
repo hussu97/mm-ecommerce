@@ -48,6 +48,8 @@ export interface Branch {
   receives_online_orders: boolean;
   /** Whether customers may choose to collect from here. Not implied by the flag above. */
   offers_pickup: boolean;
+  /** Whether this branch handles cash and runs a till drawer. Off = cashless kitchen; the POS skips the opening float and end-of-shift cash count. */
+  cash_enabled: boolean;
   accepts_reservations: boolean;
   reservation_duration: number;
   is_active: boolean;
@@ -519,13 +521,6 @@ export interface CostOfGoods {
   gross_margin_percent: number;
 }
 
-export interface MenuEngineeringRow extends SalesBreakdownRow {
-  cost: number;
-  margin: number;
-  margin_percent: number;
-  classification: 'star' | 'plough_horse' | 'puzzle' | 'dog';
-}
-
 export interface BusinessSettings {
   id: string;
   business_name: string;
@@ -558,38 +553,6 @@ export interface BusinessSettings {
   enable_tips: boolean;
 }
 
-
-/** Kitchen timings over the window; each average covers only the tickets
- *  that reached that stage, so one still cooking does not skew prep time. */
-export interface SpeedOfServiceReport {
-  tickets: number;
-  acknowledged: number;
-  completed: number;
-  outstanding: number;
-  avg_acknowledge_minutes: number;
-  avg_prep_minutes: number;
-  avg_total_minutes: number;
-  slowest_ticket_minutes: number;
-}
-
-export interface BranchTrendRow {
-  branch: string;
-  business_date: string;
-  orders: number;
-  net_sales: number;
-  average_order_value: number;
-}
-
-export interface TableUtilizationRow {
-  section: string;
-  table: string;
-  seats: number;
-  turns: number;
-  covers: number;
-  net_sales: number;
-  average_minutes: number;
-  sales_per_seat: number;
-}
 
 export interface SupplierAnalysisRow {
   supplier: string;

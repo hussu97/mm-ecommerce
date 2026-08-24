@@ -9,10 +9,10 @@ import { api, buildQs } from './api';
 import type {
   Branch, BranchHoliday, BranchHolidayWrite, BusinessSettings, Charge, CostOfGoods, Device, DrawerOperation,
   InventoryCategory, InventoryItem, InventoryLevel, InventoryTransaction,
-  InventoryValuation, KitchenFlow, MenuEngineeringRow, PaymentMethod,
+  InventoryValuation, KitchenFlow, PaymentMethod,
   PaymentReportRow, PermissionCatalogue, PosOrder, Printer, PurchaseOrder,
-  Reason, Role, SalesBreakdownRow, SalesSummary, SpeedOfServiceReport, Staff,
-  SupplierAnalysisRow, Supplier, Tag, TableUtilizationRow, Tax, BranchTrendRow,
+  Reason, Role, SalesBreakdownRow, SalesSummary, Staff,
+  SupplierAnalysisRow, Supplier, Tag, Tax,
   TaxGroup, TaxReportRow, Till, Warehouse,
 } from './pos-types';
 
@@ -219,12 +219,6 @@ export const posReportsApi = {
   payments: (w: Window) => api.get<PaymentReportRow[]>(`/pos/reports/payments${buildQs(w)}`),
   sendDailyEmail: (body: { date_from: string; date_to: string; recipients: string[] }) =>
     api.post<DailySalesEmailResult>('/pos/reports/sales/daily-email', body),
-  speedOfService: (w: Window) =>
-    api.get<SpeedOfServiceReport>(`/pos/reports/speed-of-service${buildQs(w)}`),
-  branchesTrend: (w: Window) =>
-    api.get<BranchTrendRow[]>(`/pos/reports/branches-trend${buildQs(w)}`),
-  tableUtilization: (w: Window) =>
-    api.get<TableUtilizationRow[]>(`/pos/reports/table-utilization${buildQs(w)}`),
   suppliersAnalysis: (w: Window) =>
     api.get<SupplierAnalysisRow[]>(`/pos/reports/suppliers-analysis${buildQs(w)}`),
   taxes: (w: Window) => api.get<TaxReportRow[]>(`/pos/reports/taxes${buildQs(w)}`),
@@ -234,5 +228,4 @@ export const posReportsApi = {
   inventoryValuation: (branchId?: string) =>
     api.get<InventoryValuation>(`/pos/reports/inventory/valuation${buildQs({ branch_id: branchId })}`),
   costOfGoods: (w: Window) => api.get<CostOfGoods>(`/pos/reports/inventory/cost-of-goods${buildQs(w)}`),
-  menuEngineering: (w: Window) => api.get<MenuEngineeringRow[]>(`/pos/reports/menu-engineering${buildQs(w)}`),
 };

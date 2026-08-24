@@ -1575,6 +1575,11 @@
             "title": "Business Day Start",
             "type": "string"
           },
+          "cash_enabled": {
+            "default": true,
+            "title": "Cash Enabled",
+            "type": "boolean"
+          },
           "city": {
             "anyOf": [
               {
@@ -2138,6 +2143,10 @@
             "title": "Business Day Start",
             "type": "string"
           },
+          "cash_enabled": {
+            "title": "Cash Enabled",
+            "type": "boolean"
+          },
           "city": {
             "anyOf": [
               {
@@ -2404,6 +2413,7 @@
           "noon_send_outlet_code",
           "noon_send_outlet_address_code",
           "receives_online_orders",
+          "cash_enabled",
           "offers_pickup",
           "accepts_reservations",
           "reservation_duration",
@@ -2463,6 +2473,17 @@
               }
             ],
             "title": "Business Day Start"
+          },
+          "cash_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cash Enabled"
           },
           "city": {
             "anyOf": [
@@ -4388,6 +4409,42 @@
           }
         },
         "title": "ChangeTableRequest",
+        "type": "object"
+      },
+      "ChannelRevenue": {
+        "description": "One sales channel's takings for a till's shift.\n\n`key` is the raw grouping value (`online`, `cashier`, or a marketplace's\ndisplay name); `label` is what the receipt prints (`Website`, `Counter`,\n`Talabat`\u2026).",
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "orders": {
+            "title": "Orders",
+            "type": "integer"
+          },
+          "refunds": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Refunds",
+            "type": "string"
+          },
+          "revenue": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Revenue",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "orders",
+          "revenue",
+          "refunds"
+        ],
+        "title": "ChannelRevenue",
         "type": "object"
       },
       "ChargeCreate": {
@@ -23949,7 +24006,7 @@
         "type": "object"
       },
       "TillReport": {
-        "description": "X-report (till still open) or Z-report (till closed).",
+        "description": "A till's report: the channel revenue summary, plus \u2014 for a branch that\nhandles cash \u2014 its drawer reconciliation. Printed mid-shift or at close.",
         "properties": {
           "branch_id": {
             "format": "uuid",
@@ -23959,6 +24016,17 @@
           "business_date": {
             "title": "Business Date",
             "type": "string"
+          },
+          "cash_enabled": {
+            "title": "Cash Enabled",
+            "type": "boolean"
+          },
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/ChannelRevenue"
+            },
+            "title": "Channels",
+            "type": "array"
           },
           "charges": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -24012,6 +24080,11 @@
             "title": "Gross Sales",
             "type": "string"
           },
+          "net_payments": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Net Payments",
+            "type": "string"
+          },
           "net_sales": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Net Sales",
@@ -24059,6 +24132,20 @@
             "title": "Tips",
             "type": "string"
           },
+          "total_orders": {
+            "title": "Total Orders",
+            "type": "integer"
+          },
+          "total_refunds": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Refunds",
+            "type": "string"
+          },
+          "total_revenue": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Revenue",
+            "type": "string"
+          },
           "user_id": {
             "format": "uuid",
             "title": "User Id",
@@ -24084,6 +24171,7 @@
           "user_id",
           "opened_at",
           "closed_at",
+          "cash_enabled",
           "opening_amount",
           "estimated_cash",
           "closing_amount",
@@ -24097,7 +24185,12 @@
           "net_sales",
           "tips",
           "payments_by_method",
-          "drawer_totals"
+          "drawer_totals",
+          "channels",
+          "total_orders",
+          "total_revenue",
+          "total_refunds",
+          "net_payments"
         ],
         "title": "TillReport",
         "type": "object"
@@ -43884,94 +43977,6 @@
         ]
       }
     },
-    "/api/v1/pos/reports/branches-trend": {
-      "get": {
-        "description": "Sales per branch per business day.",
-        "operationId": "branches_trend_api_v1_pos_reports_branches_trend_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "branch_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Branch Id"
-            }
-          },
-          {
-            "in": "query",
-            "name": "date_from",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Date From"
-            }
-          },
-          {
-            "in": "query",
-            "name": "date_to",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Date To"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Branches Trend",
-        "tags": [
-          "POS Reports"
-        ]
-      }
-    },
     "/api/v1/pos/reports/cost-adjustment-history": {
       "get": {
         "description": "Stock write-offs and revaluations, newest first.",
@@ -44283,106 +44288,6 @@
           }
         ],
         "summary": "Inventory Valuation",
-        "tags": [
-          "POS Reports"
-        ]
-      }
-    },
-    "/api/v1/pos/reports/menu-engineering": {
-      "get": {
-        "description": "Star / plough-horse / puzzle / dog classification by volume and margin.",
-        "operationId": "menu_engineering_api_v1_pos_reports_menu_engineering_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 200,
-              "maximum": 1000,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "branch_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Branch Id"
-            }
-          },
-          {
-            "in": "query",
-            "name": "date_from",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Date From"
-            }
-          },
-          {
-            "in": "query",
-            "name": "date_to",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Date To"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Menu Engineering",
         "tags": [
           "POS Reports"
         ]
@@ -44872,94 +44777,6 @@
         ]
       }
     },
-    "/api/v1/pos/reports/speed-of-service": {
-      "get": {
-        "description": "Kitchen acknowledge, prep and total times over the window.",
-        "operationId": "speed_of_service_api_v1_pos_reports_speed_of_service_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "branch_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Branch Id"
-            }
-          },
-          {
-            "in": "query",
-            "name": "date_from",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Date From"
-            }
-          },
-          {
-            "in": "query",
-            "name": "date_to",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Date To"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Speed Of Service",
-        "tags": [
-          "POS Reports"
-        ]
-      }
-    },
     "/api/v1/pos/reports/suppliers-analysis": {
       "get": {
         "description": "Purchase-order count and spend per supplier.",
@@ -45024,94 +44841,6 @@
           }
         ],
         "summary": "Suppliers Analysis",
-        "tags": [
-          "POS Reports"
-        ]
-      }
-    },
-    "/api/v1/pos/reports/table-utilization": {
-      "get": {
-        "description": "Covers, turns, dwell time and sales per seat, for dine-in only.",
-        "operationId": "table_utilization_api_v1_pos_reports_table_utilization_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "branch_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Branch Id"
-            }
-          },
-          {
-            "in": "query",
-            "name": "date_from",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Date From"
-            }
-          },
-          {
-            "in": "query",
-            "name": "date_to",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Date To"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Table Utilization",
         "tags": [
           "POS Reports"
         ]

@@ -44,8 +44,24 @@ class TillResponse(ORMModel):
     updated_at: datetime
 
 
+class ChannelRevenue(BaseModel):
+    """One sales channel's takings for a till's shift.
+
+    `key` is the raw grouping value (`online`, `cashier`, or a marketplace's
+    display name); `label` is what the receipt prints (`Website`, `Counter`,
+    `Talabat`…).
+    """
+
+    key: str
+    label: str
+    orders: int
+    revenue: Decimal
+    refunds: Decimal
+
+
 class TillReport(BaseModel):
-    """X-report (till still open) or Z-report (till closed)."""
+    """A till's report: the channel revenue summary, plus — for a branch that
+    handles cash — its drawer reconciliation. Printed mid-shift or at close."""
 
     till_id: UUID
     branch_id: UUID
@@ -53,6 +69,9 @@ class TillReport(BaseModel):
     user_id: UUID
     opened_at: datetime
     closed_at: datetime | None
+    #: False for a cashless branch: the register skipped the float and the count,
+    #: and the report omits its cash-reconciliation lines.
+    cash_enabled: bool
     opening_amount: Decimal
     estimated_cash: Decimal
     closing_amount: Decimal | None
@@ -67,6 +86,12 @@ class TillReport(BaseModel):
     tips: Decimal
     payments_by_method: dict[str, Decimal]
     drawer_totals: dict[str, Decimal]
+    #: Revenue per channel — one row per marketplace, plus Website and Counter.
+    channels: list[ChannelRevenue]
+    total_orders: int
+    total_revenue: Decimal
+    total_refunds: Decimal
+    net_payments: Decimal
 
 
 DrawerOperationTypeLiteral = Literal[

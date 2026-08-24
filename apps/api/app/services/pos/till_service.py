@@ -311,6 +311,21 @@ async def close_till(
             k: str(v) for k, v in report["payments_by_method"].items()
         },
         "drawer_totals": {k: str(v) for k, v in report["drawer_totals"].items()},
+        "cash_enabled": report["cash_enabled"],
+        "channels": [
+            {
+                "key": c["key"],
+                "label": c["label"],
+                "orders": c["orders"],
+                "revenue": str(c["revenue"]),
+                "refunds": str(c["refunds"]),
+            }
+            for c in report["channels"]
+        ],
+        "total_orders": report["total_orders"],
+        "total_revenue": str(report["total_revenue"]),
+        "total_refunds": str(report["total_refunds"]),
+        "net_payments": str(report["net_payments"]),
     }
 
     await db.flush()
@@ -320,7 +335,9 @@ async def close_till(
 
 async def build_report(db: AsyncSession, till: Till) -> dict:
     """
-    X-report while the till is open, Z-report once closed.
+    The till report: a read mid-shift, the close report once the till is closed.
+    There is no separate "Z report" — a close is the same figures with an end
+    time and, on a cash branch, the drawer reconciliation.
 
     Sales figures are sourced from the drawer ledger and the POS order engine.
     Until an order carries POS payments (added with the order engine), the cash
@@ -338,6 +355,10 @@ async def build_report(db: AsyncSession, till: Till) -> dict:
     }
 
     payments_by_method, sales = await _payment_breakdown(db, till)
+    channels = await _channel_breakdown(db, till)
+
+    branch = await db.get(Branch, till.branch_id)
+    cash_enabled = bool(branch.cash_enabled) if branch is not None else True
 
     return {
         "till_id": till.id,
@@ -346,6 +367,7 @@ async def build_report(db: AsyncSession, till: Till) -> dict:
         "user_id": till.user_id,
         "opened_at": till.opened_at,
         "closed_at": till.closed_at,
+        "cash_enabled": cash_enabled,
         "opening_amount": money(till.opening_amount),
         "estimated_cash": await estimated_cash(db, till),
         "closing_amount": (
@@ -362,6 +384,85 @@ async def build_report(db: AsyncSession, till: Till) -> dict:
         "tips": sales["tips"],
         "payments_by_method": payments_by_method,
         "drawer_totals": drawer_totals,
+        "channels": channels["channels"],
+        "total_orders": channels["total_orders"],
+        "total_revenue": channels["total_revenue"],
+        "total_refunds": channels["total_refunds"],
+        "net_payments": channels["net_payments"],
+    }
+
+
+async def _channel_breakdown(db: AsyncSession, till: Till) -> dict:
+    """
+    Revenue and order count per sales channel for this till's shift.
+
+    Grouped on the same `_CHANNEL_COLUMN` the sales reports use, so each
+    marketplace stands on its own line (Talabat, Noon Food, Keeta…) beside
+    Website and Counter, named through the one `courier_catalog`-backed labeller
+    they all share — the till-close report and the day's channel report cannot
+    disagree about what an order's channel is called.
+
+    Scoped to orders that arrived at this branch across the till's open window
+    (`opened_at` → `closed_at`, or → now while it is still open), not by
+    `till_id`: an aggregator or website order carries no till, because nobody
+    rings it up, so a `till_id` filter would report a kitchen's whole shift as
+    almost nothing. `_COMPLETED_SALE` keeps it to finished sales and nets out
+    cancellations, exactly as the day's sales report does.
+    """
+    # Imported here rather than at module top: the reports package pulls in a
+    # wide slice of the model layer, and a till is opened and closed on hot
+    # paths that have no need to drag that in.
+    from app.services.pos.pos_reports._base import (
+        _CHANNEL_COLUMN,
+        _COMPLETED_SALE,
+        _channel_labels,
+    )
+
+    when = func.coalesce(Order.closed_at, Order.created_at)
+    upper = till.closed_at or utcnow()
+    rows = (
+        await db.execute(
+            select(
+                _CHANNEL_COLUMN.label("key"),
+                func.count(Order.id),
+                func.coalesce(func.sum(Order.total), 0),
+                func.coalesce(func.sum(Order.refunded_amount), 0),
+            )
+            .where(
+                Order.is_pos.is_(True),
+                Order.branch_id == till.branch_id,
+                _COMPLETED_SALE,
+                when >= till.opened_at,
+                when <= upper,
+            )
+            .group_by(_CHANNEL_COLUMN)
+        )
+    ).all()
+
+    labels = _channel_labels(rows)
+    channels = [
+        {
+            "key": str(key),
+            "label": labels.get(str(key), str(key)),
+            "orders": int(count or 0),
+            "revenue": money(revenue),
+            "refunds": money(refunds),
+        }
+        for key, count, revenue, refunds in rows
+        if key is not None
+    ]
+    # Biggest earner first, so two prints of the same shift read identically and
+    # the manager's eye lands on the channel that matters.
+    channels.sort(key=lambda c: (c["revenue"], c["label"]), reverse=True)
+
+    total_revenue = money(sum((c["revenue"] for c in channels), ZERO))
+    total_refunds = money(sum((c["refunds"] for c in channels), ZERO))
+    return {
+        "channels": channels,
+        "total_orders": sum(c["orders"] for c in channels),
+        "total_revenue": total_revenue,
+        "total_refunds": total_refunds,
+        "net_payments": money(total_revenue - total_refunds),
     }
 
 

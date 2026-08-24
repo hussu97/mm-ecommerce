@@ -26,11 +26,7 @@ from .financial import (
     voids_and_returns,
 )
 from .operations import (
-    branches_trend,
-    menu_engineering,
     sales_predictions,
-    speed_of_service,
-    table_utilization,
 )
 from .sales import sales_by_dimension, sales_summary
 from .stock import (
@@ -44,20 +40,16 @@ from .stock import (
 
 __all__ = [
     "SUPPORTED_DIMENSIONS",
-    "branches_trend",
     "cost_adjustment_history",
     "cost_of_goods",
     "drawer_operations_report",
     "inventory_valuation",
-    "menu_engineering",
     "payments_report",
     "purchase_orders_report",
     "sales_by_dimension",
     "sales_predictions",
     "sales_summary",
-    "speed_of_service",
     "suppliers_analysis",
-    "table_utilization",
     "tax_report",
     "tills_report",
     "transfers_report",

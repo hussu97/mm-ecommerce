@@ -140,47 +140,6 @@ async def cost_of_goods(
     return await pos_reports.cost_of_goods(db, **window.kwargs)
 
 
-@router.get("/menu-engineering")
-async def menu_engineering(
-    limit: int = Query(200, ge=1, le=1000),
-    window: _Window = Depends(),
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("reports.cost")),
-):
-    """Star / plough-horse / puzzle / dog classification by volume and margin."""
-    return await pos_reports.menu_engineering(db, limit=limit, **window.kwargs)
-
-
-@router.get("/speed-of-service")
-async def speed_of_service(
-    window: _Window = Depends(),
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("reports.other")),
-):
-    """Kitchen acknowledge, prep and total times over the window."""
-    return await pos_reports.speed_of_service(db, **window.kwargs)
-
-
-@router.get("/branches-trend")
-async def branches_trend(
-    window: _Window = Depends(),
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("reports.sales")),
-):
-    """Sales per branch per business day."""
-    return await pos_reports.branches_trend(db, **window.kwargs)
-
-
-@router.get("/table-utilization")
-async def table_utilization(
-    window: _Window = Depends(),
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("reports.other")),
-):
-    """Covers, turns, dwell time and sales per seat, for dine-in only."""
-    return await pos_reports.table_utilization(db, **window.kwargs)
-
-
 @router.get("/suppliers-analysis")
 async def suppliers_analysis(
     date_from: str | None = None,

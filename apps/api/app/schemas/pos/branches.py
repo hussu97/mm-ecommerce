@@ -39,6 +39,9 @@ class BranchCreate(BaseModel):
     noon_send_outlet_code: str | None = Field(None, max_length=50)
     noon_send_outlet_address_code: str | None = Field(None, max_length=120)
     receives_online_orders: bool = True
+    #: Whether this branch handles cash / has a till drawer. A cashless kitchen
+    #: skips the opening-float entry and the close-time cash count.
+    cash_enabled: bool = True
     #: Whether a customer may choose to collect from here. False by default —
     #: a kitchen that bakes website orders is not automatically a counter.
     offers_pickup: bool = False
@@ -74,6 +77,7 @@ class BranchUpdate(BaseModel):
     noon_send_outlet_code: str | None = Field(None, max_length=50)
     noon_send_outlet_address_code: str | None = Field(None, max_length=120)
     receives_online_orders: bool | None = None
+    cash_enabled: bool | None = None
     offers_pickup: bool | None = None
     accepts_reservations: bool | None = None
     reservation_duration: int | None = Field(None, ge=5, le=600)
@@ -108,6 +112,7 @@ class BranchResponse(ORMModel):
     noon_send_outlet_code: str | None
     noon_send_outlet_address_code: str | None
     receives_online_orders: bool
+    cash_enabled: bool
     offers_pickup: bool
     accepts_reservations: bool
     reservation_duration: int

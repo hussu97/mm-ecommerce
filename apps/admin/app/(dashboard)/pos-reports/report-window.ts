@@ -10,10 +10,6 @@ export type TabKey =
   | 'sales'
   | 'payments'
   | 'taxes'
-  | 'menu'
-  | 'service'
-  | 'branches'
-  | 'tables'
   | 'inventory'
   | 'suppliers'
   | 'email';

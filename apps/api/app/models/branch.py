@@ -131,6 +131,17 @@ class Branch(Base, UUIDMixin, TimestampMixin):
     receives_online_orders: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"
     )
+    #: Whether this branch handles cash — i.e. has a physical till drawer.
+    #:
+    #: A production kitchen that only ever fulfils aggregator and website orders
+    #: never opens a drawer, so making its cashier count one at every shift open
+    #: and close reconciles nothing and puts a phantom float on the books. When
+    #: false the register skips the opening-float entry and the close-time cash
+    #: count, and the till-close report drops its cash-reconciliation lines. The
+    #: channel revenue summary is printed either way.
+    cash_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true"
+    )
     #: Whether a customer may choose to collect from here.
     #:
     #: Separate from `receives_online_orders`, which says the branch bakes
