@@ -225,6 +225,9 @@ class PosOrderResponse(ORMModel):
     customer_id: UUID | None = None
     customer_name: str | None
     customer_phone: str | None
+    #: A code to enter after dialling to reach the customer (Deliveroo). Kept apart
+    #: from the number; the register joins it for display / the driver slip.
+    customer_phone_access_code: str | None = None
     notes: str | None
     kitchen_notes: str | None
     #: Whoever else's number this order is also known by, printed on the ticket

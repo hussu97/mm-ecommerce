@@ -320,9 +320,15 @@ export interface Order {
   /** The short number the counter calls out — "order 12". */
   check_number?: number | null;
   customer_name?: string | null;
-  /** The customer's number, shown wherever the name is. For an aggregator order
-   * this carries any Deliveroo access code, joined onto the line server-side. */
+  /** The customer's number in E.164, shown wherever the name is. */
   customer_phone?: string | null;
+  /** ISO region ("AE") and line type ("mobile"/"landline"/"toll_free"), for
+   * readability beside the number. */
+  customer_phone_country?: string | null;
+  customer_phone_type?: string | null;
+  /** A code to enter after dialling to reach the customer (Deliveroo) — kept
+   * apart from the number and joined only for display. */
+  customer_phone_access_code?: string | null;
   /** For an aggregator order, the marketplace it came in on ("Talabat"…). */
   aggregator_channel?: string | null;
   /** The delivery charge the marketplace showed the customer — theirs, print

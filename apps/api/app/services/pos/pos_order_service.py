@@ -21,6 +21,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core import trading_hours
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
+from app.core.phone import describe_phone
 from app.models.base import utcnow
 from app.models.branch import Branch
 from app.models.business_settings import BusinessSettings
@@ -321,6 +322,9 @@ async def open_order(
             raise ConflictError(f"Table {table.name} already has an open check")
         table.status = TableStatusEnum.OCCUPIED.value
 
+    # Normalised the same way a website number is, so the one column reads one
+    # way whoever wrote it.
+    _phone = describe_phone(customer_phone)
     order = Order(
         order_number=f"POS-{branch.reference}-{day.business_date}-{check_number:04d}",
         user_id=customer_id,
@@ -344,7 +348,9 @@ async def open_order(
         guests=max(guests, 1),
         creator_id=user.id,
         customer_name=customer_name,
-        customer_phone=customer_phone,
+        customer_phone=_phone.e164 or customer_phone,
+        customer_phone_country=_phone.country,
+        customer_phone_type=_phone.type,
         notes=notes,
         # Ahead orders: when the customer wants it, not when it was rung up.
         due_at=due_at,
@@ -446,9 +452,14 @@ async def attach_online_order(db: AsyncSession, order: Order, branch: Branch) ->
     order.check_number = check_number
     order.opened_at = utcnow()
     # The counter needs somebody to call, and the storefront's snapshot is the
-    # only place a guest's name and number exist.
+    # only place a guest's name and number exist. Normalised the same way the
+    # order's own `customer_phone` already was, so landing on the register does
+    # not un-normalise it — the snapshot carries the E.164 `PhoneInput` emitted.
     order.customer_name = customer_name or None
-    order.customer_phone = str(address.get("phone") or "") or None
+    _phone = describe_phone(str(address.get("phone") or ""))
+    order.customer_phone = _phone.e164 or (str(address.get("phone") or "") or None)
+    order.customer_phone_country = _phone.country
+    order.customer_phone_type = _phone.type
     return order
 
 

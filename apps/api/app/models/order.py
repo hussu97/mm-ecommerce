@@ -433,7 +433,27 @@ class Order(Base, UUIDMixin, TimestampMixin):
     )
     # Walk-in customers are not registered users, so the POS captures them inline.
     customer_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    #: The customer's number, stored one way whoever sends it: E.164
+    #: ("+971501234567"), normalised through `app.core.phone.describe_phone` on
+    #: every write path (checkout, register, aggregator ingest). 30 holds E.164
+    #: with room to spare — the *access code* is a separate column below, not part
+    #: of the number, so the phone keeps its plain shape.
     customer_phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    #: The ISO region the number belongs to ("AE"), for readability — the dial
+    #: code is already inside the E.164. Null when the number could not be parsed.
+    customer_phone_country: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    #: "mobile" | "landline" | "toll_free" | "other", as libphonenumber classifies
+    #: it — so the counter can tell a home line ("04…") from a mobile ("05…") at a
+    #: glance. Null when the number could not be parsed.
+    customer_phone_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    #: A code to enter after dialling `customer_phone` to be put through to the
+    #: customer. Deliveroo works this way — its number is a shared line and the
+    #: code is per-order — so the two are stored apart (the phone keeps its plain
+    #: constraints) and joined only for display. Null wherever a number reaches
+    #: the customer directly, which is every channel but Deliveroo today.
+    customer_phone_access_code: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )
 
     charges_amount: Mapped[Any] = mapped_column(
         Numeric(12, 2), nullable=False, server_default="0"

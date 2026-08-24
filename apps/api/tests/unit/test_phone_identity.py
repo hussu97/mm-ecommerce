@@ -22,7 +22,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.core.config import settings
-from app.core.phone import normalise_phone, phone_identities
+from app.core.phone import describe_phone, normalise_phone, phone_identities
 from app.services import firebase_auth_service, promo_code_service
 
 
@@ -271,3 +271,32 @@ async def test_the_certificate_fetch_is_not_one_per_unknown_key():
         }
 
     firebase_auth_service.reset_keys()
+
+
+# ── describe_phone: E.164 + ISO country + line type, one shape for storage ──
+
+
+def test_describe_phone_reads_a_mobile():
+    parts = describe_phone("0501234567")
+    assert (parts.e164, parts.country, parts.type) == ("+971501234567", "AE", "mobile")
+
+
+def test_describe_phone_reads_a_uae_landline():
+    # A Dubai home line ("04…") must classify as a landline, not be rejected.
+    parts = describe_phone("04-4451555")
+    assert (parts.e164, parts.country, parts.type) == ("+97144451555", "AE", "landline")
+
+
+def test_describe_phone_reads_a_toll_free_deliveroo_line():
+    parts = describe_phone("+9718000320499")
+    assert (parts.e164, parts.country, parts.type) == (
+        "+9718000320499",
+        "AE",
+        "toll_free",
+    )
+
+
+def test_describe_phone_empty_on_junk():
+    for raw in ("", None, "0", "UNKNOWN"):
+        parts = describe_phone(raw)
+        assert (parts.e164, parts.country, parts.type) == ("", None, None)

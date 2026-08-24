@@ -312,6 +312,9 @@ def _order_mock(
     o.source = "online"
     o.customer_name = None
     o.customer_phone = None
+    o.customer_phone_country = None
+    o.customer_phone_type = None
+    o.customer_phone_access_code = None
     o.aggregator_channel = None
     o.aggregator_delivery_fee = None
     o.aggregator_display_code = None

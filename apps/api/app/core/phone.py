@@ -39,9 +39,12 @@ right length — not merely that it looks numeric.
 
 from __future__ import annotations
 
-import phonenumbers
+from dataclasses import dataclass
 
-__all__ = ["normalise_phone", "phone_identities"]
+import phonenumbers
+from phonenumbers import PhoneNumberType
+
+__all__ = ["PhoneParts", "describe_phone", "normalise_phone", "phone_identities"]
 
 #: The UAE, because that is who orders. A bare national number with no country
 #: information is read as one of ours — `0501234567` and `04 445 1555` are the
@@ -92,6 +95,52 @@ def normalise_phone(raw: str | None) -> str:
     if reduced and reduced != raw.strip():
         return _parsed(reduced)
     return ""
+
+
+#: `phonenumbers` line type → the plain word the shop reads. A UAE landline
+#: ("04 445 1555") and a mobile ("050…") are the two shapes the counter sorts by
+#: at a glance; toll-free is the marketplace's own line (Deliveroo's 800 number).
+#: Anything else — the rare fixed-or-mobile, a premium line — is "other" rather
+#: than a guess between the two the shop cares about.
+_TYPE_LABELS: dict[int, str] = {
+    PhoneNumberType.FIXED_LINE: "landline",
+    PhoneNumberType.MOBILE: "mobile",
+    PhoneNumberType.FIXED_LINE_OR_MOBILE: "mobile",
+    PhoneNumberType.TOLL_FREE: "toll_free",
+}
+
+
+@dataclass(frozen=True)
+class PhoneParts:
+    """A phone number split into the parts we store: the number, its country and
+    its line type. `e164` is `""` for anything that cannot be read as a valid
+    number, and `country`/`type` are then `None`."""
+
+    e164: str
+    #: ISO region ("AE") — the readable country, stored beside the number. The
+    #: dial code (+971) already lives inside `e164`, so this is for a person, not
+    #: for arithmetic.
+    country: str | None
+    #: "mobile" | "landline" | "toll_free" | "other".
+    type: str | None
+
+
+def describe_phone(raw: str | None) -> PhoneParts:
+    """The stored shape of a phone number: E.164, ISO region and line type.
+
+    Reuses `normalise_phone` for the number itself — same validity rule, same
+    metadata as the storefront — then reads the region and line type off the same
+    parse. One helper for every write path (checkout, register, aggregator ingest,
+    custom orders) so a number is stored one way whoever sends it.
+    """
+    e164 = normalise_phone(raw)
+    if not e164:
+        return PhoneParts(e164="", country=None, type=None)
+    # `normalise_phone` already proved this parses and is valid.
+    number = phonenumbers.parse(e164, _DEFAULT_REGION)
+    region = phonenumbers.region_code_for_number(number)
+    label = _TYPE_LABELS.get(phonenumbers.number_type(number), "other")
+    return PhoneParts(e164=e164, country=region, type=label)
 
 
 def phone_identities(raw: str | None) -> list[str]:

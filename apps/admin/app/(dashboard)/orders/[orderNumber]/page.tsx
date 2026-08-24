@@ -360,6 +360,11 @@ export default function OrderDetailPage() {
   // access code, joined onto the number server-side.
   const customerName = order.customer_name || (snapshot ? recipientName(snapshot) : null);
   const customerPhone = order.customer_phone || snapshot?.phone || null;
+  // The access code joins the number only for display (Deliveroo); the type is a
+  // readable label ("mobile" / "landline") beside it.
+  const customerPhoneShown = customerPhone
+    ? customerPhone + (order.customer_phone_access_code ? ` (Access code ${order.customer_phone_access_code})` : '')
+    : null;
   // The email only when it is one — an aggregator order's may be blank, and a
   // blank line reads as a missing field rather than "no email given".
   const customerEmail = order.email && order.email.includes('@') ? order.email : null;
@@ -645,8 +650,13 @@ export default function OrderDetailPage() {
           {/* The number sits with the name — for a marketplace order it is often
               the only way to reach the customer, and it carries any Deliveroo
               access code. */}
-          {customerPhone && (
-            <p className="text-sm font-body text-gray-700">{customerPhone}</p>
+          {customerPhoneShown && (
+            <p className="text-sm font-body text-gray-700">
+              {customerPhoneShown}
+              {order.customer_phone_type && (
+                <span className="ml-2 text-xs text-gray-400">{order.customer_phone_type}</span>
+              )}
+            </p>
           )}
           {customerEmail && (
             <p className="text-xs font-body text-gray-500 mt-0.5">{customerEmail}</p>

@@ -32,7 +32,7 @@ from app.core.exceptions import (
     ForbiddenError,
     NotFoundError,
 )
-from app.core.phone import normalise_phone
+from app.core.phone import describe_phone
 from app.models.branch import Branch
 from app.models.cart import Cart, CartItem
 from app.models.delivery_batch import DELIVERY_TIMEZONE
@@ -728,15 +728,22 @@ async def _persist_order(
     # given when it cannot be parsed — a number nobody can normalise is still a
     # number the driver has to ring.
     contact_phone = None
+    contact_phone_country = None
+    contact_phone_type = None
     if data.shipping_address is not None:
         given = (data.shipping_address.phone or "").strip()
-        contact_phone = normalise_phone(given) or given or None
+        parts = describe_phone(given)
+        contact_phone = parts.e164 or given or None
+        contact_phone_country = parts.country
+        contact_phone_type = parts.type
 
     order = Order(
         order_number=await _generate_order_number(db),
         user_id=user_id,
         email=order_email,
         customer_phone=contact_phone,
+        customer_phone_country=contact_phone_country,
+        customer_phone_type=contact_phone_type,
         locale=normalise_locale(data.locale),
         delivery_method=data.delivery_method,
         delivery_fee=totals.delivery_fee,

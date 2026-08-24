@@ -11305,6 +11305,12 @@ export interface components {
             customer_name?: string | null;
             /** Customer Phone */
             customer_phone?: string | null;
+            /** Customer Phone Access Code */
+            customer_phone_access_code?: string | null;
+            /** Customer Phone Country */
+            customer_phone_country?: string | null;
+            /** Customer Phone Type */
+            customer_phone_type?: string | null;
             /** Delivery Fee */
             delivery_fee?: number | null;
             delivery_method: components["schemas"]["DeliveryMethodEnum"];
@@ -11489,6 +11495,12 @@ export interface components {
             customer_name?: string | null;
             /** Customer Phone */
             customer_phone?: string | null;
+            /** Customer Phone Access Code */
+            customer_phone_access_code?: string | null;
+            /** Customer Phone Country */
+            customer_phone_country?: string | null;
+            /** Customer Phone Type */
+            customer_phone_type?: string | null;
             /** Delivery Fee */
             delivery_fee: number;
             delivery_method: components["schemas"]["DeliveryMethodEnum"];
@@ -12221,6 +12233,8 @@ export interface components {
             customer_name: string | null;
             /** Customer Phone */
             customer_phone: string | null;
+            /** Customer Phone Access Code */
+            customer_phone_access_code?: string | null;
             /** Delivery Address */
             delivery_address?: string | null;
             /** Delivery Provider */

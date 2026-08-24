@@ -216,10 +216,17 @@ class OrderResponse(BaseModel):
     source: str | None = None
     #: The customer's name and number, shown together wherever either shows. A
     #: website order carries these on `shipping_address_snapshot` and may leave
-    #: them null here; an aggregator or counter order carries them here. For a
-    #: Deliveroo order the phone has the access code joined onto it at ingest.
+    #: them null here; an aggregator or counter order carries them here.
     customer_name: str | None = None
+    #: E.164 ("+971501234567"), normalised on every write path. The dial code is
+    #: inside it; `customer_phone_country` (ISO "AE") and `customer_phone_type`
+    #: ("mobile"/"landline"/"toll_free") sit beside it for readability.
     customer_phone: str | None = None
+    customer_phone_country: str | None = None
+    customer_phone_type: str | None = None
+    #: A code to enter after dialling the number to reach the customer — Deliveroo
+    #: only, kept apart from the number and joined by the client for display.
+    customer_phone_access_code: str | None = None
     #: For an aggregator order (`source == "aggregator"`), the channel it came
     #: in on. Drives the admin channel tab/badge and is null on everything else.
     aggregator_channel: str | None = None
@@ -323,9 +330,12 @@ class OrderListResponse(BaseModel):
     #: The short number the counter calls out — "order 12".
     check_number: int | None = None
     customer_name: str | None = None
-    #: Shown beneath the name in the orders list. Carries any Deliveroo access
-    #: code, joined onto the number at ingest.
+    #: Shown beneath the name in the orders list (E.164). Its country/type and any
+    #: Deliveroo access code sit alongside; the client joins the code for display.
     customer_phone: str | None = None
+    customer_phone_country: str | None = None
+    customer_phone_type: str | None = None
+    customer_phone_access_code: str | None = None
     delivery_fee: float | None = None
     low_order_fee: float | None = None
     #: For an aggregator order, the channel it came in on ("Talabat", "Keeta

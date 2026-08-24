@@ -37,6 +37,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.money import money
+from app.core.phone import describe_phone
 from app.models.base import utcnow
 from app.models.branch import Branch
 from app.models.grubops import GrubOpsItemMap, GrubOpsLocationMap
@@ -244,8 +245,14 @@ def _looks_like_email(value: str) -> bool:
     return "@" in value and " " not in value
 
 
-def _customer_fields(customer: dict) -> tuple[str | None, str | None, str | None]:
-    """Name, phone (with any access code) and email, untangled per channel.
+#: Name, phone (E.164), phone country, phone type, access code, email.
+_CustomerFields = tuple[
+    str | None, str | None, str | None, str | None, str | None, str | None
+]
+
+
+def _customer_fields(customer: dict) -> _CustomerFields:
+    """Name, phone and email, untangled and normalised per channel.
 
     GrubOps hands these in shapes that differ by marketplace and need sorting out:
 
@@ -254,12 +261,14 @@ def _customer_fields(customer: dict) -> tuple[str | None, str | None, str | None
       is what put "5sg2…@privaterelay.appleid.com" in the name row. An
       email-shaped name is filed as the email and the name left blank, rather
       than shown as a name.
-    * **Deliveroo's number needs its access code.** The mobile is a generic
+    * **The number is normalised like every other.** `customerMobile` (or
+      `customerId`) goes through `describe_phone`, so an aggregator number is
+      stored the same E.164 way a website one is, with its country and line type
+      beside it. Talabat's masked landline, Noon's mobile and Deliveroo's
+      toll-free line all normalise.
+    * **Deliveroo's access code stays its own field.** The mobile is a generic
       Deliveroo line and `customerPhoneCode` is the code to enter to reach the
-      customer through it — the two are useless apart, so they are joined into
-      one callable string: "+9718000320499 (Access code 630118286)". Every screen
-      and every printout reads `customer_phone`, so joining here is what carries
-      the code to all of them.
+      customer through it — kept apart from the number and joined only for display.
     * **Placeholders.** "UNKNOWN", "unknown unknown", "", "0" all mean "not
       given" and become null rather than being shown.
     """
@@ -271,14 +280,18 @@ def _customer_fields(customer: dict) -> tuple[str | None, str | None, str | None
         email = email or raw_name
         name = None
 
-    phone = _clean_customer_field(customer.get("customerMobile")) or (
+    raw_phone = _clean_customer_field(customer.get("customerMobile")) or (
         _clean_customer_field(customer.get("customerId"))
     )
+    parts = describe_phone(raw_phone)
+    # E.164 where it parses; the cleaned raw where a real number will not (a
+    # driver still has to ring it), and None where there was nothing.
+    phone = parts.e164 or raw_phone
     code = _clean_customer_field(customer.get("customerPhoneCode"))
-    if phone and code:
-        phone = f"{phone} (Access code {code})"
+    if phone is None:
+        code = None
 
-    return name, phone, email
+    return name, phone, parts.country, parts.type, code, email
 
 
 def _payment_type(header: dict) -> str | None:
@@ -538,9 +551,11 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
     taxes = info.get("orderTaxes") or []
     vat_rate = _num(taxes[0].get("rate")) / Decimal("100") if taxes else Decimal("0.05")
 
-    # Name, phone (with any Deliveroo access code joined on) and email, sorted
-    # out per channel — see `_customer_fields`.
-    name, phone, email = _customer_fields(customer)
+    # Name, normalised phone (E.164) with its country and line type, any Deliveroo
+    # access code, and email — sorted out per channel; see `_customer_fields`.
+    name, phone, phone_country, phone_type, phone_code, email = _customer_fields(
+        customer
+    )
     unmapped = 0
 
     # The channel name for display: prefer the header's own `foodAggregatorName`
@@ -565,6 +580,9 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
         email=email or "",
         customer_name=name,
         customer_phone=phone,
+        customer_phone_country=phone_country,
+        customer_phone_type=phone_type,
+        customer_phone_access_code=phone_code,
         locale="en",
         delivery_method="delivery",
         order_type="delivery",

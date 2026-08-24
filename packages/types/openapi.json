@@ -13476,6 +13476,39 @@
             ],
             "title": "Customer Phone"
           },
+          "customer_phone_access_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Phone Access Code"
+          },
+          "customer_phone_country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Phone Country"
+          },
+          "customer_phone_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Phone Type"
+          },
           "delivery_fee": {
             "anyOf": [
               {
@@ -14010,6 +14043,39 @@
               }
             ],
             "title": "Customer Phone"
+          },
+          "customer_phone_access_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Phone Access Code"
+          },
+          "customer_phone_country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Phone Country"
+          },
+          "customer_phone_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Phone Type"
           },
           "delivery_fee": {
             "title": "Delivery Fee",
@@ -16160,6 +16226,17 @@
               }
             ],
             "title": "Customer Phone"
+          },
+          "customer_phone_access_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Phone Access Code"
           },
           "delivery_address": {
             "anyOf": [

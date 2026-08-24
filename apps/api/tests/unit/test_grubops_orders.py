@@ -546,7 +546,7 @@ def test_a_deliveroo_relay_email_is_not_shown_as_a_name():
     # Deliveroo sends the Apple private-relay address as customerName with a null
     # customerEmail. It is filed as the email and the name left blank — the row
     # must not read "5sg2…@privaterelay.appleid.com" as a name.
-    name, phone, email = g._customer_fields(
+    name, phone, country, ptype, code, email = g._customer_fields(
         {
             "customerName": "5sg2vwy4jb@privaterelay.appleid.com",
             "customerEmail": None,
@@ -556,13 +556,14 @@ def test_a_deliveroo_relay_email_is_not_shown_as_a_name():
     )
     assert name is None
     assert email == "5sg2vwy4jb@privaterelay.appleid.com"
-    # The generic Deliveroo line and its access code, joined into one callable
-    # string so every screen and printout that reads customer_phone carries both.
-    assert phone == "+9718000320499 (Access code 630118286)"
+    # The number is normalised and its access code kept apart — not joined onto it.
+    assert phone == "+9718000320499"
+    assert code == "630118286"
+    assert (country, ptype) == ("AE", "toll_free")
 
 
 def test_a_real_name_and_plain_number_pass_through():
-    name, phone, email = g._customer_fields(
+    name, phone, country, ptype, code, email = g._customer_fields(
         {
             "customerName": "Heba Zaky",
             "customerEmail": "",
@@ -571,12 +572,12 @@ def test_a_real_name_and_plain_number_pass_through():
         }
     )
     assert name == "Heba Zaky"
-    assert phone == "+97144451555"
-    assert email is None
+    assert phone == "+97144451555"  # Talabat's masked landline, normalised
+    assert (country, ptype, code, email) == ("AE", "landline", None, None)
 
 
 def test_customer_placeholders_all_become_null():
-    name, phone, email = g._customer_fields(
+    fields = g._customer_fields(
         {
             "customerName": "UNKNOWN",
             "customerEmail": None,
@@ -585,13 +586,14 @@ def test_customer_placeholders_all_become_null():
             "customerPhoneCode": None,
         }
     )
-    assert (name, phone, email) == (None, None, None)
+    assert fields == (None, None, None, None, None, None)
 
 
 def test_customer_id_is_the_phone_fallback():
     # Some channels leave customerMobile null and carry the number on customerId.
-    name, phone, _ = g._customer_fields(
+    name, phone, country, ptype, _code, _email = g._customer_fields(
         {"customerName": "Farhat Sultana", "customerId": "+971566369787"}
     )
     assert name == "Farhat Sultana"
     assert phone == "+971566369787"
+    assert (country, ptype) == ("AE", "mobile")
