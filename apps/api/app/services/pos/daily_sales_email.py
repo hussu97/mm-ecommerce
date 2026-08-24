@@ -60,7 +60,7 @@ _CLOSE_BUFFER = timedelta(minutes=15)
 _TICK_SECONDS = 600
 
 #: Where the automatic send goes. The manual admin trigger passes its own list.
-DEFAULT_RECIPIENTS = ["h_abbasi97@hotmail.com"]
+DEFAULT_RECIPIENTS = ["h_abbasi97@hotmail.com", "fahimakhtarabbasi@gmail.com"]
 
 _TEMPLATE = "daily_sales_report"
 
