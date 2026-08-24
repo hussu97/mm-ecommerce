@@ -77,10 +77,7 @@ def test_access_code_rides_on_the_phone_when_present():
         customer_phone="+97144000000",
         customer_phone_access_code="1234",
     )
-    assert (
-        push_service._customer_line(order)
-        == "Sara · +97144000000 (Code 1234)"
-    )
+    assert push_service._customer_line(order) == "Sara · +97144000000 (Code 1234)"
 
 
 def test_access_code_never_shows_without_a_number_to_dial():
@@ -103,7 +100,9 @@ def test_no_when_line_without_a_promised_time():
 
 def test_delivery_line_carries_date_and_time():
     soon = datetime.now(timezone.utc) + timedelta(days=2)
-    order = _order(promised_at=soon, promised_precision="time", delivery_method="delivery")
+    order = _order(
+        promised_at=soon, promised_precision="time", delivery_method="delivery"
+    )
     line = push_service._when_line(order)
     assert line.startswith("Delivery: ")
     # A time-precise promise shows a clock; AM/PM is the tell.
@@ -112,7 +111,9 @@ def test_delivery_line_carries_date_and_time():
 
 def test_pickup_line_is_labelled_pickup():
     soon = datetime.now(timezone.utc) + timedelta(days=2)
-    order = _order(promised_at=soon, promised_precision="time", delivery_method="pickup")
+    order = _order(
+        promised_at=soon, promised_precision="time", delivery_method="pickup"
+    )
     assert push_service._when_line(order).startswith("Pickup: ")
 
 
