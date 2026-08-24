@@ -1522,11 +1522,24 @@ async def update_status(
     # out of `VALID_TRANSITIONS` on purpose: that map is also read by the
     # courier webhooks, and a late `delivered` push must not resurrect an order
     # the shop has already written off.
+    # `extra_from` widens where a move may start for this one doorway. Two cases
+    # stack: the admin recovering a written-off order (delivered ← undelivered/
+    # cancelled), and cancelling an aggregator order that is already `packed` —
+    # the shop changed its mind after the rider was called, and GrubOps decides
+    # whether force-cancel still lands. Neither belongs in `VALID_TRANSITIONS`
+    # (the courier webhooks read that too); both are the console's to allow.
+    extra_from = set(order_lifecycle.ADMIN_RECOVERABLE.get(new_status, frozenset()))
+    if (
+        new_status == OrderStatusEnum.CANCELLED
+        and order.source == OrderSourceEnum.AGGREGATOR.value
+    ):
+        extra_from |= order_lifecycle.AGGREGATOR_CANCELLABLE_FROM
+
     moved = await order_lifecycle.transition(
         db,
         order,
         new_status,
-        extra_from=order_lifecycle.ADMIN_RECOVERABLE.get(new_status, frozenset()),
+        extra_from=extra_from,
     )
     if not moved:
         # Already there. `transition` treats that as a quiet no-op, which is

@@ -4536,6 +4536,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pos/orders/{order_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Order
+         * @description Cancel an aggregator order from the counter — the red button beside Packed.
+         *
+         *     **Aggregator only, deliberately.** Cancelling here runs the full
+         *     `cancelled` machinery: it releases the stock, voids the check on the register
+         *     and — the point of doing it from the counter rather than a laptop — fires
+         *     GrubOps force-cancel so the marketplace stops the rider. For a *website*
+         *     order that same move would refund the customer's card and cancel a booked MM
+         *     courier, which is an admin decision on the order screen, not a counter
+         *     button; so a stale device asking to cancel one is refused here rather than
+         *     quietly issuing a refund.
+         *
+         *     Reachable from `arrived_at_pos` (the map allows it) and from `packed` (it
+         *     does not — `order_service.update_status` widens it for an aggregator order
+         *     via `AGGREGATOR_CANCELLABLE_FROM`, and GrubOps declines force-cancel if its
+         *     rider has already moved on). `update_status` raises if the order cannot be
+         *     cancelled, which is what a person pressing a button should get.
+         *
+         *     Idempotent on an already-cancelled order, like `accept` and `packed`.
+         */
+        post: operations["cancel_order_api_v1_pos_orders__order_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pos/orders/{order_id}/charges": {
         parameters: {
             query?: never;
@@ -11434,6 +11471,12 @@ export interface components {
             aggregator_delivery_fee?: number | null;
             /** Aggregator Display Code */
             aggregator_display_code?: string | null;
+            /** Aggregator Driver Name */
+            aggregator_driver_name?: string | null;
+            /** Aggregator Driver Phone */
+            aggregator_driver_phone?: string | null;
+            /** Aggregator Driver Status */
+            aggregator_driver_status?: string | null;
             courier?: components["schemas"]["CourierBadge"] | null;
             /**
              * Created At
@@ -24944,6 +24987,37 @@ export interface operations {
                 /** @description The terminal accepted this by itself rather than a person pressing Accept. Refused for an order placed outside the branch's trading hours, which needs a human however the terminal is configured. */
                 auto?: boolean;
             };
+            header?: never;
+            path: {
+                order_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PosOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_order_api_v1_pos_orders__order_id__cancel_post: {
+        parameters: {
+            query?: never;
             header?: never;
             path: {
                 order_id: string;

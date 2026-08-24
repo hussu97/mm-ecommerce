@@ -157,6 +157,43 @@ async def test_extra_from_widens_where_a_move_may_start(quiet_consequences):
     assert order.status == OrderStatusEnum.REFUNDED
 
 
+@pytest.mark.asyncio
+async def test_packed_is_not_cancellable_without_the_aggregator_widening(
+    quiet_consequences,
+):
+    # The shared map keeps `packed → cancelled` shut: an MM-courier packed order
+    # is boxed and its van is booked. A webhook or the register hitting this gets
+    # a quiet decline, not a cancellation.
+    order = _order(OrderStatusEnum.PACKED, items=[])
+    moved = await order_lifecycle.transition(
+        _Db(), order, OrderStatusEnum.CANCELLED, on_invalid="skip"
+    )
+    assert moved is False
+    assert order.status == OrderStatusEnum.PACKED
+
+
+@pytest.mark.asyncio
+async def test_an_aggregator_packed_order_may_be_cancelled_via_extra_from(
+    quiet_consequences,
+):
+    # The counter/console cancel path passes `AGGREGATOR_CANCELLABLE_FROM`, which
+    # widens where the move may start for an aggregator order only. GrubOps then
+    # decides whether force-cancel still lands.
+    order = _order(
+        OrderStatusEnum.PACKED,
+        source=OrderSourceEnum.AGGREGATOR.value,
+        items=[],
+    )
+    moved = await order_lifecycle.transition(
+        _Db(),
+        order,
+        OrderStatusEnum.CANCELLED,
+        extra_from=order_lifecycle.AGGREGATOR_CANCELLABLE_FROM,
+    )
+    assert moved is True
+    assert order.status == OrderStatusEnum.CANCELLED
+
+
 # ── consequences ──────────────────────────────────────────────────────────────
 
 

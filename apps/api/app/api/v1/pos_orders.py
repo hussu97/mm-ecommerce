@@ -17,6 +17,7 @@ from app.models import (
     Branch,
     KitchenTicket,
     Order,
+    OrderSourceEnum,
     OrderStatusEnum,
     PosOrderStatusEnum,
     PosTable,
@@ -129,6 +130,13 @@ def _serialise(order: Order) -> PosOrderResponse:
     # so the driver reads "1445", not the 16-digit marketplace order id.
     if order.source == "aggregator" and order.aggregator_display_code:
         payload.courier_reference = order.aggregator_display_code
+    # The aggregator's rider, onto the same driver fields the packed screen
+    # already renders for an MM courier — so the board card shows a name and a
+    # number whatever carries the order. Null until the marketplace assigns one,
+    # and there is no live GPS in the GrubOps payload, so no distance follows.
+    if order.source == "aggregator":
+        payload.driver_name = order.aggregator_driver_name
+        payload.driver_phone = order.aggregator_driver_phone
     # Who is carrying it, for the board and cards. The marketplace for an
     # aggregator order; the dispatched courier for a website one.
     payload.courier = CourierBadge.for_order(
@@ -846,3 +854,51 @@ async def mark_packed(
     reloaded = await _load(db, order_id)
     await email_service.notify_order(db, reloaded)
     return _serialise(reloaded)
+
+
+@router.post("/{order_id}/cancel", response_model=PosOrderResponse)
+async def cancel_order(
+    order_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("pos.orders.void")),
+):
+    """
+    Cancel an aggregator order from the counter — the red button beside Packed.
+
+    **Aggregator only, deliberately.** Cancelling here runs the full
+    `cancelled` machinery: it releases the stock, voids the check on the register
+    and — the point of doing it from the counter rather than a laptop — fires
+    GrubOps force-cancel so the marketplace stops the rider. For a *website*
+    order that same move would refund the customer's card and cancel a booked MM
+    courier, which is an admin decision on the order screen, not a counter
+    button; so a stale device asking to cancel one is refused here rather than
+    quietly issuing a refund.
+
+    Reachable from `arrived_at_pos` (the map allows it) and from `packed` (it
+    does not — `order_service.update_status` widens it for an aggregator order
+    via `AGGREGATOR_CANCELLABLE_FROM`, and GrubOps declines force-cancel if its
+    rider has already moved on). `update_status` raises if the order cannot be
+    cancelled, which is what a person pressing a button should get.
+
+    Idempotent on an already-cancelled order, like `accept` and `packed`.
+    """
+    order = await _load(db, order_id)
+
+    if order.source != OrderSourceEnum.AGGREGATOR.value:
+        raise ConflictError(
+            "Only an aggregator order can be cancelled from the register."
+        )
+    if order.status == OrderStatusEnum.CANCELLED:
+        return _serialise(order)
+
+    with acting_as(
+        StatusSourceEnum.POS.value,
+        actor_id=user.id,
+        actor_label=user.email,
+        note="cancelled at the counter",
+    ):
+        await order_service.update_status(
+            db, order.order_number, OrderStatusEnum.CANCELLED
+        )
+
+    return _serialise(await _load(db, order_id))

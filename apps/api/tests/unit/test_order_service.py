@@ -313,6 +313,9 @@ def _order_mock(
     o.aggregator_channel = None
     o.aggregator_delivery_fee = None
     o.aggregator_display_code = None
+    o.aggregator_driver_name = None
+    o.aggregator_driver_phone = None
+    o.aggregator_driver_status = None
     o.external_reference = None
     o.courier = None
     o.locale = "en"

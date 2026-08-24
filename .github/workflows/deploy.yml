@@ -423,6 +423,7 @@ jobs:
           GRUBOPS_ORDERS_ENABLED=${{ secrets.GRUBOPS_ORDERS_ENABLED || 'false' }}
           GRUBOPS_ORDERS_API_BASE=${{ secrets.GRUBOPS_ORDERS_API_BASE || 'https://api-grubops.grubtech.io' }}
           GRUBOPS_ORDERS_TICK_SECONDS=${{ secrets.GRUBOPS_ORDERS_TICK_SECONDS || '60' }}
+          AGG_AUTO_CLOSE_SECONDS=${{ secrets.AGG_AUTO_CLOSE_SECONDS || '300' }}
           SLIDER_API_KEY=${{ secrets.SLIDER_API_KEY }}
           SLIDER_ACCOUNT_ID=${{ secrets.SLIDER_ACCOUNT_ID }}
           SLIDER_ENV=${{ secrets.SLIDER_ENV || 'staging' }}

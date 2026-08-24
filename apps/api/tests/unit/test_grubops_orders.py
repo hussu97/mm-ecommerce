@@ -31,7 +31,16 @@ def test_every_live_status_maps_to_a_lifecycle_state_except_on_hold():
 def test_a_completed_order_means_delivered_and_a_rejected_one_cancelled():
     assert g._STATUS_TO_MM["OrderCompleted"] == OrderStatusEnum.DELIVERED
     assert g._STATUS_TO_MM["OrderRejected"] == OrderStatusEnum.CANCELLED
-    assert g._STATUS_TO_MM["OrderPrepared"] == OrderStatusEnum.PACKED
+
+
+def test_a_prepared_order_stops_at_the_shop_not_packed():
+    # The shop, not the poll loop, owns `packed`: it is the Packed button that
+    # fires GrubOps force-complete and calls the rider. So the prepared/dispatched
+    # family maps to `arrived_at_pos` and waits there — mirroring it straight to
+    # `packed` would jump past the shop and skip the force-complete we now owe.
+    assert g._STATUS_TO_MM["OrderAccepted"] == OrderStatusEnum.ARRIVED_AT_POS
+    assert g._STATUS_TO_MM["OrderPrepared"] == OrderStatusEnum.ARRIVED_AT_POS
+    assert g._STATUS_TO_MM["OrderDispatched"] == OrderStatusEnum.ARRIVED_AT_POS
 
 
 def test_modifiers_attach_to_the_item_above_them():
@@ -73,11 +82,14 @@ async def test_the_ladder_climbs_created_to_delivered_one_rung_at_a_time():
         o.status = new_status
         return True
 
+    # A first-seen already-completed order still backfills honestly, one rung at
+    # a time, through `arrived_at_pos` and `packed` on its way to `delivered`.
     with patch.object(g.order_lifecycle, "transition", new=fake_transition):
         await g._apply_status(None, order, OrderStatusEnum.DELIVERED, [])
 
     assert moved == [
         OrderStatusEnum.CONFIRMED,
+        OrderStatusEnum.ARRIVED_AT_POS,
         OrderStatusEnum.PACKED,
         OrderStatusEnum.DELIVERED,
     ]
@@ -87,6 +99,26 @@ async def test_the_ladder_climbs_created_to_delivered_one_rung_at_a_time():
     # check with a null closed_at is what left the reports blank and is what the
     # constraint added alongside this now forbids.
     assert order.closed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_a_live_order_climbs_only_to_the_shop_and_waits():
+    # The ordinary live case: GrubOps reports the order prepared, which now
+    # targets `arrived_at_pos`. The ladder stops there — it must not walk on to
+    # `packed`, which is the shop's to press.
+    order = SimpleNamespace(status=OrderStatusEnum.CREATED, pos_status="pending")
+    moved: list[OrderStatusEnum] = []
+
+    async def fake_transition(db, o, new_status, *, on_invalid="raise"):
+        moved.append(new_status)
+        o.status = new_status
+        return True
+
+    with patch.object(g.order_lifecycle, "transition", new=fake_transition):
+        await g._apply_status(None, order, OrderStatusEnum.ARRIVED_AT_POS, [])
+
+    assert moved == [OrderStatusEnum.CONFIRMED, OrderStatusEnum.ARRIVED_AT_POS]
+    assert OrderStatusEnum.PACKED not in moved
 
 
 @pytest.mark.asyncio
@@ -148,6 +180,46 @@ async def test_write_back_force_cancels_when_grubops_allows_it():
     fake_provider.force_cancel.assert_awaited_once()
     assert order_map.last_pushed_status == "cancelled"
     assert order_map.last_push_error is None
+
+
+@pytest.mark.asyncio
+async def test_write_back_force_completes_a_packed_order():
+    # `packed`, not `delivered`, is what carries force-complete out — GrubOps's
+    # "the order is ready, call the rider".
+    order_map = SimpleNamespace(
+        grubops_order_id="123", last_pushed_status=None, last_push_error="stale"
+    )
+    db = _fake_db(order_map)
+    fake_provider = SimpleNamespace(
+        get_order=AsyncMock(
+            return_value={"orderManagementOptions": {"forceCompletionAllowed": True}}
+        ),
+        force_complete=AsyncMock(),
+    )
+    with patch.object(g, "provider", fake_provider):
+        await g.mirror_status_out(
+            db, mm_order_id="mm1", new_status=OrderStatusEnum.PACKED, actor="pos"
+        )
+    fake_provider.force_complete.assert_awaited_once()
+    assert order_map.last_pushed_status == "packed"
+    assert order_map.last_push_error is None
+
+
+@pytest.mark.asyncio
+async def test_write_back_ignores_a_delivered_move():
+    # Delivered has no force-* endpoint any more: force-complete fired at packed,
+    # and the move to delivered is our own auto-close.
+    order_map = SimpleNamespace(
+        grubops_order_id="123", last_pushed_status=None, last_push_error=None
+    )
+    db = _fake_db(order_map)
+    fake_provider = SimpleNamespace(get_order=AsyncMock(), force_complete=AsyncMock())
+    with patch.object(g, "provider", fake_provider):
+        await g.mirror_status_out(
+            db, mm_order_id="mm1", new_status=OrderStatusEnum.DELIVERED, actor="system"
+        )
+    fake_provider.get_order.assert_not_awaited()
+    fake_provider.force_complete.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -228,6 +300,56 @@ async def test_an_admin_cancel_of_an_aggregator_order_is_mirrored_out():
             )
     push.assert_called_once()
     assert push.call_args.kwargs["new_status"] == OrderStatusEnum.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_the_shop_marking_an_aggregator_order_packed_force_completes_it():
+    # The shop's Packed press (source `pos`) is what mirrors out to force-complete.
+    from app.models.order_status_event import StatusSourceEnum, acting_as
+    from app.services.orders import order_lifecycle
+
+    order = _aggregator_order()  # confirmed
+    with (
+        patch(
+            "app.services.grubops.grubops_orders_service.push_status_out_in_background"
+        ) as push,
+        patch(
+            "app.services.grubops.grubops_orders_service.is_enabled", return_value=True
+        ),
+    ):
+        db = _stock_db()
+        with acting_as(StatusSourceEnum.POS):
+            await order_lifecycle.transition(
+                db, order, OrderStatusEnum.PACKED, on_invalid="skip"
+            )
+    push.assert_called_once()
+    assert push.call_args.kwargs["new_status"] == OrderStatusEnum.PACKED
+
+
+@pytest.mark.asyncio
+async def test_the_five_minute_auto_close_pushes_nothing_out():
+    # `packed → delivered` from the auto-close is source `system`, not aggregator,
+    # so it clears the actor gate — but delivered is not a mirrored status, so
+    # nothing is pushed. force-complete already fired at packed.
+    from app.models.order_status_event import StatusSourceEnum, acting_as
+    from app.services.orders import order_lifecycle
+
+    order = _aggregator_order()
+    order.status = OrderStatusEnum.PACKED
+    with (
+        patch(
+            "app.services.grubops.grubops_orders_service.push_status_out_in_background"
+        ) as push,
+        patch(
+            "app.services.grubops.grubops_orders_service.is_enabled", return_value=True
+        ),
+    ):
+        db = _stock_db()
+        with acting_as(StatusSourceEnum.SYSTEM):
+            await order_lifecycle.transition(
+                db, order, OrderStatusEnum.DELIVERED, on_invalid="skip"
+            )
+    push.assert_not_called()
 
 
 def _aggregator_order():
@@ -373,3 +495,45 @@ def test_the_short_code_is_still_read_from_the_raw_instructions():
 
     header = {"instructions": "No cutlery.  | Talabat-short code: 1452"}
     assert _driver_code(header, None, {}) == "1452"
+
+
+# ── the aggregator rider (name / phone / status, off orderDelivery) ──────────
+
+
+def test_driver_info_is_read_from_order_delivery():
+    order = SimpleNamespace(
+        aggregator_driver_name=None,
+        aggregator_driver_phone=None,
+        aggregator_driver_status=None,
+    )
+    info = {
+        "orderDelivery": {
+            "deliveryOrderDriverName": "Mohamed Sayed",
+            "deliveryOrderDriverMobile": "971566189038",
+            "deliveryOrderStatus": "DRIVER_ASSIGNED",
+        }
+    }
+    g._apply_driver_info(order, info)
+    assert order.aggregator_driver_name == "Mohamed Sayed"
+    assert order.aggregator_driver_phone == "971566189038"
+    assert order.aggregator_driver_status == "DRIVER_ASSIGNED"
+
+
+def test_driver_placeholders_are_dropped_and_a_real_value_is_not_wiped():
+    # GrubOps fills the fields with "UNKNOWN"/"0"/"" before a rider is assigned.
+    # Those are dropped, and a real value already held is never nulled by a later
+    # tick that happens to carry a placeholder.
+    order = SimpleNamespace(
+        aggregator_driver_name="Ali",
+        aggregator_driver_phone=None,
+        aggregator_driver_status=None,
+    )
+    info = {
+        "orderDelivery": {
+            "deliveryOrderDriverName": "UNKNOWN",
+            "deliveryOrderDriverMobile": "0",
+        }
+    }
+    g._apply_driver_info(order, info)
+    assert order.aggregator_driver_name == "Ali"
+    assert order.aggregator_driver_phone is None

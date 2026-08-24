@@ -449,8 +449,11 @@ export default function OrderDetailPage() {
       )}
 
       {/* A marketplace order carries its channel, its short pickup code and the
-          delivery fee the customer paid the aggregator — none of it ours to
-          change. Shown in place of the fulfilment actions. */}
+          delivery fee the customer paid the aggregator. The shop still drives it
+          through our own lifecycle from here: Packed calls the rider (via GrubOps
+          force-complete) and the order auto-closes to delivered a few minutes
+          later; Cancel calls force-cancel. Delivery itself is the aggregator's
+          rider — its name and number are shown once GrubOps assigns one. */}
       {isAggregator && (
         <div className="bg-white border border-gray-200 p-4 mb-4">
           <p className="text-[11px] font-body uppercase tracking-widest text-gray-400 mb-2">
@@ -478,10 +481,71 @@ export default function OrderDetailPage() {
               </span>
             )}
           </div>
-          <p className="mt-3 text-xs font-body text-gray-400">
-            The aggregator fulfils and delivers this order; its status is mirrored
-            in from GrubOps. There is nothing to mark from here.
-          </p>
+
+          {/* The aggregator's rider, once assigned. No live GPS in the payload,
+              so no distance — a name and a number is all GrubOps gives us. */}
+          {(order.aggregator_driver_name || order.aggregator_driver_phone) && (
+            <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-1 border-t border-gray-100 pt-3">
+              <span className="text-[11px] font-body uppercase tracking-widest text-gray-400">
+                Driver
+              </span>
+              {order.aggregator_driver_name && (
+                <span className="text-sm font-body text-gray-800">
+                  {order.aggregator_driver_name}
+                </span>
+              )}
+              {order.aggregator_driver_phone && (
+                <a
+                  href={`tel:${order.aggregator_driver_phone}`}
+                  className="text-sm font-body text-primary hover:underline"
+                >
+                  {order.aggregator_driver_phone}
+                </a>
+              )}
+              {order.aggregator_driver_status && (
+                <span className="text-xs font-body text-gray-400">
+                  {order.aggregator_driver_status.replace(/_/g, ' ').toLowerCase()}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* The two standardized actions. Packed while the order is at the shop
+              (arrived_at_pos, or confirmed before the sweep lands it); Cancel
+              from either the shop or packed — GrubOps decides whether force-cancel
+              still lands once the rider has moved. */}
+          <div className="mt-4 flex gap-2">
+            {(order.status === 'confirmed' || order.status === 'arrived_at_pos') && (
+              <Button size="sm" onClick={() => updateStatus('packed')} loading={actionLoading}>
+                <span className="material-icons text-[14px]">inventory</span>
+                Mark Packed
+              </Button>
+            )}
+            {(order.status === 'confirmed' ||
+              order.status === 'arrived_at_pos' ||
+              order.status === 'packed') && (
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => updateStatus('cancelled')}
+                loading={actionLoading}
+              >
+                <span className="material-icons text-[14px]">cancel</span>
+                Cancel Order
+              </Button>
+            )}
+          </div>
+
+          {!(
+            order.status === 'confirmed' ||
+            order.status === 'arrived_at_pos' ||
+            order.status === 'packed'
+          ) && (
+            <p className="mt-3 text-xs font-body text-gray-400">
+              This order is {order.status}. The aggregator delivered or cancelled it;
+              there is nothing left to mark.
+            </p>
+          )}
         </div>
       )}
 

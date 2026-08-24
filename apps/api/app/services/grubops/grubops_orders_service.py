@@ -26,13 +26,14 @@ import asyncio
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import Integer, cast, func, select
 from sqlalchemy import update as sql_update
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.money import money
@@ -41,7 +42,11 @@ from app.models.branch import Branch
 from app.models.grubops import GrubOpsItemMap, GrubOpsLocationMap
 from app.models.grubops_order import GrubOpsOrderMap
 from app.models.order import Order, OrderItem, OrderStatusEnum
-from app.models.order_status_event import StatusSourceEnum, acting_as
+from app.models.order_status_event import (
+    OrderStatusEvent,
+    StatusSourceEnum,
+    acting_as,
+)
 from app.models.pos_order import OrderSourceEnum, OrderTax, PosOrderStatusEnum
 from app.models.product import Product
 from app.services.orders import order_fees, order_lifecycle
@@ -79,14 +84,23 @@ LIVE_STATUSES: list[str] = [
 
 #: GrubOps status → the MM status it means. `OrderOnHold` is deliberately absent:
 #: a hold is not a lifecycle move of ours, so an order on hold stays where it is.
+#:
+#: **The shop, not the poll loop, owns `packed`.** An aggregator order lands at
+#: `arrived_at_pos` ("at the shop") and waits there for a person to press Packed
+#: — which is what fires GrubOps force-complete and calls the rider. So the
+#: prepared/dispatched family maps to `arrived_at_pos`, not `packed`: mirroring
+#: GrubOps's own "prepared" straight to `packed` would jump past the shop and
+#: skip the force-complete our side is now responsible for. Only a genuinely
+#: terminal GrubOps outcome (completed / cancelled) drives us forward on its own,
+#: as a safety net for an order finished aggregator-side.
 _STATUS_TO_MM: dict[str, OrderStatusEnum] = {
     "OrderCreated": OrderStatusEnum.CONFIRMED,
-    "OrderAccepted": OrderStatusEnum.CONFIRMED,
-    "OrderStarted": OrderStatusEnum.CONFIRMED,
-    "OrderResumed": OrderStatusEnum.CONFIRMED,
-    "OrderPrepared": OrderStatusEnum.PACKED,
-    "OrderReadyToDispatch": OrderStatusEnum.PACKED,
-    "OrderDispatched": OrderStatusEnum.PACKED,
+    "OrderAccepted": OrderStatusEnum.ARRIVED_AT_POS,
+    "OrderStarted": OrderStatusEnum.ARRIVED_AT_POS,
+    "OrderResumed": OrderStatusEnum.ARRIVED_AT_POS,
+    "OrderPrepared": OrderStatusEnum.ARRIVED_AT_POS,
+    "OrderReadyToDispatch": OrderStatusEnum.ARRIVED_AT_POS,
+    "OrderDispatched": OrderStatusEnum.ARRIVED_AT_POS,
     "OrderCompleted": OrderStatusEnum.DELIVERED,
     "OrderCanceled": OrderStatusEnum.CANCELLED,
     "OrderRejected": OrderStatusEnum.CANCELLED,
@@ -94,11 +108,15 @@ _STATUS_TO_MM: dict[str, OrderStatusEnum] = {
 }
 
 #: The forward ladder. A GrubOps order seen for the first time as completed has
-#: to climb created → confirmed → packed → delivered rather than jump, so its
-#: MM timeline reads like a real order's and each rung's consequences fire once.
+#: to climb created → confirmed → arrived_at_pos → packed → delivered rather than
+#: jump, so its MM timeline reads like a real order's and each rung's consequences
+#: fire once. In the ordinary live case the loop only ever targets `arrived_at_pos`
+#: and stops there; `packed`/`delivered` are reached on this ladder only when
+#: GrubOps reports the order already completed.
 _LADDER: list[OrderStatusEnum] = [
     OrderStatusEnum.CREATED,
     OrderStatusEnum.CONFIRMED,
+    OrderStatusEnum.ARRIVED_AT_POS,
     OrderStatusEnum.PACKED,
     OrderStatusEnum.DELIVERED,
 ]
@@ -351,6 +369,45 @@ def _parse_ts(value: Any) -> datetime | None:
 # ── the two write paths ──────────────────────────────────────────────────────
 
 
+#: GrubOps fills the driver fields with one of these before a real rider is
+#: assigned. Treated as "no driver yet" rather than written to the order, so the
+#: packed screen shows nothing instead of the word "UNKNOWN".
+_UNKNOWN_DRIVER = {"", "unknown", "0", "none", "null"}
+
+
+def _clean_driver_field(value: Any) -> str | None:
+    """A real driver value, or None for one of GrubOps's placeholders."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if text.lower() in _UNKNOWN_DRIVER:
+        return None
+    return text
+
+
+def _apply_driver_info(order: Order, info: dict) -> None:
+    """Copy the aggregator rider's name / phone / job status onto the order.
+
+    From `orderDelivery`, which GrubOps refreshes as the delivery job progresses,
+    so this runs every ingest tick — a rider is often assigned minutes after the
+    order lands. Placeholders ("UNKNOWN", "0", "") are dropped rather than stored.
+    Only ever fills or updates; never wipes a real value we already hold back to
+    null on a later tick that happens to omit it.
+    """
+    delivery = info.get("orderDelivery") or {}
+    name = _clean_driver_field(delivery.get("deliveryOrderDriverName"))
+    phone = _clean_driver_field(delivery.get("deliveryOrderDriverMobile"))
+    status = _clean_driver_field(
+        delivery.get("deliveryOrderStatus") or delivery.get("deliveryStatus")
+    )
+    if name is not None:
+        order.aggregator_driver_name = name
+    if phone is not None:
+        order.aggregator_driver_phone = phone
+    if status is not None:
+        order.aggregator_driver_status = status
+
+
 async def ingest(db, info: dict, order_map: GrubOpsOrderMap) -> None:
     """Create the MM order if new, then move it to mirror GrubOps's status.
 
@@ -375,6 +432,9 @@ async def ingest(db, info: dict, order_map: GrubOpsOrderMap) -> None:
             return
         # Load the lines the restock/consequences need.
         await db.refresh(order, ["items"])
+
+    # Refresh the rider details each tick — they arrive after the order does.
+    _apply_driver_info(order, info)
 
     if target is not None:
         await _apply_status(db, order, target, info.get("orderHistories") or [])
@@ -665,6 +725,81 @@ def _sync_pos_status(order: Order, mm_status: OrderStatusEnum) -> None:
             order.closed_at = utcnow()
 
 
+# ── auto-close: a packed aggregator order closes itself after the window ──────
+
+
+#: How many orders one auto-close sweep will close. Generous — a busy evening's
+#: worth of aggregator orders all pass through `packed` and the window is short.
+_AUTO_CLOSE_LIMIT = 200
+
+
+async def sweep_auto_close(db) -> int:
+    """Move packed aggregator orders to `delivered` once their window has passed.
+
+    An aggregator order gives us no on-the-way or delivered signal — force-complete
+    calls the rider and then GrubOps goes quiet — so from our side the order is
+    done a few minutes after it is packed. This closes it: a `packed → delivered`
+    move attributed to `system`, which (unlike the shop's Packed press) fires no
+    GrubOps call back out, and clears the check off the register board via
+    `_sync_pos_status`.
+
+    The packed moment is read from `order_status_events` rather than a column, the
+    way the rest of the stack derives its timestamps — there is no `packed_at`.
+    Returns how many it closed. Bounded and idempotent: an order already delivered
+    or cancelled by the ingest loop in the meantime is off the query.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(
+        seconds=settings.AGG_AUTO_CLOSE_SECONDS
+    )
+    # The latest moment each order was marked packed.
+    packed_at = (
+        select(
+            OrderStatusEvent.order_id.label("order_id"),
+            func.max(OrderStatusEvent.at).label("packed_at"),
+        )
+        .where(OrderStatusEvent.status == OrderStatusEnum.PACKED.value)
+        .group_by(OrderStatusEvent.order_id)
+        .subquery()
+    )
+    orders = list(
+        (
+            await db.execute(
+                select(Order)
+                .join(packed_at, packed_at.c.order_id == Order.id)
+                .where(
+                    Order.source == OrderSourceEnum.AGGREGATOR.value,
+                    Order.status == OrderStatusEnum.PACKED,
+                    packed_at.c.packed_at <= cutoff,
+                )
+                # The restock a cancellation would walk is not needed here, but a
+                # delivered move touches no lines; `items` is loaded anyway so a
+                # consequence that grows later cannot trip a `MissingGreenlet`.
+                .options(selectinload(Order.items))
+                .order_by(packed_at.c.packed_at)
+                .limit(_AUTO_CLOSE_LIMIT)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    closed = 0
+    for order in orders:
+        with acting_as(
+            StatusSourceEnum.SYSTEM.value,
+            note="auto-closed: aggregator sends no further status after packed",
+        ):
+            moved = await order_lifecycle.transition(
+                db, order, OrderStatusEnum.DELIVERED, on_invalid="skip"
+            )
+        if moved:
+            _sync_pos_status(order, OrderStatusEnum.DELIVERED)
+            closed += 1
+    if closed:
+        await db.flush()
+    return closed
+
+
 # ── write-back: mirror an MM terminal status out to GrubOps ──────────────────
 
 
@@ -680,7 +815,10 @@ async def mirror_status_out(
     """
     endpoint = {
         OrderStatusEnum.CANCELLED: ("force_cancel", "forceCancellationAllowed"),
-        OrderStatusEnum.DELIVERED: ("force_complete", "forceCompletionAllowed"),
+        # `packed`, not `delivered`: force-complete is GrubOps's "the order is
+        # ready" — it calls the rider. Our own move to `delivered` five minutes
+        # later is bookkeeping and has nothing to push out.
+        OrderStatusEnum.PACKED: ("force_complete", "forceCompletionAllowed"),
     }.get(new_status)
     if endpoint is None:
         return

@@ -327,6 +327,12 @@ export interface Order {
   aggregator_delivery_fee?: number | null;
   /** The short driver-facing pickup code for an aggregator order. */
   aggregator_display_code?: string | null;
+  /** The aggregator's own rider, as GrubOps reports it — a name, a mobile, and
+   * its delivery-job status verbatim. No live GPS in the payload, so no distance.
+   * Null until a rider is assigned and on every non-aggregator order. */
+  aggregator_driver_name?: string | null;
+  aggregator_driver_phone?: string | null;
+  aggregator_driver_status?: string | null;
   /** The marketplace's own long order id for an aggregator order. */
   external_reference?: string | null;
   /** Who is carrying it — the marketplace for an aggregator order (list); the

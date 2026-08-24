@@ -100,8 +100,12 @@ async def sweep_once() -> int:
                 statuses=grubops_orders_service.LIVE_STATUSES
             )
         except GrubOpsError:
+            # A listing failure does not skip the auto-close below: closing a
+            # packed order that has passed its window needs no GrubOps call, and
+            # is exactly the housekeeping that should still happen while GrubOps
+            # is briefly unreachable.
             logger.exception("GrubOps: could not list orders")
-            return 0
+            summaries = []
 
         async with AsyncSessionFactory() as db:
             touched = 0
@@ -116,6 +120,17 @@ async def sweep_once() -> int:
                         summary.get("orderId"),
                     )
                     continue
+
+            # Close out any packed aggregator order past its window. Its own
+            # try so a sweep failure cannot lose the ingest work just committed.
+            try:
+                closed = await grubops_orders_service.sweep_auto_close(db)
+                if closed:
+                    logger.info("GrubOps auto-closed %s packed order(s)", closed)
+                    touched += closed
+            except Exception:  # noqa: BLE001 — housekeeping must not end the tick
+                logger.exception("GrubOps: auto-close sweep failed")
+
             await db.commit()
             return touched
 

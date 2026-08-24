@@ -46,6 +46,7 @@ from app.models.product import Product
 
 __all__ = [
     "ADMIN_RECOVERABLE",
+    "AGGREGATOR_CANCELLABLE_FROM",
     "VALID_TRANSITIONS",
     "can_transition",
     "transition",
@@ -220,6 +221,22 @@ ADMIN_RECOVERABLE: dict[OrderStatusEnum, frozenset[OrderStatusEnum]] = {
         {OrderStatusEnum.UNDELIVERED, OrderStatusEnum.CANCELLED}
     ),
 }
+
+
+#: Source states an *aggregator* order may be cancelled from, beyond what the map
+#: allows. `packed` is the one that matters: a GrubOps order marked packed has
+#: had its driver called via force-complete, and the shop can still change its
+#: mind — GrubOps decides whether force-cancel is still permitted and declines it
+#: if the rider has already moved on (see `grubops_orders_service.mirror_status_out`).
+#:
+#: Deliberately **not** in `VALID_TRANSITIONS`: that map is read by the courier
+#: webhooks, the register and the checkout, and an *MM-courier* packed order is
+#: boxed and its van is booked — cancelling it there is the wrong thing. This
+#: reaches the resolver through `extra_from`, the same escape hatch
+#: `ADMIN_RECOVERABLE` uses, and only for `source == aggregator`.
+AGGREGATOR_CANCELLABLE_FROM: frozenset[OrderStatusEnum] = frozenset(
+    {OrderStatusEnum.PACKED}
+)
 
 
 def can_transition(current: OrderStatusEnum, new: OrderStatusEnum) -> bool:
@@ -527,14 +544,22 @@ async def _consequences(
 
         await payment_service.refund_order(db, order)
 
-    # Mirror a terminal MM move back out to GrubOps for an aggregator order —
-    # cancel or complete, via the force-* overrides. Only when the move came
-    # from *our* side: the ingest loop attributes its own moves `aggregator`,
-    # and echoing GrubOps's state straight back to GrubOps would be a feedback
-    # loop. A human (admin) cancel is attributed otherwise and does mirror out.
+    # Mirror an MM move back out to GrubOps for an aggregator order via the
+    # force-* overrides. `packed` fires GrubOps force-complete — which in GrubOps
+    # terms means "the order is ready", so its rider is called to collect — and
+    # `cancelled` fires force-cancel. Only when the move came from *our* side:
+    # the ingest loop attributes its own moves `aggregator`, and echoing GrubOps's
+    # state straight back to GrubOps would be a feedback loop. The shop pressing
+    # Packed (source `pos`) or an admin cancelling is attributed otherwise and
+    # does mirror out.
+    #
+    # `delivered` deliberately does *not* mirror out: force-complete has already
+    # fired at `packed`, and the move to `delivered` is our own 5-minute auto-close
+    # (source `system`) recording that the order is done from our side — GrubOps
+    # has nothing further to hear.
     if (
         order.source == OrderSourceEnum.AGGREGATOR.value
-        and new_status in (OrderStatusEnum.CANCELLED, OrderStatusEnum.DELIVERED)
+        and new_status in (OrderStatusEnum.CANCELLED, OrderStatusEnum.PACKED)
         and current_actor().source != StatusSourceEnum.AGGREGATOR.value
     ):
         from app.services.grubops import grubops_orders_service

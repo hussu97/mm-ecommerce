@@ -224,6 +224,14 @@ class OrderResponse(BaseModel):
     #: The short driver-facing pickup code for an aggregator order (Talabat
     #: "1445", the GrubOps sequence where none exists). Null on everything else.
     aggregator_display_code: str | None = None
+    #: The aggregator's own rider on an aggregator order, as GrubOps reports it —
+    #: a name, a mobile, and its delivery-job status verbatim. MM books no courier
+    #: for these, so this is all the driver detail there is (no live GPS, hence no
+    #: distance); the packed panel shows it beside the channel logo. Null until a
+    #: rider is assigned, and on every non-aggregator order.
+    aggregator_driver_name: str | None = None
+    aggregator_driver_phone: str | None = None
+    aggregator_driver_status: str | None = None
     #: The marketplace's own long order id for an aggregator order, for support
     #: and tracing. Null on everything else.
     external_reference: str | None = None

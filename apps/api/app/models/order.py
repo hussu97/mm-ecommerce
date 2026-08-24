@@ -318,6 +318,28 @@ class Order(Base, UUIDMixin, TimestampMixin):
         String(32), nullable=True
     )
 
+    #: The aggregator's own rider, as GrubOps reports it on `orderDelivery`. MM
+    #: books no courier for an aggregator order (`_mm_owns_fulfilment` is false)
+    #: and has no `OrderDriver` row for it, so these carry the little the
+    #: marketplace surfaces — a name and a mobile — for the packed screen to show
+    #: alongside the channel logo. Both null until GrubOps assigns a rider, and
+    #: they stay null where the payload says "UNKNOWN"; refreshed each ingest tick.
+    #: There is no live driver GPS in the GrubOps payload, so no distance-from-
+    #: branch is derivable for an aggregator order — unlike an MM courier.
+    aggregator_driver_name: Mapped[str | None] = mapped_column(
+        String(120), nullable=True
+    )
+    aggregator_driver_phone: Mapped[str | None] = mapped_column(
+        String(30), nullable=True
+    )
+    #: GrubOps's own delivery-job status verbatim (`DRIVER_ASSIGNED`,
+    #: `DELIVERY_JOB_STARTED`, `DELIVERY_JOB_COMPLETED`, …). A provider word, kept
+    #: unconstrained by design (canon rule 6) — shown as-is, not mapped onto our
+    #: lifecycle. Null on non-aggregator orders.
+    aggregator_driver_status: Mapped[str | None] = mapped_column(
+        String(40), nullable=True
+    )
+
     #: When the checkout told this customer their order would arrive.
     #:
     #: A record of what was said, not a calculation to repeat. Everything else

@@ -167,6 +167,7 @@ services:
       GRUBOPS_ORDERS_ENABLED: ${GRUBOPS_ORDERS_ENABLED:-false}
       GRUBOPS_ORDERS_API_BASE: ${GRUBOPS_ORDERS_API_BASE:-https://api-grubops.grubtech.io}
       GRUBOPS_ORDERS_TICK_SECONDS: ${GRUBOPS_ORDERS_TICK_SECONDS:-60}
+      AGG_AUTO_CLOSE_SECONDS: ${AGG_AUTO_CLOSE_SECONDS:-300}
       # ── Slider ──────────────────────────────────────────────────────────
       # The third courier. Every one of these has to be here and not only in
       # `.env`: this block is an allow-list, and a variable the VM holds but
@@ -396,6 +397,7 @@ services:
       GRUBOPS_ORDERS_ENABLED: ${GRUBOPS_ORDERS_ENABLED:-false}
       GRUBOPS_ORDERS_API_BASE: ${GRUBOPS_ORDERS_API_BASE:-https://api-grubops.grubtech.io}
       GRUBOPS_ORDERS_TICK_SECONDS: ${GRUBOPS_ORDERS_TICK_SECONDS:-60}
+      AGG_AUTO_CLOSE_SECONDS: ${AGG_AUTO_CLOSE_SECONDS:-300}
       # Deliberately absent: BATCH_DISPATCHER_ENABLED. That starts the
       # background loop that sweeps batches out, and a second copy of it in this
       # container would race the storefront's over the same rows. The register

@@ -948,6 +948,7 @@ it here and redeploying.
 | `GRUBOPS_ORDERS_ENABLED` | `false` | Aggregator order ingest kill switch. Off until watched once in prod |
 | `GRUBOPS_ORDERS_API_BASE` | `https://api-grubops.grubtech.io` | The console host orders answer on |
 | `GRUBOPS_ORDERS_TICK_SECONDS` | `60` | How often the ingest loop polls GrubOps for orders |
+| `AGG_AUTO_CLOSE_SECONDS` | `300` | How long a packed aggregator order waits before auto-closing to delivered (no signal comes after force-complete) |
 
 ```bash
 gh secret set GRUBOPS_USERNAME --repo hussu97/mm-ecommerce

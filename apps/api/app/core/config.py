@@ -350,6 +350,12 @@ class Settings(BaseSettings):
     #: waiting on a cake, so this is far shorter than the availability tick; the
     #: cheap `getOrderCount` probe keeps an unchanged tick close to free.
     GRUBOPS_ORDERS_TICK_SECONDS: int = 60
+    #: How long an aggregator order sits at `packed` before the ingest loop closes
+    #: it to `delivered` itself. The aggregator gives us no on-the-way or delivered
+    #: signal once its rider is called (force-complete), so from our side the order
+    #: is done a few minutes later; this is that few minutes. Resolved at the poll
+    #: tick, so the effective delay is this rounded up to the next tick.
+    AGG_AUTO_CLOSE_SECONDS: int = 300
 
     # ── Slider (courier) ──────────────────────────────────────────────────────
     #: The third courier, and the same contract as the other two: an empty key
