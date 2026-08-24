@@ -13465,6 +13465,17 @@
             ],
             "title": "Customer Name"
           },
+          "customer_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Phone"
+          },
           "delivery_fee": {
             "anyOf": [
               {
@@ -13977,6 +13988,28 @@
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "customer_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Name"
+          },
+          "customer_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Phone"
           },
           "delivery_fee": {
             "title": "Delivery Fee",

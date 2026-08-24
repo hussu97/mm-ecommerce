@@ -264,7 +264,12 @@ export default function CustomOrdersPage() {
                 <div className="mt-1 space-y-1">
                   {day.orders.slice(0, 3).map((order) => (
                     <div key={order.id} className="truncate text-xs text-gray-700">
+                      {/* Name and number on one line — the number goes wherever
+                          the name does; truncation keeps the calendar dense. */}
                       {order.customer_name}
+                      {order.customer_phone && (
+                        <span className="text-gray-400"> · {order.customer_phone}</span>
+                      )}
                     </div>
                   ))}
                   {day.orders.length > 3 && (

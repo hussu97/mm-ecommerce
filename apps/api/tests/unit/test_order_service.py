@@ -310,6 +310,8 @@ def _order_mock(
     o.email_has_account = False
     o.fulfilment = None
     o.source = "online"
+    o.customer_name = None
+    o.customer_phone = None
     o.aggregator_channel = None
     o.aggregator_delivery_fee = None
     o.aggregator_display_code = None

@@ -73,6 +73,8 @@ def _order(**overrides) -> Order:
         "notes": None,
         "admin_notes": None,
         "source": "online",
+        "customer_name": None,
+        "customer_phone": None,
         "aggregator_channel": None,
         "aggregator_delivery_fee": None,
         "aggregator_display_code": None,

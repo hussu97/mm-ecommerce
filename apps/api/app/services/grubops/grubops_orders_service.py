@@ -224,6 +224,63 @@ def _customer_note(header: dict) -> str | None:
     return cleaned or None
 
 
+#: A customer field that means "not given". GrubOps fills these rather than
+#: leaving the key out, and each channel has its own spelling of nothing.
+_UNKNOWN_CUSTOMER = {"", "0", "unknown", "unknown unknown", "none", "null"}
+
+
+def _clean_customer_field(value: Any) -> str | None:
+    """A real customer value, or None for one of GrubOps's placeholders."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if text.lower() in _UNKNOWN_CUSTOMER:
+        return None
+    return text
+
+
+def _looks_like_email(value: str) -> bool:
+    """An `@` and no spaces — enough to tell a private-relay address from a name."""
+    return "@" in value and " " not in value
+
+
+def _customer_fields(customer: dict) -> tuple[str | None, str | None, str | None]:
+    """Name, phone (with any access code) and email, untangled per channel.
+
+    GrubOps hands these in shapes that differ by marketplace and need sorting out:
+
+    * **The name is sometimes an email.** Deliveroo sends the customer's Apple
+      private-relay address as `customerName` with `customerEmail` null — which
+      is what put "5sg2…@privaterelay.appleid.com" in the name row. An
+      email-shaped name is filed as the email and the name left blank, rather
+      than shown as a name.
+    * **Deliveroo's number needs its access code.** The mobile is a generic
+      Deliveroo line and `customerPhoneCode` is the code to enter to reach the
+      customer through it — the two are useless apart, so they are joined into
+      one callable string: "+9718000320499 (Access code 630118286)". Every screen
+      and every printout reads `customer_phone`, so joining here is what carries
+      the code to all of them.
+    * **Placeholders.** "UNKNOWN", "unknown unknown", "", "0" all mean "not
+      given" and become null rather than being shown.
+    """
+    raw_name = _clean_customer_field(customer.get("customerName"))
+    email = _clean_customer_field(customer.get("customerEmail"))
+    name: str | None = raw_name
+    if raw_name and _looks_like_email(raw_name):
+        # The "name" is really an email — file it as one, and show no name.
+        email = email or raw_name
+        name = None
+
+    phone = _clean_customer_field(customer.get("customerMobile")) or (
+        _clean_customer_field(customer.get("customerId"))
+    )
+    code = _clean_customer_field(customer.get("customerPhoneCode"))
+    if phone and code:
+        phone = f"{phone} (Access code {code})"
+
+    return name, phone, email
+
+
 def _payment_type(header: dict) -> str | None:
     """`prepaid` (card) or `postpaid` (cash), or None when the header is silent.
 
@@ -481,8 +538,9 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
     taxes = info.get("orderTaxes") or []
     vat_rate = _num(taxes[0].get("rate")) / Decimal("100") if taxes else Decimal("0.05")
 
-    phone = customer.get("customerMobile") or customer.get("customerId")
-    name = customer.get("customerName")
+    # Name, phone (with any Deliveroo access code joined on) and email, sorted
+    # out per channel — see `_customer_fields`.
+    name, phone, email = _customer_fields(customer)
     unmapped = 0
 
     # The channel name for display: prefer the header's own `foodAggregatorName`
@@ -499,9 +557,14 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
     order = Order(
         order_number=await _generate_order_number(db),
         user_id=None,
-        email="",
-        customer_name=(name if name and name not in ("UNKNOWN", "") else None),
-        customer_phone=(phone if phone and phone not in ("UNKNOWN", "0") else None),
+        # The customer's email where the marketplace gave one (Deliveroo's
+        # private-relay address included) — for display only. MM sends an
+        # aggregator customer nothing (`email_service.is_counter_sale` covers
+        # them), so this never becomes a recipient; it is the address a person
+        # would use, not one we write to.
+        email=email or "",
+        customer_name=name,
+        customer_phone=phone,
         locale="en",
         delivery_method="delivery",
         order_type="delivery",

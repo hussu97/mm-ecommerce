@@ -320,6 +320,9 @@ export interface Order {
   /** The short number the counter calls out — "order 12". */
   check_number?: number | null;
   customer_name?: string | null;
+  /** The customer's number, shown wherever the name is. For an aggregator order
+   * this carries any Deliveroo access code, joined onto the line server-side. */
+  customer_phone?: string | null;
   /** For an aggregator order, the marketplace it came in on ("Talabat"…). */
   aggregator_channel?: string | null;
   /** The delivery charge the marketplace showed the customer — theirs, print

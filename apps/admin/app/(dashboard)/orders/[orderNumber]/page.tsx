@@ -352,6 +352,17 @@ export default function OrderDetailPage() {
     snapshot?.latitude && snapshot?.longitude
       ? `https://www.google.com/maps/search/?api=1&query=${snapshot.latitude},${snapshot.longitude}`
       : null;
+  // The customer, from the order first and the address snapshot second. A
+  // website order carries its name and number on the snapshot; an aggregator or
+  // counter order has no snapshot and carries them on the order itself — which
+  // is why an aggregator order used to show only an email here. The phone shows
+  // wherever the name does, and for a Deliveroo order it already carries the
+  // access code, joined onto the number server-side.
+  const customerName = order.customer_name || (snapshot ? recipientName(snapshot) : null);
+  const customerPhone = order.customer_phone || snapshot?.phone || null;
+  // The email only when it is one — an aggregator order's may be blank, and a
+  // blank line reads as a missing field rather than "no email given".
+  const customerEmail = order.email && order.email.includes('@') ? order.email : null;
 
   return (
     <div className="max-w-3xl">
@@ -628,11 +639,23 @@ export default function OrderDetailPage() {
         {/* Customer info */}
         <div className="bg-white border border-gray-200 p-4">
           <p className="text-[11px] font-body uppercase tracking-widest text-gray-400 mb-2">Customer</p>
-          <p className="text-sm font-body text-gray-800">{order.email}</p>
+          {customerName && (
+            <p className="text-sm font-body text-gray-800">{customerName}</p>
+          )}
+          {/* The number sits with the name — for a marketplace order it is often
+              the only way to reach the customer, and it carries any Deliveroo
+              access code. */}
+          {customerPhone && (
+            <p className="text-sm font-body text-gray-700">{customerPhone}</p>
+          )}
+          {customerEmail && (
+            <p className="text-xs font-body text-gray-500 mt-0.5">{customerEmail}</p>
+          )}
+          {!customerName && !customerPhone && !customerEmail && (
+            <p className="text-sm font-body text-gray-400">No customer details given.</p>
+          )}
           {snapshot && (
             <div className="mt-2 text-xs font-body text-gray-500">
-              <p className="text-gray-800">{recipientName(snapshot)}</p>
-              <p>{snapshot.phone}</p>
               {/* Broken out rather than stacked into a paragraph. Every one of
                   these is a field the customer typed into its own box, and
                   running them together is how `unit_number` — the flat, the

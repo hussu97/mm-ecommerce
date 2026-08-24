@@ -11303,6 +11303,8 @@ export interface components {
             created_at: string;
             /** Customer Name */
             customer_name?: string | null;
+            /** Customer Phone */
+            customer_phone?: string | null;
             /** Delivery Fee */
             delivery_fee?: number | null;
             delivery_method: components["schemas"]["DeliveryMethodEnum"];
@@ -11483,6 +11485,10 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Customer Name */
+            customer_name?: string | null;
+            /** Customer Phone */
+            customer_phone?: string | null;
             /** Delivery Fee */
             delivery_fee: number;
             delivery_method: components["schemas"]["DeliveryMethodEnum"];

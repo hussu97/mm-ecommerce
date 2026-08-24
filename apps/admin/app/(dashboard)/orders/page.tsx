@@ -290,7 +290,16 @@ export default function OrdersPage() {
             {
               header: 'Customer',
               priority: 'secondary',
-              render: o => o.customer_name || o.email,
+              // Name with the number beneath it — the phone shows wherever the
+              // name does, and for a Deliveroo order it carries the access code.
+              render: o => (
+                <div className="leading-tight">
+                  <span>{o.customer_name || o.email || '—'}</span>
+                  {o.customer_phone && (
+                    <span className="block text-xs text-gray-400">{o.customer_phone}</span>
+                  )}
+                </div>
+              ),
             },
             ...(showCounterColumns
               ? [
