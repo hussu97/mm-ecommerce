@@ -22,9 +22,15 @@ Nothing here records somebody else's words.
 Values spelled out rather than imported, as in 099: a migration must say what
 it did even after the code moves on.
 
-No data repair, for 099's reason. A value outside these lists is a writer that
-went off-script and worth looking at, not one to normalise away silently — if
-`upgrade` fails, `SELECT DISTINCT <column>` on the named table says who.
+One data repair, and only one. `SELECT DISTINCT` across all five columns on
+production turned up a single off-script value: `tables.status = 'available'`
+on 16 rows, written by the Foodics provisioner using `DeviceStatusEnum`'s word
+for what `TableStatusEnum` calls `'free'`. That is a known synonym of the
+column's own default, and its writer is fixed in this same change, so `upgrade`
+renames it rather than failing on it. Everything else is left strict: a value
+outside these lists is a writer that went off-script and worth looking at, not
+one to normalise away silently — if `upgrade` fails, `SELECT DISTINCT <column>`
+on the named table says who.
 
 Revision ID: 138_status_vocab_remainder
 Revises: 137_order_fees
@@ -70,6 +76,17 @@ def _condition(column: str, values: tuple[str, ...], nullable: bool) -> str:
 
 
 def upgrade() -> None:
+    # `tables.status` carried 'available' on 16 production rows — the word
+    # belongs to `DeviceStatusEnum`, not `TableStatusEnum`, and was written by
+    # the Foodics provisioner (`scripts/foodics/provision_operations.py`), now
+    # corrected to 'free'. 'available' is the exact synonym of 'free', the
+    # column's own server default, so this is renaming a known legacy value —
+    # the writer was found and fixed — not the silent normalisation 099 warned
+    # against. Without it the CHECK below is rejected on live data (the deploy
+    # of 2026-08-24). Scoped to the one value we verified; any other off-script
+    # value would still fail here and still be worth looking at.
+    op.execute("UPDATE tables SET status = 'free' WHERE status = 'available'")
+
     for table, column, values, nullable in VOCABULARIES:
         op.create_check_constraint(
             f"ck_{table}_{column}_allowed",

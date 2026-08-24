@@ -231,7 +231,7 @@ class Provisioner:
                         section_id=section.id,
                         name=name,
                         seats=2 if number <= 2 else 4,
-                        status="available",
+                        status="free",
                         accepts_reservations=branch.accepts_reservations,
                         display_order=number,
                         is_active=True,
