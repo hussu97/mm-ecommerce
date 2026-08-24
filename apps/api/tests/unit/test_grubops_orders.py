@@ -222,6 +222,90 @@ async def test_write_back_ignores_a_delivered_move():
     fake_provider.force_complete.assert_not_awaited()
 
 
+# ── the retry sweep: re-firing a push the immediate mirror-out never landed ──
+
+
+def _sweep_db(rows, order_map=None):
+    """A session whose one result serves both the candidate query (`.all()`) and
+    the map lookup `mirror_status_out` makes next (`.scalar_one_or_none()`)."""
+
+    class _Result:
+        def all(self):
+            return rows
+
+        def scalar_one_or_none(self):
+            return order_map
+
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_Result())
+    db.flush = AsyncMock()
+    return db
+
+
+@pytest.mark.asyncio
+async def test_a_stuck_packed_push_is_retried_and_lands_when_the_gate_opens():
+    # The reported bug: the immediate push found the gate shut at pack time and
+    # recorded a failure. The gate is open now, so the sweep force-completes.
+    order = SimpleNamespace(id="mm1", status=OrderStatusEnum.PACKED)
+    order_map = SimpleNamespace(
+        grubops_order_id="123",
+        last_pushed_status=None,
+        last_push_error="forceCompletionAllowed is false; GrubOps already moved on",
+    )
+    db = _sweep_db([(order, order_map)], order_map=order_map)
+    fake_provider = SimpleNamespace(
+        get_order=AsyncMock(
+            return_value={"orderManagementOptions": {"forceCompletionAllowed": True}}
+        ),
+        force_complete=AsyncMock(),
+    )
+    with patch.object(g, "provider", fake_provider):
+        landed = await g.sweep_pending_pushouts(db)
+    fake_provider.force_complete.assert_awaited_once()
+    assert order_map.last_pushed_status == "packed"
+    assert order_map.last_push_error is None
+    assert landed == 1
+
+
+@pytest.mark.asyncio
+async def test_an_order_already_pushed_for_its_state_is_skipped_without_grubops():
+    # The busy-board common case: a landed push must cost no GrubOps call on the
+    # next tick, decided in memory from the map row.
+    order = SimpleNamespace(id="mm1", status=OrderStatusEnum.PACKED)
+    order_map = SimpleNamespace(
+        grubops_order_id="123", last_pushed_status="packed", last_push_error=None
+    )
+    db = _sweep_db([(order, order_map)], order_map=order_map)
+    fake_provider = SimpleNamespace(get_order=AsyncMock(), force_complete=AsyncMock())
+    with patch.object(g, "provider", fake_provider):
+        landed = await g.sweep_pending_pushouts(db)
+    fake_provider.get_order.assert_not_awaited()
+    fake_provider.force_complete.assert_not_awaited()
+    assert landed == 0
+
+
+@pytest.mark.asyncio
+async def test_a_retry_still_forbidden_is_recorded_and_not_counted():
+    # GrubOps has genuinely moved on: the gate is still shut. The sweep records
+    # the outcome, pushes nothing, and reports no landing.
+    order = SimpleNamespace(id="mm1", status=OrderStatusEnum.CANCELLED)
+    order_map = SimpleNamespace(
+        grubops_order_id="123", last_pushed_status=None, last_push_error=None
+    )
+    db = _sweep_db([(order, order_map)], order_map=order_map)
+    fake_provider = SimpleNamespace(
+        get_order=AsyncMock(
+            return_value={"orderManagementOptions": {"forceCancellationAllowed": False}}
+        ),
+        force_cancel=AsyncMock(),
+    )
+    with patch.object(g, "provider", fake_provider):
+        landed = await g.sweep_pending_pushouts(db)
+    fake_provider.force_cancel.assert_not_awaited()
+    assert "forceCancellationAllowed" in order_map.last_push_error
+    assert landed == 0
+
+
 @pytest.mark.asyncio
 async def test_a_known_order_at_the_same_status_costs_no_detail_fetch():
     # The change detector: an order already ingested at this exact status must

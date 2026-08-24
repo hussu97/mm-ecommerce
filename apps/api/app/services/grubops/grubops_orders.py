@@ -121,6 +121,20 @@ async def sweep_once() -> int:
                     )
                     continue
 
+            # Re-fire any Packed/cancelled push the immediate mirror-out never
+            # landed — the gate not yet open at pack time, a transient GrubOps
+            # error, a task dropped on a restart. Before auto-close on purpose:
+            # auto-close lifts a packed order to `delivered` and off the retry,
+            # so this is its last chance to force-complete. Its own try so a
+            # sweep failure cannot lose the ingest work just committed.
+            try:
+                repushed = await grubops_orders_service.sweep_pending_pushouts(db)
+                if repushed:
+                    logger.info("GrubOps re-pushed %s stuck status(es)", repushed)
+                    touched += repushed
+            except Exception:  # noqa: BLE001 — housekeeping must not end the tick
+                logger.exception("GrubOps: mirror-out retry sweep failed")
+
             # Close out any packed aggregator order past its window. Its own
             # try so a sweep failure cannot lose the ingest work just committed.
             try:

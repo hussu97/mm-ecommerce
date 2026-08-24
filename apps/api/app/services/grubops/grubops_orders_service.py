@@ -61,6 +61,7 @@ __all__ = [
     "LIVE_STATUSES",
     "push_status_out_in_background",
     "mirror_status_out",
+    "sweep_pending_pushouts",
 ]
 
 #: Dubai, for the order-number date. The shop's day, not UTC's — the same
@@ -959,5 +960,97 @@ def push_status_out_in_background(
         _pending.add(task)
         task.add_done_callback(_pending.discard)
     except RuntimeError:
-        # No running loop — nothing to mirror from here.
+        # No running loop — nothing to mirror from here. The ingest tick's
+        # `sweep_pending_pushouts` is the safety net for exactly this.
         pass
+
+
+# ── retry: re-fire a mirror-out the immediate push never landed ───────────────
+
+
+#: How far back a stuck order stays worth retrying. Comfortably past a transient
+#: GrubOps outage without probing GrubOps forever for an order it has quietly
+#: moved on from. `packed` is bounded tighter still — `sweep_auto_close` lifts it
+#: to `delivered` after `AGG_AUTO_CLOSE_SECONDS` (5 min by default), off this
+#: query — so this bound is really the one that stops a stuck *cancel* retrying.
+_PUSH_RETRY_LOOKBACK_SECONDS = 3600
+#: One sweep's worth. Aggregator volume is low; this is a backstop, not a batch.
+_PUSH_RETRY_LIMIT = 100
+
+
+async def sweep_pending_pushouts(db, *, actor: str = "reconcile") -> int:
+    """Re-fire any Packed/cancelled mirror-out the immediate push never landed.
+
+    `push_status_out_in_background` is best-effort: it re-reads GrubOps live and
+    force-completes only if `forceCompletionAllowed` is true *at that instant*.
+    An order packed seconds after GrubOps accepted it can be pushed before
+    GrubOps is ready to be force-completed — the gate reads false, the failure is
+    recorded on the map row, and nothing tries again; a transient GrubOps error
+    at push time ends the same way. Either way GrubOps stays a step behind until
+    it advances itself. This is the reconcile that comment counts on.
+
+    Each ingest tick, any aggregator order still sitting in a mirror-worthy state
+    (`packed`/`cancelled`) whose map row has not recorded a *successful* push of
+    that status gets one more go through `mirror_status_out` — which re-reads the
+    gate, so a now-allowed order finally goes out and a genuinely-moved-on one is
+    recorded and left.
+
+    Two guards keep it honest: it only touches orders whose *current* state was
+    set by a non-aggregator actor — mirroring `order_lifecycle`'s own rule, so a
+    GrubOps-originated cancel ingested onto our side is never echoed back as a
+    force-cancel — and only orders that reached the state within the lookback, so
+    a permanently-stuck order is not retried against GrubOps forever.
+
+    Returns how many pushes it landed this pass.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(
+        seconds=_PUSH_RETRY_LOOKBACK_SECONDS
+    )
+
+    # The most recent status event per order — its `at` doubles as "how long has
+    # it sat here" and its `source` as "who put it here". Read from the events,
+    # the way `sweep_auto_close` reads its packed moment; there is no `*_at`
+    # column, and `(order_id, at)` is indexed for exactly this DISTINCT ON.
+    latest = (
+        select(
+            OrderStatusEvent.order_id.label("order_id"),
+            OrderStatusEvent.source.label("source"),
+            OrderStatusEvent.at.label("at"),
+        )
+        .order_by(OrderStatusEvent.order_id, OrderStatusEvent.at.desc())
+        .distinct(OrderStatusEvent.order_id)
+        .subquery()
+    )
+
+    rows = (
+        await db.execute(
+            select(Order, GrubOpsOrderMap)
+            .join(GrubOpsOrderMap, GrubOpsOrderMap.mm_order_id == Order.id)
+            .join(latest, latest.c.order_id == Order.id)
+            .where(
+                Order.source == OrderSourceEnum.AGGREGATOR.value,
+                Order.status.in_([OrderStatusEnum.PACKED, OrderStatusEnum.CANCELLED]),
+                latest.c.source != StatusSourceEnum.AGGREGATOR.value,
+                latest.c.at >= cutoff,
+            )
+            .order_by(latest.c.at)
+            .limit(_PUSH_RETRY_LIMIT)
+        )
+    ).all()
+
+    pushed = 0
+    for order, order_map in rows:
+        # Already mirrored out for the state it is in — the common case, skipped
+        # in memory with no GrubOps call. `mirror_status_out` only stamps
+        # `last_pushed_status` on a landed push, so anything else (a null
+        # never-attempted, or a value left over from an earlier state) is a gap.
+        if order_map.last_pushed_status == order.status.value:
+            continue
+        await mirror_status_out(
+            db, mm_order_id=order.id, new_status=order.status, actor=actor
+        )
+        # Same row via the identity map, so its post-push state is visible here:
+        # a stamped `last_pushed_status` is the only thing that means it landed.
+        if order_map.last_pushed_status == order.status.value:
+            pushed += 1
+    return pushed
