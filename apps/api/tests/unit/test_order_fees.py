@@ -10,11 +10,13 @@ rate from being read as a free one.
 
 from __future__ import annotations
 
+import uuid
 from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
 
+from app.models.courier_branch_rate import CourierBranchRate
 from app.services.orders import order_fees
 
 
@@ -26,6 +28,9 @@ def _order(**kwargs) -> SimpleNamespace:
         aggregator_channel=None,
         payment_method="card",
         payment_provider="stripe",
+        branch_id=None,
+        aggregator_payment_type=None,
+        aggregator_customer_is_member=None,
     )
     base.update(kwargs)
     return SimpleNamespace(**base)
@@ -36,8 +41,43 @@ def _courier(
     commission_fixed=None,
     payment_fee_percent=None,
     payment_fee_fixed=None,
+    *,
+    commission_vat_inclusive=False,
+    payment_fee_vat_inclusive=False,
+    commission_fixed_net_of_base=False,
+    payment_fee_cash_exempt=False,
+    commission_fixed_requires_member=False,
 ) -> SimpleNamespace:
-    """A `couriers` row, with every rate absent unless the test sets it."""
+    """A `couriers` row, with every rate absent and every flag off unless set."""
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        commission_percent=(
+            Decimal(commission_percent) if commission_percent is not None else None
+        ),
+        commission_fixed=(
+            Decimal(commission_fixed) if commission_fixed is not None else None
+        ),
+        payment_fee_percent=(
+            Decimal(payment_fee_percent) if payment_fee_percent is not None else None
+        ),
+        payment_fee_fixed=(
+            Decimal(payment_fee_fixed) if payment_fee_fixed is not None else None
+        ),
+        commission_vat_inclusive=commission_vat_inclusive,
+        payment_fee_vat_inclusive=payment_fee_vat_inclusive,
+        commission_fixed_net_of_base=commission_fixed_net_of_base,
+        payment_fee_cash_exempt=payment_fee_cash_exempt,
+        commission_fixed_requires_member=commission_fixed_requires_member,
+    )
+
+
+def _override(
+    commission_percent=None,
+    commission_fixed=None,
+    payment_fee_percent=None,
+    payment_fee_fixed=None,
+) -> SimpleNamespace:
+    """A `courier_branch_rate` row — every column null unless the test sets it."""
     return SimpleNamespace(
         commission_percent=(
             Decimal(commission_percent) if commission_percent is not None else None
@@ -55,14 +95,22 @@ def _courier(
 
 
 class _FakeDB:
-    """A session that answers one `select(...)` with whatever it was handed."""
+    """A session that routes each `select(...)` to the row it was handed.
 
-    def __init__(self, row=None):
+    The commission path now reads two tables — the courier and its optional
+    per-branch override — so the fake answers by which entity was queried, and
+    still returns `row` for the single-select gateway path the own-channel tests
+    use.
+    """
+
+    def __init__(self, row=None, *, override=None):
         self._row = row
+        self._override = override
 
-    async def execute(self, _stmt):
-        row = self._row
-        return SimpleNamespace(scalar_one_or_none=lambda: row)
+    async def execute(self, stmt):
+        entity = stmt.column_descriptions[0]["entity"]
+        result = self._override if entity is CourierBranchRate else self._row
+        return SimpleNamespace(scalar_one_or_none=lambda r=result: r)
 
 
 # ── the marketplace's cut ─────────────────────────────────────────────────────
@@ -227,3 +275,172 @@ async def test_only_both_halves_being_absent_means_unknown():
 
     neither = await order_fees.compute(_FakeDB(_courier()), order)
     assert neither.aggregator_fee is None
+
+
+# ── the four contracts, each read its own way ────────────────────────────────
+#
+# Deliveroo per-branch, Keeta's net-of-base VAT-inclusive figure, Careem's cash
+# waiver, Talabat's member fee (dormant) — the grammar `137` could not express.
+
+
+@pytest.mark.asyncio
+async def test_deliveroo_takes_its_branch_rate_not_a_courier_default():
+    """
+    27% in Sharjah, 31% in Barsha, on the same courier row.
+
+    The branch override wins over the (here absent) courier default, so a Barsha
+    basket of 100 is 31 + VAT = 32.55. Payment is a real zero — Deliveroo takes
+    no card fee — not the null an unpriced channel would show.
+    """
+    courier = _courier(payment_fee_percent="0.00")  # commission is per-branch only
+    order = _order(
+        source="aggregator",
+        aggregator_channel="Deliveroo",
+        branch_id=uuid.uuid4(),
+    )
+
+    barsha = await order_fees.compute(
+        _FakeDB(courier, override=_override(commission_percent="31.00")), order
+    )
+    assert barsha.aggregator_fee == Decimal("32.55")  # 31 + 5%
+    assert barsha.payment_fee == Decimal("0.00")
+
+    sharjah = await order_fees.compute(
+        _FakeDB(courier, override=_override(commission_percent="27.00")), order
+    )
+    assert sharjah.aggregator_fee == Decimal("28.35")  # 27 + 5%
+
+
+@pytest.mark.asyncio
+async def test_deliveroo_at_a_branch_with_no_override_is_unknown_not_free():
+    """No branch rate means we cannot cost the basket — null, never zero."""
+    courier = _courier(payment_fee_percent="0.00")
+    order = _order(
+        source="aggregator", aggregator_channel="Deliveroo", branch_id=uuid.uuid4()
+    )
+
+    fees = await order_fees.compute(_FakeDB(courier, override=None), order)
+
+    assert fees.aggregator_fee is None
+    assert fees.payment_fee == Decimal("0.00")
+
+
+@pytest.mark.asyncio
+async def test_keeta_nets_the_flat_out_of_the_base_and_carries_its_own_vat():
+    """
+    "4 AED + 25% of (the basket − 4 AED)", VAT already inside both fees.
+
+    On a 40 basket: 4 + 25%·(40 − 4) = 4 + 9 = 13, and no 5% on top because the
+    contract is quoted VAT-inclusive. Payment is 2% of 40 = 0.80, also inclusive.
+    Read either figure as before-VAT and it is 5% light — the mistake the flags
+    exist to stop.
+    """
+    courier = _courier(
+        commission_percent="25.00",
+        commission_fixed="4.00",
+        commission_fixed_net_of_base=True,
+        commission_vat_inclusive=True,
+        payment_fee_percent="2.00",
+        payment_fee_vat_inclusive=True,
+    )
+    order = _order(
+        source="aggregator", aggregator_channel="Keeta 2.0", total=Decimal("40.00")
+    )
+
+    fees = await order_fees.compute(_FakeDB(courier), order)
+
+    assert fees.aggregator_fee == Decimal("13.00")
+    assert fees.payment_fee == Decimal("0.80")
+
+
+@pytest.mark.asyncio
+async def test_careem_waives_its_payment_fee_on_a_cash_order():
+    """
+    2% only when the customer paid the marketplace by card.
+
+    A `postpaid` (cash) order took no card, so it pays no card fee — a true zero,
+    the same rule a cash counter sale gets. A `prepaid` one pays 2% + VAT.
+    Commission (25% + VAT) is charged either way.
+    """
+    courier = _courier(
+        commission_percent="25.00",
+        commission_fixed="4.00",
+        commission_fixed_requires_member=True,
+        payment_fee_percent="2.00",
+        payment_fee_cash_exempt=True,
+    )
+
+    cash = await order_fees.compute(
+        _FakeDB(courier),
+        _order(
+            source="aggregator",
+            aggregator_channel="Careem",
+            aggregator_payment_type="postpaid",
+        ),
+    )
+    assert cash.payment_fee == Decimal("0.00")
+    assert cash.aggregator_fee == Decimal("26.25")  # 25% of 100 + VAT, no member fee
+
+    card = await order_fees.compute(
+        _FakeDB(courier),
+        _order(
+            source="aggregator",
+            aggregator_channel="Careem",
+            aggregator_payment_type="prepaid",
+        ),
+    )
+    assert card.payment_fee == Decimal("2.10")  # 2 + VAT
+
+
+@pytest.mark.asyncio
+async def test_talabat_charges_its_payment_fee_even_on_a_cash_order():
+    """Talabat bills the 2% on every order — no cash waiver, unlike Careem."""
+    courier = _courier(
+        commission_percent="30.00",
+        commission_fixed="4.00",
+        commission_fixed_requires_member=True,
+        payment_fee_percent="2.00",
+        # payment_fee_cash_exempt stays False
+    )
+    order = _order(
+        source="aggregator",
+        aggregator_channel="Talabat",
+        aggregator_payment_type="postpaid",
+    )
+
+    fees = await order_fees.compute(_FakeDB(courier), order)
+
+    assert fees.aggregator_fee == Decimal("31.50")  # 30% of 100 + VAT (no member fee)
+    assert fees.payment_fee == Decimal("2.10")  # 2 + VAT, cash notwithstanding
+
+
+@pytest.mark.asyncio
+async def test_the_member_flat_fee_is_dormant_until_the_order_says_member():
+    """
+    The 4 AED is charged only to a member, and we cannot yet see who is one.
+
+    An order with membership unknown (the only state today) is not charged the
+    flat — the commission is the percentage alone. Flip the order's flag true and
+    the 4 AED lands, so the rule is wired and merely waiting on a signal.
+    """
+    courier = _courier(
+        commission_percent="30.00",
+        commission_fixed="4.00",
+        commission_fixed_requires_member=True,
+    )
+
+    unknown = await order_fees.compute(
+        _FakeDB(courier),
+        _order(source="aggregator", aggregator_channel="Talabat"),
+    )
+    assert unknown.aggregator_fee == Decimal("31.50")  # 30 + VAT, no flat
+
+    member = await order_fees.compute(
+        _FakeDB(courier),
+        _order(
+            source="aggregator",
+            aggregator_channel="Talabat",
+            aggregator_customer_is_member=True,
+        ),
+    )
+    assert member.aggregator_fee == Decimal("35.70")  # (30 + 4) + VAT

@@ -44,6 +44,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.money import money, to_decimal
 from app.models.courier import Courier
+from app.models.courier_branch_rate import CourierBranchRate
 from app.models.order import Order
 from app.models.payment_gateway import PaymentGateway
 from app.services.couriers import courier_catalog
@@ -144,6 +145,18 @@ async def _aggregator_fees(
     marketplace collected on our behalf. Their delivery charge is deliberately
     not in it (`orders.aggregator_delivery_fee` carries that, receipt-only), so
     there is no risk of paying commission on a fee we never received.
+
+    Two things bend the plain reading of the row, because the contracts are not
+    all the same sentence:
+
+      * **The branch.** Deliveroo charges 27% in Sharjah and 31% in Barsha, so a
+        `courier_branch_rate` override is consulted first and its non-null
+        numbers win over the courier default.
+      * **The grammar flags** on the courier row — VAT already inside the rate
+        (Keeta), the flat part netted out before the percentage (Keeta), the
+        payment fee waived on cash (Careem), the flat part charged only to a
+        member (Careem Plus, Talabat Pro). A courier that sets none of them
+        behaves exactly as it did before they existed.
     """
     code = courier_catalog.code_for_channel(order.aggregator_channel)
     row = None
@@ -162,32 +175,84 @@ async def _aggregator_fees(
         )
         return OrderFees(None, None, True)
 
+    override = None
+    if order.branch_id is not None:
+        override = (
+            await db.execute(
+                select(CourierBranchRate).where(
+                    CourierBranchRate.courier_id == row.id,
+                    CourierBranchRate.branch_id == order.branch_id,
+                )
+            )
+        ).scalar_one_or_none()
+
     return OrderFees(
-        aggregator_fee=_rate_pair(
-            charged, row.commission_percent, row.commission_fixed
-        ),
-        payment_fee=_rate_pair(charged, row.payment_fee_percent, row.payment_fee_fixed),
+        aggregator_fee=_commission(charged, order, row, override),
+        payment_fee=_payment_fee(charged, order, row, override),
         payment_fee_is_estimated=True,
     )
 
 
-def _rate_pair(charged: Decimal, percent: object, fixed: object) -> Decimal | None:
-    """
-    One fee from its two halves — a share of the basket plus a flat amount.
+def _override_or(override: object, courier_value: object, field: str) -> object:
+    """The branch override's value for `field` if it set one, else the courier's.
 
-    Both contracts and card processors are quoted this way ("25% plus two
-    dirhams", "2.9% + AED 1"), so a fee is a pair rather than a number, and the
-    pair is what decides whether it is known.
-
-    **Unknown only when both halves are null.** One half set and the other null
-    is a contract that quotes only a percentage, or only a flat amount, and the
-    missing half is genuinely nothing — reading that as "unknown" would blank
-    the net on every channel whose contract happens to be simple.
+    Null on the override means "no special rate here", never "free" — so it
+    falls through to the courier default, and only a value the branch actually
+    typed replaces it.
     """
+    if override is not None:
+        value = getattr(override, field)
+        if value is not None:
+            return value
+    return courier_value
+
+
+def _commission(
+    charged: Decimal, order: Order, row: Courier, override: object
+) -> Decimal | None:
+    """The marketplace's cut on this order, its grammar flags applied."""
+    percent = _override_or(override, row.commission_percent, "commission_percent")
+    fixed = _override_or(override, row.commission_fixed, "commission_fixed")
+
+    # The flat part is a member's fee on Careem/Talabat, and we cannot see who
+    # is a member — so unless the order is explicitly flagged, the flat part is
+    # not charged. Dropped to None (not zero) so that a percentage-only contract
+    # is unaffected and a flat-only one correctly reads as unknown.
+    if row.commission_fixed_requires_member and not order.aggregator_customer_is_member:
+        fixed = None
+
     if percent is None and fixed is None:
         return None
+
+    if row.commission_fixed_net_of_base and percent is not None and fixed is not None:
+        # Keeta: "4 AED + 25% of (the item value − the original 4 AED)".
+        before_tax = to_decimal(fixed) + _as_fraction(to_decimal(percent)) * (
+            charged - to_decimal(fixed)
+        )
+    else:
+        before_tax = charged * _as_fraction(to_decimal(percent)) + to_decimal(fixed)
+
+    return money(before_tax) if row.commission_vat_inclusive else _with_vat(before_tax)
+
+
+def _payment_fee(
+    charged: Decimal, order: Order, row: Courier, override: object
+) -> Decimal | None:
+    """What the marketplace's card handling cost on this order."""
+    # A cash order took no card, so a cash-exempt contract (Careem) charges
+    # nothing — a true zero, the way a cash counter sale pays no Stripe fee, not
+    # an unknown. `postpaid` is cash; a null payment type is treated as card
+    # (the historical default and the common case) rather than exempting it.
+    if row.payment_fee_cash_exempt and order.aggregator_payment_type == "postpaid":
+        return _ZERO
+
+    percent = _override_or(override, row.payment_fee_percent, "payment_fee_percent")
+    fixed = _override_or(override, row.payment_fee_fixed, "payment_fee_fixed")
+    if percent is None and fixed is None:
+        return None
+
     before_tax = charged * _as_fraction(to_decimal(percent)) + to_decimal(fixed)
-    return _with_vat(before_tax)
+    return money(before_tax) if row.payment_fee_vat_inclusive else _with_vat(before_tax)
 
 
 async def _own_channel_fees(

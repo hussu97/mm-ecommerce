@@ -26,6 +26,7 @@ from .courier import (  # noqa: F401
     Courier,
     UnbatchedPromiseEnum,
 )
+from .courier_branch_rate import CourierBranchRate  # noqa: F401
 
 # ─── POS domain ───────────────────────────────────────────────────────────────
 from .course import Course  # noqa: F401
@@ -224,6 +225,7 @@ __all__ = [
     "DeliverySettings",
     "FulfilmentProviderEnum",
     "Courier",
+    "CourierBranchRate",
     "UnbatchedPromiseEnum",
     "PaymentGateway",
     "PaymentGatewayEnum",

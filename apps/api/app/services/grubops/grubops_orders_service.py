@@ -205,6 +205,25 @@ def _customer_note(header: dict) -> str | None:
     return cleaned or None
 
 
+def _payment_type(header: dict) -> str | None:
+    """`prepaid` (card) or `postpaid` (cash), or None when the header is silent.
+
+    `paymentStatus` is the field that carries it on every channel we see
+    (`PREPAID` / `POSTPAID`); `paymentMethod` says `CASH` on the channels that
+    send it and agrees. Either naming cash means cash. This drives whether a
+    marketplace's payment fee applies (Careem waives its 2% on cash), so an
+    unknown is left null rather than guessed — the fee logic reads a null as
+    card, the common case and the one a null should not silently zero.
+    """
+    status = (header.get("paymentStatus") or "").strip().upper()
+    method = (header.get("paymentMethod") or "").strip().upper()
+    if status == "POSTPAID" or method == "CASH":
+        return "postpaid"
+    if status == "PREPAID" or method == "PREPAID":
+        return "prepaid"
+    return None
+
+
 # ── reading a GrubOps order ──────────────────────────────────────────────────
 
 
@@ -448,6 +467,16 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
         # (POSTPAID) order, and for a prepaid one still not `card` — MM never
         # took the card, so nothing here may look refundable to the register.
         payment_method="cod",
+        # ...but *record* which it was, because a marketplace's payment fee can
+        # turn on it (Careem waives its 2% on cash). `paymentStatus` is the
+        # reliable discriminator — `POSTPAID` is cash, `PREPAID` is card;
+        # `paymentMethod == 'CASH'` says the same thing on the channels that
+        # send it. Anything else stays null and reads as card downstream.
+        aggregator_payment_type=_payment_type(header),
+        # Loyalty membership (Careem Plus, Talabat Pro) is not in the payload —
+        # left unknown, which the fee logic treats as "not a member". See the
+        # column's own note on why this is null rather than a guess.
+        aggregator_customer_is_member=None,
         notes=_customer_note(header),
     )
     db.add(order)

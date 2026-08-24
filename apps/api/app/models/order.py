@@ -279,6 +279,36 @@ class Order(Base, UUIDMixin, TimestampMixin):
         Numeric(10, 2), nullable=True
     )
 
+    #: How the customer paid the marketplace: `prepaid` (card — the marketplace
+    #: took it) or `postpaid` (cash on delivery). Read from GrubOps'
+    #: `orderHeader.paymentStatus` at ingest. Null on everything that is not an
+    #: aggregator order, and on aggregator orders taken before this was captured.
+    #:
+    #: Distinct from `payment_method`, which stays `cod` on every aggregator
+    #: order on purpose — MM never touched the card, so nothing here may look
+    #: refundable to the register. This column answers a different question: did
+    #: a card processor take a cut? Careem's 2% payment fee applies only when
+    #: this is `prepaid`, the same "no card, no card fee" rule a counter sale
+    #: gets.
+    aggregator_payment_type: Mapped[str | None] = mapped_column(
+        String(12), nullable=True
+    )
+
+    #: Whether this aggregator order's customer is a loyalty/subscription member
+    #: — Careem Plus, Talabat Pro/VIP — which is what turns on the flat 4 AED
+    #: those contracts charge on a member's order (`couriers`.
+    #: `commission_fixed_requires_member`).
+    #:
+    #: **Null today on every order, and that is not an oversight.** GrubOps sends
+    #: nothing that distinguishes a Pro order from an ordinary one, so we cannot
+    #: know — and a null (treated as "not a member") is the only honest answer
+    #: that does not over-charge. The column exists so the fee can be switched on
+    #: per order the moment a signal does arrive, without a migration. Only a
+    #: value of `true` ever adds the fee.
+    aggregator_customer_is_member: Mapped[bool | None] = mapped_column(
+        Boolean, nullable=True
+    )
+
     #: The short, driver-facing pickup code for an aggregator order — Talabat's
     #: "1445", Noon's four digits, or the GrubOps sequence where the marketplace
     #: has no short code of its own. Distinct from `external_reference` (the long

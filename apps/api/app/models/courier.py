@@ -155,6 +155,66 @@ class Courier(Base, UUIDMixin, TimestampMixin):
     #: has always been quoted here ("2.9% + AED 1").
     payment_fee_fixed: Mapped[Any | None] = mapped_column(Numeric(10, 2), nullable=True)
 
+    # ── How the two rates above are *read* ───────────────────────────────────
+    #
+    # Everything above is a number; the flags below are the grammar for turning
+    # it into a fee. They exist because the marketplaces do not all quote the
+    # same sentence: Noon and Careem bill "25% + VAT", Keeta bills a figure that
+    # already has the VAT inside it, and the flat part means different things to
+    # different contracts. Each flag defaults to the plain reading
+    # (`commission_percent`% of the basket, plus `commission_fixed`, plus 5%),
+    # so a courier that says nothing special behaves exactly as it did before
+    # these columns existed — Noon Food's numbers do not move.
+
+    #: The commission is already **VAT-inclusive**; do not gross it up by 5%.
+    #: True for Keeta, whose contract is quoted with the tax inside the rate
+    #: ("VAT is included in the 25%"). False everywhere else, where the rate is
+    #: before VAT and `order_fees` adds the 5% — the reading every existing row
+    #: was written under.
+    commission_vat_inclusive: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
+    #: The payment fee is already **VAT-inclusive**. True for Keeta ("2% payment
+    #: charge incl. VAT"); false for the contracts quoted as "2% + VAT".
+    payment_fee_vat_inclusive: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
+    #: The flat part is **netted out of the basket before the percentage**, i.e.
+    #: `commission_fixed + commission_percent% × (basket − commission_fixed)`
+    #: rather than the usual `commission_percent% × basket + commission_fixed`.
+    #: True for Keeta alone, whose contract is written "4 AED + 25% of (the item
+    #: value − the original 4 AED)". False everywhere else, where the flat part
+    #: simply adds on top.
+    commission_fixed_net_of_base: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
+    #: The payment fee is **not charged on a cash order**. True for Careem,
+    #: whose 2% applies only when the customer paid the marketplace by card
+    #: ("non-cash"). A cash order took no card, so it pays no card fee — the same
+    #: reasoning `order_fees._own_channel_fees` already applies to a counter
+    #: sale. False for Talabat, which bills the 2% on every order regardless.
+    #: Read against `orders.aggregator_payment_type` (`postpaid` = cash).
+    payment_fee_cash_exempt: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
+    #: The flat part is charged **only to a loyalty/subscription customer** —
+    #: Careem Plus, Talabat Pro/VIP. True for both; false everywhere else.
+    #:
+    #: Load-bearing and, today, dormant. GrubOps sends no flag that tells a Pro
+    #: order from an ordinary one (checked across every payload we hold), so
+    #: `orders.aggregator_customer_is_member` is never set true and this fee
+    #: never actually applies. The rule is modelled in full so that the day a
+    #: signal arrives — a GrubOps field, or a human toggling the order — the
+    #: 4 AED starts landing on exactly the members it should, with no schema
+    #: change. Until then, seeding it does not over-charge a single non-member.
+    commission_fixed_requires_member: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
     @property
     def promises_next_day(self) -> bool:
         return self.unbatched_promise_kind == UnbatchedPromiseEnum.NEXT_DAY.value
