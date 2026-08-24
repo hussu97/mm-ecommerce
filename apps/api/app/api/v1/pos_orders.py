@@ -86,6 +86,29 @@ def _list_load_options():
     )
 
 
+def _ordered_page(stmt, *, limit: int, offset: int):
+    """
+    The register list's stable order plus its paging window.
+
+    A named function, like `_list_load_options`, so the offset guarantee is
+    asserted against the endpoint's *own* construct rather than a copy (see
+    `test_pos_order_list_query.py`). `Order.id` is the final sort key on purpose:
+    `opened_at` and `created_at` can tie — a burst of website orders lands in the
+    same instant — and without a unique tiebreaker the same row can straddle a
+    page boundary, so the infinite-scroll register would skip or duplicate it as
+    the cashier pages through a busy day.
+    """
+    return (
+        stmt.order_by(
+            Order.opened_at.desc().nullslast(),
+            Order.created_at.desc(),
+            Order.id.desc(),
+        )
+        .limit(limit)
+        .offset(offset)
+    )
+
+
 def _serialise(order: Order) -> PosOrderResponse:
     payload = PosOrderResponse.model_validate(order)
     payload.customer_id = order.user_id
@@ -195,6 +218,7 @@ async def list_orders(
     order_type: str | None = None,
     open_only: bool = False,
     limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require("orders.read")),
 ):
@@ -214,10 +238,8 @@ async def list_orders(
         stmt = stmt.where(Order.order_type == order_type)
     if open_only:
         stmt = stmt.where(Order.pos_status.in_(sorted(pos_order_service.OPEN_STATUSES)))
-    stmt = (
-        stmt.options(*_list_load_options())
-        .order_by(Order.opened_at.desc().nullslast(), Order.created_at.desc())
-        .limit(limit)
+    stmt = _ordered_page(
+        stmt.options(*_list_load_options()), limit=limit, offset=offset
     )
     orders = list((await db.execute(stmt)).scalars().unique().all())
     return [_serialise(o) for o in orders]

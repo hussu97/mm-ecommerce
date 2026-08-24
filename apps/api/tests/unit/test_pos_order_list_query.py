@@ -20,6 +20,7 @@ Needs no database. Building the statement is what fails.
 from __future__ import annotations
 
 from sqlalchemy import select
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import selectinload
 
 from app.api.v1 import pos_orders
@@ -60,3 +61,22 @@ def test_the_branch_is_among_them():
     loaded = {opt.path[1].key for opt in pos_orders._list_load_options()}
     assert "branch" in loaded
     assert "delivery" in loaded
+
+
+def test_the_register_list_is_offset_paged_with_a_stable_order():
+    """
+    Infinite scroll pages `GET /pos/orders` by offset, so the order has to be
+    total — `Order.id` breaks ties `opened_at`/`created_at` leave, or a
+    same-instant order lands on two pages (skip) or none (dupe). Asserted against
+    the endpoint's own `_ordered_page`, not a copy of it.
+    """
+    sql = str(
+        pos_orders._ordered_page(select(Order), limit=10, offset=25).compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "LIMIT 10" in sql
+    assert "OFFSET 25" in sql
+    # The unique tiebreaker, last in the ORDER BY.
+    assert "orders.id DESC" in sql
+    assert sql.index("orders.opened_at") < sql.index("orders.id DESC")

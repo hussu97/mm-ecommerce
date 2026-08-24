@@ -24855,6 +24855,7 @@ export interface operations {
                 order_type?: string | null;
                 open_only?: boolean;
                 limit?: number;
+                offset?: number;
             };
             header?: never;
             path?: never;
