@@ -38,7 +38,7 @@ export const NAV: Array<
   { section: 'Online store' },
   { href: '/orders',        label: 'Orders',          icon: 'receipt_long' },
   { href: '/custom-orders', label: 'Custom Orders',   icon: 'cake' },
-  { href: '/promo-codes',   label: 'Promo Codes',     icon: 'local_offer' },
+  { href: '/promo-codes',   label: 'Promotions',      icon: 'local_offer' },
   { href: '/customers',     label: 'Customers',       icon: 'people' },
   { href: '/delivery-zones', label: 'Delivery',       icon: 'local_shipping' },
   // Under "Online store" and not "System": this is the lever you reach for

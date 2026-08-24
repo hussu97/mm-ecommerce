@@ -13014,6 +13014,11 @@ export interface components {
         };
         /** PromotionCreate */
         PromotionCreate: {
+            /**
+             * Auto Apply
+             * @default false
+             */
+            auto_apply: boolean;
             /** Branch Ids */
             branch_ids?: string[];
             /** Customer Tag Ids */
@@ -13093,6 +13098,8 @@ export interface components {
              * @default 0
              */
             reward_value: number | string;
+            /** Sources */
+            sources?: ("cashier" | "online" | "aggregator" | "api" | "call_center")[];
             /** To Date */
             to_date?: string | null;
             /**
@@ -13128,6 +13135,8 @@ export interface components {
         };
         /** PromotionResponse */
         PromotionResponse: {
+            /** Auto Apply */
+            auto_apply: boolean;
             /** Branch Ids */
             branch_ids: string[];
             /**
@@ -13176,6 +13185,8 @@ export interface components {
             reward_product_ids: string[];
             /** Reward Value */
             reward_value: string;
+            /** Sources */
+            sources: string[];
             /** To Date */
             to_date: string | null;
             /** To Time */
@@ -13196,6 +13207,8 @@ export interface components {
         };
         /** PromotionUpdate */
         PromotionUpdate: {
+            /** Auto Apply */
+            auto_apply?: boolean | null;
             /** Branch Ids */
             branch_ids?: string[] | null;
             /** From Date */
@@ -13232,6 +13245,8 @@ export interface components {
             reward_product_ids?: string[] | null;
             /** Reward Value */
             reward_value?: number | string | null;
+            /** Sources */
+            sources?: ("cashier" | "online" | "aggregator" | "api" | "call_center")[] | null;
             /** To Date */
             to_date?: string | null;
             /** To Time */

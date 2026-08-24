@@ -18965,6 +18965,11 @@
       },
       "PromotionCreate": {
         "properties": {
+          "auto_apply": {
+            "default": false,
+            "title": "Auto Apply",
+            "type": "boolean"
+          },
           "branch_ids": {
             "items": {
               "format": "uuid",
@@ -19119,6 +19124,20 @@
             "default": "0",
             "title": "Reward Value"
           },
+          "sources": {
+            "items": {
+              "enum": [
+                "cashier",
+                "online",
+                "aggregator",
+                "api",
+                "call_center"
+              ],
+              "type": "string"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
           "to_date": {
             "anyOf": [
               {
@@ -19198,6 +19217,10 @@
       },
       "PromotionResponse": {
         "properties": {
+          "auto_apply": {
+            "title": "Auto Apply",
+            "type": "boolean"
+          },
           "branch_ids": {
             "items": {
               "format": "uuid",
@@ -19312,6 +19335,13 @@
             "title": "Reward Value",
             "type": "string"
           },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
           "to_date": {
             "anyOf": [
               {
@@ -19367,8 +19397,10 @@
           "reward_product_ids",
           "branch_ids",
           "order_types",
+          "sources",
           "priority",
           "max_uses_per_order",
+          "auto_apply",
           "from_date",
           "to_date",
           "from_time",
@@ -19390,6 +19422,17 @@
       },
       "PromotionUpdate": {
         "properties": {
+          "auto_apply": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Apply"
+          },
           "branch_ids": {
             "anyOf": [
               {
@@ -19618,6 +19661,27 @@
               }
             ],
             "title": "Reward Value"
+          },
+          "sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "cashier",
+                    "online",
+                    "aggregator",
+                    "api",
+                    "call_center"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sources"
           },
           "to_date": {
             "anyOf": [

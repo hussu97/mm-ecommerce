@@ -8,6 +8,7 @@ import { DataTable } from '@/components/ui/DataTable';
 import { useConfirm, useToast } from '@/components/ui/feedback';
 import { useApiList } from '@/hooks/useApiList';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { CounterPromotions } from './CounterPromotions';
 
 const DISCOUNT_TYPE_OPTIONS = [
   { value: 'percentage', label: 'Percentage (%)' },
@@ -220,8 +221,10 @@ export default function PromoCodesPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="font-display text-2xl text-gray-800">Promo Codes</h1>
-          <p className="text-xs text-gray-400 font-body mt-0.5">{codes.length} total</p>
+          <h1 className="font-display text-2xl text-gray-800">Promotions</h1>
+          <p className="text-xs text-gray-400 font-body mt-0.5">
+            Auto-applied offers and coupon codes
+          </p>
         </div>
         {!showForm && (
           <Button onClick={openCreate}>
@@ -230,6 +233,15 @@ export default function PromoCodesPage() {
           </Button>
         )}
       </div>
+
+      {/* Auto-applied promotions (e.g. the standing counter discount) */}
+      <CounterPromotions />
+
+      {/* Coupon codes */}
+      <h2 className="font-display text-lg text-gray-800 mb-1">Coupon codes</h2>
+      <p className="text-xs text-gray-400 font-body mb-4">
+        {codes.length} total — codes a customer enters at checkout.
+      </p>
 
       {/* Inline Form */}
       {showForm && (

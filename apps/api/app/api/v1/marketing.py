@@ -7,7 +7,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models import (
     Discount,
@@ -19,6 +19,14 @@ from .pos_config import build_crud_router
 
 Translations = dict[str, dict[str, str]]
 OrderTypeLiteral = Literal["dine_in", "pickup", "delivery", "drive_thru"]
+#: `OrderSourceEnum` values — the channel that rang an order up. `cashier` is the
+#: counter, the one source the POS itself creates.
+SourceLiteral = Literal["cashier", "online", "aggregator", "api", "call_center"]
+
+#: The rewards `auto_apply` may carry: both reduce to a single order-level
+#: discount the pricing engine can add unattended. Mirrors
+#: `auto_promotion_service._AUTO_REWARDS`.
+_AUTO_APPLY_REWARDS = {"percentage_off_order", "fixed_off_order"}
 
 
 class ORMModel(BaseModel):
@@ -143,10 +151,27 @@ class PromotionCreate(ScheduleFields):
     reward_product_ids: list[uuid.UUID] = Field(default_factory=list)
     branch_ids: list[uuid.UUID] = Field(default_factory=list)
     order_types: list[OrderTypeLiteral] = Field(default_factory=list)
+    #: Channels this promotion may fire on; empty = every channel. A
+    #: counter-only offer carries `["cashier"]`.
+    sources: list[SourceLiteral] = Field(default_factory=list)
     customer_tag_ids: list[uuid.UUID] = Field(default_factory=list)
     priority: int = Field(100, ge=0, le=10000)
     max_uses_per_order: int = Field(1, ge=1, le=100)
+    #: When true, the pricing engine applies this promotion with no cashier
+    #: action. Only order-level rewards on a spend trigger can be auto-applied.
+    auto_apply: bool = False
     is_active: bool = True
+
+    @model_validator(mode="after")
+    def _auto_apply_needs_order_level_reward(self) -> "PromotionCreate":
+        if self.auto_apply and (
+            self.reward not in _AUTO_APPLY_REWARDS or self.trigger != "spend"
+        ):
+            raise ValueError(
+                "auto_apply is only allowed on an order-level reward "
+                "(percentage_off_order or fixed_off_order) with a spend trigger"
+            )
+        return self
 
 
 class PromotionUpdate(BaseModel):
@@ -160,8 +185,10 @@ class PromotionUpdate(BaseModel):
     reward_product_ids: list[uuid.UUID] | None = None
     branch_ids: list[uuid.UUID] | None = None
     order_types: list[OrderTypeLiteral] | None = None
+    sources: list[SourceLiteral] | None = None
     priority: int | None = Field(None, ge=0, le=10000)
     max_uses_per_order: int | None = Field(None, ge=1, le=100)
+    auto_apply: bool | None = None
     from_date: date | None = None
     to_date: date | None = None
     from_time: int | None = Field(None, ge=0, le=1439)
@@ -174,6 +201,22 @@ class PromotionUpdate(BaseModel):
     is_sat: bool | None = None
     is_sun: bool | None = None
     is_active: bool | None = None
+
+    @model_validator(mode="after")
+    def _auto_apply_needs_order_level_reward(self) -> "PromotionUpdate":
+        # Best-effort on a partial update: only what this payload can see. An
+        # `auto_apply` set on a promotion whose reward is product-level without
+        # being touched here is still harmless — `auto_promotion_service` never
+        # applies a non-order-level reward, so it simply does nothing.
+        if self.auto_apply:
+            if self.reward is not None and self.reward not in _AUTO_APPLY_REWARDS:
+                raise ValueError(
+                    "auto_apply needs an order-level reward "
+                    "(percentage_off_order or fixed_off_order)"
+                )
+            if self.trigger is not None and self.trigger != "spend":
+                raise ValueError("auto_apply needs a spend trigger")
+        return self
 
 
 class PromotionResponse(ORMModel):
@@ -188,8 +231,10 @@ class PromotionResponse(ORMModel):
     reward_product_ids: list[uuid.UUID]
     branch_ids: list[uuid.UUID]
     order_types: list[str]
+    sources: list[str]
     priority: int
     max_uses_per_order: int
+    auto_apply: bool
     from_date: date | None
     to_date: date | None
     from_time: int

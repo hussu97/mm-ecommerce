@@ -3,7 +3,7 @@ import type {
   AnalyticsOverview, AuditLog, Category, CmsPage, CustomerBreakdown, ZoneSalesData,
   FunnelData, ImportResult, Language, Modifier, Order, OrdersPoint, PaginatedAuditLogs,
   PaginatedCustomers, PaginatedEmailLogs, PaginatedLiveCarts, PaginatedOrders, Product, ProductListResponse,
-  PromoCode, PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
+  PromoCode, Promotion, PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
   TrafficData, UploadResponse, User, DeliverySettings, SalesChannel,
   DeliveryMapVersion, DeliveryPricingMode, DeliveryZone, DeliveryZoneSummary, FulfilmentProvider, OrderDelivery, OrderEconomics,
   BatchGroup,
@@ -560,6 +560,13 @@ export const promoApi = {
   create: (data: object) => api.post<PromoCode>('/promo-codes', data),
   update: (code: string, data: object) => api.put<PromoCode>(`/promo-codes/${code}`, data),
   delete: (code: string) => api.delete<void>(`/promo-codes/${code}`),
+};
+
+// ─── Promotions (auto-applied offers, e.g. the standing counter discount) ──────
+
+export const promotionsApi = {
+  list: () => api.get<Promotion[]>('/promotions'),
+  update: (id: string, data: object) => api.put<Promotion>(`/promotions/${id}`, data),
 };
 
 // ─── URL Redirects ────────────────────────────────────────────────────────────

@@ -87,6 +87,14 @@ async def _run(monkeypatch, order, *, configured_tax_group, resolved_rate):
 
     db.get = AsyncMock(side_effect=fake_get)
 
+    # This order carries no promotion, and this test is about charge tax, not
+    # the auto-discount path recalculate now consults — stub it to a no-op so the
+    # bare SimpleNamespace order need not model the whole POS shape.
+    monkeypatch.setattr(
+        pos_order_service.auto_promotion_service,
+        "sync_auto_discounts",
+        AsyncMock(),
+    )
     monkeypatch.setattr(pos_order_service, "get_order", AsyncMock(return_value=order))
     monkeypatch.setattr(
         pos_order_service,

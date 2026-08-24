@@ -53,7 +53,12 @@ from app.services import option_snapshot
 from app.services.catalog import modifier_rules
 from app.services.inventory import inventory_service
 from app.services.orders import order_lifecycle
-from app.services.pos import business_day_service, pos_pricing, till_service
+from app.services.pos import (
+    auto_promotion_service,
+    business_day_service,
+    pos_pricing,
+    till_service,
+)
 from app.services.pos.pos_pricing import (
     ChargeInput,
     DiscountInput,
@@ -854,6 +859,12 @@ async def recalculate(db: AsyncSession, order: Order) -> Order:
     """
     order = await get_order(db, order.id)
     settings = await _settings(db)
+
+    # Standing promotions (e.g. "every counter order is 15% off") add or remove
+    # their order-level discount here, before the basket is priced, so the saving
+    # tracks the lines as they change. Idempotent, and a no-op unless a promotion
+    # actually qualifies — see `auto_promotion_service`.
+    await auto_promotion_service.sync_auto_discounts(db, order)
 
     live_items = [
         i

@@ -201,6 +201,31 @@ class Promotion(Base, UUIDMixin, TimestampMixin, ScheduleMixin):
     customer_tag_ids: Mapped[list[uuid.UUID]] = mapped_column(
         ARRAY(UUID(as_uuid=True)), nullable=False, default=list, server_default="{}"
     )
+    #: The order channels this promotion may fire on — `OrderSourceEnum` values
+    #: (`cashier`, `online`, `aggregator`, …). Empty = every channel.
+    #:
+    #: `order_types` already scopes the *fulfilment shape* (dine-in vs delivery);
+    #: this scopes *who rang it up*, which is the axis that separates a walk-in at
+    #: the register from a storefront or aggregator order sharing the same table.
+    #: A counter-only promotion carries `["cashier"]` — the one source the POS
+    #: itself creates — so the storefront and the aggregators never inherit it.
+    sources: Mapped[Any] = mapped_column(
+        ARRAY(String), nullable=False, default=list, server_default="{}"
+    )
+    #: Whether the pricing engine applies this promotion by itself, with no
+    #: cashier action. An ordinary promotion is a rule the counter *may* invoke;
+    #: an auto-apply one is a standing discount the register puts on every
+    #: qualifying check — "every counter order is 15% off" — so it is enforced in
+    #: `pos_order_service.recalculate`, not chosen from a menu.
+    #:
+    #: Only meaningful for an order-level reward (`percentage_off_order`,
+    #: `fixed_off_order`) fired on a `spend` trigger: those are the rewards that
+    #: reduce to one order-level `OrderDiscount` the engine can add unattended.
+    #: The API refuses `auto_apply` on any other reward/trigger so the flag can
+    #: never be set on a shape the engine will silently ignore.
+    auto_apply: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
     #: Lower number wins when several promotions could apply.
     priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default="100")
     #: Stops a single check from stacking the same offer indefinitely.
@@ -213,6 +238,31 @@ class Promotion(Base, UUIDMixin, TimestampMixin, ScheduleMixin):
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    def matches_order(
+        self,
+        *,
+        source: str | None,
+        branch_id: uuid.UUID | None,
+        order_type: str | None,
+    ) -> bool:
+        """
+        Whether this promotion's channel/branch/type scope covers an order.
+
+        Scope only — the caller still checks `is_active`, `deleted_at`, the
+        schedule (`runs_on`/`runs_at`) and the spend trigger. Kept here so the
+        "empty array means everything" rule lives with the columns it reads,
+        the same way `Discount.applies_to` does.
+        """
+        if self.deleted_at is not None or not self.is_active:
+            return False
+        if self.sources and source not in self.sources:
+            return False
+        if self.branch_ids and branch_id not in self.branch_ids:
+            return False
+        if self.order_types and order_type not in self.order_types:
+            return False
+        return True
 
     def __repr__(self) -> str:
         return f"<Promotion {self.name}>"

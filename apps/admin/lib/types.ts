@@ -426,6 +426,40 @@ export interface PromoCode {
   created_at: string;
 }
 
+/**
+ * A conditional offer the pricing engine applies itself, as opposed to a coupon
+ * the customer types. The console surfaces the `auto_apply` ones — standing
+ * discounts the register puts on every qualifying check, like "every counter
+ * order is 15% off".
+ */
+export interface Promotion {
+  id: string;
+  name: string;
+  type: string;
+  trigger: 'spend' | 'quantity';
+  /** The `spend` threshold (min order value) or `quantity` count that arms it. */
+  trigger_value: number;
+  reward:
+    | 'percentage_off_products'
+    | 'fixed_off_products'
+    | 'percentage_off_order'
+    | 'fixed_off_order'
+    | 'fixed_price'
+    | 'free_product';
+  /** A percent for a percentage reward (15 == 15%), an AED amount for a fixed one. */
+  reward_value: number;
+  branch_ids: string[];
+  order_types: string[];
+  /** Order channels this may fire on (`OrderSourceEnum`); empty = every channel. */
+  sources: string[];
+  /** Whether the pricing engine applies it with no cashier action. */
+  auto_apply: boolean;
+  priority: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface UploadResponse {
   url: string;
   key: string;
