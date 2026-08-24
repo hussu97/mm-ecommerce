@@ -63,7 +63,9 @@ def test_a_null_subtotal_is_read_as_zero_not_a_crash():
 
 @pytest.mark.asyncio
 async def test_the_ladder_climbs_created_to_delivered_one_rung_at_a_time():
-    order = SimpleNamespace(status=OrderStatusEnum.CREATED, pos_status="pending")
+    order = SimpleNamespace(
+        status=OrderStatusEnum.CREATED, pos_status="pending", closed_at=None
+    )
     moved: list[OrderStatusEnum] = []
 
     async def fake_transition(db, o, new_status, *, on_invalid="raise"):
@@ -81,11 +83,17 @@ async def test_the_ladder_climbs_created_to_delivered_one_rung_at_a_time():
     ]
     # Delivered closes the check on the board.
     assert order.pos_status == g.PosOrderStatusEnum.CLOSED.value
+    # ...and stamps when it closed, because no cashier is here to. A closed
+    # check with a null closed_at is what left the reports blank and is what the
+    # constraint added alongside this now forbids.
+    assert order.closed_at is not None
 
 
 @pytest.mark.asyncio
 async def test_a_cancel_is_attempted_directly_rather_than_climbed():
-    order = SimpleNamespace(status=OrderStatusEnum.CONFIRMED, pos_status="active")
+    order = SimpleNamespace(
+        status=OrderStatusEnum.CONFIRMED, pos_status="active", closed_at=None
+    )
     seen: list[OrderStatusEnum] = []
 
     async def fake_transition(db, o, new_status, *, on_invalid="raise"):

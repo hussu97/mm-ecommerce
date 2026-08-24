@@ -36,6 +36,7 @@ from sqlalchemy import update as sql_update
 
 from app.core.config import settings
 from app.core.money import money
+from app.models.base import utcnow
 from app.models.branch import Branch
 from app.models.grubops import GrubOpsItemMap, GrubOpsLocationMap
 from app.models.grubops_order import GrubOpsOrderMap
@@ -654,6 +655,14 @@ def _sync_pos_status(order: Order, mm_status: OrderStatusEnum) -> None:
     pos = _POS_STATUS.get(mm_status)
     if pos is not None:
         order.pos_status = pos
+        # A closed check has to carry the moment it closed. The counter stamps
+        # this when the cashier takes payment; an aggregator order has no cashier
+        # tapping "close", so without this it reached pos_status=closed with a
+        # null closed_at — which is what left the hour/terminal/cashier reports
+        # reading "Unknown" and what the constraint added alongside this now
+        # forbids. Stamp once, when the delivery that closes the order arrives.
+        if pos == PosOrderStatusEnum.CLOSED.value and order.closed_at is None:
+            order.closed_at = utcnow()
 
 
 # ── write-back: mirror an MM terminal status out to GrubOps ──────────────────

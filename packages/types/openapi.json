@@ -6189,6 +6189,92 @@
         "title": "CustomerSummary",
         "type": "object"
       },
+      "DailySalesEmailRecipientResult": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "recipient": {
+            "title": "Recipient",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "recipient",
+          "status"
+        ],
+        "title": "DailySalesEmailRecipientResult",
+        "type": "object"
+      },
+      "DailySalesEmailRequest": {
+        "description": "Send the daily sales spreadsheet for a window to a set of recipients.",
+        "properties": {
+          "date_from": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "title": "Date From",
+            "type": "string"
+          },
+          "date_to": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "title": "Date To",
+            "type": "string"
+          },
+          "recipients": {
+            "items": {
+              "format": "email",
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Recipients",
+            "type": "array"
+          }
+        },
+        "required": [
+          "date_from",
+          "date_to",
+          "recipients"
+        ],
+        "title": "DailySalesEmailRequest",
+        "type": "object"
+      },
+      "DailySalesEmailResponse": {
+        "properties": {
+          "rows": {
+            "title": "Rows",
+            "type": "integer"
+          },
+          "sent": {
+            "items": {
+              "$ref": "#/components/schemas/DailySalesEmailRecipientResult"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "rows",
+          "sent"
+        ],
+        "title": "DailySalesEmailResponse",
+        "type": "object"
+      },
       "DayAvailabilityResponse": {
         "properties": {
           "available": {
@@ -44455,6 +44541,53 @@
           }
         ],
         "summary": "Sales By",
+        "tags": [
+          "POS Reports"
+        ]
+      }
+    },
+    "/api/v1/pos/reports/sales/daily-email": {
+      "post": {
+        "description": "Build the daily sales spreadsheet for a window and email it now.\n\nThe same report the nightly job sends, on demand: a console button picks a\ndate range and a recipient list, and this returns per-recipient outcomes so\nthe screen can say which addresses it reached. Gated on the sales-reports\npermission the figures themselves need.",
+        "operationId": "send_daily_sales_email_api_v1_pos_reports_sales_daily_email_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DailySalesEmailRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DailySalesEmailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Send Daily Sales Email",
         "tags": [
           "POS Reports"
         ]

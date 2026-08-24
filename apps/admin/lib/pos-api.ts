@@ -206,11 +206,19 @@ export const inventoryApi = {
 
 type Window = { branch_id?: string; date_from?: string; date_to?: string };
 
+export type DailySalesEmailResult = {
+  subject: string;
+  rows: number;
+  sent: { recipient: string; status: string; error: string | null }[];
+};
+
 export const posReportsApi = {
   salesSummary: (w: Window) => api.get<SalesSummary>(`/pos/reports/sales/summary${buildQs(w)}`),
   salesBy: (dimension: string, w: Window, limit = 100) =>
     api.get<SalesBreakdownRow[]>(`/pos/reports/sales/by${buildQs({ dimension, limit, ...w })}`),
   payments: (w: Window) => api.get<PaymentReportRow[]>(`/pos/reports/payments${buildQs(w)}`),
+  sendDailyEmail: (body: { date_from: string; date_to: string; recipients: string[] }) =>
+    api.post<DailySalesEmailResult>('/pos/reports/sales/daily-email', body),
   speedOfService: (w: Window) =>
     api.get<SpeedOfServiceReport>(`/pos/reports/speed-of-service${buildQs(w)}`),
   branchesTrend: (w: Window) =>

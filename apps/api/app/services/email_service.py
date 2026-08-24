@@ -534,7 +534,9 @@ def _order_context(
     }
 
 
-def _send(to: str, subject: str, html: str) -> dict:
+def _send(
+    to: str, subject: str, html: str, attachments: list[dict] | None = None
+) -> dict:
     """
     Send an email via Resend. Never raises — always returns a result dict:
       {"status": "sent"|"failed"|"skipped", "resend_id": str|None, "error": str|None}
@@ -585,6 +587,11 @@ def _send(to: str, subject: str, html: str) -> dict:
             "subject": subject,
             "html": html,
         }
+        # Resend takes attachments as base64 content beside a filename. Only
+        # added when there are any, so every existing caller sends exactly the
+        # payload it did before.
+        if attachments:
+            params["attachments"] = attachments
         response = resend.Emails.send(params)
         resend_id = response.id if hasattr(response, "id") else response.get("id")
         logger.info("Email sent: id=%s to=%s subject=%s", resend_id, to, subject)
@@ -1134,6 +1141,40 @@ async def _send_user_email(
         )
         result = {"status": "failed", "resend_id": None, "error": str(exc)}
     await _log(template.removesuffix(".html"), email, subject, result)
+
+
+async def send_with_attachment(
+    recipient: str,
+    subject: str,
+    html: str,
+    *,
+    filename: str,
+    content: bytes,
+    template: str = "report",
+) -> dict:
+    """
+    Send one email carrying a single binary attachment, and journal it.
+
+    The daily sales report is the caller: a spreadsheet the owner opens rather
+    than a templated order mail. Runs the blocking Resend call off the event
+    loop like the rest of this module and never raises — a report that fails to
+    send is a logged failure, not an exception in whatever scheduled it.
+    """
+    import base64
+
+    encoded = base64.b64encode(content).decode("ascii")
+    try:
+        result = await asyncio.to_thread(
+            _send,
+            recipient,
+            subject,
+            html,
+            [{"filename": filename, "content": encoded}],
+        )
+    except Exception as exc:  # noqa: BLE001 — sending must never raise upward
+        result = {"status": "failed", "resend_id": None, "error": str(exc)}
+    await _log(template, recipient, subject, result)
+    return result
 
 
 async def send_welcome(email: str, locale: str = "en") -> None:

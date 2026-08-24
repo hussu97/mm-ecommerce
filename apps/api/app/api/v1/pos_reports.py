@@ -11,7 +11,8 @@ from app.core.deps import get_db
 from app.core.exceptions import BadRequestError
 from app.core.permissions import require
 from app.models.user import User
-from app.services.pos import pos_reports
+from app.schemas.reports import DailySalesEmailRequest, DailySalesEmailResponse
+from app.services.pos import daily_sales_email, pos_reports
 
 router = APIRouter()
 
@@ -234,3 +235,25 @@ async def sales_predictions(
     return await pos_reports.sales_predictions(
         db, branch_id=branch_id, days_ahead=days_ahead
     )
+
+
+@router.post("/sales/daily-email", response_model=DailySalesEmailResponse)
+async def send_daily_sales_email(
+    body: DailySalesEmailRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("reports.sales")),
+) -> DailySalesEmailResponse:
+    """Build the daily sales spreadsheet for a window and email it now.
+
+    The same report the nightly job sends, on demand: a console button picks a
+    date range and a recipient list, and this returns per-recipient outcomes so
+    the screen can say which addresses it reached. Gated on the sales-reports
+    permission the figures themselves need.
+    """
+    result = await daily_sales_email.send(
+        db,
+        date_from=body.date_from,
+        date_to=body.date_to,
+        recipients=[str(r) for r in body.recipients],
+    )
+    return DailySalesEmailResponse(**result)

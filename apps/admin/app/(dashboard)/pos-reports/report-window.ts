@@ -15,7 +15,8 @@ export type TabKey =
   | 'branches'
   | 'tables'
   | 'inventory'
-  | 'suppliers';
+  | 'suppliers'
+  | 'email';
 
 /** Default window: the last 7 trading days, which is what a manager checks. */
 export function defaultWindow() {

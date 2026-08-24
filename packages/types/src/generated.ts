@@ -5128,6 +5128,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pos/reports/sales/daily-email": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send Daily Sales Email
+         * @description Build the daily sales spreadsheet for a window and email it now.
+         *
+         *     The same report the nightly job sends, on demand: a console button picks a
+         *     date range and a recipient list, and this returns per-recipient outcomes so
+         *     the screen can say which addresses it reached. Gated on the sales-reports
+         *     permission the figures themselves need.
+         */
+        post: operations["send_daily_sales_email_api_v1_pos_reports_sales_daily_email_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pos/reports/sales/summary": {
         parameters: {
             query?: never;
@@ -8876,6 +8901,36 @@ export interface components {
             phone: string | null;
             /** Total Spent */
             total_spent: number;
+        };
+        /** DailySalesEmailRecipientResult */
+        DailySalesEmailRecipientResult: {
+            /** Error */
+            error?: string | null;
+            /** Recipient */
+            recipient: string;
+            /** Status */
+            status: string;
+        };
+        /**
+         * DailySalesEmailRequest
+         * @description Send the daily sales spreadsheet for a window to a set of recipients.
+         */
+        DailySalesEmailRequest: {
+            /** Date From */
+            date_from: string;
+            /** Date To */
+            date_to: string;
+            /** Recipients */
+            recipients: string[];
+        };
+        /** DailySalesEmailResponse */
+        DailySalesEmailResponse: {
+            /** Rows */
+            rows: number;
+            /** Sent */
+            sent: components["schemas"]["DailySalesEmailRecipientResult"][];
+            /** Subject */
+            subject: string;
         };
         /** DayAvailabilityResponse */
         DayAvailabilityResponse: {
@@ -25878,6 +25933,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    send_daily_sales_email_api_v1_pos_reports_sales_daily_email_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DailySalesEmailRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DailySalesEmailResponse"];
                 };
             };
             /** @description Validation Error */

@@ -37,6 +37,7 @@ dependencies = [
     # the lenient one. Phone is the promo-abuse identity; "eight or more
     # digits", which is what the hand-rolled check amounted to, was not a check.
     "phonenumbers>=9.0.0",
+    "openpyxl>=3.1.5",
 ]
 
 [project.optional-dependencies]

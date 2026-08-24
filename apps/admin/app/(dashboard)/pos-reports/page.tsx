@@ -7,6 +7,7 @@ import { Input, Select, TabBar } from '@/components/ui';
 
 import { defaultWindow, type TabKey } from './report-window';
 import { BranchesTrendTab } from './tabs/BranchesTrendTab';
+import { EmailTab } from './tabs/EmailTab';
 import { InventoryTab } from './tabs/InventoryTab';
 import { MenuTab } from './tabs/MenuTab';
 import { PaymentsTab } from './tabs/PaymentsTab';
@@ -74,6 +75,7 @@ export default function PosReportsPage() {
             { key: 'tables', label: 'Tables' },
             { key: 'inventory', label: 'Inventory' },
             { key: 'suppliers', label: 'Suppliers' },
+            { key: 'email', label: 'Email Report' },
           ]}
           active={tab}
           onChange={(k) => setTab(k as TabKey)}
@@ -90,6 +92,7 @@ export default function PosReportsPage() {
         {tab === 'tables' && <TableUtilizationTab window={window} />}
         {tab === 'suppliers' && <SuppliersTab window={window} />}
         {tab === 'inventory' && <InventoryTab window={window} branchId={branchId} />}
+        {tab === 'email' && <EmailTab window={window} />}
       </div>
     </div>
   );

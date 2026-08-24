@@ -183,6 +183,14 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
 
             background.append(asyncio.create_task(log_retention.run_forever()))
 
+            # The daily sales email. Rides here for the same reasons its
+            # neighbours do — no cron in this stack, an advisory lock so a second
+            # copy is harmless — and belongs to whichever app owns the shared
+            # work. Sends once, after the last branch closes for the day.
+            from app.services.pos import daily_sales_email
+
+            background.append(asyncio.create_task(daily_sales_email.run_forever()))
+
             # Same reasoning, its own flag: this one talks to somebody else's
             # private API, so it has to be switchable off without taking the
             # dispatcher down with it. Storefront only, like its neighbours —
