@@ -49709,7 +49709,7 @@
     },
     "/api/v1/tills/{till_id}/report": {
       "get": {
-        "description": "X-report while open, Z-report once closed.",
+        "description": "The till report \u2014 a read while open, the close report once closed.",
         "operationId": "till_report_api_v1_tills__till_id__report_get",
         "parameters": [
           {

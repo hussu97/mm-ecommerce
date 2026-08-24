@@ -6388,7 +6388,7 @@ export interface paths {
         };
         /**
          * Till Report
-         * @description X-report while open, Z-report once closed.
+         * @description The till report — a read while open, the close report once closed.
          */
         get: operations["till_report_api_v1_tills__till_id__report_get"];
         put?: never;
