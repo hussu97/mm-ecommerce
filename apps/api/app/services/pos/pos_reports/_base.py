@@ -6,16 +6,17 @@ import uuid
 from decimal import Decimal
 from typing import Any, Sequence
 
-from sqlalchemy import Select, case, func, select
+from sqlalchemy import Select, and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.branch import Branch
 from app.models.device import Device
-from app.models.order import Order
+from app.models.order import Order, OrderStatusEnum
 from app.models.pos_order import (
     PosOrderStatusEnum,
 )
 from app.models.pos_table import PosTable
+from app.models.till import Till
 from app.models.user import User
 from app.services.couriers import courier_catalog
 
@@ -44,6 +45,49 @@ CLOSED = PosOrderStatusEnum.CLOSED.value
 
 
 VOID = PosOrderStatusEnum.VOID.value
+
+
+#: What counts as a completed POS sale, across every sales report.
+#:
+#: A counter check is done when the till closes it (`pos_status = closed`), and a
+#: GrubOps order maps its own `delivered` to the same `closed` on ingest — so the
+#: aggregators were already in. A website order is the exception the reports used
+#: to miss entirely: it is paid online and fulfilled by a courier, so its
+#: `pos_status` never leaves `active` and only its e-commerce `status` reaches
+#: `delivered`. Counting that here is what puts Website revenue on the same
+#: footing as a Talabat order, which is the whole point of a per-channel report.
+#:
+#: Cancellations and refunds are excluded by construction: a cancelled website
+#: order is `cancelled`, not `delivered`, and a voided counter check is
+#: `pos_status = void`, not `closed`.
+_COMPLETED_SALE = or_(
+    Order.pos_status == CLOSED,
+    and_(Order.source == "online", Order.status == OrderStatusEnum.DELIVERED.value),
+)
+
+
+#: When an order carries no cashier or terminal of its own — every aggregator and
+#: website order, because nobody rings them up — this reads back "who was online
+#: at the POS" as the till that was open at the order's branch across the moment
+#: it arrived. Correlated per order (a LATERAL), branch-scoped, and when more than
+#: one device is trading the most recently opened till wins. An order that came in
+#: while no till was open stays unattributed, which is the honest answer.
+def _covering_till():
+    when = func.coalesce(Order.closed_at, Order.created_at)
+    return (
+        select(
+            Till.user_id.label("user_id"),
+            Till.device_id.label("device_id"),
+        )
+        .where(
+            Till.branch_id == Order.branch_id,
+            Till.opened_at <= when,
+            or_(Till.closed_at.is_(None), Till.closed_at >= when),
+        )
+        .order_by(Till.opened_at.desc())
+        .limit(1)
+        .lateral("covering_till")
+    )
 
 
 def _channel_logo(key: Any) -> str | None:
@@ -94,7 +138,7 @@ _ORDER_DIMENSIONS = {
     # under "branch"; a manager comparing counters — or looking for the terminal
     # that stopped selling at four o'clock — needs them apart.
     "device": Order.device_id,
-    "hour": func.to_char(Order.closed_at, "HH24"),
+    "hour": func.to_char(func.coalesce(Order.closed_at, Order.created_at), "HH24"),
 }
 
 

@@ -25,16 +25,17 @@ from app.models.tag import Tag, TaggedEntity
 from app.services.pos import business_day_service
 
 from ._base import (
+    _COMPLETED_SALE,
     _DISCOUNT_SOURCES,
     _ENTITY_TAG_DIMENSIONS,
     _LINE_DIMENSIONS,
     _ORDER_DIMENSIONS,
     _TABLE_DIMENSIONS,
-    CLOSED,
     SUPPORTED_DIMENSIONS,
     VOID,
     ZERO,
     _channel_logo,
+    _covering_till,
     _labels_for,
     _scope,
 )
@@ -65,7 +66,7 @@ async def sales_summary(
         branch_id=branch_id,
         date_from=date_from,
         date_to=date_to,
-    ).where(Order.pos_status == CLOSED)
+    ).where(_COMPLETED_SALE)
 
     row = (await db.execute(stmt)).one()
     (
@@ -111,7 +112,7 @@ async def sales_summary(
             # returns booked against still-open checks and voided orders counted
             # towards a `gross_sales` that excludes them, so the funnel did not
             # reconcile.
-            .where(Order.pos_status == CLOSED)
+            .where(_COMPLETED_SALE)
         )
     ).scalar_one()
 
@@ -212,7 +213,23 @@ async def sales_by_dimension(
         # `closed_at` is stored in UTC; the hour has to be read in the business's
         # local timezone or a 6pm rush reports as 2pm.
         tz = await business_day_service.resolve_timezone(db)
-        column = func.to_char(func.timezone(tz.key, Order.closed_at), "HH24")
+        column = func.to_char(
+            func.timezone(tz.key, func.coalesce(Order.closed_at, Order.created_at)),
+            "HH24",
+        )
+
+    # Aggregator and website orders carry no cashier or terminal of their own, so
+    # grouping on the raw column drops every one of them into a single "Unknown"
+    # row. Read "who was online at the POS" off the till that was open when the
+    # order arrived instead; the order's own value still wins when it has one, so
+    # a counter sale is unaffected and only the un-rung orders borrow the till's.
+    till_lateral = None
+    if dimension in {"cashier", "staff", "device"}:
+        till_lateral = _covering_till()
+        if dimension == "device":
+            column = func.coalesce(Order.device_id, till_lateral.c.device_id)
+        else:
+            column = func.coalesce(Order.closer_id, till_lateral.c.user_id)
 
     # What the group cost us, beside what it took. Every dimension here groups
     # whole orders, so the two stamped fee columns sum cleanly against the same
@@ -232,21 +249,28 @@ async def sales_by_dimension(
     # the order count when every one is priced; lower when some are not.
     fees_known = func.count(Order.payment_fee)
 
+    selectable = select(
+        column.label("key"),
+        func.count(Order.id),
+        func.coalesce(func.sum(Order.total), 0),
+        func.coalesce(func.sum(Order.discount_amount), 0),
+        fees,
+        fees_known,
+    )
+    if till_lateral is not None:
+        # Correlated to Order, so it is a LEFT JOIN LATERAL and never multiplies
+        # the row: at most one till answers, and orders that carry their own
+        # cashier/device never consult it.
+        selectable = selectable.select_from(Order).outerjoin(till_lateral, sa_true())
+
     stmt = (
         _scope(
-            select(
-                column.label("key"),
-                func.count(Order.id),
-                func.coalesce(func.sum(Order.total), 0),
-                func.coalesce(func.sum(Order.discount_amount), 0),
-                fees,
-                fees_known,
-            ),
+            selectable,
             branch_id=branch_id,
             date_from=date_from,
             date_to=date_to,
         )
-        .where(Order.pos_status == CLOSED)
+        .where(_COMPLETED_SALE)
         .group_by(column)
         .order_by(func.coalesce(func.sum(Order.total), 0).desc())
         .limit(limit)
@@ -312,7 +336,7 @@ async def _sales_by_related(
         )
         .select_from(Order)
         .join(model, model.order_id == Order.id)
-        .where(Order.pos_status == CLOSED)
+        .where(_COMPLETED_SALE)
         .where(
             OrderDiscount.source == _DISCOUNT_SOURCES[dimension]
             if dimension in _DISCOUNT_SOURCES
@@ -360,7 +384,11 @@ async def _sales_by_item(
     # every other screen shows, so this is the same picture the products list
     # and the storefront use rather than a second opinion about which is the
     # main one.
-    thumbnail = Product.image_urls[0].astext
+    # `image_urls` is a Postgres text array, not JSON: PG arrays are 1-based so
+    # `[0]` is always NULL, and `.astext` is a JSON accessor this column does not
+    # have — together they built invalid SQL that 500'd product *and* category
+    # (this line runs before the branch split) and never yielded a thumbnail.
+    thumbnail = Product.image_urls[1]
 
     if group_by_category:
         key, label = Category.id, Category.name
@@ -403,7 +431,7 @@ async def _sales_by_item(
 
     stmt = _scope(stmt, branch_id=branch_id, date_from=date_from, date_to=date_to)
     stmt = (
-        stmt.where(Order.pos_status == CLOSED, OrderItem.status != "void")
+        stmt.where(_COMPLETED_SALE, OrderItem.status != "void")
         .group_by(*group_columns)
         .order_by(revenue.desc())
         .limit(limit)
@@ -461,7 +489,7 @@ async def _sales_by_modifier_option(
         .select_from(Order)
         .join(OrderItem, OrderItem.order_id == Order.id)
         .join(option, sa_true())
-        .where(Order.pos_status == CLOSED)
+        .where(_COMPLETED_SALE)
         .group_by(name)
         .order_by(func.sum(quantity).desc())
         .limit(limit)
@@ -526,7 +554,7 @@ async def _sales_by_seating(
             if dimension == "section"
             else (Tag.id == PosTable.revenue_center_tag_id),
         )
-        .where(Order.pos_status == CLOSED)
+        .where(_COMPLETED_SALE)
         .group_by(label)
         .order_by(func.coalesce(func.sum(Order.total), 0).desc())
         .limit(limit)
@@ -624,7 +652,7 @@ async def _sales_by_tag(
         )
 
     stmt = (
-        stmt.where(Order.pos_status == CLOSED)
+        stmt.where(_COMPLETED_SALE)
         .group_by(Tag.name)
         .order_by(func.count(func.distinct(Order.id)).desc())
         .limit(limit)
@@ -677,7 +705,7 @@ async def _sales_by_delivery_zone(
         )
         .select_from(Order)
         .outerjoin(OrderDelivery, OrderDelivery.order_id == Order.id)
-        .where(Order.pos_status == CLOSED, Order.order_type == "delivery")
+        .where(_COMPLETED_SALE, Order.order_type == "delivery")
         .group_by(zone)
         .order_by(func.coalesce(func.sum(Order.total), 0).desc())
         .limit(limit)
