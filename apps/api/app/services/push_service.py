@@ -22,16 +22,21 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.models.delivery_batch import DELIVERY_TIMEZONE
 from app.models.device_push_token import DevicePushToken
 from app.models.order import Order
+from app.models.pos_order import OrderSourceEnum
 from app.services.providers.apns_provider import ApnsError, provider
 
 logger = logging.getLogger(__name__)
+
+_TZ = ZoneInfo(DELIVERY_TIMEZONE)
 
 __all__ = [
     "is_enabled",
@@ -178,9 +183,80 @@ def _alert(
     return {"aps": aps, **extra}
 
 
+def _channel_line(order: Order) -> str:
+    """
+    Which kind of order this is — the first thing the counter needs to read.
+
+    An aggregator order says which marketplace it came from (`Talabat`, `Noon`,
+    …), because "aggregator" alone tells a register nothing it can act on, and
+    names the aggregator's own rider once GrubOps has assigned one. A storefront
+    order is `Website`. Everything else falls back to its source spelled as a
+    word rather than the enum value.
+    """
+    if order.source == OrderSourceEnum.AGGREGATOR.value:
+        channel = order.aggregator_channel or "Aggregator"
+        if order.aggregator_driver_name:
+            return f"{channel} · {order.aggregator_driver_name}"
+        return channel
+    if order.source == OrderSourceEnum.ONLINE.value:
+        return "Website"
+    return (order.source or "Order").replace("_", " ").title()
+
+
+def _when(moment: datetime, *, precision: str | None) -> str:
+    """A delivery estimate as a counter would read it, in shop time.
+
+    "Today"/"Tomorrow" rather than a date whenever they apply — that is the
+    answer somebody glancing at a register actually wants. A `day`-precision
+    promise carries no clock, because we only ever committed to a day.
+    """
+    local = moment.astimezone(_TZ)
+    today = datetime.now(_TZ).date()
+    delta = (local.date() - today).days
+    if delta == 0:
+        day = "Today"
+    elif delta == 1:
+        day = "Tomorrow"
+    else:
+        day = local.strftime("%a %-d %b")
+    if precision == "day":
+        return day
+    return f"{day} {local.strftime('%-I:%M %p')}"
+
+
+def _when_line(order: Order) -> str | None:
+    """The delivery/pickup estimate, or nothing when there is none to show.
+
+    Aggregator orders carry no `promised_at` (the marketplace owns the promise),
+    so this is in practice a website line — which is where the estimate is most
+    worth reading.
+    """
+    if order.promised_at is None:
+        return None
+    when = _when(order.promised_at, precision=order.promised_precision)
+    if order.delivery_method == "pickup":
+        return f"Pickup: {when}"
+    return f"Delivery: {when}"
+
+
+def _customer_line(order: Order) -> str | None:
+    """Name and phone where we have them, joined; nothing where we do not.
+
+    Never a stand-in like "A customer": a blank line reads as "no name on this
+    order", and an invented one reads as a real person who is not there.
+    """
+    parts = [p for p in (order.customer_name, order.customer_phone) if p]
+    return " · ".join(parts) if parts else None
+
+
 async def notify_order_placed(db: AsyncSession, order: Order) -> int:
     """
-    A website order has landed on this branch's register.
+    A new order has landed on this branch's register — website or aggregator.
+
+    The title is the two facts a counter triages on: which order, and how much
+    it is worth. Everything else — which channel it came from, when it is due,
+    and who it is for — is a line in the body, most-useful first, with anything
+    we do not have simply left out.
 
     Uses the app's own alert sound rather than the default. The requirement is a
     tone that keeps going until somebody dismisses it, and iOS will not loop a
@@ -191,16 +267,26 @@ async def notify_order_placed(db: AsyncSession, order: Order) -> int:
     if not order.branch_id:
         return 0
 
-    name = order.customer_name or "A customer"
+    lines = [
+        line
+        for line in (
+            _channel_line(order),
+            _when_line(order),
+            _customer_line(order),
+        )
+        if line
+    ]
     payload = _alert(
-        "New online order",
-        f"#{order.check_number or order.order_number} · {name} · AED {order.total}",
+        f"#{order.order_number} · AED {order.total:.2f}",
+        "\n".join(lines),
         sound=settings.APNS_ORDER_SOUND,
         extra={
             "event": "order_placed",
             "order_number": order.order_number,
             "order_id": str(order.id),
             "check_number": order.check_number,
+            "source": order.source,
+            "aggregator_channel": order.aggregator_channel,
             "branch_id": str(order.branch_id),
             # The app starts its own repeating tone off this, and stops when the
             # cashier accepts the order.
