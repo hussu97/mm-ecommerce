@@ -244,8 +244,16 @@ def _customer_line(order: Order) -> str | None:
 
     Never a stand-in like "A customer": a blank line reads as "no name on this
     order", and an invented one reads as a real person who is not there.
+
+    A Deliveroo access code — the digits dialled *after* the shared number to be
+    put through — rides on the phone when both are present, the way the admin
+    order page joins them. It is meaningless without a number to enter it into,
+    so it never shows on its own.
     """
-    parts = [p for p in (order.customer_name, order.customer_phone) if p]
+    phone = order.customer_phone
+    if phone and order.customer_phone_access_code:
+        phone = f"{phone} (Code {order.customer_phone_access_code})"
+    parts = [p for p in (order.customer_name, phone) if p]
     return " · ".join(parts) if parts else None
 
 

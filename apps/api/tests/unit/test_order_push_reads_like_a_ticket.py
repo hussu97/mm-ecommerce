@@ -28,6 +28,7 @@ def _order(**overrides):
         delivery_method="delivery",
         customer_name=None,
         customer_phone=None,
+        customer_phone_access_code=None,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -67,6 +68,32 @@ def test_customer_line_is_name_and_phone_when_we_have_both():
 
 def test_customer_line_is_just_the_phone_when_that_is_all_we_have():
     order = _order(customer_name=None, customer_phone="+971500000000")
+    assert push_service._customer_line(order) == "+971500000000"
+
+
+def test_access_code_rides_on_the_phone_when_present():
+    order = _order(
+        customer_name="Sara",
+        customer_phone="+97144000000",
+        customer_phone_access_code="1234",
+    )
+    assert (
+        push_service._customer_line(order)
+        == "Sara · +97144000000 (Code 1234)"
+    )
+
+
+def test_access_code_never_shows_without_a_number_to_dial():
+    order = _order(
+        customer_name="Sara",
+        customer_phone=None,
+        customer_phone_access_code="1234",
+    )
+    assert push_service._customer_line(order) == "Sara"
+
+
+def test_no_access_code_means_a_plain_phone():
+    order = _order(customer_phone="+971500000000", customer_phone_access_code=None)
     assert push_service._customer_line(order) == "+971500000000"
 
 
