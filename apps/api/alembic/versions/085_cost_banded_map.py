@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Sequence, Union
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "085_cost_banded_map"

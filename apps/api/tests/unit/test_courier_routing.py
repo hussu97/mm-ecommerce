@@ -30,7 +30,7 @@ import pytest
 from app.core.config import settings
 from app.models.order import OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
-from app.services import courier_service
+from app.services.couriers import courier_service
 
 
 def _order(**overrides):

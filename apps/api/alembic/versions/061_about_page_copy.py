@@ -38,8 +38,9 @@ import uuid
 from typing import Any, Sequence, Union
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+
+from alembic import op
 
 revision: str = "061_about_page_copy"
 down_revision: Union[str, None] = "060_batch_retry"

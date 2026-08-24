@@ -11,8 +11,9 @@ Create Date: 2026-07-25
 from typing import Sequence, Union
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision: str = "037_inventory"
 down_revision: Union[str, None] = "036_product_pos_fields"

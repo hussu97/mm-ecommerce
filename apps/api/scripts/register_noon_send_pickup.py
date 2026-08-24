@@ -38,7 +38,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
 from app.models.branch import Branch
-from app.services.lalamove_service import normalise_phone
+from app.services.couriers.lalamove_service import normalise_phone
 from app.services.providers.noon_send_provider import NoonSendError, provider
 
 

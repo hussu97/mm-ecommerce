@@ -20,8 +20,9 @@ from app.schemas.cart import (
     CartResponse,
     SelectedOption,
 )
-from app.services import modifier_rules, option_snapshot
-from app.services.storefront_visibility import (
+from app.services import option_snapshot
+from app.services.catalog import modifier_rules
+from app.services.catalog.storefront_visibility import (
     is_website_product_visible,
     website_product_visibility_clause,
 )

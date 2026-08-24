@@ -17,8 +17,8 @@ from app.core.exceptions import (
     UnauthorizedError,
 )
 from app.core.limiter import limiter
-from app.core.security import create_access_token, hash_password, verify_password
 from app.core.permissions import assert_no_escalation, require
+from app.core.security import create_access_token, hash_password, verify_password
 from app.models import (
     ALL_PERMISSIONS,
     PERMISSION_GROUPS,

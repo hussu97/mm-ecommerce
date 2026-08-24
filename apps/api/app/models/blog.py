@@ -4,7 +4,7 @@ from sqlalchemy import Boolean, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .base import Base, UUIDMixin, TimestampMixin
+from .base import Base, TimestampMixin, UUIDMixin
 
 
 class BlogPost(Base, UUIDMixin, TimestampMixin):

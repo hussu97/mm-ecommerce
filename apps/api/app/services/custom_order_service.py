@@ -28,7 +28,7 @@ from app.models.custom_order import (
     CustomOrderStatusEnum,
 )
 from app.models.product import Product
-from app.services import business_day_service
+from app.services.pos import business_day_service
 
 logger = logging.getLogger(__name__)
 

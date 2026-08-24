@@ -5,14 +5,13 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, Request, status
-
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.deps import get_current_active_user, get_db
-from app.core.permissions import require
 from app.core.exceptions import ConflictError
+from app.core.permissions import require
 from app.models import (
     Branch,
     BranchBusinessDay,
@@ -40,13 +39,9 @@ from app.schemas.pos import (
     TableResponse,
     TableUpdate,
 )
-from app.services import (
-    audit_service,
-    branch_holiday_service,
-    business_day_service,
-    crud_service,
-    fulfilment_service,
-)
+from app.services import audit_service, branch_holiday_service, crud_service
+from app.services.delivery import fulfilment_service
+from app.services.pos import business_day_service
 
 router = APIRouter()
 

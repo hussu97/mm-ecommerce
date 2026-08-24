@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-from app.services import product_service
+from app.services.catalog import product_service
 
 
 async def _sql_for(**kwargs) -> str:

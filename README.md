@@ -4,6 +4,13 @@ Full-stack ecommerce platform for **Melting Moments Cakes** — a UAE artisanal 
 
 ---
 
+## Documentation
+
+- [`CLAUDE.md`](CLAUDE.md) — the conventions. Read before changing anything.
+- [`docs/system-shape.md`](docs/system-shape.md) — how the four apps and one database fit together.
+- [`docs/`](docs/README.md) — indexed reference: integrations, analytics, schema, audits.
+- [`PRODUCTION.md`](PRODUCTION.md) — the deployment run-book.
+
 ## Overview
 
 | App | Description | Port |
@@ -404,40 +411,46 @@ See `docs/umami-analytics-setup.md` for the event reference and a troubleshootin
 
 ```
 apps/web/
-├── app/                   Next.js App Router pages
-│   ├── (home)/            Homepage
-│   ├── [category]/        Category listing + product detail
-│   │   └── [product]/     Product detail page (PDP)
-│   ├── search/            Search results
-│   ├── cart/              Cart page
-│   ├── checkout/          Checkout flow
-│   ├── account/           Account settings, orders
-│   ├── privacy/           Privacy policy
-│   └── terms/             Terms & conditions
-├── components/
-│   ├── layout/            Header, Footer, Navigation
-│   ├── category/          ProductCard, ProductGrid
-│   └── ui/                Button, Input, Toast, Breadcrumb, etc.
+├── app/
+│   ├── [locale]/          Every page lives under the locale segment (en | ar)
+│   │   ├── [category]/    Category listing
+│   │   │   └── [product]/ Product detail page (PDP)
+│   │   ├── search/        Search results
+│   │   ├── cart/          Cart page
+│   │   ├── checkout/      Checkout flow, its components and its hooks
+│   │   ├── account/       Account settings, orders, addresses
+│   │   ├── blog/          Blog index and posts
+│   │   ├── track/         Guest order tracking
+│   │   └── privacy/       Privacy policy
+│   ├── sitemap.ts         Sitemaps, llms.txt and the image feed
+│   └── vague/             First-party analytics proxy (see the Umami section)
+├── components/            layout, home, category, product, cart, order, ui, …
 └── lib/
-    ├── api.ts             Typed API client
+    ├── api-client.ts      The browser client — see convention 9
+    ├── api-server.ts      The RSC client — see convention 9
+    ├── api.ts             Compatibility shim re-exporting api-client
     ├── cart-context.tsx   Cart state (React context)
-    ├── types.ts           TypeScript interfaces
+    ├── i18n/              Locale detection, translation provider, server fetch
+    ├── location/          Location provider and zone resolution
+    ├── types.ts           Hand-written types (being retired — see convention 8)
     └── analytics.ts       Umami analytics helpers
 
 apps/admin/
-├── app/(dashboard)/       Dashboard, orders, products, categories, users
-└── components/            Admin-specific UI (forms, tables, badges)
+├── app/(dashboard)/       One directory per screen: orders, products, …
+├── components/            content, delivery, orders, pos, products, ui
+└── lib/                   `api.ts` request() + bindings, pos-api.ts bindings
 
 apps/api/
 ├── app/
 │   ├── api/v1/            Route handlers (one file per resource)
-│   ├── core/              Config, DB session, exceptions, auth, limiter
-│   ├── middleware/        Request ID, logging
+│   ├── core/              Config, DB session, exceptions, auth, limiter, money
 │   ├── models/            SQLAlchemy ORM models
 │   ├── schemas/           Pydantic request/response schemas
-│   ├── services/          Business logic layer
+│   ├── services/          Business logic, with `providers/` for integrations
 │   └── templates/emails/  Jinja2 email templates
-└── alembic/               Migration scripts
+├── alembic/versions/      Migration scripts, one linear chain
+└── scripts/               Operator tools — and `seed_i18n`, which the API runs
+                           on boot and which owns every UI string
 ```
 
 ---

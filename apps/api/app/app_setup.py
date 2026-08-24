@@ -32,6 +32,7 @@ from app.core.database import AsyncSessionFactory
 from app.core.deps import get_db
 from app.core.exceptions import AppError
 from app.core.limiter import limiter
+from app.services import firebase_auth_service
 from scripts.seed_i18n import seed as seed_i18n
 
 logger = logging.getLogger("mm.api")
@@ -161,7 +162,7 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
         # carries the current logo. Best-effort — the module falls back to the
         # conventional URL if this cannot run — and cheap (one small query).
         try:
-            from app.services import courier_catalog
+            from app.services.couriers import courier_catalog
 
             async with AsyncSessionFactory() as session:
                 await courier_catalog.load(session)
@@ -170,7 +171,7 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
 
         background: list[asyncio.Task] = []
         if dispatch_batches and settings.BATCH_DISPATCHER_ENABLED:
-            from app.services import batch_scheduler
+            from app.services.delivery import batch_scheduler
 
             background.append(asyncio.create_task(batch_scheduler.run_forever()))
 
@@ -187,7 +188,7 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
             # dispatcher down with it. Storefront only, like its neighbours —
             # the register app must not run a second copy.
             if settings.GRUBOPS_SYNC_ENABLED:
-                from app.services import grubops_reconcile
+                from app.services.grubops import grubops_reconcile
 
                 background.append(asyncio.create_task(grubops_reconcile.run_forever()))
 
@@ -197,7 +198,7 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
             # syncing stock are switched on at different times and fail
             # independently. Storefront only, like its neighbours.
             if settings.GRUBOPS_ORDERS_ENABLED:
-                from app.services import grubops_orders
+                from app.services.grubops import grubops_orders
 
                 background.append(asyncio.create_task(grubops_orders.run_forever()))
 
@@ -311,6 +312,32 @@ def add_system_endpoints(app: FastAPI, *, service: str) -> None:
     @app.get("/ping", tags=["System"], summary="Liveness probe — no dependencies")
     async def ping() -> dict:
         return {"status": "ok", "service": service}
+
+    @app.get(
+        "/health/integrations",
+        tags=["System"],
+        summary="Third-party reachability — for a smoke test, not a healthcheck",
+    )
+    async def health_integrations() -> dict:
+        """
+        Whether the outside services this deploy depends on answer.
+
+        Deliberately not part of `/health`, and deliberately not what the
+        container healthcheck polls (that is `/ping`, which depends on
+        nothing). A probe that lets a third party mark the container unhealthy
+        turns their outage into our restart loop.
+
+        It exists because a misconfigured deploy is otherwise invisible until a
+        customer meets it: phone verification with an unreachable certificate
+        endpoint fails closed, quietly, and looks like nobody tried to sign up.
+        """
+        checks: dict[str, str] = {}
+        if firebase_auth_service.is_enabled():
+            reachable = await firebase_auth_service.certificates_reachable()
+            checks["firebase_certificates"] = "ok" if reachable else "unreachable"
+        else:
+            checks["firebase_certificates"] = "disabled"
+        return {"service": service, "checks": checks}
 
     @app.get(
         "/health", tags=["System"], summary="Health check — verifies DB connectivity"

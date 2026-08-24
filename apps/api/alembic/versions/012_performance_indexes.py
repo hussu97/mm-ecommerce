@@ -10,7 +10,6 @@ from typing import Sequence, Union
 
 from alembic import op
 
-
 revision: str = "012_performance_indexes"
 down_revision: Union[str, None] = "011_cms_home_page"
 branch_labels: Union[str, Sequence[str], None] = None

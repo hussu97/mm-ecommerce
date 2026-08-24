@@ -5,8 +5,9 @@ Revises: 017_cart_and_order_indexes
 Create Date: 2026-03-08 00:00:00.000000
 """
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "018_address_region_overhaul"
 down_revision = "017_cart_and_order_indexes"

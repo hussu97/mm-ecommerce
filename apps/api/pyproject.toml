@@ -75,6 +75,29 @@ geo = [
     "shapely>=2.0",
 ]
 
+[tool.ruff]
+# Ruff ran on its defaults until now — `E4`, `E7`, `E9`, `F` — which is why
+# `models/address.py` could carry a second `from sqlalchemy import ...` below a
+# local import and pass CI for months.
+
+[tool.ruff.lint]
+# `I` (isort) is the addition. It is mechanical, it has an autofix, and import
+# order is one of the few things in a file an agent reads before anything else.
+extend-select = ["I"]
+
+# Deliberately *not* enabled, so the next person does not have to re-derive it:
+#
+# * `B`, `UP` — 1,822 findings, almost all cosmetic modernisation
+#   (`Optional[X]` -> `X | None`, `timezone.utc` -> `UTC`). Worth doing as its
+#   own pass with its own review; folding it into an unrelated change would
+#   bury the change.
+# * `S` (bandit) — 7 findings in `app/`, all false positives: `token_type =
+#   "bearer"`, the dev sentinel `SECRET_KEY` that `app_setup` already refuses to
+#   boot production with, and Cloudflare's published Turnstile test keys. Seven
+#   suppressions for no finding is worse than not running it. Note the
+#   `# noqa: S608` comments in migrations 054 and 061 are therefore inert — they
+#   document deliberately string-built SQL and are kept for that.
+
 [build-system]
 requires = ["setuptools>=75.0"]
 build-backend = "setuptools.build_meta"

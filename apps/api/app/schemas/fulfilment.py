@@ -2,7 +2,7 @@
 The customer-facing shape of "how does this order reach me".
 
 Serialisation only — every decision behind these fields lives in
-`app.services.fulfilment_service`, including the rule that a courier's name and
+`app.services.delivery.fulfilment_service`, including the rule that a courier's name and
 a driver's identity never appear here.
 
 Nothing in this module imports a service. `OrderResponse` embeds
@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from app.models.branch import Branch
 
 if TYPE_CHECKING:  # pragma: no cover — typing only, see the module docstring
-    from app.services.fulfilment_service import Fulfilment
+    from app.services.delivery.fulfilment_service import Fulfilment
 
 __all__ = ["FulfilmentResponse", "PickupBranchResponse"]
 

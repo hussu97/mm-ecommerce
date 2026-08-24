@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import cache_delete_pattern
 from app.core.deps import get_db
-from app.core.permissions import require
 from app.core.exceptions import BadRequestError
+from app.core.permissions import require
 from app.models.category import Category
 from app.models.modifier import Modifier, ModifierOption
 from app.models.product import Product

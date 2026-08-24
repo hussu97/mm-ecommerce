@@ -7,12 +7,12 @@ from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import BadRequestError, NotFoundError
 from app.core.deps import get_current_active_user, get_db
+from app.core.exceptions import BadRequestError, NotFoundError
 from app.core.limiter import limiter
 from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.user import User
-from app.services import payment_service
+from app.services.payments import payment_service
 from app.services.webhook_log_service import Recorder
 
 logger = logging.getLogger(__name__)

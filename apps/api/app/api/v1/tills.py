@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import uuid
-
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query, Request, status
@@ -11,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, get_db
+from app.core.deps import get_db
 from app.core.exceptions import ConflictError, ForbiddenError
 from app.core.permissions import require
 from app.models import Branch, Till
@@ -24,13 +23,23 @@ from app.schemas.pos import (
     TillReport,
     TillResponse,
 )
-from app.services import audit_service, crud_service, till_service
+from app.services import audit_service, crud_service
+from app.services.pos import till_service
 
 router = APIRouter()
 
 
 def _assert_can_touch(till: Till, user: User) -> None:
-    """A cashier may only operate their own till; admins may operate any."""
+    """A cashier may only operate their own till; admins may operate any.
+
+    Stays imperative, and is not the hand-rolled check rule 4 forbids. That
+    rule is about *permissions*, which are a property of the caller and are
+    therefore knowable when the route is declared — `require()` is a dependency
+    and runs before the handler has loaded anything. This is ownership: it is a
+    property of the row, and there is no row until the handler fetches it. The
+    permission half of the gate is `require("pos.register.access")` in the
+    signature, where it can be audited by grep; this is the half that cannot be.
+    """
     if till.user_id != user.id and not user.is_admin:
         raise ForbiddenError("This till belongs to another user")
 
@@ -45,9 +54,11 @@ async def list_tills(
     status_filter: str | None = Query(None, alias="status"),
     limit: int = Query(50, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("pos.register.access")),
 ):
     stmt = select(Till)
+    # Scoping, not gating: a cashier sees their own tills and an admin sees
+    # every one. A dependency cannot narrow a query, so this stays here.
     if not user.is_admin:
         stmt = stmt.where(Till.user_id == user.id)
     if branch_id:
@@ -64,7 +75,7 @@ async def list_tills(
 async def get_my_open_till(
     branch_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("pos.register.access")),
 ):
     """The caller's open till, or null — the POS calls this on every app launch."""
     return await till_service.get_open_till(db, user_id=user.id, branch_id=branch_id)
@@ -75,7 +86,7 @@ async def open_till(
     request: Request,
     data: TillOpenRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("pos.register.access")),
 ):
     branch = await crud_service.get_or_404(db, Branch, data.branch_id)
 
@@ -136,7 +147,7 @@ async def close_till(
     till_id: uuid.UUID,
     data: TillCloseRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("pos.register.access")),
 ):
     till = await till_service.require_till(db, till_id)
     _assert_can_touch(till, user)
@@ -168,7 +179,7 @@ async def close_till(
 async def get_till(
     till_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("pos.register.access")),
 ):
     till = await till_service.require_till(db, till_id)
     _assert_can_touch(till, user)
@@ -179,7 +190,7 @@ async def get_till(
 async def till_report(
     till_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("pos.register.access")),
 ):
     """X-report while open, Z-report once closed."""
     till = await till_service.require_till(db, till_id)
@@ -252,7 +263,7 @@ async def cash_spot_check(
 async def list_drawer_operations(
     till_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("pos.register.access")),
 ):
     from app.models import DrawerOperation
 

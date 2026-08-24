@@ -23,7 +23,7 @@ import pytest
 
 from app.models.order import Order, OrderStatusEnum
 from app.models.pos_order import OrderSourceEnum
-from app.services import arrival_service
+from app.services.delivery import arrival_service
 
 #: Comfortably ahead of now, so the batched case is genuinely waiting.
 LATER = datetime.now(timezone.utc) + timedelta(hours=2)
@@ -54,7 +54,7 @@ def _run(dispatch_at: datetime, *, open_: bool = True):
 @pytest.fixture
 def stubs(monkeypatch):
     """The world around a scheduling decision, recorded rather than run."""
-    from app.services import batching_service
+    from app.services.delivery import batching_service
 
     calls: dict[str, list] = {"landed": [], "reserved": []}
 
@@ -174,7 +174,7 @@ class _Db:
 @pytest.fixture
 def quiet_publish(monkeypatch):
     """`arrived_at_pos` publishes to the register; that has its own tests."""
-    from app.services import order_service
+    from app.services.orders import order_service
 
     async def publish(db, order, branch=None):
         return None
@@ -192,7 +192,7 @@ async def test_a_courier_that_refuses_still_lets_the_kitchen_know(
     and never *conditional* on it. Getting this backwards would mean an empty
     Lalamove wallet silently stopped the kitchen.
     """
-    from app.services import batching_service
+    from app.services.delivery import batching_service
 
     async def explode(db, order, **kwargs):
         raise RuntimeError("wallet is empty")
@@ -213,7 +213,7 @@ async def test_an_order_that_moved_on_without_us_is_left_alone(
     `confirmed` without passing through here. The sweep must not drag such an
     order backwards onto a status it has already overtaken.
     """
-    from app.services import batching_service
+    from app.services.delivery import batching_service
 
     async def never(db, order, **kwargs):
         raise AssertionError("a driver was called for an order already gone")
@@ -236,7 +236,7 @@ def test_a_driver_collecting_skips_packed_rather_than_inventing_it():
     to the customer and read by the kitchen reports, and a timestamp meaning
     "the moment we heard about the driver" is wrong in both.
     """
-    from app.services.order_lifecycle import VALID_TRANSITIONS
+    from app.services.orders.order_lifecycle import VALID_TRANSITIONS
 
     assert (
         OrderStatusEnum.OUT_FOR_DELIVERY
@@ -251,7 +251,7 @@ def test_confirmed_still_reaches_packed_without_arriving():
     exists. Refusing that because our own bookkeeping has not caught up would be
     the tail wagging the dog.
     """
-    from app.services.order_lifecycle import VALID_TRANSITIONS
+    from app.services.orders.order_lifecycle import VALID_TRANSITIONS
 
     assert OrderStatusEnum.PACKED in VALID_TRANSITIONS[OrderStatusEnum.CONFIRMED]
 
@@ -264,7 +264,7 @@ def test_an_arrived_order_cannot_go_back_to_confirmed():
     again on every terminal in the branch, and — on a zone we dispatch — sent a
     second van.
     """
-    from app.services.order_lifecycle import VALID_TRANSITIONS
+    from app.services.orders.order_lifecycle import VALID_TRANSITIONS
 
     assert (
         OrderStatusEnum.CONFIRMED
@@ -289,7 +289,7 @@ async def test_the_gateway_is_not_recorded_as_having_told_the_shop(
     tell a kitchen anything.
     """
     from app.models.order_status_event import StatusSourceEnum, acting_as
-    from app.services import batching_service
+    from app.services.delivery import batching_service
 
     async def nothing(db, order, **kwargs):
         return None
@@ -321,7 +321,7 @@ async def test_an_arrival_is_recorded_like_any_other_status(monkeypatch, quiet_p
     *assigned*, not because somebody remembered to record it — which is the
     property that survives the next writer.
     """
-    from app.services import batching_service
+    from app.services.delivery import batching_service
 
     async def nothing(db, order, **kwargs):
         return None

@@ -26,8 +26,8 @@ from sqlalchemy.exc import IntegrityError
 from app.models.branch import Branch
 from app.models.order_delivery import OrderDelivery
 from app.models.order_driver import OrderDriver
-from app.services import driver_assignment, driver_proximity
-from app.services.driver_assignment import Change, Driver
+from app.services.delivery import driver_assignment, driver_proximity
+from app.services.delivery.driver_assignment import Change, Driver
 
 NOW = datetime(2026, 8, 20, 9, 0, tzinfo=timezone.utc)
 
@@ -402,7 +402,7 @@ def test_the_sweep_refreshes_before_the_counter_stops_being_told():
     the larger, there would be a stretch of every minute in which the counter
     saw nothing and nothing was being fetched.
     """
-    from app.services import driver_tracking
+    from app.services.delivery import driver_tracking
 
     assert driver_tracking.STALE_AFTER < driver_proximity.MAX_AGE
 
@@ -497,7 +497,7 @@ async def test_a_failed_route_leaves_the_last_good_one_alone(monkeypatch):
     fresh route for a minute at a time, suppressing the retry — and the screens
     would quietly stop showing an ETA with nothing to say why.
     """
-    from app.services import driver_routing
+    from app.services.delivery import driver_routing
     from app.services.providers import mapbox_provider
 
     async def _no_route(**_kwargs):
@@ -517,7 +517,7 @@ async def test_a_failed_route_leaves_the_last_good_one_alone(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_a_successful_route_is_written_with_the_moment_it_was_asked(monkeypatch):
-    from app.services import driver_routing
+    from app.services.delivery import driver_routing
     from app.services.providers import mapbox_provider
 
     async def _leg(**_kwargs):
@@ -541,7 +541,7 @@ async def test_mapbox_is_asked_for_lng_lat_in_that_order(monkeypatch):
     and getting it wrong does not raise — it routes across the Arabian Sea and
     returns a plausible-looking number of kilometres.
     """
-    from app.services import driver_routing
+    from app.services.delivery import driver_routing
     from app.services.providers import mapbox_provider
 
     seen: dict = {}
@@ -586,7 +586,8 @@ async def test_the_sweep_builds_its_query_when_lalamove_is_configured(monkeypatc
     question a reader can answer by looking, and is the only question that
     mattered here.
     """
-    from app.services import driver_tracking, lalamove_service
+    from app.services.couriers import lalamove_service
+    from app.services.delivery import driver_tracking
 
     monkeypatch.setattr(lalamove_service, "is_enabled", lambda: True)
 
@@ -609,7 +610,7 @@ async def test_the_sweep_builds_its_query_when_lalamove_is_configured(monkeypatc
 @pytest.mark.asyncio
 async def test_the_routing_sweep_builds_its_query_too(monkeypatch):
     """The same hole, on the sibling sweep. Same reason, same cheap assertion."""
-    from app.services import driver_routing
+    from app.services.delivery import driver_routing
     from app.services.providers import mapbox_provider
 
     monkeypatch.setattr(mapbox_provider, "is_configured", lambda: True)
@@ -751,7 +752,8 @@ async def test_the_sweep_looks_at_bookings_with_no_driver_on_them(monkeypatch):
     `_refresh_one` reads the booking before the driver and learns the id from
     it, so the filter never bought anything either.
     """
-    from app.services import driver_tracking, lalamove_service
+    from app.services.couriers import lalamove_service
+    from app.services.delivery import driver_tracking
 
     monkeypatch.setattr(lalamove_service, "is_enabled", lambda: True)
 
@@ -785,7 +787,8 @@ async def test_the_sweep_stops_chasing_a_booking_that_is_old_enough_to_be_somebo
     whose `COMPLETED` push was lost would otherwise be polled once a minute
     forever.
     """
-    from app.services import driver_tracking, lalamove_service
+    from app.services.couriers import lalamove_service
+    from app.services.delivery import driver_tracking
 
     monkeypatch.setattr(lalamove_service, "is_enabled", lambda: True)
 
@@ -813,7 +816,8 @@ async def test_the_sweep_recovers_a_driver_the_webhook_dropped(monkeypatch):
     The whole point, end to end: a booking we believe has nobody on it, which
     Lalamove says has been ON_GOING with a rider for some time.
     """
-    from app.services import driver_tracking, lalamove_service
+    from app.services.couriers import lalamove_service
+    from app.services.delivery import driver_tracking
     from app.services.providers import lalamove_provider
 
     delivery = _delivery(
@@ -858,7 +862,8 @@ async def test_a_booking_still_being_matched_costs_one_call_and_no_more(monkeypa
     There is genuinely nobody on it. The sweep must not go on to ask the driver
     endpoint about an id it does not have, or announce a rider to the counter.
     """
-    from app.services import driver_tracking, lalamove_service
+    from app.services.couriers import lalamove_service
+    from app.services.delivery import driver_tracking
     from app.services.providers import lalamove_provider
 
     delivery = _delivery(
@@ -907,7 +912,8 @@ async def test_a_lost_completed_still_delivers_the_order(monkeypatch):
     `test_lalamove_service.test_a_completed_nobody_pushed_still_delivers_the_order`;
     a mock cannot make it and should not appear to.
     """
-    from app.services import driver_tracking, lalamove_service
+    from app.services.couriers import lalamove_service
+    from app.services.delivery import driver_tracking
     from app.services.providers import lalamove_provider
 
     delivery = _delivery(
@@ -946,7 +952,8 @@ async def test_an_ending_we_already_recorded_costs_nothing(monkeypatch):
     the one that noticed. Reapplying it would rewrite `last_payload` with a
     fabricated body and re-run the consequences of a transition already made.
     """
-    from app.services import driver_tracking, lalamove_service
+    from app.services.couriers import lalamove_service
+    from app.services.delivery import driver_tracking
     from app.services.providers import lalamove_provider
 
     delivery = _delivery(courier_status="COMPLETED", driver_id="4827243")
@@ -970,7 +977,8 @@ async def test_a_lost_pickup_is_reconciled_too(monkeypatch):
     `out_for_delivery`. Losing it strands the customer's timeline just as badly,
     so it goes through the same door.
     """
-    from app.services import driver_tracking, lalamove_service
+    from app.services.couriers import lalamove_service
+    from app.services.delivery import driver_tracking
     from app.services.providers import lalamove_provider
 
     delivery = _delivery(courier_status="ON_GOING", driver_id="4827243")
@@ -1000,7 +1008,7 @@ def test_the_fabricated_payload_does_not_borrow_a_courier_event_name():
     when asking what the courier actually said.
     """
     from app.models.order_delivery import CourierStatusEnum
-    from app.services import driver_tracking
+    from app.services.delivery import driver_tracking
 
     payload = driver_tracking._as_payload({"status": "COMPLETED"}, at=NOW)
 
@@ -1026,7 +1034,8 @@ async def test_the_fabricated_payload_clears_the_out_of_order_guard(monkeypatch)
     well predate a later push we did receive. Stamped with now, it is always
     the newest thing we know.
     """
-    from app.services import driver_tracking, lalamove_service
+    from app.services.couriers import lalamove_service
+    from app.services.delivery import driver_tracking
 
     delivery = _delivery(
         courier_status="ON_GOING",

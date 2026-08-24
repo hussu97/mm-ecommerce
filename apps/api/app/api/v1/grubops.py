@@ -48,7 +48,8 @@ from app.schemas.grubops import (
     GrubOpsOrderRow,
     GrubOpsSyncSummary,
 )
-from app.services import audit_service, grubops_mapping
+from app.services import audit_service
+from app.services.grubops import grubops_mapping
 from app.services.providers.grubops_provider import GrubOpsError
 
 router = APIRouter()

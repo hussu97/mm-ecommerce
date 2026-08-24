@@ -88,6 +88,10 @@ class CustomOrder(Base, UUIDMixin, TimestampMixin):
         # Migration 099: a typo'd status here is a slot the capacity check
         # either never releases or never counts.
         status_vocabulary("custom_orders", "status", CustomOrderStatusEnum),
+        # Migration 138. Ours, not a provider's: a request arrives by one of
+        # four routes we chose, and the sibling `status` has been constrained
+        # since 099.
+        status_vocabulary("custom_orders", "source", CustomOrderSourceEnum),
     )
 
     #: The date the cake is wanted. Not nullable: a custom order with no date is

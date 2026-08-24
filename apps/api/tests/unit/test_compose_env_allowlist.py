@@ -23,7 +23,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from pydantic import TypeAdapter
 
 from app.core.config import Settings
@@ -306,4 +305,139 @@ def test_no_compose_default_is_a_value_its_setting_cannot_parse():
     assert not failures, (
         "a compose default cannot be parsed by its setting, so the container "
         "will fail to start:\n  " + "\n  ".join(failures)
+    )
+
+
+# ── The other four places on the checklist ───────────────────────────────────
+#
+# Everything above reads `docker-compose.prod.yml` — location 5, the one whose
+# absence is silent. But the checklist in CLAUDE.md names five places, and
+# until now only this one was enforced; the other four were named in the
+# docstring at the top of this file as narrative and read by nothing.
+#
+# That gap had already cost something. `NOON_SEND_BASE`, `NOON_SEND_BULKY_BASE`
+# and `NOON_SEND_SURGE_AED` — the noon Send fares, in dirhams — were in
+# `.env.example` and in compose, and in neither workflow. Compose supplies
+# `${NOON_SEND_BASE:-12}` and the setting defaults to 12.0, so the two agreed
+# and nothing looked wrong. The failure was the inverse of the 2026-08-05 one:
+# not a default reaching production instead of a secret, but a secret that
+# could never reach production at all. `gh secret set NOON_SEND_BASE` wrote a
+# value the deploy never copied to the VM, so the fare was pinned at 12 and no
+# screen said so.
+
+ROOT = COMPOSE.parent
+ENV_EXAMPLE = ROOT / "apps" / "api" / ".env.example"
+PRODUCTION_MD = ROOT / "PRODUCTION.md"
+DEPLOY_YML = ROOT / ".github" / "workflows" / "deploy.yml"
+ROLLBACK_YML = ROOT / ".github" / "workflows" / "rollback.yml"
+
+#: Written into `.env` on the VM but not read through `Settings`. Each is
+#: consumed by the compose file itself rather than by the app.
+NOT_A_SETTING = {
+    # Postgres' own credentials; the database service reads them.
+    "POSTGRES_USER",
+    "POSTGRES_PASSWORD",
+    "POSTGRES_DB",
+    # Read by the `gcplogs` Docker logging driver, not by Python.
+    "GCP_PROJECT_ID",
+}
+
+
+def _configurable() -> set[str]:
+    return set(Settings.model_fields) - NOT_FROM_ENV
+
+
+def _env_written_by(workflow: Path) -> dict[str, str]:
+    """
+    The `KEY=value` lines of a workflow's "Write .env on VM" heredoc.
+
+    Scoped to the heredoc rather than grepped from the whole file on purpose:
+    both workflows have later steps with shell variables of their own
+    (`API_READY`, `POS_READY`, `TARGET_SHA`) that are not env at all, and a
+    looser match reports them as drift between the two files forever.
+    """
+    body = re.search(r"<<'ENVEOF'\n(.*?)\n\s*ENVEOF", workflow.read_text(), re.S)
+    assert body, f"no .env heredoc found in {workflow.name}"
+    return dict(re.findall(r"^\s*([A-Z][A-Z0-9_]*)=(.*)$", body.group(1), re.M))
+
+
+def test_every_setting_is_documented_in_env_example():
+    """Location 1. A setting absent here is one nobody knows exists."""
+    documented = set(re.findall(r"^([A-Z][A-Z0-9_]*)=", ENV_EXAMPLE.read_text(), re.M))
+    missing = sorted(_configurable() - documented)
+
+    assert not missing, (
+        "add these to apps/api/.env.example with a comment saying what they "
+        f"do:\n  {chr(10).join(missing)}"
+    )
+
+
+def test_every_setting_is_documented_in_production_md():
+    """
+    Location 2. Matched on the backticked name anywhere in the runbook, which
+    is deliberately loose: this asserts the operator can find the variable,
+    not where the page happens to mention it.
+    """
+    mentioned = set(re.findall(r"`([A-Z][A-Z0-9_]{2,})`", PRODUCTION_MD.read_text()))
+    missing = sorted(_configurable() - mentioned)
+
+    assert not missing, (
+        "add these to the PRODUCTION.md secrets tables (Step 13c) — a setting "
+        f"that is not on that page cannot be set deliberately:\n  {chr(10).join(missing)}"
+    )
+
+
+@pytest.mark.parametrize("workflow", [DEPLOY_YML, ROLLBACK_YML])
+def test_every_setting_is_written_to_the_vm(workflow):
+    """
+    Locations 3 and 4. A setting the workflow never writes cannot be changed by
+    setting its GitHub secret — the value goes nowhere and the app keeps its
+    default, with nothing reporting the difference.
+    """
+    missing = sorted(_configurable() - set(_env_written_by(workflow)))
+
+    assert not missing, (
+        f"these settings are never written to .env by {workflow.name}, so a "
+        f"secret set for them does nothing:\n  {chr(10).join(missing)}"
+    )
+
+
+def test_the_two_workflows_write_the_same_env():
+    """
+    A rollback that writes a different `.env` than the deploy is a second,
+    unreviewed configuration that only ever runs during an incident — the worst
+    moment to discover the two had drifted. They were in sync by hand until
+    now; this is what keeps them that way.
+    """
+    deploy = _env_written_by(DEPLOY_YML)
+    rollback = _env_written_by(ROLLBACK_YML)
+
+    assert set(deploy) == set(rollback), (
+        "deploy.yml and rollback.yml write different keys:\n"
+        f"  only in deploy.yml:   {sorted(set(deploy) - set(rollback))}\n"
+        f"  only in rollback.yml: {sorted(set(rollback) - set(deploy))}"
+    )
+
+    differing = sorted(k for k in deploy if deploy[k] != rollback[k])
+    assert not differing, (
+        "deploy.yml and rollback.yml write different values for:\n  "
+        + "\n  ".join(f"{k}: {deploy[k]!r} vs {rollback[k]!r}" for k in differing)
+    )
+
+
+def test_nothing_is_written_to_the_vm_that_no_service_reads():
+    """
+    The reverse direction, and the literal 2026-08-05 failure: a variable in
+    `.env` that no `environment:` block names never reaches a container.
+    """
+    compose = _load_compose()
+    named = set()
+    for service in compose["services"].values():
+        named |= set(service.get("environment") or {})
+
+    stranded = sorted(set(_env_written_by(DEPLOY_YML)) - named - NOT_A_SETTING)
+
+    assert not stranded, (
+        "these are written to .env on the VM and passed to no container, so "
+        f"the app never sees them:\n  {chr(10).join(stranded)}"
     )

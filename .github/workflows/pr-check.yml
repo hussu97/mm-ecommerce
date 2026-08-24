@@ -65,7 +65,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: apps/web/.next/cache
-          key: nextjs-web-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('apps/web/src/**/*.ts', 'apps/web/src/**/*.tsx', 'apps/web/**/*.ts', 'apps/web/**/*.tsx') }}
+          key: nextjs-web-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('apps/web/**/*.ts', 'apps/web/**/*.tsx') }}
           restore-keys: |
             nextjs-web-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
             nextjs-web-${{ runner.os }}-
@@ -116,7 +116,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: apps/admin/.next/cache
-          key: nextjs-admin-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('apps/admin/src/**/*.ts', 'apps/admin/src/**/*.tsx', 'apps/admin/**/*.ts', 'apps/admin/**/*.tsx') }}
+          key: nextjs-admin-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('apps/admin/**/*.ts', 'apps/admin/**/*.tsx') }}
           restore-keys: |
             nextjs-admin-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
             nextjs-admin-${{ runner.os }}-

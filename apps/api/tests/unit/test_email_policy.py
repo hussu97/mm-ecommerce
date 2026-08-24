@@ -17,12 +17,13 @@ from __future__ import annotations
 import inspect
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import app.api.v1.auth
 from app.services import email_service
-
 
 # ─── The policy is actually applied at the call sites ─────────────────────────
 
@@ -39,6 +40,34 @@ def test_auth_no_longer_uses_background_tasks():
     source = inspect.getsource(auth)
     assert "BackgroundTasks" not in source
     assert "background_tasks" not in source
+
+
+def test_no_router_uses_background_tasks_for_anything():
+    """
+    The policy is about the mechanism, not about email.
+
+    Guarding `auth.py` alone left three routers — `uploads`, `import_data` and
+    `cms` — using `BackgroundTasks` for CDN warming, with no comment
+    acknowledging the deviation, while `indexnow_service` solved the identical
+    "do not make the admin wait for this" problem with a tracked
+    `asyncio.Task`. Two shapes for one problem is what convention 5 exists to
+    stop, and the failure mode does not care what the payload was: the process
+    can be reaped the moment the response goes out, and the work is dropped
+    with nothing recording it.
+    """
+    api_dir = Path(inspect.getfile(app.api.v1.auth)).parent
+    offenders = sorted(
+        path.name
+        for path in api_dir.rglob("*.py")
+        if "BackgroundTasks" in path.read_text(encoding="utf-8")
+    )
+
+    assert not offenders, (
+        "these routers use BackgroundTasks, which is dropped when the serving "
+        "process is reaped. For work that must not block the response, use a "
+        "tracked asyncio.Task the way `indexnow_service.submit_in_background` "
+        f"and `image_warm_service.warm_in_background` do:\n  {chr(10).join(offenders)}"
+    )
 
 
 def test_the_two_auth_emails_are_awaited_inline():

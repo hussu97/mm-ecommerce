@@ -36,6 +36,7 @@ from decimal import Decimal
 from typing import Sequence, Union
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "089_payment_gateways"

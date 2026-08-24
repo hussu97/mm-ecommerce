@@ -24,7 +24,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.models.charge import Charge
-from app.services import pos_order_service
+from app.services.pos import pos_order_service
 
 pytestmark = pytest.mark.asyncio
 

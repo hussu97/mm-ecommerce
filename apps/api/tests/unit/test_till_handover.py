@@ -20,7 +20,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.services import till_service
+from app.services.pos import till_service
 
 
 class _Result:

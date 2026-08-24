@@ -12,18 +12,19 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 from decimal import Decimal
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
+from sqlalchemy import inspect
 
 from app.models.order import Order, OrderStatusEnum
-from app.models.order_status_event import pending_events
-from sqlalchemy import inspect
 from app.models.order_delivery import OrderDelivery
 from app.models.order_driver import OrderDriver
-from app.services import batching_service, lalamove_service
+from app.models.order_status_event import pending_events
+from app.services.couriers import lalamove_service
+from app.services.delivery import batching_service
 
 NOW = datetime(2026, 8, 2, 12, 0, tzinfo=timezone.utc)
 COURIER_ID = "3463513590991397204"
@@ -570,7 +571,7 @@ async def test_a_completed_nobody_pushed_still_delivers_the_order(monkeypatch):
     Asserting on `courier_status` alone would pass on a version that moved the
     column and left the order behind, which is the failure this is guarding.
     """
-    from app.services import driver_tracking
+    from app.services.delivery import driver_tracking
     from app.services.providers import lalamove_provider
 
     delivery = _delivery(courier_status="ON_GOING", driver_id="4827243")
@@ -600,7 +601,7 @@ async def test_a_failed_booking_found_by_the_sweep_still_needs_a_human(monkeypat
     exactly where it is so an admin re-dispatches rather than the customer being
     told anything happened.
     """
-    from app.services import driver_tracking
+    from app.services.delivery import driver_tracking
     from app.services.providers import lalamove_provider
 
     delivery = _delivery(courier_status="ASSIGNING_DRIVER")
@@ -630,7 +631,7 @@ async def test_a_sweep_cannot_rewind_an_order_the_push_already_settled(monkeypat
     for a genuine ending — it must not also let a stale reading walk a delivered
     order backwards.
     """
-    from app.services import driver_tracking
+    from app.services.delivery import driver_tracking
     from app.services.providers import lalamove_provider
 
     delivered_at = NOW + timedelta(minutes=30)

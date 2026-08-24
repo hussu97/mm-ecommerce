@@ -29,6 +29,9 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+#: Live fire-and-forget warms. See `warm_in_background`.
+_pending: set[asyncio.Task] = set()
+
 # The widths a browser can actually land on, given the `sizes` the storefront
 # declares: product cards resolve to 384-1080 across phone and desktop DPRs, and
 # the product page's 50vw at 2x is what reaches for 1920. Anything else in
@@ -144,8 +147,36 @@ async def warm(urls: Iterable[str]) -> int:
 
 
 async def warm_quietly(urls: Iterable[str]) -> None:
-    """`warm`, with every failure swallowed. Use as a FastAPI background task."""
+    """`warm`, with every failure swallowed."""
     try:
         await warm(urls)
     except Exception:  # pragma: no cover - defensive
         logger.exception("image warm task failed")
+
+
+def warm_in_background(urls: Iterable[str]) -> None:
+    """
+    Warm the CDN without making the uploader wait for it.
+
+    This used to be `BackgroundTasks`, which convention 5 rules out: those run
+    after the response on whatever process served it, and on a serverless or
+    scaled-to-zero host that process can be frozen the moment the response goes
+    out — the warm is dropped and nothing says so. Same shape as
+    `indexnow_service.submit_in_background`, which is the pattern that already
+    solved this problem in this codebase.
+    """
+    urls = list(urls)
+    if not urls:
+        return
+    try:
+        task = asyncio.create_task(warm_quietly(urls))
+    except RuntimeError:
+        # No running loop — a management command, or a test.
+        logger.debug("image warm: no event loop, skipped %d url(s)", len(urls))
+        return
+
+    # `create_task` does not keep the task alive: the loop holds only a weak
+    # reference, so a task nobody awaits can be collected mid-flight. The set
+    # holds it until it finishes and the callback stops the set being a leak.
+    _pending.add(task)
+    task.add_done_callback(_pending.discard)

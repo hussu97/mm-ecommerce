@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import logging
-
 import hashlib
 import json
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
@@ -18,6 +17,7 @@ from fastapi import (
 )
 from jose import JWTError
 from pydantic import BaseModel, Field
+from slowapi.util import get_remote_address
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from webauthn import (
@@ -35,21 +35,21 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
+from app.core.config import settings
 from app.core.deps import (
     get_current_active_user,
     get_db,
     get_optional_user,
 )
-from app.core.permissions import require
 from app.core.exceptions import (
     BadRequestError,
     ConflictError,
     ForbiddenError,
     UnauthorizedError,
 )
-from slowapi.util import get_remote_address
-
 from app.core.limiter import limiter
+from app.core.permissions import require
+from app.core.phone import normalise_phone
 from app.core.security import (
     create_access_token,
     create_password_reset_token,
@@ -58,12 +58,8 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
-from app.core.config import settings
-from app.core.phone import normalise_phone
 from app.models import AdminPasskey, User, WebAuthnChallenge
 from app.models.refresh_token import RefreshToken
-from app.services import email_service, firebase_auth_service, turnstile_service
-from app.services.order_service import normalise_locale
 from app.schemas.user import (
     GuestSessionRequest,
     LoginRequest,
@@ -74,7 +70,8 @@ from app.schemas.user import (
     UserResponse,
     UserUpdate,
 )
-
+from app.services import email_service, firebase_auth_service, turnstile_service
+from app.services.orders.order_service import normalise_locale
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

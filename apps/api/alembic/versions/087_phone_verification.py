@@ -23,6 +23,7 @@ Create Date: 2026-08-07
 from typing import Sequence, Union
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "087_phone_verification"

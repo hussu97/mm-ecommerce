@@ -1,15 +1,6 @@
-import coreWebVitals from "eslint-config-next/core-web-vitals";
-import typescript from "eslint-config-next/typescript";
+import base from "@mm/config/eslint";
 
-export default [
-  ...coreWebVitals,
-  ...typescript,
-  {
-    rules: {
-      // react-hooks v7 added this rule but it flags intentional patterns like
-      // setMounted(true) in effects (SSR hydration safety) and animation state
-      // transitions. Downgrade to warn so CI doesn't hard-fail on valid code.
-      "react-hooks/set-state-in-effect": "warn",
-    },
-  },
-];
+/** @type {import('eslint').Linter.Config[]} */
+const config = base;
+
+export default config;

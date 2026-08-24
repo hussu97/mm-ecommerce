@@ -35,8 +35,9 @@ Revises: 115
 Create Date: 2026-08-20
 """
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "116_basket_activity"
 down_revision = "115_cart_promo_code"

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db
@@ -36,7 +36,6 @@ async def get_page(
 async def update_page(
     slug: str,
     data: CmsPageUpdate,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require("content.manage")),
 ):
@@ -44,9 +43,8 @@ async def update_page(
     # A swapped hero or promo photograph is a brand-new image URL that no page
     # view has ever asked the optimiser for. Warm it here rather than leaving the
     # first customer after the change to sit through the encode.
-    background_tasks.add_task(
-        image_warm_service.warm_quietly,
-        image_warm_service.collect_image_urls(data.content),
+    image_warm_service.warm_in_background(
+        image_warm_service.collect_image_urls(data.content)
     )
     return page
 
@@ -56,14 +54,12 @@ async def update_page_locale(
     slug: str,
     locale: str,
     data: CmsPageLocaleUpdate,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require("content.manage")),
 ):
     page = await cms_service.update_page_locale(db, slug, locale, data.content)
-    background_tasks.add_task(
-        image_warm_service.warm_quietly,
-        image_warm_service.collect_image_urls(data.content),
+    image_warm_service.warm_in_background(
+        image_warm_service.collect_image_urls(data.content)
     )
     return page
 

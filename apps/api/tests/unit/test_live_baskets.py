@@ -29,7 +29,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.api.v1 import analytics
+from app.api.v1.analytics import live_carts as analytics
 from app.models.cart import Cart, CartItem
 from app.models.product import Product
 from app.models.user import User

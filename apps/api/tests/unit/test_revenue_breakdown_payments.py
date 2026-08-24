@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.api.v1.analytics import _merged, _payment_method_label
+from app.api.v1.analytics.commerce import _merged, _payment_method_label
 
 
 class TestTheMethodLabel:
@@ -79,7 +79,7 @@ def test_cash_is_not_a_gateway():
     the same conflation this whole split was made to remove — and `none`, which
     a fully-discounted zero-total order writes, is not one either.
     """
-    from app.api.v1.analytics import _NOT_A_GATEWAY
+    from app.api.v1.analytics.commerce import _NOT_A_GATEWAY
 
     assert "cod" in _NOT_A_GATEWAY
     assert "none" in _NOT_A_GATEWAY

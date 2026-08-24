@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-from app.services import order_service
+from app.services.orders import order_service
 
 
 def _db(found: bool) -> AsyncMock:

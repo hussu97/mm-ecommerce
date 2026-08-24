@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from app.services.storefront_visibility import is_website_product_visible
+from app.services.catalog.storefront_visibility import is_website_product_visible
 
 
 def product(

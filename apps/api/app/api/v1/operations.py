@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db
 from app.core.exceptions import BadRequestError
+from app.core.money import money
 from app.core.permissions import require
 from app.models import (
     Branch,
@@ -40,11 +41,9 @@ from app.models import (
 )
 from app.models.base import utcnow
 from app.models.user import User
-from app.services import (
-    business_day_service,
-    crud_service,
-    transfer_service,
-)
+from app.services import crud_service
+from app.services.inventory import transfer_service
+from app.services.pos import business_day_service
 
 from .pos_config import build_crud_router
 
@@ -742,7 +741,7 @@ async def inventory_dashboard(
 
     return {
         "items_tracked": tracked,
-        "stock_value": total_value.quantize(Decimal("0.01")),
+        "stock_value": money(total_value),
         "below_minimum": below,
         "out_of_stock": out_of_stock,
     }

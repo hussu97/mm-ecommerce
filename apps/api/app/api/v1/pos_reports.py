@@ -11,7 +11,7 @@ from app.core.deps import get_db
 from app.core.exceptions import BadRequestError
 from app.core.permissions import require
 from app.models.user import User
-from app.services import pos_reports_service
+from app.services.pos import pos_reports
 
 router = APIRouter()
 
@@ -46,7 +46,7 @@ async def sales_summary(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require("reports.sales")),
 ):
-    return await pos_reports_service.sales_summary(db, **window.kwargs)
+    return await pos_reports.sales_summary(db, **window.kwargs)
 
 
 @router.get("/sales/by")
@@ -63,12 +63,12 @@ async def sales_by(
     The allowed set comes from the service rather than a literal repeated
     here, so adding a dimension cannot leave the route rejecting it.
     """
-    if dimension not in pos_reports_service.SUPPORTED_DIMENSIONS:
+    if dimension not in pos_reports.SUPPORTED_DIMENSIONS:
         raise BadRequestError(
             f"Unsupported dimension '{dimension}'. Try one of: "
-            f"{', '.join(sorted(pos_reports_service.SUPPORTED_DIMENSIONS))}"
+            f"{', '.join(sorted(pos_reports.SUPPORTED_DIMENSIONS))}"
         )
-    return await pos_reports_service.sales_by_dimension(
+    return await pos_reports.sales_by_dimension(
         db, dimension=dimension, limit=limit, **window.kwargs
     )
 
@@ -79,7 +79,7 @@ async def payments(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require("reports.sales")),
 ):
-    return await pos_reports_service.payments_report(db, **window.kwargs)
+    return await pos_reports.payments_report(db, **window.kwargs)
 
 
 @router.get("/taxes")
@@ -89,7 +89,7 @@ async def taxes(
     _: User = Depends(require("reports.other")),
 ):
     """VAT return input: taxable base and tax collected per rate."""
-    return await pos_reports_service.tax_report(db, **window.kwargs)
+    return await pos_reports.tax_report(db, **window.kwargs)
 
 
 @router.get("/voids-returns")
@@ -99,7 +99,7 @@ async def voids_and_returns(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require("reports.other")),
 ):
-    return await pos_reports_service.voids_and_returns(db, limit=limit, **window.kwargs)
+    return await pos_reports.voids_and_returns(db, limit=limit, **window.kwargs)
 
 
 @router.get("/tills")
@@ -108,7 +108,7 @@ async def tills(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require("reports.other")),
 ):
-    return await pos_reports_service.tills_report(db, **window.kwargs)
+    return await pos_reports.tills_report(db, **window.kwargs)
 
 
 @router.get("/drawer-operations")
@@ -117,7 +117,7 @@ async def drawer_operations(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require("reports.other")),
 ):
-    return await pos_reports_service.drawer_operations_report(db, **window.kwargs)
+    return await pos_reports.drawer_operations_report(db, **window.kwargs)
 
 
 @router.get("/inventory/valuation")
@@ -127,7 +127,7 @@ async def inventory_valuation(
     _: User = Depends(require("reports.inventory")),
 ):
     """Stock value on hand plus everything below its reorder point."""
-    return await pos_reports_service.inventory_valuation(db, branch_id=branch_id)
+    return await pos_reports.inventory_valuation(db, branch_id=branch_id)
 
 
 @router.get("/inventory/cost-of-goods")
@@ -136,7 +136,7 @@ async def cost_of_goods(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require("reports.cost")),
 ):
-    return await pos_reports_service.cost_of_goods(db, **window.kwargs)
+    return await pos_reports.cost_of_goods(db, **window.kwargs)
 
 
 @router.get("/menu-engineering")
@@ -147,7 +147,7 @@ async def menu_engineering(
     _: User = Depends(require("reports.cost")),
 ):
     """Star / plough-horse / puzzle / dog classification by volume and margin."""
-    return await pos_reports_service.menu_engineering(db, limit=limit, **window.kwargs)
+    return await pos_reports.menu_engineering(db, limit=limit, **window.kwargs)
 
 
 @router.get("/speed-of-service")
@@ -157,7 +157,7 @@ async def speed_of_service(
     _: User = Depends(require("reports.other")),
 ):
     """Kitchen acknowledge, prep and total times over the window."""
-    return await pos_reports_service.speed_of_service(db, **window.kwargs)
+    return await pos_reports.speed_of_service(db, **window.kwargs)
 
 
 @router.get("/branches-trend")
@@ -167,7 +167,7 @@ async def branches_trend(
     _: User = Depends(require("reports.sales")),
 ):
     """Sales per branch per business day."""
-    return await pos_reports_service.branches_trend(db, **window.kwargs)
+    return await pos_reports.branches_trend(db, **window.kwargs)
 
 
 @router.get("/table-utilization")
@@ -177,7 +177,7 @@ async def table_utilization(
     _: User = Depends(require("reports.other")),
 ):
     """Covers, turns, dwell time and sales per seat, for dine-in only."""
-    return await pos_reports_service.table_utilization(db, **window.kwargs)
+    return await pos_reports.table_utilization(db, **window.kwargs)
 
 
 @router.get("/suppliers-analysis")
@@ -188,7 +188,7 @@ async def suppliers_analysis(
     _: User = Depends(require("reports.cost")),
 ):
     """Purchase-order count and spend per supplier."""
-    return await pos_reports_service.suppliers_analysis(
+    return await pos_reports.suppliers_analysis(
         db, date_from=date_from, date_to=date_to
     )
 
@@ -200,7 +200,7 @@ async def cost_adjustment_history(
     _: User = Depends(require("reports.cost")),
 ):
     """Stock write-offs and revaluations, newest first."""
-    return await pos_reports_service.cost_adjustment_history(db, **window.kwargs)
+    return await pos_reports.cost_adjustment_history(db, **window.kwargs)
 
 
 @router.get("/purchase-orders")
@@ -210,7 +210,7 @@ async def purchase_orders_report(
     _: User = Depends(require("reports.cost")),
 ):
     """Purchase orders with ordered, received and outstanding value."""
-    return await pos_reports_service.purchase_orders_report(db, **window.kwargs)
+    return await pos_reports.purchase_orders_report(db, **window.kwargs)
 
 
 @router.get("/transfers")
@@ -220,7 +220,7 @@ async def transfers_report(
     _: User = Depends(require("reports.cost")),
 ):
     """Stock moved between branches, both legs."""
-    return await pos_reports_service.transfers_report(db, **window.kwargs)
+    return await pos_reports.transfers_report(db, **window.kwargs)
 
 
 @router.get("/sales-predictions")
@@ -231,6 +231,6 @@ async def sales_predictions(
     _: User = Depends(require("reports.sales")),
 ):
     """Forecast the coming days from each weekday's own history."""
-    return await pos_reports_service.sales_predictions(
+    return await pos_reports.sales_predictions(
         db, branch_id=branch_id, days_ahead=days_ahead
     )

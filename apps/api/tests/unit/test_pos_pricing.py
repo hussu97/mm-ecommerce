@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.services.pos_pricing import (
+from app.services.pos.pos_pricing import (
     ChargeInput,
     DiscountInput,
     LineInput,

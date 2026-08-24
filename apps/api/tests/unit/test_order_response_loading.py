@@ -32,7 +32,7 @@ from sqlalchemy.orm.exc import DetachedInstanceError
 
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.schemas.order import OrderResponse
-from app.services import order_service
+from app.services.orders import order_service
 
 NOW = datetime(2026, 8, 5, 8, 2, tzinfo=timezone.utc)
 

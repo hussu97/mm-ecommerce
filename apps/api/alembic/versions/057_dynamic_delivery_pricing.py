@@ -58,6 +58,7 @@ from pathlib import Path
 from typing import Sequence, Union
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "057_dynamic_delivery_pricing"

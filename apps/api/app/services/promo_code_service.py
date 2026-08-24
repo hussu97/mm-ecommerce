@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import secrets
 import uuid
-
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -10,10 +9,10 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError
+from app.core.money import money
 from app.core.phone import phone_identities
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.models.promo_code import DiscountTypeEnum, PromoCode
-from app.services import firebase_auth_service
 from app.schemas.promo_code import (
     PromoCodeAdvertResponse,
     PromoCodeCreate,
@@ -21,6 +20,7 @@ from app.schemas.promo_code import (
     PromoCodeUpdate,
     PromoCodeValidateResponse,
 )
+from app.services import firebase_auth_service
 
 __all__ = [
     "advertisable",
@@ -35,9 +35,7 @@ __all__ = [
 
 def _calc_discount(promo: PromoCode, subtotal: Decimal) -> Decimal:
     if promo.discount_type == DiscountTypeEnum.PERCENTAGE:
-        amount = (subtotal * promo.discount_value / Decimal("100")).quantize(
-            Decimal("0.01")
-        )
+        amount = money(subtotal * promo.discount_value / Decimal("100"))
     else:
         amount = min(promo.discount_value, subtotal)
     # A percentage scales with the basket, which is fine at 60 dirhams and not
@@ -60,7 +58,7 @@ def _money(amount: Decimal) -> str:
     Only ever used inside a refusal the customer reads. "Add AED 50.00 more"
     reads like a system talking; the fils are noise unless there are any.
     """
-    amount = amount.quantize(Decimal("0.01"))
+    amount = money(amount)
     return str(
         amount.to_integral_value() if amount == amount.to_integral_value() else amount
     )

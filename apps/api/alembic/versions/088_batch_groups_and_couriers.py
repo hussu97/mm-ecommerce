@@ -34,6 +34,7 @@ Create Date: 2026-08-08
 from typing import Sequence, Union
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "088_batch_groups_and_couriers"

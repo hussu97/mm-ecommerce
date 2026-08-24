@@ -17,7 +17,7 @@ import uuid
 from decimal import Decimal
 from types import SimpleNamespace
 
-from app.services import payment_service
+from app.services.payments import payment_service
 
 
 class _AttemptsDb:

@@ -23,8 +23,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.models.delivery_settings import DeliverySettings
-from app.services import delivery_service
-from app.services.delivery_zone_service import Zone
+from app.services.delivery import delivery_service
+from app.services.delivery.delivery_zone_service import Zone
 
 
 @pytest.fixture(autouse=True)

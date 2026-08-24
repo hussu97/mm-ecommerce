@@ -28,7 +28,8 @@ from types import SimpleNamespace
 import pytest
 
 from app.models.order import OrderStatusEnum
-from app.services import arrival_service, order_service
+from app.services.delivery import arrival_service
+from app.services.orders import order_service
 
 
 def _order(status: OrderStatusEnum) -> SimpleNamespace:

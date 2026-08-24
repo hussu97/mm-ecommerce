@@ -38,6 +38,7 @@ the upgrade failed on its own bookkeeping *after* running every statement.
 from typing import Sequence, Union
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "092_cart_addons_personalisation"

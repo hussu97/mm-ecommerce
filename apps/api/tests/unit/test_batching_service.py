@@ -25,8 +25,8 @@ from app.models.delivery_batch import (
     DeliveryBatchWindow,
 )
 from app.models.order_delivery import OrderDelivery
-from app.services import batching_service
-from app.services.batching_service import (
+from app.services.delivery import batching_service
+from app.services.delivery.batching_service import (
     WindowMatch,
     _open_batch,
     find_window,

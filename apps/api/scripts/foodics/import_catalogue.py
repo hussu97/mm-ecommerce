@@ -34,24 +34,23 @@ sys.path.insert(
     0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 )
 
-from app.models.product import POS_CHANNEL, WEB_CHANNEL  # noqa: E402
 from app.models import (  # noqa: E402
     Branch,
-    Combo,
-    ComboSize,
-    Discount,
-    MenuGroup,
-    MenuGroupProduct,
-    InventoryItem,
     BusinessSettings,
     Category,
     Charge,
+    Combo,
+    ComboSize,
+    Discount,
+    InventoryItem,
+    MenuGroup,
+    MenuGroupProduct,
     Modifier,
     ModifierOption,
     PaymentMethod,
     Product,
-    Promotion,
     ProductModifier,
+    Promotion,
     Reason,
     Role,
     Supplier,
@@ -62,6 +61,7 @@ from app.models import (  # noqa: E402
     User,
     UserBranch,
 )
+from app.models.product import POS_CHANNEL, WEB_CHANNEL  # noqa: E402
 
 #: Foodics encodes the tender type as an integer. Anything not listed is
 #: imported as "other" rather than dropped, so the books still balance.

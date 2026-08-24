@@ -23,7 +23,8 @@ from types import SimpleNamespace
 import pytest
 
 from app.models.order import OrderStatusEnum
-from app.services import order_lifecycle, payment_service
+from app.services.orders import order_lifecycle
+from app.services.payments import payment_service
 from app.services.providers.base import PaymentEventType
 from app.services.providers.stripe_provider import _EVENT_TYPES
 

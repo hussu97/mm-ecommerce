@@ -15,7 +15,7 @@ from app.schemas.modifier import (
     ModifierResponse,
     ModifierUpdate,
 )
-from app.services import modifier_service
+from app.services.catalog import modifier_service
 
 router = APIRouter()
 

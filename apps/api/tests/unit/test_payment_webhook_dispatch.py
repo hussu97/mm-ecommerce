@@ -18,7 +18,7 @@ import pytest
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.order import OrderStatusEnum
 from app.models.payment_transaction import PaymentTransactionStatusEnum
-from app.services import payment_service
+from app.services.payments import payment_service
 from app.services.providers.base import GatewayEvent, PaymentEventType
 
 
@@ -85,7 +85,7 @@ def wired(monkeypatch, order):
     # scheduling reads the zone's run and the branch's hours. Neither is what
     # these tests are about — they are about which gateway event reaches which
     # handler — and both would query a session that is a bare mock.
-    from app.services import arrival_service
+    from app.services.delivery import arrival_service
 
     monkeypatch.setattr(arrival_service, "schedule", AsyncMock(return_value=None))
     sent = SimpleNamespace(

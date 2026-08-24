@@ -20,7 +20,8 @@ from app.schemas.delivery import (  # noqa: F401
     DeliveryEstimateResponse,
     DeliveryQuoteResponse,
 )
-from app.services import cart_service, delivery_service, delivery_zone_service
+from app.services import cart_service
+from app.services.delivery import delivery_service, delivery_zone_service
 
 router = APIRouter()
 

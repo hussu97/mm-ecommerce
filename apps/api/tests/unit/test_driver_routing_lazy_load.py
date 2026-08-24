@@ -27,7 +27,7 @@ import uuid
 import pytest
 from sqlalchemy.exc import MissingGreenlet
 
-from app.services import driver_routing
+from app.services.delivery import driver_routing
 
 
 class _ExplodingOrder:

@@ -24,8 +24,9 @@ import pytest
 from app.api.v1.delivery import DeliveryQuoteResponse
 from app.models.cart import Cart
 from app.models.delivery_settings import DeliverySettings
-from app.services import delivery_promise, delivery_service, lalamove_service
-from app.services.delivery_zone_service import Zone
+from app.services.couriers import lalamove_service
+from app.services.delivery import delivery_promise, delivery_service
+from app.services.delivery.delivery_zone_service import Zone
 
 
 @pytest.fixture(autouse=True)
@@ -334,7 +335,7 @@ async def test_a_noon_send_zone_is_costed_on_its_own_rate_card(cart, monkeypatch
     loses AED 10 an order when it makes AED 3.
     """
     from app.core.config import settings as app_settings
-    from app.services import courier_service, noon_send_service
+    from app.services.couriers import courier_service, noon_send_service
 
     monkeypatch.setattr(app_settings, "NOON_SEND_API_KEY", "test-key")
 

@@ -638,29 +638,38 @@ const EXPORT_FILENAMES: Record<string, string> = {
   'product-modifiers': 'product_modifiers.csv',
 };
 
+/**
+ * Fetch a file and hand it to the browser as a download.
+ *
+ * Goes through the 401 refresh-and-retry that `request()` owns, which the two
+ * copies of this block did not: an export started on an expired session threw
+ * "Export failed: HTTP 401" instead of refreshing and succeeding, and the
+ * admin's only clue was that pressing the button again worked.
+ *
+ * `request()` itself cannot be used, because it parses the body as JSON and
+ * this one is a CSV. So the refresh is shared rather than the whole function.
+ */
+async function downloadBlob(path: string, filename: string): Promise<void> {
+  let res = await fetch(`${API_BASE}${path}`, { credentials: 'include' });
+
+  if (res.status === 401 && (await refreshAccessToken())) {
+    res = await fetch(`${API_BASE}${path}`, { credentials: 'include' });
+  }
+  if (!res.ok) throw new ApiError(res.status, `Export failed: HTTP ${res.status}`);
+
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export const exportApi = {
-  download: async (entity: string) => {
-    const res = await fetch(`${API_BASE}/export/${entity}`, { credentials: 'include' });
-    if (!res.ok) throw new ApiError(res.status, `Export failed: HTTP ${res.status}`);
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = EXPORT_FILENAMES[entity] ?? `${entity}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  },
-  exportOrders: async (params?: { start_date?: string; end_date?: string; status?: string }) => {
-    const res = await fetch(`${API_BASE}/export/orders${buildQs(params)}`, { credentials: 'include' });
-    if (!res.ok) throw new ApiError(res.status, `Export failed: HTTP ${res.status}`);
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'orders.csv';
-    a.click();
-    URL.revokeObjectURL(url);
-  },
+  download: (entity: string) =>
+    downloadBlob(`/export/${entity}`, EXPORT_FILENAMES[entity] ?? `${entity}.csv`),
+  exportOrders: (params?: { start_date?: string; end_date?: string; status?: string }) =>
+    downloadBlob(`/export/orders${buildQs(params)}`, 'orders.csv'),
 };
 
 // ─── Uploads ──────────────────────────────────────────────────────────────────

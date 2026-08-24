@@ -29,6 +29,7 @@ Create Date: 2026-08-18
 from typing import Sequence, Union
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "106_branch_holidays"

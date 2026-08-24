@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from app.services.delivery_zone_service import point_in_geometry
+from app.services.delivery.delivery_zone_service import point_in_geometry
 
 VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
 DATA = Path(__file__).resolve().parents[2] / "app" / "data"

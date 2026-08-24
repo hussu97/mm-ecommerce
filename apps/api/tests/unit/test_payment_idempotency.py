@@ -21,7 +21,7 @@ import pytest
 
 from app.core.exceptions import ConflictError
 from app.models.pos_order import OrderPayment
-from app.services import pos_order_service
+from app.services.pos import pos_order_service
 
 pytestmark = pytest.mark.asyncio
 

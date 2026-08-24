@@ -19,12 +19,11 @@ import pytest
 from app.core.config import settings
 from app.core.exceptions import BadRequestError
 from app.models.payment_gateway import PaymentGateway
-from app.services import payment_gateway_router as router
+from app.services.payments import payment_gateway_router as router
 from app.services.providers.base import (
     GatewaySession,
     PaymentGatewayProvider,
 )
-
 
 _MIGRATION_PATH = (
     Path(__file__).resolve().parents[2]

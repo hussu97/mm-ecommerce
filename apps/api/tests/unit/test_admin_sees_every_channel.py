@@ -18,7 +18,7 @@ import pathlib
 import re
 
 from app.api.v1 import products as products_api
-from app.services import product_service
+from app.services.catalog import product_service
 
 ADMIN = pathlib.Path(__file__).parents[3] / "admin"
 

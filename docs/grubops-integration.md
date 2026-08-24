@@ -9,9 +9,9 @@ One way only: this app is the source of truth and GrubOps is told.
 | Piece | File |
 |---|---|
 | Transport, Cognito login, token cache | `apps/api/app/services/providers/grubops_provider.py` |
-| Payload building, the two write paths | `apps/api/app/services/grubops_service.py` |
-| The reconcile loop | `apps/api/app/services/grubops_reconcile.py` |
-| Name matching, location discovery | `apps/api/app/services/grubops_mapping.py` |
+| Payload building, the two write paths | `apps/api/app/services/grubops/grubops_service.py` |
+| The reconcile loop | `apps/api/app/services/grubops/grubops_reconcile.py` |
+| Name matching, location discovery | `apps/api/app/services/grubops/grubops_mapping.py` |
 | Tables | `apps/api/app/models/grubops.py`, migration `131_grubops_mapping` |
 | Console API | `apps/api/app/api/v1/grubops.py` |
 | Console screen | `apps/admin/app/(dashboard)/grubops/page.tsx` |
@@ -288,8 +288,8 @@ records, displays, decrements stock, and can mirror a cancel/complete back.
 | Piece | File |
 |---|---|
 | Provider order methods (read + force-* write-back) | `apps/api/app/services/providers/grubops_provider.py` |
-| Ingest: create the order, map lines, decrement stock, walk the lifecycle, write-back | `apps/api/app/services/grubops_orders_service.py` |
-| The ingest poll loop | `apps/api/app/services/grubops_orders.py` |
+| Ingest: create the order, map lines, decrement stock, walk the lifecycle, write-back | `apps/api/app/services/grubops/grubops_orders_service.py` |
+| The ingest poll loop | `apps/api/app/services/grubops/grubops_orders.py` |
 | Register attach (pending + check number) | `pos_order_service.attach_aggregator_order` |
 | Tables | `apps/api/app/models/grubops_order.py`, migration `132_grubops_orders` |
 | Monitoring API | `GET /grubops/orders` in `apps/api/app/api/v1/grubops.py` |

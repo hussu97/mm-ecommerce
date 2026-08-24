@@ -16,8 +16,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.services import availability_service as availability
-from app.services import business_day_service
+from app.services.catalog import availability_service as availability
+from app.services.pos import business_day_service
 
 
 def _option(name: str, *, active: bool = True) -> SimpleNamespace:

@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.services import order_fees
+from app.services.orders import order_fees
 
 
 def _order(**kwargs) -> SimpleNamespace:

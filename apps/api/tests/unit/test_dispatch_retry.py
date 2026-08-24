@@ -20,8 +20,8 @@ from decimal import Decimal
 from app.models.branch import Branch
 from app.models.order import OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
-from app.services import courier_service
-from app.services.batching_service import RETRY_BACKOFF
+from app.services.couriers import courier_service
+from app.services.delivery.batching_service import RETRY_BACKOFF
 
 NOW = datetime(2026, 8, 15, 7, 21, tzinfo=timezone.utc)  # 11:21 in Dubai
 

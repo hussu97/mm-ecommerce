@@ -31,30 +31,25 @@ from app.schemas.pos_order import (
     AddItemRequest,
     ApplyChargeRequest,
     ApplyDiscountRequest,
+    AssignDriverRequest,
+    ChangeTableRequest,
+    JoinOrderRequest,
     KitchenTicketResponse,
     OpenOrderRequest,
     OrderItemResponse,
     PaymentRequest,
     PosOrderResponse,
     ReturnItemRequest,
-    VoidItemRequest,
+    ScheduleOrderRequest,
     SplitOrderRequest,
     SplitOrderResponse,
-    JoinOrderRequest,
-    ChangeTableRequest,
-    AssignDriverRequest,
-    ScheduleOrderRequest,
+    VoidItemRequest,
     VoidOrderRequest,
 )
-from app.services import (
-    address_format,
-    crud_service,
-    driver_proximity,
-    email_service,
-    option_snapshot,
-    order_service,
-    pos_order_service,
-)
+from app.services import crud_service, email_service, option_snapshot
+from app.services.delivery import address_format, driver_proximity
+from app.services.orders import order_service
+from app.services.pos import pos_order_service
 
 logger = logging.getLogger(__name__)
 

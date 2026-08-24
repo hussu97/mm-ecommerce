@@ -8,7 +8,7 @@ decisions. These assert the shape they now all share.
 
 from __future__ import annotations
 
-from app.services import address_format
+from app.services.delivery import address_format
 
 
 class TestOneLine:

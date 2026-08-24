@@ -68,7 +68,6 @@ def test_the_register_really_does_switch_sentry_on():
     import sentry_sdk
 
     import app.pos_main  # noqa: F401  — importing is what configures it
-
     from app.core.config import settings
 
     client = sentry_sdk.get_client()

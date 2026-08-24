@@ -38,8 +38,9 @@ from app.schemas.address import AddressCreate
 from app.schemas.order import OrderCreate
 from app.schemas.order_preview import OrderPreviewRequest
 from app.schemas.promo_code import PromoCodeValidateResponse
-from app.services import lalamove_service, order_service
-from app.services.delivery_zone_service import Zone
+from app.services.couriers import lalamove_service
+from app.services.delivery.delivery_zone_service import Zone
+from app.services.orders import order_service
 
 # ── The basket ────────────────────────────────────────────────────────────────
 #
@@ -156,15 +157,15 @@ def priced_world():
     """
     with (
         patch(
-            "app.services.delivery_service.get_settings",
+            "app.services.delivery.delivery_service.get_settings",
             new=AsyncMock(return_value=SETTINGS),
         ),
         patch(
-            "app.services.delivery_service.delivery_zone_service.find_zone",
+            "app.services.delivery.delivery_service.delivery_zone_service.find_zone",
             new=AsyncMock(return_value=ZONE),
         ),
         patch(
-            "app.services.delivery_service.courier_service.estimate_for_point",
+            "app.services.delivery.delivery_service.courier_service.estimate_for_point",
             new=AsyncMock(
                 return_value=(
                     lalamove_service.Estimate(
@@ -181,19 +182,19 @@ def priced_world():
         # recorded so the fee table can be argued with later. That recording is
         # a write on the cart and has its own tests.
         patch(
-            "app.services.delivery_service.lalamove_service.record_cart_estimate",
+            "app.services.delivery.delivery_service.lalamove_service.record_cart_estimate",
             new_callable=AsyncMock,
         ),
         patch(
-            "app.services.delivery_service.delivery_promise.promise_for_zone",
+            "app.services.delivery.delivery_service.delivery_promise.promise_for_zone",
             new=AsyncMock(return_value=None),
         ),
         patch(
-            "app.services.order_service.delivery_promise.promise_for_zone",
+            "app.services.orders.order_service.delivery_promise.promise_for_zone",
             new=AsyncMock(return_value=None),
         ),
         patch(
-            "app.services.order_service.promo_code_service.validate",
+            "app.services.orders.order_service.promo_code_service.validate",
             new=AsyncMock(
                 return_value=PromoCodeValidateResponse(
                     valid=True,
@@ -203,7 +204,7 @@ def priced_world():
             ),
         ),
         patch(
-            "app.services.order_service.promo_code_service.get_promo",
+            "app.services.orders.order_service.promo_code_service.get_promo",
             new=AsyncMock(
                 return_value=SimpleNamespace(
                     id=uuid.uuid4(), code="FIRST15", max_uses=None
@@ -211,22 +212,22 @@ def priced_world():
             ),
         ),
         patch(
-            "app.services.order_service.resolve_branch",
+            "app.services.orders.order_service.resolve_branch",
             new_callable=AsyncMock,
             return_value=SimpleNamespace(
                 id=uuid.uuid4(), reference="K001", is_active=True, deleted_at=None
             ),
         ),
         patch(
-            "app.services.order_service.pos_order_service.attach_online_order",
+            "app.services.orders.order_service.pos_order_service.attach_online_order",
             new_callable=AsyncMock,
         ),
         patch(
-            "app.services.order_service.lalamove_service.record_order_delivery",
+            "app.services.orders.order_service.lalamove_service.record_order_delivery",
             new_callable=AsyncMock,
         ),
         patch(
-            "app.services.order_service.fulfilment_service.for_order",
+            "app.services.orders.order_service.fulfilment_service.for_order",
             new_callable=AsyncMock,
             return_value=None,
         ),
@@ -241,7 +242,7 @@ async def _preview(cart):
     # path is stubbed above.
     db.execute = AsyncMock(side_effect=_script([_result()]))
     with patch(
-        "app.services.order_service.find_priceable_cart",
+        "app.services.orders.order_service.find_priceable_cart",
         new=AsyncMock(return_value=cart),
     ):
         return await order_service.preview_order(
@@ -277,7 +278,7 @@ async def _create(cart):
             ]
         )
     )
-    with patch("app.services.order_service.to_response", new_callable=AsyncMock):
+    with patch("app.services.orders.order_service.to_response", new_callable=AsyncMock):
         await order_service.create_order(
             db,
             OrderCreate(
@@ -381,7 +382,7 @@ async def test_an_unserviceable_pin_is_reported_rather_than_refused():
     button — next to the two things that resolve it, move the pin or collect.
     """
     with patch(
-        "app.services.delivery_service.delivery_zone_service.find_zone",
+        "app.services.delivery.delivery_service.delivery_zone_service.find_zone",
         new=AsyncMock(return_value=None),
     ):
         preview = await _preview(_cart())

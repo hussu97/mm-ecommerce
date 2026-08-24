@@ -30,8 +30,8 @@ from sqlalchemy.orm import selectinload
 
 from app.models.cart import Cart
 from app.models.product import Product
-from app.services import availability_service
-from app.services.order_service import _priceable_cart_options
+from app.services.catalog import availability_service
+from app.services.orders.order_service import _priceable_cart_options
 
 
 def _loaded_paths(options) -> set[str]:

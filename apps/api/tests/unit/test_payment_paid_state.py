@@ -24,7 +24,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.models.payment_transaction import PaymentTransactionStatusEnum
-from app.services.payment_service import _is_paid
+from app.services.payments.payment_service import _is_paid
 
 
 def _order(*, provider=None, payment_id=None, transactions=()):

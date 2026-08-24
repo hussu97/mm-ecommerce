@@ -25,7 +25,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.api.v1.delivery_zones import PolygonUpdate, create_version, update_polygon
+from app.api.v1.delivery_zones.schemas import PolygonUpdate
+from app.api.v1.delivery_zones.versions import create_version, update_polygon
 from app.models.delivery_batch import DeliveryBatchGroup, DeliveryBatchWindow
 from app.models.delivery_polygon import DeliveryPolygon, DeliveryPolygonVersion
 
@@ -104,7 +105,7 @@ class _Db:
 
 async def _clone(db: _Db, source: DeliveryPolygonVersion, monkeypatch):
     """Run `create_version` against the fake, with its two lookups stubbed."""
-    import app.api.v1.delivery_zones as zones
+    import app.api.v1.delivery_zones.versions as zones
 
     async def _load_version(_db, _id):
         return source
@@ -246,7 +247,7 @@ def _draft_zone(provider: str = "lalamove"):
 
 
 async def _change_courier(polygon, to: str, monkeypatch, *, group_books="lalamove"):
-    import app.api.v1.delivery_zones as zones
+    import app.api.v1.delivery_zones.versions as zones
 
     db = _Db(
         group=DeliveryBatchGroup(
@@ -312,7 +313,7 @@ async def test_changing_something_else_never_touches_the_run(monkeypatch):
     The guard hangs off the courier changing, not off the zone being saved. A
     fee edit on a batched zone must leave the run alone.
     """
-    import app.api.v1.delivery_zones as zones
+    import app.api.v1.delivery_zones.versions as zones
 
     polygon = _draft_zone()
     db = _Db(group=DeliveryBatchGroup(id=GROUP_ID, name="D", courier_code="lalamove"))

@@ -36,9 +36,10 @@ import pytest
 from app.core.config import settings
 from app.models.delivery_settings import DeliverySettings
 from app.models.order import DeliveryMethodEnum
-from app.services import delivery_service, trial_customer
-from app.services.delivery_zone_service import Zone
-from app.services.lalamove_service import Estimate
+from app.services import trial_customer
+from app.services.couriers.lalamove_service import Estimate
+from app.services.delivery import delivery_service
+from app.services.delivery.delivery_zone_service import Zone
 
 TRIAL_EMAIL = "h_abbasi97@hotmail.com"
 USER_ID = uuid.uuid4()

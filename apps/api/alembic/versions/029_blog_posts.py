@@ -11,8 +11,9 @@ from datetime import datetime
 from typing import Sequence, Union
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+
+from alembic import op
 
 revision: str = "029_blog_posts"
 down_revision: Union[str, None] = "028_cms_about_contact_labels"

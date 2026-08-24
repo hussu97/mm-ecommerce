@@ -2,105 +2,54 @@
 All SQLAlchemy models — imported here so Alembic can autodiscover them.
 """
 
-from .base import Base  # noqa: F401 — must be first
-from .user import User  # noqa: F401
 from .address import Address  # noqa: F401
-from .category import Category  # noqa: F401
-from .product import Product  # noqa: F401
-from .modifier import Modifier, ModifierOption, ProductModifier  # noqa: F401
-from .cart import Cart, CartItem  # noqa: F401
-from .order import Order, OrderItem, OrderStatusEnum, DeliveryMethodEnum  # noqa: F401
-from .promo_code import PromoCode, DiscountTypeEnum  # noqa: F401
-from .refresh_token import RefreshToken  # noqa: F401
-from .language import Language, UiTranslation  # noqa: F401
-from .cms import CmsPage  # noqa: F401
-from .url_redirect import UrlRedirect  # noqa: F401
-from .blog import BlogPost  # noqa: F401
-from .webhook_event import WebhookEvent  # noqa: F401
-from .payment_gateway import (  # noqa: F401
-    PaymentGateway,
-    PaymentGatewayEnum,
-    PaymentMethodEnum,
-)
-from .payment_transaction import (  # noqa: F401
-    PaymentTransaction,
-    PaymentTransactionStatusEnum,
-)
-from .webhook_log import WebhookLog  # noqa: F401
-from .grubops import (  # noqa: F401
-    GrubOpsItemMap,
-    GrubOpsLocationMap,
-    GrubOpsSyncState,
-)
-from .grubops_order import GrubOpsOrderMap  # noqa: F401
-from .email_log import EmailLog  # noqa: F401
-from .delivery_settings import DeliverySettings  # noqa: F401
-from .delivery_polygon import (  # noqa: F401
-    DeliveryPolygon,
-    DeliveryPolygonVersion,
-    FulfilmentProviderEnum,
-)
-from .courier import (  # noqa: F401
-    Courier,
-    UnbatchedPromiseEnum,
-)
-from .delivery_batch import (  # noqa: F401
-    DeliveryBatchGroup,
-    DELIVERY_TIMEZONE,
-    MAX_DROPS_PER_ORDER,
-    BatchStatusEnum,
-    DeliveryBatch,
-    DeliveryBatchWindow,
-)
-from .phone_verification import PhoneVerification  # noqa: F401
-from .order_delivery import (  # noqa: F401
-    FAILED_COURIER_STATUSES,
-    NOON_SEND_FAILED_STATUSES,
-    NOON_SEND_TERMINAL_STATUSES,
-    TERMINAL_COURIER_STATUSES,
-    CourierStatusEnum,
-    NoonSendStatusEnum,
-    OrderDelivery,
-    is_collected,
-    is_failed,
-    is_terminal,
-)
-from .order_driver import OrderDriver  # noqa: F401
-from .order_status_event import (  # noqa: F401
-    OrderStatusEvent,
-    StatusActor,
-    StatusSourceEnum,
-    acting_as,
-    pending_events,
-)
-from .device_push_token import (  # noqa: F401
-    DevicePushToken,
-    PushPlatformEnum,
-)
-from .audit_log import AuditLog  # noqa: F401
 from .admin_passkey import AdminPasskey, WebAuthnChallenge  # noqa: F401
-
-# ─── POS domain ───────────────────────────────────────────────────────────────
-from .course import Course  # noqa: F401
-from .tax import Tax, TaxGroup, TaxGroupTax, TaxTypeEnum  # noqa: F401
+from .audit_log import AuditLog  # noqa: F401
+from .base import Base  # noqa: F401 — must be first
+from .blog import BlogPost  # noqa: F401
 from .branch import (  # noqa: F401
     Branch,
     BranchBusinessDay,
     BranchHoliday,
     BranchTypeEnum,
 )
-from .role import (  # noqa: F401
-    ALL_PERMISSIONS,
-    PERMISSION_DESCRIPTIONS,
-    PERMISSION_GROUPS,
-    Role,
-    UserBranch,
+from .business_settings import (  # noqa: F401
+    BusinessSettings,
+    KitchenSortingEnum,
+    ReceiptLanguageModeEnum,
 )
-from .payment_method import PaymentMethod, PaymentMethodTypeEnum  # noqa: F401
+from .cart import Cart, CartItem  # noqa: F401
+from .category import Category  # noqa: F401
 from .charge import Charge, ChargeTypeEnum  # noqa: F401
-from .reason import Reason, ReasonTypeEnum  # noqa: F401
-from .tag import Tag, TaggedEntity, TagTypeEnum  # noqa: F401
-from .kitchen_flow import KitchenFlow, KitchenFlowCategory  # noqa: F401
+from .cms import CmsPage  # noqa: F401
+from .courier import (  # noqa: F401
+    Courier,
+    UnbatchedPromiseEnum,
+)
+
+# ─── POS domain ───────────────────────────────────────────────────────────────
+from .course import Course  # noqa: F401
+from .custom_order import (  # noqa: F401
+    OCCUPIES_SLOT,
+    CustomOrder,
+    CustomOrderBlackout,
+    CustomOrderSourceEnum,
+    CustomOrderStatusEnum,
+)
+from .delivery_batch import (  # noqa: F401
+    DELIVERY_TIMEZONE,
+    MAX_DROPS_PER_ORDER,
+    BatchStatusEnum,
+    DeliveryBatch,
+    DeliveryBatchGroup,
+    DeliveryBatchWindow,
+)
+from .delivery_polygon import (  # noqa: F401
+    DeliveryPolygon,
+    DeliveryPolygonVersion,
+    FulfilmentProviderEnum,
+)
+from .delivery_settings import DeliverySettings  # noqa: F401
 from .device import (  # noqa: F401
     Device,
     DeviceStatusEnum,
@@ -109,19 +58,17 @@ from .device import (  # noqa: F401
     PrinterConnectionEnum,
     PrinterRoleEnum,
 )
-from .pos_table import PosTable, Section, TableStatusEnum  # noqa: F401
-from .till import (  # noqa: F401
-    DRAWER_SIGN,
-    DrawerOperation,
-    DrawerOperationTypeEnum,
-    Till,
-    TillStatusEnum,
+from .device_push_token import (  # noqa: F401
+    DevicePushToken,
+    PushPlatformEnum,
 )
-from .business_settings import (  # noqa: F401
-    BusinessSettings,
-    KitchenSortingEnum,
-    ReceiptLanguageModeEnum,
+from .email_log import EmailLog  # noqa: F401
+from .grubops import (  # noqa: F401
+    GrubOpsItemMap,
+    GrubOpsLocationMap,
+    GrubOpsSyncState,
 )
+from .grubops_order import GrubOpsOrderMap  # noqa: F401
 from .inventory import (  # noqa: F401
     TRANSACTION_SIGN,
     CostingMethodEnum,
@@ -142,6 +89,18 @@ from .inventory import (  # noqa: F401
     TransactionStatusEnum,
     Warehouse,
 )
+from .kitchen_flow import KitchenFlow, KitchenFlowCategory  # noqa: F401
+from .language import Language, UiTranslation  # noqa: F401
+from .marketing import (  # noqa: F401
+    Discount,
+    DiscountQualificationEnum,
+    Promotion,
+    PromotionRewardEnum,
+    PromotionTriggerEnum,
+    PromotionTypeEnum,
+    TimedEvent,
+    TimedEventTypeEnum,
+)
 from .menu import (  # noqa: F401
     Allergen,
     BranchModifierOption,
@@ -155,29 +114,45 @@ from .menu import (  # noqa: F401
     ProductAllergen,
     SellingMethodEnum,
 )
-from .marketing import (  # noqa: F401
-    Discount,
-    DiscountQualificationEnum,
-    Promotion,
-    PromotionRewardEnum,
-    PromotionTriggerEnum,
-    PromotionTypeEnum,
-    TimedEvent,
-    TimedEventTypeEnum,
-)
+from .modifier import Modifier, ModifierOption, ProductModifier  # noqa: F401
 from .operations import (  # noqa: F401
     NotificationRule,
     TransferOrder,
     TransferOrderItem,
     TransferOrderStatusEnum,
 )
-from .custom_order import (  # noqa: F401
-    OCCUPIES_SLOT,
-    CustomOrder,
-    CustomOrderBlackout,
-    CustomOrderSourceEnum,
-    CustomOrderStatusEnum,
+from .order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum  # noqa: F401
+from .order_delivery import (  # noqa: F401
+    FAILED_COURIER_STATUSES,
+    NOON_SEND_FAILED_STATUSES,
+    NOON_SEND_TERMINAL_STATUSES,
+    TERMINAL_COURIER_STATUSES,
+    CourierStatusEnum,
+    NoonSendStatusEnum,
+    OrderDelivery,
+    is_collected,
+    is_failed,
+    is_terminal,
 )
+from .order_driver import OrderDriver  # noqa: F401
+from .order_status_event import (  # noqa: F401
+    OrderStatusEvent,
+    StatusActor,
+    StatusSourceEnum,
+    acting_as,
+    pending_events,
+)
+from .payment_gateway import (  # noqa: F401
+    PaymentGateway,
+    PaymentGatewayEnum,
+    PaymentMethodEnum,
+)
+from .payment_method import PaymentMethod, PaymentMethodTypeEnum  # noqa: F401
+from .payment_transaction import (  # noqa: F401
+    PaymentTransaction,
+    PaymentTransactionStatusEnum,
+)
+from .phone_verification import PhoneVerification  # noqa: F401
 from .pos_order import (  # noqa: F401
     DeliveryStatusEnum,
     DiscountSourceEnum,
@@ -193,6 +168,31 @@ from .pos_order import (  # noqa: F401
     OrderTypeEnum,
     PosOrderStatusEnum,
 )
+from .pos_table import PosTable, Section, TableStatusEnum  # noqa: F401
+from .product import Product  # noqa: F401
+from .promo_code import DiscountTypeEnum, PromoCode  # noqa: F401
+from .reason import Reason, ReasonTypeEnum  # noqa: F401
+from .refresh_token import RefreshToken  # noqa: F401
+from .role import (  # noqa: F401
+    ALL_PERMISSIONS,
+    PERMISSION_DESCRIPTIONS,
+    PERMISSION_GROUPS,
+    Role,
+    UserBranch,
+)
+from .tag import Tag, TaggedEntity, TagTypeEnum  # noqa: F401
+from .tax import Tax, TaxGroup, TaxGroupTax, TaxTypeEnum  # noqa: F401
+from .till import (  # noqa: F401
+    DRAWER_SIGN,
+    DrawerOperation,
+    DrawerOperationTypeEnum,
+    Till,
+    TillStatusEnum,
+)
+from .url_redirect import UrlRedirect  # noqa: F401
+from .user import User  # noqa: F401
+from .webhook_event import WebhookEvent  # noqa: F401
+from .webhook_log import WebhookLog  # noqa: F401
 
 __all__ = [
     "Base",

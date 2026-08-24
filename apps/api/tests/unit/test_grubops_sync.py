@@ -24,7 +24,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.services import grubops_service as svc
+from app.services.grubops import grubops_service as svc
 from app.services.providers.grubops_provider import (
     STATUS_UNTIL_FURTHER_NOTICE,
     GrubOpsClient,
@@ -312,7 +312,7 @@ def test_a_location_matches_the_branch_it_names():
     the difference is a word GrubOps simply does not bother saying. Seeding
     nothing, silently, is the failure this test exists to prevent.
     """
-    from app.services.grubops_mapping import match_branch
+    from app.services.grubops.grubops_mapping import match_branch
 
     sharjah = _Branch("Sharjah Kitchen", "Sharjah")
     barsha = _Branch("Barsha Heights Counter", "Dubai")
@@ -322,7 +322,7 @@ def test_a_location_matches_the_branch_it_names():
 
 def test_a_location_that_is_no_branch_of_ours_matches_nothing():
     """Better an unmatched row somebody reads than a confident wrong one."""
-    from app.services.grubops_mapping import match_branch
+    from app.services.grubops.grubops_mapping import match_branch
 
     assert (
         match_branch("Abu Dhabi Mall", [_Branch("Sharjah Kitchen", "Sharjah")]) is None
@@ -331,7 +331,7 @@ def test_a_location_that_is_no_branch_of_ours_matches_nothing():
 
 def test_names_match_across_case_accents_and_punctuation():
     """Two systems typed into by two people on two days."""
-    from app.services.grubops_mapping import normalise
+    from app.services.grubops.grubops_mapping import normalise
 
     assert normalise("Crème Brûlée  Tart!") == normalise("creme brulee tart")
 
@@ -341,7 +341,7 @@ def test_a_weak_item_match_is_not_offered_at_all():
     An unmatched item costs somebody a minute; a wrong one takes the wrong
     cake off Talabat.
     """
-    from app.services.grubops_mapping import Candidate, best_match
+    from app.services.grubops.grubops_mapping import Candidate, best_match
 
     candidates = [
         Candidate(
@@ -353,7 +353,7 @@ def test_a_weak_item_match_is_not_offered_at_all():
 
 
 def test_an_exact_item_match_is_marked_exact():
-    from app.services.grubops_mapping import Candidate, best_match
+    from app.services.grubops.grubops_mapping import Candidate, best_match
 
     candidates = [
         Candidate(
@@ -376,7 +376,7 @@ def test_a_modifier_is_pinned_by_its_recipe_as_well_as_its_group():
     collapsed 147 options onto 51 modifiers, silently, with every match
     reported as exact.
     """
-    from app.services.grubops_mapping import Candidate, best_match, normalise
+    from app.services.grubops.grubops_mapping import Candidate, best_match, normalise
 
     modifiers = [
         Candidate(
@@ -405,7 +405,7 @@ def test_a_modifier_is_pinned_by_its_recipe_as_well_as_its_group():
 
 def test_the_parent_chain_yields_both_group_and_recipe():
     """The shape GrubOps actually answers with — group, then recipe above it."""
-    from app.services.grubops_mapping import _parent_of
+    from app.services.grubops.grubops_mapping import _parent_of
 
     group, recipe_id = _parent_of(
         {
@@ -433,7 +433,7 @@ def test_the_parent_chain_yields_both_group_and_recipe():
 
 def test_the_english_name_is_taken_from_the_translation_bundle():
     """`{"name": {"translations": {"en-US": ...}}}` is what the item list sends."""
-    from app.services.grubops_mapping import _name_of
+    from app.services.grubops.grubops_mapping import _name_of
 
     assert (
         _name_of(

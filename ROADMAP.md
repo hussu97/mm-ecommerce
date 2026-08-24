@@ -1,6 +1,10 @@
 # Melting Moments Ecommerce — Audit & Roadmap
 
 > Comprehensive system audit performed 2026-03-05.
+>
+> **Superseded for architecture.** `docs/architecture-audit-2026-08.md` is the
+> current system-design audit and its findings are remediated; this file remains
+> the product roadmap.
 > Items organized by priority tier and domain. Check off items as they're resolved.
 
 ---
@@ -37,11 +41,11 @@ _Fix within 1-2 sprints._
 ### Bugs
 
 - [x] **Admin dashboard order links go to list, not detail** — Fixed: `/orders/${order.order_number}` deep-link in place.
-- [x] **Product detail page does not exist** — `apps/web/app/[category]/[product]/page.tsx` fully implemented.
-- [x] **No search page** — `apps/web/app/search/page.tsx` exists with full filtering + pagination.
+- [x] **Product detail page does not exist** — `apps/web/app/[locale]/[category]/[product]/page.tsx` fully implemented.
+- [x] **No search page** — `apps/web/app/[locale]/search/page.tsx` exists with full filtering + pagination.
 - [x] **Placeholder WhatsApp number** — Replaced with real number `+971563526578` across all pages.
 - [x] **Category page silently swallows fetch errors** — Now logs `[category] Failed to load data for slug:` and returns `null` (404) instead of swallowing the error.
-- [x] **Missing privacy and terms pages** — `apps/web/app/privacy/page.tsx` and `apps/web/app/terms/page.tsx` both exist.
+- [x] **Missing privacy page** — `apps/web/app/[locale]/privacy/page.tsx` exists. The terms page named alongside it in the original finding was never built, and migration `129_retire_terms_link_strings` has since removed the links that pointed at it.
 - [x] **Hardcoded placeholder phone in contact & footer** — Replaced with real number `+971 56 352 6578`.
 - [x] **Cart merge ignores stock limits** — Merged quantity is now capped at `product.stock_quantity` for stock-tracked products.
 - [x] **Payment status overly permissive for BNPL** — Removed shortcut; Tabby/Tamara orders stay `paid=False` until webhook confirmation.

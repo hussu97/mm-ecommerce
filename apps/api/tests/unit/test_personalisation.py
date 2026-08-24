@@ -223,7 +223,7 @@ def test_checkout_refuses_a_line_with_no_message(monkeypatch):
     empty it is a paid line that does nothing, and the customer has no way to
     add the words afterwards.
     """
-    from app.services import order_service
+    from app.services.orders import order_service
 
     monkeypatch.setattr(order_service, "is_website_product_visible", lambda p: True)
     with pytest.raises(BadRequestError, match="Add your message"):
@@ -232,7 +232,7 @@ def test_checkout_refuses_a_line_with_no_message(monkeypatch):
 
 def test_checkout_refuses_a_whitespace_only_message(monkeypatch):
     """Spaces are not a message. Blank in every spelling is blank."""
-    from app.services import order_service
+    from app.services.orders import order_service
 
     monkeypatch.setattr(order_service, "is_website_product_visible", lambda p: True)
     with pytest.raises(BadRequestError, match="Add your message"):
@@ -247,7 +247,7 @@ def test_the_message_is_snapshotted_onto_the_order(monkeypatch):
     product is edited or deleted — and this is the string that has to survive
     exactly.
     """
-    from app.services import order_service
+    from app.services.orders import order_service
 
     monkeypatch.setattr(order_service, "is_website_product_visible", lambda p: True)
     items, subtotal = order_service._compute_item_totals(
@@ -258,7 +258,7 @@ def test_the_message_is_snapshotted_onto_the_order(monkeypatch):
 
 
 def test_an_ordinary_product_snapshots_no_message(monkeypatch):
-    from app.services import order_service
+    from app.services.orders import order_service
 
     monkeypatch.setattr(order_service, "is_website_product_visible", lambda p: True)
     items, _ = order_service._compute_item_totals(

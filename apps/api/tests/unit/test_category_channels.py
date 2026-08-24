@@ -19,7 +19,7 @@ from sqlalchemy.dialects import postgresql
 
 from app.core.exceptions import NotFoundError
 from app.models.category import Category
-from app.services import category_service
+from app.services.catalog import category_service
 
 
 def _category(**overrides) -> Category:

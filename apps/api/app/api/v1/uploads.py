@@ -7,7 +7,6 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     File,
     Query,
@@ -48,7 +47,6 @@ def _get_r2_client():
     "/image", response_model=UploadResponse, status_code=status.HTTP_201_CREATED
 )
 async def upload_image(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     folder: str = Query(
         "products", description="R2 folder prefix (e.g. products, categories)"
@@ -100,7 +98,7 @@ async def upload_image(
     # Whoever uploaded this will see it immediately because their own page view
     # warms it; the customer who lands on it tomorrow is the one who would
     # otherwise pay for the encode.
-    background_tasks.add_task(image_warm_service.warm_quietly, [public_url])
+    image_warm_service.warm_in_background([public_url])
 
     return UploadResponse(url=public_url, key=key)
 

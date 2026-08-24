@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.user import UserCreate, LoginRequest, PasswordResetConfirm
+from app.schemas.user import LoginRequest, PasswordResetConfirm, UserCreate
 
 
 class TestUserCreate:

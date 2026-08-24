@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
-
 from decimal import Decimal
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
     CheckConstraint,
@@ -18,11 +17,11 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, UUIDMixin, TimestampMixin, utcnow
+from .base import Base, TimestampMixin, UUIDMixin, utcnow
 
 if TYPE_CHECKING:
-    from .user import User
     from .product import Product
+    from .user import User
 
 
 class Cart(Base, UUIDMixin, TimestampMixin):

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-
 _VALID_UUID = "00000000-0000-0000-0000-000000000001"
 
 

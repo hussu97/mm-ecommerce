@@ -14,11 +14,10 @@ and the customer never heard again.
 
 from __future__ import annotations
 
+import inspect
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
-
-import inspect
 
 import pytest
 

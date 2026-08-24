@@ -22,7 +22,7 @@ import pytest
 
 from app.api.v1.delivery import DeliveryAreaResponse, _speed_of, delivery_area
 from app.models.delivery_settings import DeliverySettings
-from app.services.delivery_zone_service import Zone
+from app.services.delivery.delivery_zone_service import Zone
 
 SETTINGS = DeliverySettings(
     pickup_fee=Decimal("0.00"),

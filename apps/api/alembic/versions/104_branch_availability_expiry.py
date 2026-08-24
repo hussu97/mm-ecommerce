@@ -23,8 +23,9 @@ catalogue, so the ordinary case costs nothing and "no row" means "sold here".
 from typing import Sequence, Union
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects.postgresql import UUID
+
+from alembic import op
 
 revision: str = "104_branch_availability_expiry"
 down_revision: Union[str, None] = "103_soft_delete_consistency"

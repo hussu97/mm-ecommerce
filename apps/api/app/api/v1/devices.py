@@ -17,8 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
 from app.core.deps import get_current_active_user, get_db
-from app.core.permissions import require
 from app.core.exceptions import ConflictError, UnauthorizedError
+from app.core.permissions import require
 from app.models import (
     Branch,
     Device,

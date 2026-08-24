@@ -31,8 +31,9 @@ from __future__ import annotations
 from typing import Sequence, Union
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+
+from alembic import op
 
 revision: str = "051_order_deliveries"
 down_revision: Union[str, None] = "050_delivery_zone_fulfilment"

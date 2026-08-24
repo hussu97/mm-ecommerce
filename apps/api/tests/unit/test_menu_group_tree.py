@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import inspect
 
-from app.services import menu_group_service
+from app.services.catalog import menu_group_service
 
 
 def test_the_walk_descends_only_through_active_groups():

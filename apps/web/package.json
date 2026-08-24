@@ -8,6 +8,7 @@
     "images": "node scripts/optimize-images.mjs",
     "start": "next start --port 3000",
     "lint": "eslint .",
+    "type-check": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test"

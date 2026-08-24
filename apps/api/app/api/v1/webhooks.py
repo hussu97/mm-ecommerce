@@ -2,17 +2,16 @@ from __future__ import annotations
 
 import hmac
 import json
-from typing import Any
-
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.v1.payments import process_gateway_webhook
 from app.core.config import settings
 from app.core.deps import get_db
-from app.api.v1.payments import process_gateway_webhook
-from app.services import lalamove_service, noon_send_service, slider_service
+from app.services.couriers import lalamove_service, noon_send_service, slider_service
 from app.services.providers.lalamove_provider import LalamoveError
 from app.services.providers.noon_send_provider import NoonSendError
 from app.services.providers.slider_provider import SliderError

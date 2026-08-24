@@ -22,8 +22,8 @@ import pytest
 from app.models.courier import Courier
 from app.models.delivery_batch import DeliveryBatchGroup
 from app.models.order import DeliveryMethodEnum, OrderStatusEnum
-from app.services import fulfilment_service
-from app.services.fulfilment_service import TZ
+from app.services.delivery import fulfilment_service
+from app.services.delivery.fulfilment_service import TZ
 
 NOW = datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc)
 

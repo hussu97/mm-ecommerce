@@ -30,7 +30,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.models.language import Language, UiTranslation
 
-
 LANGUAGES = [
     {
         "code": "en",

@@ -22,7 +22,7 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 from app.core.exceptions import NotFoundError
-from app.services import category_service, product_service
+from app.services.catalog import category_service, product_service
 
 
 async def _sql_for(fn, *args, **kwargs) -> str:
