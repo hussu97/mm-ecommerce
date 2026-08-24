@@ -22,7 +22,16 @@ GrubTech publish no partner API. GrubOps 2.0 is a Flutter web app talking to
 `internal-api.grubtech.io`, and this signs in the way the console does:
 
 - AWS Cognito, `eu-west-2`, flow `USER_PASSWORD_AUTH`, app client
-  `2d8lmtmc241sviat2psomuuon8`, pool `eu-west-2_CKectL0Mu`. No MFA.
+  `75n3em3l16kvhnf6c512680vm9` — the GrubOps 2.0 **console** client, pool
+  `eu-west-2_Lp8Eb8HmS`. No MFA. We first used the integration client
+  `2d8lmtmc241sviat2psomuuon8` (pool `eu-west-2_CKectL0Mu`): it reads everything,
+  but its token is refused by `order-force-complete` with a 403 "Force completed
+  unsuccessful" while the console's identical request (same body, same
+  `permissionValues: ALL`) succeeds — that endpoint authorises on the token
+  `aud`, so only the console client passes. The console client was verified to be
+  a superset (orders, locations, catalogue, availability all serve it), so the
+  whole sync uses it. Both clients live in the same region and accept the same
+  `USER_PASSWORD_AUTH` login for this user; only the `aud`/pool differ.
 - The resulting **id token is used directly as `Authorization: Bearer`**. The
   console's second hop through `admin-user-auth/user-authentication/authenticate`
   turns out to be unnecessary for these services — the id token already carries

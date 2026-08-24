@@ -310,7 +310,16 @@ class Settings(BaseSettings):
     #: blank because they are not secret, they are stable, and a missing one is
     #: a silent no-op that takes an afternoon to find.
     GRUBOPS_PARTNER_ID: str = "6922fe267f5b1c6d208c634f"
-    GRUBOPS_COGNITO_CLIENT_ID: str = "2d8lmtmc241sviat2psomuuon8"
+    #: The GrubOps 2.0 **console** app client (pool eu-west-2_Lp8Eb8HmS) — not the
+    #: integration client `2d8lmtmc…` (pool eu-west-2_CKectL0Mu) we used first.
+    #: Same user, same USER_PASSWORD_AUTH, same `permissionValues: ALL` — but
+    #: `order-management/order-force-complete` authorises on the token's `aud` and
+    #: 403s ("Force completed unsuccessful") every client but the console's. The
+    #: console client is a superset — verified serving every read the sync makes
+    #: (orders, locations, catalogue, availability) — so the whole sync uses it.
+    #: Do not "tidy" this back to the integration client; see
+    #: docs/grubops-integration.md.
+    GRUBOPS_COGNITO_CLIENT_ID: str = "75n3em3l16kvhnf6c512680vm9"
     GRUBOPS_COGNITO_REGION: str = "eu-west-2"
     GRUBOPS_API_BASE: str = "https://internal-api.grubtech.io"
     #: The catalogue lives on a different host from the availability service.

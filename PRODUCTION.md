@@ -938,7 +938,7 @@ it here and redeploying.
 | `GRUBOPS_USERNAME` | — | The GrubOps console login |
 | `GRUBOPS_PASSWORD` | — | That login's password |
 | `GRUBOPS_PARTNER_ID` | `6922fe267f5b1c6d208c634f` | This account's partner id |
-| `GRUBOPS_COGNITO_CLIENT_ID` | `2d8lmtmc241sviat2psomuuon8` | Their app client; changes only if GrubTech reissue it |
+| `GRUBOPS_COGNITO_CLIENT_ID` | `75n3em3l16kvhnf6c512680vm9` | GrubOps 2.0 **console** app client; force-complete authorises on the token aud, so the integration client `2d8lmtmc…` 403s and only this one works |
 | `GRUBOPS_COGNITO_REGION` | `eu-west-2` | |
 | `GRUBOPS_API_BASE` | `https://internal-api.grubtech.io` | Availability writes |
 | `GRUBOPS_CATALOG_API_BASE` | `https://api-grubone.grubtech.io` | Brands and menu listing — a different host, which is their split |
