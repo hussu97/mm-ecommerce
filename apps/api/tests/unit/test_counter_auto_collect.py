@@ -71,7 +71,9 @@ async def test_a_counter_sale_is_confirmed_then_collected(wiring):
     order_holder["order"] = _order("cashier")
 
     await pos_order_service.close_order(
-        AsyncMock(), order=order_holder["order"], user=SimpleNamespace(id=uuid.uuid4(), email="c@mm.test")
+        AsyncMock(),
+        order=order_holder["order"],
+        user=SimpleNamespace(id=uuid.uuid4(), email="c@mm.test"),
     )
 
     # Confirmed (the close) then delivered (the collection), in that order.
@@ -89,7 +91,9 @@ async def test_an_online_hand_over_is_not_swept_to_delivered(wiring):
     order_holder["order"] = _order("online")
 
     await pos_order_service.close_order(
-        AsyncMock(), order=order_holder["order"], user=SimpleNamespace(id=uuid.uuid4(), email="c@mm.test")
+        AsyncMock(),
+        order=order_holder["order"],
+        user=SimpleNamespace(id=uuid.uuid4(), email="c@mm.test"),
     )
 
     assert _statuses(transition) == [OrderStatusEnum.CONFIRMED]

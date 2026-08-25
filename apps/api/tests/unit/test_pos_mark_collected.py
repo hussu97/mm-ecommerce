@@ -122,7 +122,9 @@ async def test_collecting_twice_is_not_an_error(monkeypatch, wiring):
         OrderStatusEnum.REFUNDED,
     ],
 )
-async def test_an_order_that_cannot_be_collected_is_refused(monkeypatch, wiring, status):
+async def test_an_order_that_cannot_be_collected_is_refused(
+    monkeypatch, wiring, status
+):
     """The same transition table the console is held to — collection can only
     follow the order actually being ready."""
     update_status, notify = wiring
