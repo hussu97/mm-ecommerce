@@ -1651,6 +1651,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/dashboard/today": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dashboard Today
+         * @description The current trading day at a glance, over every order and every channel.
+         */
+        get: operations["dashboard_today_api_v1_dashboard_today_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/delivery-zones/batch-groups": {
         parameters: {
             query?: never;
@@ -7853,6 +7873,18 @@ export interface components {
             /** Revenue */
             revenue: number;
         };
+        /**
+         * BreakdownRow
+         * @description One slice of the day — a status, a channel, a fulfilment or a payment.
+         */
+        BreakdownRow: {
+            /** Label */
+            label: string;
+            /** Orders */
+            orders: number;
+            /** Revenue */
+            revenue: number;
+        };
         /** BulkStatusRequest */
         BulkStatusRequest: {
             /** Ids */
@@ -8952,6 +8984,78 @@ export interface components {
             sent: components["schemas"]["DailySalesEmailRecipientResult"][];
             /** Subject */
             subject: string;
+        };
+        /**
+         * DashboardOps
+         * @description Open work, as it stands right now.
+         *
+         *     These are current-state counts, not windowed to today, because an order that
+         *     went out for delivery last night is still the shop's problem this morning —
+         *     except the three explicitly named `_today`, which are the day's events.
+         */
+        DashboardOps: {
+            /** Active Couriers */
+            active_couriers: number;
+            /** Custom Orders Due Today */
+            custom_orders_due_today: number;
+            /** Low Stock Items */
+            low_stock_items: number;
+            /** Open Custom Orders */
+            open_custom_orders: number;
+            /** Open Tills */
+            open_tills: number;
+            /** Out For Delivery */
+            out_for_delivery: number;
+            /** Payment Failed Today */
+            payment_failed_today: number;
+            /** Pending Purchase Orders */
+            pending_purchase_orders: number;
+            /** Refunds Amount Today */
+            refunds_amount_today: number;
+            /** Refunds Today */
+            refunds_today: number;
+            /** Undelivered */
+            undelivered: number;
+        };
+        /**
+         * DashboardSummary
+         * @description The day's headline figures, over every non-cancelled order created today.
+         */
+        DashboardSummary: {
+            /** Avg Order Value */
+            avg_order_value: number;
+            /** Delivered */
+            delivered: number;
+            /** Orders */
+            orders: number;
+            /** Orders Growth */
+            orders_growth: number;
+            /** Revenue */
+            revenue: number;
+            /** Revenue Growth */
+            revenue_growth: number;
+        };
+        /** DashboardTodayResponse */
+        DashboardTodayResponse: {
+            /** Business Date */
+            business_date: string;
+            /** By Channel */
+            by_channel: components["schemas"]["BreakdownRow"][];
+            /** By Fulfillment */
+            by_fulfillment: components["schemas"]["BreakdownRow"][];
+            /** By Payment */
+            by_payment: components["schemas"]["BreakdownRow"][];
+            /** By Status */
+            by_status: components["schemas"]["BreakdownRow"][];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            ops: components["schemas"]["DashboardOps"];
+            summary: components["schemas"]["DashboardSummary"];
+            /** Timezone */
+            timezone: string;
         };
         /** DayAvailabilityResponse */
         DayAvailabilityResponse: {
@@ -19289,6 +19393,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dashboard_today_api_v1_dashboard_today_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardTodayResponse"];
                 };
             };
         };

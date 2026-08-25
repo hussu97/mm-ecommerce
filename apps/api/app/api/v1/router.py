@@ -19,6 +19,7 @@ from .custom_orders import (
 from .custom_orders import (
     router as custom_orders_router,
 )
+from .dashboard import router as home_dashboard_router
 from .delivery import router as delivery_router
 from .delivery_zones import router as delivery_zones_router
 from .devices import printers_router
@@ -115,6 +116,9 @@ api_router.include_router(
 )
 api_router.include_router(webhooks_router, prefix="/webhooks", tags=["Webhooks"])
 api_router.include_router(analytics_router, prefix="/analytics", tags=["Analytics"])
+api_router.include_router(
+    home_dashboard_router, prefix="/dashboard", tags=["Dashboard"]
+)
 api_router.include_router(users_router, prefix="/users", tags=["Users"])
 api_router.include_router(bulk_router, prefix="/bulk", tags=["Bulk"])
 api_router.include_router(export_router, prefix="/export", tags=["Export"])
