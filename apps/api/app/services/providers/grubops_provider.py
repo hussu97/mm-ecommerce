@@ -72,9 +72,9 @@ TYPE_NESTED_MODIFIER = "NESTED_MODIFIER"
 STATUS_UNTIL_FURTHER_NOTICE = "UNAVAILABLE_UNTIL_FURTHER_NOTICE"
 STATUS_UNTIL_SPECIFIC_DATE = "UNAVAILABLE_UNTIL_SPECIFIC_DATE"
 
-#: The order-management overrides our console token can reach. The normal
-#: accept/prepare flow lives behind the KDS station pool and is not callable
-#: here — see docs/grubops-integration.md.
+#: The order read endpoints, mounted on the orders host. GrubOps' order-management
+#: *write* overrides are no longer called from here — MM drives the order forward
+#: on Foodics instead (see `foodics_orders_service`).
 _ORDERS = "/v2.0"
 
 
@@ -468,12 +468,16 @@ class GrubOpsClient:
             return payload.get("items") or []
         return payload or []
 
-    # ── orders (aggregator ingest + write-back) ──────────────────────────────
+    # ── orders (aggregator ingest, read-only) ────────────────────────────────
     #
     # The order side answers on a third host, the console's own
     # `api-grubops.grubtech.io`, hence `base=self.config.orders_base` on each.
-    # Reads are how MM learns of an aggregator sale; the three write methods are
-    # override actions (force-*), the only ones this token can reach.
+    # Reads are how MM learns of an aggregator sale. The write-back — dispatch,
+    # finalise, cancel — is done on the *Foodics* order now (see
+    # `foodics_orders_service`), not through GrubOps' `order-force-*` overrides,
+    # which were removed: they were a blunt jump straight to "the order is ready"
+    # that skipped the real ready-to-dispatch step, and Foodics exposes that step
+    # properly.
 
     async def list_orders(
         self,
@@ -563,36 +567,6 @@ class GrubOpsClient:
         if isinstance(payload, dict):
             return payload.get("orderInfo") or payload
         return None
-
-    async def force_complete(self, order_id: str, message: str) -> Any:
-        """Mark an order complete — an override, gated per order by
-        `orderManagementOptions.forceCompletionAllowed`."""
-        return await self._call(
-            "POST",
-            f"{_ORDERS}/order-management/order-force-complete",
-            json_body={"orderInternalId": order_id, "message": message},
-            base=self.config.orders_base,
-        )
-
-    async def force_cancel(self, order_id: str, message: str) -> Any:
-        """Cancel an order — an override, gated by
-        `orderManagementOptions.forceCancellationAllowed`."""
-        return await self._call(
-            "POST",
-            f"{_ORDERS}/order-management/order-force-cancel",
-            json_body={"orderInternalId": order_id, "message": message},
-            base=self.config.orders_base,
-        )
-
-    async def order_void(self, order_id: str, message: str) -> Any:
-        """Void an order — an override, gated by
-        `orderManagementOptions.voidAllowed`."""
-        return await self._call(
-            "POST",
-            f"{_ORDERS}/order-management/order-void",
-            json_body={"orderInternalId": order_id, "message": message},
-            base=self.config.orders_base,
-        )
 
 
 def _unwrap(response: httpx.Response) -> Any:

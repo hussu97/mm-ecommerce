@@ -342,20 +342,16 @@ async def send(
 # ── The daily loop ───────────────────────────────────────────────────────────
 
 
-def _close_datetime(branch: Branch, day: date, tz: ZoneInfo) -> datetime:
-    """When a branch's trading day ends, as a real moment in the shop's zone.
-
-    `opening_to` is "HH:MM". A branch that closes at or before it opens trades
-    past midnight, so its close belongs to the next calendar day — without that
-    a 01:00 close would be read as the earliest close of the day rather than the
-    latest.
-    """
-    close_h, close_m = (int(x) for x in branch.opening_to.split(":"))
-    open_h, open_m = (int(x) for x in branch.opening_from.split(":"))
-    close = datetime(day.year, day.month, day.day, close_h, close_m, tzinfo=tz)
-    if (close_h, close_m) <= (open_h, open_m):
-        close += timedelta(days=1)
-    return close
+#: How many recently-ended business days a tick will still send if they were
+#: missed. The report used to be sendable only in the ~45-minute slice between the
+#: last branch's close and local midnight, with no catch-up: a deploy, a restart,
+#: or a single slow tick in that window lost the night permanently, and a branch
+#: closing at or past midnight poisoned the window for the whole estate. Now a
+#: tick sends any *completed* business day still unsent within this look-back, so
+#: a missed night is caught up on the next tick rather than lost. Three days
+#: covers a weekend outage without ever backfilling ancient history (the
+#: `_already_sent` guard skips anything already mailed).
+_CATCHUP_DAYS = 3
 
 
 async def _already_sent(db: AsyncSession, business_date: str) -> bool:
@@ -384,12 +380,25 @@ async def _tick(db: AsyncSession, now: datetime | None = None) -> None:
     if not branches:
         return
 
-    latest_close = max(_close_datetime(b, now.date(), tz) for b in branches)
-    if now < latest_close + _CLOSE_BUFFER:
-        return
+    # The earliest business day still in progress across all branches, measured
+    # `_CLOSE_BUFFER` in the past so a day only counts as ended once its rollover
+    # is comfortably behind us. Any date strictly before this has closed for every
+    # branch — no `opening_to`/midnight arithmetic, so a past-midnight closer no
+    # longer poisons the run. `business_date_for` already applies each branch's own
+    # cut-off, which is the same boundary orders book under.
+    ref = now - _CLOSE_BUFFER
+    frontier = min(
+        business_day_service.business_date_for(b, ref, tz) for b in branches
+    )
+    frontier_date = date.fromisoformat(frontier)
 
-    business_date = await business_day_service.current_business_date(db, branches[0])
-    if await _already_sent(db, business_date):
+    # Every completed day in the look-back, oldest first, that has not been mailed.
+    targets = [
+        (frontier_date - timedelta(days=offset)).isoformat()
+        for offset in range(_CATCHUP_DAYS, 0, -1)
+    ]
+    pending = [t for t in targets if not await _already_sent(db, t)]
+    if not pending:
         return
 
     async with advisory_lock.held(
@@ -397,22 +406,24 @@ async def _tick(db: AsyncSession, now: datetime | None = None) -> None:
     ) as mine:
         if not mine:
             return
-        # Re-check under the lock: another worker may have sent it in the gap.
-        if await _already_sent(db, business_date):
-            return
-        summary = await send(
-            db,
-            date_from=business_date,
-            date_to=business_date,
-            recipients=DEFAULT_RECIPIENTS,
-        )
-        logger.info(
-            "Daily sales report sent for %s: %s", business_date, summary["sent"]
-        )
+        for business_date in pending:
+            # Re-check under the lock: another worker may have sent it in the gap.
+            if await _already_sent(db, business_date):
+                continue
+            summary = await send(
+                db,
+                date_from=business_date,
+                date_to=business_date,
+                recipients=DEFAULT_RECIPIENTS,
+            )
+            logger.info(
+                "Daily sales report sent for %s: %s", business_date, summary["sent"]
+            )
 
 
 async def run_forever() -> None:
-    """Check every ten minutes; send once, after the last branch has closed."""
+    """Check every ten minutes; send each completed business day once, catching
+    up any recent day a restart or outage caused to be missed."""
     logger.info("Daily sales report loop started")
     while True:
         try:

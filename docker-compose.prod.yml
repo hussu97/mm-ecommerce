@@ -168,6 +168,12 @@ services:
       GRUBOPS_ORDERS_API_BASE: ${GRUBOPS_ORDERS_API_BASE:-https://api-grubops.grubtech.io}
       GRUBOPS_ORDERS_TICK_SECONDS: ${GRUBOPS_ORDERS_TICK_SECONDS:-60}
       AGG_AUTO_CLOSE_SECONDS: ${AGG_AUTO_CLOSE_SECONDS:-300}
+      FOODICS_ORDER_PUSH_ENABLED: ${FOODICS_ORDER_PUSH_ENABLED:-false}
+      FOODICS_CONSOLE_BASE: ${FOODICS_CONSOLE_BASE:-https://console.foodics.com}
+      FOODICS_ACCOUNT_NUMBER: ${FOODICS_ACCOUNT_NUMBER:-862261}
+      FOODICS_EMAIL: ${FOODICS_EMAIL:-}
+      FOODICS_PASSWORD: ${FOODICS_PASSWORD:-}
+      FOODICS_TIMEOUT_SECONDS: ${FOODICS_TIMEOUT_SECONDS:-8}
       # ── Slider ──────────────────────────────────────────────────────────
       # The third courier. Every one of these has to be here and not only in
       # `.env`: this block is an allow-list, and a variable the VM holds but
@@ -398,6 +404,13 @@ services:
       GRUBOPS_ORDERS_API_BASE: ${GRUBOPS_ORDERS_API_BASE:-https://api-grubops.grubtech.io}
       GRUBOPS_ORDERS_TICK_SECONDS: ${GRUBOPS_ORDERS_TICK_SECONDS:-60}
       AGG_AUTO_CLOSE_SECONDS: ${AGG_AUTO_CLOSE_SECONDS:-300}
+      # The register presses Packed, so it fires the Foodics dispatch too.
+      FOODICS_ORDER_PUSH_ENABLED: ${FOODICS_ORDER_PUSH_ENABLED:-false}
+      FOODICS_CONSOLE_BASE: ${FOODICS_CONSOLE_BASE:-https://console.foodics.com}
+      FOODICS_ACCOUNT_NUMBER: ${FOODICS_ACCOUNT_NUMBER:-862261}
+      FOODICS_EMAIL: ${FOODICS_EMAIL:-}
+      FOODICS_PASSWORD: ${FOODICS_PASSWORD:-}
+      FOODICS_TIMEOUT_SECONDS: ${FOODICS_TIMEOUT_SECONDS:-8}
       # Deliberately absent: BATCH_DISPATCHER_ENABLED. That starts the
       # background loop that sweeps batches out, and a second copy of it in this
       # container would race the storefront's over the same rows. The register

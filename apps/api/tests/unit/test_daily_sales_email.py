@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime
 from decimal import Decimal as D
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -204,19 +206,100 @@ async def test_xlsx_has_the_five_sections_with_discount_and_charges_negative():
     assert shj_charges[header.index("talabat")] == -900.0  # 800 + 100, negative
 
 
-# ── Scheduling helper ────────────────────────────────────────────────────────
+# ── Scheduling: which completed days a tick sends ────────────────────────────
+
+_NOW = datetime(2026, 8, 25, 6, 0, tzinfo=ZoneInfo("Asia/Dubai"))
 
 
-def test_a_past_midnight_close_belongs_to_the_next_day():
-    tz = ZoneInfo("Asia/Dubai")
-    # Opens 10:00, closes 02:00 → the close is the following calendar day.
-    branch = SimpleNamespace(opening_from="10:00", opening_to="02:00")
-    close = dse._close_datetime(branch, datetime(2026, 8, 24, tzinfo=tz).date(), tz)
-    assert close.day == 25 and close.hour == 2
+@asynccontextmanager
+async def _lock_ok(*_a, **_k):
+    yield True
 
 
-def test_a_normal_evening_close_is_the_same_day():
-    tz = ZoneInfo("Asia/Dubai")
-    branch = SimpleNamespace(opening_from="10:00", opening_to="23:00")
-    close = dse._close_datetime(branch, datetime(2026, 8, 24, tzinfo=tz).date(), tz)
-    assert close.day == 24 and close.hour == 23
+def _branches_db(branches):
+    class _Scalars:
+        def all(self):
+            return branches
+
+    class _Res:
+        def scalars(self):
+            return _Scalars()
+
+    async def execute(_stmt):
+        return _Res()
+
+    return SimpleNamespace(execute=execute)
+
+
+async def _run_tick(*, in_progress: dict[str, str], already_sent: set[str]):
+    """Drive `_tick` with `business_date_for` and the send/guard stubbed out, so
+    the test states the branch's in-progress business day directly and reads back
+    which dates got mailed."""
+    branches = [SimpleNamespace(name=n) for n in in_progress]
+    sent: list[str] = []
+
+    async def fake_send(_db, *, date_from, date_to, recipients):
+        sent.append(date_from)
+        return {"sent": []}
+
+    with (
+        patch.object(
+            dse.business_day_service,
+            "resolve_timezone",
+            AsyncMock(return_value=ZoneInfo("Asia/Dubai")),
+        ),
+        patch.object(
+            dse.business_day_service,
+            "business_date_for",
+            lambda branch, moment, tz: in_progress[branch.name],
+        ),
+        patch.object(
+            dse, "_already_sent", AsyncMock(side_effect=lambda _db, d: d in already_sent)
+        ),
+        patch.object(dse, "send", fake_send),
+        patch.object(dse.advisory_lock, "held", _lock_ok),
+    ):
+        await dse._tick(_branches_db(branches), now=_NOW)
+    return sent
+
+
+@pytest.mark.asyncio
+async def test_it_sends_every_completed_day_in_the_window_oldest_first():
+    # Nothing mailed yet: it sends the just-ended day and catches up the two
+    # before it — never the in-progress day. This is the fix: a missed night is
+    # caught up, not lost.
+    sent = await _run_tick(
+        in_progress={"A": "2026-08-25", "B": "2026-08-25"}, already_sent=set()
+    )
+    assert sent == ["2026-08-22", "2026-08-23", "2026-08-24"]
+    assert "2026-08-25" not in sent
+
+
+@pytest.mark.asyncio
+async def test_it_skips_days_already_mailed():
+    sent = await _run_tick(
+        in_progress={"A": "2026-08-25", "B": "2026-08-25"},
+        already_sent={"2026-08-22", "2026-08-23"},
+    )
+    assert sent == ["2026-08-24"]
+
+
+@pytest.mark.asyncio
+async def test_it_sends_nothing_when_the_window_is_all_mailed():
+    sent = await _run_tick(
+        in_progress={"A": "2026-08-25", "B": "2026-08-25"},
+        already_sent={"2026-08-22", "2026-08-23", "2026-08-24"},
+    )
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_it_waits_for_the_last_branch_before_sending_a_day():
+    # B is still trading 2026-08-24 while A has rolled to the 25th. The 24th is
+    # not complete everywhere, so it is held back; the 23rd (done for both) sends.
+    # A branch closing late or past midnight can no longer poison the estate.
+    sent = await _run_tick(
+        in_progress={"A": "2026-08-25", "B": "2026-08-24"}, already_sent=set()
+    )
+    assert "2026-08-24" not in sent
+    assert "2026-08-23" in sent

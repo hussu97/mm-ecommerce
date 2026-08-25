@@ -224,10 +224,11 @@ ADMIN_RECOVERABLE: dict[OrderStatusEnum, frozenset[OrderStatusEnum]] = {
 
 
 #: Source states an *aggregator* order may be cancelled from, beyond what the map
-#: allows. `packed` is the one that matters: a GrubOps order marked packed has
-#: had its driver called via force-complete, and the shop can still change its
-#: mind — GrubOps decides whether force-cancel is still permitted and declines it
-#: if the rider has already moved on (see `grubops_orders_service.mirror_status_out`).
+#: allows. `packed` is the one that matters: a packed aggregator order has had its
+#: rider called via the Foodics dispatch, and the shop can still change its mind —
+#: the cancel then declines the Foodics order if it is still pending, and records
+#: the ones already accepted (Foodics has no public void). See
+#: `foodics_orders_service.mirror_status_out`.
 #:
 #: Deliberately **not** in `VALID_TRANSITIONS`: that map is read by the courier
 #: webhooks, the register and the checkout, and an *MM-courier* packed order is
@@ -544,28 +545,32 @@ async def _consequences(
 
         await payment_service.refund_order(db, order)
 
-    # Mirror an MM move back out to GrubOps for an aggregator order via the
-    # force-* overrides. `packed` fires GrubOps force-complete — which in GrubOps
-    # terms means "the order is ready", so its rider is called to collect — and
-    # `cancelled` fires force-cancel. Only when the move came from *our* side:
-    # the ingest loop attributes its own moves `aggregator`, and echoing GrubOps's
-    # state straight back to GrubOps would be a feedback loop. The shop pressing
-    # Packed (source `pos`) or an admin cancelling is attributed otherwise and
-    # does mirror out.
+    # Mirror an MM move back out to the aggregator's POS — **Foodics**, the system
+    # behind GrubTech — for an aggregator order. `packed` dispatches the Foodics
+    # order (marks it ready-to-deliver, which GrubTech cascades to the rider — the
+    # step GrubOps' force-complete used to fake); `delivered` (our 5-minute
+    # auto-close) finalises it on the delivery axis; `cancelled` declines it while
+    # it is still pending. This replaced the GrubOps `order-force-*` overrides.
     #
-    # `delivered` deliberately does *not* mirror out: force-complete has already
-    # fired at `packed`, and the move to `delivered` is our own 5-minute auto-close
-    # (source `system`) recording that the order is done from our side — GrubOps
-    # has nothing further to hear.
+    # Only when the move came from *our* side: the ingest loop attributes its own
+    # moves `aggregator`, and echoing that state straight back to Foodics would be
+    # a feedback loop. The shop pressing Packed (source `pos`), the 5-minute
+    # auto-close (source `system`) and an admin cancelling are attributed
+    # otherwise and do mirror out.
     if (
         order.source == OrderSourceEnum.AGGREGATOR.value
-        and new_status in (OrderStatusEnum.CANCELLED, OrderStatusEnum.PACKED)
+        and new_status
+        in (
+            OrderStatusEnum.CANCELLED,
+            OrderStatusEnum.PACKED,
+            OrderStatusEnum.DELIVERED,
+        )
         and current_actor().source != StatusSourceEnum.AGGREGATOR.value
     ):
-        from app.services.grubops import grubops_orders_service
+        from app.services.foodics import foodics_orders_service
 
         actor = current_actor()
-        grubops_orders_service.push_status_out_in_background(
+        foodics_orders_service.push_status_out_in_background(
             mm_order_id=order.id,
             new_status=new_status,
             actor=actor.actor_label or actor.source,

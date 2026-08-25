@@ -3,8 +3,10 @@
 This is the domain layer of the order-ingest feature: it knows how a GrubOps
 order maps onto our `orders` table and lifecycle, and nothing about HTTP or the
 polling loop. `services/grubops_orders.py` (the loop) calls `ingest` for each
-order it sees; `order_lifecycle` calls `push_status_out_in_background` when an
-aggregator order reaches a terminal state here.
+order it sees. Driving the order *back out* — dispatch/finalise/cancel — is no
+longer done here: `order_lifecycle` mirrors an MM move onto the **Foodics** order
+(the POS behind GrubTech) via `foodics_orders_service`, which replaced the GrubOps
+`order-force-*` overrides this file used to fire.
 
 Three things make an aggregator order different from a website order, and each
 is handled deliberately rather than by pretending it is an `online` sale:
@@ -51,7 +53,7 @@ from app.models.order_status_event import (
 from app.models.pos_order import OrderSourceEnum, OrderTax, PosOrderStatusEnum
 from app.models.product import Product
 from app.services.orders import order_fees, order_lifecycle
-from app.services.providers.grubops_provider import GrubOpsError, provider
+from app.services.providers.grubops_provider import provider
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +61,7 @@ __all__ = [
     "is_enabled",
     "ingest",
     "LIVE_STATUSES",
-    "push_status_out_in_background",
-    "mirror_status_out",
-    "sweep_pending_pushouts",
+    "sweep_auto_close",
 ]
 
 #: Dubai, for the order-number date. The shop's day, not UTC's — the same
@@ -89,10 +89,10 @@ LIVE_STATUSES: list[str] = [
 #:
 #: **The shop, not the poll loop, owns `packed`.** An aggregator order lands at
 #: `arrived_at_pos` ("at the shop") and waits there for a person to press Packed
-#: — which is what fires GrubOps force-complete and calls the rider. So the
+#: — which is what dispatches the Foodics order and calls the rider. So the
 #: prepared/dispatched family maps to `arrived_at_pos`, not `packed`: mirroring
 #: GrubOps's own "prepared" straight to `packed` would jump past the shop and
-#: skip the force-complete our side is now responsible for. Only a genuinely
+#: skip the Foodics dispatch our side is now responsible for. Only a genuinely
 #: terminal GrubOps outcome (completed / cancelled) drives us forward on its own,
 #: as a safety net for an order finished aggregator-side.
 _STATUS_TO_MM: dict[str, OrderStatusEnum] = {
@@ -479,6 +479,39 @@ def _apply_driver_info(order: Order, info: dict) -> None:
         order.aggregator_driver_status = status
 
 
+#: The Foodics order id, as GrubOps embeds it. GrubTech does not surface a POS-id
+#: field; it only records the publish in the order history, e.g.
+#: "Order External Id - 4961 Foodics Order Id: f172c019-ba85-46c4-88d7-cb85f728696f"
+#: (status `PUBLISHING_ORDER_CREATED_TO_POS_SUCCEEDED`, code 20000). The uuid is
+#: the id the Foodics API and console use for the order, so it is the write-back's
+#: handle. Parsed rather than field-read because there is no field.
+_FOODICS_ORDER_ID_RE = re.compile(
+    r"Foodics\s+Order\s+Id\s*[:\-]?\s*"
+    r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})",
+    re.IGNORECASE,
+)
+
+
+def _foodics_order_id(info: dict) -> str | None:
+    """Pull the Foodics order id out of a `getOrderInfo` payload, or None.
+
+    Prefers the dedicated publish event (code 20000) and falls back to scanning
+    every history description, so a change in which event carries the line does
+    not lose it. Returns the first uuid found; there is only ever one.
+    """
+    histories = info.get("orderHistories") or []
+    ordered = sorted(
+        histories,
+        key=lambda h: 0 if h.get("code") == 20000 else 1,
+    )
+    for entry in ordered:
+        match = _FOODICS_ORDER_ID_RE.search(str(entry.get("description") or ""))
+        if match:
+            return match.group(1)
+    return None
+
+
 async def ingest(db, info: dict, order_map: GrubOpsOrderMap) -> None:
     """Create the MM order if new, then move it to mirror GrubOps's status.
 
@@ -512,6 +545,12 @@ async def ingest(db, info: dict, order_map: GrubOpsOrderMap) -> None:
 
     order_map.last_grubops_status = gr_status
     order_map.raw = info
+    # Cache the Foodics id the first time GrubOps reveals it (the publish event
+    # lands a beat after creation), so the Foodics write-back needs no re-parse.
+    if order_map.foodics_order_id is None:
+        foodics_id = _foodics_order_id(info)
+        if foodics_id is not None:
+            order_map.foodics_order_id = foodics_id
     await db.flush()
 
 
@@ -818,12 +857,13 @@ _AUTO_CLOSE_LIMIT = 200
 async def sweep_auto_close(db) -> int:
     """Move packed aggregator orders to `delivered` once their window has passed.
 
-    An aggregator order gives us no on-the-way or delivered signal — force-complete
-    calls the rider and then GrubOps goes quiet — so from our side the order is
+    An aggregator order gives us no on-the-way or delivered signal — the dispatch
+    calls the rider and then GrubTech goes quiet — so from our side the order is
     done a few minutes after it is packed. This closes it: a `packed → delivered`
-    move attributed to `system`, which (unlike the shop's Packed press) fires no
-    GrubOps call back out, and clears the check off the register board via
-    `_sync_pos_status`.
+    move attributed to `system`, which clears the check off the register board via
+    `_sync_pos_status` and (unlike an ingest-driven move) mirrors out to *finalise*
+    the Foodics order on the delivery axis, via `order_lifecycle`'s DELIVERED
+    mirror-out. This is the 5-minute delay the write-back's "close" hangs off.
 
     The packed moment is read from `order_status_events` rather than a column, the
     way the rest of the stack derives its timestamps — there is no `packed_at`.
@@ -880,177 +920,3 @@ async def sweep_auto_close(db) -> int:
     if closed:
         await db.flush()
     return closed
-
-
-# ── write-back: mirror an MM terminal status out to GrubOps ──────────────────
-
-
-async def mirror_status_out(
-    db, *, mm_order_id, new_status: OrderStatusEnum, actor: str
-) -> None:
-    """Reflect an MM cancel/complete onto GrubOps via the force-* overrides.
-
-    Only if GrubOps still allows it: the order's `orderManagementOptions` are
-    re-read live, and a flag of false (GrubOps has already moved on) is recorded
-    rather than forced. The map row's `last_pushed_status` / `last_push_error`
-    carry the outcome.
-    """
-    endpoint = {
-        OrderStatusEnum.CANCELLED: ("force_cancel", "forceCancellationAllowed"),
-        # `packed`, not `delivered`: force-complete is GrubOps's "the order is
-        # ready" — it calls the rider. Our own move to `delivered` five minutes
-        # later is bookkeeping and has nothing to push out.
-        OrderStatusEnum.PACKED: ("force_complete", "forceCompletionAllowed"),
-    }.get(new_status)
-    if endpoint is None:
-        return
-    method_name, gate = endpoint
-
-    order_map = (
-        await db.execute(
-            select(GrubOpsOrderMap).where(GrubOpsOrderMap.mm_order_id == mm_order_id)
-        )
-    ).scalar_one_or_none()
-    if order_map is None:
-        return
-    grubops_order_id = order_map.grubops_order_id
-
-    try:
-        info = await provider.get_order(grubops_order_id)
-        options = (info or {}).get("orderManagementOptions") or {}
-        if not options.get(gate):
-            order_map.last_push_error = f"{gate} is false; GrubOps already moved on"
-            await db.flush()
-            return
-        await getattr(provider, method_name)(
-            grubops_order_id, f"Mirrored from Melting Moments ({actor})"
-        )
-        order_map.last_pushed_status = new_status.value
-        order_map.last_push_error = None
-    except GrubOpsError as exc:
-        order_map.last_push_error = str(exc)[:500]
-    await db.flush()
-
-
-def push_status_out_in_background(
-    *, mm_order_id, new_status: OrderStatusEnum, actor: str
-) -> None:
-    """Fire-and-forget mirror-out. Never raises, no-op when disabled or when no
-    event loop is running (tests, the register's sync paths)."""
-    if not is_enabled():
-        return
-
-    async def _run() -> None:
-        from app.core.database import AsyncSessionFactory
-
-        try:
-            async with AsyncSessionFactory() as db:
-                await mirror_status_out(
-                    db,
-                    mm_order_id=mm_order_id,
-                    new_status=new_status,
-                    actor=actor,
-                )
-                await db.commit()
-        except Exception:  # noqa: BLE001 — best-effort, the loop reconciles
-            logger.exception("GrubOps mirror-out failed for order %s", mm_order_id)
-
-    try:
-        task = asyncio.create_task(_run())
-        _pending.add(task)
-        task.add_done_callback(_pending.discard)
-    except RuntimeError:
-        # No running loop — nothing to mirror from here. The ingest tick's
-        # `sweep_pending_pushouts` is the safety net for exactly this.
-        pass
-
-
-# ── retry: re-fire a mirror-out the immediate push never landed ───────────────
-
-
-#: How far back a stuck order stays worth retrying. Comfortably past a transient
-#: GrubOps outage without probing GrubOps forever for an order it has quietly
-#: moved on from. `packed` is bounded tighter still — `sweep_auto_close` lifts it
-#: to `delivered` after `AGG_AUTO_CLOSE_SECONDS` (5 min by default), off this
-#: query — so this bound is really the one that stops a stuck *cancel* retrying.
-_PUSH_RETRY_LOOKBACK_SECONDS = 3600
-#: One sweep's worth. Aggregator volume is low; this is a backstop, not a batch.
-_PUSH_RETRY_LIMIT = 100
-
-
-async def sweep_pending_pushouts(db, *, actor: str = "reconcile") -> int:
-    """Re-fire any Packed/cancelled mirror-out the immediate push never landed.
-
-    `push_status_out_in_background` is best-effort: it re-reads GrubOps live and
-    force-completes only if `forceCompletionAllowed` is true *at that instant*.
-    An order packed seconds after GrubOps accepted it can be pushed before
-    GrubOps is ready to be force-completed — the gate reads false, the failure is
-    recorded on the map row, and nothing tries again; a transient GrubOps error
-    at push time ends the same way. Either way GrubOps stays a step behind until
-    it advances itself. This is the reconcile that comment counts on.
-
-    Each ingest tick, any aggregator order still sitting in a mirror-worthy state
-    (`packed`/`cancelled`) whose map row has not recorded a *successful* push of
-    that status gets one more go through `mirror_status_out` — which re-reads the
-    gate, so a now-allowed order finally goes out and a genuinely-moved-on one is
-    recorded and left.
-
-    Two guards keep it honest: it only touches orders whose *current* state was
-    set by a non-aggregator actor — mirroring `order_lifecycle`'s own rule, so a
-    GrubOps-originated cancel ingested onto our side is never echoed back as a
-    force-cancel — and only orders that reached the state within the lookback, so
-    a permanently-stuck order is not retried against GrubOps forever.
-
-    Returns how many pushes it landed this pass.
-    """
-    cutoff = datetime.now(timezone.utc) - timedelta(
-        seconds=_PUSH_RETRY_LOOKBACK_SECONDS
-    )
-
-    # The most recent status event per order — its `at` doubles as "how long has
-    # it sat here" and its `source` as "who put it here". Read from the events,
-    # the way `sweep_auto_close` reads its packed moment; there is no `*_at`
-    # column, and `(order_id, at)` is indexed for exactly this DISTINCT ON.
-    latest = (
-        select(
-            OrderStatusEvent.order_id.label("order_id"),
-            OrderStatusEvent.source.label("source"),
-            OrderStatusEvent.at.label("at"),
-        )
-        .order_by(OrderStatusEvent.order_id, OrderStatusEvent.at.desc())
-        .distinct(OrderStatusEvent.order_id)
-        .subquery()
-    )
-
-    rows = (
-        await db.execute(
-            select(Order, GrubOpsOrderMap)
-            .join(GrubOpsOrderMap, GrubOpsOrderMap.mm_order_id == Order.id)
-            .join(latest, latest.c.order_id == Order.id)
-            .where(
-                Order.source == OrderSourceEnum.AGGREGATOR.value,
-                Order.status.in_([OrderStatusEnum.PACKED, OrderStatusEnum.CANCELLED]),
-                latest.c.source != StatusSourceEnum.AGGREGATOR.value,
-                latest.c.at >= cutoff,
-            )
-            .order_by(latest.c.at)
-            .limit(_PUSH_RETRY_LIMIT)
-        )
-    ).all()
-
-    pushed = 0
-    for order, order_map in rows:
-        # Already mirrored out for the state it is in — the common case, skipped
-        # in memory with no GrubOps call. `mirror_status_out` only stamps
-        # `last_pushed_status` on a landed push, so anything else (a null
-        # never-attempted, or a value left over from an earlier state) is a gap.
-        if order_map.last_pushed_status == order.status.value:
-            continue
-        await mirror_status_out(
-            db, mm_order_id=order.id, new_status=order.status, actor=actor
-        )
-        # Same row via the identity map, so its post-push state is visible here:
-        # a stamped `last_pushed_status` is the only thing that means it landed.
-        if order_map.last_pushed_status == order.status.value:
-            pushed += 1
-    return pushed

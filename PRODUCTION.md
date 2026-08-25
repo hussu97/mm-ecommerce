@@ -948,7 +948,13 @@ it here and redeploying.
 | `GRUBOPS_ORDERS_ENABLED` | `false` | Aggregator order ingest kill switch. Off until watched once in prod |
 | `GRUBOPS_ORDERS_API_BASE` | `https://api-grubops.grubtech.io` | The console host orders answer on |
 | `GRUBOPS_ORDERS_TICK_SECONDS` | `60` | How often the ingest loop polls GrubOps for orders |
-| `AGG_AUTO_CLOSE_SECONDS` | `300` | How long a packed aggregator order waits before auto-closing to delivered (no signal comes after force-complete) |
+| `AGG_AUTO_CLOSE_SECONDS` | `300` | How long a packed aggregator order waits before auto-closing to delivered (no signal comes after the Foodics dispatch) |
+| `FOODICS_ORDER_PUSH_ENABLED` | `false` | Drive aggregator orders forward on Foodics (dispatch/finalise/cancel) instead of GrubOps force-*. Off until watched once in prod |
+| `FOODICS_CONSOLE_BASE` | `https://console.foodics.com` | Foodics **console** base — this is the console integration, not the developer API |
+| `FOODICS_ACCOUNT_NUMBER` | `862261` | Business/account reference the console signs in with |
+| `FOODICS_EMAIL` | (unset) | Console owner email |
+| `FOODICS_PASSWORD` | (unset) | Console owner password — the provider logs in with it to derive the session. GitHub secret |
+| `FOODICS_TIMEOUT_SECONDS` | `8` | Foodics HTTP timeout |
 
 ```bash
 gh secret set GRUBOPS_USERNAME --repo hussu97/mm-ecommerce

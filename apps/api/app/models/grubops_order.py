@@ -45,6 +45,16 @@ class GrubOpsOrderMap(Base, UUIDMixin, TimestampMixin):
     #: `grubops_location_map`.
     location_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
+    #: The order's id in **Foodics** — the POS behind GrubTech, and where MM now
+    #: drives the order forward (accept/dispatch/close/void) instead of via GrubOps'
+    #: force-* overrides. GrubOps does not surface it as a field, so it is parsed
+    #: from the ingested `getOrderInfo` payload's history (the code-20000
+    #: "…Foodics Order Id: <uuid>" event) and cached here so the write-back needs
+    #: no re-parse. Null until that event has been seen for the order.
+    foodics_order_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
+
     #: The MM order. Null in the gap between first sight and a successful
     #: create; SET NULL rather than CASCADE so deleting an order does not erase
     #: the fact that it was ingested.

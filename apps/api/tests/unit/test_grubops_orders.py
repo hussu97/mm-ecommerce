@@ -33,11 +33,35 @@ def test_a_completed_order_means_delivered_and_a_rejected_one_cancelled():
     assert g._STATUS_TO_MM["OrderRejected"] == OrderStatusEnum.CANCELLED
 
 
+def test_the_foodics_order_id_is_parsed_from_the_publish_history():
+    # GrubOps has no Foodics-id field; it only records the publish in the history.
+    # The write-back needs that uuid, so ingest parses it and caches it.
+    info = {
+        "orderHistories": [
+            {"code": 1000, "status": "OrderCreated", "description": ""},
+            {
+                "code": 20000,
+                "status": "PUBLISHING_ORDER_CREATED_TO_POS_SUCCEEDED",
+                "description": (
+                    "Order External Id - 4961 Foodics Order Id: "
+                    "f172c019-ba85-46c4-88d7-cb85f728696f"
+                ),
+            },
+        ]
+    }
+    assert g._foodics_order_id(info) == "f172c019-ba85-46c4-88d7-cb85f728696f"
+
+
+def test_a_payload_without_the_publish_event_has_no_foodics_id():
+    assert g._foodics_order_id({"orderHistories": []}) is None
+    assert g._foodics_order_id({}) is None
+
+
 def test_a_prepared_order_stops_at_the_shop_not_packed():
     # The shop, not the poll loop, owns `packed`: it is the Packed button that
-    # fires GrubOps force-complete and calls the rider. So the prepared/dispatched
+    # fires the Foodics dispatch and calls the rider. So the prepared/dispatched
     # family maps to `arrived_at_pos` and waits there — mirroring it straight to
-    # `packed` would jump past the shop and skip the force-complete we now owe.
+    # `packed` would jump past the shop and skip the Foodics dispatch we now owe.
     assert g._STATUS_TO_MM["OrderAccepted"] == OrderStatusEnum.ARRIVED_AT_POS
     assert g._STATUS_TO_MM["OrderPrepared"] == OrderStatusEnum.ARRIVED_AT_POS
     assert g._STATUS_TO_MM["OrderDispatched"] == OrderStatusEnum.ARRIVED_AT_POS
@@ -141,172 +165,6 @@ async def test_a_cancel_is_attempted_directly_rather_than_climbed():
 
 
 @pytest.mark.asyncio
-async def test_write_back_skips_and_records_when_grubops_forbids_it():
-    order_map = SimpleNamespace(
-        grubops_order_id="123", last_pushed_status=None, last_push_error=None
-    )
-    db = _fake_db(order_map)
-    fake_provider = SimpleNamespace(
-        get_order=AsyncMock(
-            return_value={"orderManagementOptions": {"forceCancellationAllowed": False}}
-        ),
-        force_cancel=AsyncMock(),
-    )
-    with patch.object(g, "provider", fake_provider):
-        await g.mirror_status_out(
-            db, mm_order_id="mm1", new_status=OrderStatusEnum.CANCELLED, actor="admin"
-        )
-    fake_provider.force_cancel.assert_not_awaited()
-    assert "forceCancellationAllowed" in order_map.last_push_error
-    assert order_map.last_pushed_status is None
-
-
-@pytest.mark.asyncio
-async def test_write_back_force_cancels_when_grubops_allows_it():
-    order_map = SimpleNamespace(
-        grubops_order_id="123", last_pushed_status=None, last_push_error="stale"
-    )
-    db = _fake_db(order_map)
-    fake_provider = SimpleNamespace(
-        get_order=AsyncMock(
-            return_value={"orderManagementOptions": {"forceCancellationAllowed": True}}
-        ),
-        force_cancel=AsyncMock(),
-    )
-    with patch.object(g, "provider", fake_provider):
-        await g.mirror_status_out(
-            db, mm_order_id="mm1", new_status=OrderStatusEnum.CANCELLED, actor="admin"
-        )
-    fake_provider.force_cancel.assert_awaited_once()
-    assert order_map.last_pushed_status == "cancelled"
-    assert order_map.last_push_error is None
-
-
-@pytest.mark.asyncio
-async def test_write_back_force_completes_a_packed_order():
-    # `packed`, not `delivered`, is what carries force-complete out — GrubOps's
-    # "the order is ready, call the rider".
-    order_map = SimpleNamespace(
-        grubops_order_id="123", last_pushed_status=None, last_push_error="stale"
-    )
-    db = _fake_db(order_map)
-    fake_provider = SimpleNamespace(
-        get_order=AsyncMock(
-            return_value={"orderManagementOptions": {"forceCompletionAllowed": True}}
-        ),
-        force_complete=AsyncMock(),
-    )
-    with patch.object(g, "provider", fake_provider):
-        await g.mirror_status_out(
-            db, mm_order_id="mm1", new_status=OrderStatusEnum.PACKED, actor="pos"
-        )
-    fake_provider.force_complete.assert_awaited_once()
-    assert order_map.last_pushed_status == "packed"
-    assert order_map.last_push_error is None
-
-
-@pytest.mark.asyncio
-async def test_write_back_ignores_a_delivered_move():
-    # Delivered has no force-* endpoint any more: force-complete fired at packed,
-    # and the move to delivered is our own auto-close.
-    order_map = SimpleNamespace(
-        grubops_order_id="123", last_pushed_status=None, last_push_error=None
-    )
-    db = _fake_db(order_map)
-    fake_provider = SimpleNamespace(get_order=AsyncMock(), force_complete=AsyncMock())
-    with patch.object(g, "provider", fake_provider):
-        await g.mirror_status_out(
-            db, mm_order_id="mm1", new_status=OrderStatusEnum.DELIVERED, actor="system"
-        )
-    fake_provider.get_order.assert_not_awaited()
-    fake_provider.force_complete.assert_not_awaited()
-
-
-# ── the retry sweep: re-firing a push the immediate mirror-out never landed ──
-
-
-def _sweep_db(rows, order_map=None):
-    """A session whose one result serves both the candidate query (`.all()`) and
-    the map lookup `mirror_status_out` makes next (`.scalar_one_or_none()`)."""
-
-    class _Result:
-        def all(self):
-            return rows
-
-        def scalar_one_or_none(self):
-            return order_map
-
-    db = AsyncMock()
-    db.execute = AsyncMock(return_value=_Result())
-    db.flush = AsyncMock()
-    return db
-
-
-@pytest.mark.asyncio
-async def test_a_stuck_packed_push_is_retried_and_lands_when_the_gate_opens():
-    # The reported bug: the immediate push found the gate shut at pack time and
-    # recorded a failure. The gate is open now, so the sweep force-completes.
-    order = SimpleNamespace(id="mm1", status=OrderStatusEnum.PACKED)
-    order_map = SimpleNamespace(
-        grubops_order_id="123",
-        last_pushed_status=None,
-        last_push_error="forceCompletionAllowed is false; GrubOps already moved on",
-    )
-    db = _sweep_db([(order, order_map)], order_map=order_map)
-    fake_provider = SimpleNamespace(
-        get_order=AsyncMock(
-            return_value={"orderManagementOptions": {"forceCompletionAllowed": True}}
-        ),
-        force_complete=AsyncMock(),
-    )
-    with patch.object(g, "provider", fake_provider):
-        landed = await g.sweep_pending_pushouts(db)
-    fake_provider.force_complete.assert_awaited_once()
-    assert order_map.last_pushed_status == "packed"
-    assert order_map.last_push_error is None
-    assert landed == 1
-
-
-@pytest.mark.asyncio
-async def test_an_order_already_pushed_for_its_state_is_skipped_without_grubops():
-    # The busy-board common case: a landed push must cost no GrubOps call on the
-    # next tick, decided in memory from the map row.
-    order = SimpleNamespace(id="mm1", status=OrderStatusEnum.PACKED)
-    order_map = SimpleNamespace(
-        grubops_order_id="123", last_pushed_status="packed", last_push_error=None
-    )
-    db = _sweep_db([(order, order_map)], order_map=order_map)
-    fake_provider = SimpleNamespace(get_order=AsyncMock(), force_complete=AsyncMock())
-    with patch.object(g, "provider", fake_provider):
-        landed = await g.sweep_pending_pushouts(db)
-    fake_provider.get_order.assert_not_awaited()
-    fake_provider.force_complete.assert_not_awaited()
-    assert landed == 0
-
-
-@pytest.mark.asyncio
-async def test_a_retry_still_forbidden_is_recorded_and_not_counted():
-    # GrubOps has genuinely moved on: the gate is still shut. The sweep records
-    # the outcome, pushes nothing, and reports no landing.
-    order = SimpleNamespace(id="mm1", status=OrderStatusEnum.CANCELLED)
-    order_map = SimpleNamespace(
-        grubops_order_id="123", last_pushed_status=None, last_push_error=None
-    )
-    db = _sweep_db([(order, order_map)], order_map=order_map)
-    fake_provider = SimpleNamespace(
-        get_order=AsyncMock(
-            return_value={"orderManagementOptions": {"forceCancellationAllowed": False}}
-        ),
-        force_cancel=AsyncMock(),
-    )
-    with patch.object(g, "provider", fake_provider):
-        landed = await g.sweep_pending_pushouts(db)
-    fake_provider.force_cancel.assert_not_awaited()
-    assert "forceCancellationAllowed" in order_map.last_push_error
-    assert landed == 0
-
-
-@pytest.mark.asyncio
 async def test_a_known_order_at_the_same_status_costs_no_detail_fetch():
     # The change detector: an order already ingested at this exact status must
     # not spend a getOrderInfo call on the busy-board common case.
@@ -343,6 +201,12 @@ def _fake_db(scalar_one_or_none=None, execute_result=None):
     return db
 
 
+#: Where `order_lifecycle` now mirrors an aggregator move out to — the Foodics
+#: write-back, not GrubOps' removed force-* one.
+_PUSH = "app.services.foodics.foodics_orders_service.push_status_out_in_background"
+_ENABLED = "app.services.foodics.foodics_orders_service.is_enabled"
+
+
 @pytest.mark.asyncio
 async def test_the_ingest_loops_own_cancel_is_not_mirrored_back_out():
     # The order_lifecycle write-back trigger must tell its own mirroring apart
@@ -352,9 +216,7 @@ async def test_the_ingest_loops_own_cancel_is_not_mirrored_back_out():
     from app.services.orders import order_lifecycle
 
     order = _aggregator_order()
-    with patch(
-        "app.services.grubops.grubops_orders_service.push_status_out_in_background"
-    ) as push:
+    with patch(_PUSH) as push:
         db = _stock_db()
         with acting_as(StatusSourceEnum.AGGREGATOR):
             await order_lifecycle.transition(
@@ -369,14 +231,7 @@ async def test_an_admin_cancel_of_an_aggregator_order_is_mirrored_out():
     from app.services.orders import order_lifecycle
 
     order = _aggregator_order()
-    with (
-        patch(
-            "app.services.grubops.grubops_orders_service.push_status_out_in_background"
-        ) as push,
-        patch(
-            "app.services.grubops.grubops_orders_service.is_enabled", return_value=True
-        ),
-    ):
+    with patch(_PUSH) as push, patch(_ENABLED, return_value=True):
         db = _stock_db()
         with acting_as(StatusSourceEnum.ADMIN):
             await order_lifecycle.transition(
@@ -387,20 +242,14 @@ async def test_an_admin_cancel_of_an_aggregator_order_is_mirrored_out():
 
 
 @pytest.mark.asyncio
-async def test_the_shop_marking_an_aggregator_order_packed_force_completes_it():
-    # The shop's Packed press (source `pos`) is what mirrors out to force-complete.
+async def test_the_shop_marking_an_aggregator_order_packed_dispatches_it():
+    # The shop's Packed press (source `pos`) is what mirrors out to the Foodics
+    # dispatch — the ready-to-deliver that calls the rider.
     from app.models.order_status_event import StatusSourceEnum, acting_as
     from app.services.orders import order_lifecycle
 
     order = _aggregator_order()  # confirmed
-    with (
-        patch(
-            "app.services.grubops.grubops_orders_service.push_status_out_in_background"
-        ) as push,
-        patch(
-            "app.services.grubops.grubops_orders_service.is_enabled", return_value=True
-        ),
-    ):
+    with patch(_PUSH) as push, patch(_ENABLED, return_value=True):
         db = _stock_db()
         with acting_as(StatusSourceEnum.POS):
             await order_lifecycle.transition(
@@ -411,29 +260,24 @@ async def test_the_shop_marking_an_aggregator_order_packed_force_completes_it():
 
 
 @pytest.mark.asyncio
-async def test_the_five_minute_auto_close_pushes_nothing_out():
+async def test_the_five_minute_auto_close_finalises_on_foodics():
     # `packed → delivered` from the auto-close is source `system`, not aggregator,
-    # so it clears the actor gate — but delivered is not a mirrored status, so
-    # nothing is pushed. force-complete already fired at packed.
+    # so it clears the actor gate — and delivered now *is* a mirrored status: it
+    # finalises the Foodics order (delivery_status=5). This is the "close after 5
+    # min" step. (Under the old GrubOps write-back this pushed nothing.)
     from app.models.order_status_event import StatusSourceEnum, acting_as
     from app.services.orders import order_lifecycle
 
     order = _aggregator_order()
     order.status = OrderStatusEnum.PACKED
-    with (
-        patch(
-            "app.services.grubops.grubops_orders_service.push_status_out_in_background"
-        ) as push,
-        patch(
-            "app.services.grubops.grubops_orders_service.is_enabled", return_value=True
-        ),
-    ):
+    with patch(_PUSH) as push, patch(_ENABLED, return_value=True):
         db = _stock_db()
         with acting_as(StatusSourceEnum.SYSTEM):
             await order_lifecycle.transition(
                 db, order, OrderStatusEnum.DELIVERED, on_invalid="skip"
             )
-    push.assert_not_called()
+    push.assert_called_once()
+    assert push.call_args.kwargs["new_status"] == OrderStatusEnum.DELIVERED
 
 
 def _aggregator_order():

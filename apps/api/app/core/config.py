@@ -361,10 +361,40 @@ class Settings(BaseSettings):
     GRUBOPS_ORDERS_TICK_SECONDS: int = 60
     #: How long an aggregator order sits at `packed` before the ingest loop closes
     #: it to `delivered` itself. The aggregator gives us no on-the-way or delivered
-    #: signal once its rider is called (force-complete), so from our side the order
+    #: signal once its rider is called (Foodics dispatch), so from our side the order
     #: is done a few minutes later; this is that few minutes. Resolved at the poll
-    #: tick, so the effective delay is this rounded up to the next tick.
+    #: tick, so the effective delay is this rounded up to the next tick. The same
+    #: `packed -> delivered` move also fires the Foodics **Close** (see below).
     AGG_AUTO_CLOSE_SECONDS: int = 300
+
+    # ── Foodics (aggregator order write-back, via the console) ────────────────
+    #: MM drives the aggregator order forward through **Foodics** — the POS behind
+    #: GrubTech — rather than through GrubOps's blunt force-* overrides. When the
+    #: shop presses Packed we *dispatch* the Foodics order (its "ready to deliver",
+    #: which GrubTech cascades to the aggregator rider via the normal flow,
+    #: verified 2026-08-25 on Noon order 4961); five minutes later the auto-close
+    #: move *finalises* it (delivery_status=delivered); a cancel *declines* it.
+    #: Reads still come from the GrubOps ingest loop, which is where we learn each
+    #: order's Foodics id.
+    #:
+    #: **This is the console integration, not the Foodics developer/OAuth API.** We
+    #: sign in as the business the way `console.foodics.com` does and call its
+    #: private `core-api` — the same approach as the GrubOps provider. Auth is a
+    #: session cookie + CSRF token the provider obtains at runtime by **logging in**
+    #: with the account number + email + password below; nothing to paste. The one
+    #: unbuilt piece of that login is the reCAPTCHA step (see `foodics_provider`).
+    #:
+    #: Off by default: a bad login or status mapping would drive real orders.
+    #: Independent of `GRUBOPS_ORDERS_ENABLED` (ingest) so the read side can run
+    #: without the write side.
+    FOODICS_ORDER_PUSH_ENABLED: bool = False
+    FOODICS_CONSOLE_BASE: str = "https://console.foodics.com"
+    #: The account (business reference) + owner login the console signs in with.
+    #: Not secret in themselves; the password is.
+    FOODICS_ACCOUNT_NUMBER: str = "862261"
+    FOODICS_EMAIL: str = ""
+    FOODICS_PASSWORD: str = ""
+    FOODICS_TIMEOUT_SECONDS: float = 8.0
 
     # ── Slider (courier) ──────────────────────────────────────────────────────
     #: The third courier, and the same contract as the other two: an empty key

@@ -26,6 +26,7 @@ from app.core import advisory_lock
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
 from app.models.grubops_order import GrubOpsOrderMap
+from app.services.foodics import foodics_orders_service
 from app.services.grubops import grubops_orders_service
 from app.services.providers.grubops_provider import GrubOpsError, provider
 
@@ -121,19 +122,18 @@ async def sweep_once() -> int:
                     )
                     continue
 
-            # Re-fire any Packed/cancelled push the immediate mirror-out never
-            # landed — the gate not yet open at pack time, a transient GrubOps
-            # error, a task dropped on a restart. Before auto-close on purpose:
-            # auto-close lifts a packed order to `delivered` and off the retry,
-            # so this is its last chance to force-complete. Its own try so a
+            # Re-fire any packed/delivered/cancelled push to Foodics the immediate
+            # mirror-out never landed — a Foodics id not yet ingested at pack time,
+            # a token blip, a task dropped on a restart. Runs each tick here
+            # because this is where the Foodics id is learned. Its own try so a
             # sweep failure cannot lose the ingest work just committed.
             try:
-                repushed = await grubops_orders_service.sweep_pending_pushouts(db)
+                repushed = await foodics_orders_service.sweep_pending_pushouts(db)
                 if repushed:
-                    logger.info("GrubOps re-pushed %s stuck status(es)", repushed)
+                    logger.info("Foodics re-pushed %s stuck status(es)", repushed)
                     touched += repushed
             except Exception:  # noqa: BLE001 — housekeeping must not end the tick
-                logger.exception("GrubOps: mirror-out retry sweep failed")
+                logger.exception("Foodics: mirror-out retry sweep failed")
 
             # Close out any packed aggregator order past its window. Its own
             # try so a sweep failure cannot lose the ingest work just committed.
