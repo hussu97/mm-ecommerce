@@ -226,8 +226,8 @@ ADMIN_RECOVERABLE: dict[OrderStatusEnum, frozenset[OrderStatusEnum]] = {
 #: Source states an *aggregator* order may be cancelled from, beyond what the map
 #: allows. `packed` is the one that matters: a packed aggregator order has had its
 #: rider called via the Foodics dispatch, and the shop can still change its mind —
-#: the cancel then declines the Foodics order if it is still pending, and records
-#: the ones already accepted (Foodics has no public void). See
+#: the cancel then declines the Foodics order if it is still pending, and voids
+#: it (console Void Order, `status = 7`) once accepted. See
 #: `foodics_orders_service.mirror_status_out`.
 #:
 #: Deliberately **not** in `VALID_TRANSITIONS`: that map is read by the courier
@@ -549,8 +549,9 @@ async def _consequences(
     # behind GrubTech — for an aggregator order. `packed` dispatches the Foodics
     # order (marks it ready-to-deliver, which GrubTech cascades to the rider — the
     # step GrubOps' force-complete used to fake); `delivered` (our 5-minute
-    # auto-close) finalises it on the delivery axis; `cancelled` declines it while
-    # it is still pending. This replaced the GrubOps `order-force-*` overrides.
+    # auto-close) marks it delivered and closes it; `cancelled` declines it while
+    # still pending and voids it once accepted. This replaced the GrubOps
+    # `order-force-*` overrides.
     #
     # Only when the move came from *our* side: the ingest loop attributes its own
     # moves `aggregator`, and echoing that state straight back to Foodics would be

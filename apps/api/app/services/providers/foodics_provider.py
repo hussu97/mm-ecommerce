@@ -88,18 +88,30 @@ _SESSION_DEAD = frozenset({401, 419})
 DELIVERY_READY = 2
 DELIVERY_DELIVERED = 5
 
-#: Foodics order `status` integers. Only `DECLINED` is settable by this client
-#: (and only from `PENDING`); the rest are here to read the live state.
+#: Foodics order `status` integers, from the console's own enum
+#: (`PENDING:1 … VOID:7`). Captured 2026-08-25 from `useOrderActions`.
 STATUS_PENDING = 1
 STATUS_ACTIVE = 2
 STATUS_DECLINED = 3
-STATUS_CLOSED = 4
+STATUS_CLOSED = 4  # Done — the Close Order button
+STATUS_RETURNED = 5
+STATUS_VOID = 7
+
+#: Product-line statuses on the same console enum. Void sets lines to `VOID`;
+#: a return (after close) uses `RETURNED` and is not something we write.
+PRODUCT_VOID = 5
+
+#: The console's Void Reason picker lists `reasons` with `type = 1`
+#: (void/return). Prefer this name when the shop has it — it is on this
+#: account — and fall back to the first undeleted type-1 reason otherwise.
+_VOID_REASON_NAME = "Customer Cancelled"
 
 #: The console back-end and its verbs. `getting` fetches one resource, `listing`
 #: filters a collection, `updating` writes — each proxies to the matching Foodics
 #: resource, so the *data* fields are the same ones the resource takes.
 _GETTING = "/core-api/getting"
 _LISTING = "/core-api/listing"
+_SELECT_LISTING = "/core-api/select-listing"
 _UPDATING = "/core-api/updating"
 
 #: Laravel exposes the request CSRF token in a `<meta name="csrf-token">` tag on
@@ -309,6 +321,8 @@ class FoodicsClient:
         self._config = config
         self._cookie: str | None = None
         self._csrf: str | None = None
+        self._user_id: str | None = None
+        self._void_reason_id_cached: str | None = None
         # Remember a failed login so we back off rather than hammer it.
         self._login_error: FoodicsAuthError | None = None
         self._login_retry_at: datetime | None = None
@@ -326,6 +340,8 @@ class FoodicsClient:
         """Forget the cached session. For an expiry and for tests."""
         self._cookie = None
         self._csrf = None
+        self._user_id = None
+        self._void_reason_id_cached = None
 
     def reset_login_backoff(self) -> None:
         """Clear the failed-login cooldown so the next call retries immediately."""
@@ -573,9 +589,119 @@ class FoodicsClient:
         )
 
     async def decline_order(self, order_id: str) -> Any:
-        """Decline a still-pending order (`status = 3`). Foodics allows this only
-        from `1:Pending`; the caller checks the live status first."""
+        """Decline a still-pending order (`status = 3`). The console's Decline
+        on a pending API order; Void is a different status and a different
+        button, used once the order is already accepted."""
         return await self._update(order_id, {"status": STATUS_DECLINED})
+
+    async def close_order(self, order_id: str) -> Any:
+        """Close an accepted order (`status = 4` Done). The console's Close
+        Order button, captured 2026-08-25 on Keeta 17423."""
+        data: dict[str, Any] = {"status": STATUS_CLOSED, "closed_at": _stamp()}
+        user_id = await self._whoami_id()
+        if user_id:
+            data["closer_id"] = user_id
+        return await self._update(order_id, data)
+
+    async def void_order(self, order_id: str) -> Any:
+        """Void an accepted order (`status = 7`). The console's Void Order
+        button — reason + reversing payment — from `useOrderActions.void_`.
+
+        Pending orders are declined (`status = 3`) instead; this is the
+        accepted/dispatched path an MM POS cancel has to take.
+        """
+        order = await self._order_for_write(order_id)
+        if order is None:
+            raise FoodicsError("Foodics no longer has this order", status=404)
+        user_id = await self._whoami_id()
+        reason_id = await self._void_reason_id()
+        now = _stamp()
+        payload = {
+            "status": STATUS_VOID,
+            "business_date": order.get("business_date"),
+            "closer_id": user_id,
+            "closed_at": now,
+            "charges": [],
+            "total_price": 0,
+            "subtotal_price": 0,
+            "discount_amount": 0,
+            "tax_exclusive_discount_amount": 0,
+            "payments": _void_payments(order, user_id=user_id, added_at=now),
+            "meta": order.get("meta") or {},
+            "products": _void_products(
+                order, reason_id=reason_id, voider_id=user_id, closed_at=now
+            ),
+            "combos": _void_combos(
+                order, reason_id=reason_id, voider_id=user_id, closed_at=now
+            ),
+        }
+        return await self._update(order_id, payload)
+
+    async def _whoami_id(self) -> str | None:
+        """The signed-in console user's id (`closer_id` / `voider_id`)."""
+        if self._user_id:
+            return self._user_id
+        payload = await self._call("GET", _GETTING, params={"url": "/whoami"})
+        data = payload.get("data") if isinstance(payload, dict) else None
+        user_id = data.get("id") if isinstance(data, dict) else None
+        if isinstance(user_id, str) and user_id:
+            self._user_id = user_id
+        return self._user_id
+
+    async def _void_reason_id(self) -> str:
+        """A type-1 (void/return) reason. Prefer `Customer Cancelled`."""
+        if self._void_reason_id_cached:
+            return self._void_reason_id_cached
+        payload = await self._call(
+            "GET",
+            _SELECT_LISTING,
+            params={
+                "url": "/reasons",
+                "filters[type]": 1,
+                "filters[is_deleted]": "false",
+                "page": 1,
+            },
+        )
+        rows = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(rows, list) or not rows:
+            raise FoodicsError("Foodics has no void reasons configured")
+        named = next(
+            (
+                row
+                for row in rows
+                if isinstance(row, dict)
+                and (row.get("name") or "").strip() == _VOID_REASON_NAME
+            ),
+            None,
+        )
+        chosen = named if isinstance(named, dict) else rows[0]
+        reason_id = chosen.get("id") if isinstance(chosen, dict) else None
+        if not isinstance(reason_id, str) or not reason_id:
+            raise FoodicsError("Foodics void reason was missing an id")
+        self._void_reason_id_cached = reason_id
+        return reason_id
+
+    async def _order_for_write(self, order_id: str) -> dict | None:
+        """The order plus products/payments/combos the Void payload copies."""
+        params: dict[str, Any] = {
+            "url": "/orders",
+            "id": order_id,
+            "include[]": [
+                "branch",
+                "products.product",
+                "payments.paymentMethod",
+                "payments.user",
+                "combos.products.product",
+                "combos.comboSize",
+            ],
+        }
+        try:
+            payload = await self._call("GET", _GETTING, params=params)
+        except FoodicsError as exc:
+            if exc.status == 404:
+                return None
+            raise
+        return _order_of(payload)
 
     async def _update(self, order_id: str, data: dict[str, Any]) -> Any:
         # Captured from the console on 2026-08-25: PUT `/core-api/updating` with
@@ -597,6 +723,128 @@ def _order_of(payload: Any) -> dict | None:
     if isinstance(data, list):
         return data[0] if data else None
     return data or payload
+
+
+def _payment_method_id(payment: dict) -> str | None:
+    method = payment.get("payment_method") or payment.get("paymentMethod") or {}
+    if isinstance(method, dict) and method.get("id"):
+        return str(method["id"])
+    raw = payment.get("payment_method_id")
+    return str(raw) if raw else None
+
+
+def _void_payments(order: dict, *, user_id: str | None, added_at: str) -> list[dict]:
+    """Existing payments plus the reversing row the Void modal adds."""
+    existing: list[dict] = []
+    paid = 0.0
+    method_id: str | None = None
+    for payment in order.get("payments") or []:
+        if not isinstance(payment, dict):
+            continue
+        pid = _payment_method_id(payment)
+        if pid:
+            method_id = pid
+        amount = payment.get("amount") or 0
+        try:
+            paid += float(amount)
+        except (TypeError, ValueError):
+            pass
+        user = payment.get("user") if isinstance(payment.get("user"), dict) else {}
+        existing.append(
+            {
+                "payment_method_id": pid,
+                "user_id": user.get("id"),
+                "amount": amount,
+                "tendered": payment.get("tendered"),
+                "business_date": payment.get("business_date"),
+                "added_at": payment.get("added_at"),
+            }
+        )
+    if method_id and paid:
+        existing.append(
+            {
+                "payment_method_id": method_id,
+                "user_id": user_id,
+                "amount": -paid,
+                "tendered": -paid,
+                "business_date": order.get("business_date"),
+                "added_at": added_at,
+            }
+        )
+    return existing
+
+
+def _void_products(
+    order: dict, *, reason_id: str, voider_id: str | None, closed_at: str
+) -> list[dict]:
+    rows: list[dict] = []
+    for product in order.get("products") or []:
+        if not isinstance(product, dict):
+            continue
+        nested = (
+            product.get("product") if isinstance(product.get("product"), dict) else {}
+        )
+        rows.append(
+            {
+                "id": product.get("id"),
+                "product_id": nested.get("id"),
+                "quantity": product.get("quantity"),
+                "unit_price": product.get("unit_price"),
+                "total_price": product.get("total_price"),
+                "tax_exclusive_total_price": product.get("tax_exclusive_total_price"),
+                "tax_exclusive_unit_price": product.get("tax_exclusive_unit_price"),
+                "discount_amount": product.get("discount_amount"),
+                "discount_type": product.get("discount_type"),
+                "status": PRODUCT_VOID,
+                "void_reason_id": reason_id,
+                "voider_id": voider_id,
+                "closed_at": closed_at,
+                "kitchen_notes": product.get("kitchen_notes"),
+                "added_at": product.get("added_at"),
+                "taxes": [],
+            }
+        )
+    return rows
+
+
+def _void_combos(
+    order: dict, *, reason_id: str, voider_id: str | None, closed_at: str
+) -> list[dict]:
+    rows: list[dict] = []
+    for combo in order.get("combos") or []:
+        if not isinstance(combo, dict):
+            continue
+        size = combo.get("combo_size") or combo.get("comboSize") or {}
+        products: list[dict] = []
+        for nested in combo.get("products") or []:
+            if not isinstance(nested, dict):
+                continue
+            product = (
+                nested.get("product") if isinstance(nested.get("product"), dict) else {}
+            )
+            products.append(
+                {
+                    "id": nested.get("id"),
+                    "product_id": product.get("id"),
+                    "quantity": nested.get("quantity"),
+                    "unit_price": nested.get("unit_price"),
+                    "total_price": nested.get("total_price"),
+                    "status": PRODUCT_VOID,
+                    "void_reason_id": reason_id,
+                    "voider_id": voider_id,
+                    "closed_at": closed_at,
+                    "taxes": [],
+                }
+            )
+        rows.append(
+            {
+                "combo_size_id": size.get("id") if isinstance(size, dict) else None,
+                "quantity": combo.get("quantity"),
+                "discount_amount": combo.get("discount_amount"),
+                "products": products,
+            }
+        )
+    return rows
 
 
 def _unwrap(response: httpx.Response) -> Any:

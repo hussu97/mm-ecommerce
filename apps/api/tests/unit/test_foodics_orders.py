@@ -2,9 +2,10 @@
 
 This is the write-back that replaced GrubOps' `order-force-*` overrides: when MM
 moves an aggregator order, we drive the Foodics order through the actions its
-public API exposes — dispatch (ready), finalise (delivered), decline (pending
-only). What lives here is the decision logic: which Foodics call each MM move
-makes, what it skips as already done, and how a stuck push is retried.
+console exposes — dispatch (ready), close (delivered), decline (pending cancel)
+and void (accepted cancel). What lives here is the decision logic: which Foodics
+call each MM move makes, what it skips as already done, and how a stuck push is
+retried.
 """
 
 from __future__ import annotations
@@ -107,21 +108,43 @@ async def test_packed_is_idempotent_when_already_dispatched():
 
 
 @pytest.mark.asyncio
-async def test_delivered_finalises_on_the_delivery_axis():
-    # The 5-minute auto-close: mark the Foodics order delivered (the API has no
-    # public status=4 close).
+async def test_delivered_marks_delivered_then_closes():
+    # The 5-minute auto-close: delivery_status = 5, then Close Order (status 4).
     order_map = _map()
     db = _fake_db(order_map)
     fp = SimpleNamespace(
         get_order=AsyncMock(return_value={"status": 2, "delivery_status": 2}),
         update_delivery_status=AsyncMock(),
+        close_order=AsyncMock(),
         decline_order=AsyncMock(),
+        void_order=AsyncMock(),
     )
     with patch.object(f, "provider", fp):
         await f.mirror_status_out(
             db, mm_order_id="mm1", new_status=OrderStatusEnum.DELIVERED, actor="system"
         )
     fp.update_delivery_status.assert_awaited_once_with("f1", DELIVERY_DELIVERED)
+    fp.close_order.assert_awaited_once_with("f1")
+    assert order_map.last_pushed_status == "delivered"
+
+
+@pytest.mark.asyncio
+async def test_delivered_skips_close_when_foodics_is_already_done():
+    order_map = _map()
+    db = _fake_db(order_map)
+    fp = SimpleNamespace(
+        get_order=AsyncMock(return_value={"status": 4, "delivery_status": 5}),
+        update_delivery_status=AsyncMock(),
+        close_order=AsyncMock(),
+        decline_order=AsyncMock(),
+        void_order=AsyncMock(),
+    )
+    with patch.object(f, "provider", fp):
+        await f.mirror_status_out(
+            db, mm_order_id="mm1", new_status=OrderStatusEnum.DELIVERED, actor="system"
+        )
+    fp.update_delivery_status.assert_not_awaited()
+    fp.close_order.assert_not_awaited()
     assert order_map.last_pushed_status == "delivered"
 
 
@@ -143,22 +166,60 @@ async def test_cancel_declines_a_still_pending_order():
 
 
 @pytest.mark.asyncio
-async def test_cancel_records_an_already_accepted_order_it_cannot_void():
-    # Foodics has no public void once accepted — record it, do not claim success.
+async def test_cancel_voids_an_already_accepted_order():
+    # Void Order on an Active Foodics order — status 7, not decline.
     order_map = _map()
     db = _fake_db(order_map)
     fp = SimpleNamespace(
         get_order=AsyncMock(return_value={"status": 2, "delivery_status": 1}),
         update_delivery_status=AsyncMock(),
         decline_order=AsyncMock(),
+        void_order=AsyncMock(),
     )
     with patch.object(f, "provider", fp):
         await f.mirror_status_out(
-            db, mm_order_id="mm1", new_status=OrderStatusEnum.CANCELLED, actor="admin"
+            db, mm_order_id="mm1", new_status=OrderStatusEnum.CANCELLED, actor="pos"
         )
     fp.decline_order.assert_not_awaited()
+    fp.void_order.assert_awaited_once_with("f1")
+    assert order_map.last_pushed_status == "cancelled"
+    assert order_map.last_push_error is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_is_idempotent_when_foodics_already_voided():
+    order_map = _map()
+    db = _fake_db(order_map)
+    fp = SimpleNamespace(
+        get_order=AsyncMock(return_value={"status": 7, "delivery_status": None}),
+        decline_order=AsyncMock(),
+        void_order=AsyncMock(),
+    )
+    with patch.object(f, "provider", fp):
+        await f.mirror_status_out(
+            db, mm_order_id="mm1", new_status=OrderStatusEnum.CANCELLED, actor="pos"
+        )
+    fp.void_order.assert_not_awaited()
+    fp.decline_order.assert_not_awaited()
+    assert order_map.last_pushed_status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_records_a_closed_order_it_cannot_void():
+    order_map = _map()
+    db = _fake_db(order_map)
+    fp = SimpleNamespace(
+        get_order=AsyncMock(return_value={"status": 4, "delivery_status": 5}),
+        decline_order=AsyncMock(),
+        void_order=AsyncMock(),
+    )
+    with patch.object(f, "provider", fp):
+        await f.mirror_status_out(
+            db, mm_order_id="mm1", new_status=OrderStatusEnum.CANCELLED, actor="pos"
+        )
+    fp.void_order.assert_not_awaited()
     assert order_map.last_pushed_status is None
-    assert "cannot cancel" in order_map.last_push_error
+    assert "already closed" in order_map.last_push_error
 
 
 @pytest.mark.asyncio
@@ -301,6 +362,76 @@ async def test_decline_writes_the_declined_status_via_updating():
     assert captured["path"] == "/core-api/updating"
     assert captured["body"]["url"] == "/orders/f1"
     assert captured["body"]["payload"] == {"status": 3}
+
+
+@pytest.mark.asyncio
+async def test_close_writes_done_status_and_closed_at():
+    captured = {}
+    client = FoodicsClient(_cfg())
+
+    async def fake_call(method, path, *, json_body=None, params=None, **_):
+        captured.update(method=method, path=path, body=json_body, params=params)
+        if path == "/core-api/getting":
+            return {"data": {"id": "user-1"}}
+        return {"data": {}}
+
+    client._call = fake_call
+    await client.close_order("f1")
+    assert captured["path"] == "/core-api/updating"
+    assert captured["body"]["url"] == "/orders/f1"
+    assert captured["body"]["payload"]["status"] == 4
+    assert "closed_at" in captured["body"]["payload"]
+    assert captured["body"]["payload"]["closer_id"] == "user-1"
+
+
+@pytest.mark.asyncio
+async def test_void_writes_status_seven_with_reason_and_reversing_payment():
+    captured = {}
+    client = FoodicsClient(_cfg())
+    client._whoami_id = AsyncMock(return_value="user-1")
+    client._void_reason_id = AsyncMock(return_value="reason-cancelled")
+    client._order_for_write = AsyncMock(
+        return_value={
+            "business_date": "2026-08-25",
+            "meta": {},
+            "payments": [
+                {
+                    "payment_method": {"id": "pm-keeta"},
+                    "user": {"id": "user-1"},
+                    "amount": 40,
+                    "tendered": 40,
+                    "business_date": "2026-08-25",
+                    "added_at": "2026-08-25 09:47:00",
+                }
+            ],
+            "products": [
+                {
+                    "id": "line-1",
+                    "product": {"id": "prod-1"},
+                    "quantity": 1,
+                    "unit_price": 40,
+                    "total_price": 40,
+                }
+            ],
+            "combos": [],
+        }
+    )
+
+    async def fake_call(method, path, *, json_body=None, params=None, **_):
+        captured.update(method=method, path=path, body=json_body)
+        return {"data": {}}
+
+    client._call = fake_call
+    await client.void_order("f1")
+    payload = captured["body"]["payload"]
+    assert captured["body"]["url"] == "/orders/f1"
+    assert payload["status"] == 7
+    assert payload["total_price"] == 0
+    assert payload["closer_id"] == "user-1"
+    assert payload["payments"][-1]["amount"] == -40
+    assert payload["payments"][-1]["payment_method_id"] == "pm-keeta"
+    assert payload["products"][0]["status"] == 5
+    assert payload["products"][0]["void_reason_id"] == "reason-cancelled"
 
 
 @pytest.mark.asyncio

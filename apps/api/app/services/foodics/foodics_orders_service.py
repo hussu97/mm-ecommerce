@@ -12,12 +12,12 @@ public API actually exposes:
   — verified live on Noon order 4961 (2026-08-25).
 * **delivered → finalise.** Five minutes later the auto-close move
   (`packed → delivered`, source `system`) marks the Foodics order delivered
-  (`delivery_status = 5`). Foodics has no public "close order" (status 4) write —
-  that is a POS-side transition, and GrubTech has usually completed its own side
-  at dispatch anyway — so `delivered` on the delivery axis is how we finalise.
-* **cancelled → decline.** A cancel declines the order (`status = 3`) while it is
-  still `1:Pending`; once Foodics has accepted it there is no public void, so
-  those are recorded rather than forced.
+  (`delivery_status = 5`) and then closes it (`status = 4` Done) — the console's
+  Close Order button, captured on Keeta 17423 (2026-08-25).
+* **cancelled → decline or void.** A cancel declines a still-pending order
+  (`status = 3`). Once Foodics has accepted it, the console's Void Order button
+  writes `status = 7` with a void reason and a reversing payment — captured from
+  `useOrderActions.void_` (2026-08-25), not by actually voiding a live order.
 
 Same shape as the GrubOps write-back it replaces — `mirror_status_out` +
 `push_status_out_in_background` + `sweep_pending_pushouts`, keyed off the map
@@ -43,7 +43,11 @@ from app.models.pos_order import OrderSourceEnum
 from app.services.providers.foodics_provider import (
     DELIVERY_DELIVERED,
     DELIVERY_READY,
+    STATUS_CLOSED,
+    STATUS_DECLINED,
     STATUS_PENDING,
+    STATUS_RETURNED,
+    STATUS_VOID,
     FoodicsError,
     provider,
 )
@@ -78,9 +82,9 @@ async def mirror_status_out(
     """Reflect an MM packed/delivered/cancelled onto the Foodics order.
 
     Reads the Foodics order first and acts on its live state — dispatch only what
-    is not already dispatched, finalise only what is not already delivered,
-    decline only what is still pending — so a retry is safe and a state Foodics
-    has moved past is recorded rather than fought. The map row's
+    is not already dispatched, finalise only what is not already delivered/closed,
+    decline a pending cancel and void an accepted one — so a retry is safe and a
+    state Foodics has moved past is recorded rather than fought. The map row's
     `last_pushed_status`/`last_push_error` carry the outcome.
     """
     if new_status not in _MIRRORED:
@@ -125,18 +129,29 @@ async def mirror_status_out(
                 await provider.update_delivery_status(
                     foodics_order_id, DELIVERY_DELIVERED
                 )
+            if status not in (
+                STATUS_CLOSED,
+                STATUS_VOID,
+                STATUS_RETURNED,
+                STATUS_DECLINED,
+            ):
+                await provider.close_order(foodics_order_id)
         elif new_status == OrderStatusEnum.CANCELLED:
-            if status == STATUS_PENDING:
+            if status in (STATUS_DECLINED, STATUS_VOID, STATUS_RETURNED):
+                pass
+            elif status == STATUS_PENDING:
                 await provider.decline_order(foodics_order_id)
-            else:
-                # Accepted already — Foodics exposes no public void. Record it so
-                # a person can cancel it in the console, and do not claim success.
+            elif status == STATUS_CLOSED:
+                # Done already — Foodics will not void a closed order (return
+                # is a different console action). Record it rather than fight.
                 order_map.last_push_error = (
-                    f"cannot cancel: Foodics order status is {status}, "
-                    "no public void once accepted"
+                    "cannot cancel: Foodics order is already closed"
                 )
                 await db.flush()
                 return
+            else:
+                # Accepted / dispatched — the console's Void Order button.
+                await provider.void_order(foodics_order_id)
 
         order_map.last_pushed_status = new_status.value
         order_map.last_push_error = None
