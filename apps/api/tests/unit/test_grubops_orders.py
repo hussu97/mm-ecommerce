@@ -70,17 +70,35 @@ async def test_a_line_priced_only_on_a_modifier_gets_a_nonzero_total():
     info = {
         "orderHeader": {"taxAmount": 0},
         "orderLines": [
-            {"type": "ITEM", "name": "Ferrero Brownies", "recipeId": "R1",
-             "unitPrice": 0, "quantity": 2},
-            {"type": "MODIFIER", "name": "3 Pieces", "modifierId": "M1",
-             "unitPrice": 55, "quantity": 1},
-            {"type": "ITEM", "name": "Plain Box", "recipeId": "R2",
-             "unitPrice": 100, "quantity": 1},
+            {
+                "type": "ITEM",
+                "name": "Ferrero Brownies",
+                "recipeId": "R1",
+                "unitPrice": 0,
+                "quantity": 2,
+            },
+            {
+                "type": "MODIFIER",
+                "name": "3 Pieces",
+                "modifierId": "M1",
+                "unitPrice": 55,
+                "quantity": 1,
+            },
+            {
+                "type": "ITEM",
+                "name": "Plain Box",
+                "recipeId": "R2",
+                "unitPrice": 100,
+                "quantity": 1,
+            },
         ],
     }
     order_map = SimpleNamespace(
-        location_id="L1", grubops_order_id="G1", external_id="1445",
-        source_channel="Talabat", last_push_error=None,
+        location_id="L1",
+        grubops_order_id="G1",
+        external_id="1445",
+        source_channel="Talabat",
+        last_push_error=None,
     )
 
     added: list = []
@@ -92,10 +110,16 @@ async def test_a_line_priced_only_on_a_modifier_gets_a_nonzero_total():
 
     with (
         patch.object(g, "_resolve_branch", AsyncMock(return_value=uuid.uuid4())),
-        patch.object(g, "_reverse_maps", AsyncMock(return_value=(
-            {"R1": uuid.uuid4(), "R2": uuid.uuid4()},
-            {"M1": {"modifier_option_id": uuid.uuid4()}},
-        ))),
+        patch.object(
+            g,
+            "_reverse_maps",
+            AsyncMock(
+                return_value=(
+                    {"R1": uuid.uuid4(), "R2": uuid.uuid4()},
+                    {"M1": {"modifier_option_id": uuid.uuid4()}},
+                )
+            ),
+        ),
         patch.object(g, "_generate_order_number", AsyncMock(return_value="AGG-X-1")),
         patch.object(g, "_decrement_stock", AsyncMock()),
         patch.object(g.order_fees, "stamp", AsyncMock()),
