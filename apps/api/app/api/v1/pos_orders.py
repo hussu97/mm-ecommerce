@@ -15,6 +15,7 @@ from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.core.permissions import ensure, require
 from app.models import (
     Branch,
+    DeliveryMethodEnum,
     KitchenTicket,
     Order,
     OrderSourceEnum,
@@ -817,6 +818,62 @@ async def mark_handed_over(
     # reasoning as `mark_packed`: inline and awaited, because a background task
     # can be dropped on a restart and this is the message the customer is
     # waiting for.
+    reloaded = await _load(db, order_id)
+    await email_service.notify_order(db, reloaded)
+    return _serialise(reloaded)
+
+
+@router.post("/{order_id}/collected", response_model=PosOrderResponse)
+async def mark_collected(
+    order_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("pos.register.access")),
+):
+    """
+    The customer has taken the order at the counter. Said by whoever handed it over.
+
+    **The pickup counterpart of `handed-over`.** A store-pickup order has no
+    driver and no courier telemetry — nothing reports back that the customer
+    collected it. Until now the only way to record it was an admin on a laptop
+    marking the whole order delivered; the shop that actually handed the box
+    over had no button. This is that button.
+
+    `delivered` is the stored status; the storefront and the receipt render it as
+    "Collected" because the order is `pickup`. A delivery order is rejected — its
+    hand-over is `handed-over` (→ `out_for_delivery`), driven by the courier.
+
+    Deliberately thin, like `mark_packed`/`mark_handed_over`: `order_service`
+    owns the transition rules and side effects, `email_service` owns which email
+    the status earns. Idempotent, because two people will press it.
+    """
+    order = await _load(db, order_id)
+
+    method = getattr(order.delivery_method, "value", order.delivery_method)
+    if method != DeliveryMethodEnum.PICKUP.value:
+        raise BadRequestError("Only a store-pickup order is collected at the counter")
+
+    if order.status == OrderStatusEnum.DELIVERED:
+        return _serialise(order)
+    if OrderStatusEnum.DELIVERED not in order_service.VALID_TRANSITIONS.get(
+        order.status, set()
+    ):
+        raise ConflictError(
+            f"An order that is {order.status.value} cannot be collected."
+        )
+
+    with acting_as(
+        StatusSourceEnum.POS.value,
+        actor_id=user.id,
+        actor_label=user.email,
+        note="collected at the counter",
+    ):
+        await order_service.update_status(
+            db, order.order_number, OrderStatusEnum.DELIVERED
+        )
+
+    # The "Collected" email, inline and awaited for the same reason as
+    # `mark_handed_over`: a background task can be dropped on a restart and this
+    # is the message the customer is waiting on.
     reloaded = await _load(db, order_id)
     await email_service.notify_order(db, reloaded)
     return _serialise(reloaded)

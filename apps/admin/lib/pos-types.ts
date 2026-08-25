@@ -3,16 +3,17 @@
 
 export type Translations = Record<string, Record<string, string>>;
 
-export type OrderType = 'dine_in' | 'pickup' | 'delivery' | 'drive_thru';
+// Counter orders are all `pickup` now — the register dropped its order-type
+// choice and `dine_in`/`drive_thru` were retired. `delivery` survives for
+// online and aggregator orders.
+export type OrderType = 'pickup' | 'delivery';
 export type PosOrderStatus =
   | 'draft' | 'pending' | 'active' | 'closed'
   | 'declined' | 'void' | 'returned' | 'joined';
 
 export const ORDER_TYPE_LABELS: Record<OrderType, string> = {
-  dine_in: 'Dine In',
-  pickup: 'Takeaway',
+  pickup: 'Pickup',
   delivery: 'Delivery',
-  drive_thru: 'Drive Thru',
 };
 
 // ─── Configuration ────────────────────────────────────────────────────────────

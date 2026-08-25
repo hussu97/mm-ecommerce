@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.courier import CourierBadge
 
-OrderTypeLiteral = Literal["dine_in", "pickup", "delivery", "drive_thru"]
+OrderTypeLiteral = Literal["pickup", "delivery"]
 
 
 class ORMModel(BaseModel):
@@ -28,7 +28,10 @@ class SelectedOption(BaseModel):
 
 class OpenOrderRequest(BaseModel):
     branch_id: UUID
-    order_type: OrderTypeLiteral
+    #: The register no longer offers an order-type choice — a counter order is
+    #: always `pickup`. Left on the request (defaulted) so programmatic callers
+    #: (`api`/`call_center`) can still open a `delivery` check.
+    order_type: OrderTypeLiteral = "pickup"
     till_id: UUID | None = None
     device_id: UUID | None = None
     table_id: UUID | None = None

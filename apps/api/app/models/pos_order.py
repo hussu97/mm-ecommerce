@@ -44,10 +44,11 @@ from .base import (
 
 
 class OrderTypeEnum(str, enum.Enum):
-    DINE_IN = "dine_in"
+    # Counter orders are all `pickup`; `dine_in` and `drive_thru` were retired
+    # (the register no longer offers an order-type choice). `delivery` survives
+    # only for online and aggregator orders, which set it from `delivery_method`.
     PICKUP = "pickup"
     DELIVERY = "delivery"
-    DRIVE_THRU = "drive_thru"
 
 
 class OrderSourceEnum(str, enum.Enum):

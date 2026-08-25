@@ -3383,10 +3383,8 @@
             "anyOf": [
               {
                 "enum": [
-                  "dine_in",
                   "pickup",
-                  "delivery",
-                  "drive_thru"
+                  "delivery"
                 ],
                 "type": "string"
               },
@@ -4480,10 +4478,8 @@
           "order_types": {
             "items": {
               "enum": [
-                "dine_in",
                 "pickup",
-                "delivery",
-                "drive_thru"
+                "delivery"
               ],
               "type": "string"
             },
@@ -4730,10 +4726,8 @@
               {
                 "items": {
                   "enum": [
-                    "dine_in",
                     "pickup",
-                    "delivery",
-                    "drive_thru"
+                    "delivery"
                   ],
                   "type": "string"
                 },
@@ -7332,10 +7326,8 @@
           "order_types": {
             "items": {
               "enum": [
-                "dine_in",
                 "pickup",
-                "delivery",
-                "drive_thru"
+                "delivery"
               ],
               "type": "string"
             },
@@ -7669,10 +7661,8 @@
               {
                 "items": {
                   "enum": [
-                    "dine_in",
                     "pickup",
-                    "delivery",
-                    "drive_thru"
+                    "delivery"
                   ],
                   "type": "string"
                 },
@@ -10450,10 +10440,8 @@
           "order_types": {
             "items": {
               "enum": [
-                "dine_in",
                 "pickup",
-                "delivery",
-                "drive_thru"
+                "delivery"
               ],
               "type": "string"
             },
@@ -10693,10 +10681,8 @@
               {
                 "items": {
                   "enum": [
-                    "dine_in",
                     "pickup",
-                    "delivery",
-                    "drive_thru"
+                    "delivery"
                   ],
                   "type": "string"
                 },
@@ -12704,11 +12690,10 @@
             "title": "Notes"
           },
           "order_type": {
+            "default": "pickup",
             "enum": [
-              "dine_in",
               "pickup",
-              "delivery",
-              "drive_thru"
+              "delivery"
             ],
             "title": "Order Type",
             "type": "string"
@@ -12750,8 +12735,7 @@
           }
         },
         "required": [
-          "branch_id",
-          "order_type"
+          "branch_id"
         ],
         "title": "OpenOrderRequest",
         "type": "object"
@@ -19095,10 +19079,8 @@
           "order_types": {
             "items": {
               "enum": [
-                "dine_in",
                 "pickup",
-                "delivery",
-                "drive_thru"
+                "delivery"
               ],
               "type": "string"
             },
@@ -19614,10 +19596,8 @@
               {
                 "items": {
                   "enum": [
-                    "dine_in",
                     "pickup",
-                    "delivery",
-                    "drive_thru"
+                    "delivery"
                   ],
                   "type": "string"
                 },
@@ -24521,10 +24501,8 @@
           "order_types": {
             "items": {
               "enum": [
-                "dine_in",
                 "pickup",
-                "delivery",
-                "drive_thru"
+                "delivery"
               ],
               "type": "string"
             },
@@ -24940,10 +24918,8 @@
               {
                 "items": {
                   "enum": [
-                    "dine_in",
                     "pickup",
-                    "delivery",
-                    "drive_thru"
+                    "delivery"
                   ],
                   "type": "string"
                 },
@@ -43065,6 +43041,55 @@
           }
         ],
         "summary": "Close Order",
+        "tags": [
+          "POS Orders"
+        ]
+      }
+    },
+    "/api/v1/pos/orders/{order_id}/collected": {
+      "post": {
+        "description": "The customer has taken the order at the counter. Said by whoever handed it over.\n\n**The pickup counterpart of `handed-over`.** A store-pickup order has no\ndriver and no courier telemetry \u2014 nothing reports back that the customer\ncollected it. Until now the only way to record it was an admin on a laptop\nmarking the whole order delivered; the shop that actually handed the box\nover had no button. This is that button.\n\n`delivered` is the stored status; the storefront and the receipt render it as\n\"Collected\" because the order is `pickup`. A delivery order is rejected \u2014 its\nhand-over is `handed-over` (\u2192 `out_for_delivery`), driven by the courier.\n\nDeliberately thin, like `mark_packed`/`mark_handed_over`: `order_service`\nowns the transition rules and side effects, `email_service` owns which email\nthe status earns. Idempotent, because two people will press it.",
+        "operationId": "mark_collected_api_v1_pos_orders__order_id__collected_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Order Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PosOrderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Mark Collected",
         "tags": [
           "POS Orders"
         ]

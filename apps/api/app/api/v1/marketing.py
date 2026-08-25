@@ -18,7 +18,7 @@ from app.models import (
 from .pos_config import build_crud_router
 
 Translations = dict[str, dict[str, str]]
-OrderTypeLiteral = Literal["dine_in", "pickup", "delivery", "drive_thru"]
+OrderTypeLiteral = Literal["pickup", "delivery"]
 #: `OrderSourceEnum` values — the channel that rang an order up. `cashier` is the
 #: counter, the one source the POS itself creates.
 SourceLiteral = Literal["cashier", "online", "aggregator", "api", "call_center"]

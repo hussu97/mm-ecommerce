@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict
 
 Translations = dict[str, dict[str, str]]
 
-OrderTypeLiteral = Literal["dine_in", "pickup", "delivery", "drive_thru"]
+OrderTypeLiteral = Literal["pickup", "delivery"]
 
 #: `HH:MM`, 24-hour. Used by every opening-hours and window field here.
 _TIME_RE = r"^([01]\d|2[0-3]):[0-5]\d$"

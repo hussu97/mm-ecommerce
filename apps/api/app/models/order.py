@@ -28,7 +28,7 @@ from .base import (
     business_date_format,
     status_vocabulary,
 )
-from .pos_order import OrderItemStatusEnum, PosOrderStatusEnum
+from .pos_order import OrderItemStatusEnum, OrderTypeEnum, PosOrderStatusEnum
 
 if TYPE_CHECKING:
     from .branch import Branch
@@ -104,6 +104,11 @@ class Order(Base, UUIDMixin, TimestampMixin):
         # Migration 099: a typo'd pos_status vanishes from every WHERE clause
         # that feeds a register; the CHECK makes it an error instead.
         status_vocabulary("orders", "pos_status", PosOrderStatusEnum, nullable=True),
+        # Migration 149: `order_type` collapsed to `pickup`/`delivery` when the
+        # register dropped its order-type choice. The CHECK (nullable — pure web
+        # orders carry NULL until a register attaches them) makes a retired
+        # `dine_in`/`drive_thru` an error instead of a silent stray value.
+        status_vocabulary("orders", "order_type", OrderTypeEnum, nullable=True),
         # Migration 100: check numbers, tills and Z-reports join on this string.
         business_date_format("orders"),
     )

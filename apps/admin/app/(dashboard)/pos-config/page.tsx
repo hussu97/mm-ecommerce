@@ -22,11 +22,12 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'tags', label: 'Tags' },
 ];
 
+// `dine_in`/`drive_thru` were retired when the register dropped its order-type
+// choice — scoping a rule to them would match nothing. `pickup` (every counter
+// order, plus online store-pickup) and `delivery` (online/aggregator) remain.
 const ORDER_TYPE_OPTIONS = [
-  { value: 'dine_in', label: 'Dine In' },
-  { value: 'pickup', label: 'Takeaway' },
+  { value: 'pickup', label: 'Pickup' },
   { value: 'delivery', label: 'Delivery' },
-  { value: 'drive_thru', label: 'Drive Thru' },
 ];
 
 export default function PosConfigPage() {

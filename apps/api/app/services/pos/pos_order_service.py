@@ -298,7 +298,7 @@ async def open_order(
     *,
     branch: Branch,
     user: User,
-    order_type: str,
+    order_type: str = OrderTypeEnum.PICKUP.value,
     till: Till | None = None,
     device_id: uuid.UUID | None = None,
     table_id: uuid.UUID | None = None,
@@ -318,14 +318,6 @@ async def open_order(
     check_number = await _next_check_number(
         db, branch.id, day.business_date, settings.order_number_reset_daily
     )
-
-    if order_type == OrderTypeEnum.DINE_IN.value and table_id is not None:
-        table = await db.get(PosTable, table_id)
-        if table is None:
-            raise BadRequestError("Table not found")
-        if table.status == TableStatusEnum.OCCUPIED.value:
-            raise ConflictError(f"Table {table.name} already has an open check")
-        table.status = TableStatusEnum.OCCUPIED.value
 
     # Normalised the same way a website number is, so the one column reads one
     # way whoever wrote it.
@@ -1274,6 +1266,24 @@ async def close_order(db: AsyncSession, *, order: Order, user: User) -> Order:
         await order_lifecycle.transition(
             db, order, OrderStatusEnum.CONFIRMED, on_invalid="skip"
         )
+
+    # A counter sale is collected the instant it is paid for — the customer is
+    # standing at the till with the box — so closing a cashier check takes it
+    # all the way to `delivered`, rendered "Collected" since every counter order
+    # is pickup. An online order closed at the counter as a hand-over is left
+    # where it is: its delivery lifecycle is driven by the courier/admin, so the
+    # guard on `source` and `on_invalid="skip"` keep this from jumping it ahead.
+    if order.source == OrderSourceEnum.CASHIER.value:
+        with acting_as(
+            StatusSourceEnum.POS.value,
+            actor_id=user.id,
+            actor_label=user.email,
+            note="counter collected",
+        ):
+            await order_lifecycle.transition(
+                db, order, OrderStatusEnum.DELIVERED, on_invalid="skip"
+            )
+
     order.closer_id = user.id
     order.closed_at = utcnow()
     for item in order.items:
@@ -1468,30 +1478,15 @@ async def join_orders(
 async def change_table(
     db: AsyncSession, *, order: Order, table_id: uuid.UUID | None
 ) -> Order:
-    """Move an open check to another table, or off the floor entirely."""
+    """Move an open check to another table, or off the floor entirely.
+
+    Dine-in was retired — every counter order is now `pickup`, so no check ever
+    sits at a table. The route and the register's latent `moveToTable` still
+    resolve here, so this stays as a guard that always refuses rather than
+    silently reintroducing table service for pickup checks.
+    """
     _assert_open(order)
-    if order.order_type != OrderTypeEnum.DINE_IN.value:
-        raise BadRequestError("Only a dine-in check sits at a table")
-
-    previous_id = order.table_id
-    if table_id is not None:
-        table = await db.get(PosTable, table_id)
-        if table is None:
-            raise BadRequestError("Table not found")
-        if table.id != previous_id and table.status == TableStatusEnum.OCCUPIED.value:
-            raise ConflictError(f"Table {table.name} already has an open check")
-        table.status = TableStatusEnum.OCCUPIED.value
-
-    order.table_id = table_id
-    # Free the old table only after the new one is claimed, so a failure part
-    # way through cannot leave the party with no table at all.
-    if previous_id and previous_id != table_id:
-        previous = await db.get(PosTable, previous_id)
-        if previous is not None:
-            previous.status = TableStatusEnum.FREE.value
-
-    await db.flush()
-    return await get_order(db, order.id)
+    raise BadRequestError("Only a dine-in check sits at a table")
 
 
 async def park_order(db: AsyncSession, *, order: Order) -> Order:

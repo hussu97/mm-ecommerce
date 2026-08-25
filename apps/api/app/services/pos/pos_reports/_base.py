@@ -119,8 +119,9 @@ _CHANNEL_COLUMN = case(
 
 
 #: Dimensions that group the order rows themselves.
+# "order_type" was retired as a dimension: every counter order is now `pickup`,
+# so the breakdown grouped nothing. `source`/`channel` carry the real split.
 _ORDER_DIMENSIONS = {
-    "order_type": Order.order_type,
     "source": Order.source,
     "channel": _CHANNEL_COLUMN,
     "business_date": Order.business_date,

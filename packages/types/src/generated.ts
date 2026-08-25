@@ -4608,6 +4608,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pos/orders/{order_id}/collected": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark Collected
+         * @description The customer has taken the order at the counter. Said by whoever handed it over.
+         *
+         *     **The pickup counterpart of `handed-over`.** A store-pickup order has no
+         *     driver and no courier telemetry — nothing reports back that the customer
+         *     collected it. Until now the only way to record it was an admin on a laptop
+         *     marking the whole order delivered; the shop that actually handed the box
+         *     over had no button. This is that button.
+         *
+         *     `delivered` is the stored status; the storefront and the receipt render it as
+         *     "Collected" because the order is `pickup`. A delivery order is rejected — its
+         *     hand-over is `handed-over` (→ `out_for_delivery`), driven by the courier.
+         *
+         *     Deliberately thin, like `mark_packed`/`mark_handed_over`: `order_service`
+         *     owns the transition rules and side effects, `email_service` owns which email
+         *     the status earns. Idempotent, because two people will press it.
+         */
+        post: operations["mark_collected_api_v1_pos_orders__order_id__collected_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pos/orders/{order_id}/discounts": {
         parameters: {
             query?: never;
@@ -7985,7 +8019,7 @@ export interface components {
             /** Decimal Places */
             decimal_places?: number | null;
             /** Default Order Type */
-            default_order_type?: ("dine_in" | "pickup" | "delivery" | "drive_thru") | null;
+            default_order_type?: ("pickup" | "delivery") | null;
             /** Enable Tips */
             enable_tips?: boolean | null;
             /** Extra */
@@ -8344,7 +8378,7 @@ export interface components {
             /** Name Localized */
             name_localized?: string | null;
             /** Order Types */
-            order_types?: ("dine_in" | "pickup" | "delivery" | "drive_thru")[];
+            order_types?: ("pickup" | "delivery")[];
             /** Reference */
             reference?: string | null;
             /** Tax Group Id */
@@ -8421,7 +8455,7 @@ export interface components {
             /** Name Localized */
             name_localized?: string | null;
             /** Order Types */
-            order_types?: ("dine_in" | "pickup" | "delivery" | "drive_thru")[] | null;
+            order_types?: ("pickup" | "delivery")[] | null;
             /** Reference */
             reference?: string | null;
             /** Tax Group Id */
@@ -9250,7 +9284,7 @@ export interface components {
             /** Name Localized */
             name_localized?: string | null;
             /** Order Types */
-            order_types?: ("dine_in" | "pickup" | "delivery" | "drive_thru")[];
+            order_types?: ("pickup" | "delivery")[];
             /**
              * Qualification
              * @default order
@@ -9340,7 +9374,7 @@ export interface components {
             /** Name Localized */
             name_localized?: string | null;
             /** Order Types */
-            order_types?: ("dine_in" | "pickup" | "delivery" | "drive_thru")[] | null;
+            order_types?: ("pickup" | "delivery")[] | null;
             /** Qualification */
             qualification?: ("product" | "order" | "both") | null;
             /** Reference */
@@ -10252,7 +10286,7 @@ export interface components {
             /** Name Localized */
             name_localized?: string | null;
             /** Order Types */
-            order_types?: ("dine_in" | "pickup" | "delivery" | "drive_thru")[];
+            order_types?: ("pickup" | "delivery")[];
             /** Translations */
             translations?: {
                 [key: string]: {
@@ -10329,7 +10363,7 @@ export interface components {
             /** Name Localized */
             name_localized?: string | null;
             /** Order Types */
-            order_types?: ("dine_in" | "pickup" | "delivery" | "drive_thru")[] | null;
+            order_types?: ("pickup" | "delivery")[] | null;
             /** Translations */
             translations?: {
                 [key: string]: {
@@ -11030,9 +11064,10 @@ export interface components {
             notes?: string | null;
             /**
              * Order Type
+             * @default pickup
              * @enum {string}
              */
-            order_type: "dine_in" | "pickup" | "delivery" | "drive_thru";
+            order_type: "pickup" | "delivery";
             /**
              * Source
              * @default cashier
@@ -13085,7 +13120,7 @@ export interface components {
             /** Name Localized */
             name_localized?: string | null;
             /** Order Types */
-            order_types?: ("dine_in" | "pickup" | "delivery" | "drive_thru")[];
+            order_types?: ("pickup" | "delivery")[];
             /**
              * Priority
              * @default 100
@@ -13241,7 +13276,7 @@ export interface components {
             /** Name */
             name?: string | null;
             /** Order Types */
-            order_types?: ("dine_in" | "pickup" | "delivery" | "drive_thru")[] | null;
+            order_types?: ("pickup" | "delivery")[] | null;
             /** Priority */
             priority?: number | null;
             /** Reward */
@@ -14901,7 +14936,7 @@ export interface components {
             /** Name Localized */
             name_localized?: string | null;
             /** Order Types */
-            order_types?: ("dine_in" | "pickup" | "delivery" | "drive_thru")[];
+            order_types?: ("pickup" | "delivery")[];
             /**
              * Priority
              * @default 100
@@ -15022,7 +15057,7 @@ export interface components {
             /** Name */
             name?: string | null;
             /** Order Types */
-            order_types?: ("dine_in" | "pickup" | "delivery" | "drive_thru")[] | null;
+            order_types?: ("pickup" | "delivery")[] | null;
             /** Priority */
             priority?: number | null;
             /** Product Ids */
@@ -25085,6 +25120,37 @@ export interface operations {
         };
     };
     close_order_api_v1_pos_orders__order_id__close_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PosOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mark_collected_api_v1_pos_orders__order_id__collected_post: {
         parameters: {
             query?: never;
             header?: never;

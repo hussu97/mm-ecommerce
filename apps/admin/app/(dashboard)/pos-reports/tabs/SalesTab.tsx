@@ -52,7 +52,6 @@ export function SalesTab({ window }: { window: Window }) {
               { value: 'category', label: 'Category' },
               { value: 'modifier_option', label: 'Modifier option' },
               { value: 'product_tag', label: 'Product tag' },
-              { value: 'order_type', label: 'Order type' },
               { value: 'order_tag', label: 'Order tag' },
               { value: 'source', label: 'Order source' },
               { value: 'business_date', label: 'Day' },
