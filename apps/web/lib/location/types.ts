@@ -48,6 +48,14 @@ export interface DeliveryArea {
   free_delivery_available: boolean;
   speed: DeliverySpeed;
   /**
+   * For an `express` pin, the courier's promised minutes ready-to-door — the
+   * number the badge says out loud, sourced server-side from the same courier
+   * row the checkout quotes, so the card and the checkout agree. Null for
+   * `same_day`/`next_day`, and null for an express zone whose courier promises a
+   * day rather than minutes, where the badge falls back to its own wording.
+   */
+  express_minutes?: number | null;
+  /**
    * The kitchen this pin resolves to, or null where we do not serve it.
    *
    * Handed straight back on catalogue reads so the shelf matches the branch

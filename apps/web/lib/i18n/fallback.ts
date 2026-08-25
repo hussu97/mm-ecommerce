@@ -1,3 +1,5 @@
+import { interpolate } from './interpolate';
+
 type TFunction = (key: string, params?: Record<string, string | number>) => string;
 
 /**
@@ -7,8 +9,20 @@ type TFunction = (key: string, params?: Record<string, string | number>) => stri
  * when it is missing, which is how `checkout.estimated_delivery` once shipped to
  * customers verbatim. Strings whose DB rows land in a later deploy than the code
  * that reads them go through here so the gap shows a real word instead.
+ *
+ * `params` fills `{name}` placeholders in **both** branches — `t` interpolates a
+ * found string, and the fallback is interpolated here — so a templated wording
+ * like "Get it in {minutes} minutes" reads the same whether or not its row has
+ * been seeded yet, instead of leaking a raw `{minutes}` while the deploy catches
+ * up.
  */
-export function withFallback(t: TFunction, key: string, fallback: string): string {
-  const value = t(key);
-  return value === key ? fallback : value;
+export function withFallback(
+  t: TFunction,
+  key: string,
+  fallback: string,
+  params?: Record<string, string | number>,
+): string {
+  const value = t(key, params);
+  if (value !== key) return value;
+  return params ? interpolate(fallback, params) : fallback;
 }

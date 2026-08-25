@@ -4,6 +4,7 @@ import type { CSSProperties } from 'react';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { useLocation } from '@/lib/location/LocationProvider';
 import type { DeliverySpeed } from '@/lib/location/types';
+import { speedLabel } from '@/lib/location/speed';
 import { Icon } from '@/components/ui/Icon';
 
 export interface UspItem {
@@ -28,13 +29,6 @@ const THEMES = {
   plum: 'bg-primary text-white/95 border-y border-primary',
   cream: 'bg-[#f4ece4] text-primary border-y border-secondary/40',
 } as const;
-
-/** How fast, as three promises rather than one hedged average. */
-const SPEED_KEY: Record<DeliverySpeed, string> = {
-  express: 'usp.speed_express',
-  same_day: 'usp.speed_same_day',
-  next_day: 'usp.speed_next_day',
-};
 
 //: Ligatures, not `material-symbols-outlined` — that class matches no font here
 //: and prints its own name. These three are all in the classic Material Icons
@@ -83,9 +77,8 @@ export function UspMarquee({ c }: { c: UspContent }) {
   // shop's own zone — which is the right default for a Sharjah bakery whose
   // nearest customers are its biggest group. The banner beside it names the
   // area and offers to change it, so the claim is never unqualified.
-  const speedKey = area ? SPEED_KEY[area.speed] : undefined;
   const items: UspItem[] = [
-    ...(speedKey && area ? [{ icon: SPEED_ICON[area.speed], label: t(speedKey) }] : []),
+    ...(area ? [{ icon: SPEED_ICON[area.speed], label: speedLabel(t, area) }] : []),
     ...(c.items ?? []).filter(i => i.label),
   ];
   if (items.length === 0) return null;

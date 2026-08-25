@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import uuid
 from decimal import Decimal
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -55,7 +55,13 @@ def _zone(
     )
 
 
-async def _area(zone):
+async def _area(zone, *, courier=None):
+    # The `express_minutes` read looks the serving courier up by code; a test
+    # that cares about the number hands one in, and the db mock returns it.
+    db = AsyncMock()
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none.return_value = courier
+    db.execute = AsyncMock(return_value=execute_result)
     with (
         patch(
             "app.api.v1.delivery.delivery_zone_service.find_zone",
@@ -70,8 +76,19 @@ async def _area(zone):
         # `Request`, and constructing one here would test slowapi rather than
         # the answer this endpoint gives.
         return await delivery_area.__wrapped__(
-            request=AsyncMock(), latitude=25.2, longitude=55.3, db=AsyncMock()
+            request=AsyncMock(), latitude=25.2, longitude=55.3, db=db
         )
+
+
+def _courier(kind="minutes", minutes=90):
+    from app.models.courier import Courier
+
+    return Courier(
+        code="slider",
+        name="Slider",
+        unbatched_promise_kind=kind,
+        unbatched_promise_minutes=minutes,
+    )
 
 
 # ── the promise ───────────────────────────────────────────────────────────────
@@ -131,6 +148,51 @@ async def test_the_response_names_no_courier():
             assert leak not in blob, f"the area response mentions {leak!r}"
 
 
+# ── the express minutes ───────────────────────────────────────────────────────
+
+
+async def test_express_reports_the_couriers_real_minutes():
+    """The regression this whole change exists for.
+
+    The card badge read a hardcoded hour while the checkout, reading the
+    courier's `unbatched_promise_minutes`, quoted ninety — one pin, two numbers.
+    The area response now carries the same figure the checkout does, so the two
+    screens agree the moment the polygon's courier is re-timed.
+    """
+    result = await _area(_zone("slider"), courier=_courier(minutes=90))
+    assert result.speed == "express"
+    assert result.express_minutes == 90
+
+
+async def test_a_day_promise_names_no_minutes():
+    """An express-shaped zone whose courier promises a day has no minutes to
+    count — the badge keeps its own wording rather than inventing a figure."""
+    result = await _area(
+        _zone("slider"), courier=_courier(kind="next_day", minutes=None)
+    )
+    assert result.speed == "express"
+    assert result.express_minutes is None
+
+
+@pytest.mark.parametrize("provider", ["lalamove", "slider", "noon_send"])
+async def test_a_batched_zone_names_no_minutes(provider):
+    """`same_day` counts in windows, not minutes."""
+    result = await _area(
+        _zone(provider, batch_group_id=uuid.uuid4()), courier=_courier()
+    )
+    assert result.speed == "same_day"
+    assert result.express_minutes is None
+
+
+async def test_the_minutes_are_still_no_courier_leak():
+    """A duration says nothing a fee does not; the number is safe where the name
+    is not."""
+    result = await _area(_zone("slider"), courier=_courier(minutes=90))
+    blob = result.model_dump_json().lower()
+    for leak in ("lalamove", "noon", "slider", "courier", "provider"):
+        assert leak not in blob
+
+
 # ── the threshold ─────────────────────────────────────────────────────────────
 
 
@@ -185,6 +247,9 @@ def test_the_response_model_carries_nothing_else():
         "free_threshold",
         "free_delivery_available",
         "speed",
+        # The minutes behind an express badge, so the card and the checkout
+        # cannot name two durations for one pin. A number, never the courier.
+        "express_minutes",
         # The kitchen this pin resolves to, which the storefront hands back on
         # catalogue reads so the shelf matches the branch. An id, not a name:
         # `zone_name` remains the only field here allowed to name a place.

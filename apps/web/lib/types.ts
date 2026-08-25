@@ -734,6 +734,13 @@ export interface DeliveryArea {
   /** `express` is inside the hour, `same_day` today, `next_day` tomorrow. */
   speed: 'express' | 'same_day' | 'next_day';
   /**
+   * For an `express` pin, the courier's promised minutes ready-to-door — the
+   * number the badge says, sourced from the same courier row the checkout
+   * quotes. Null for `same_day`/`next_day` and for an express zone whose courier
+   * promises a day rather than minutes.
+   */
+  express_minutes?: number | null;
+  /**
    * The kitchen this pin resolves to, or null where we do not serve it.
    *
    * `LocationProvider` writes it to a cookie so the server-rendered catalogue

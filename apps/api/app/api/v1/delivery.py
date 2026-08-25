@@ -6,10 +6,12 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Query, Request
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, get_optional_user
 from app.core.limiter import limiter
+from app.models.courier import Courier, UnbatchedPromiseEnum
 from app.models.order import DeliveryMethodEnum
 from app.models.user import User
 
@@ -74,6 +76,14 @@ class DeliveryAreaResponse(BaseModel):
     #: genuinely is three, and collapsing them would make the near zones wear
     #: the far zones' promise.
     speed: str = "next_day"
+    #: The minutes an `express` badge says out loud, e.g. `90` — read from the
+    #: same courier row the checkout's `delivery_promise` quotes, so the product
+    #: card and the checkout cannot name two different durations for one pin. It
+    #: is the number and never the courier: a duration leaks nothing a fee does
+    #: not. Null for `same_day`/`next_day` (nothing to count in minutes), and
+    #: null for an express zone whose courier promises a day rather than minutes,
+    #: where the card keeps its own wording rather than inventing a figure.
+    express_minutes: int | None = None
     #: The kitchen this pin resolves to, so the storefront can ask the catalogue
     #: what that kitchen has. Resolved exactly as an order would resolve it, and
     #: that is the point of sending it: the shopper is shown what the checkout
@@ -162,6 +172,30 @@ def _speed_of(zone) -> str:
     return "next_day"
 
 
+#: The number behind an `express` badge, read off the same courier row the
+#: checkout quotes. Kept beside `_speed_of` because the two answer one question
+#: together — how fast, and how fast in minutes — and only ever disagreed
+#: because the card had no way to read the second and hardcoded an hour.
+async def _express_minutes(db: AsyncSession, zone, speed: str) -> int | None:
+    # Only `express` counts in minutes; the other two promise a day, and a
+    # number there would be a precision we do not have.
+    if speed != "express":
+        return None
+    courier = (
+        await db.execute(
+            select(Courier).where(Courier.code == zone.fulfilment_provider)
+        )
+    ).scalar_one_or_none()
+    # No courier row, or one that promises a day rather than an hour: null, and
+    # the card falls back to its own wording rather than a figure nothing set.
+    if (
+        courier is None
+        or courier.unbatched_promise_kind != UnbatchedPromiseEnum.MINUTES.value
+    ):
+        return None
+    return courier.unbatched_promise_minutes
+
+
 @router.get("/area", response_model=DeliveryAreaResponse)
 @limiter.limit("60/minute")
 async def delivery_area(
@@ -200,6 +234,7 @@ async def delivery_area(
         )
 
     threshold = zone.free_delivery_threshold
+    speed = _speed_of(zone)
     return DeliveryAreaResponse(
         serviceable=True,
         # The emirate, not the cost band — see `public_zone_name`.
@@ -207,7 +242,8 @@ async def delivery_area(
         delivery_fee=None if zone.is_dynamic else float(zone.delivery_fee),
         free_threshold=None if threshold is None else float(threshold),
         free_delivery_available=zone.free_delivery_eligible,
-        speed=_speed_of(zone),
+        speed=speed,
+        express_minutes=await _express_minutes(db, zone, speed),
         # The zone's own kitchen, and deliberately not `order_service.
         # resolve_branch`. That function must always name one, because an order
         # has to be baked somewhere, so it ends at "any active branch" — a guess

@@ -2,7 +2,7 @@
 
 import { useLocation } from '@/lib/location/LocationProvider';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
-import { withFallback } from '@/lib/i18n/fallback';
+import { speedLabel } from '@/lib/location/speed';
 
 /**
  * How fast this reaches the customer — as a claim, not a hedge.
@@ -20,12 +20,6 @@ import { withFallback } from '@/lib/i18n/fallback';
  * and this is the strongest thing the shop can say about itself. It is set to
  * look like a badge for that reason, not like a caption.
  */
-
-const SPEED_KEYS = {
-  express: ['usp.speed_express', 'Get it in 60 minutes'],
-  same_day: ['usp.speed_same_day', 'Get it today'],
-  next_day: ['usp.speed_next_day', 'Get it tomorrow'],
-} as const;
 
 /**
  * A van with a speed line through it, drawn rather than named.
@@ -118,10 +112,9 @@ export function DeliveryEstimate({
   // first one.
   if (loading || !area) return null;
 
-  const [key, english] = SPEED_KEYS[area.speed] ?? SPEED_KEYS.next_day;
   return (
     <SpeedBadge size={variant} className={className}>
-      {withFallback(t, key, english)}
+      {speedLabel(t, area)}
     </SpeedBadge>
   );
 }

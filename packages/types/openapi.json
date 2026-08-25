@@ -6387,6 +6387,17 @@
             ],
             "title": "Delivery Fee"
           },
+          "express_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Express Minutes"
+          },
           "free_delivery_available": {
             "default": false,
             "title": "Free Delivery Available",

@@ -353,7 +353,7 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("verify", "too_many", "Too many attempts. Try again in a few minutes."),
     ("verify", "unavailable", "Verification is unavailable right now."),
     # ── delivery speed, by zone ───────────────────────────────────────────
-    ("usp", "speed_express", "Get it in 60 minutes"),
+    ("usp", "speed_express", "Get it in {minutes} minutes"),
     ("usp", "speed_same_day", "Get it today"),
     ("usp", "speed_next_day", "Get it tomorrow"),
     ("usp", "free_delivery_here", "Free delivery in {area}"),
@@ -1103,7 +1103,7 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("verify", "too_many", "محاولات كثيرة. حاول بعد بضع دقائق."),
     ("verify", "unavailable", "التحقق غير متاح حالياً."),
     # ── delivery speed, by zone ───────────────────────────────────────────
-    ("usp", "speed_express", "استلمه خلال 60 دقيقة"),
+    ("usp", "speed_express", "استلمه خلال {minutes} دقيقة"),
     ("usp", "speed_same_day", "استلمه اليوم"),
     ("usp", "speed_next_day", "استلمه غداً"),
     ("usp", "free_delivery_here", "توصيل مجاني في {area}"),

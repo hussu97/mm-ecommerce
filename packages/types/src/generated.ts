@@ -8986,6 +8986,8 @@ export interface components {
             branch_id?: string | null;
             /** Delivery Fee */
             delivery_fee?: number | null;
+            /** Express Minutes */
+            express_minutes?: number | null;
             /**
              * Free Delivery Available
              * @default false
