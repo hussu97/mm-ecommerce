@@ -17,12 +17,16 @@ cookie + CSRF token**.
 carries a `__Secure-console_session` cookie and an `x-csrf-token` header; that
 pair is the credential, and the provider gets it at runtime by **signing in** with
 the account number + email + password — there is nothing to paste or store beyond
-the login. `_login()` primes the session, reads the form's CSRF token, and POSTs
-the credentials; the resulting cookie + CSRF are cached and refreshed
-automatically when the session expires. Every step of that login is implemented
-**except the reCAPTCHA token** (`_recaptcha_token`): the console login is gated by
-reCAPTCHA, and producing that token is bot-detection we have deliberately **not**
-built yet — so `_login()` raises at that one step until it is finished.
+the login. `_login()` primes the session, reads the form's CSRF token, asks
+Google for the same reCAPTCHA v3 token the login page's own script would, and
+POSTs the credentials the way Chrome in the UAE does (the shop's country, a
+current Chrome UA and client hints — not python-httpx). The resulting cookie +
+CSRF are cached and refreshed automatically when the session expires.
+
+The form fields are the ones the live page posts (`business`, `email`,
+`password`, `token`, `_token`). A 200 that is still `/login` is a rejection —
+Laravel does not 401 a bad password, it re-renders the form — so success is
+"we left the login page", not "the POST returned 200".
 
 **The order id is the mapping.** GrubOps records the Foodics order id in its order
 history (`…Foodics Order Id: <uuid>`), which the ingest loop parses onto
@@ -33,11 +37,13 @@ lookup. `find_order_by_original_id` exists as a fallback/debug path.
 
 from __future__ import annotations
 
+import base64
 import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -45,12 +51,28 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-#: After a failed login, wait this long before trying again. reCAPTCHA is unbuilt,
-#: so the login fails every time — without a backoff the write-back would attempt
-#: it on every order and every retry tick, and a flood of failed logins is how a
-#: Foodics account gets locked. One attempt per window is enough to observe the
-#: server's response in the logs.
+#: After a failed login, wait this long before trying again. A flood of failed
+#: sign-ins is how a Foodics account gets locked; one attempt per window is
+#: enough to observe the server's response in the logs.
 _LOGIN_BACKOFF = timedelta(minutes=10)
+
+#: Login talks to Foodics *and* Google for the reCAPTCHA token. The API-call
+#: timeout is 8s, which is tight once Cloudflare has had a think; this is only
+#: the sign-in round-trip.
+_LOGIN_TIMEOUT = 20.0
+
+#: Chrome 151 on Windows, reduced UA (patch frozen at 0.0.0). python-httpx's
+#: default UA is how Cloudflare decides this is not a person at the console;
+#: matching a current Chrome is what a regular shop login looks like.
+_CHROME_MAJOR = "151"
+_CHROME_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+)
+
+#: UAE English first — the shop is in the UAE, the VM is in Doha, and a
+#: US/HK Accept-Language on that hop is a country mismatch reCAPTCHA scores.
+_ACCEPT_LANGUAGE = "en-AE,en;q=0.9,ar-AE;q=0.8,ar;q=0.7"
 
 #: Retried once — the codes that mean "ask again", not "you asked wrongly".
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
@@ -81,11 +103,145 @@ _LISTING = "/core-api/listing"
 _UPDATING = "/core-api/updating"
 
 #: Laravel exposes the request CSRF token in a `<meta name="csrf-token">` tag on
-#: the login page; that is what the `x-csrf-token` header must echo.
+#: the login page; that is what the `x-csrf-token` header must echo. The form
+#: also posts it as `_token` — prefer the form value when both are present.
 _CSRF_META_RE = re.compile(
     r'<meta\s+name=["\']csrf-token["\']\s+content=["\']([^"\']+)["\']',
     re.IGNORECASE,
 )
+_FORM_TOKEN_RE = re.compile(
+    r'name=["\']_token["\']\s+value=["\']([^"\']+)["\']',
+    re.IGNORECASE,
+)
+
+#: reCAPTCHA v3 site key on the login page (`api.js?render=…` and
+#: `recaptchClientID`). Confirmed 2026-08-25 against the live form.
+_SITEKEY_RE = re.compile(
+    r"recaptcha/api\.js\?render=([A-Za-z0-9_-]+)",
+    re.IGNORECASE,
+)
+_RECAPTCHA_VERSION_RE = re.compile(r"releases/([A-Za-z0-9_-]+)/")
+_RECAPTCHA_ANCHOR_TOKEN_RE = re.compile(r'id="recaptcha-token"\s+value="([^"]+)"')
+_RECAPTCHA_RRESP_RE = re.compile(r'\["rresp","([^"]+)"')
+
+
+def _chrome_headers(
+    *, navigate: bool = False, referer: str | None = None
+) -> dict[str, str]:
+    """UA, UAE language and client hints a current Chrome sends.
+
+    Deliberately no `sec-fetch-*`: Cloudflare in front of the console challenged
+    python-httpx when those were present (2026-08-25, from the Doha VM) and
+    served the real login page for the same UA / `en-AE` / client-hints without
+    them.
+    """
+    headers = {
+        "User-Agent": _CHROME_UA,
+        "Accept-Language": _ACCEPT_LANGUAGE,
+        "sec-ch-ua": (
+            f'"Google Chrome";v="{_CHROME_MAJOR}", '
+            f'"Chromium";v="{_CHROME_MAJOR}", "Not A(Brand";v="8"'
+        ),
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+    }
+    if navigate:
+        headers["Accept"] = (
+            "text/html,application/xhtml+xml,application/xml;q=0.9,"
+            "image/avif,image/webp,image/apng,*/*;q=0.8"
+        )
+        headers["Upgrade-Insecure-Requests"] = "1"
+    else:
+        headers["Accept"] = "application/json, text/plain, */*"
+    if referer:
+        headers["Referer"] = referer
+    return headers
+
+
+def _is_cloudflare_challenge(response: httpx.Response) -> bool:
+    text = response.text or ""
+    return "Just a moment..." in text or "cf-challenge" in text.lower()
+
+
+def _still_on_login(response: httpx.Response) -> bool:
+    """Laravel re-renders `/login` on a rejected sign-in; that is a 200."""
+    path = httpx.URL(str(response.url)).path.rstrip("/")
+    if path.endswith("/login"):
+        return True
+    return 'id="recaptcha_token"' in (response.text or "")
+
+
+def _recaptcha_origin(console_base: str) -> str:
+    parsed = urlparse(console_base)
+    host = parsed.hostname or "console.foodics.com"
+    return f"{parsed.scheme or 'https'}://{host}:443"
+
+
+async def _fetch_recaptcha_token(*, sitekey: str, origin: str, timeout: float) -> str:
+    """The v3 token grecaptcha.execute would put in the login form.
+
+    Two calls, as the login page's own script makes them: load the widget
+    (anchor) then exchange it (reload), with action `homepage` and `hl=en-AE`.
+    """
+    co = base64.b64encode(origin.encode()).decode().rstrip("=") + "."
+    chrome = _chrome_headers()
+    chrome["Accept-Language"] = _ACCEPT_LANGUAGE
+    async with httpx.AsyncClient(
+        timeout=timeout, follow_redirects=True, headers=chrome
+    ) as client:
+        api_js = await client.get(
+            f"https://www.google.com/recaptcha/api.js?render={sitekey}",
+            headers={**chrome, "Referer": "https://console.foodics.com/login"},
+        )
+        version_m = _RECAPTCHA_VERSION_RE.search(api_js.text)
+        if not version_m:
+            return ""
+        version = version_m.group(1)
+        anchor = await client.get(
+            "https://www.google.com/recaptcha/api2/anchor",
+            params={
+                "ar": "1",
+                "k": sitekey,
+                "co": co,
+                "hl": "en-AE",
+                "v": version,
+                "size": "invisible",
+                "sa": "homepage",
+                "cb": "cb1",
+            },
+            headers={
+                **chrome,
+                "Accept": (
+                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                ),
+                "Referer": "https://console.foodics.com/login",
+            },
+        )
+        token_m = _RECAPTCHA_ANCHOR_TOKEN_RE.search(anchor.text)
+        if not token_m:
+            return ""
+        reload = await client.post(
+            f"https://www.google.com/recaptcha/api2/reload?k={sitekey}",
+            data={
+                "v": version,
+                "reason": "q",
+                "c": token_m.group(1),
+                "k": sitekey,
+                "co": co,
+                "hl": "en-AE",
+                "size": "invisible",
+                "sa": "homepage",
+            },
+            headers={
+                **chrome,
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Origin": "https://www.google.com",
+                "Referer": str(anchor.url),
+                "Accept": "*/*",
+            },
+        )
+        rresp = _RECAPTCHA_RRESP_RE.search(reload.text)
+        return rresp.group(1) if rresp else ""
 
 
 class FoodicsError(RuntimeError):
@@ -101,10 +257,10 @@ class FoodicsError(RuntimeError):
 
 
 class FoodicsAuthError(FoodicsError):
-    """A login/session problem — a dead session, or the reCAPTCHA step we have
-    not built. Distinct so a caller can tell "could not sign in" from "the order
-    call failed"; still a `FoodicsError`, so the write-back records it either
-    way."""
+    """A login/session problem — a dead session, a rejected sign-in, or a
+    Cloudflare challenge in front of the console. Distinct so a caller can tell
+    "could not sign in" from "the order call failed"; still a `FoodicsError`, so
+    the write-back records it either way."""
 
 
 @dataclass(frozen=True)
@@ -172,71 +328,99 @@ class FoodicsClient:
         self._csrf = None
 
     def reset_login_backoff(self) -> None:
-        """Clear the failed-login cooldown so the next call retries immediately.
-        For when the credentials or the (future) reCAPTCHA step have changed."""
+        """Clear the failed-login cooldown so the next call retries immediately."""
         self._login_error = None
         self._login_retry_at = None
 
     # ── the session ───────────────────────────────────────────────────────────
 
-    def _recaptcha_token(self) -> str:
-        """The reCAPTCHA token the console login requires — **not built yet.**
+    async def _recaptcha_token(self, page_html: str) -> str:
+        """The reCAPTCHA v3 token the login form posts as `token`.
 
-        The login form is gated by reCAPTCHA, and producing a *passing* token is
-        bot-detection we have deliberately not implemented. Rather than block the
-        sign-in outright, this returns an empty token so `_login()` still POSTs and
-        we can see what the console actually does with a captcha-less request
-        (observed on prod via `last_push_error`). It does **not** solve, forge, or
-        spoof anything — Foodics is expected to reject it; if it does not, that is
-        the console's own (non-)enforcement, not a bypass on our side.
+        The live page runs `grecaptcha.execute(sitekey, { action: 'homepage' })`
+        and writes the result into `#recaptcha_token`. We make the same two
+        Google calls that script makes (anchor, then reload), as Chrome in the
+        UAE. An empty return is what the page itself does when execute fails —
+        the form still submits.
         """
-        return ""
+        sitekey_m = _SITEKEY_RE.search(page_html)
+        if not sitekey_m:
+            logger.warning("Foodics login page had no reCAPTCHA site key")
+            return ""
+        origin = _recaptcha_origin(self.config.console_base)
+        try:
+            return await _fetch_recaptcha_token(
+                sitekey=sitekey_m.group(1),
+                origin=origin,
+                timeout=max(self.config.timeout, _LOGIN_TIMEOUT),
+            )
+        except httpx.HTTPError as exc:
+            logger.warning("Foodics reCAPTCHA token request failed: %s", exc)
+            return ""
 
     async def _login(self) -> None:
-        """Sign in to the console and cache the session cookie + CSRF token.
-
-        Everything here is implemented except `_recaptcha_token`, which raises —
-        so this cannot yet complete on its own. The endpoint and field names
-        follow the console's own login form and should be confirmed against a
-        captured login once the reCAPTCHA step exists.
-        """
+        """Sign in to the console and cache the session cookie + CSRF token."""
         config = self.config
+        timeout = max(config.timeout, _LOGIN_TIMEOUT)
         async with httpx.AsyncClient(
-            timeout=config.timeout,
+            timeout=timeout,
             base_url=config.console_base,
             follow_redirects=True,
+            headers=_chrome_headers(navigate=True),
         ) as client:
-            # 1. Prime the session (sets the initial cookies) and read the CSRF
-            #    token the form carries.
             page = await client.get("/login")
-            csrf = _CSRF_META_RE.search(page.text)
-            csrf_token = csrf.group(1) if csrf else client.cookies.get("XSRF-TOKEN")
+            if _is_cloudflare_challenge(page):
+                raise FoodicsAuthError(
+                    "Foodics login page was challenged",
+                    status=page.status_code,
+                )
+            if page.status_code >= 400:
+                raise FoodicsAuthError(
+                    f"Foodics login page failed: {page.status_code}",
+                    status=page.status_code,
+                )
 
-            # 2. The one piece not built: the reCAPTCHA token. Raises today.
-            recaptcha = self._recaptcha_token()
+            form_token = _FORM_TOKEN_RE.search(page.text)
+            meta_token = _CSRF_META_RE.search(page.text)
+            if form_token:
+                csrf_token = form_token.group(1)
+            elif meta_token:
+                csrf_token = meta_token.group(1)
+            else:
+                csrf_token = client.cookies.get("XSRF-TOKEN")
 
-            # 3. Post the credentials the way the login form does.
+            recaptcha = await self._recaptcha_token(page.text)
+
             resp = await client.post(
                 "/login",
                 data={
-                    "business_reference": config.account_number,
+                    "business": config.account_number,
                     "email": config.email,
                     "password": config.password,
-                    "g-recaptcha-response": recaptcha,
+                    "token": recaptcha,
                     "_token": csrf_token,
                 },
-                headers={"X-Requested-With": "XMLHttpRequest"},
+                headers=_chrome_headers(
+                    navigate=True,
+                    referer=config.console_base + "/login",
+                )
+                | {"Origin": config.console_base},
             )
-            if resp.status_code >= 400:
+            if _is_cloudflare_challenge(resp):
+                raise FoodicsAuthError(
+                    "Foodics login was challenged",
+                    status=resp.status_code,
+                )
+            if resp.status_code >= 400 or _still_on_login(resp):
                 raise FoodicsAuthError(
                     f"Foodics login failed: {resp.status_code} {resp.text[:200]}",
                     status=resp.status_code,
                 )
 
-            # 4. Cache the authenticated session cookie + a fresh CSRF token.
             self._cookie = "; ".join(f"{k}={v}" for k, v in client.cookies.items())
             fresh = _CSRF_META_RE.search(resp.text)
             self._csrf = (fresh.group(1) if fresh else None) or csrf_token
+            logger.info("Foodics: signed in as %s", config.email)
 
     async def _ensure_session(self) -> None:
         if self._cookie:
@@ -279,10 +463,9 @@ class FoodicsClient:
         for attempt in range(attempts):
             await self._ensure_session()
             headers = {
-                "Accept": "application/json, text/plain, */*",
+                **_chrome_headers(referer=config.console_base + "/"),
                 "Cookie": self._cookie or "",
                 "X-Requested-With": "XMLHttpRequest",
-                "Referer": config.console_base + "/",
             }
             if self._csrf:
                 headers["X-CSRF-TOKEN"] = self._csrf
@@ -290,7 +473,9 @@ class FoodicsClient:
                 headers["Content-Type"] = "application/json"
             try:
                 async with httpx.AsyncClient(
-                    timeout=config.timeout, base_url=config.console_base
+                    timeout=config.timeout,
+                    base_url=config.console_base,
+                    headers=_chrome_headers(),
                 ) as client:
                     response = await client.request(
                         method, path, params=params, json=json_body, headers=headers
@@ -301,9 +486,17 @@ class FoodicsClient:
                     continue
                 raise FoodicsError(f"Foodics is unreachable: {exc}") from exc
 
+            if _is_cloudflare_challenge(response):
+                last = FoodicsError(
+                    "Foodics returned a Cloudflare challenge",
+                    status=response.status_code,
+                )
+                if attempt + 1 < attempts:
+                    continue
+                raise last
+
             if response.status_code in _SESSION_DEAD and attempt + 1 < attempts:
-                # Session expired mid-use. Drop it and log in again on the next
-                # go (which raises until the reCAPTCHA step is built).
+                # Session expired mid-use. Drop it and log in again on the next go.
                 self.reset()
                 last = FoodicsError(
                     "Foodics session rejected", status=response.status_code

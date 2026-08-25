@@ -23,8 +23,8 @@ Same shape as the GrubOps write-back it replaces — `mirror_status_out` +
 `push_status_out_in_background` + `sweep_pending_pushouts`, keyed off the map
 row's `last_pushed_status`/`last_push_error` — so `order_lifecycle` calls it the
 same way and the ingest loop retries it the same way. `push`/mirror is a no-op
-unless `FOODICS_ORDER_PUSH_ENABLED` and a token are set, and only fires for a move
-made by *our* side (never one the ingest loop attributed `aggregator`).
+unless `FOODICS_ORDER_PUSH_ENABLED` and credentials are set, and only fires for
+a move made by *our* side (never one the ingest loop attributed `aggregator`).
 """
 
 from __future__ import annotations

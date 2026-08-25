@@ -380,9 +380,9 @@ class Settings(BaseSettings):
     #: **This is the console integration, not the Foodics developer/OAuth API.** We
     #: sign in as the business the way `console.foodics.com` does and call its
     #: private `core-api` — the same approach as the GrubOps provider. Auth is a
-    #: session cookie + CSRF token the provider obtains at runtime by **logging in**
-    #: with the account number + email + password below; nothing to paste. The one
-    #: unbuilt piece of that login is the reCAPTCHA step (see `foodics_provider`).
+    #: session cookie + CSRF token the provider obtains at runtime by logging in
+    #: with the account number + email + password below, presenting as Chrome in
+    #: the UAE the way a person at the console does.
     #:
     #: Off by default: a bad login or status mapping would drive real orders.
     #: Independent of `GRUBOPS_ORDERS_ENABLED` (ingest) so the read side can run

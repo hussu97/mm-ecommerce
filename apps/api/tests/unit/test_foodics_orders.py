@@ -12,13 +12,17 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from app.models.order import OrderStatusEnum
 from app.services.foodics import foodics_orders_service as f
 from app.services.providers.foodics_provider import (
+    _ACCEPT_LANGUAGE,
+    _CHROME_UA,
     DELIVERY_DELIVERED,
     DELIVERY_READY,
+    FoodicsAuthError,
     FoodicsClient,
     FoodicsConfig,
 )
@@ -305,19 +309,136 @@ def test_an_empty_client_is_not_configured():
     assert client.is_configured is False
 
 
-def test_the_recaptcha_token_is_an_empty_placeholder_until_built():
-    # Not solved/forged/spoofed — an empty token, so the login still POSTs and we
-    # can observe what the console does with a captcha-less request. Foodics is
-    # expected to reject it until the real step is built.
-    assert FoodicsClient(_cfg())._recaptcha_token() == ""
+_LOGIN_HTML = """
+<html><head>
+<meta name="csrf-token" content="csrf-from-meta">
+</head><body>
+<form method="POST" action="/login">
+<input type="hidden" name="_token" value="csrf-from-form">
+<input type="hidden" name="token" id="recaptcha_token" />
+<input name="business"><input name="email"><input name="password">
+</form>
+<script src="https://www.google.com/recaptcha/api.js?render=sitekey-abc"></script>
+</body></html>
+"""
+
+_DASHBOARD_HTML = """
+<html><head>
+<meta name="csrf-token" content="csrf-after-login-01234567890123456789">
+</head><body><div id="app">console</div></body></html>
+"""
+
+
+class _FakeFoodicsHttp:
+    """Stands in for httpx.AsyncClient during login: one GET /login, one POST."""
+
+    def __init__(
+        self, *, post_url="https://console.foodics.com/home", post_html=_DASHBOARD_HTML
+    ):
+        self.post_url = post_url
+        self.post_html = post_html
+        self.gets: list[dict] = []
+        self.posts: list[dict] = []
+        self.cookies = httpx.Cookies()
+        self.cookies.set("XSRF-TOKEN", "xsrf")
+        self.cookies.set("__Secure-console_session", "sess")
+        self._kwargs: dict = {}
+
+    def __call__(self, **kwargs):
+        self._kwargs = kwargs
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return False
+
+    async def get(self, path, **kwargs):
+        self.gets.append({"path": path, "headers": kwargs.get("headers")})
+        return httpx.Response(
+            200,
+            text=_LOGIN_HTML,
+            headers={"content-type": "text/html"},
+            request=httpx.Request("GET", "https://console.foodics.com/login"),
+        )
+
+    async def post(self, path, **kwargs):
+        self.posts.append(
+            {
+                "path": path,
+                "data": kwargs.get("data"),
+                "headers": kwargs.get("headers") or {},
+            }
+        )
+        return httpx.Response(
+            200,
+            text=self.post_html,
+            headers={"content-type": "text/html"},
+            request=httpx.Request("GET", self.post_url),
+        )
+
+
+@pytest.mark.asyncio
+async def test_login_posts_the_live_form_as_uae_chrome(monkeypatch):
+    # Captured 2026-08-25: account number is `business`, recaptcha is `token`,
+    # and the page is a regular form POST — not XHR, not `business_reference`.
+    fake = _FakeFoodicsHttp()
+    monkeypatch.setattr(
+        "app.services.providers.foodics_provider.httpx.AsyncClient", fake
+    )
+
+    async def token(_self, _html):
+        return "recaptcha-v3-token"
+
+    client = FoodicsClient(_cfg())
+    monkeypatch.setattr(FoodicsClient, "_recaptcha_token", token)
+    await client._login()
+
+    assert fake._kwargs["headers"]["User-Agent"] == _CHROME_UA
+    assert fake._kwargs["headers"]["Accept-Language"] == _ACCEPT_LANGUAGE
+    assert fake.posts, "login must POST"
+    posted = fake.posts[0]
+    assert posted["data"]["business"] == "862261"
+    assert posted["data"]["email"] == "owner@x.com"
+    assert posted["data"]["password"] == "pw"
+    assert posted["data"]["token"] == "recaptcha-v3-token"
+    assert posted["data"]["_token"] == "csrf-from-form"
+    assert "business_reference" not in posted["data"]
+    assert "g-recaptcha-response" not in posted["data"]
+    assert posted["headers"]["User-Agent"] == _CHROME_UA
+    assert posted["headers"]["Accept-Language"] == _ACCEPT_LANGUAGE
+    assert posted["headers"].get("X-Requested-With") is None
+    assert not any(k.lower().startswith("sec-fetch") for k in posted["headers"])
+    assert client._cookie
+    assert client._csrf == "csrf-after-login-01234567890123456789"
+
+
+@pytest.mark.asyncio
+async def test_a_200_that_stays_on_login_is_a_rejection(monkeypatch):
+    # Laravel re-renders the form on a bad password. Treating that 200 as
+    # success cached a guest session on prod and every later call 419'd.
+    fake = _FakeFoodicsHttp(
+        post_url="https://console.foodics.com/login", post_html=_LOGIN_HTML
+    )
+    monkeypatch.setattr(
+        "app.services.providers.foodics_provider.httpx.AsyncClient", fake
+    )
+
+    async def token(_self, _html):
+        return "tok"
+
+    client = FoodicsClient(_cfg())
+    monkeypatch.setattr(FoodicsClient, "_recaptcha_token", token)
+    with pytest.raises(FoodicsAuthError, match="login failed"):
+        await client._login()
+    assert client._cookie is None
 
 
 @pytest.mark.asyncio
 async def test_a_failed_login_backs_off_instead_of_hammering():
     # A flood of failed logins locks the account, so a failure is remembered and
     # re-raised without another network round-trip until the cooldown passes.
-    from app.services.providers.foodics_provider import FoodicsAuthError
-
     client = FoodicsClient(_cfg())
     calls = 0
 
