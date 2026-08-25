@@ -1,54 +1,76 @@
-# Courier aggregator rates — Deliveroo / Keeta / Careem / Talabat
+# Payment-failure reason: deep-dive the gateway signal, tell the customer why
 
-## Agreed rules (from product owner)
-- **Deliveroo** — Sharjah (K001) 27% + VAT, Barsha (B001) 31% + VAT. **0** payment fee. Per-branch commission.
-- **Keeta** (all branches) — commission = `4 + 25% × (item_value − 4)`, **VAT-inclusive** (no gross-up). Payment = 2%, **VAT-inclusive**.
-- **Careem** (all branches) — 25% + VAT commission. +4 AED **only for Careem-Plus members**. Payment 2% + VAT **only on cashless (non-cash)** orders.
-- **Talabat** (all branches) — 30% + VAT commission. +4 AED **only for Pro/VIP/loyalty members**. Payment 2% + VAT on **all** orders (incl. cash).
-- **Noon Food** — unchanged (25% + 2%, before VAT).
+Orders MM-20260824-002 / -003 failed at Stripe. Today we keep only `code` +
+`message` from Stripe and the customer always sees the same generic
+"Payment was cancelled" toast on return to checkout. `OrderResponse` exposes no
+failure reason at all, so the frontend *cannot* do better.
 
-## Confirmed facts (prod, 2026-08-24)
-- Branches: `K001` Sharjah, `B001` Barsha Heights (Dubai) → Deliveroo split = `order.branch_id`.
-- Cash vs cashless = `grubops raw.orderHeader.paymentStatus` (`POSTPAID`=cash / `PREPAID`=cashless). Ingest currently discards it (hardcodes `payment_method='cod'`).
-- **No loyalty/Pro/Plus identifier exists in any GrubOps payload** (`additionalInfos` null, `orderLoyaltyPoint` empty, no `tpro`/`careem-plus`/`vip`/`member` token in 68/68 payloads).
-  → Decision: **model the 4 AED but keep it dormant** via a per-order `aggregator_customer_is_member` flag that stays unpopulated; the fee never applies until a real signal exists.
+## Findings (grounded in the docs)
+
+- Stripe `payment_intent.payment_failed` → `last_payment_error` carries
+  `decline_code` (the real reason: `insufficient_funds`, `expired_card`,
+  `incorrect_cvc`, …) which we currently throw away. `code` is usually just
+  `card_declined`. Full table: https://docs.stripe.com/declines/codes
+- Ziina's `latest_error` is only `{message, code}` where `code` is an HTTP
+  status — **no decline taxonomy**. So Ziina → pass its human `message` through
+  verbatim (localization not required); Stripe → normalized reason code +
+  localized copy. (Ziina is off in prod behind `ZIINA_ENABLED`.)
 
 ## Plan
-- [ ] `couriers` gains 5 config flags: `commission_vat_inclusive`, `payment_fee_vat_inclusive`,
-      `commission_fixed_net_of_base` (Keeta's `fixed + %·(base−fixed)`),
-      `payment_fee_cash_exempt` (Careem), `commission_fixed_requires_member` (Careem+Talabat).
-- [ ] New `courier_branch_rate` table — per-(courier,branch) numeric rate overrides (Deliveroo).
-- [ ] `orders` gains `aggregator_payment_type` (`prepaid`/`postpaid`) + `aggregator_customer_is_member` (dormant).
-- [ ] `order_fees._aggregator_fees` rewritten for overrides + flags + cash-exempt + member gate + net-of-base + vat-inclusive.
-- [ ] GrubOps ingest captures `aggregator_payment_type`; member flag left null.
-- [ ] Migration `140_courier_branch_rates`: schema + seed rates + branch overrides + backfill `aggregator_payment_type` from raw + recompute `aggregator_fee`/`payment_fee` for all aggregator orders.
-- [ ] Tests for every courier's arithmetic + the dormant member fee.
-- [ ] Admin schema exposure of new flags + branch overrides (+ TS regen) — follow-up commit.
 
-## Review
+Backend
+- [ ] `providers/base.py`: `PaymentFailureReason` enum + `GatewayEvent.failure_reason`
+- [ ] `stripe_provider.py`: capture `decline_code`, map code/decline_code → reason
+- [ ] `ziina_provider.py`: leave `failure_reason=None`, keep message passthrough
+- [ ] `payment_transaction.py`: add `failure_reason` column (+ CHECK) & migration
+- [ ] `payment_service._record_transaction`: persist `failure_reason`
+- [ ] `schemas/order.py`: `payment_failure_reason` + `payment_failure_message`
+- [ ] `order_service`: eager-load transactions; populate the two fields (guarded)
+- [ ] email: `failed.reason.*` copy (en/ar) + render in `payment_failed.html`
 
-Implemented and verified end-to-end on a throwaway DB (full 131→140 chain + a
-scenario order per courier). Computed fees, all correct:
+Frontend
+- [ ] web `lib/types.ts` + `seed_i18n.py` `checkout.payment_failure.*` (en/ar)
+- [ ] `useRetryOrder.ts`: reason code → localized toast; else raw message; else generic
+- [ ] admin: show reason + raw code/message on failed orders
+- [ ] regenerate `packages/types`
 
-| Order | commission | payment |
-|---|---|---|
-| Deliveroo K001 (Sharjah), 100 | 28.35 (27%+VAT) | 0.00 |
-| Deliveroo B001 (Barsha), 100 | 32.55 (31%+VAT) | 0.00 |
-| Keeta, 40 | 13.00 = 4+25%·(40−4), VAT incl | 0.80 (2% incl) |
-| Careem card, 100 | 26.25 (25%+VAT) | 2.10 (2%+VAT) |
-| Careem cash, 100 | 26.25 | 0.00 (waived) |
-| Talabat cash, 100 | 31.50 (30%+VAT) | 2.10 (charged on cash too) |
-| Noon, 100 | 26.25 (unchanged) | 2.10 |
+Verify
+- [x] unit tests for the Stripe reason mapping + to_response population
 
-- Per-order `aggregator_payment_type` backfilled from GrubOps `raw.paymentStatus`.
-- The 4 AED member fee is seeded but dormant (`aggregator_customer_is_member`
-  never set true), so no non-member is over-charged.
-- 2007 unit tests pass (17 in `test_order_fees.py`, incl. one per new rule); ruff clean.
+## Review (done 2026-08-25)
 
-### Follow-up (not in this change)
-- Admin console can already edit the numeric rates (`CourierUpdate`), but the new
-  grammar flags and Deliveroo's per-branch overrides are seed-only for now —
-  exposing them in `CourierResponse`/`CourierUpdate` + a branch-rate endpoint
-  (and the admin UI) is a separate change that also regenerates `@mm/types`.
-- Wire `aggregator_customer_is_member` to a real signal if GrubOps ever exposes
-  Careem-Plus / Talabat-Pro, or add a manual per-order toggle.
+Shipped all three layers + admin + email, all green.
+
+- `providers/base.py` re-exports `PaymentFailureReason` (defined on the model, so
+  a model never imports a service); `GatewayEvent.failure_reason` added.
+- `stripe_provider.py`: captures `decline_code`, stores the *granular* code in
+  `error_code`, normalises code/decline_code → reason via `_FAILURE_REASONS`
+  (full Stripe table, grouped by customer action; fraud/lost/stolen masked to
+  `card_declined` per Stripe policy; unknown → `card_declined`).
+- `ziina_provider.py`: `failure_reason=None` — no taxonomy; message passed
+  through verbatim (per your call).
+- `payment_transactions.failure_reason` column + CHECK; migration `148`.
+- `order_service._apply_payment_failure`: only while `payment_failed`, latest
+  failed attempt, guarded against unloaded transactions; `payment_transactions`
+  added to `_order_load_options`.
+- `OrderResponse.payment_failure_reason` + `payment_failure_message`; types
+  regenerated; hand-written web/admin `Order` updated.
+- Toast: `useRetryOrder` prefers reason code → localised, else raw message,
+  else generic. i18n keys en+ar in `seed_i18n.py`.
+- Email: `failed.reason.*` copy en+ar, rendered in `payment_failed.html`.
+- Admin order page shows the decline reason + raw message on failed orders.
+
+Tests: `test_stripe_webhook_parsing` (+4), `test_payment_failure_reason` (new,
+4), full payment/order/email surface 737 passed; web+admin tsc clean; single
+alembic head.
+
+Known limits (by design):
+- Race: customer often lands back before the `payment_failed` webhook is
+  processed → order still `created`, no reason yet → generic toast. Acceptable;
+  the email carries the reason regardless. A short delayed re-fetch could close
+  it later if desired.
+- Past failures have no `failure_reason` (no backfill — the raw code's context
+  is gone). New failures fill it going forward, so MM-20260824-002/-003
+  themselves won't show a reason retroactively.
+- Analytics untouched (avoids the W10 umami-doc cascade); `paymentCancelled`
+  still fires on return.

@@ -297,6 +297,11 @@ class ZiinaProvider(PaymentGatewayProvider):
             amount_refunded=amount_refunded,
             error_code=error.get("code"),
             error_message=error.get("message"),
+            # No normalised reason, deliberately. Ziina's `latest_error.code` is
+            # an HTTP status, not a decline taxonomy, and there is nothing here
+            # to bucket. `error_message` is documented as human-readable, so the
+            # storefront shows it verbatim rather than a made-up category.
+            failure_reason=None,
         )
 
     # ── signature ─────────────────────────────────────────────────────────────

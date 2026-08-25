@@ -39,6 +39,7 @@ from app.models.delivery_batch import DELIVERY_TIMEZONE
 from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
 from app.models.order_status_event import StatusSourceEnum, acting_as
+from app.models.payment_transaction import PaymentTransactionStatusEnum
 from app.models.pos_order import OrderSourceEnum, OrderTax
 from app.models.product import Product
 from app.models.promo_code import PromoCode
@@ -109,7 +110,13 @@ __all__ = [
 
 
 def _order_load_options():
-    return [selectinload(Order.items)]
+    # `payment_transactions` rides along because `to_response` reads the failed
+    # attempt off it to tell the customer why a payment was declined, and a lazy
+    # load inside async SQLAlchemy is a `MissingGreenlet`, not a slow query.
+    return [
+        selectinload(Order.items),
+        selectinload(Order.payment_transactions),
+    ]
 
 
 async def to_response(db: AsyncSession, order: Order) -> OrderResponse:
@@ -126,6 +133,7 @@ async def to_response(db: AsyncSession, order: Order) -> OrderResponse:
     reached = await fulfilment_service.reached_at(db, order)
     response = OrderResponse.model_validate(order)
     response.email_has_account = await _email_has_account(db, order.email)
+    _apply_payment_failure(order, response)
     response.fulfilment = FulfilmentResponse.of(
         await fulfilment_service.for_order(db, order, reached=reached)
     )
@@ -134,6 +142,43 @@ async def to_response(db: AsyncSession, order: Order) -> OrderResponse:
         for status, at in sorted(reached.items(), key=lambda pair: pair[1])
     ]
     return response
+
+
+def _apply_payment_failure(order: Order, response: OrderResponse) -> None:
+    """
+    Tell the customer why their last payment was declined — but only while it is
+    still true.
+
+    Scoped to `payment_failed` on purpose: a customer whose card was declined
+    and then paid with another is not shown a stale "insufficient funds", and an
+    order abandoned at the payment page (never declined) has no attempt to quote.
+
+    Reads the most recent *failed* attempt so a retry that failed a second way
+    replaces the first reason rather than keeping the older one. Silent when the
+    transactions were not eager-loaded — a response built from a bare `select`
+    (the POS path, an in-memory order in a test) simply carries no reason rather
+    than triggering a lazy load that async SQLAlchemy turns into a crash.
+    """
+    if order.status != OrderStatusEnum.PAYMENT_FAILED:
+        return
+
+    state = sa_inspect(order)
+    if not (state.transient or state.pending) and (
+        "payment_transactions" in state.unloaded
+    ):
+        return
+
+    failed = [
+        transaction
+        for transaction in order.payment_transactions
+        if transaction.status == PaymentTransactionStatusEnum.FAILED.value
+    ]
+    if not failed:
+        return
+
+    latest = max(failed, key=lambda transaction: transaction.created_at)
+    response.payment_failure_reason = latest.failure_reason
+    response.payment_failure_message = latest.error_message
 
 
 async def _ensure_items_loaded(db: AsyncSession, order: Order) -> None:

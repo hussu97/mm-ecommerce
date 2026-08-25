@@ -24,6 +24,7 @@ from app.services.providers.base import (
     GatewaySession,
     GatewayUnavailableError,
     PaymentEventType,
+    PaymentFailureReason,
     PaymentGatewayProvider,
 )
 
@@ -395,13 +396,24 @@ class StripeProvider(PaymentGatewayProvider):
         fully_refunded: bool | None = None
         error_code: str | None = None
         error_message: str | None = None
+        failure_reason: PaymentFailureReason | None = None
 
         if raw_type.startswith("payment_intent."):
             payment_id = obj.get("id")
             order_number = metadata.get("order_number")
             last_error = obj.get("last_payment_error") or {}
-            error_code = last_error.get("code")
+            # `decline_code` is the reason the *bank* gave and the only field
+            # granular enough to tell a customer anything useful — `code` on a
+            # declined card is almost always the bare "card_declined". We keep
+            # the granular one as `error_code` (falling back to `code` for the
+            # input errors that carry no decline_code, e.g. `incorrect_cvc`) so
+            # reconciliation sees the specific reason, and normalise the pair
+            # into the bucket the storefront actually shows.
+            decline_code = last_error.get("decline_code")
+            code = last_error.get("code")
+            error_code = decline_code or code
             error_message = last_error.get("message")
+            failure_reason = _failure_reason(code, decline_code)
         elif raw_type == "charge.dispute.created":
             payment_id = obj.get("payment_intent")
         elif raw_type.startswith("charge."):
@@ -437,6 +449,7 @@ class StripeProvider(PaymentGatewayProvider):
             fully_refunded=fully_refunded,
             error_code=error_code,
             error_message=error_message,
+            failure_reason=failure_reason,
         )
 
     def is_confirmed_payment_id(self, payment_id: str | None) -> bool:
@@ -449,6 +462,96 @@ class StripeProvider(PaymentGatewayProvider):
         `payment_service._is_paid`.
         """
         return bool(payment_id and payment_id.startswith(_PAYMENT_INTENT_PREFIX))
+
+
+#: Stripe's decline vocabulary → the buckets the customer is shown.
+#:
+#: Keyed by both `decline_code` (the bank's reason) and `code` (the API-level
+#: error), because the same table has to answer for either: a declined card
+#: sends `code="card_declined"` + a `decline_code`, while an input error like a
+#: bad CVC sends only `code="incorrect_cvc"`. Whichever we have, we look it up.
+#:
+#: The list is Stripe's own (https://docs.stripe.com/declines/codes), grouped by
+#: the shopper's next move. The sensitive reasons — `fraudulent`, `lost_card`,
+#: `stolen_card`, `merchant_blacklist`, `pickup_card` — are folded into
+#: `CARD_DECLINED` on purpose: Stripe's rule is that they must be presented as an
+#: ordinary decline, never named to the customer.
+_FAILURE_REASONS: dict[str, PaymentFailureReason] = {
+    # Not enough money / over a limit.
+    "insufficient_funds": PaymentFailureReason.INSUFFICIENT_FUNDS,
+    "card_velocity_exceeded": PaymentFailureReason.INSUFFICIENT_FUNDS,
+    "withdrawal_count_limit_exceeded": PaymentFailureReason.INSUFFICIENT_FUNDS,
+    # Expired, or an expiry that cannot be right.
+    "expired_card": PaymentFailureReason.EXPIRED_CARD,
+    "invalid_expiry_month": PaymentFailureReason.EXPIRED_CARD,
+    "invalid_expiry_year": PaymentFailureReason.EXPIRED_CARD,
+    # Wrong security code.
+    "incorrect_cvc": PaymentFailureReason.INCORRECT_CVC,
+    "invalid_cvc": PaymentFailureReason.INCORRECT_CVC,
+    # Wrong card number.
+    "incorrect_number": PaymentFailureReason.INCORRECT_NUMBER,
+    "invalid_number": PaymentFailureReason.INCORRECT_NUMBER,
+    # Wrong billing postcode / address.
+    "incorrect_zip": PaymentFailureReason.INCORRECT_DETAILS,
+    "incorrect_address": PaymentFailureReason.INCORRECT_DETAILS,
+    # Card / currency / transaction type not usable here.
+    "card_not_supported": PaymentFailureReason.CARD_NOT_SUPPORTED,
+    "currency_not_supported": PaymentFailureReason.CARD_NOT_SUPPORTED,
+    "not_permitted": PaymentFailureReason.CARD_NOT_SUPPORTED,
+    "transaction_not_allowed": PaymentFailureReason.CARD_NOT_SUPPORTED,
+    "service_not_allowed": PaymentFailureReason.CARD_NOT_SUPPORTED,
+    "invalid_account": PaymentFailureReason.CARD_NOT_SUPPORTED,
+    "invalid_amount": PaymentFailureReason.CARD_NOT_SUPPORTED,
+    "new_account_information_available": PaymentFailureReason.CARD_NOT_SUPPORTED,
+    # Bank wants 3-D Secure / step-up.
+    "authentication_required": PaymentFailureReason.AUTHENTICATION_REQUIRED,
+    "authentication_not_handled": PaymentFailureReason.AUTHENTICATION_REQUIRED,
+    "mobile_device_authentication_required": (
+        PaymentFailureReason.AUTHENTICATION_REQUIRED
+    ),
+    # Transient — "try again" is the honest advice.
+    "processing_error": PaymentFailureReason.PROCESSING_ERROR,
+    "reenter_transaction": PaymentFailureReason.PROCESSING_ERROR,
+    "issuer_not_available": PaymentFailureReason.PROCESSING_ERROR,
+    "approve_with_id": PaymentFailureReason.PROCESSING_ERROR,
+    "try_again_later": PaymentFailureReason.PROCESSING_ERROR,
+    # A near-identical charge just went through.
+    "duplicate_transaction": PaymentFailureReason.DUPLICATE,
+    # Unknowable bank refusals, and the reasons we must not name — all shown as
+    # a plain decline.
+    "do_not_honor": PaymentFailureReason.CARD_DECLINED,
+    "generic_decline": PaymentFailureReason.CARD_DECLINED,
+    "call_issuer": PaymentFailureReason.CARD_DECLINED,
+    "no_action_taken": PaymentFailureReason.CARD_DECLINED,
+    "revocation_of_all_authorizations": PaymentFailureReason.CARD_DECLINED,
+    "revocation_of_authorization": PaymentFailureReason.CARD_DECLINED,
+    "security_violation": PaymentFailureReason.CARD_DECLINED,
+    "stop_payment_order": PaymentFailureReason.CARD_DECLINED,
+    "fraudulent": PaymentFailureReason.CARD_DECLINED,
+    "lost_card": PaymentFailureReason.CARD_DECLINED,
+    "stolen_card": PaymentFailureReason.CARD_DECLINED,
+    "merchant_blacklist": PaymentFailureReason.CARD_DECLINED,
+    "pickup_card": PaymentFailureReason.CARD_DECLINED,
+    "restricted_card": PaymentFailureReason.CARD_DECLINED,
+    "card_declined": PaymentFailureReason.CARD_DECLINED,
+}
+
+
+def _failure_reason(code: str | None, decline_code: str | None) -> PaymentFailureReason:
+    """
+    The customer-shown bucket for a Stripe failure.
+
+    `decline_code` first — it is the specific reason — then `code`, then the
+    safe default. There is *always* a bucket: a code Stripe adds tomorrow that
+    we have not mapped is a decline the customer should still be told is a
+    decline, and `CARD_DECLINED`'s copy ("contact your bank or try another
+    card") is true of every one of them.
+    """
+    return (
+        _FAILURE_REASONS.get(decline_code or "")
+        or _FAILURE_REASONS.get(code or "")
+        or PaymentFailureReason.CARD_DECLINED
+    )
 
 
 #: Stripe's vocabulary → ours. A dict rather than a chain of `if`s because it is

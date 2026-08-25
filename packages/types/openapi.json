@@ -14213,6 +14213,28 @@
             "title": "Order Number",
             "type": "string"
           },
+          "payment_failure_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Failure Message"
+          },
+          "payment_failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Failure Reason"
+          },
           "payment_id": {
             "anyOf": [
               {
@@ -42895,7 +42917,7 @@
     },
     "/api/v1/pos/orders/{order_id}/cancel": {
       "post": {
-        "description": "Cancel an aggregator order from the counter \u2014 the red button beside Packed.\n\n**Aggregator only, deliberately.** Cancelling here runs the full\n`cancelled` machinery: it releases the stock, voids the check on the register\nand \u2014 the point of doing it from the counter rather than a laptop \u2014 fires\nGrubOps force-cancel so the marketplace stops the rider. For a *website*\norder that same move would refund the customer's card and cancel a booked MM\ncourier, which is an admin decision on the order screen, not a counter\nbutton; so a stale device asking to cancel one is refused here rather than\nquietly issuing a refund.\n\nReachable from `arrived_at_pos` (the map allows it) and from `packed` (it\ndoes not \u2014 `order_service.update_status` widens it for an aggregator order\nvia `AGGREGATOR_CANCELLABLE_FROM`, and GrubOps declines force-cancel if its\nrider has already moved on). `update_status` raises if the order cannot be\ncancelled, which is what a person pressing a button should get.\n\nIdempotent on an already-cancelled order, like `accept` and `packed`.",
+        "description": "Cancel an aggregator order from the counter \u2014 the red button beside Packed.\n\n**Aggregator only, deliberately.** Cancelling here runs the full\n`cancelled` machinery: it releases the stock, voids the check on the register\nand \u2014 the point of doing it from the counter rather than a laptop \u2014 declines\nthe Foodics order so the marketplace stops the rider. For a *website*\norder that same move would refund the customer's card and cancel a booked MM\ncourier, which is an admin decision on the order screen, not a counter\nbutton; so a stale device asking to cancel one is refused here rather than\nquietly issuing a refund.\n\nReachable from `arrived_at_pos` (the map allows it) and from `packed` (it\ndoes not \u2014 `order_service.update_status` widens it for an aggregator order\nvia `AGGREGATOR_CANCELLABLE_FROM`; the Foodics decline then applies only while\nthe order is still pending, and an already-accepted one is recorded for a\nperson to void in the console). `update_status` raises if the order cannot be\ncancelled, which is what a person pressing a button should get.\n\nIdempotent on an already-cancelled order, like `accept` and `packed`.",
         "operationId": "cancel_order_api_v1_pos_orders__order_id__cancel_post",
         "parameters": [
           {

@@ -31,7 +31,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, UUIDMixin, status_vocabulary
 
-__all__ = ["PaymentTransaction", "PaymentTransactionStatusEnum"]
+__all__ = [
+    "PaymentTransaction",
+    "PaymentTransactionStatusEnum",
+    "PaymentFailureReason",
+]
 
 
 class PaymentTransactionStatusEnum(str, enum.Enum):
@@ -52,6 +56,54 @@ class PaymentTransactionStatusEnum(str, enum.Enum):
     REFUNDED = "refunded"
     #: A chargeback was filed against it.
     DISPUTED = "disputed"
+
+
+class PaymentFailureReason(str, enum.Enum):
+    """
+    Why a card was refused, in the small set of things a *customer* can act on.
+
+    This is the same idea as the status enum above, one level down: a gateway's
+    decline vocabulary is large (Stripe alone has ~45 `decline_code`s) and most
+    of the distinctions in it are for a bank's reconciliation, not a shopper's
+    next move. `insufficient_funds` and `expired_card` mean "try another card";
+    `incorrect_cvc` means "check the digits"; a dozen unknowable bank refusals
+    all mean "contact your bank or try another card". These buckets are those
+    next moves, so the storefront can localise one short, honest sentence per
+    bucket while the gateway's raw code stays in `error_code` for reconciling.
+
+    Translated *at the provider* (see `providers/base.py`), like every other
+    gateway word: Stripe maps its `decline_code`/`code` onto these; a gateway
+    with no decline taxonomy (Ziina reports only an HTTP status and a human
+    message) sets none and lets its own message through verbatim.
+
+    Deliberately conservative about what it reveals. Stripe's guidance is that
+    `fraudulent`, `lost_card` and `stolen_card` must be shown as an ordinary
+    decline, never named — so they map to `CARD_DECLINED` with everyone else,
+    and the customer is never told their card was flagged.
+    """
+
+    #: Not enough on the card — includes velocity/credit-limit refusals.
+    INSUFFICIENT_FUNDS = "insufficient_funds"
+    #: Card expired, or an expiry that cannot be right.
+    EXPIRED_CARD = "expired_card"
+    #: The security code was wrong.
+    INCORRECT_CVC = "incorrect_cvc"
+    #: The card number was wrong.
+    INCORRECT_NUMBER = "incorrect_number"
+    #: Billing postcode/address did not match the card.
+    INCORRECT_DETAILS = "incorrect_details"
+    #: The card or its currency is not usable for this purchase.
+    CARD_NOT_SUPPORTED = "card_not_supported"
+    #: The bank wants 3-D Secure / step-up authentication.
+    AUTHENTICATION_REQUIRED = "authentication_required"
+    #: A transient processor error — the one bucket where "try again" is the
+    #: honest advice rather than "try another card".
+    PROCESSING_ERROR = "processing_error"
+    #: A near-identical charge went through moments ago.
+    DUPLICATE = "duplicate"
+    #: The catch-all: a bank refusal with no customer-actionable detail, and the
+    #: home of every reason we must not name (fraud, lost, stolen).
+    CARD_DECLINED = "card_declined"
 
 
 #: The statuses that mean this attempt paid for the order. `REFUNDED` is
@@ -89,6 +141,15 @@ class PaymentTransaction(Base, UUIDMixin, TimestampMixin):
         # word lives unconstrained in `raw_status`, by design.
         status_vocabulary(
             "payment_transactions", "status", PaymentTransactionStatusEnum
+        ),
+        # Our normalised failure buckets. Nullable — most attempts never fail,
+        # and a gateway with no taxonomy leaves it null. The raw gateway code is
+        # unconstrained in `error_code`, same split as status/raw_status above.
+        status_vocabulary(
+            "payment_transactions",
+            "failure_reason",
+            PaymentFailureReason,
+            nullable=True,
         ),
     )
 
@@ -142,6 +203,12 @@ class PaymentTransaction(Base, UUIDMixin, TimestampMixin):
 
     error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    #: `error_code` normalised into the bucket the customer is actually shown.
+    #: Null on a success, on an abandoned attempt, and on a gateway that gives
+    #: no decline taxonomy to normalise (Ziina — there `error_message` is shown
+    #: verbatim instead). The raw code stays in `error_code` for reconciling.
+    failure_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
     order = relationship("Order", back_populates="payment_transactions")
 

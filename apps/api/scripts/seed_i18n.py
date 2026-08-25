@@ -487,6 +487,61 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("common", "try_again", "Try Again"),
     ("checkout", "cart_empty", "Your cart is empty"),
     ("checkout", "payment_cancelled", "Payment was cancelled. Please try again."),
+    # Per-reason decline toasts, keyed by `PaymentFailureReason`. Shown on return
+    # to the payment step when the gateway said why the card was refused; the
+    # generic `payment_cancelled` above stays the fallback. Worded so none of
+    # them names a reason Stripe requires we keep quiet — fraud/lost/stolen all
+    # arrive as `card_declined`.
+    (
+        "checkout",
+        "payment_failure.insufficient_funds",
+        "Your card was declined — it may not have enough funds. Please try another card.",
+    ),
+    (
+        "checkout",
+        "payment_failure.expired_card",
+        "Your card has expired. Please try a different card.",
+    ),
+    (
+        "checkout",
+        "payment_failure.incorrect_cvc",
+        "The card's security code (CVC) looks incorrect. Please check it and try again.",
+    ),
+    (
+        "checkout",
+        "payment_failure.incorrect_number",
+        "The card number looks incorrect. Please check it and try again.",
+    ),
+    (
+        "checkout",
+        "payment_failure.incorrect_details",
+        "Your billing details didn't match your card. Please check them and try again.",
+    ),
+    (
+        "checkout",
+        "payment_failure.card_not_supported",
+        "This card can't be used for this payment. Please try another card.",
+    ),
+    (
+        "checkout",
+        "payment_failure.authentication_required",
+        "Your bank needs to verify this payment. Please try again and complete the verification.",
+    ),
+    (
+        "checkout",
+        "payment_failure.processing_error",
+        "Something went wrong processing your card. Please wait a moment and try again.",
+    ),
+    (
+        "checkout",
+        "payment_failure.duplicate",
+        "This looks like a repeat of a recent payment. Please check whether it already went through before retrying.",
+    ),
+    (
+        "checkout",
+        "payment_failure.card_declined",
+        "Your card was declined. Please contact your bank or try another card.",
+    ),
     ("checkout", "promo_placeholder", "Promo code"),
     ("checkout", "apply", "Apply"),
     ("checkout", "remove_promo", "Remove promo"),
@@ -1169,6 +1224,56 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("common", "try_again", "حاول مرة أخرى"),
     ("checkout", "cart_empty", "سلتك فارغة"),
     ("checkout", "payment_cancelled", "تم إلغاء الدفع. يرجى المحاولة مجدداً."),
+    (
+        "checkout",
+        "payment_failure.insufficient_funds",
+        "تم رفض بطاقتك — قد يكون الرصيد غير كافٍ. يرجى استخدام بطاقة أخرى.",
+    ),
+    (
+        "checkout",
+        "payment_failure.expired_card",
+        "انتهت صلاحية بطاقتك. يرجى استخدام بطاقة أخرى.",
+    ),
+    (
+        "checkout",
+        "payment_failure.incorrect_cvc",
+        "رمز التحقق (CVC) غير صحيح. يرجى التحقق منه والمحاولة مرة أخرى.",
+    ),
+    (
+        "checkout",
+        "payment_failure.incorrect_number",
+        "رقم البطاقة غير صحيح. يرجى التحقق منه والمحاولة مرة أخرى.",
+    ),
+    (
+        "checkout",
+        "payment_failure.incorrect_details",
+        "بيانات الفوترة لا تطابق بطاقتك. يرجى التحقق منها والمحاولة مرة أخرى.",
+    ),
+    (
+        "checkout",
+        "payment_failure.card_not_supported",
+        "لا يمكن استخدام هذه البطاقة لهذه العملية. يرجى استخدام بطاقة أخرى.",
+    ),
+    (
+        "checkout",
+        "payment_failure.authentication_required",
+        "يحتاج بنكك إلى التحقق من هذه العملية. يرجى إعادة المحاولة وإكمال خطوة التحقق.",
+    ),
+    (
+        "checkout",
+        "payment_failure.processing_error",
+        "حدث خطأ أثناء معالجة بطاقتك. يرجى الانتظار قليلاً والمحاولة مرة أخرى.",
+    ),
+    (
+        "checkout",
+        "payment_failure.duplicate",
+        "يبدو أن هذه عملية دفع مكررة تمت مؤخراً. يرجى التحقق مما إذا كانت قد تمت بالفعل قبل إعادة المحاولة.",
+    ),
+    (
+        "checkout",
+        "payment_failure.card_declined",
+        "تم رفض بطاقتك. يرجى التواصل مع بنكك أو استخدام بطاقة أخرى.",
+    ),
     ("checkout", "promo_placeholder", "رمز الخصم"),
     ("checkout", "apply", "تطبيق"),
     ("checkout", "remove_promo", "إزالة الخصم"),

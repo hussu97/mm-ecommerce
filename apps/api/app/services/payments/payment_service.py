@@ -700,6 +700,8 @@ def _record_transaction(order: Order, gateway: str, event: GatewayEvent) -> None
             transaction.error_code = event.error_code[:80]
         if event.error_message:
             transaction.error_message = event.error_message[:2000]
+        if event.failure_reason is not None:
+            transaction.failure_reason = event.failure_reason.value
         return
 
 

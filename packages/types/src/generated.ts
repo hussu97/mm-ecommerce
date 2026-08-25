@@ -4551,8 +4551,8 @@ export interface paths {
          *
          *     **Aggregator only, deliberately.** Cancelling here runs the full
          *     `cancelled` machinery: it releases the stock, voids the check on the register
-         *     and — the point of doing it from the counter rather than a laptop — fires
-         *     GrubOps force-cancel so the marketplace stops the rider. For a *website*
+         *     and — the point of doing it from the counter rather than a laptop — declines
+         *     the Foodics order so the marketplace stops the rider. For a *website*
          *     order that same move would refund the customer's card and cancel a booked MM
          *     courier, which is an admin decision on the order screen, not a counter
          *     button; so a stale device asking to cancel one is refused here rather than
@@ -4560,8 +4560,9 @@ export interface paths {
          *
          *     Reachable from `arrived_at_pos` (the map allows it) and from `packed` (it
          *     does not — `order_service.update_status` widens it for an aggregator order
-         *     via `AGGREGATOR_CANCELLABLE_FROM`, and GrubOps declines force-cancel if its
-         *     rider has already moved on). `update_status` raises if the order cannot be
+         *     via `AGGREGATOR_CANCELLABLE_FROM`; the Foodics decline then applies only while
+         *     the order is still pending, and an already-accepted one is recorded for a
+         *     person to void in the console). `update_status` raises if the order cannot be
          *     cancelled, which is what a person pressing a button should get.
          *
          *     Idempotent on an already-cancelled order, like `accept` and `packed`.
@@ -11489,6 +11490,10 @@ export interface components {
             notes: string | null;
             /** Order Number */
             order_number: string;
+            /** Payment Failure Message */
+            payment_failure_message?: string | null;
+            /** Payment Failure Reason */
+            payment_failure_reason?: string | null;
             /** Payment Id */
             payment_id: string | null;
             /** Payment Method */

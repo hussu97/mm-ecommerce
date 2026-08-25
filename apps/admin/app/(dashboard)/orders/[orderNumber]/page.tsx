@@ -733,6 +733,29 @@ export default function OrderDetailPage() {
                 <dd className="text-gray-700">{order.promo_code_used}</dd>
               </div>
             )}
+            {/* Why the card was refused, on a failed order. The normalised
+                bucket is the first thing to read; the gateway's own message
+                (when present) is the raw detail underneath it, which is the
+                line worth having when a customer writes in. Off every order
+                that did not fail at payment. */}
+            {order.status === 'payment_failed' &&
+              (order.payment_failure_reason || order.payment_failure_message) && (
+              <div className="flex justify-between gap-4">
+                <dt className="text-gray-500 shrink-0">Decline reason</dt>
+                <dd className="text-red-700 text-right">
+                  {order.payment_failure_reason && (
+                    <span className="capitalize">
+                      {order.payment_failure_reason.replace(/_/g, ' ')}
+                    </span>
+                  )}
+                  {order.payment_failure_message && (
+                    <span className="block text-gray-500">
+                      {order.payment_failure_message}
+                    </span>
+                  )}
+                </dd>
+              </div>
+            )}
           </dl>
         </div>
       </div>

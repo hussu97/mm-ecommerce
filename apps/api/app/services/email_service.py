@@ -31,7 +31,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
@@ -531,7 +531,23 @@ def _order_context(
         # showed no live link and said nothing about why.
         "tracking_by_sms": bool(fulfilment and fulfilment.tracking_by_sms),
         "retry_url": _account_order_url(order.order_number, locale),
+        # The one specific line the payment-failed email adds, when the gateway
+        # gave a reason worth reading. Null for every other template and for an
+        # order abandoned rather than declined. A normalised code is localised
+        # per bucket; a gateway that gives only a human message (Ziina) has it
+        # shown verbatim — the same prefer-code-then-message fall-through the
+        # storefront uses. None of the localised buckets names a reason Stripe
+        # requires we keep quiet.
+        "payment_reason": _payment_reason(order, t=t),
     }
+
+
+def _payment_reason(order: OrderResponse, *, t: Callable[..., str]) -> str | None:
+    """The failed-payment reason line, localised, or None when there is none."""
+    reason = getattr(order, "payment_failure_reason", None)
+    if reason:
+        return t(f"failed.reason.{reason}")
+    return getattr(order, "payment_failure_message", None) or None
 
 
 def _send(

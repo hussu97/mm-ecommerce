@@ -28,6 +28,17 @@
     <p class="lead" style="text-align:center;">
       {{ t('failed.lead', name=name, order_number=order.order_number) }}
     </p>
+    {#
+      The specific reason, only when the gateway gave one. The lead already says
+      what happened; this says why, in the one honest sentence the reason bucket
+      allows. Absent for an order we could tell nothing about — better silent
+      than guessing at a decline.
+    #}
+    {% if payment_reason %}
+    <p class="muted" style="text-align:center; padding-top: 8px;">
+      {{ payment_reason }}
+    </p>
+    {% endif %}
   </td></tr>
 </table>
 

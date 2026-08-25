@@ -294,6 +294,11 @@ def _order_mock(
     o.payment_method = "stripe"
     o.payment_provider = None
     o.payment_id = None
+    # No failed attempt to read a reason off — a bare MagicMock here validates
+    # as neither `str | None`, the same trap the response-only block below fixes.
+    o.payment_transactions = []
+    o.payment_failure_reason = None
+    o.payment_failure_message = None
     o.vat_rate = Decimal("0.0500")
     o.vat_amount = vat_amount
     o.total_excl_vat = total_excl_vat

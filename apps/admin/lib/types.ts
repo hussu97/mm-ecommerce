@@ -301,6 +301,14 @@ export interface Order {
   payment_method: string | null;
   payment_provider: string | null;
   payment_id: string | null;
+  /**
+   * Why the last payment attempt was declined. Set only while `status` is
+   * `payment_failed`. `payment_failure_reason` is a normalised code (Stripe);
+   * `payment_failure_message` is the gateway's raw message (Ziina, or Stripe's
+   * own sentence alongside the code). Both null for an abandoned checkout.
+   */
+  payment_failure_reason?: string | null;
+  payment_failure_message?: string | null;
   /** How much has been sent back to the card. Zero on almost every order. */
   refunded_amount: number;
   notes: string | null;

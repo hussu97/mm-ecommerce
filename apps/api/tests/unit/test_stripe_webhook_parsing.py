@@ -25,7 +25,7 @@ import stripe
 from app.core.config import settings
 from app.core.exceptions import BadRequestError
 from app.services.providers import stripe_provider as sp
-from app.services.providers.base import PaymentEventType
+from app.services.providers.base import PaymentEventType, PaymentFailureReason
 
 SECRET = "whsec_test_secret"
 
@@ -106,6 +106,84 @@ def test_a_failed_payment_yields_its_order_number():
     assert parsed.event_type is PaymentEventType.FAILED
     assert parsed.raw_type == "payment_intent.payment_failed"
     assert parsed.order_number == "MM-20260804-002"
+
+
+def test_a_declined_card_keeps_the_granular_reason_and_normalises_it():
+    """
+    `decline_code` is the bank's actual reason and the only field granular
+    enough to tell a customer anything — `code` on a decline is the bare
+    `card_declined`. We keep the granular one raw and bucket it for display.
+    """
+    payload, header = _signed(
+        _event(
+            "payment_intent.payment_failed",
+            {
+                "id": "pi_live_10",
+                "metadata": {"order_number": "MM-20260824-002"},
+                "last_payment_error": {
+                    "code": "card_declined",
+                    "decline_code": "insufficient_funds",
+                    "message": "Your card has insufficient funds.",
+                },
+            },
+        )
+    )
+    parsed = sp.provider.parse_webhook(payload, {"stripe-signature": header})
+    assert parsed.error_code == "insufficient_funds"
+    assert parsed.error_message == "Your card has insufficient funds."
+    assert parsed.failure_reason is PaymentFailureReason.INSUFFICIENT_FUNDS
+
+
+def test_an_input_error_normalises_off_the_code_when_there_is_no_decline_code():
+    payload, header = _signed(
+        _event(
+            "payment_intent.payment_failed",
+            {"id": "pi_live_11", "last_payment_error": {"code": "incorrect_cvc"}},
+        )
+    )
+    parsed = sp.provider.parse_webhook(payload, {"stripe-signature": header})
+    assert parsed.error_code == "incorrect_cvc"
+    assert parsed.failure_reason is PaymentFailureReason.INCORRECT_CVC
+
+
+def test_a_sensitive_decline_is_never_named_to_the_customer():
+    """
+    Stripe requires `fraudulent`/`lost_card`/`stolen_card` be shown as a plain
+    decline. The raw code is still kept for reconciliation, but the bucket the
+    storefront reads is the generic one.
+    """
+    payload, header = _signed(
+        _event(
+            "payment_intent.payment_failed",
+            {
+                "id": "pi_live_12",
+                "last_payment_error": {
+                    "code": "card_declined",
+                    "decline_code": "stolen_card",
+                },
+            },
+        )
+    )
+    parsed = sp.provider.parse_webhook(payload, {"stripe-signature": header})
+    assert parsed.error_code == "stolen_card"
+    assert parsed.failure_reason is PaymentFailureReason.CARD_DECLINED
+
+
+def test_an_unmapped_decline_code_still_becomes_a_decline():
+    payload, header = _signed(
+        _event(
+            "payment_intent.payment_failed",
+            {
+                "id": "pi_live_13",
+                "last_payment_error": {
+                    "code": "card_declined",
+                    "decline_code": "some_code_stripe_adds_next_year",
+                },
+            },
+        )
+    )
+    parsed = sp.provider.parse_webhook(payload, {"stripe-signature": header})
+    assert parsed.failure_reason is PaymentFailureReason.CARD_DECLINED
 
 
 def test_a_refund_is_read_off_the_charge():

@@ -165,6 +165,17 @@ class OrderResponse(BaseModel):
     payment_method: str | None
     payment_provider: str | None
     payment_id: str | None
+    #: Why the last payment attempt failed, for a customer to read. Only ever set
+    #: while the order is `payment_failed`; null the moment a later attempt pays.
+    #:
+    #: Two fields because two gateways answer differently. `payment_failure_reason`
+    #: is a normalised code (`PaymentFailureReason`) the storefront localises into
+    #: one honest sentence — Stripe fills it. `payment_failure_message` is a
+    #: gateway's own human message, shown verbatim when there is no code to
+    #: localise — Ziina fills it. The client prefers the code and falls back to
+    #: the message. Both null on an order that was abandoned rather than declined.
+    payment_failure_reason: str | None = None
+    payment_failure_message: str | None = None
     #: How much has been sent back to the card, in the order's currency. Zero on
     #: everything that has not been refunded, which is almost every order.
     #:

@@ -24,12 +24,14 @@ from decimal import Decimal
 from typing import Mapping
 
 from app.models.order import Order
+from app.models.payment_transaction import PaymentFailureReason
 
 __all__ = [
     "GatewayEvent",
     "GatewaySession",
     "GatewayUnavailableError",
     "PaymentEventType",
+    "PaymentFailureReason",
     "PaymentGatewayProvider",
 ]
 
@@ -133,9 +135,14 @@ class GatewayEvent:
     amount_captured: int | None = None
     fully_refunded: bool | None = None
 
-    #: Why it failed, when it failed and the gateway said why.
+    #: Why it failed, when it failed and the gateway said why. `error_code` and
+    #: `error_message` are the gateway's own raw words, kept for reconciliation;
+    #: `failure_reason` is those words normalised into the small set the customer
+    #: is actually shown (null when the gateway gives nothing to normalise, in
+    #: which case `error_message` is what gets shown instead).
     error_code: str | None = None
     error_message: str | None = None
+    failure_reason: PaymentFailureReason | None = None
 
 
 class PaymentGatewayProvider(ABC):

@@ -297,6 +297,19 @@ export interface Order {
   payment_method: string | null;
   payment_provider: string | null;
   payment_id: string | null;
+  /**
+   * Why the last payment attempt was declined, for the customer to read. Set
+   * only while `status === 'payment_failed'`; both null once a later attempt
+   * pays, and on an order abandoned rather than declined.
+   *
+   * `payment_failure_reason` is a normalised code (see
+   * `paymentFailureMessage`) localised into one honest sentence — Stripe fills
+   * it. `payment_failure_message` is a gateway's own human message shown
+   * verbatim when there is no code — Ziina fills it. Prefer the code, fall back
+   * to the message.
+   */
+  payment_failure_reason?: string | null;
+  payment_failure_message?: string | null;
   notes: string | null;
   admin_notes: string | null;
   created_at: string;

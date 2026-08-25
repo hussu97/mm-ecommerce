@@ -287,6 +287,47 @@ STRINGS: dict[str, dict[str, str]] = {
             "Still not working? Let us know and we'll take it from there — we "
             "can arrange payment another way."
         ),
+        # The specific reason, when the gateway gave one worth reading. Rendered
+        # under the lead by the template only when set; the buckets mirror
+        # `PaymentFailureReason`, and are worded so none of them names a reason
+        # Stripe requires we keep quiet (fraud/lost/stolen fall under the last).
+        "failed.reason.insufficient_funds": (
+            "It looks like the card didn't have enough available funds — a "
+            "different card usually sorts it."
+        ),
+        "failed.reason.expired_card": (
+            "The card appears to have expired. Please try a different card."
+        ),
+        "failed.reason.incorrect_cvc": (
+            "The card's security code (CVC) didn't match. Please check it and try "
+            "again."
+        ),
+        "failed.reason.incorrect_number": (
+            "The card number didn't look right. Please check it and try again."
+        ),
+        "failed.reason.incorrect_details": (
+            "The billing details didn't match the card. Please check them and try "
+            "again."
+        ),
+        "failed.reason.card_not_supported": (
+            "This card can't be used for this payment. Please try a different card."
+        ),
+        "failed.reason.authentication_required": (
+            "Your bank asked to verify the payment. Please try again and complete "
+            "the verification step."
+        ),
+        "failed.reason.processing_error": (
+            "Something went wrong reaching your bank. This is usually temporary — "
+            "please try again in a moment."
+        ),
+        "failed.reason.duplicate": (
+            "This looked like a repeat of a payment made moments ago. Please check "
+            "whether it already went through before retrying."
+        ),
+        "failed.reason.card_declined": (
+            "Your bank declined the payment without a specific reason. Contacting "
+            "them or using a different card usually resolves it."
+        ),
         # ── welcome ───────────────────────────────────────────────────────────
         "welcome.subject": "Welcome to Melting Moments",
         "welcome.eyebrow": "Welcome",
@@ -535,6 +576,39 @@ STRINGS: dict[str, dict[str, str]] = {
         "failed.footnote": (
             "ما زالت المحاولة لا تنجح؟ أخبرنا وسنتولى الأمر — يمكننا ترتيب "
             "الدفع بطريقة أخرى."
+        ),
+        "failed.reason.insufficient_funds": (
+            "يبدو أن رصيد البطاقة غير كافٍ — عادةً ما تنجح المحاولة ببطاقة أخرى."
+        ),
+        "failed.reason.expired_card": (
+            "يبدو أن البطاقة منتهية الصلاحية. يرجى استخدام بطاقة أخرى."
+        ),
+        "failed.reason.incorrect_cvc": (
+            "رمز التحقق (CVC) غير مطابق. يرجى التحقق منه والمحاولة مرة أخرى."
+        ),
+        "failed.reason.incorrect_number": (
+            "رقم البطاقة غير صحيح. يرجى التحقق منه والمحاولة مرة أخرى."
+        ),
+        "failed.reason.incorrect_details": (
+            "بيانات الفوترة لا تطابق البطاقة. يرجى التحقق منها والمحاولة مرة أخرى."
+        ),
+        "failed.reason.card_not_supported": (
+            "لا يمكن استخدام هذه البطاقة لهذه العملية. يرجى استخدام بطاقة أخرى."
+        ),
+        "failed.reason.authentication_required": (
+            "طلب البنك التحقق من العملية. يرجى إعادة المحاولة وإكمال خطوة التحقق."
+        ),
+        "failed.reason.processing_error": (
+            "حدث خطأ أثناء الاتصال بالبنك. عادةً ما يكون مؤقتًا — يرجى المحاولة "
+            "مرة أخرى بعد قليل."
+        ),
+        "failed.reason.duplicate": (
+            "بدت هذه العملية تكرارًا لدفعة تمت قبل قليل. يرجى التحقق مما إذا كانت "
+            "قد تمت بالفعل قبل إعادة المحاولة."
+        ),
+        "failed.reason.card_declined": (
+            "رفض البنك العملية دون سبب محدد. عادةً ما يُحل الأمر بالتواصل معهم أو "
+            "باستخدام بطاقة أخرى."
         ),
         # ── welcome ───────────────────────────────────────────────────────────
         "welcome.subject": "أهلاً بك في ملتينج مومنتس",
