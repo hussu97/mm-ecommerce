@@ -68,6 +68,27 @@ async def test_packed_dispatches_when_not_already_dispatched():
 
 
 @pytest.mark.asyncio
+async def test_packed_accepts_a_still_pending_order_before_dispatch():
+    # The console's Dispatch button is hidden until Accept. A packed MM order
+    # whose Foodics twin is still pending has to take both steps.
+    order_map = _map()
+    db = _fake_db(order_map)
+    fp = SimpleNamespace(
+        get_order=AsyncMock(return_value={"status": 1, "delivery_status": None}),
+        accept_order=AsyncMock(),
+        update_delivery_status=AsyncMock(),
+        decline_order=AsyncMock(),
+    )
+    with patch.object(f, "provider", fp):
+        await f.mirror_status_out(
+            db, mm_order_id="mm1", new_status=OrderStatusEnum.PACKED, actor="pos"
+        )
+    fp.accept_order.assert_awaited_once_with("f1")
+    fp.update_delivery_status.assert_awaited_once_with("f1", DELIVERY_READY)
+    assert order_map.last_pushed_status == "packed"
+
+
+@pytest.mark.asyncio
 async def test_packed_is_idempotent_when_already_dispatched():
     # Already ready/assigned/en-route: no second dispatch, but still a success.
     order_map = _map()
@@ -260,11 +281,10 @@ async def test_dispatch_updates_delivery_status_via_the_updating_verb():
     await client.update_delivery_status("f1", DELIVERY_READY)
     assert captured["method"] == "PUT"
     assert captured["path"] == "/core-api/updating"
-    assert captured["body"]["url"] == "/orders"
-    assert captured["body"]["id"] == "f1"
-    assert captured["body"]["data"]["delivery_status"] == DELIVERY_READY
-    assert "dispatched_at" in captured["body"]["data"]
-    assert "delivered_at" not in captured["body"]["data"]
+    assert captured["body"]["url"] == "/orders/f1"
+    assert captured["body"]["payload"]["delivery_status"] == DELIVERY_READY
+    assert "dispatched_at" in captured["body"]["payload"]
+    assert "delivered_at" not in captured["body"]["payload"]
 
 
 @pytest.mark.asyncio
@@ -279,7 +299,8 @@ async def test_decline_writes_the_declined_status_via_updating():
     client._call = fake_call
     await client.decline_order("f1")
     assert captured["path"] == "/core-api/updating"
-    assert captured["body"] == {"url": "/orders", "id": "f1", "data": {"status": 3}}
+    assert captured["body"]["url"] == "/orders/f1"
+    assert captured["body"]["payload"] == {"status": 3}
 
 
 @pytest.mark.asyncio

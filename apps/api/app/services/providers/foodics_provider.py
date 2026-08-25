@@ -565,20 +565,26 @@ class FoodicsClient:
             data["delivered_at"] = _stamp(delivered_at)
         return await self._update(order_id, data)
 
+    async def accept_order(self, order_id: str) -> Any:
+        """Accept a still-pending order (`status = 2`). The console's Accept
+        button; dispatch is a second step and is refused until this lands."""
+        return await self._update(
+            order_id, {"status": STATUS_ACTIVE, "accepted_at": _stamp()}
+        )
+
     async def decline_order(self, order_id: str) -> Any:
         """Decline a still-pending order (`status = 3`). Foodics allows this only
         from `1:Pending`; the caller checks the live status first."""
         return await self._update(order_id, {"status": STATUS_DECLINED})
 
     async def _update(self, order_id: str, data: dict[str, Any]) -> Any:
-        # TODO(confirm-envelope): the `updating` verb's exact body has not been
-        # captured yet. `{url, id, data}` mirrors the read verbs' `url`/`id`
-        # shape and the resource's own field names; confirm against a real
-        # console PUT (Network → Payload) before enabling the write path in prod.
+        # Captured from the console on 2026-08-25: PUT `/core-api/updating` with
+        # `{url: /orders/<id>, payload: {...}}`. `{url: /orders, id, data}` hits
+        # the collection and 405s (`v5/orders` is GET/HEAD/POST only).
         return await self._call(
             "PUT",
             _UPDATING,
-            json_body={"url": "/orders", "id": order_id, "data": data},
+            json_body={"url": f"/orders/{order_id}", "payload": data},
         )
 
 

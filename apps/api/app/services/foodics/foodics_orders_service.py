@@ -113,7 +113,11 @@ async def mirror_status_out(
         delivery_status = order.get("delivery_status")
 
         if new_status == OrderStatusEnum.PACKED:
-            # Ready-to-deliver, unless already at or past it.
+            # The console will not dispatch a still-pending order — Accept
+            # first (status 2), then ready-to-deliver. Captured from the live
+            # "Accept Order" / "Dispatch Order" buttons on 2026-08-25.
+            if status == STATUS_PENDING:
+                await provider.accept_order(foodics_order_id)
             if delivery_status is None or delivery_status < DELIVERY_READY:
                 await provider.update_delivery_status(foodics_order_id, DELIVERY_READY)
         elif new_status == OrderStatusEnum.DELIVERED:
