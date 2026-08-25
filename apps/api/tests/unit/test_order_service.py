@@ -326,6 +326,7 @@ def _order_mock(
     o.aggregator_driver_name = None
     o.aggregator_driver_phone = None
     o.aggregator_driver_status = None
+    o.aggregator_cancel_reason = None
     o.external_reference = None
     o.courier = None
     o.locale = "en"

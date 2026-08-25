@@ -350,6 +350,10 @@ export interface Order {
   aggregator_driver_name?: string | null;
   aggregator_driver_phone?: string | null;
   aggregator_driver_status?: string | null;
+  /** Why the marketplace cancelled an aggregator order, as GrubOps's own reason
+   * code (`TOO_BUSY`, …). Set only when a GrubOps cancellation was mirrored in;
+   * null otherwise. */
+  aggregator_cancel_reason?: string | null;
   /** The marketplace's own long order id for an aggregator order. */
   external_reference?: string | null;
   /** Who is carrying it — the marketplace for an aggregator order (list); the

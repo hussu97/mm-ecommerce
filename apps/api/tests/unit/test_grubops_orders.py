@@ -605,3 +605,145 @@ def test_customer_id_is_the_phone_fallback():
     assert name == "Farhat Sultana"
     assert phone == "+971566369787"
     assert (country, ptype) == ("AE", "mobile")
+
+
+# ── GrubOps-side cancellation: reason capture and aged-out re-poll ─────────────
+
+
+def test_cancel_reason_prefers_the_header_code_then_the_history():
+    # The clean machine code on the header wins.
+    info = {
+        "orderHeader": {"cancelReason": "TOO_BUSY"},
+        "orderHistories": [{"status": "OrderCanceled", "description": "TOOBusy"}],
+    }
+    assert g._cancel_reason(info) == "TOO_BUSY"
+
+    # With no header reason, the cancel event's own description is the fallback.
+    info = {
+        "orderHeader": {"cancelReason": None},
+        "orderHistories": [
+            {"status": "OrderCreated", "description": "made"},
+            {"status": "OrderRejected", "description": "Store closed"},
+        ],
+    }
+    assert g._cancel_reason(info) == "Store closed"
+
+    # Nothing to say → None, not an empty string.
+    assert g._cancel_reason({"orderHeader": {}, "orderHistories": []}) is None
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_records_its_reason_on_the_order_and_the_event():
+    # The reason is stamped on the order for display *and* threaded through
+    # `acting_as`, so the status-event row records why as well as when.
+    from app.models.order_status_event import current_actor
+
+    order = SimpleNamespace(
+        status=OrderStatusEnum.ARRIVED_AT_POS,
+        pos_status="active",
+        closed_at=None,
+        aggregator_cancel_reason=None,
+    )
+    notes: list[str | None] = []
+
+    async def fake_transition(db, o, new_status, *, on_invalid="raise"):
+        notes.append(current_actor().note)
+        o.status = new_status
+        return True
+
+    with patch.object(g.order_lifecycle, "transition", new=fake_transition):
+        await g._apply_status(
+            None, order, OrderStatusEnum.CANCELLED, [], reason="TOO_BUSY"
+        )
+
+    assert order.aggregator_cancel_reason == "TOO_BUSY"
+    assert notes == ["TOO_BUSY"]
+
+
+class _ScalarsResult:
+    """A minimal stand-in for `db.execute(...).scalars().all()`."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self._rows
+
+
+@pytest.mark.asyncio
+async def test_sweep_open_orders_repolls_an_aged_out_order_and_reconciles_it():
+    # An order that left the summary window and was cancelled aggregator-side: the
+    # sweep fetches it, sees the status moved, and reconciles through `ingest`.
+    order_map = SimpleNamespace(
+        grubops_order_id="agg-1", last_grubops_status="OrderStarted"
+    )
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_ScalarsResult([order_map]))
+    db.flush = AsyncMock()
+
+    info = {"orderHeader": {"orderStatus": "OrderCanceled"}}
+    fake_provider = SimpleNamespace(get_order=AsyncMock(return_value=info))
+    ingested: list = []
+
+    async def fake_ingest(db_, info_, om_):
+        ingested.append((info_, om_))
+
+    with (
+        patch.object(g, "provider", fake_provider),
+        patch.object(g, "ingest", new=fake_ingest),
+    ):
+        touched = await g.sweep_open_orders(db, seen_ids=set())
+
+    assert touched == 1
+    fake_provider.get_order.assert_awaited_once_with("agg-1")
+    assert ingested and ingested[0][1] is order_map
+
+
+@pytest.mark.asyncio
+async def test_sweep_open_orders_skips_an_order_already_seen_this_tick():
+    # An order the summary already returned this tick is refreshed by the loop;
+    # the sweep must not spend a second getOrderInfo on it.
+    order_map = SimpleNamespace(
+        grubops_order_id="agg-1", last_grubops_status="OrderStarted"
+    )
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_ScalarsResult([order_map]))
+    db.flush = AsyncMock()
+    fake_provider = SimpleNamespace(get_order=AsyncMock())
+
+    with patch.object(g, "provider", fake_provider):
+        touched = await g.sweep_open_orders(db, seen_ids={"agg-1"})
+
+    assert touched == 0
+    fake_provider.get_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sweep_open_orders_ignores_an_order_that_has_not_moved():
+    # Fetched, but GrubOps still reports the same status we last recorded — no
+    # reconcile, no wasted lifecycle work.
+    order_map = SimpleNamespace(
+        grubops_order_id="agg-1", last_grubops_status="OrderStarted"
+    )
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_ScalarsResult([order_map]))
+    db.flush = AsyncMock()
+
+    info = {"orderHeader": {"orderStatus": "OrderStarted"}}
+    fake_provider = SimpleNamespace(get_order=AsyncMock(return_value=info))
+    ingested: list = []
+
+    async def fake_ingest(db_, info_, om_):
+        ingested.append(om_)
+
+    with (
+        patch.object(g, "provider", fake_provider),
+        patch.object(g, "ingest", new=fake_ingest),
+    ):
+        touched = await g.sweep_open_orders(db, seen_ids=set())
+
+    assert touched == 0
+    assert ingested == []

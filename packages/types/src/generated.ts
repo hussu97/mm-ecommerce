@@ -11460,6 +11460,8 @@ export interface components {
         OrderResponse: {
             /** Admin Notes */
             admin_notes: string | null;
+            /** Aggregator Cancel Reason */
+            aggregator_cancel_reason?: string | null;
             /** Aggregator Channel */
             aggregator_channel?: string | null;
             /** Aggregator Delivery Fee */

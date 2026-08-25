@@ -256,6 +256,11 @@ class OrderResponse(BaseModel):
     aggregator_driver_name: str | None = None
     aggregator_driver_phone: str | None = None
     aggregator_driver_status: str | None = None
+    #: Why the marketplace cancelled an aggregator order, as GrubOps's own reason
+    #: code (`TOO_BUSY`, `ITEM_OUT_OF_STOCK`, …). Set only when the ingest mirrored
+    #: a GrubOps cancellation in; null on a live order, a website/counter
+    #: cancellation, and every order that was not cancelled by the marketplace.
+    aggregator_cancel_reason: str | None = None
     #: The marketplace's own long order id for an aggregator order, for support
     #: and tracing. Null on everything else.
     external_reference: str | None = None

@@ -25,6 +25,7 @@ import {
   STATUS_LABEL,
   STATUS_STEPS,
   STATUS_VARIANT,
+  humanizeCancelReason,
   promisedFor,
   recipientName,
   stampFor,
@@ -523,6 +524,21 @@ export default function OrderDetailPage() {
                   {order.aggregator_driver_status.replace(/_/g, ' ').toLowerCase()}
                 </span>
               )}
+            </div>
+          )}
+
+          {/* Why the marketplace cancelled it, when GrubOps gave a reason. Only
+              a marketplace-side cancel fills this — a cancel from the shop here
+              leaves it null — so it reads as "the aggregator called it off, and
+              this is what they said". */}
+          {isCancelled && order.aggregator_cancel_reason && (
+            <div className="mt-3 border-t border-gray-100 pt-3">
+              <span className="text-[11px] font-body uppercase tracking-widest text-red-500">
+                Cancelled by marketplace
+              </span>
+              <p className="mt-1 text-sm font-body text-red-800">
+                {humanizeCancelReason(order.aggregator_cancel_reason)}
+              </p>
             </div>
           )}
 

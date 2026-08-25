@@ -137,6 +137,20 @@ export const STATUS_LABEL: Record<OrderStatus, string> = {
   disputed: 'disputed',
 };
 
+/** The friendly text for a GrubOps cancellation reason.
+ *
+ * The value is stored as GrubOps spells it — a screaming-snake code
+ * (`TOO_BUSY`, `ITEM_OUT_OF_STOCK`) on the common path, or a free-text fallback
+ * when a cancellation carried its reason only in the history description. A code
+ * is title-cased into a sentence; anything already sentence-shaped is shown
+ * as-is, so an unrecognised or free-text reason is never mangled. */
+export function humanizeCancelReason(reason: string): string {
+  const trimmed = reason.trim();
+  if (!/^[A-Z0-9_]+$/.test(trimmed)) return trimmed;
+  const spaced = trimmed.replace(/_/g, ' ').toLowerCase();
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
 export const STATUS_VARIANT: Record<OrderStatus, 'warning' | 'info' | 'success' | 'danger'> = {
   created: 'warning',
   confirmed: 'info',

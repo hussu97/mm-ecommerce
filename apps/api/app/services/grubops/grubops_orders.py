@@ -110,7 +110,9 @@ async def sweep_once() -> int:
 
         async with AsyncSessionFactory() as db:
             touched = 0
+            seen_ids: set[str] = set()
             for summary in summaries:
+                seen_ids.add(str(summary.get("orderId")))
                 # Per order, so one malformed payload does not end the pass.
                 try:
                     if await _ingest_one(db, summary):
@@ -121,6 +123,18 @@ async def sweep_once() -> int:
                         summary.get("orderId"),
                     )
                     continue
+
+            # Re-poll open orders the summary window has dropped — an order that
+            # lingered at arrived_at_pos and was then cancelled or completed
+            # aggregator-side, which the loop above can no longer see. Its own try
+            # so a re-poll failure cannot lose the ingest work just committed.
+            try:
+                repolled = await grubops_orders_service.sweep_open_orders(db, seen_ids)
+                if repolled:
+                    logger.info("GrubOps re-polled %s aged-out order(s)", repolled)
+                    touched += repolled
+            except Exception:  # noqa: BLE001 — housekeeping must not end the tick
+                logger.exception("GrubOps: open-order re-poll sweep failed")
 
             # Re-fire any packed/delivered/cancelled push to Foodics the immediate
             # mirror-out never landed — a Foodics id not yet ingested at pack time,

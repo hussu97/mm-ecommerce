@@ -84,6 +84,7 @@ def _order(**overrides) -> Order:
         "aggregator_driver_name": None,
         "aggregator_driver_phone": None,
         "aggregator_driver_status": None,
+        "aggregator_cancel_reason": None,
         "external_reference": None,
         "locale": "en",
         "created_at": NOW,

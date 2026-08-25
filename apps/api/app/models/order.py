@@ -344,6 +344,16 @@ class Order(Base, UUIDMixin, TimestampMixin):
     aggregator_driver_status: Mapped[str | None] = mapped_column(
         String(40), nullable=True
     )
+    #: Why GrubOps cancelled an aggregator order, as its own reason code
+    #: (`TOO_BUSY`, `ITEM_OUT_OF_STOCK`, …), captured verbatim when the ingest
+    #: mirrors a `OrderCanceled`/`OrderRejected`/`OrderFailed` in from GrubOps. A
+    #: provider word, kept unconstrained by design (canon rule 6) — humanised for
+    #: display, not mapped onto anything. Null on a website/counter cancellation
+    #: (whose reason, when there is one, is the register's `void_reason_id`) and on
+    #: every order that was not cancelled by the marketplace.
+    aggregator_cancel_reason: Mapped[str | None] = mapped_column(
+        String(60), nullable=True
+    )
 
     #: When the checkout told this customer their order would arrive.
     #:

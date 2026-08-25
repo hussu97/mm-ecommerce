@@ -13993,6 +13993,17 @@
             ],
             "title": "Admin Notes"
           },
+          "aggregator_cancel_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aggregator Cancel Reason"
+          },
           "aggregator_channel": {
             "anyOf": [
               {

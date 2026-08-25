@@ -62,6 +62,7 @@ __all__ = [
     "ingest",
     "LIVE_STATUSES",
     "sweep_auto_close",
+    "sweep_open_orders",
 ]
 
 #: Dubai, for the order-number date. The shop's day, not UTC's — the same
@@ -437,6 +438,34 @@ def _parse_ts(value: Any) -> datetime | None:
         return None
 
 
+#: The GrubOps history statuses that mean "the order ended cancelled", so the
+#: reason can be read off the event's own description when the header omits it.
+_CANCEL_STATUSES = {"OrderCanceled", "OrderRejected", "OrderFailed"}
+
+
+def _cancel_reason(info: dict) -> str | None:
+    """Why GrubOps cancelled this order, verbatim, or None.
+
+    `orderHeader.cancelReason` is the clean machine code (`TOO_BUSY`,
+    `ITEM_OUT_OF_STOCK`, …) and is preferred. Some cancellations leave it null
+    and carry the reason only in the free-text description of the cancel history
+    event, so that is the fallback. Returned as GrubOps spells it — the humanising
+    is the reader's, the same way `aggregator_driver_status` is stored raw.
+    """
+    header = info.get("orderHeader") or {}
+    reason = header.get("cancelReason")
+    if reason:
+        text = str(reason).strip()
+        if text:
+            return text[:60]
+    for h in info.get("orderHistories") or []:
+        if h.get("status") in _CANCEL_STATUSES:
+            desc = str(h.get("description") or "").strip()
+            if desc:
+                return desc[:60]
+    return None
+
+
 # ── the two write paths ──────────────────────────────────────────────────────
 
 
@@ -541,7 +570,10 @@ async def ingest(db, info: dict, order_map: GrubOpsOrderMap) -> None:
     _apply_driver_info(order, info)
 
     if target is not None:
-        await _apply_status(db, order, target, info.get("orderHistories") or [])
+        reason = _cancel_reason(info) if target == OrderStatusEnum.CANCELLED else None
+        await _apply_status(
+            db, order, target, info.get("orderHistories") or [], reason=reason
+        )
 
     order_map.last_grubops_status = gr_status
     order_map.raw = info
@@ -805,17 +837,32 @@ async def _decrement_stock(db, order_id: uuid.UUID) -> None:
 
 
 async def _apply_status(
-    db, order: Order, target: OrderStatusEnum, histories: list[dict]
+    db,
+    order: Order,
+    target: OrderStatusEnum,
+    histories: list[dict],
+    *,
+    reason: str | None = None,
 ) -> None:
     """Move the order up the ladder to `target`, one honest rung at a time.
 
     Cancellation is not on the ladder — it can arrive from most states — so it
     is attempted directly; if the order is already past the point GrubOps can
     cancel from (packed, delivered), the map refuses and `skip` lets it stand.
+
+    `reason` is GrubOps's cancellation reason, carried only on the CANCELLED path:
+    it is stamped on the order for display and threaded through `acting_as` as the
+    status-event note, so the timeline row records *why* as well as *when*.
     """
     if target == OrderStatusEnum.CANCELLED:
         at = _history_at(histories, target)
-        with acting_as(StatusSourceEnum.AGGREGATOR, at=at):
+        # Set before the transition so the value is in place whether or not the
+        # move lands — a GrubOps cancel of an order our board has already closed
+        # (packed/delivered) is refused, but the reason it gives is still the
+        # truth about that order and worth keeping.
+        if reason:
+            order.aggregator_cancel_reason = reason
+        with acting_as(StatusSourceEnum.AGGREGATOR, at=at, note=reason):
             await order_lifecycle.transition(db, order, target, on_invalid="skip")
         _sync_pos_status(order, target)
         return
@@ -929,3 +976,84 @@ async def sweep_auto_close(db) -> int:
     if closed:
         await db.flush()
     return closed
+
+
+# ── re-poll: catch a GrubOps-side change after the order left the window ──────
+
+
+#: The aggregator statuses that are still "open" from our side — the order is
+#: with us or waiting, not yet closed. A GrubOps-side cancel or completion of one
+#: of these is what the summary window can drop before the ordinary loop sees it.
+#: `packed` is deliberately absent: `sweep_auto_close` already owns it, and
+#: re-polling a packed order would race that sweep.
+_OPEN_STATUSES: tuple[OrderStatusEnum, ...] = (
+    OrderStatusEnum.CREATED,
+    OrderStatusEnum.CONFIRMED,
+    OrderStatusEnum.ARRIVED_AT_POS,
+)
+
+#: How many aged-out open orders one sweep will re-poll. Each costs a GrubOps
+#: `getOrderInfo`, so this bounds that spend per tick; comfortably above the
+#: handful ever open at once.
+_OPEN_REPOLL_LIMIT = 50
+
+
+async def sweep_open_orders(db, seen_ids: set[str]) -> int:
+    """Re-poll open aggregator orders GrubOps has stopped showing us.
+
+    `getOrderSummaryList` is a single most-recent window, so an order that lingers
+    at `arrived_at_pos` — waiting for the shop to press Packed — eventually falls
+    out of it. Once it does, the ordinary loop never re-checks it, and a later
+    GrubOps-side cancellation or completion is missed: the order freezes on our
+    board at the last status we happened to catch. This closes that gap. For each
+    open aggregator order not already refreshed from this tick's summary, it
+    fetches the full order and, when GrubOps's status has moved, reconciles it
+    through `ingest` — the same path the loop uses, so a cancel carries its reason
+    and a completion walks the ladder exactly as an in-window one would.
+
+    `seen_ids` are the GrubOps order ids the summary already returned this tick;
+    they are skipped so a fetch is spent only on the genuinely quiet orders.
+    Bounded by `_OPEN_REPOLL_LIMIT`. Returns how many it advanced.
+    """
+    order_maps = list(
+        (
+            await db.execute(
+                select(GrubOpsOrderMap)
+                .join(Order, Order.id == GrubOpsOrderMap.mm_order_id)
+                .where(
+                    Order.source == OrderSourceEnum.AGGREGATOR.value,
+                    Order.status.in_(_OPEN_STATUSES),
+                )
+                .order_by(Order.created_at)
+                .limit(_OPEN_REPOLL_LIMIT)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    touched = 0
+    for order_map in order_maps:
+        if order_map.grubops_order_id in seen_ids:
+            continue
+        # Per order, so one unreachable order or malformed payload does not end
+        # the pass — the same guarantee the summary loop gives.
+        try:
+            info = await provider.get_order(order_map.grubops_order_id)
+            if info is None:
+                continue
+            header = info.get("orderHeader") or {}
+            gr_status = header.get("orderStatus") or info.get("orderStatus")
+            if gr_status == order_map.last_grubops_status:
+                continue
+            await ingest(db, info, order_map)
+            touched += 1
+        except Exception:  # noqa: BLE001 — one bad order must not stop the rest
+            logger.exception(
+                "GrubOps: failed to re-poll open order %s",
+                order_map.grubops_order_id,
+            )
+            continue
+    if touched:
+        await db.flush()
+    return touched
