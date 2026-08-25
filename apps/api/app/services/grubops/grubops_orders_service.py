@@ -713,6 +713,7 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
             )
         base_price = _num(item.get("unitPrice"))
         quantity = int(_num(item.get("quantity"), "1"))
+        unit_price = base_price + options_price
         db.add(
             OrderItem(
                 order_id=order.id,
@@ -723,8 +724,16 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
                 quantity=quantity,
                 base_price=money(base_price),
                 options_price=money(options_price),
-                unit_price=money(base_price + options_price),
-                total_price=money(_num(item.get("totalPrice"), str(base_price))),
+                unit_price=money(unit_price),
+                # The line total is the per-unit price (base plus its modifiers)
+                # times quantity — the same figure the register and the website
+                # write. It was taken from GrubOps' own `totalPrice` with a
+                # fallback to `base_price`, and a product whose price lives
+                # entirely on a modifier (base 0, the "3 Pieces" charge on the
+                # brownie) has neither: GrubOps omitted `totalPrice` and the
+                # fallback wrote 0, so the line read 0.00 on an order whose
+                # subtotal — summed from the header, not these lines — was right.
+                total_price=money(unit_price * quantity),
                 selected_options_snapshot=snapshot,
                 tax_amount=money(_num(item.get("taxAmount"))),
                 # What the customer said about *this line*. GrubOps carries it

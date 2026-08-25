@@ -57,6 +57,62 @@ def test_a_payload_without_the_publish_event_has_no_foodics_id():
     assert g._foodics_order_id({}) is None
 
 
+@pytest.mark.asyncio
+async def test_a_line_priced_only_on_a_modifier_gets_a_nonzero_total():
+    # The Ferrero brownie whose whole price is the "3 Pieces" modifier: base 0,
+    # and GrubOps sent no line `totalPrice`. The ingest used to fall back to
+    # `base_price` and wrote 0.00, so the line read free on the order summary and
+    # understated every report that sums the line totals. The line total is
+    # (base + options) * quantity — the same figure the register and the website
+    # write — so a modifier-only line is never zero, and quantity is not dropped.
+    import uuid
+
+    info = {
+        "orderHeader": {"taxAmount": 0},
+        "orderLines": [
+            {"type": "ITEM", "name": "Ferrero Brownies", "recipeId": "R1",
+             "unitPrice": 0, "quantity": 2},
+            {"type": "MODIFIER", "name": "3 Pieces", "modifierId": "M1",
+             "unitPrice": 55, "quantity": 1},
+            {"type": "ITEM", "name": "Plain Box", "recipeId": "R2",
+             "unitPrice": 100, "quantity": 1},
+        ],
+    }
+    order_map = SimpleNamespace(
+        location_id="L1", grubops_order_id="G1", external_id="1445",
+        source_channel="Talabat", last_push_error=None,
+    )
+
+    added: list = []
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=None)  # no branch object → skip attach/push
+    db.add = added.append
+    db.flush = AsyncMock()
+    db.execute = AsyncMock()
+
+    with (
+        patch.object(g, "_resolve_branch", AsyncMock(return_value=uuid.uuid4())),
+        patch.object(g, "_reverse_maps", AsyncMock(return_value=(
+            {"R1": uuid.uuid4(), "R2": uuid.uuid4()},
+            {"M1": {"modifier_option_id": uuid.uuid4()}},
+        ))),
+        patch.object(g, "_generate_order_number", AsyncMock(return_value="AGG-X-1")),
+        patch.object(g, "_decrement_stock", AsyncMock()),
+        patch.object(g.order_fees, "stamp", AsyncMock()),
+    ):
+        await g._create_order(db, info, order_map)
+
+    items = {i.product_name: i for i in added if isinstance(i, g.OrderItem)}
+    ferrero = items["Ferrero Brownies"]
+    assert ferrero.base_price == Decimal("0.00")
+    assert ferrero.options_price == Decimal("55.00")
+    assert ferrero.unit_price == Decimal("55.00")
+    # base 0 + 55 in options, times two — not 0, and not 55.
+    assert ferrero.total_price == Decimal("110.00")
+    # A plainly-priced line is unaffected.
+    assert items["Plain Box"].total_price == Decimal("100.00")
+
+
 def test_a_prepared_order_stops_at_the_shop_not_packed():
     # The shop, not the poll loop, owns `packed`: it is the Packed button that
     # fires the Foodics dispatch and calls the rider. So the prepared/dispatched
