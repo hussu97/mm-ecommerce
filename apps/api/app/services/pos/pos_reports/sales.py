@@ -431,7 +431,16 @@ async def _sales_by_item(
 
     stmt = _scope(stmt, branch_id=branch_id, date_from=date_from, date_to=date_to)
     stmt = (
-        stmt.where(_COMPLETED_SALE, OrderItem.status != "void")
+        # `IS DISTINCT FROM`, not `!=`, because only a counter line carries a
+        # `status` at all. Aggregator (GrubOps) and website lines are written with
+        # a NULL status, and `NULL != 'void'` is NULL — not TRUE — so a plain `!=`
+        # silently dropped every aggregator and website item from the by-product
+        # and by-category breakdowns, while the tiles and the by-channel report
+        # (which sum whole orders) still counted them. That mismatch is what made
+        # "Sales by Product" show only counter sales and never reconcile to Net
+        # Sales. The NULL-safe form keeps every completed line and still excludes
+        # a genuinely voided one.
+        stmt.where(_COMPLETED_SALE, OrderItem.status.is_distinct_from("void"))
         .group_by(*group_columns)
         .order_by(revenue.desc())
         .limit(limit)

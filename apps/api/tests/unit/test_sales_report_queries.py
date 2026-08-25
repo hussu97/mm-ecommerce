@@ -124,6 +124,24 @@ async def test_completed_sale_counts_delivered_website_orders():
     assert "'online'" in literal and "'delivered'" in literal
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dimension", ["product", "category"])
+async def test_by_item_keeps_null_status_lines(dimension):
+    """Aggregator (GrubOps) and website lines carry a NULL item status. A plain
+    `status != 'void'` drops them — `NULL != 'void'` is NULL, not TRUE — so the
+    by-product and by-category reports showed only counter sales and never
+    reconciled to the Net Sales tile. The void filter must be NULL-safe."""
+    literal = str(
+        (await _one_statement(dimension)).compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    ).lower()
+    assert "is distinct from" in literal, (
+        f"{dimension} uses a NULL-unsafe void filter — aggregator/website items vanish"
+    )
+    assert "status != 'void'" not in literal and "status <> 'void'" not in literal
+
+
 async def _one_statement(dimension: str):
     """Return the (single) statement `sales_by_dimension` builds for a dimension,
     by capturing it rather than executing."""
