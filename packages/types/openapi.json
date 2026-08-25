@@ -2877,6 +2877,30 @@
         "title": "BreakdownItem",
         "type": "object"
       },
+      "BreakdownRow": {
+        "description": "One slice of the day \u2014 a status, a channel, a fulfilment or a payment.",
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "orders": {
+            "title": "Orders",
+            "type": "integer"
+          },
+          "revenue": {
+            "title": "Revenue",
+            "type": "number"
+          }
+        },
+        "required": [
+          "label",
+          "orders",
+          "revenue"
+        ],
+        "title": "BreakdownRow",
+        "type": "object"
+      },
       "BulkStatusRequest": {
         "properties": {
           "ids": {
@@ -6324,6 +6348,173 @@
           "sent"
         ],
         "title": "DailySalesEmailResponse",
+        "type": "object"
+      },
+      "DashboardOps": {
+        "description": "Open work, as it stands right now.\n\nThese are current-state counts, not windowed to today, because an order that\nwent out for delivery last night is still the shop's problem this morning \u2014\nexcept the three explicitly named `_today`, which are the day's events.",
+        "properties": {
+          "active_couriers": {
+            "title": "Active Couriers",
+            "type": "integer"
+          },
+          "custom_orders_due_today": {
+            "title": "Custom Orders Due Today",
+            "type": "integer"
+          },
+          "low_stock_items": {
+            "title": "Low Stock Items",
+            "type": "integer"
+          },
+          "open_custom_orders": {
+            "title": "Open Custom Orders",
+            "type": "integer"
+          },
+          "open_tills": {
+            "title": "Open Tills",
+            "type": "integer"
+          },
+          "out_for_delivery": {
+            "title": "Out For Delivery",
+            "type": "integer"
+          },
+          "payment_failed_today": {
+            "title": "Payment Failed Today",
+            "type": "integer"
+          },
+          "pending_purchase_orders": {
+            "title": "Pending Purchase Orders",
+            "type": "integer"
+          },
+          "refunds_amount_today": {
+            "title": "Refunds Amount Today",
+            "type": "number"
+          },
+          "refunds_today": {
+            "title": "Refunds Today",
+            "type": "integer"
+          },
+          "undelivered": {
+            "title": "Undelivered",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "out_for_delivery",
+          "undelivered",
+          "payment_failed_today",
+          "refunds_today",
+          "refunds_amount_today",
+          "open_custom_orders",
+          "custom_orders_due_today",
+          "low_stock_items",
+          "pending_purchase_orders",
+          "open_tills",
+          "active_couriers"
+        ],
+        "title": "DashboardOps",
+        "type": "object"
+      },
+      "DashboardSummary": {
+        "description": "The day's headline figures, over every non-cancelled order created today.",
+        "properties": {
+          "avg_order_value": {
+            "title": "Avg Order Value",
+            "type": "number"
+          },
+          "delivered": {
+            "title": "Delivered",
+            "type": "integer"
+          },
+          "orders": {
+            "title": "Orders",
+            "type": "integer"
+          },
+          "orders_growth": {
+            "title": "Orders Growth",
+            "type": "number"
+          },
+          "revenue": {
+            "title": "Revenue",
+            "type": "number"
+          },
+          "revenue_growth": {
+            "title": "Revenue Growth",
+            "type": "number"
+          }
+        },
+        "required": [
+          "orders",
+          "revenue",
+          "avg_order_value",
+          "delivered",
+          "orders_growth",
+          "revenue_growth"
+        ],
+        "title": "DashboardSummary",
+        "type": "object"
+      },
+      "DashboardTodayResponse": {
+        "properties": {
+          "business_date": {
+            "title": "Business Date",
+            "type": "string"
+          },
+          "by_channel": {
+            "items": {
+              "$ref": "#/components/schemas/BreakdownRow"
+            },
+            "title": "By Channel",
+            "type": "array"
+          },
+          "by_fulfillment": {
+            "items": {
+              "$ref": "#/components/schemas/BreakdownRow"
+            },
+            "title": "By Fulfillment",
+            "type": "array"
+          },
+          "by_payment": {
+            "items": {
+              "$ref": "#/components/schemas/BreakdownRow"
+            },
+            "title": "By Payment",
+            "type": "array"
+          },
+          "by_status": {
+            "items": {
+              "$ref": "#/components/schemas/BreakdownRow"
+            },
+            "title": "By Status",
+            "type": "array"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "ops": {
+            "$ref": "#/components/schemas/DashboardOps"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/DashboardSummary"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "business_date",
+          "timezone",
+          "generated_at",
+          "summary",
+          "by_status",
+          "by_channel",
+          "by_fulfillment",
+          "by_payment",
+          "ops"
+        ],
+        "title": "DashboardTodayResponse",
         "type": "object"
       },
       "DayAvailabilityResponse": {
@@ -33094,6 +33285,33 @@
         "summary": "Get Availability",
         "tags": [
           "Custom Orders"
+        ]
+      }
+    },
+    "/api/v1/dashboard/today": {
+      "get": {
+        "description": "The current trading day at a glance, over every order and every channel.",
+        "operationId": "dashboard_today_api_v1_dashboard_today_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardTodayResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Dashboard Today",
+        "tags": [
+          "Dashboard"
         ]
       }
     },
