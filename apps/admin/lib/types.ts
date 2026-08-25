@@ -510,6 +510,50 @@ export interface PaginatedCustomers {
   pages: number;
 }
 
+// ─── Dashboard (home) ───────────────────────────────────────────────────────
+
+/** One slice of the day — a status, channel, fulfilment or payment method. */
+export interface DashboardBreakdownRow {
+  label: string;
+  orders: number;
+  revenue: number;
+}
+
+export interface DashboardSummary {
+  orders: number;
+  revenue: number;
+  avg_order_value: number;
+  delivered: number;
+  orders_growth: number;
+  revenue_growth: number;
+}
+
+export interface DashboardOps {
+  out_for_delivery: number;
+  undelivered: number;
+  payment_failed_today: number;
+  refunds_today: number;
+  refunds_amount_today: number;
+  open_custom_orders: number;
+  custom_orders_due_today: number;
+  low_stock_items: number;
+  pending_purchase_orders: number;
+  open_tills: number;
+  active_couriers: number;
+}
+
+export interface DashboardToday {
+  business_date: string;
+  timezone: string;
+  generated_at: string;
+  summary: DashboardSummary;
+  by_status: DashboardBreakdownRow[];
+  by_channel: DashboardBreakdownRow[];
+  by_fulfillment: DashboardBreakdownRow[];
+  by_payment: DashboardBreakdownRow[];
+  ops: DashboardOps;
+}
+
 // ─── Analytics ────────────────────────────────────────────────────────────────
 
 export interface AnalyticsOverview {

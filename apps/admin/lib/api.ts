@@ -1,6 +1,6 @@
 import type {
   AdminLoginOptions, AdminPasskey, AdminUserSummary,
-  AnalyticsOverview, AuditLog, Category, CmsPage, CustomerBreakdown, ZoneSalesData,
+  AnalyticsOverview, AuditLog, Category, CmsPage, CustomerBreakdown, DashboardToday, ZoneSalesData,
   FunnelData, ImportResult, Language, Modifier, Order, OrdersPoint, PaginatedAuditLogs,
   PaginatedCustomers, PaginatedEmailLogs, PaginatedLiveCarts, PaginatedOrders, Product, ProductListResponse,
   PromoCode, Promotion, PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
@@ -502,6 +502,17 @@ export const deliveryZonesApi = {
 // ─── Analytics ────────────────────────────────────────────────────────────────
 
 type DateParams = { start_date?: string; end_date?: string; group_by?: string };
+
+// ─── Dashboard (home) ─────────────────────────────────────────────────────────
+
+export const dashboardApi = {
+  /**
+   * The current trading day at a glance — every order across every channel,
+   * aggregated and rounded server-side. No params: it always means "today,
+   * where the shop is".
+   */
+  today: () => api.get<DashboardToday>(`/dashboard/today`),
+};
 
 export const analyticsApi = {
   overview: (params?: { start_date?: string; end_date?: string }) =>
