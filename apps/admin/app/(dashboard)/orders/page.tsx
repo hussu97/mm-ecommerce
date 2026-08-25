@@ -27,7 +27,7 @@ import { DataTable } from '@/components/ui/DataTable';
 import { CourierLogo } from '@/components/orders/CourierLogo';
 import { useApiList } from '@/hooks/useApiList';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
-import { cn, formatCurrency, formatDate } from '@/lib/utils';
+import { cn, formatCurrency, formatDate, formatTime } from '@/lib/utils';
 
 // Carriers a row can be filtered to — the five marketplaces and the four
 // couriers MM dispatches. Codes match the API's `courier` param and the DB
@@ -389,7 +389,14 @@ export default function OrdersPage() {
             {
               header: 'Date',
               className: 'text-right',
-              render: o => <span className="text-gray-400">{formatDate(o.created_at)}</span>,
+              render: o => (
+                <div className="text-gray-400">
+                  <div>{formatDate(o.created_at)}</div>
+                  <div className="text-xs tabular-nums text-gray-300">
+                    {formatTime(o.created_at)}
+                  </div>
+                </div>
+              ),
             },
           ]}
         />

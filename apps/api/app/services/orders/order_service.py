@@ -1400,6 +1400,39 @@ def _net_value_expression(cost_of_sale):
     )
 
 
+def _economics_columns():
+    """
+    The direct-cost pair — net kept, and net as a share of menu price — as two
+    labelled columns a list query can select in the same pass as its rows.
+
+    Both admin and account order lists need them and once diverged: the account
+    list computed them and the admin one silently did not, so the console — the
+    one screen the shop reads its margins from — showed a dash on every row while
+    its schema documented the column as filled. One helper so a single query
+    cannot forget the column its response model promises.
+    """
+    net_value = _net_value_expression(_cost_of_sale_subquery())
+    cost_cover = net_value / func.nullif(Order.subtotal, 0) * 100
+    return net_value.label("net_value"), cost_cover.label("cost_cover")
+
+
+def _apply_economics(resp: OrderListResponse, net, cover) -> None:
+    """
+    Write the direct-cost trio onto a list row from its computed columns.
+
+    Three-valued on `covers_direct_cost`, and the null is the point: an
+    unconfigured commission rate makes the answer unknowable, and rendering that
+    as a failure is how a seeding gap becomes a fortnight of chasing the wrong
+    orders.
+    """
+    threshold = order_economics.DIRECT_COST_THRESHOLD
+    resp.net_value = float(net) if net is not None else None
+    resp.cost_cover = float(cover) if cover is not None else None
+    resp.covers_direct_cost = (
+        None if cover is None else Decimal(str(cover)) >= threshold
+    )
+
+
 def _list_row_load_options():
     """
     Pin the four POS collections to empty on list rows.
@@ -1455,18 +1488,17 @@ async def get_user_orders(
     )
     total = count_result.scalar() or 0
 
-    # The direct-cost column, computed in the same pass as the rows. `subtotal`
+    # The direct-cost columns, computed in the same pass as the rows. `subtotal`
     # is the goods at menu price *before* discount — the denominator held still
     # on purpose, so a coupon shows up as the cost it is instead of shrinking
     # the base it is measured against.
-    net_value = _net_value_expression(_cost_of_sale_subquery())
-    cost_cover = net_value / func.nullif(Order.subtotal, 0) * 100
+    net_value, cost_cover = _economics_columns()
 
     stmt = (
         base_stmt.add_columns(
             _item_count_subquery().label("item_count"),
-            net_value.label("net_value"),
-            cost_cover.label("cost_cover"),
+            net_value,
+            cost_cover,
         )
         .options(*_list_row_load_options())
         .order_by(Order.created_at.desc())
@@ -1475,19 +1507,11 @@ async def get_user_orders(
     )
     result = await db.execute(stmt)
 
-    threshold = order_economics.DIRECT_COST_THRESHOLD
     items = []
     for order, count, net, cover in result.all():
         resp = OrderListResponse.model_validate(order)
         resp.item_count = int(count or 0)
-        resp.net_value = float(net) if net is not None else None
-        resp.cost_cover = float(cover) if cover is not None else None
-        # Three-valued, and the null is the point: an unconfigured commission
-        # rate makes the answer unknowable, and rendering that as a failure is
-        # how a seeding gap becomes a fortnight of chasing the wrong orders.
-        resp.covers_direct_cost = (
-            None if cover is None else Decimal(str(cover)) >= threshold
-        )
+        _apply_economics(resp, net, cover)
         items.append(resp)
     return items, total
 
@@ -1684,8 +1708,19 @@ async def get_all_admin(
     )
     total = count_result.scalar() or 0
 
+    # The direct-cost columns, in the same pass as the rows — the console reads
+    # its margins from this list, so a dash on every row (the state before these
+    # were selected here) hid exactly the underwater orders the column exists to
+    # surface. `subtotal` is the goods at menu price before discount, so a coupon
+    # shows up as the cost it is rather than shrinking its own denominator.
+    net_value, cost_cover = _economics_columns()
+
     stmt = (
-        base_stmt.add_columns(_item_count_subquery().label("item_count"))
+        base_stmt.add_columns(
+            _item_count_subquery().label("item_count"),
+            net_value,
+            cost_cover,
+        )
         .options(*_list_row_load_options())
         .order_by(Order.created_at.desc())
         .offset((page - 1) * per_page)
@@ -1694,8 +1729,9 @@ async def get_all_admin(
     result = await db.execute(stmt)
 
     items = []
-    for order, count in result.all():
+    for order, count, net, cover in result.all():
         resp = OrderListResponse.model_validate(order)
         resp.item_count = int(count or 0)
+        _apply_economics(resp, net, cover)
         items.append(resp)
     return items, total
