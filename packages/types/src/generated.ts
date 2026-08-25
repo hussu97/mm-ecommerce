@@ -4243,6 +4243,59 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/payments/apple-pay/eligibility": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Apple Pay Eligibility
+         * @description Whether the caller may be offered in-page Apple Pay on checkout.
+         *
+         *     Restricted, server-side, to the small allowlist in `apple_pay_service` — a
+         *     guest or any other account gets `eligible: false`, so the option can never
+         *     render for them however the client is coaxed. The optional `amount` is the
+         *     order total the client is quoting, used only to route the gateway check;
+         *     the intent endpoint re-checks against the real order and is the actual
+         *     guard on money.
+         */
+        get: operations["apple_pay_eligibility_api_v1_payments_apple_pay_eligibility_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/payments/apple-pay/intent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Apple Pay Intent
+         * @description Mint a Stripe PaymentIntent so the browser can take an Apple Pay payment.
+         *
+         *     Allowlisted and owner-only, and refused unless Stripe is the active card
+         *     gateway (Ziina does not offer Apple Pay). The intent carries the order
+         *     number in its metadata, so it settles through the same
+         *     `payment_intent.succeeded` webhook every card payment already uses — this
+         *     endpoint writes no order status of its own.
+         */
+        post: operations["create_apple_pay_intent_api_v1_payments_apple_pay_intent_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/payments/create-session": {
         parameters: {
             query?: never;
@@ -7111,6 +7164,27 @@ export interface components {
             passkey_count: number;
             /** Phone */
             phone: string | null;
+        };
+        /** ApplePayEligibilityResponse */
+        ApplePayEligibilityResponse: {
+            /** Eligible */
+            eligible: boolean;
+        };
+        /** ApplePayIntentRequest */
+        ApplePayIntentRequest: {
+            /** Order Number */
+            order_number: string;
+        };
+        /** ApplePayIntentResponse */
+        ApplePayIntentResponse: {
+            /** Amount */
+            amount: string;
+            /** Client Secret */
+            client_secret: string;
+            /** Currency */
+            currency: string;
+            /** Order Number */
+            order_number: string;
         };
         /** ApplyChargeRequest */
         ApplyChargeRequest: {
@@ -24753,6 +24827,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PaymentMethodResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apple_pay_eligibility_api_v1_payments_apple_pay_eligibility_get: {
+        parameters: {
+            query?: {
+                amount?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplePayEligibilityResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_apple_pay_intent_api_v1_payments_apple_pay_intent_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplePayIntentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplePayIntentResponse"];
                 };
             };
             /** @description Validation Error */

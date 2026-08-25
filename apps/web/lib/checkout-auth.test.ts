@@ -9,7 +9,7 @@ vi.mock('./api', () => ({
 }));
 
 import { authApi, ensureSessionId } from './api';
-import { accountEmailOf, ensureCheckoutAuth } from './checkout-auth';
+import { accountEmailOf, ensureCheckoutAuth, isApplePayTestUser } from './checkout-auth';
 import type { User } from './types';
 
 describe('ensureCheckoutAuth', () => {
@@ -69,5 +69,29 @@ describe('accountEmailOf', () => {
 
   it('treats a blank address as no address', () => {
     expect(accountEmailOf(asUser({ email: '   ', is_guest: false }))).toBeNull();
+  });
+});
+
+describe('isApplePayTestUser', () => {
+  const asUser = (u: Partial<User>) => u as User;
+
+  it('admits the allowlisted account', () => {
+    expect(isApplePayTestUser(asUser({ email: 'h_abbasi97@hotmail.com', is_guest: false }))).toBe(true);
+  });
+
+  it('matches regardless of case or surrounding space', () => {
+    expect(isApplePayTestUser(asUser({ email: '  H_Abbasi97@Hotmail.com ', is_guest: false }))).toBe(true);
+  });
+
+  it('turns away every other signed-in customer', () => {
+    expect(isApplePayTestUser(asUser({ email: 'someone@else.com', is_guest: false }))).toBe(false);
+  });
+
+  it('turns away a guest even if the address happens to match', () => {
+    expect(isApplePayTestUser(asUser({ email: 'h_abbasi97@hotmail.com', is_guest: true }))).toBe(false);
+  });
+
+  it('turns away nobody-signed-in', () => {
+    expect(isApplePayTestUser(null)).toBe(false);
   });
 });

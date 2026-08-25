@@ -1,62 +1,64 @@
-# Admin Dashboard Revamp
+# Apple Pay on checkout — test user only
 
-## Problem
-`apps/admin/app/(dashboard)/page.tsx` computes "Today's Orders" and "Today's Revenue"
-by fetching only the last 10 orders (`ordersApi.listAll({ per_page: 10 })`) and filtering
-them client-side. So the dashboard's daily stats are wrong (capped at 10 orders) and the
-revenue is summed client-side — a violation of CLAUDE.md rule #10 (money math is server-side).
-The page is also outdated: it ignores POS, aggregator, custom orders, delivery, inventory,
-purchase orders, tills, couriers, refunds — all the flows the system now has.
+## Goal
+For the test user **h_abbasi97@hotmail.com** only (logged in, not guest), show an
+in-page **Apple Pay** payment option on checkout — but only when (a) the active
+default card gateway is **Stripe** (not Ziina), and (b) the browser actually
+supports Apple Pay. When selected and the checkout is otherwise ready, replace
+the "Place Order" button with an Apple-styled Apple Pay button that takes the
+payment in-page via Stripe (no redirect to the hosted Stripe page).
 
-## Approach
-Server-side "today" aggregation over ALL orders for the current business day (shop tz),
-plus a cross-domain operational snapshot. Then a full rewrite of the dashboard page.
+Guests and every other user must never see it.
 
-### Backend (`apps/api`)
-- [ ] New module `app/api/v1/dashboard.py`, router mounted at `/dashboard`, perm `dashboard.access`.
-- [ ] Compute tz-aware UTC day bounds from `business_day_service.shop_today(Asia/Dubai)` (correct
-      at the midnight boundary — not `func.date()` which is UTC-dated).
-- [ ] Today window over `Order` (created_at in window):
-      - summary: orders, revenue (money()), avg_order_value, delivered count, + growth vs
-        the same window yesterday.
-      - breakdowns: by_status, by_channel (source), by_fulfillment (delivery_method),
-        by_payment (payment_method).
-- [ ] Live operational counters (current open state): awaiting-action, out_for_delivery,
-      undelivered, payment_failed (today), refunds (today: count+amount), open custom orders,
-      custom orders due today, low-stock items, pending purchase orders, open tills, active couriers.
-- [ ] Response schemas in `app/schemas/dashboard.py` (rule #11 — schemas live in app/schemas).
-- [ ] Register router in `app/api/v1/router.py`.
-- [ ] Regenerate contract: `python -m scripts.export_openapi` + `pnpm --filter @mm/types generate`.
-- [ ] Unit test in `apps/api/tests/` seeding orders across today/yesterday and asserting the aggregates.
+## Design decisions
+- Apple Pay is a **card wallet**, so the order is still created with
+  `payment_method = card` (wire `stripe`). Apple Pay is a *checkout-page-local*
+  selection, NOT a new value in the shared `PaymentMethod` type or the wire
+  contract. Keeps the provider-agnostic abstraction intact.
+- In-page flow = Stripe **PaymentIntent** + Payment Request API. A PaymentIntent
+  carrying `metadata.order_number` reconciles through the **existing**
+  `payment_intent.succeeded` webhook path — the same path production card
+  payments already use. No new webhook/lifecycle code.
+- Do **not** set `order.payment_id = pi_...` at intent creation (would trip the
+  `_is_paid` legacy-prefix check). Record the intent id only on the
+  `PaymentTransaction` row; the webhook sets it on the order when it succeeds.
+- Server enforces the test-user gate on both new endpoints (defense in depth).
 
-### Frontend (`apps/admin`)
-- [ ] `dashboardApi.today()` binding in `lib/api.ts`; `DashboardToday` types in `lib/types.ts`.
-- [ ] Rewrite `app/(dashboard)/page.tsx`: hero metrics (today, server-side), order pipeline,
-      needs-attention tiles, channel/fulfillment/payment mix (CSS bars — no new dep),
-      recent-orders feed, quick actions. `Promise.allSettled` + per-section errors. Auto-refresh + "as of".
+## Backend (apps/api)
+- [x] `app/services/payments/apple_pay_service.py` — test-email allowlist,
+      `is_test_user`, `eligibility(db, amount)` (stripe is top candidate),
+      `create_intent(db, order_number, user)`.
+- [x] `stripe_provider.create_payment_intent(order, *, idempotency_key)`.
+- [x] Two endpoints in `app/api/v1/payments.py` (mounted at `/payments`):
+      `GET /payments/apple-pay/eligibility`, `POST /payments/apple-pay/intent`.
+- [x] Regenerate `packages/types/openapi.json` + `@mm/types` generated.ts.
+- [x] pytest: test-user gate, eligibility reflects gateway, endpoint auth.
 
-### Verify
-- [ ] `ruff check/format`, `pytest`, `export_openapi --check` (api job)
-- [ ] admin `lint` + `tsc --noEmit` + `build`; `@mm/types check:fresh` + test (web job)
-- [ ] Push to feature branch `claude/admin-dashboard-redesign-288sfk`, open PR to main, drive CI green.
+## Frontend (apps/web)
+- [x] Add `@stripe/stripe-js` dep + lockfile.
+- [x] `lib/api-client.ts` — `applePayEligibility`, `createApplePayIntent`.
+- [x] `hooks/useApplePay.ts` — Stripe.js load, eligibility, canMakePayment,
+      `pay()` (create order → intent → confirm → confirmation).
+- [x] `page.tsx` — show Apple Pay option row (test user + available); when
+      selected + gate ready, render Apple-styled Apple Pay button.
+- [x] Pure helper + unit test for the "show apple pay option" gate.
 
-## Review / results
-- New endpoint `GET /api/v1/dashboard/today` (`dashboard.access`) aggregates **every** order of
-  the shop's local day server-side — fixing the last-10-orders cap and the client-side revenue sum.
-  "Today" is resolved to exact UTC bounds from the shop timezone, correct at the midnight boundary.
-- Returns: headline summary (revenue, orders, delivered, AOV) with growth vs the same window
-  yesterday; by-status / by-channel / by-fulfilment / by-payment breakdowns; and a live ops snapshot
-  (out-for-delivery, undelivered, payment-failed, refunds, custom orders due/open, low stock, pending
-  POs, open tills, active couriers).
-- Dashboard page rewritten: headline cards, a Needs-Attention grid linking into each flow, today's mix
-  bars, an order-status strip, quick actions and the recent-orders feed. Auto-refreshes every 60s with
-  an "as of" stamp; `Promise.allSettled` so one failed call doesn't blank the page.
-- Contract regenerated (`openapi.json` + `@mm/types/generated.ts`).
-- Verified locally: API ruff/format/openapi-check + full pytest (2346 passed, +8 new); admin
-  lint/tsc/test/build; web lint/test/tsc/build + `@mm/types` fresh & tests. All green.
+## Verify
+- [x] `ruff check/format`, `pytest` (2358 passed), OpenAPI `--check`.
+- [x] web `lint` (0 errors), `test` (518 passed), `tsc --noEmit`, `build`, `@mm/types check:fresh`.
+- [ ] Commit, push, PR, drive CI green, merge, deploy green.
 
-## Note on branch
-Session policy designates branch `claude/admin-dashboard-redesign-288sfk` and forbids pushing to
-a different branch. Direct-to-main also skips review and fires the production deploy immediately.
-So: push to the feature branch + PR; merging the PR is what triggers `deploy.yml`. CI ("deploy is
-green") is driven green on the PR.
+## Review
+Backend and frontend implemented and locally green. All backend boxes and the
+frontend boxes are done (marked above). Apple Pay is a checkout-page-local
+selection over an unchanged `card` order; the money settles through the
+existing `payment_intent.succeeded` webhook. The feature is invisible to guests
+and every non-allowlisted account, and hides itself on any browser/gateway that
+cannot take Apple Pay. Operational follow-up for the owner: verify the domain
+with Stripe/Apple so `canMakePayment()` lights up in production.
+
+## Notes
+- Apple Pay only renders when the domain is verified with Stripe/Apple; until
+  then `canMakePayment()` returns null and the option stays hidden — which is
+  exactly the required "hide on unsupported browsers" behavior. Domain
+  verification in the Stripe dashboard is an operational step for the owner.
