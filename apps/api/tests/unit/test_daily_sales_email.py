@@ -254,7 +254,9 @@ async def _run_tick(*, in_progress: dict[str, str], already_sent: set[str]):
             lambda branch, moment, tz: in_progress[branch.name],
         ),
         patch.object(
-            dse, "_already_sent", AsyncMock(side_effect=lambda _db, d: d in already_sent)
+            dse,
+            "_already_sent",
+            AsyncMock(side_effect=lambda _db, d: d in already_sent),
         ),
         patch.object(dse, "send", fake_send),
         patch.object(dse.advisory_lock, "held", _lock_ok),

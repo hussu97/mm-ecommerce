@@ -194,7 +194,10 @@ async def test_a_stuck_packed_push_is_retried_and_lands():
         update_delivery_status=AsyncMock(),
         decline_order=AsyncMock(),
     )
-    with patch.object(f, "provider", fp), patch.object(f, "is_enabled", return_value=True):
+    with (
+        patch.object(f, "provider", fp),
+        patch.object(f, "is_enabled", return_value=True),
+    ):
         landed = await f.sweep_pending_pushouts(db)
     fp.update_delivery_status.assert_awaited_once_with("f1", DELIVERY_READY)
     assert order_map.last_pushed_status == "packed"
@@ -207,7 +210,10 @@ async def test_an_order_already_pushed_for_its_state_is_skipped():
     order_map = _map(last_pushed_status="packed")
     db = _sweep_db([(order, order_map)], order_map=order_map)
     fp = SimpleNamespace(get_order=AsyncMock(), update_delivery_status=AsyncMock())
-    with patch.object(f, "provider", fp), patch.object(f, "is_enabled", return_value=True):
+    with (
+        patch.object(f, "provider", fp),
+        patch.object(f, "is_enabled", return_value=True),
+    ):
         landed = await f.sweep_pending_pushouts(db)
     fp.get_order.assert_not_awaited()
     assert landed == 0

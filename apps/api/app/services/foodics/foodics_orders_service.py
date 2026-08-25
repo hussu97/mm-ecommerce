@@ -111,7 +111,6 @@ async def mirror_status_out(
 
         status = order.get("status")
         delivery_status = order.get("delivery_status")
-        note = f"Mirrored from Melting Moments ({actor})"
 
         if new_status == OrderStatusEnum.PACKED:
             # Ready-to-deliver, unless already at or past it.

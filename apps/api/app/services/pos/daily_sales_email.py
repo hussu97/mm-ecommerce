@@ -30,7 +30,6 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from io import BytesIO
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -387,9 +386,7 @@ async def _tick(db: AsyncSession, now: datetime | None = None) -> None:
     # longer poisons the run. `business_date_for` already applies each branch's own
     # cut-off, which is the same boundary orders book under.
     ref = now - _CLOSE_BUFFER
-    frontier = min(
-        business_day_service.business_date_for(b, ref, tz) for b in branches
-    )
+    frontier = min(business_day_service.business_date_for(b, ref, tz) for b in branches)
     frontier_date = date.fromisoformat(frontier)
 
     # Every completed day in the look-back, oldest first, that has not been mailed.
