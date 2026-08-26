@@ -129,8 +129,6 @@ async def _talabat_is_authenticated_app(page) -> bool:
 
 
 async def login_talabat(context) -> None:
-    from playwright.async_api import Error as PlaywrightError  # lazy  # noqa: F401
-
     if not settings.TALABAT_EMAIL or not settings.TALABAT_PASSWORD:
         raise LoginError("TALABAT_EMAIL / TALABAT_PASSWORD are not configured.")
     page = await context.new_page()

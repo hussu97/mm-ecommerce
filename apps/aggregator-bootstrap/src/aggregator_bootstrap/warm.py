@@ -6,9 +6,9 @@ happen first (a full bootstrap does the OTP login to establish the state; a warm
 assumes it exists and just re-runs the sensor by loading a page). Both end here.
 
 Keeta is the exception: it has no httpx sweep, so warming it also pulls its
-orders in-page and pushes them. That in-page pull is the one piece still to be
-ported from the standalone scraper's `channels/keeta` fetch (it needs the page's
-own signing), and is stubbed here with a clear error until it lands.
+orders in-page (its `mtgsig` signing lives in the page) and pushes the raw
+payloads to the `/keeta/orders` endpoint — see `keeta_pull.pull_keeta_orders_in_page`,
+which `warm_channel` routes Keeta to.
 """
 
 from __future__ import annotations
