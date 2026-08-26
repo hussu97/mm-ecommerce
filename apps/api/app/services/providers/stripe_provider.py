@@ -285,6 +285,62 @@ class StripeProvider(PaymentGatewayProvider):
             raw_status=getattr(session, "status", None),
         )
 
+    async def create_payment_intent(self, order: Order, *, idempotency_key: str):
+        """
+        A PaymentIntent for an in-page wallet payment (Apple Pay via Stripe.js).
+
+        Unlike `create_session`, which hands the customer to Stripe's hosted
+        page, this returns a `client_secret` the browser confirms itself — the
+        Payment Request / Apple Pay path. The money still lands the ordinary
+        way: the intent carries `order_number` in its metadata, so
+        `payment_intent.succeeded` reconciles it through the exact webhook path
+        every hosted-Checkout card payment already uses. Nothing downstream is
+        Apple-Pay-aware.
+
+        `payment_method_types=["card"]` on purpose: an Apple Pay token *is* a
+        card payment method to Stripe, so this is the same processor surface as
+        the hosted session and cannot pull in a redirect-based method the
+        in-page confirmation could not complete.
+
+        The idempotency key is the order, so a customer who dismisses the sheet
+        and taps again gets the *same* intent rather than a second one — one
+        order, one charge.
+        """
+        self._configure()
+
+        amount_minor = int(Decimal(str(order.total)) * 100)
+
+        try:
+            intent = stripe.PaymentIntent.create(
+                amount=amount_minor,
+                currency="aed",
+                payment_method_types=["card"],
+                description=f"Order {order.order_number}",
+                receipt_email=order.email or None,
+                metadata={
+                    "order_number": order.order_number,
+                    "order_id": str(order.id),
+                },
+                idempotency_key=idempotency_key,
+            )
+        except APIConnectionError as e:
+            logger.error("Stripe unreachable creating payment intent: %s", e)
+            raise GatewayUnavailableError(f"Stripe unreachable: {e}") from e
+        except StripeError as e:
+            status = getattr(e, "http_status", None)
+            if status in _UNAVAILABLE_STATUSES:
+                logger.error(
+                    "Stripe returned %s creating payment intent: %s", status, e
+                )
+                raise GatewayUnavailableError(f"Stripe error {status}: {e}") from e
+            logger.error("Stripe payment intent creation failed: %s", e)
+            raise BadRequestError(
+                "Payment could not be started: "
+                f"{getattr(e, 'user_message', None) or str(e)}"
+            )
+
+        return intent
+
     async def refund(
         self,
         *,

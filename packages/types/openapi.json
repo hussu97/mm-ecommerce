@@ -585,6 +585,60 @@
         "title": "AdminUserSummary",
         "type": "object"
       },
+      "ApplePayEligibilityResponse": {
+        "properties": {
+          "eligible": {
+            "title": "Eligible",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "eligible"
+        ],
+        "title": "ApplePayEligibilityResponse",
+        "type": "object"
+      },
+      "ApplePayIntentRequest": {
+        "properties": {
+          "order_number": {
+            "title": "Order Number",
+            "type": "string"
+          }
+        },
+        "required": [
+          "order_number"
+        ],
+        "title": "ApplePayIntentRequest",
+        "type": "object"
+      },
+      "ApplePayIntentResponse": {
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "string"
+          },
+          "client_secret": {
+            "title": "Client Secret",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "order_number": {
+            "title": "Order Number",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_secret",
+          "amount",
+          "currency",
+          "order_number"
+        ],
+        "title": "ApplePayIntentResponse",
+        "type": "object"
+      },
       "ApplyChargeRequest": {
         "properties": {
           "charge_id": {
@@ -42399,6 +42453,108 @@
         "summary": "Restore Item",
         "tags": [
           "Payment Methods"
+        ]
+      }
+    },
+    "/api/v1/payments/apple-pay/eligibility": {
+      "get": {
+        "description": "Whether the caller may be offered in-page Apple Pay on checkout.\n\nRestricted, server-side, to the small allowlist in `apple_pay_service` \u2014 a\nguest or any other account gets `eligible: false`, so the option can never\nrender for them however the client is coaxed. The optional `amount` is the\norder total the client is quoting, used only to route the gateway check;\nthe intent endpoint re-checks against the real order and is the actual\nguard on money.",
+        "operationId": "apple_pay_eligibility_api_v1_payments_apple_pay_eligibility_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "amount",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Amount"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplePayEligibilityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Apple Pay Eligibility",
+        "tags": [
+          "Payments"
+        ]
+      }
+    },
+    "/api/v1/payments/apple-pay/intent": {
+      "post": {
+        "description": "Mint a Stripe PaymentIntent so the browser can take an Apple Pay payment.\n\nAllowlisted and owner-only, and refused unless Stripe is the active card\ngateway (Ziina does not offer Apple Pay). The intent carries the order\nnumber in its metadata, so it settles through the same\n`payment_intent.succeeded` webhook every card payment already uses \u2014 this\nendpoint writes no order status of its own.",
+        "operationId": "create_apple_pay_intent_api_v1_payments_apple_pay_intent_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplePayIntentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplePayIntentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Create Apple Pay Intent",
+        "tags": [
+          "Payments"
         ]
       }
     },

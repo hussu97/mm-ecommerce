@@ -9,7 +9,7 @@ import {
 } from '@/lib/api';
 import { toPaymentMethod, toWireMethod, type PaymentMethod } from '@/lib/types';
 import { useAuth } from '@/lib/auth-context';
-import { accountEmailOf, ensureCheckoutAuth } from '@/lib/checkout-auth';
+import { accountEmailOf, ensureCheckoutAuth, isApplePayTestUser } from '@/lib/checkout-auth';
 import { Button } from '@/components/ui/Button';
 import { SpeedBadge } from '@/components/product/DeliveryEstimate';
 import { Input } from '@/components/ui/Input';
@@ -31,6 +31,7 @@ import { ChoiceRow, Section } from './components/Section';
 import { UnserviceableNotice } from './components/UnserviceableNotice';
 import { PromoCodeStep } from './components/PromoCodeStep';
 import { clearCheckoutSession, useCheckoutForm } from './hooks/useCheckoutForm';
+import { useApplePay } from './hooks/useApplePay';
 import { useOrderPreview } from './hooks/useOrderPreview';
 import { usePhoneVerification } from './hooks/usePhoneVerification';
 import { useRetryOrder } from './hooks/useRetryOrder';
@@ -204,6 +205,16 @@ function CheckoutContent() {
    */
   const [addressIntent, setAddressIntent] = useState<'select' | 'verifyPhone'>('select');
   const [showExtras, setShowExtras] = useState(false);
+  /**
+   * Whether the test-only Apple Pay option is the one chosen.
+   *
+   * Held apart from `form.paymentMethod` on purpose: Apple Pay is a *card*, so
+   * the order is still written as a card order and the checkout stays
+   * provider-agnostic everywhere the money is described. This only changes how
+   * the card is collected — an in-page sheet instead of the hosted page — so it
+   * is a view-model flag, not a payment method, and never reaches the wire.
+   */
+  const [applePaySelected, setApplePaySelected] = useState(false);
   const [pickupBranches, setPickupBranches] = useState<PickupBranch[]>([]);
   /**
    * The section the button just pointed at, lit for a moment.
@@ -502,6 +513,21 @@ function CheckoutContent() {
     ? Number(retryOrder.low_order_fee ?? 0)
     : (preview?.low_order_fee ?? 0);
 
+  // The test-only in-page Apple Pay path. `enabled` is the account gate — false
+  // for a guest and for every non-allowlisted customer, so the hook does no
+  // Stripe work and offers nothing for them. `available` narrows that further
+  // to a device and a gateway that can actually take it; the option below and
+  // the button lower down both hang off it, so on any browser that cannot do
+  // Apple Pay neither ever renders. A returned unpaid order replays its own
+  // gateway, so Apple Pay is not offered on that path.
+  const applePayGated = isApplePayTestUser(user) && !retryOrder;
+  const applePay = useApplePay({ enabled: applePayGated, amount: total });
+  const applePayOffered = applePayGated && applePay.available;
+  // Keep the selection legal: if Apple Pay stops being offered, fall back to
+  // the card/cash choice the form already holds.
+  const isApplePay = applePaySelected && applePayOffered;
+  const selectedPayment: 'card' | 'cod' | 'apple_pay' = isApplePay ? 'apple_pay' : paymentMethod;
+
   /**
    * The three states worth a goal of their own, each fired once per checkout.
    *
@@ -594,6 +620,95 @@ function CheckoutContent() {
       locationLng: d.longitude,
     });
     ['address', 'firstName', 'lastName', 'phone'].forEach(clearError);
+  };
+
+  /**
+   * The order the form describes, in the shape `POST /orders` takes.
+   *
+   * Extracted so the place-order path and the in-page Apple Pay path build the
+   * *same* order rather than two literals that could drift — Apple Pay is a
+   * card, so `payment_method` is the same `card`→`stripe` wire word either way.
+   */
+  const buildOrderCreate = () => ({
+    // Blank means "no email" — the API falls back to the session's own
+    // address rather than refusing the order.
+    email: accountEmail ?? (form.email.trim() ? form.email.trim().toLowerCase() : undefined),
+    delivery_method: form.deliveryMethod,
+    shipping_address: isDelivery
+      ? {
+          label: form.addressLabel || DEFAULT_ADDRESS_LABEL,
+          first_name: form.firstName,
+          last_name: form.lastName,
+          phone: form.phone,
+          address_line_1: form.addressLine1,
+          address_line_2: form.addressLine2 || undefined,
+          unit_number: form.unitNumber || undefined,
+          // Non-null for a delivery: `checkout-gate` returns `address`
+          // and the button stays unpressable until a pin is dropped.
+          latitude: form.locationLat as number,
+          longitude: form.locationLng as number,
+        }
+      : undefined,
+    pickup_branch_id: isDelivery ? undefined : pickupBranchId || undefined,
+    // Stamped on the order, and every email about it is written in it.
+    locale,
+    promo_code: form.promoDiscount > 0 ? form.promoCode : undefined,
+    // The legacy word, for one release. See `toWireMethod`.
+    payment_method: toWireMethod(paymentMethod),
+    notes: form.notes || undefined,
+    session_id: getSessionId() ?? undefined,
+  });
+
+  /**
+   * Write the order the form describes and clean up after it.
+   *
+   * The half of `handleSubmit` the Apple Pay path also needs — everything up to
+   * an order existing, and nothing about the gateway. Throws on failure so the
+   * caller decides what a failure means (a toast here, a closed sheet there).
+   */
+  const createOrderFromForm = async (): Promise<import('@/lib/types').Order> => {
+    if (!user) await ensureCheckoutAuth(user);
+    if (!cart || cart.items.length === 0) {
+      analytics.checkoutCartEmpty();
+      throw new Error(t('checkout.cart_empty'));
+    }
+    const order = await ordersApi.create(buildOrderCreate());
+    clearCheckoutSession();
+    await refreshCart();
+    return order;
+  };
+
+  /**
+   * Take the payment in-page with Apple Pay, then land on the confirmation.
+   *
+   * Its own path rather than a branch of `handleSubmit`, because the Apple Pay
+   * sheet must be opened synchronously from the press to count as a user
+   * gesture — there is no room to create the order first. So `pay()` shows the
+   * sheet now and writes the order inside its authorised callback. Only reached
+   * when the gate is already `ready`, so the form is complete and
+   * `createOrderFromForm` should not be refused by our own validation.
+   */
+  const handleApplePay = () => {
+    setSubmitting(true);
+    setPromoRefusal(null);
+    analytics.checkoutStepComplete({ step: 1, delivery_method: form.deliveryMethod });
+    applePay.pay({
+      total,
+      createOrder: createOrderFromForm,
+      onSuccess: (order) => {
+        const orderEmail =
+          order.email ?? accountEmail ?? form.email.trim().toLowerCase();
+        window.location.assign(
+          `/${locale}/checkout/confirmation?order_number=${order.order_number}&email=${encodeURIComponent(orderEmail)}`,
+        );
+      },
+      onError: (message) => {
+        setSubmitting(false);
+        // Empty message = the customer dismissed the sheet; nothing was refused,
+        // so nothing is said.
+        if (message) addToast(message, 'error');
+      },
+    });
   };
 
   /**
@@ -726,38 +841,7 @@ function CheckoutContent() {
           return;
         }
 
-        const order = await ordersApi.create({
-          // Blank means "no email" — the API falls back to the session's own
-          // address rather than refusing the order.
-          email: accountEmail ?? (form.email.trim() ? form.email.trim().toLowerCase() : undefined),
-          delivery_method: form.deliveryMethod,
-          shipping_address: isDelivery
-            ? {
-                label: form.addressLabel || DEFAULT_ADDRESS_LABEL,
-                first_name: form.firstName,
-                last_name: form.lastName,
-                phone: form.phone,
-                address_line_1: form.addressLine1,
-                address_line_2: form.addressLine2 || undefined,
-                unit_number: form.unitNumber || undefined,
-                // Non-null for a delivery: `checkout-gate` returns `address`
-                // and the button stays unpressable until a pin is dropped.
-                latitude: form.locationLat as number,
-                longitude: form.locationLng as number,
-              }
-            : undefined,
-          pickup_branch_id: isDelivery ? undefined : pickupBranchId || undefined,
-          // Stamped on the order, and every email about it is written in it.
-          locale,
-          promo_code: form.promoDiscount > 0 ? form.promoCode : undefined,
-          // The legacy word, for one release. The previous API validates this
-          // against an enum that has no `card` in it, and the web ships to
-          // Vercel minutes before the API reaches the VM — so sending `card`
-          // here 422s every order created in that window. See `toWireMethod`.
-          payment_method: toWireMethod(paymentMethod),
-          notes: form.notes || undefined,
-          session_id: getSessionId() ?? undefined,
-        });
+        const order = await ordersApi.create(buildOrderCreate());
         createdOrder = order;
         orderNumber = order.order_number;
 
@@ -978,6 +1062,42 @@ function CheckoutContent() {
       {gateLabel}
     </Button>
   );
+
+  /**
+   * The Apple-styled button that replaces "Place Order" when Apple Pay is the
+   * chosen method and everything else is done.
+   *
+   * Only when the gate is `ready` (or already `submitting` this same payment):
+   * before that the ordinary button is the right one, because it walks the
+   * customer down the page to whatever is still missing — an Apple Pay sheet
+   * over an unfinished form would open onto an order that cannot be written.
+   */
+  const showApplePayButton = isApplePay && (gate.kind === 'ready' || gate.kind === 'submitting');
+  const applePayButton = (
+    <button
+      type="button"
+      onClick={handleApplePay}
+      disabled={submitting}
+      aria-label={withFallback(t, 'checkout.pay_with_apple_pay', 'Pay with Apple Pay')}
+      className="w-full h-12 flex items-center justify-center gap-1.5 rounded-md bg-black text-white font-medium transition-opacity hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed"
+    >
+      {submitting ? (
+        <Spinner size="sm" />
+      ) : (
+        <>
+          {/* The Apple logo, drawn rather than an icon-font glyph so it renders
+              the same on every device the sheet will open on. */}
+          <svg viewBox="0 0 24 24" aria-hidden="true" className="w-5 h-5 fill-current" focusable="false">
+            <path d="M17.05 12.54c-.02-2.02 1.65-2.99 1.73-3.04-.94-1.38-2.41-1.57-2.93-1.59-1.25-.13-2.44.73-3.07.73-.63 0-1.61-.71-2.65-.69-1.36.02-2.62.79-3.32 2.01-1.42 2.46-.36 6.1 1.02 8.1.67.98 1.47 2.08 2.52 2.04 1.01-.04 1.39-.65 2.61-.65 1.22 0 1.56.65 2.63.63 1.09-.02 1.78-1 2.45-1.98.77-1.13 1.09-2.23 1.11-2.29-.02-.01-2.13-.82-2.15-3.25zM15.03 6.6c.56-.68.94-1.62.83-2.56-.81.03-1.79.54-2.37 1.21-.52.6-.97 1.56-.85 2.48.9.07 1.83-.46 2.39-1.13z"/>
+          </svg>
+          <span className="text-base">{withFallback(t, 'checkout.apple_pay', 'Pay')}</span>
+        </>
+      )}
+    </button>
+  );
+
+  /** Whichever button this checkout is currently offering. */
+  const actionButton = showApplePayButton ? applePayButton : placeOrderButton;
 
   /** The momentary "it's this one" ring — never the red of a rejected value. */
   const highlightRing = (field: string) =>
@@ -1252,12 +1372,14 @@ function CheckoutContent() {
         <div className="space-y-2">
           {paymentOptions.map((id) => {
             const isCod = id === 'cod';
-            const only = paymentOptions.length === 1;
+            // Apple Pay, when offered, is a second card-family option, so the
+            // card row stops being the sole answer and becomes a real choice.
+            const only = paymentOptions.length === 1 && !applePayOffered;
             const row = (
               <>
                 <Icon
                   name={isCod ? 'payments' : 'credit_card'}
-                  className={`text-xl ${paymentMethod === id || only ? 'text-primary' : 'text-gray-400'}`}
+                  className={`text-xl ${selectedPayment === id || only ? 'text-primary' : 'text-gray-400'}`}
                 />
                 <span className="flex-1 min-w-0">
                   <span className="block font-body text-sm text-gray-800">
@@ -1291,23 +1413,66 @@ function CheckoutContent() {
               <button
                 key={id}
                 type="button"
-                aria-pressed={paymentMethod === id}
+                aria-pressed={selectedPayment === id}
                 onClick={() => {
                   analytics.paymentMethodSelected({
                     method: id,
                     delivery_method: form.deliveryMethod,
                     total,
                   });
+                  // Choosing card or cash steps off Apple Pay; the underlying
+                  // card/cash method is what the order is written with.
+                  setApplePaySelected(false);
                   onChange({ paymentMethod: id });
                 }}
                 className={`w-full flex items-center gap-3 px-3.5 py-3 border rounded-sm text-start transition-colors ${
-                  paymentMethod === id ? 'border-primary bg-primary/5' : 'border-gray-200 hover:border-primary/40'
+                  selectedPayment === id ? 'border-primary bg-primary/5' : 'border-gray-200 hover:border-primary/40'
                 }`}
               >
                 {row}
               </button>
             );
           })}
+
+          {/* Apple Pay — the test-only extra option. Rendered only when the
+              account is allowlisted, Stripe is the active gateway, and the
+              device can actually do Apple Pay (`applePayOffered`). It is a
+              card underneath, so the order is written no differently; what it
+              changes is that the pay button below becomes the in-page sheet. */}
+          {applePayOffered && (
+            <button
+              type="button"
+              aria-pressed={selectedPayment === 'apple_pay'}
+              onClick={() => {
+                analytics.paymentMethodSelected({
+                  method: 'apple_pay',
+                  delivery_method: form.deliveryMethod,
+                  total,
+                });
+                setApplePaySelected(true);
+              }}
+              className={`w-full flex items-center gap-3 px-3.5 py-3 border rounded-sm text-start transition-colors ${
+                selectedPayment === 'apple_pay' ? 'border-primary bg-primary/5' : 'border-gray-200 hover:border-primary/40'
+              }`}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+                focusable="false"
+                className={`w-5 h-5 shrink-0 ${selectedPayment === 'apple_pay' ? 'fill-primary' : 'fill-gray-400'}`}
+              >
+                <path d="M17.05 12.54c-.02-2.02 1.65-2.99 1.73-3.04-.94-1.38-2.41-1.57-2.93-1.59-1.25-.13-2.44.73-3.07.73-.63 0-1.61-.71-2.65-.69-1.36.02-2.62.79-3.32 2.01-1.42 2.46-.36 6.1 1.02 8.1.67.98 1.47 2.08 2.52 2.04 1.01-.04 1.39-.65 2.61-.65 1.22 0 1.56.65 2.63.63 1.09-.02 1.78-1 2.45-1.98.77-1.13 1.09-2.23 1.11-2.29-.02-.01-2.13-.82-2.15-3.25zM15.03 6.6c.56-.68.94-1.62.83-2.56-.81.03-1.79.54-2.37 1.21-.52.6-.97 1.56-.85 2.48.9.07 1.83-.46 2.39-1.13z" />
+              </svg>
+              <span className="flex-1 min-w-0">
+                <span className="block font-body text-sm text-gray-800">
+                  {withFallback(t, 'checkout.apple_pay_label', 'Apple Pay')}
+                </span>
+                <span className="block font-body text-xs text-gray-400 mt-0.5">
+                  {withFallback(t, 'checkout.apple_pay_sublabel', 'Pay in one tap with Apple Pay')}
+                </span>
+              </span>
+            </button>
+          )}
         </div>
       </Section>
 
@@ -1380,7 +1545,7 @@ function CheckoutContent() {
 
       {/* 6 — One button, and on a phone it never leaves the screen. */}
       <div className="hidden sm:block pt-2">
-        {placeOrderButton}
+        {actionButton}
         <p className="mt-3 flex items-center justify-center gap-1.5 text-gray-400">
           <Icon name="lock" className="text-sm" />
           <span className="font-body text-xs">{t('checkout.security_note')}</span>
@@ -1397,7 +1562,7 @@ function CheckoutContent() {
           no second viewport for it to disagree with. `-mx-4` cancels the page
           gutter so it still spans edge to edge. */}
       <div className="sm:hidden sticky bottom-0 z-30 -mx-4 mt-4 bg-white/95 backdrop-blur border-t border-gray-100 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-        {placeOrderButton}
+        {actionButton}
       </div>
 
       <AddressModal

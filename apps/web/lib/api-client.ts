@@ -16,7 +16,7 @@ import { readBranch } from '@/lib/location/branch-cookie';
 import 'client-only';
 
 import { analytics, normalisePath } from './analytics';
-import { AdvertisedPromo, Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, PaymentMethod, toWireMethod, DeliveryRates, DeliveryQuote, DeliveryArea, OrderPreview, PickupBranch, TrackResult } from './types';
+import { AdvertisedPromo, Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, PaymentMethod, toWireMethod, DeliveryRates, DeliveryQuote, DeliveryArea, OrderPreview, PickupBranch, TrackResult, ApplePayEligibility, ApplePayIntent } from './types';
 import { API_BASE } from './api-base';
 
 export { API_BASE };
@@ -491,6 +491,29 @@ export const paymentsApi = {
       order_number: orderNumber,
       method,
       provider: toWireMethod(method),
+    }),
+
+  /**
+   * Whether the signed-in account may be offered in-page Apple Pay.
+   *
+   * Server-gated to a test allowlist and to Stripe being the active card
+   * gateway — a guest or any other account gets `{ eligible: false }`, so the
+   * option cannot render for them however the client is coaxed. `amount` is the
+   * total being quoted, used only to route the gateway check.
+   */
+  applePayEligibility: (amount?: number) =>
+    api.get<ApplePayEligibility>(
+      `/payments/apple-pay/eligibility${amount && amount > 0 ? `?amount=${amount}` : ''}`,
+    ),
+
+  /**
+   * Mint a Stripe PaymentIntent so the browser can take an Apple Pay payment
+   * for an order in-page. The intent settles through the same webhook every
+   * card payment already uses; this only returns the secret to confirm against.
+   */
+  createApplePayIntent: (orderNumber: string) =>
+    api.post<ApplePayIntent>('/payments/apple-pay/intent', {
+      order_number: orderNumber,
     }),
 };
 
