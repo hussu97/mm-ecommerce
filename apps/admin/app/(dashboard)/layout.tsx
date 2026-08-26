@@ -8,9 +8,6 @@ import { loginPathFor } from '@/lib/auth-redirect';
 import { activeNavHref, NAV } from '@/lib/nav';
 import { cn } from '@/lib/utils';
 
-const AGGREGATOR_DASHBOARD_URL =
-  process.env.NEXT_PUBLIC_AGGREGATOR_DASHBOARD_URL ?? 'https://aggregator.meltingmomentscakes.com';
-
 interface SidebarContentProps {
   collapsed: boolean;
   pathname: string;
@@ -193,16 +190,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </button>
 
           <div className="flex-1" />
-
-          <a
-            href={AGGREGATOR_DASHBOARD_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="hidden sm:flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-body uppercase tracking-widest text-gray-500 transition-colors hover:border-primary hover:text-primary"
-          >
-            <span className="material-icons text-[16px]">open_in_new</span>
-            Aggregator
-          </a>
 
           {/* `min-w-0` + `truncate`: an admin's address can be sixty
               characters, and without both of these it pushed the hamburger
