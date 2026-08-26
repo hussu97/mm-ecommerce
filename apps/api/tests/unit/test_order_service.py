@@ -706,8 +706,26 @@ class TestUpdateStatus:
         with pytest.raises(BadRequestError):
             await update_status(db, order.order_number, OrderStatusEnum.CONFIRMED)
 
-    async def test_packed_to_cancelled_raises(self):
+    async def test_packed_website_order_can_be_cancelled(self):
+        # Policy change: the counter/console may cancel a *website* order that is
+        # already `packed` (ready) — a pickup box on a shelf, or a delivery order
+        # whose booked courier the cancellation then stands down and whose card
+        # it refunds. `update_status` widens the start state for `source==online`
+        # via `ONLINE_CANCELLABLE_FROM`. The shared map still keeps `packed →
+        # cancelled` shut for everyone who does not opt in through that hatch.
+        order = _order_mock(status=OrderStatusEnum.PACKED)  # source defaults to online
+        updated = _order_mock(status=OrderStatusEnum.CANCELLED)
+        db = _db_for_update(order, updated)
+
+        result = await update_status(db, order.order_number, OrderStatusEnum.CANCELLED)
+
+        assert result.status == OrderStatusEnum.CANCELLED
+
+    async def test_packed_cashier_check_still_cannot_be_cancelled(self):
+        # A counter sale is not widened — it is voided through the void flow, not
+        # cancelled — so `packed → cancelled` stays shut for it.
         order = _order_mock(status=OrderStatusEnum.PACKED)
+        order.source = "cashier"
         db = _db_for_update(order)
 
         with pytest.raises(BadRequestError):

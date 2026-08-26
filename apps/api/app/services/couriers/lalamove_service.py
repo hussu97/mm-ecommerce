@@ -360,10 +360,23 @@ async def record_cart_estimate(
     longitude: float,
     estimate: Estimate | None,
     error: str | None,
+    provider: str | None = None,
 ) -> None:
-    """Park the estimate on the basket. Written even when it failed."""
+    """Park the estimate on the basket. Written even when it failed.
+
+    `provider` is the courier this quote was actually costed against, which for
+    a non-pilot Slider zone is the fallback the pilot gate resolved to rather
+    than the zone's raw `slider` — the caller passes it so the provider parked
+    here names the same courier the estimate belongs to. Absent (the callers
+    that do not gate), it falls back to the zone's own provider, which is what
+    this always used.
+    """
     cart.delivery_quote_provider = (
-        zone.fulfilment_provider if zone else FulfilmentProviderEnum.LALAMOVE.value
+        provider
+        if provider is not None
+        else (
+            zone.fulfilment_provider if zone else FulfilmentProviderEnum.LALAMOVE.value
+        )
     )
     cart.delivery_quote_zone = zone.name if zone else None
     cart.delivery_quote_fee = fee
@@ -383,6 +396,7 @@ async def record_order_delivery(
     *,
     zone: Zone | None,
     cart: Cart | None,
+    provider: str | None = None,
 ) -> OrderDelivery:
     """
     Open the delivery record as the order is written.
@@ -395,11 +409,28 @@ async def record_order_delivery(
     now carried by Lalamove, so "outside the map" describes a gap in the map
     rather than a different way of delivering, and the fee it was priced at came
     from the courier in the first place.
+
+    `provider` is the courier this order will actually dispatch to, and the
+    caller resolves it through the Slider pilot gate before handing it down —
+    so a non-pilot order in a Slider zone stamps `lalamove` (or `noon_send` in
+    Sharjah) here, the same verdict `carrier_for` reaches at dispatch, and the
+    panel shows the real carrier rather than `slider` with a parked 403 for a
+    courier it was never going to reach. Absent, it falls back to the zone's own
+    provider, which keeps this the identity for the pilot account and for every
+    non-Slider zone. `zone_name` and `polygon_id` still point at the **real**
+    zone whatever the provider resolves to, because batching reaches this zone's
+    own schedule through them.
     """
     delivery = OrderDelivery(
         order_id=order.id,
         provider=(
-            zone.fulfilment_provider if zone else FulfilmentProviderEnum.LALAMOVE.value
+            provider
+            if provider is not None
+            else (
+                zone.fulfilment_provider
+                if zone
+                else FulfilmentProviderEnum.LALAMOVE.value
+            )
         ),
         zone_name=zone.name if zone else None,
         # The row, not just the name: batching needs to reach this zone's

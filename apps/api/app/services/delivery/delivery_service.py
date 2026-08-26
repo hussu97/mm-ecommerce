@@ -206,6 +206,8 @@ async def price(
     longitude: Decimal | float | None = None,
     address: str | None = None,
     settings: DeliverySettings | None = None,
+    user_id: uuid.UUID | None = None,
+    email: str | None = None,
 ) -> DeliveryPrice:
     """
     Price delivery to one pin. The single place that decision is made.
@@ -236,6 +238,13 @@ async def price(
     far ones. The test now happens once the pin has resolved to a zone, against
     that zone's own number, falling back to the national one where a zone does
     not set its own.
+
+    `user_id` and `email` are threaded down to the courier estimate for the
+    Slider pilot gate, and for that alone: a non-pilot Slider zone is quoted
+    against the courier that will actually carry it rather than against Slider's
+    dead fare endpoint. They change nothing about the fee itself — a fixed-fee
+    zone charges its own row whoever asks — only which courier is asked for the
+    margin estimate. Most callers pass neither and get the ordinary answer.
     """
     if settings is None:
         settings = await get_settings(db)
@@ -297,6 +306,10 @@ async def price(
         # emirate the drop is in and a pin does not carry one. Every zone name
         # begins with its emirate by construction.
         zone.name if zone else None,
+        # Who is asking, so the Slider pilot gate can quote a non-pilot Slider
+        # zone against its fallback courier instead of Slider itself.
+        user_id=user_id,
+        email=email,
     )
 
     eligible = zone is not None and zone.free_delivery_eligible
@@ -414,6 +427,10 @@ async def calculate_fee(
         longitude=longitude,
         address=address,
         settings=settings,
+        # The same identity the waiver below reads, so the courier the fee is
+        # costed against is the one the pilot gate would actually book.
+        user_id=user_id,
+        email=email,
     )
     # After `price`, not before: a pilot account still may not order somewhere we
     # cannot deliver to. Free is a discount, not an exemption from geography.
@@ -505,6 +522,10 @@ async def quote_priced(
         longitude=longitude,
         address=address,
         settings=settings,
+        # So the courier estimate parked on the basket is the one that would
+        # actually carry this customer under the Slider pilot gate.
+        user_id=user_id,
+        email=email,
     )
 
     # A pilot account pays nothing anywhere it can be delivered to. Applied here
@@ -522,10 +543,21 @@ async def quote_priced(
         and longitude is not None
         and (priced.estimate is not None or priced.error is not None)
     ):
+        # The courier this customer actually resolves to, not the zone's raw
+        # provider: for a non-pilot Slider zone the estimate above was quoted
+        # against the fallback, so the provider parked beside it on the basket
+        # has to name the same courier or the two disagree.
+        effective, _ = courier_service.effective_provider(
+            priced.zone.fulfilment_provider if priced.zone else None,
+            priced.zone.name if priced.zone else None,
+            user_id,
+            email,
+        )
         await lalamove_service.record_cart_estimate(
             db,
             cart,
             zone=priced.zone,
+            provider=effective,
             # The fee actually charged, free delivery included, because the
             # comparison that matters is cost against revenue. An unserviceable
             # pin charges nothing because it sells nothing.

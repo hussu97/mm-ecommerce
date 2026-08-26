@@ -240,6 +240,26 @@ AGGREGATOR_CANCELLABLE_FROM: frozenset[OrderStatusEnum] = frozenset(
 )
 
 
+#: Source states a *website* order may be cancelled from, beyond what the map
+#: allows. A website order is already naturally cancellable from `created`,
+#: `confirmed` and `arrived_at_pos` through `VALID_TRANSITIONS`; this hatch adds
+#: the one the map deliberately closes — `packed` (the register calls it
+#: "ready"). Cancelling a packed website order from the counter/console is a real
+#: thing the shop does: a packed *pickup* order is just a box on a shelf, and a
+#: packed *delivery* order cancels its booked MM courier and refunds the card —
+#: both consequences already fire inside `transition(cancelled)`.
+#:
+#: `out_for_delivery` is deliberately **not** here: a driver is already carrying
+#: it, so cancelling then is the admin's call on the order screen, not a counter
+#: button. And, like `AGGREGATOR_CANCELLABLE_FROM`, this is kept out of
+#: `VALID_TRANSITIONS` on purpose — that map is read by the courier webhooks, the
+#: register and the checkout, where a packed order must stay packed. It reaches
+#: the resolver only through `extra_from`, and only for `source == online`.
+ONLINE_CANCELLABLE_FROM: frozenset[OrderStatusEnum] = frozenset(
+    {OrderStatusEnum.PACKED}
+)
+
+
 def can_transition(current: OrderStatusEnum, new: OrderStatusEnum) -> bool:
     """Whether the map allows moving from `current` to `new`."""
     return new in VALID_TRANSITIONS.get(current, set())

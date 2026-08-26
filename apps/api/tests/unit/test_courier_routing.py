@@ -24,13 +24,15 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app.core.config import settings
 from app.models.order import OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
-from app.services.couriers import courier_service
+from app.services.couriers import courier_service, lalamove_service
+from app.services.delivery.delivery_zone_service import Zone
 
 
 def _order(**overrides):
@@ -502,3 +504,211 @@ async def test_a_lalamove_zone_is_never_offered_to_slider(slider_ready, slider_s
         _Db(_delivery("lalamove")), _order(email=TRIAL_EMAIL)
     )
     assert slider_spies == ["lalamove"]
+
+
+# ── the gate as a primitive ───────────────────────────────────────────────────
+#
+# `carrier_for`, the fare quote and the order-creation stamp are three callers of
+# one decision that must not disagree — a quote against Slider for an account the
+# dispatcher hands to Lalamove is a fare nobody is booked at. The decision itself
+# is `effective_provider`, expressed in strings so all three can reach it. These
+# pin it directly.
+
+
+def test_effective_provider_hands_a_guest_a_slider_zone_to_lalamove(slider_ready):
+    provider, reason = courier_service.effective_provider(
+        "slider", "Ajman City", None, None
+    )
+    assert provider == "lalamove"
+    assert reason  # and it says why it is not the zone's own
+
+
+def test_effective_provider_hands_a_signed_in_stranger_to_lalamove(slider_ready):
+    provider, reason = courier_service.effective_provider(
+        "slider", "Ajman City", uuid.uuid4(), "someone@else.com"
+    )
+    assert provider == "lalamove"
+    assert reason
+
+
+def test_effective_provider_keeps_a_sharjah_slider_zone_on_noon_send(slider_ready):
+    """`Sharjah Core` was carved out of noon Send's ground, so its fallback is
+    noon Send, not Lalamove — decided off the zone name for a guest with no
+    address at all."""
+    provider, _ = courier_service.effective_provider(
+        "slider", "Sharjah Core", None, None
+    )
+    assert provider == "noon_send"
+
+
+def test_effective_provider_gives_the_pilot_account_slider(slider_ready):
+    provider, reason = courier_service.effective_provider(
+        "slider", "Ajman City", uuid.uuid4(), TRIAL_EMAIL
+    )
+    assert provider == "slider"
+    assert reason is None
+
+
+@pytest.mark.parametrize("zone_provider", ["lalamove", "noon_send", "third_party"])
+def test_effective_provider_leaves_a_non_slider_zone_alone(slider_ready, zone_provider):
+    provider, reason = courier_service.effective_provider(
+        zone_provider, "Dubai Near", uuid.uuid4(), "anyone@example.com"
+    )
+    assert provider == zone_provider
+    assert reason is None
+
+
+# ── the gate at the fare quote ─────────────────────────────────────────────────
+#
+# The same gate now runs before a fare is quoted, so a non-pilot Slider zone is
+# priced against the courier that will carry it — never against Slider's dead
+# sandbox, whose 403 used to be parked on a real order's cart.
+
+
+@pytest.fixture
+def estimate_spies(monkeypatch, slider_ready):
+    """Records which courier was asked to price, without reaching any API."""
+    calls: list[str] = []
+
+    def spy(name):
+        async def _estimate(*_args, **_kwargs):
+            calls.append(name)
+            return None, None
+
+        return _estimate
+
+    for service in (
+        courier_service.slider_service,
+        courier_service.lalamove_service,
+        courier_service.noon_send_service,
+    ):
+        monkeypatch.setattr(service, "is_enabled", lambda: True)
+    monkeypatch.setattr(
+        courier_service.slider_service, "estimate_for_point", spy("slider")
+    )
+    monkeypatch.setattr(
+        courier_service.lalamove_service, "estimate_for_point", spy("lalamove")
+    )
+    monkeypatch.setattr(
+        courier_service.noon_send_service, "estimate_for_point", spy("noon_send")
+    )
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_a_non_pilot_slider_quote_prices_against_lalamove(estimate_spies):
+    await courier_service.estimate_for_point(
+        AsyncMock(),
+        "slider",
+        25.40,
+        55.44,
+        zone_name="Ajman City",
+        user_id=uuid.uuid4(),
+        email="someone@else.com",
+    )
+    assert estimate_spies == ["lalamove"]
+
+
+@pytest.mark.asyncio
+async def test_the_pilot_account_quote_prices_against_slider(estimate_spies):
+    await courier_service.estimate_for_point(
+        AsyncMock(),
+        "slider",
+        25.40,
+        55.44,
+        zone_name="Ajman City",
+        user_id=uuid.uuid4(),
+        email=TRIAL_EMAIL,
+    )
+    assert estimate_spies == ["slider"]
+
+
+# ── the gate at order creation ─────────────────────────────────────────────────
+#
+# The row an order opens carries the courier it will actually dispatch to,
+# resolved through the same gate and handed to `record_order_delivery`. The zone
+# still travels whole so batching keeps hold of its schedule.
+
+
+def _zone(name="Ajman City", provider="slider"):
+    return Zone(
+        id=uuid.uuid4(),
+        name=name,
+        delivery_fee=Decimal("10.00"),
+        fulfilment_provider=provider,
+        min_lat=25.3,
+        max_lat=25.5,
+        min_lng=55.4,
+        max_lng=55.6,
+        rings=(),
+        free_delivery_eligible=True,
+        free_delivery_threshold=Decimal("75.00"),
+    )
+
+
+class _RecordDb:
+    """Just enough session to accept the row `record_order_delivery` writes."""
+
+    def add(self, _row):
+        return None
+
+    async def flush(self):
+        return None
+
+
+def _quoted_cart(error=None):
+    """A basket whose quote succeeded — a cost parked, no error — which is what a
+    gated Slider zone's Lalamove quote leaves behind."""
+    return SimpleNamespace(
+        delivery_quote_cost=Decimal("31.00"),
+        delivery_quote_currency="AED",
+        delivery_quote_distance_m=9000,
+        delivery_quote_reference="q_1",
+        delivery_quote_at=None,
+        delivery_quote_error=error,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_gated_order_opens_its_row_on_the_fallback_courier():
+    """A guest in a Slider zone stamps the courier that will carry it, and no
+    Slider error is parked because the quote never reached Slider."""
+    zone = _zone()
+    delivery = await lalamove_service.record_order_delivery(
+        _RecordDb(),
+        SimpleNamespace(id=uuid.uuid4(), delivery_fee=Decimal("10.00")),
+        zone=zone,
+        cart=_quoted_cart(),
+        provider="lalamove",
+    )
+    assert delivery.provider == "lalamove"
+    # The real zone travels whole: batching reaches this zone's own schedule
+    # through the name and the id, whatever courier the provider resolved to.
+    assert delivery.zone_name == "Ajman City"
+    assert delivery.polygon_id == zone.id
+    assert delivery.last_error is None
+
+
+@pytest.mark.asyncio
+async def test_the_pilot_account_opens_its_row_on_slider():
+    delivery = await lalamove_service.record_order_delivery(
+        _RecordDb(),
+        SimpleNamespace(id=uuid.uuid4(), delivery_fee=Decimal("0.00")),
+        zone=_zone(),
+        cart=_quoted_cart(),
+        provider="slider",
+    )
+    assert delivery.provider == "slider"
+
+
+@pytest.mark.asyncio
+async def test_an_unstamped_row_falls_back_to_the_zone_provider():
+    """No provider passed is the identity for the pilot account and for every
+    non-Slider zone: the row takes the zone's own courier."""
+    delivery = await lalamove_service.record_order_delivery(
+        _RecordDb(),
+        SimpleNamespace(id=uuid.uuid4(), delivery_fee=Decimal("10.00")),
+        zone=_zone(provider="lalamove", name="Dubai Near"),
+        cart=_quoted_cart(),
+    )
+    assert delivery.provider == "lalamove"

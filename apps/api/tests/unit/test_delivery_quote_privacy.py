@@ -368,6 +368,50 @@ async def test_a_noon_send_zone_is_costed_on_its_own_rate_card(cart, monkeypatch
     assert cart.delivery_quote_reference is None
 
 
+async def test_a_non_pilot_slider_zone_parks_its_fallback_courier(cart, monkeypatch):
+    """
+    The provider filed against the basket is the one the quote was costed
+    against, not the zone's raw `slider`. A non-pilot customer in a Slider zone
+    is quoted — and later dispatched — on the fallback, so parking `slider` here
+    would disagree with the courier the estimate actually belongs to and would
+    reintroduce the Slider name onto an order that never touches Slider.
+    """
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "SLIDER_API_KEY", "sk_test")
+    monkeypatch.setattr(app_settings, "SLIDER_TRIAL_EMAILS", "pilot@example.com")
+
+    ajman = Zone(
+        id=uuid.uuid4(),
+        name="Ajman City",
+        delivery_fee=Decimal("10.00"),
+        fulfilment_provider="slider",
+        min_lat=25.3,
+        max_lat=25.5,
+        min_lng=55.4,
+        max_lng=55.6,
+        rings=(),
+        free_delivery_eligible=True,
+        free_delivery_threshold=Decimal("75.00"),
+    )
+
+    settings_p, zone_p, est_p, windows_p = _patches(ESTIMATE, None, ajman)
+    with settings_p, zone_p, est_p, windows_p:
+        await delivery_service.quote(
+            AsyncMock(),
+            Decimal("100.00"),
+            latitude=25.4052,
+            longitude=55.4384,
+            cart=cart,
+            address="Ajman",
+            user_id=uuid.uuid4(),
+            email="someone@else.com",
+        )
+
+    assert cart.delivery_quote_provider == "lalamove"
+    assert cart.delivery_quote_zone == "Ajman City"
+
+
 async def test_a_courier_outage_cannot_stop_someone_checking_out(cart):
     """
     With no estimate and no error — the shape when Lalamove is switched off

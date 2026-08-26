@@ -50,7 +50,7 @@ from app.schemas.pos_order import (
 )
 from app.services import crud_service, email_service, option_snapshot
 from app.services.delivery import address_format, driver_proximity
-from app.services.orders import order_service
+from app.services.orders import order_lifecycle, order_service
 from app.services.pos import pos_order_service
 
 logger = logging.getLogger(__name__)
@@ -838,12 +838,21 @@ async def mark_collected(
     marking the whole order delivered; the shop that actually handed the box
     over had no button. This is that button.
 
+    It does **two** things: it closes the register check (so the admin "Counter"
+    column reads CLOSED, not ACTIVE) *and* it records the collection as
+    `delivered`. The two used to be separate — collecting only advanced the
+    delivery status, leaving the check open at `pos_status=active` with a null
+    `closed_at` for ever — which is the bug this heals: closing runs first and
+    independently of the delivered check, so a pickup order already `delivered`
+    but never closed on the till self-heals the next time this is pressed.
+
     `delivered` is the stored status; the storefront and the receipt render it as
     "Collected" because the order is `pickup`. A delivery order is rejected — its
     hand-over is `handed-over` (→ `out_for_delivery`), driven by the courier.
 
-    Deliberately thin, like `mark_packed`/`mark_handed_over`: `order_service`
-    owns the transition rules and side effects, `email_service` owns which email
+    Deliberately thin, like `mark_packed`/`mark_handed_over`: `pos_order_service`
+    owns closing the check (fees, stock, table release), `order_service` owns the
+    delivery transition rules and side effects, `email_service` owns which email
     the status earns. Idempotent, because two people will press it.
     """
     order = await _load(db, order_id)
@@ -852,6 +861,23 @@ async def mark_collected(
     if method != DeliveryMethodEnum.PICKUP.value:
         raise BadRequestError("Only a store-pickup order is collected at the counter")
 
+    # Settle the register check first, and independently of the delivered
+    # fast-path below. `close_order` is the only code that closes an online
+    # check — it stamps `closer_id`/`closed_at`, closes the items, releases the
+    # table, stamps the fees and depletes stock; it settles an online prepaid
+    # order's zero balance without touching its delivery lifecycle (that stays
+    # the courier/admin's, and `close_order` only auto-collects a `cashier`
+    # sale). Guarded on the check still being open on the register, so it is a
+    # no-op the second time — which is also what self-heals a pickup order that
+    # reached `delivered` on a laptop but whose till check was never closed.
+    if order.pos_status in order_lifecycle._OPEN_ON_THE_REGISTER:
+        await pos_order_service.close_order(db, order=order, user=user)
+        order = await _load(db, order_id)
+
+    # Idempotent fast path: already collected. Placed *after* the counter-close
+    # above so the stuck case (delivered but still open on the register) is
+    # settled before this short-circuits, and so a second press sends no
+    # duplicate "Collected" email.
     if order.status == OrderStatusEnum.DELIVERED:
         return _serialise(order)
     if OrderStatusEnum.DELIVERED not in order_service.VALID_TRANSITIONS.get(
@@ -942,32 +968,43 @@ async def cancel_order(
     user: User = Depends(require("pos.orders.void")),
 ):
     """
-    Cancel an aggregator order from the counter — the red button beside Packed.
+    Cancel an aggregator or website order from the counter — the red button
+    beside Packed.
 
-    **Aggregator only, deliberately.** Cancelling here runs the full
-    `cancelled` machinery: it releases the stock, voids the check on the register
-    and — the point of doing it from the counter rather than a laptop — declines
-    the Foodics order so the marketplace stops the rider. For a *website*
-    order that same move would refund the customer's card and cancel a booked MM
-    courier, which is an admin decision on the order screen, not a counter
-    button; so a stale device asking to cancel one is refused here rather than
-    quietly issuing a refund.
+    **Aggregator and website, deliberately; not a cashier check.** Cancelling
+    here runs the full `cancelled` machinery, and what that does depends on the
+    order:
+    - *aggregator*: releases the stock, voids the check on the register and —
+      the point of doing it from the counter rather than a laptop — declines the
+      Foodics order so the marketplace stops the rider.
+    - *website* (`source == online`), pickup **and** delivery: refunds the
+      customer's card and cancels any booked MM courier. This is intentional —
+      the product decision is that the counter may cancel a website order — and
+      the register device shows a red confirmation dialog as the safeguard,
+      because it is real money moving. Courier-cancel is a natural no-op for a
+      pickup order, which never booked one.
+
+    A *cashier* counter check is **not** cancelled here — it is voided through
+    the void flow (`pos.orders.void` → `void_order`), which is what keeps the
+    till reconciled; so it stays rejected.
 
     Reachable from `arrived_at_pos` (the map allows it) and from `packed` (it
-    does not — `order_service.update_status` widens it for an aggregator order
-    via `AGGREGATOR_CANCELLABLE_FROM`; the Foodics decline then applies only while
-    the order is still pending, and an already-accepted one is recorded for a
-    person to void in the console). `update_status` raises if the order cannot be
-    cancelled, which is what a person pressing a button should get.
+    does not — `order_service.update_status` widens it via
+    `AGGREGATOR_CANCELLABLE_FROM` for an aggregator order and
+    `ONLINE_CANCELLABLE_FROM` for a website one; the Foodics decline then applies
+    only while an aggregator order is still pending). `update_status` raises if
+    the order cannot be cancelled, which is what a person pressing a button
+    should get.
 
     Idempotent on an already-cancelled order, like `accept` and `packed`.
     """
     order = await _load(db, order_id)
 
-    if order.source != OrderSourceEnum.AGGREGATOR.value:
-        raise ConflictError(
-            "Only an aggregator order can be cancelled from the register."
-        )
+    if order.source not in (
+        OrderSourceEnum.AGGREGATOR.value,
+        OrderSourceEnum.ONLINE.value,
+    ):
+        raise ConflictError("This order cannot be cancelled from the register.")
     if order.status == OrderStatusEnum.CANCELLED:
         return _serialise(order)
 

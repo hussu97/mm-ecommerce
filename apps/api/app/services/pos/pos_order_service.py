@@ -1247,7 +1247,17 @@ async def close_order(db: AsyncSession, *, order: Order, user: User) -> Order:
     order = await get_order(db, order.id)
     _assert_open(order)
 
-    if order.balance_due > 0:
+    # The balance guard is the counter's, and only the counter's. `balance_due`
+    # is `total` minus the `OrderPayment` rows a cashier records at the till, so
+    # it asks the right question of a `cashier` check and the wrong one of an
+    # order that settled somewhere else. An `online` order is paid at the gateway
+    # and an aggregator order by the marketplace, and neither writes an
+    # `OrderPayment` — so their `balance_due` is the whole total forever, and
+    # blocking on it here is exactly why an online check could never close: it
+    # sat `active` until this line was taught that a prepaid order owes the till
+    # nothing. Collecting a store-pickup order (`mark_collected`) closes its
+    # check through here, so the guard has to know the difference.
+    if order.source == OrderSourceEnum.CASHIER.value and order.balance_due > 0:
         raise ConflictError(f"Order still has {order.balance_due} outstanding")
 
     order.pos_status = PosOrderStatusEnum.CLOSED.value
