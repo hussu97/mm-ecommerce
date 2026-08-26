@@ -114,21 +114,24 @@ export default function OrderDetailPage() {
 
   async function updateStatus(newStatus: OrderStatus) {
     if (!order) return;
-    // Cancelling a *live* order goes through on the first click — created or
-    // confirmed, nothing made yet, the customer still on the phone. It is the
-    // one status the counter changes without a second look.
+    // Cancelling a `created` order goes through on the first click — the payment
+    // has not been captured, so nothing is refunded and the customer is likely
+    // still on the phone. It is the one status the counter cancels without a
+    // second look.
     //
-    // A boxed website order is not that. Once it is `arrived_at_pos` or
-    // `packed` the goods exist, so cancelling refunds and restocks — the same
-    // weight as the undelivered write-off below — and it must ask first.
-    // Scoped to our own orders: a marketplace cancel is GrubOps force-cancel,
-    // not a refund of ours, and keeps its old single-click path untouched.
-    const isBoxedWebsiteCancel =
+    // A paid website order is not that. From `confirmed` on the card is charged,
+    // so cancelling refunds it (and, once `arrived_at_pos`/`packed`, restocks
+    // the box) — the same weight as the undelivered write-off below — and it
+    // must ask first. Scoped to our own orders: a marketplace cancel is GrubOps
+    // force-cancel, not a refund of ours, and keeps its old single-click path.
+    const isPaidWebsiteCancel =
       newStatus === 'cancelled' &&
       !isAggregator &&
-      (order.status === 'arrived_at_pos' || order.status === 'packed');
+      (order.status === 'confirmed' ||
+        order.status === 'arrived_at_pos' ||
+        order.status === 'packed');
     const straightThrough =
-      newStatus === 'cancelled' && !isUndelivered && !isBoxedWebsiteCancel;
+      newStatus === 'cancelled' && !isUndelivered && !isPaidWebsiteCancel;
     if (!straightThrough && !(await confirmDialog(
       // Correcting a settled order is not the same act as advancing a live
       // one, and the difference is money: cancelling refunds automatically,
@@ -167,12 +170,13 @@ export default function OrderDetailPage() {
               'van was booked and usually already drove.',
             confirmLabel: 'Write off & refund',
           }
-      // Cancelling a ready order — one that has arrived at the counter or been
-      // packed. The box is made, so this is a refund, not a phone-call cancel:
-      // the customer gets their money back in full and the stock returns to the
-      // shelf, and a delivery order's booked courier is called off with it. Red
-      // button, because it is the same money as the write-off above.
-      : isBoxedWebsiteCancel
+      // Cancelling a paid order before it is delivered — confirmed, arrived at
+      // the counter, or packed. The card is charged, so this is a refund, not a
+      // phone-call cancel: the customer gets their money back in full and the
+      // stock returns to the shelf, and a delivery order's booked courier is
+      // called off with it. Red button, because it is the same money as the
+      // write-off above.
+      : isPaidWebsiteCancel
         ? {
             title: 'Cancel this order',
             message:
