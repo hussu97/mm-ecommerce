@@ -81,16 +81,18 @@ function formatRate(value: number | null | undefined): string {
   return `${pct.toFixed(1)}%`;
 }
 
-/** A row is worth a second look when any side of it disagrees. */
+/**
+ * A row is worth a second look when the server raised a flag on it. This mirrors
+ * the API's `_flagged_clause` exactly (item/refund flag, or a non-empty `flags`
+ * — which now carries commission_variance, amount_variance, refund and no_mm_order
+ * codes), so the red highlight, the "Flagged only" filter and the summary counts
+ * all agree. Keying off `match_status !== 'matched'` used to redden every
+ * `no_maker_side` row (the expected state for aggregator-only branches) and off a
+ * bare `amount_variance !== 0` reddened sub-tolerance rounding noise that then
+ * vanished under the filter.
+ */
 function isFlagged(r: ReconRow): boolean {
-  return (
-    r.item_flag ||
-    r.refund_flag ||
-    (r.flags?.length ?? 0) > 0 ||
-    (r.commission_variance != null && r.commission_variance !== 0) ||
-    (r.amount_variance != null && r.amount_variance !== 0) ||
-    r.match_status !== 'matched'
-  );
+  return r.item_flag || r.refund_flag || (r.flags?.length ?? 0) > 0;
 }
 
 function StatCard({

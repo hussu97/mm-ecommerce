@@ -123,7 +123,10 @@ def _item_discrepancy(agg_items, mm_items: list[OrderItem]) -> tuple[dict | None
         "agg_lines": len(line_items),
         "mm_lines": len(mm_items),
     }
-    flagged = abs(agg_qty - mm_qty) > _TOL or len(line_items) != len(mm_items)
+    # Compare quantities, not line counts. `mm_items` carries every OrderItem
+    # (modifiers, voided lines) so its length rarely equals the aggregator's line
+    # grain even when the quantities agree — counting lines flagged good orders.
+    flagged = abs(agg_qty - mm_qty) > _TOL
     return (detail, flagged)
 
 
@@ -175,6 +178,11 @@ async def reconcile_order(db: AsyncSession, agg, *, run_id=None) -> None:
     amount_variance = (
         total_agg - total_mm if total_agg is not None and total_mm is not None else None
     )
+    # A matched order whose totals disagree beyond tolerance is a real
+    # discrepancy — flag it, so it both highlights in the dashboard and survives
+    # the "flagged only" filter (which keys off `flags`), like commission/refund.
+    if amount_variance is not None and abs(amount_variance) > _TOL:
+        flags.append("amount_variance")
     rate_base = total_agg or total_mm
     rate_effective = None
     if commission_actual is not None and rate_base and rate_base != 0:
