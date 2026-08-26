@@ -61,7 +61,7 @@ from app.schemas.order_preview import (
 from app.services import cart_service, email_service, promo_code_service, push_service
 from app.services.catalog import availability_service
 from app.services.catalog.storefront_visibility import is_website_product_visible
-from app.services.couriers import courier_catalog, lalamove_service
+from app.services.couriers import courier_catalog, courier_service, lalamove_service
 from app.services.delivery import delivery_promise, delivery_service, fulfilment_service
 from app.services.delivery.delivery_zone_service import Zone
 from app.services.orders import (
@@ -1127,8 +1127,24 @@ async def create_order(
     #    so "what did fulfilment cost" is answerable for the whole country and
     #    not just the automated part of it.
     if data.delivery_method == DeliveryMethodEnum.DELIVERY:
+        # The courier this order will actually go out on, resolved through the
+        # Slider pilot gate here — the same decision `carrier_for` makes at
+        # dispatch — so quote, creation and dispatch all agree. Without it a
+        # non-pilot order in a Slider zone would stamp `slider` and carry the
+        # dead sandbox's 403 into the panel for a courier it will never reach.
+        # `effective_provider` lives in `courier_service`, which imports this
+        # module's neighbours but not this one; computing it here and passing
+        # the resolved string down keeps `lalamove_service` clear of a courier
+        # import it would otherwise have to make locally.
+        effective_provider, _ = courier_service.effective_provider(
+            totals.zone.fulfilment_provider if totals.zone else None,
+            totals.zone.name if totals.zone else None,
+            order.user_id,
+            order.email,
+            city=str((order.shipping_address_snapshot or {}).get("city") or ""),
+        )
         await lalamove_service.record_order_delivery(
-            db, order, zone=totals.zone, cart=cart
+            db, order, zone=totals.zone, cart=cart, provider=effective_provider
         )
 
     # 9. Cash orders confirm themselves. A card order is confirmed by its
@@ -1598,18 +1614,26 @@ async def update_status(
     # out of `VALID_TRANSITIONS` on purpose: that map is also read by the
     # courier webhooks, and a late `delivered` push must not resurrect an order
     # the shop has already written off.
-    # `extra_from` widens where a move may start for this one doorway. Two cases
-    # stack: the admin recovering a written-off order (delivered ← undelivered/
-    # cancelled), and cancelling an aggregator order that is already `packed` —
-    # the shop changed its mind after the rider was called, and GrubOps decides
-    # whether force-cancel still lands. Neither belongs in `VALID_TRANSITIONS`
-    # (the courier webhooks read that too); both are the console's to allow.
+    # `extra_from` widens where a move may start for this one doorway. Three
+    # cases stack: the admin recovering a written-off order (delivered ←
+    # undelivered/cancelled); cancelling an aggregator order that is already
+    # `packed` — the shop changed its mind after the rider was called, and
+    # GrubOps decides whether force-cancel still lands; and cancelling a
+    # `packed` (ready) *website* order from the counter/console, which refunds
+    # the card and cancels any booked MM courier. None belongs in
+    # `VALID_TRANSITIONS` (the courier webhooks read that too); all are the
+    # console's/counter's to allow.
     extra_from = set(order_lifecycle.ADMIN_RECOVERABLE.get(new_status, frozenset()))
     if (
         new_status == OrderStatusEnum.CANCELLED
         and order.source == OrderSourceEnum.AGGREGATOR.value
     ):
         extra_from |= order_lifecycle.AGGREGATOR_CANCELLABLE_FROM
+    if (
+        new_status == OrderStatusEnum.CANCELLED
+        and order.source == OrderSourceEnum.ONLINE.value
+    ):
+        extra_from |= order_lifecycle.ONLINE_CANCELLABLE_FROM
 
     moved = await order_lifecycle.transition(
         db,

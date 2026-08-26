@@ -378,6 +378,11 @@ async def compute_order_totals(
                 longitude=longitude,
                 address=address,
                 settings=settings,
+                # The same identity the waiver below reads, so a non-pilot
+                # Slider zone is costed against the courier the pilot gate would
+                # actually book rather than against Slider's dead fare endpoint.
+                user_id=user_id,
+                email=email,
             )
         zone = priced.zone
         serviceable = priced.serviceable

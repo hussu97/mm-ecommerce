@@ -62,6 +62,7 @@ __all__ = [
     "books_itself",
     "cancel",
     "carrier_for",
+    "effective_provider",
     "may_be_carried_by",
     "dispatch",
     "estimate_for_point",
@@ -170,32 +171,102 @@ def carrier_for(order: Order, delivery: OrderDelivery) -> tuple[str, str | None]
     address is consulted only for a delivery row too old to carry a zone name.
 
     Returns the provider to book and, when it is not the zone's, the reason.
+
+    **One decision, asked in three places now.** Dispatch is where it began, but
+    the fare quote and the order-creation stamp have to reach exactly the same
+    verdict — a checkout that quotes Slider against an account the dispatcher
+    will hand to Lalamove shows a fare nobody will be booked at, and a delivery
+    row stamped `slider` for an order that dispatches on Lalamove parks a Slider
+    error on a real order and prints the wrong carrier in the panel. So the core
+    of this lives in `effective_provider`, which works on primitives and knows
+    nothing about an `Order` or an `OrderDelivery`, and this function is the
+    thin adapter that reads those two rows and calls it.
     """
-    provider = delivery.provider
-    if provider != SLIDER:
-        return provider, None
+    return effective_provider(
+        delivery.provider,
+        delivery.zone_name,
+        # Read tolerantly with `getattr`: a non-Slider zone returns from
+        # `effective_provider` before any of these is looked at, and one caller
+        # — `batching_service.reserve` — asks this about orders that carry only
+        # an id and a number. The old early return made the same three reads
+        # unreachable for those orders; keeping them lazy keeps that true.
+        getattr(order, "user_id", None),
+        getattr(order, "email", None),
+        city=str(
+            (getattr(order, "shipping_address_snapshot", None) or {}).get("city") or ""
+        ),
+    )
+
+
+def effective_provider(
+    zone_provider: str | None,
+    zone_name: str | None,
+    user_id: uuid.UUID | None,
+    email: str | None,
+    *,
+    city: str | None = None,
+) -> tuple[str, str | None]:
+    """
+    The courier a zone actually resolves to for this customer, and why it is not
+    the zone's own.
+
+    Everything the Slider pilot gate needs, expressed in strings rather than
+    rows, so the one decision can be asked at dispatch (`carrier_for`), at the
+    fare quote (`estimate_for_point`) and at order creation — where the answer
+    must agree or the customer is shown one courier, charged against a second
+    and delivered by a third.
+
+    A non-Slider zone passes straight through: the map decides for the other two
+    couriers and nothing here changes that. A Slider zone is Slider's only for
+    the signed-in pilot account; everybody else is handed to whoever carried
+    that ground before the zone existed — noon Send inside Sharjah, Lalamove
+    outside it — which is what makes publishing the new map a no-op for every
+    customer but one.
+
+    `city` is consulted only for a Slider zone with no name to read, which in
+    practice is a delivery row too old to carry one: the zone name is a
+    statement about who used to carry this ground and is trusted first, where
+    the address's `city` is a string a customer typed and can say "Dubai" for a
+    pin in Sharjah. Every zone name begins with its emirate by construction, so
+    the fare quote — which has a name but no address — needs no `city` at all.
+    """
+    if zone_provider != SLIDER:
+        return zone_provider, None
 
     if not slider_service.is_enabled():
         # The same contract the other two have: an absent credential is a
         # fallback, never an outage.
         reason = "Slider is not configured"
-    elif order.user_id is None:
+    elif user_id is None:
         reason = "Slider is limited to signed-in pilot accounts"
-    elif not trial_customer.is_trial_customer(order.user_id, order.email):
+    elif not trial_customer.is_trial_customer(user_id, email):
         reason = "Slider is limited to the pilot account"
     else:
         return SLIDER, None
 
-    return (NOON_SEND if _was_noon_send_ground(order, delivery) else LALAMOVE), reason
+    return (NOON_SEND if _is_sharjah_ground(zone_name, city) else LALAMOVE), reason
 
 
 def _was_noon_send_ground(order: Order, delivery: OrderDelivery) -> bool:
     """Whether this drop is in Sharjah, and so was noon Send's before Slider."""
-    zone = (delivery.zone_name or "").strip().lower()
+    return _is_sharjah_ground(
+        delivery.zone_name,
+        str((order.shipping_address_snapshot or {}).get("city") or ""),
+    )
+
+
+def _is_sharjah_ground(zone_name: str | None, city: str | None) -> bool:
+    """
+    Whether this drop is in Sharjah, and so was noon Send's before Slider.
+
+    The zone name wins where there is one — it is the statement about who used
+    to carry this ground, which is exactly the question — and the customer-typed
+    `city` is the fallback for a row too old to carry a name.
+    """
+    zone = (zone_name or "").strip().lower()
     if zone:
         return zone.startswith("sharjah")
-    city = str((order.shipping_address_snapshot or {}).get("city") or "")
-    return city.strip().lower().startswith("sharjah")
+    return (city or "").strip().lower().startswith("sharjah")
 
 
 # ── dispatch ──────────────────────────────────────────────────────────────────
@@ -489,6 +560,8 @@ async def estimate_for_point(
     address: str | None = None,
     branch_id: uuid.UUID | None = None,
     zone_name: str | None = None,
+    user_id: uuid.UUID | None = None,
+    email: str | None = None,
 ):
     """
     What this zone's courier would charge us to reach this point.
@@ -496,11 +569,19 @@ async def estimate_for_point(
     Never raises and never blocks a sale: this runs inside the pricing call the
     checkout makes on every pin move.
 
-    A zone is estimated on its **own** courier, even when the per-order gate
-    will later hand the delivery to somebody else — a Slider zone is quoted
-    against Slider whether or not the customer is on the pilot list. The
-    estimate describes the zone's economics, which is what the number is for;
-    the per-order swap is recorded on the delivery row where it belongs.
+    The Slider pilot gate is applied here first, on the same terms it is applied
+    at dispatch: a Slider zone is quoted against Slider only for the pilot
+    account, and against its fallback — noon Send inside Sharjah, Lalamove
+    outside it — for everybody else. This used to quote every Slider zone
+    against Slider whoever asked, which meant a non-pilot checkout hit Slider's
+    fare endpoint (a dead sandbox that 403s) and parked that error on the cart,
+    for a courier the order was never going to be dispatched to. Quoting what
+    will actually carry it keeps the number the customer is shown honest and
+    keeps the Slider 403 off orders that dispatch on Lalamove.
+
+    `zone_name` carries the emirate by construction, which is all the fallback
+    needs to tell Sharjah ground from the rest — so no address is required here
+    even though `carrier_for` reads one at dispatch.
 
     Everything else — including third-party zones and pins outside every zone —
     is still quoted against Lalamove, unchanged. Those quotes are not used to
@@ -508,6 +589,11 @@ async def estimate_for_point(
     could be served by a courier instead, and that question stops being
     answerable the moment we stop asking it.
     """
+    # The gate, before the provider dispatch below: a non-pilot Slider zone is
+    # quoted against the courier that will actually carry it, so its fare
+    # endpoint is never reached for a quote that would only be thrown away.
+    provider, _ = effective_provider(provider, zone_name, user_id, email)
+
     if provider == NOON_SEND and noon_send_service.is_enabled():
         return await noon_send_service.estimate_for_point(
             db, latitude, longitude, address, branch_id

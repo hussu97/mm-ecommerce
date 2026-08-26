@@ -114,14 +114,21 @@ export default function OrderDetailPage() {
 
   async function updateStatus(newStatus: OrderStatus) {
     if (!order) return;
-    // Cancelling a live order goes through on the first click — it is the one
-    // status the counter changes while the customer is still on the phone.
+    // Cancelling a *live* order goes through on the first click — created or
+    // confirmed, nothing made yet, the customer still on the phone. It is the
+    // one status the counter changes without a second look.
     //
-    // Cancelling an *undelivered* one does not, and the difference is money.
-    // That is the write-off: it is where the refund happens now, and a refund
-    // is not something to fire off a single click on a screen somebody is
-    // scrolling. Every other move still asks too.
-    const straightThrough = newStatus === 'cancelled' && !isUndelivered;
+    // A boxed website order is not that. Once it is `arrived_at_pos` or
+    // `packed` the goods exist, so cancelling refunds and restocks — the same
+    // weight as the undelivered write-off below — and it must ask first.
+    // Scoped to our own orders: a marketplace cancel is GrubOps force-cancel,
+    // not a refund of ours, and keeps its old single-click path untouched.
+    const isBoxedWebsiteCancel =
+      newStatus === 'cancelled' &&
+      !isAggregator &&
+      (order.status === 'arrived_at_pos' || order.status === 'packed');
+    const straightThrough =
+      newStatus === 'cancelled' && !isUndelivered && !isBoxedWebsiteCancel;
     if (!straightThrough && !(await confirmDialog(
       // Correcting a settled order is not the same act as advancing a live
       // one, and the difference is money: cancelling refunds automatically,
@@ -159,6 +166,23 @@ export default function OrderDetailPage() {
               'for the goods. The delivery and small-order fees are kept — the ' +
               'van was booked and usually already drove.',
             confirmLabel: 'Write off & refund',
+          }
+      // Cancelling a ready order — one that has arrived at the counter or been
+      // packed. The box is made, so this is a refund, not a phone-call cancel:
+      // the customer gets their money back in full and the stock returns to the
+      // shelf, and a delivery order's booked courier is called off with it. Red
+      // button, because it is the same money as the write-off above.
+      : isBoxedWebsiteCancel
+        ? {
+            title: 'Cancel this order',
+            message:
+              `${order.order_number} is cancelled and the customer is refunded ` +
+              'in full. The stock goes back on the shelf' +
+              (isDeliveryOrder
+                ? ', and any booked courier is cancelled with it.'
+                : '.'),
+            confirmLabel: 'Cancel order',
+            danger: true,
           }
         : {
             title: 'Change status',
@@ -647,7 +671,16 @@ export default function OrderDetailPage() {
             Write Off &amp; Refund
           </Button>
         )}
-        {(order.status === 'created' || order.status === 'confirmed') && (
+        {/* Cancelling a website order. Once it was only the two live states —
+            nothing made yet, the customer still on the phone. It now reaches a
+            boxed order too (`arrived_at_pos`, `packed`), matching the backend
+            that lets a ready pickup or delivery order be called off: that path
+            refunds and restocks, so `updateStatus` sends it through the danger
+            dialog rather than straight through. */}
+        {(order.status === 'created' ||
+          order.status === 'confirmed' ||
+          order.status === 'arrived_at_pos' ||
+          order.status === 'packed') && (
           <Button variant="danger" size="sm" onClick={() => updateStatus('cancelled')} loading={actionLoading}>
             <span className="material-icons text-[14px]">cancel</span>
             Cancel Order

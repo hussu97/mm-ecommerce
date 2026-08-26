@@ -194,6 +194,55 @@ async def test_an_aggregator_packed_order_may_be_cancelled_via_extra_from(
     assert order.status == OrderStatusEnum.CANCELLED
 
 
+@pytest.mark.asyncio
+async def test_a_website_packed_order_is_not_cancellable_without_its_widening(
+    quiet_consequences,
+):
+    # The shared map keeps `packed → cancelled` shut for a website order too — a
+    # boxed order with a van booked. Without `ONLINE_CANCELLABLE_FROM` the move
+    # is a quiet decline, not a cancellation.
+    order = _order(
+        OrderStatusEnum.PACKED,
+        source=OrderSourceEnum.ONLINE.value,
+        items=[],
+    )
+    moved = await order_lifecycle.transition(
+        _Db(), order, OrderStatusEnum.CANCELLED, on_invalid="skip"
+    )
+    assert moved is False
+    assert order.status == OrderStatusEnum.PACKED
+
+
+@pytest.mark.asyncio
+async def test_a_website_packed_order_may_be_cancelled_via_extra_from(
+    quiet_consequences,
+):
+    # The counter/console cancel path passes `ONLINE_CANCELLABLE_FROM`, which
+    # widens where the move may start for a website order. The cancellation's
+    # own consequences — the refund, the restock, the register void, the courier
+    # cancel — then fire exactly as they do from any other doorway.
+    db = _Db()
+    order = _order(
+        OrderStatusEnum.PACKED,
+        source=OrderSourceEnum.ONLINE.value,
+        pos_status=PosOrderStatusEnum.ACTIVE.value,
+        items=[OrderItem(product_id=uuid.uuid4(), quantity=2)],
+    )
+    moved = await order_lifecycle.transition(
+        db,
+        order,
+        OrderStatusEnum.CANCELLED,
+        extra_from=order_lifecycle.ONLINE_CANCELLABLE_FROM,
+    )
+    assert moved is True
+    assert order.status == OrderStatusEnum.CANCELLED
+    # Refund the card, hand the stock back, void the open check, cancel the van.
+    assert quiet_consequences["refund"] == [order]
+    assert quiet_consequences["courier_cancel"] == [order]
+    assert len(db.executed) == 1  # the restock update
+    assert order.pos_status == PosOrderStatusEnum.VOID.value
+
+
 # ── consequences ──────────────────────────────────────────────────────────────
 
 
