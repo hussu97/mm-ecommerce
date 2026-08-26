@@ -19,6 +19,8 @@ import type {
   GrubOpsMappingList,
   GrubOpsSyncSummary,
   GrubOpsOrderList,
+  ReconList,
+  ReconSummary,
 } from './types';
 import type {
   PublicKeyCredentialCreationOptionsJSON,
@@ -617,6 +619,30 @@ export const grubopsApi = {
     page?: number;
     page_size?: number;
   }) => api.get<GrubOpsOrderList>(`/grubops/orders${buildQs(params)}`),
+};
+
+// ─── Aggregator reconciliation ────────────────────────────────────────────────
+
+/**
+ * The aggregator↔MM order match: what each marketplace says an order was worth
+ * against what our books recorded, and where the two disagree.
+ *
+ * Paginated by `limit`/`offset` rather than `page`/`per_page` — the endpoint
+ * answers with `{ items, total }` and the page turns that into pages itself.
+ */
+export const reconciliationApi = {
+  list: (params: {
+    channel?: string;
+    branch_id?: string;
+    match_status?: string;
+    /** Only rows the pass flagged — an item, refund, commission or amount discrepancy. */
+    flagged?: boolean;
+    limit?: number;
+    offset?: number;
+  }) => api.get<ReconList>(`/aggregators/reconciliation${buildQs(params)}`),
+  /** Per-channel roll-up and a grand total, for the stat cards. */
+  summary: (params?: { channel?: string; branch_id?: string }) =>
+    api.get<ReconSummary>(`/aggregators/reconciliation/summary${buildQs(params)}`),
 };
 
 // ─── Bulk Actions ─────────────────────────────────────────────────────────────

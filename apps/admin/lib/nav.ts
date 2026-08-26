@@ -60,6 +60,9 @@ export const NAV: Array<
   // aggregators show. The register is what marks things out; this screen only
   // decides which branches that reaches and which item is which.
   { href: '/grubops',       label: 'GrubOps',         icon: 'restaurant_menu' },
+  // Beside GrubOps because it is the other half of the aggregator relationship:
+  // GrubOps is what we tell them, this is checking what they paid us back.
+  { href: '/aggregators/reconciliation', label: 'Reconciliation', icon: 'account_balance' },
   { href: '/languages',     label: 'Languages',       icon: 'translate' },
   { href: '/translations',  label: 'Translations',    icon: 'text_fields' },
 

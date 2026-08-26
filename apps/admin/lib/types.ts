@@ -1407,3 +1407,65 @@ export interface GrubOpsOrderList {
   error_count: number;
   unmapped_count: number;
 }
+
+// ─── Aggregator reconciliation ────────────────────────────────────────────────
+//
+// The aggregator↔MM order match, one row per aggregator order the maker-checker
+// pass looked at. Money fields are numbers or null — null where the side that
+// would carry the figure is missing (an unmatched order has no MM total, and so
+// no amount variance to speak of).
+
+/**
+ * Which sides the reconciler could line up.
+ *
+ * `matched` — both sides present and paired. `unmatched_agg` — an aggregator
+ * order with no MM order behind it; `unmatched_mm` — the reverse. `no_maker_side`
+ * — neither side could be established, so nothing was compared.
+ */
+export type ReconMatchStatus = 'matched' | 'unmatched_agg' | 'unmatched_mm' | 'no_maker_side';
+
+export interface ReconRow {
+  id: string;
+  channel: string;
+  external_order_id: string | null;
+  branch_id: string | null;
+  branch_name: string | null;
+  mm_order_id: string | null;
+  match_status: ReconMatchStatus;
+  item_flag: boolean;
+  refund_flag: boolean;
+  refund_agg: number | null;
+  refund_mm: number | null;
+  commission_expected: number | null;
+  commission_actual: number | null;
+  commission_variance: number | null;
+  commission_rate_effective: number | null;
+  total_agg: number | null;
+  total_mm: number | null;
+  amount_variance: number | null;
+  flags: string[];
+  reconciled_at: string | null;
+}
+
+export interface ReconList {
+  items: ReconRow[];
+  total: number;
+}
+
+export interface ReconSummaryRow {
+  channel: string;
+  total: number;
+  matched: number;
+  unmatched_agg: number;
+  no_maker_side: number;
+  item_flags: number;
+  refund_flags: number;
+  commission_variance_count: number;
+  commission_actual_sum: number;
+  avg_rate_effective: number;
+}
+
+export interface ReconSummary {
+  by_channel: ReconSummaryRow[];
+  totals: ReconSummaryRow;
+}
