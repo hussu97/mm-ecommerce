@@ -46,7 +46,7 @@ from app.models.aggregator import (
     AggregatorSyncRun,
 )
 from app.models.base import utcnow
-from app.services.aggregators import crypto, session_store
+from app.services.aggregators import crypto, reconcile, session_store
 from app.services.aggregators.normalized import (
     FinanceResult,
     SalesResult,
@@ -269,6 +269,7 @@ async def _sweep_channel(
     run = await _new_run(db, channel, mode)
     now = utcnow()
     written = 0
+    reconciled = 0
     truncation: str | None = None
     try:
         if mode == RUN_MODE_SALES:
@@ -291,6 +292,10 @@ async def _sweep_channel(
                 await _upsert_payout(db, channel, payout)
             written = len(finance.statements) + len(finance.payouts)
             truncation = finance.truncation_note
+            # Reconcile after the finance write, so Layer B compares against the
+            # freshest statement commission. Reconciles all stored orders for the
+            # channel (idempotent), not just this window's.
+            reconciled = await reconcile.reconcile_channel(db, channel, run_id=run.id)
     except AggregatorAuthError as exc:
         run.status = RUN_FAILED
         run.error = str(exc)[:2000]
@@ -308,6 +313,8 @@ async def _sweep_channel(
     run.status = RUN_COMPLETED
     run.finished_at = utcnow()
     run.stats = {"written": written, "from": since.isoformat(), "to": now.isoformat()}
+    if reconciled:
+        run.stats["reconciled"] = reconciled
     if truncation:
         run.stats["truncation"] = truncation
         logger.info("aggregator %s %s truncated: %s", channel, mode, truncation)
