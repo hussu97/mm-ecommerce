@@ -79,16 +79,22 @@ def upgrade() -> None:
     conn = op.get_bind()
 
     # 1. Ensure the two aggregator-only branches exist (guarded by name).
+    #    `:name` is CAST to text on purpose: it appears both as an INSERT-SELECT
+    #    column (where asyncpg deduces `branches.name`'s varchar) and inside
+    #    `lower(:name)` (text). asyncpg PREPAREs every statement and rejects the
+    #    conflicting deduction ("inconsistent types deduced for parameter $1"),
+    #    where psycopg2 tolerated it — casting both uses to text keeps them one
+    #    type. Do not remove the cast.
     for b in _NEW_BRANCHES:
         conn.execute(
             text(
                 """
                 INSERT INTO branches (name, reference, city, type, timezone,
                     opening_from, opening_to)
-                SELECT :name, :reference, :city, 'kitchen', 'Asia/Dubai',
-                    '09:00', '23:00'
+                SELECT CAST(:name AS text), :reference, :city, 'kitchen',
+                    'Asia/Dubai', '09:00', '23:00'
                 WHERE NOT EXISTS (
-                    SELECT 1 FROM branches WHERE lower(name) = lower(:name)
+                    SELECT 1 FROM branches WHERE lower(name) = lower(CAST(:name AS text))
                 )
                 ON CONFLICT DO NOTHING
                 """
