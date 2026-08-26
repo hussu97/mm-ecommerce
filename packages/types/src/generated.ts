@@ -193,6 +193,155 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/aggregators/branch-map": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Branch Map
+         * @description Every outlet↔branch mapping, for the admin to view and edit.
+         */
+        get: operations["list_branch_map_api_v1_aggregators_branch_map_get"];
+        put?: never;
+        /**
+         * Upsert Branch Map Row
+         * @description Create or update one mapping — the DB is the source of truth, edited here.
+         */
+        post: operations["upsert_branch_map_row_api_v1_aggregators_branch_map_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/aggregators/branch-map/{map_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Branch Map Row
+         * @description Remove a mapping — the branch stops being enumerated on that channel.
+         */
+        delete: operations["delete_branch_map_row_api_v1_aggregators_branch_map__map_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/aggregators/keeta/orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Push Keeta Orders
+         * @description Ingest a batch of in-page-fetched Keeta order payloads.
+         *
+         *     Keeta is not on the httpx sweep (its `mtgsig` signing lives in the page), so
+         *     the bootstrap worker fetches each `getOrders` response in-page and pushes the
+         *     raw payloads here. Each is parsed by the Keeta provider and upserted exactly
+         *     as the sweep upserts the other channels. Returns the count of orders written.
+         */
+        post: operations["push_keeta_orders_api_v1_aggregators_keeta_orders_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/aggregators/reconciliation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Reconciliation
+         * @description The reconciliation rows for the dashboard, newest first, with the total.
+         */
+        get: operations["list_reconciliation_api_v1_aggregators_reconciliation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/aggregators/reconciliation/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Reconciliation Summary
+         * @description Per-channel reconciliation tallies plus one combined total, from SQL.
+         */
+        get: operations["reconciliation_summary_api_v1_aggregators_reconciliation_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/aggregators/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Push Session
+         * @description Store (or replace) the session for one channel, sealed at rest.
+         */
+        post: operations["push_session_api_v1_aggregators_session_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/aggregators/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Sessions
+         * @description Session health per channel — the monitoring read (no secrets exposed).
+         */
+        get: operations["list_sessions_api_v1_aggregators_sessions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/analytics/customers": {
         parameters: {
             query?: never;
@@ -4621,23 +4770,33 @@ export interface paths {
         put?: never;
         /**
          * Cancel Order
-         * @description Cancel an aggregator order from the counter — the red button beside Packed.
+         * @description Cancel an aggregator or website order from the counter — the red button
+         *     beside Packed.
          *
-         *     **Aggregator only, deliberately.** Cancelling here runs the full
-         *     `cancelled` machinery: it releases the stock, voids the check on the register
-         *     and — the point of doing it from the counter rather than a laptop — declines
-         *     the Foodics order so the marketplace stops the rider. For a *website*
-         *     order that same move would refund the customer's card and cancel a booked MM
-         *     courier, which is an admin decision on the order screen, not a counter
-         *     button; so a stale device asking to cancel one is refused here rather than
-         *     quietly issuing a refund.
+         *     **Aggregator and website, deliberately; not a cashier check.** Cancelling
+         *     here runs the full `cancelled` machinery, and what that does depends on the
+         *     order:
+         *     - *aggregator*: releases the stock, voids the check on the register and —
+         *       the point of doing it from the counter rather than a laptop — declines the
+         *       Foodics order so the marketplace stops the rider.
+         *     - *website* (`source == online`), pickup **and** delivery: refunds the
+         *       customer's card and cancels any booked MM courier. This is intentional —
+         *       the product decision is that the counter may cancel a website order — and
+         *       the register device shows a red confirmation dialog as the safeguard,
+         *       because it is real money moving. Courier-cancel is a natural no-op for a
+         *       pickup order, which never booked one.
+         *
+         *     A *cashier* counter check is **not** cancelled here — it is voided through
+         *     the void flow (`pos.orders.void` → `void_order`), which is what keeps the
+         *     till reconciled; so it stays rejected.
          *
          *     Reachable from `arrived_at_pos` (the map allows it) and from `packed` (it
-         *     does not — `order_service.update_status` widens it for an aggregator order
-         *     via `AGGREGATOR_CANCELLABLE_FROM`; the Foodics decline then applies only while
-         *     the order is still pending, and an already-accepted one is recorded for a
-         *     person to void in the console). `update_status` raises if the order cannot be
-         *     cancelled, which is what a person pressing a button should get.
+         *     does not — `order_service.update_status` widens it via
+         *     `AGGREGATOR_CANCELLABLE_FROM` for an aggregator order and
+         *     `ONLINE_CANCELLABLE_FROM` for a website one; the Foodics decline then applies
+         *     only while an aggregator order is still pending). `update_status` raises if
+         *     the order cannot be cancelled, which is what a person pressing a button
+         *     should get.
          *
          *     Idempotent on an already-cancelled order, like `accept` and `packed`.
          */
@@ -4701,12 +4860,21 @@ export interface paths {
          *     marking the whole order delivered; the shop that actually handed the box
          *     over had no button. This is that button.
          *
+         *     It does **two** things: it closes the register check (so the admin "Counter"
+         *     column reads CLOSED, not ACTIVE) *and* it records the collection as
+         *     `delivered`. The two used to be separate — collecting only advanced the
+         *     delivery status, leaving the check open at `pos_status=active` with a null
+         *     `closed_at` for ever — which is the bug this heals: closing runs first and
+         *     independently of the delivered check, so a pickup order already `delivered`
+         *     but never closed on the till self-heals the next time this is pressed.
+         *
          *     `delivered` is the stored status; the storefront and the receipt render it as
          *     "Collected" because the order is `pickup`. A delivery order is rejected — its
          *     hand-over is `handed-over` (→ `out_for_delivery`), driven by the courier.
          *
-         *     Deliberately thin, like `mark_packed`/`mark_handed_over`: `order_service`
-         *     owns the transition rules and side effects, `email_service` owns which email
+         *     Deliberately thin, like `mark_packed`/`mark_handed_over`: `pos_order_service`
+         *     owns closing the check (fees, stock, table release), `order_service` owns the
+         *     delivery transition rules and side effects, `email_service` owns which email
          *     the status earns. Idempotent, because two people will press it.
          */
         post: operations["mark_collected_api_v1_pos_orders__order_id__collected_post"];
@@ -7165,6 +7333,183 @@ export interface components {
             passkey_count: number;
             /** Phone */
             phone: string | null;
+        };
+        /**
+         * AggregatorBranchMapIn
+         * @description An outlet↔branch mapping to create or update from the admin.
+         *
+         *     The mapping lives in the DB (seeded by migration 152, edited here) rather
+         *     than in code, so a re-onboarded outlet or a new branch is a row change, not
+         *     a deploy. Keyed on `(channel, branch_id)`; posting the same pair updates it.
+         */
+        AggregatorBranchMapIn: {
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /** Channel */
+            channel: string;
+            /** Channel Ref */
+            channel_ref?: string | null;
+            /** External Brand Id */
+            external_brand_id?: string | null;
+            /** External Company Id */
+            external_company_id?: string | null;
+            /** External Outlet Id */
+            external_outlet_id?: string | null;
+            /**
+             * Is Active
+             * @default true
+             */
+            is_active: boolean;
+        };
+        /**
+         * AggregatorBranchMapOut
+         * @description One outlet↔branch mapping row, with the branch name for display.
+         */
+        AggregatorBranchMapOut: {
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /** Branch Name */
+            branch_name?: string | null;
+            /** Channel */
+            channel: string;
+            /** Channel Ref */
+            channel_ref?: string | null;
+            /** External Brand Id */
+            external_brand_id?: string | null;
+            /** External Company Id */
+            external_company_id?: string | null;
+            /** External Outlet Id */
+            external_outlet_id?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Active */
+            is_active: boolean;
+        };
+        /**
+         * AggregatorReconciliationList
+         * @description A page of reconciliation rows, plus the unpaginated total for the filter.
+         */
+        AggregatorReconciliationList: {
+            /** Items */
+            items: components["schemas"]["AggregatorReconciliationOut"][];
+            /** Total */
+            total: number;
+        };
+        /**
+         * AggregatorReconciliationOut
+         * @description One reconciliation row for the dashboard — the maker-checker's output.
+         *
+         *     `branch_name` is joined from `branches`; `flags` is the list of issue codes
+         *     raised (never null on the wire — an unflagged order carries `[]`).
+         */
+        AggregatorReconciliationOut: {
+            /** Amount Variance */
+            amount_variance?: string | null;
+            /** Branch Id */
+            branch_id?: string | null;
+            /** Branch Name */
+            branch_name?: string | null;
+            /** Channel */
+            channel: string;
+            /** Commission Actual */
+            commission_actual?: string | null;
+            /** Commission Expected */
+            commission_expected?: string | null;
+            /** Commission Rate Effective */
+            commission_rate_effective?: string | null;
+            /** Commission Variance */
+            commission_variance?: string | null;
+            /** External Order Id */
+            external_order_id: string;
+            /** Flags */
+            flags?: string[];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Item Flag */
+            item_flag: boolean;
+            /** Match Status */
+            match_status: string;
+            /** Mm Order Id */
+            mm_order_id?: string | null;
+            /** Reconciled At */
+            reconciled_at?: string | null;
+            /** Refund Agg */
+            refund_agg?: string | null;
+            /** Refund Flag */
+            refund_flag: boolean;
+            /** Refund Mm */
+            refund_mm?: string | null;
+            /** Total Agg */
+            total_agg?: string | null;
+            /** Total Mm */
+            total_mm?: string | null;
+        };
+        /**
+         * AggregatorSessionPush
+         * @description A freshly captured marketplace session, pushed in for the ingest to replay.
+         *
+         *     The worker that runs the browser (and can solve OTP / a bot sensor) sends
+         *     the bundle here; the API seals it and stores it. The cookies carry the load-
+         *     bearing anti-bot cookie, `header_profile` the exact request fingerprint.
+         */
+        AggregatorSessionPush: {
+            /**
+             * Account Ref
+             * @default
+             */
+            account_ref: string;
+            /** Channel */
+            channel: string;
+            /** Cookie Expires At */
+            cookie_expires_at?: string | null;
+            /** Cookies */
+            cookies?: {
+                [key: string]: string;
+            };
+            /** Header Profile */
+            header_profile?: {
+                [key: string]: string;
+            };
+            /** Token Expires At */
+            token_expires_at?: string | null;
+            /** Tokens */
+            tokens?: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * AggregatorSessionResponse
+         * @description The stored session's health, echoed back to the worker.
+         */
+        AggregatorSessionResponse: {
+            /** Account Ref */
+            account_ref: string;
+            /** Channel */
+            channel: string;
+            /** Cookie Expires At */
+            cookie_expires_at?: string | null;
+            /** Last Bootstrap At */
+            last_bootstrap_at?: string | null;
+            /** Last Error */
+            last_error?: string | null;
+            /** Last Success At */
+            last_success_at?: string | null;
+            /** Status */
+            status: string;
+            /** Token Expires At */
+            token_expires_at?: string | null;
         };
         /** ApplePayEligibilityResponse */
         ApplePayEligibilityResponse: {
@@ -10432,6 +10777,30 @@ export interface components {
              * Format: uuid
              */
             source_order_id: string;
+        };
+        /**
+         * KeetaOrdersPush
+         * @description A batch of in-page-fetched Keeta order payloads, pushed in for ingest.
+         *
+         *     Keeta cannot be swept over httpx (its `mtgsig` request signing lives in the
+         *     page), so the bootstrap worker fetches each `getOrders` response in-page and
+         *     hands the raw payloads here. Each payload is parsed by `keeta_provider` into
+         *     channel-neutral orders and upserted, exactly as the httpx sweep does for the
+         *     other four channels — this endpoint is simply Keeta's transport.
+         */
+        KeetaOrdersPush: {
+            /** Payloads */
+            payloads?: {
+                [key: string]: unknown;
+            }[];
+        };
+        /**
+         * KeetaOrdersResult
+         * @description How many orders the pushed Keeta payloads upserted.
+         */
+        KeetaOrdersResult: {
+            /** Ingested */
+            ingested: number;
         };
         /** KitchenFlowCreate */
         KitchenFlowCreate: {
@@ -13852,6 +14221,45 @@ export interface components {
             /** Ingredients */
             ingredients?: components["schemas"]["RecipeLine"][];
         };
+        /**
+         * ReconSummaryOut
+         * @description The summary read: per-channel rows and one combined total.
+         */
+        ReconSummaryOut: {
+            /** By Channel */
+            by_channel: components["schemas"]["ReconSummaryRow"][];
+            totals: components["schemas"]["ReconSummaryRow"];
+        };
+        /**
+         * ReconSummaryRow
+         * @description The reconciliation tallies for one channel (or the `all` total row).
+         *
+         *     Counts are over the filtered set; `commission_actual_sum` and
+         *     `avg_rate_effective` are the money aggregates the couriers grammar is
+         *     validated against.
+         */
+        ReconSummaryRow: {
+            /** Avg Rate Effective */
+            avg_rate_effective?: string | null;
+            /** Channel */
+            channel: string;
+            /** Commission Actual Sum */
+            commission_actual_sum?: string | null;
+            /** Commission Variance Count */
+            commission_variance_count: number;
+            /** Item Flags */
+            item_flags: number;
+            /** Matched */
+            matched: number;
+            /** No Maker Side */
+            no_maker_side: number;
+            /** Refund Flags */
+            refund_flags: number;
+            /** Total */
+            total: number;
+            /** Unmatched Agg */
+            unmatched_agg: number;
+        };
         /** RedirectCreate */
         RedirectCreate: {
             /** From Path */
@@ -16404,6 +16812,262 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_branch_map_api_v1_aggregators_branch_map_get: {
+        parameters: {
+            query?: {
+                channel?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AggregatorBranchMapOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upsert_branch_map_row_api_v1_aggregators_branch_map_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AggregatorBranchMapIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AggregatorBranchMapOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_branch_map_row_api_v1_aggregators_branch_map__map_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                map_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    push_keeta_orders_api_v1_aggregators_keeta_orders_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KeetaOrdersPush"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KeetaOrdersResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_reconciliation_api_v1_aggregators_reconciliation_get: {
+        parameters: {
+            query?: {
+                channel?: string | null;
+                branch_id?: string | null;
+                match_status?: string | null;
+                /** @description Only orders carrying an item/refund flag or a flag code */
+                flagged?: boolean | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AggregatorReconciliationList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reconciliation_summary_api_v1_aggregators_reconciliation_summary_get: {
+        parameters: {
+            query?: {
+                channel?: string | null;
+                branch_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReconSummaryOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    push_session_api_v1_aggregators_session_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AggregatorSessionPush"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AggregatorSessionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_sessions_api_v1_aggregators_sessions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AggregatorSessionResponse"][];
                 };
             };
         };

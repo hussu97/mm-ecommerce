@@ -827,7 +827,12 @@ async def mark_handed_over(
 async def mark_collected(
     order_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("pos.register.access")),
+    # `pos.payment.perform`, not `pos.register.access`: this now runs a full
+    # `close_order` — it settles the register check, the same authority the
+    # dedicated `/close` endpoint requires. Gating it on register access alone
+    # let a register-only user finalize a paid pickup sale without the settle
+    # permission. Whoever may close a check may record its collection.
+    user: User = Depends(require("pos.payment.perform")),
 ):
     """
     The customer has taken the order at the counter. Said by whoever handed it over.
@@ -870,7 +875,7 @@ async def mark_collected(
     # sale). Guarded on the check still being open on the register, so it is a
     # no-op the second time — which is also what self-heals a pickup order that
     # reached `delivered` on a laptop but whose till check was never closed.
-    if order.pos_status in order_lifecycle._OPEN_ON_THE_REGISTER:
+    if order.pos_status in order_lifecycle.OPEN_ON_THE_REGISTER:
         await pos_order_service.close_order(db, order=order, user=user)
         order = await _load(db, order_id)
 

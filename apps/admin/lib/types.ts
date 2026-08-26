@@ -1451,3 +1451,32 @@ export interface GrubOpsOrderList {
   error_count: number;
   unmapped_count: number;
 }
+
+// ─── Aggregator reconciliation & outlet↔branch mappings ───────────────────────
+//
+// The row/list/summary/mapping shapes are the generated contract, imported from
+// `@mm/types` (`AggregatorReconciliationOut`, `AggregatorReconciliationList`,
+// `ReconSummaryRow`, `ReconSummaryOut`, `AggregatorBranchMapOut`,
+// `AggregatorBranchMapIn`) by the reconciliation/mappings pages and `lib/api.ts`
+// rather than shadowed here (rule 8). The hand-written copies that used to live
+// here typed the money fields as `number | null`; on the wire they are
+// `string | null` — Decimals serialised as strings — so read them through
+// `Number(...)` / `formatCurrency`, which is exactly the drift these duplicates
+// carried before they were removed.
+//
+// The two unions below stay local: the contract types both `match_status` and
+// `channel` as a bare `string`, so these are the console's own record of the
+// value set — they drive the channel `<Select>` and the match-status
+// badge/label lookups, and have no generated counterpart to move onto.
+
+/**
+ * Which sides the reconciler could line up.
+ *
+ * `matched` — both sides present and paired. `unmatched_agg` — an aggregator
+ * order with no MM order behind it; `unmatched_mm` — the reverse. `no_maker_side`
+ * — neither side could be established, so nothing was compared.
+ */
+export type ReconMatchStatus = 'matched' | 'unmatched_agg' | 'unmatched_mm' | 'no_maker_side';
+
+/** The five marketplaces a branch can be mapped to — same set the reconciler knows. */
+export type BranchMapChannel = 'careem' | 'deliveroo' | 'talabat' | 'noon' | 'keeta';

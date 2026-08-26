@@ -585,6 +585,530 @@
         "title": "AdminUserSummary",
         "type": "object"
       },
+      "AggregatorBranchMapIn": {
+        "description": "An outlet\u2194branch mapping to create or update from the admin.\n\nThe mapping lives in the DB (seeded by migration 152, edited here) rather\nthan in code, so a re-onboarded outlet or a new branch is a row change, not\na deploy. Keyed on `(channel, branch_id)`; posting the same pair updates it.",
+        "properties": {
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "channel_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel Ref"
+          },
+          "external_brand_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Brand Id"
+          },
+          "external_company_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Company Id"
+          },
+          "external_outlet_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Outlet Id"
+          },
+          "is_active": {
+            "default": true,
+            "title": "Is Active",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "channel",
+          "branch_id"
+        ],
+        "title": "AggregatorBranchMapIn",
+        "type": "object"
+      },
+      "AggregatorBranchMapOut": {
+        "description": "One outlet\u2194branch mapping row, with the branch name for display.",
+        "properties": {
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Name"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "channel_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel Ref"
+          },
+          "external_brand_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Brand Id"
+          },
+          "external_company_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Company Id"
+          },
+          "external_outlet_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Outlet Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "channel",
+          "branch_id",
+          "is_active"
+        ],
+        "title": "AggregatorBranchMapOut",
+        "type": "object"
+      },
+      "AggregatorReconciliationList": {
+        "description": "A page of reconciliation rows, plus the unpaginated total for the filter.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AggregatorReconciliationOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "AggregatorReconciliationList",
+        "type": "object"
+      },
+      "AggregatorReconciliationOut": {
+        "description": "One reconciliation row for the dashboard \u2014 the maker-checker's output.\n\n`branch_name` is joined from `branches`; `flags` is the list of issue codes\nraised (never null on the wire \u2014 an unflagged order carries `[]`).",
+        "properties": {
+          "amount_variance": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Variance"
+          },
+          "branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Id"
+          },
+          "branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Name"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "commission_actual": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commission Actual"
+          },
+          "commission_expected": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commission Expected"
+          },
+          "commission_rate_effective": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commission Rate Effective"
+          },
+          "commission_variance": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commission Variance"
+          },
+          "external_order_id": {
+            "title": "External Order Id",
+            "type": "string"
+          },
+          "flags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Flags",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "item_flag": {
+            "title": "Item Flag",
+            "type": "boolean"
+          },
+          "match_status": {
+            "title": "Match Status",
+            "type": "string"
+          },
+          "mm_order_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mm Order Id"
+          },
+          "reconciled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reconciled At"
+          },
+          "refund_agg": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refund Agg"
+          },
+          "refund_flag": {
+            "title": "Refund Flag",
+            "type": "boolean"
+          },
+          "refund_mm": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refund Mm"
+          },
+          "total_agg": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Agg"
+          },
+          "total_mm": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Mm"
+          }
+        },
+        "required": [
+          "id",
+          "channel",
+          "external_order_id",
+          "match_status",
+          "item_flag",
+          "refund_flag"
+        ],
+        "title": "AggregatorReconciliationOut",
+        "type": "object"
+      },
+      "AggregatorSessionPush": {
+        "description": "A freshly captured marketplace session, pushed in for the ingest to replay.\n\nThe worker that runs the browser (and can solve OTP / a bot sensor) sends\nthe bundle here; the API seals it and stores it. The cookies carry the load-\nbearing anti-bot cookie, `header_profile` the exact request fingerprint.",
+        "properties": {
+          "account_ref": {
+            "default": "",
+            "title": "Account Ref",
+            "type": "string"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "cookie_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cookie Expires At"
+          },
+          "cookies": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Cookies",
+            "type": "object"
+          },
+          "header_profile": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Header Profile",
+            "type": "object"
+          },
+          "token_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Expires At"
+          },
+          "tokens": {
+            "additionalProperties": true,
+            "title": "Tokens",
+            "type": "object"
+          }
+        },
+        "required": [
+          "channel"
+        ],
+        "title": "AggregatorSessionPush",
+        "type": "object"
+      },
+      "AggregatorSessionResponse": {
+        "description": "The stored session's health, echoed back to the worker.",
+        "properties": {
+          "account_ref": {
+            "title": "Account Ref",
+            "type": "string"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "cookie_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cookie Expires At"
+          },
+          "last_bootstrap_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Bootstrap At"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "last_success_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Success At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "token_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Expires At"
+          }
+        },
+        "required": [
+          "channel",
+          "account_ref",
+          "status"
+        ],
+        "title": "AggregatorSessionResponse",
+        "type": "object"
+      },
       "ApplePayEligibilityResponse": {
         "properties": {
           "eligible": {
@@ -10636,6 +11160,35 @@
           "source_order_id"
         ],
         "title": "JoinOrderRequest",
+        "type": "object"
+      },
+      "KeetaOrdersPush": {
+        "description": "A batch of in-page-fetched Keeta order payloads, pushed in for ingest.\n\nKeeta cannot be swept over httpx (its `mtgsig` request signing lives in the\npage), so the bootstrap worker fetches each `getOrders` response in-page and\nhands the raw payloads here. Each payload is parsed by `keeta_provider` into\nchannel-neutral orders and upserted, exactly as the httpx sweep does for the\nother four channels \u2014 this endpoint is simply Keeta's transport.",
+        "properties": {
+          "payloads": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Payloads",
+            "type": "array"
+          }
+        },
+        "title": "KeetaOrdersPush",
+        "type": "object"
+      },
+      "KeetaOrdersResult": {
+        "description": "How many orders the pushed Keeta payloads upserted.",
+        "properties": {
+          "ingested": {
+            "title": "Ingested",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ingested"
+        ],
+        "title": "KeetaOrdersResult",
         "type": "object"
       },
       "KitchenFlowCreate": {
@@ -21116,6 +21669,100 @@
         "title": "RecipeUpsert",
         "type": "object"
       },
+      "ReconSummaryOut": {
+        "description": "The summary read: per-channel rows and one combined total.",
+        "properties": {
+          "by_channel": {
+            "items": {
+              "$ref": "#/components/schemas/ReconSummaryRow"
+            },
+            "title": "By Channel",
+            "type": "array"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/ReconSummaryRow"
+          }
+        },
+        "required": [
+          "by_channel",
+          "totals"
+        ],
+        "title": "ReconSummaryOut",
+        "type": "object"
+      },
+      "ReconSummaryRow": {
+        "description": "The reconciliation tallies for one channel (or the `all` total row).\n\nCounts are over the filtered set; `commission_actual_sum` and\n`avg_rate_effective` are the money aggregates the couriers grammar is\nvalidated against.",
+        "properties": {
+          "avg_rate_effective": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Rate Effective"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "commission_actual_sum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commission Actual Sum"
+          },
+          "commission_variance_count": {
+            "title": "Commission Variance Count",
+            "type": "integer"
+          },
+          "item_flags": {
+            "title": "Item Flags",
+            "type": "integer"
+          },
+          "matched": {
+            "title": "Matched",
+            "type": "integer"
+          },
+          "no_maker_side": {
+            "title": "No Maker Side",
+            "type": "integer"
+          },
+          "refund_flags": {
+            "title": "Refund Flags",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "unmatched_agg": {
+            "title": "Unmatched Agg",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "channel",
+          "total",
+          "matched",
+          "unmatched_agg",
+          "no_maker_side",
+          "item_flags",
+          "refund_flags",
+          "commission_variance_count"
+        ],
+        "title": "ReconSummaryRow",
+        "type": "object"
+      },
       "RedirectCreate": {
         "properties": {
           "from_path": {
@@ -28064,6 +28711,515 @@
         "summary": "Update Status",
         "tags": [
           "Custom Orders"
+        ]
+      }
+    },
+    "/api/v1/aggregators/branch-map": {
+      "get": {
+        "description": "Every outlet\u2194branch mapping, for the admin to view and edit.",
+        "operationId": "list_branch_map_api_v1_aggregators_branch_map_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "channel",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AggregatorBranchMapOut"
+                  },
+                  "title": "Response List Branch Map Api V1 Aggregators Branch Map Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Branch Map",
+        "tags": [
+          "Aggregators"
+        ]
+      },
+      "post": {
+        "description": "Create or update one mapping \u2014 the DB is the source of truth, edited here.",
+        "operationId": "upsert_branch_map_row_api_v1_aggregators_branch_map_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AggregatorBranchMapIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AggregatorBranchMapOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Upsert Branch Map Row",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/branch-map/{map_id}": {
+      "delete": {
+        "description": "Remove a mapping \u2014 the branch stops being enumerated on that channel.",
+        "operationId": "delete_branch_map_row_api_v1_aggregators_branch_map__map_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "map_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Map Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Delete Branch Map Row Api V1 Aggregators Branch Map  Map Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Delete Branch Map Row",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/keeta/orders": {
+      "post": {
+        "description": "Ingest a batch of in-page-fetched Keeta order payloads.\n\nKeeta is not on the httpx sweep (its `mtgsig` signing lives in the page), so\nthe bootstrap worker fetches each `getOrders` response in-page and pushes the\nraw payloads here. Each is parsed by the Keeta provider and upserted exactly\nas the sweep upserts the other channels. Returns the count of orders written.",
+        "operationId": "push_keeta_orders_api_v1_aggregators_keeta_orders_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeetaOrdersPush"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeetaOrdersResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Push Keeta Orders",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/reconciliation": {
+      "get": {
+        "description": "The reconciliation rows for the dashboard, newest first, with the total.",
+        "operationId": "list_reconciliation_api_v1_aggregators_reconciliation_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "channel",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel"
+            }
+          },
+          {
+            "in": "query",
+            "name": "branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Branch Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "match_status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Match Status"
+            }
+          },
+          {
+            "description": "Only orders carrying an item/refund flag or a flag code",
+            "in": "query",
+            "name": "flagged",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only orders carrying an item/refund flag or a flag code",
+              "title": "Flagged"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AggregatorReconciliationList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Reconciliation",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/reconciliation/summary": {
+      "get": {
+        "description": "Per-channel reconciliation tallies plus one combined total, from SQL.",
+        "operationId": "reconciliation_summary_api_v1_aggregators_reconciliation_summary_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "channel",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel"
+            }
+          },
+          {
+            "in": "query",
+            "name": "branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Branch Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconSummaryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Reconciliation Summary",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/session": {
+      "post": {
+        "description": "Store (or replace) the session for one channel, sealed at rest.",
+        "operationId": "push_session_api_v1_aggregators_session_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AggregatorSessionPush"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AggregatorSessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Push Session",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/sessions": {
+      "get": {
+        "description": "Session health per channel \u2014 the monitoring read (no secrets exposed).",
+        "operationId": "list_sessions_api_v1_aggregators_sessions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AggregatorSessionResponse"
+                  },
+                  "title": "Response List Sessions Api V1 Aggregators Sessions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Sessions",
+        "tags": [
+          "Aggregators"
         ]
       }
     },
@@ -43284,7 +44440,7 @@
     },
     "/api/v1/pos/orders/{order_id}/cancel": {
       "post": {
-        "description": "Cancel an aggregator order from the counter \u2014 the red button beside Packed.\n\n**Aggregator only, deliberately.** Cancelling here runs the full\n`cancelled` machinery: it releases the stock, voids the check on the register\nand \u2014 the point of doing it from the counter rather than a laptop \u2014 declines\nthe Foodics order so the marketplace stops the rider. For a *website*\norder that same move would refund the customer's card and cancel a booked MM\ncourier, which is an admin decision on the order screen, not a counter\nbutton; so a stale device asking to cancel one is refused here rather than\nquietly issuing a refund.\n\nReachable from `arrived_at_pos` (the map allows it) and from `packed` (it\ndoes not \u2014 `order_service.update_status` widens it for an aggregator order\nvia `AGGREGATOR_CANCELLABLE_FROM`; the Foodics decline then applies only while\nthe order is still pending, and an already-accepted one is recorded for a\nperson to void in the console). `update_status` raises if the order cannot be\ncancelled, which is what a person pressing a button should get.\n\nIdempotent on an already-cancelled order, like `accept` and `packed`.",
+        "description": "Cancel an aggregator or website order from the counter \u2014 the red button\nbeside Packed.\n\n**Aggregator and website, deliberately; not a cashier check.** Cancelling\nhere runs the full `cancelled` machinery, and what that does depends on the\norder:\n- *aggregator*: releases the stock, voids the check on the register and \u2014\n  the point of doing it from the counter rather than a laptop \u2014 declines the\n  Foodics order so the marketplace stops the rider.\n- *website* (`source == online`), pickup **and** delivery: refunds the\n  customer's card and cancels any booked MM courier. This is intentional \u2014\n  the product decision is that the counter may cancel a website order \u2014 and\n  the register device shows a red confirmation dialog as the safeguard,\n  because it is real money moving. Courier-cancel is a natural no-op for a\n  pickup order, which never booked one.\n\nA *cashier* counter check is **not** cancelled here \u2014 it is voided through\nthe void flow (`pos.orders.void` \u2192 `void_order`), which is what keeps the\ntill reconciled; so it stays rejected.\n\nReachable from `arrived_at_pos` (the map allows it) and from `packed` (it\ndoes not \u2014 `order_service.update_status` widens it via\n`AGGREGATOR_CANCELLABLE_FROM` for an aggregator order and\n`ONLINE_CANCELLABLE_FROM` for a website one; the Foodics decline then applies\nonly while an aggregator order is still pending). `update_status` raises if\nthe order cannot be cancelled, which is what a person pressing a button\nshould get.\n\nIdempotent on an already-cancelled order, like `accept` and `packed`.",
         "operationId": "cancel_order_api_v1_pos_orders__order_id__cancel_post",
         "parameters": [
           {
@@ -43439,7 +44595,7 @@
     },
     "/api/v1/pos/orders/{order_id}/collected": {
       "post": {
-        "description": "The customer has taken the order at the counter. Said by whoever handed it over.\n\n**The pickup counterpart of `handed-over`.** A store-pickup order has no\ndriver and no courier telemetry \u2014 nothing reports back that the customer\ncollected it. Until now the only way to record it was an admin on a laptop\nmarking the whole order delivered; the shop that actually handed the box\nover had no button. This is that button.\n\n`delivered` is the stored status; the storefront and the receipt render it as\n\"Collected\" because the order is `pickup`. A delivery order is rejected \u2014 its\nhand-over is `handed-over` (\u2192 `out_for_delivery`), driven by the courier.\n\nDeliberately thin, like `mark_packed`/`mark_handed_over`: `order_service`\nowns the transition rules and side effects, `email_service` owns which email\nthe status earns. Idempotent, because two people will press it.",
+        "description": "The customer has taken the order at the counter. Said by whoever handed it over.\n\n**The pickup counterpart of `handed-over`.** A store-pickup order has no\ndriver and no courier telemetry \u2014 nothing reports back that the customer\ncollected it. Until now the only way to record it was an admin on a laptop\nmarking the whole order delivered; the shop that actually handed the box\nover had no button. This is that button.\n\nIt does **two** things: it closes the register check (so the admin \"Counter\"\ncolumn reads CLOSED, not ACTIVE) *and* it records the collection as\n`delivered`. The two used to be separate \u2014 collecting only advanced the\ndelivery status, leaving the check open at `pos_status=active` with a null\n`closed_at` for ever \u2014 which is the bug this heals: closing runs first and\nindependently of the delivered check, so a pickup order already `delivered`\nbut never closed on the till self-heals the next time this is pressed.\n\n`delivered` is the stored status; the storefront and the receipt render it as\n\"Collected\" because the order is `pickup`. A delivery order is rejected \u2014 its\nhand-over is `handed-over` (\u2192 `out_for_delivery`), driven by the courier.\n\nDeliberately thin, like `mark_packed`/`mark_handed_over`: `pos_order_service`\nowns closing the check (fees, stock, table release), `order_service` owns the\ndelivery transition rules and side effects, `email_service` owns which email\nthe status earns. Idempotent, because two people will press it.",
         "operationId": "mark_collected_api_v1_pos_orders__order_id__collected_post",
         "parameters": [
           {

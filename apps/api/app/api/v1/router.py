@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from .addresses import router as addresses_router
+from .aggregators import router as aggregators_router
 from .analytics import router as analytics_router
 from .audit_logs import router as audit_logs_router
 from .auth import router as auth_router
@@ -97,6 +98,9 @@ api_router.include_router(categories_router, prefix="/categories", tags=["Catego
 api_router.include_router(redirects_router, prefix="/redirects", tags=["Redirects"])
 api_router.include_router(products_router, prefix="/products", tags=["Products"])
 api_router.include_router(grubops_router, prefix="/grubops", tags=["GrubOps"])
+api_router.include_router(
+    aggregators_router, prefix="/aggregators", tags=["Aggregators"]
+)
 api_router.include_router(modifiers_router, prefix="/modifiers", tags=["Modifiers"])
 api_router.include_router(import_router, prefix="/import", tags=["Import"])
 api_router.include_router(cart_router, prefix="/cart", tags=["Cart"])

@@ -175,7 +175,7 @@ def test_only_an_open_check_is_voided_by_a_cancellation():
     """
     # The set lives with the cancellation consequence that reads it, in
     # `order_lifecycle` — the one module allowed to move `Order.status`.
-    open_now = order_lifecycle._OPEN_ON_THE_REGISTER
+    open_now = order_lifecycle.OPEN_ON_THE_REGISTER
 
     assert open_now == {
         PosOrderStatusEnum.DRAFT.value,

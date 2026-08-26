@@ -146,13 +146,16 @@ async def test_an_order_that_cannot_be_collected_is_refused(
     notify.assert_not_awaited()
 
 
-async def test_it_takes_the_same_permission_as_the_register():
-    """`pos.register.access` — whoever may take the order may say it was collected."""
+async def test_it_takes_the_settle_permission_like_close():
+    """`pos.payment.perform` — collecting runs a full `close_order` (it settles
+    the register check), so it takes the same authority as `/close`, not the
+    lower `pos.register.access`."""
     dep = inspect.signature(pos_orders.mark_collected).parameters["user"].default
-    assert dep.dependency.permission == "pos.register.access"
+    assert dep.dependency.permission == "pos.payment.perform"
 
+    # A register-only user (no settle permission) is now refused.
     with pytest.raises(ForbiddenError):
-        await dep.dependency(_user("orders.read"))
+        await dep.dependency(_user("pos.register.access"))
 
 
 # ── closing the counter, not just recording the collection ───────────────────

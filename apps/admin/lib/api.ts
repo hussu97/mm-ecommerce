@@ -20,10 +20,18 @@ import type {
   GrubOpsSyncSummary,
   GrubOpsOrderList,
 } from './types';
+import type { Schemas } from '@mm/types';
 import type {
   PublicKeyCredentialCreationOptionsJSON,
   PublicKeyCredentialRequestOptionsJSON,
 } from '@simplewebauthn/browser';
+
+// Aggregator reconciliation + branch-map shapes come straight from the generated
+// contract (rule 8); these aliases keep the friendly names the code below uses.
+type ReconList = Schemas['AggregatorReconciliationList'];
+type ReconSummary = Schemas['ReconSummaryOut'];
+type BranchMapRow = Schemas['AggregatorBranchMapOut'];
+type BranchMapInput = Schemas['AggregatorBranchMapIn'];
 
 /**
  * Where the API lives, from the browser's point of view.
@@ -628,6 +636,47 @@ export const grubopsApi = {
     page?: number;
     page_size?: number;
   }) => api.get<GrubOpsOrderList>(`/grubops/orders${buildQs(params)}`),
+};
+
+// ─── Aggregator reconciliation ────────────────────────────────────────────────
+
+/**
+ * The aggregator↔MM order match: what each marketplace says an order was worth
+ * against what our books recorded, and where the two disagree.
+ *
+ * Paginated by `limit`/`offset` rather than `page`/`per_page` — the endpoint
+ * answers with `{ items, total }` and the page turns that into pages itself.
+ */
+export const reconciliationApi = {
+  list: (params: {
+    channel?: string;
+    branch_id?: string;
+    match_status?: string;
+    /** Only rows the pass flagged — an item, refund, commission or amount discrepancy. */
+    flagged?: boolean;
+    limit?: number;
+    offset?: number;
+  }) => api.get<ReconList>(`/aggregators/reconciliation${buildQs(params)}`),
+  /** Per-channel roll-up and a grand total, for the stat cards. */
+  summary: (params?: { channel?: string; branch_id?: string }) =>
+    api.get<ReconSummary>(`/aggregators/reconciliation/summary${buildQs(params)}`),
+};
+
+// ─── Aggregator outlet↔branch mappings ────────────────────────────────────────
+
+/**
+ * The outlet↔branch map every aggregator integration reads: which of our
+ * branches a marketplace's outlet/brand/company ids point at.
+ *
+ * `upsert` writes on the pair (`channel`, `branch_id`) — POSTing the same pair
+ * again edits that row rather than adding a second, so the console never has to
+ * decide between create and update itself. `remove` deletes by row id.
+ */
+export const branchMapApi = {
+  list: (params?: { channel?: string }) =>
+    api.get<BranchMapRow[]>(`/aggregators/branch-map${buildQs(params)}`),
+  upsert: (data: BranchMapInput) => api.post<BranchMapRow>('/aggregators/branch-map', data),
+  remove: (id: string) => api.delete<void>(`/aggregators/branch-map/${id}`),
 };
 
 // ─── Bulk Actions ─────────────────────────────────────────────────────────────

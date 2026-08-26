@@ -47,6 +47,8 @@ from app.models.product import Product
 __all__ = [
     "ADMIN_RECOVERABLE",
     "AGGREGATOR_CANCELLABLE_FROM",
+    "ONLINE_CANCELLABLE_FROM",
+    "OPEN_ON_THE_REGISTER",
     "VALID_TRANSITIONS",
     "can_transition",
     "transition",
@@ -178,7 +180,7 @@ VALID_TRANSITIONS: dict[OrderStatusEnum, set[OrderStatusEnum]] = {
 #: Register states a cancellation still has to close. `closed`, `void`,
 #: `joined` and the rest are already finished, and a cancellation arriving after
 #: them must not reopen or relabel what the till already settled.
-_OPEN_ON_THE_REGISTER = frozenset(
+OPEN_ON_THE_REGISTER = frozenset(
     {
         PosOrderStatusEnum.DRAFT.value,
         PosOrderStatusEnum.PENDING.value,
@@ -493,7 +495,7 @@ async def _consequences(
         #
         # Void rather than closed — closed means paid and finished, and this was
         # neither.
-        if order.pos_status in _OPEN_ON_THE_REGISTER:
+        if order.pos_status in OPEN_ON_THE_REGISTER:
             order.pos_status = PosOrderStatusEnum.VOID.value
 
         # A cancelled order releases the stock it claimed at creation.
