@@ -1800,6 +1800,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/dashboard/today": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dashboard Today
+         * @description The current trading day at a glance, over every order and every channel.
+         */
+        get: operations["dashboard_today_api_v1_dashboard_today_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/delivery-zones/batch-groups": {
         parameters: {
             query?: never;
@@ -4366,6 +4386,60 @@ export interface paths {
         put?: never;
         /** Restore Item */
         post: operations["restore_item_api_v1_payment_methods__item_id__restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/payments/apple-pay/eligibility": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Apple Pay Eligibility
+         * @description Whether in-page Apple Pay may be offered on checkout.
+         *
+         *     Public, and not account-specific: it answers only "is Stripe the active card
+         *     gateway", the one thing the client cannot see for itself. A guest checking
+         *     out has no session to authenticate this with before their cart mints one, so
+         *     gating it behind auth would hide the option from exactly the customers Apple
+         *     Pay helps most. The optional `amount` is the order total the client is
+         *     quoting, used only to route the gateway check; the intent endpoint, which
+         *     does spend money, is owner-only and re-checks against the real order.
+         */
+        get: operations["apple_pay_eligibility_api_v1_payments_apple_pay_eligibility_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/payments/apple-pay/intent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Apple Pay Intent
+         * @description Mint a Stripe PaymentIntent so the browser can take an Apple Pay payment.
+         *
+         *     Owner-only, and refused unless Stripe is the active card
+         *     gateway (Ziina does not offer Apple Pay). The intent carries the order
+         *     number in its metadata, so it settles through the same
+         *     `payment_intent.succeeded` webhook every card payment already uses — this
+         *     endpoint writes no order status of its own.
+         */
+        post: operations["create_apple_pay_intent_api_v1_payments_apple_pay_intent_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7437,6 +7511,27 @@ export interface components {
             /** Token Expires At */
             token_expires_at?: string | null;
         };
+        /** ApplePayEligibilityResponse */
+        ApplePayEligibilityResponse: {
+            /** Eligible */
+            eligible: boolean;
+        };
+        /** ApplePayIntentRequest */
+        ApplePayIntentRequest: {
+            /** Order Number */
+            order_number: string;
+        };
+        /** ApplePayIntentResponse */
+        ApplePayIntentResponse: {
+            /** Amount */
+            amount: string;
+            /** Client Secret */
+            client_secret: string;
+            /** Currency */
+            currency: string;
+            /** Order Number */
+            order_number: string;
+        };
         /** ApplyChargeRequest */
         ApplyChargeRequest: {
             /** Charge Id */
@@ -8191,6 +8286,18 @@ export interface components {
         };
         /** BreakdownItem */
         BreakdownItem: {
+            /** Label */
+            label: string;
+            /** Orders */
+            orders: number;
+            /** Revenue */
+            revenue: number;
+        };
+        /**
+         * BreakdownRow
+         * @description One slice of the day — a status, a channel, a fulfilment or a payment.
+         */
+        BreakdownRow: {
             /** Label */
             label: string;
             /** Orders */
@@ -9297,6 +9404,78 @@ export interface components {
             sent: components["schemas"]["DailySalesEmailRecipientResult"][];
             /** Subject */
             subject: string;
+        };
+        /**
+         * DashboardOps
+         * @description Open work, as it stands right now.
+         *
+         *     These are current-state counts, not windowed to today, because an order that
+         *     went out for delivery last night is still the shop's problem this morning —
+         *     except the three explicitly named `_today`, which are the day's events.
+         */
+        DashboardOps: {
+            /** Active Couriers */
+            active_couriers: number;
+            /** Custom Orders Due Today */
+            custom_orders_due_today: number;
+            /** Low Stock Items */
+            low_stock_items: number;
+            /** Open Custom Orders */
+            open_custom_orders: number;
+            /** Open Tills */
+            open_tills: number;
+            /** Out For Delivery */
+            out_for_delivery: number;
+            /** Payment Failed Today */
+            payment_failed_today: number;
+            /** Pending Purchase Orders */
+            pending_purchase_orders: number;
+            /** Refunds Amount Today */
+            refunds_amount_today: number;
+            /** Refunds Today */
+            refunds_today: number;
+            /** Undelivered */
+            undelivered: number;
+        };
+        /**
+         * DashboardSummary
+         * @description The day's headline figures, over every non-cancelled order created today.
+         */
+        DashboardSummary: {
+            /** Avg Order Value */
+            avg_order_value: number;
+            /** Delivered */
+            delivered: number;
+            /** Orders */
+            orders: number;
+            /** Orders Growth */
+            orders_growth: number;
+            /** Revenue */
+            revenue: number;
+            /** Revenue Growth */
+            revenue_growth: number;
+        };
+        /** DashboardTodayResponse */
+        DashboardTodayResponse: {
+            /** Business Date */
+            business_date: string;
+            /** By Channel */
+            by_channel: components["schemas"]["BreakdownRow"][];
+            /** By Fulfillment */
+            by_fulfillment: components["schemas"]["BreakdownRow"][];
+            /** By Payment */
+            by_payment: components["schemas"]["BreakdownRow"][];
+            /** By Status */
+            by_status: components["schemas"]["BreakdownRow"][];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            ops: components["schemas"]["DashboardOps"];
+            summary: components["schemas"]["DashboardSummary"];
+            /** Timezone */
+            timezone: string;
         };
         /** DayAvailabilityResponse */
         DayAvailabilityResponse: {
@@ -19957,6 +20136,26 @@ export interface operations {
             };
         };
     };
+    dashboard_today_api_v1_dashboard_today_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardTodayResponse"];
+                };
+            };
+        };
+    };
     list_batch_groups_api_v1_delivery_zones_batch_groups_get: {
         parameters: {
             query?: never;
@@ -25293,6 +25492,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PaymentMethodResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apple_pay_eligibility_api_v1_payments_apple_pay_eligibility_get: {
+        parameters: {
+            query?: {
+                amount?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplePayEligibilityResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_apple_pay_intent_api_v1_payments_apple_pay_intent_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplePayIntentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplePayIntentResponse"];
                 };
             };
             /** @description Validation Error */

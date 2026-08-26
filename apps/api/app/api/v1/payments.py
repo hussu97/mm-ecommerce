@@ -12,7 +12,7 @@ from app.core.exceptions import BadRequestError, NotFoundError
 from app.core.limiter import limiter
 from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.user import User
-from app.services.payments import payment_service
+from app.services.payments import apple_pay_service, payment_service
 from app.services.webhook_log_service import Recorder
 
 logger = logging.getLogger(__name__)
@@ -64,6 +64,27 @@ class PaymentStatusResponse(BaseModel):
     order_status: str
 
 
+class ApplePayEligibilityResponse(BaseModel):
+    #: Whether in-page Apple Pay may be offered: Stripe is the active card
+    #: gateway. The browser's own "can this device do Apple Pay" check is the
+    #: client's to make on top of this.
+    eligible: bool
+
+
+class ApplePayIntentRequest(BaseModel):
+    order_number: str
+
+
+class ApplePayIntentResponse(BaseModel):
+    #: The secret the browser confirms the payment against with Stripe.js.
+    client_secret: str
+    #: The server-computed amount, so the Apple Pay sheet shows the figure the
+    #: card is actually charged rather than one the client re-derived.
+    amount: str
+    currency: str
+    order_number: str
+
+
 @router.post(
     "/create-session",
     response_model=CreateSessionResponse,
@@ -106,6 +127,67 @@ async def create_payment_session(
             admin=current_user.is_admin,
         )
     return CreateSessionResponse(**result)
+
+
+@router.get("/apple-pay/eligibility", response_model=ApplePayEligibilityResponse)
+@limiter.limit("30/minute")
+async def apple_pay_eligibility(
+    request: Request,
+    amount: float | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Whether in-page Apple Pay may be offered on checkout.
+
+    Public, and not account-specific: it answers only "is Stripe the active card
+    gateway", the one thing the client cannot see for itself. A guest checking
+    out has no session to authenticate this with before their cart mints one, so
+    gating it behind auth would hide the option from exactly the customers Apple
+    Pay helps most. The optional `amount` is the order total the client is
+    quoting, used only to route the gateway check; the intent endpoint, which
+    does spend money, is owner-only and re-checks against the real order.
+    """
+    from decimal import Decimal
+
+    amt = Decimal(str(amount)) if amount and amount > 0 else None
+    result = await apple_pay_service.eligibility(db, amount=amt)
+    return ApplePayEligibilityResponse(**result)
+
+
+@router.post(
+    "/apple-pay/intent",
+    response_model=ApplePayIntentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+@limiter.limit("20/minute")
+async def create_apple_pay_intent(
+    request: Request,
+    data: ApplePayIntentRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Mint a Stripe PaymentIntent so the browser can take an Apple Pay payment.
+
+    Owner-only, and refused unless Stripe is the active card
+    gateway (Ziina does not offer Apple Pay). The intent carries the order
+    number in its metadata, so it settles through the same
+    `payment_intent.succeeded` webhook every card payment already uses — this
+    endpoint writes no order status of its own.
+    """
+    # `create_intent` may reset a `payment_failed` order back to `created` for a
+    # retry, which is the customer finishing checkout rather than anything
+    # automated — attributed at the door where the caller is known.
+    with acting_as(
+        StatusSourceEnum.CHECKOUT.value,
+        actor_id=current_user.id,
+        actor_label=current_user.email,
+        note="apple_pay",
+    ):
+        result = await apple_pay_service.create_intent(
+            db, data.order_number, current_user
+        )
+    return ApplePayIntentResponse(**result)
 
 
 async def process_gateway_webhook(

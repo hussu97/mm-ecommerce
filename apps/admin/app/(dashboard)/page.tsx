@@ -1,124 +1,349 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { ordersApi, productsApi, promoApi } from '@/lib/api';
-import type { Order, PromoCode } from '@/lib/types';
-import { Badge } from '@/components/ui';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { dashboardApi, ordersApi } from '@/lib/api';
+import type { DashboardToday, DashboardBreakdownRow, Order } from '@/lib/types';
+import { Badge, LoadError } from '@/components/ui';
+import { formatCurrency, formatTime, formatTimeAgo, cn } from '@/lib/utils';
 
-const STATUS_BADGE: Record<string, 'warning' | 'info' | 'success' | 'danger'> = {
-  created:   'warning',
+/** How often the live figures refetch themselves, in ms. */
+const REFRESH_MS = 60_000;
+
+const STATUS_BADGE: Record<string, 'warning' | 'info' | 'success' | 'danger' | 'neutral'> = {
+  created: 'warning',
   confirmed: 'info',
-  packed:    'success',
+  arrived_at_pos: 'info',
+  packed: 'success',
+  out_for_delivery: 'info',
+  delivered: 'success',
+  undelivered: 'danger',
   cancelled: 'danger',
+  payment_failed: 'danger',
+  refunded: 'neutral',
+  disputed: 'danger',
 };
 
+type Growth = number | undefined;
+
+function GrowthPill({ value }: { value: Growth }) {
+  if (value === undefined || value === 0) return null;
+  const up = value > 0;
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-0.5 text-[11px] font-body',
+        up ? 'text-green-600' : 'text-red-500',
+      )}
+      title="vs the same time yesterday"
+    >
+      <span className="material-icons text-[13px]">{up ? 'arrow_upward' : 'arrow_downward'}</span>
+      {Math.abs(value)}%
+    </span>
+  );
+}
+
+function MetricCard({
+  label,
+  value,
+  icon,
+  href,
+  growth,
+  loading,
+}: {
+  label: string;
+  value: string;
+  icon: string;
+  href: string;
+  growth?: Growth;
+  loading?: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      className="bg-white border border-gray-200 p-4 hover:border-primary transition-colors group"
+    >
+      <div className="flex items-start justify-between mb-3">
+        <span className="material-icons text-secondary text-xl group-hover:text-primary transition-colors">
+          {icon}
+        </span>
+        {!loading && <GrowthPill value={growth} />}
+      </div>
+      <div className="font-display text-2xl text-gray-800 mb-1">{loading ? '—' : value}</div>
+      <div className="text-[11px] font-body uppercase tracking-widest text-gray-400">{label}</div>
+    </Link>
+  );
+}
+
+function AttentionTile({
+  label,
+  count,
+  icon,
+  href,
+  tone = 'neutral',
+  sub,
+}: {
+  label: string;
+  count: number;
+  icon: string;
+  href: string;
+  tone?: 'neutral' | 'warning' | 'danger';
+  sub?: string;
+}) {
+  const active = count > 0;
+  const toneCls =
+    active && tone === 'danger'
+      ? 'text-red-600'
+      : active && tone === 'warning'
+        ? 'text-amber-600'
+        : 'text-gray-800';
+  return (
+    <Link
+      href={href}
+      className={cn(
+        'bg-white border p-3 flex items-center gap-3 transition-colors hover:border-primary',
+        active && tone === 'danger'
+          ? 'border-red-200'
+          : active && tone === 'warning'
+            ? 'border-amber-200'
+            : 'border-gray-200',
+      )}
+    >
+      <span className={cn('material-icons text-lg', active ? toneCls : 'text-gray-300')}>{icon}</span>
+      <div className="min-w-0">
+        <div className={cn('font-display text-lg leading-none', toneCls)}>{count}</div>
+        <div className="text-[10px] font-body uppercase tracking-widest text-gray-400 mt-1 truncate">
+          {sub ?? label}
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+function Section({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
+  return (
+    <div className="mb-8">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-xs font-body uppercase tracking-widest text-gray-500">{title}</h2>
+        {action}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** A labelled share bar — orders width proportional to the row's share. */
+function BreakdownBars({ rows, empty }: { rows: DashboardBreakdownRow[]; empty: string }) {
+  if (rows.length === 0) {
+    return <p className="text-xs text-gray-400 font-body py-3">{empty}</p>;
+  }
+  const max = Math.max(...rows.map((r) => r.orders), 1);
+  return (
+    <div className="space-y-2.5">
+      {rows.map((r) => (
+        <div key={r.label}>
+          <div className="flex items-center justify-between text-xs font-body mb-1">
+            <span className="text-gray-600">{r.label}</span>
+            <span className="text-gray-400">
+              {r.orders} · <span className="text-gray-600">{formatCurrency(r.revenue)}</span>
+            </span>
+          </div>
+          <div className="h-1.5 bg-gray-100">
+            <div className="h-full bg-secondary" style={{ width: `${(r.orders / max) * 100}%` }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function DashboardPage() {
+  const [data, setData] = useState<DashboardToday | null>(null);
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
-  const [totalProducts, setTotalProducts] = useState<number | null>(null);
-  const [activePromos, setActivePromos] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    const [today, orders] = await Promise.allSettled([
+      dashboardApi.today(),
+      ordersApi.listAll({ per_page: 8 }),
+    ]);
+
+    if (today.status === 'fulfilled') {
+      setData(today.value);
+      setFailed(false);
+    } else if (!data) {
+      setFailed(true);
+    }
+    if (orders.status === 'fulfilled') setRecentOrders(orders.value.items);
+
+    setRefreshedAt(new Date().toISOString());
+    setLoading(false);
+  }, [data]);
 
   useEffect(() => {
-    Promise.all([
-      ordersApi.listAll({ per_page: 10 }),
-      productsApi.list({ per_page: 1 }),
-      promoApi.list(),
-    ]).then(([orders, products, promos]) => {
-      setRecentOrders(orders.items);
-      setTotalProducts(products.total);
-      setActivePromos((promos as PromoCode[]).filter(p => p.is_active).length);
-    }).catch(() => {}).finally(() => setLoading(false));
+    load();
+    const id = setInterval(load, REFRESH_MS);
+    return () => clearInterval(id);
+    // load is intentionally excluded — it closes over `data` only to decide the
+    // first-load error, and re-subscribing the interval on every fetch is worse
+    // than the stale closure.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Compute today's stats from recent orders
-  const today = new Date().toDateString();
-  const todayOrders = recentOrders.filter(o => new Date(o.created_at).toDateString() === today);
-  const todayRevenue = todayOrders.reduce((sum, o) => sum + Number(o.total), 0);
-
-  const METRICS = [
-    {
-      label: "Today's Orders",
-      value: loading ? '—' : String(todayOrders.length),
-      icon: 'receipt_long',
-      href: '/orders',
-    },
-    {
-      label: "Today's Revenue",
-      value: loading ? '—' : formatCurrency(todayRevenue),
-      icon: 'payments',
-      href: '/orders',
-    },
-    {
-      label: 'Total Products',
-      value: loading ? '—' : String(totalProducts ?? 0),
-      icon: 'inventory_2',
-      href: '/products',
-    },
-    {
-      label: 'Active Promos',
-      value: loading ? '—' : String(activePromos ?? 0),
-      icon: 'local_offer',
-      href: '/promo-codes',
-    },
-  ];
+  const s = data?.summary;
+  const ops = data?.ops;
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="font-display text-2xl text-gray-800">Dashboard</h1>
-        <p className="text-xs text-gray-400 font-body mt-0.5">
-          {new Date().toLocaleDateString('en-AE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-        </p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-display text-2xl text-gray-800">Dashboard</h1>
+          <p className="text-xs text-gray-400 font-body mt-0.5">
+            {new Date().toLocaleDateString('en-AE', {
+              weekday: 'long',
+              day: 'numeric',
+              month: 'long',
+              year: 'numeric',
+            })}
+            {data && <span className="text-gray-300"> · trading day {data.business_date}</span>}
+          </p>
+        </div>
+        <button
+          onClick={load}
+          className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-body uppercase tracking-widest text-gray-500 hover:text-primary transition-colors min-h-11 md:min-h-0"
+          title="Refresh"
+        >
+          <span className="material-icons text-[15px]">refresh</span>
+          {refreshedAt ? `As of ${formatTime(refreshedAt)}` : 'Refresh'}
+        </button>
       </div>
 
-      {/* Metrics */}
+      {failed && (
+        <div className="mb-6">
+          <LoadError message="Could not load today's figures." onRetry={load} />
+        </div>
+      )}
+
+      {/* Today's headline figures — every order, aggregated server-side */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        {METRICS.map(({ label, value, icon, href }) => (
-          <Link
-            key={label}
-            href={href}
-            className="bg-white border border-gray-200 p-4 hover:border-primary transition-colors group"
-          >
-            <div className="flex items-start justify-between mb-3">
-              <span className="material-icons text-secondary text-xl group-hover:text-primary transition-colors">{icon}</span>
-            </div>
-            <div className="font-display text-2xl text-gray-800 mb-1">{value}</div>
-            <div className="text-[11px] font-body uppercase tracking-widest text-gray-400">{label}</div>
-          </Link>
-        ))}
+        <MetricCard
+          label="Revenue Today"
+          value={formatCurrency(s?.revenue ?? 0)}
+          icon="payments"
+          href="/orders"
+          growth={s?.revenue_growth}
+          loading={loading}
+        />
+        <MetricCard
+          label="Orders Today"
+          value={String(s?.orders ?? 0)}
+          icon="receipt_long"
+          href="/orders"
+          growth={s?.orders_growth}
+          loading={loading}
+        />
+        <MetricCard
+          label="Delivered"
+          value={String(s?.delivered ?? 0)}
+          icon="check_circle"
+          href="/orders"
+          loading={loading}
+        />
+        <MetricCard
+          label="Avg Order"
+          value={formatCurrency(s?.avg_order_value ?? 0)}
+          icon="trending_up"
+          href="/analytics"
+          loading={loading}
+        />
       </div>
+
+      {/* Needs attention — the open operational work, right now */}
+      <Section title="Needs Attention">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <AttentionTile label="Out for delivery" sub="Out for delivery" count={ops?.out_for_delivery ?? 0} icon="local_shipping" href="/orders" tone="warning" />
+          <AttentionTile label="Undelivered" sub="Undelivered" count={ops?.undelivered ?? 0} icon="error_outline" href="/orders" tone="danger" />
+          <AttentionTile label="Payment failed" sub="Payment failed" count={ops?.payment_failed_today ?? 0} icon="credit_card_off" href="/orders" tone="danger" />
+          <AttentionTile label="Refunds today" sub={ops ? `Refunds · ${formatCurrency(ops.refunds_amount_today)}` : 'Refunds today'} count={ops?.refunds_today ?? 0} icon="undo" href="/orders" tone="warning" />
+          <AttentionTile label="Custom due today" sub="Custom due today" count={ops?.custom_orders_due_today ?? 0} icon="cake" href="/custom-orders" tone="warning" />
+          <AttentionTile label="Open custom orders" sub="Open custom orders" count={ops?.open_custom_orders ?? 0} icon="pending_actions" href="/custom-orders" />
+          <AttentionTile label="Low stock" sub="Low stock items" count={ops?.low_stock_items ?? 0} icon="inventory_2" href="/inventory" tone="warning" />
+          <AttentionTile label="Pending POs" sub="Pending POs" count={ops?.pending_purchase_orders ?? 0} icon="local_mall" href="/purchase-orders" tone="warning" />
+          <AttentionTile label="Open tills" sub="Open tills" count={ops?.open_tills ?? 0} icon="point_of_sale" href="/pos-reports" />
+          <AttentionTile label="Active couriers" sub="Active couriers" count={ops?.active_couriers ?? 0} icon="two_wheeler" href="/delivery-zones" />
+        </div>
+      </Section>
+
+      {/* Today's mix — where the orders and money came from */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-8">
+        <div className="bg-white border border-gray-200 p-4">
+          <h3 className="text-[11px] font-body uppercase tracking-widest text-gray-400 mb-4">By Channel</h3>
+          <BreakdownBars rows={data?.by_channel ?? []} empty="No orders yet today" />
+        </div>
+        <div className="bg-white border border-gray-200 p-4">
+          <h3 className="text-[11px] font-body uppercase tracking-widest text-gray-400 mb-4">By Fulfilment</h3>
+          <BreakdownBars rows={data?.by_fulfillment ?? []} empty="No orders yet today" />
+        </div>
+        <div className="bg-white border border-gray-200 p-4">
+          <h3 className="text-[11px] font-body uppercase tracking-widest text-gray-400 mb-4">By Payment</h3>
+          <BreakdownBars rows={data?.by_payment ?? []} empty="No orders yet today" />
+        </div>
+      </div>
+
+      {/* Today's pipeline — every status the day's orders are sitting in */}
+      {data && data.by_status.length > 0 && (
+        <Section title="Today's Orders by Status">
+          <div className="bg-white border border-gray-200 p-4 flex flex-wrap gap-2">
+            {data.by_status.map((row) => (
+              <div key={row.label} className="flex items-center gap-2 border border-gray-100 px-3 py-1.5">
+                <Badge variant={STATUS_BADGE[row.label.toLowerCase().replace(/ /g, '_')] ?? 'neutral'}>
+                  {row.label}
+                </Badge>
+                <span className="font-display text-sm text-gray-800">{row.orders}</span>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
 
       {/* Quick Actions */}
-      <div className="mb-8">
-        <h2 className="text-xs font-body uppercase tracking-widest text-gray-500 mb-3">Quick Actions</h2>
+      <Section title="Quick Actions">
         <div className="flex flex-wrap gap-2">
           <Link href="/products/new" className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white text-xs font-body uppercase tracking-widest hover:opacity-90 transition-opacity">
             <span className="material-icons text-[14px]">add</span>
             New Product
           </Link>
-          <Link href="/categories" className="flex items-center gap-1.5 px-4 py-2 border border-gray-300 text-gray-600 text-xs font-body uppercase tracking-widest hover:bg-gray-50 transition-colors">
-            <span className="material-icons text-[14px]">add</span>
-            New Category
+          <Link href="/custom-orders" className="flex items-center gap-1.5 px-4 py-2 border border-gray-300 text-gray-600 text-xs font-body uppercase tracking-widest hover:bg-gray-50 transition-colors">
+            <span className="material-icons text-[14px]">cake</span>
+            Custom Orders
           </Link>
           <Link href="/orders" className="flex items-center gap-1.5 px-4 py-2 border border-gray-300 text-gray-600 text-xs font-body uppercase tracking-widest hover:bg-gray-50 transition-colors">
             <span className="material-icons text-[14px]">visibility</span>
             View All Orders
           </Link>
+          <Link href="/analytics" className="flex items-center gap-1.5 px-4 py-2 border border-gray-300 text-gray-600 text-xs font-body uppercase tracking-widest hover:bg-gray-50 transition-colors">
+            <span className="material-icons text-[14px]">insights</span>
+            Analytics
+          </Link>
         </div>
-      </div>
+      </Section>
 
       {/* Recent Orders */}
       <div>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-xs font-body uppercase tracking-widest text-gray-500">Recent Orders</h2>
-          <Link href="/orders" className="inline-flex items-center min-h-11 md:min-h-0 text-xs text-primary hover:underline font-body">View all</Link>
+          <Link href="/orders" className="inline-flex items-center min-h-11 md:min-h-0 text-xs text-primary hover:underline font-body">
+            View all
+          </Link>
         </div>
 
         {loading ? (
           <div className="space-y-2">
-            {[1,2,3].map(i => <div key={i} className="h-12 bg-gray-100 animate-pulse" />)}
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-12 bg-gray-100 animate-pulse" />
+            ))}
           </div>
         ) : recentOrders.length === 0 ? (
           <div className="text-center py-10 bg-white border border-gray-200">
@@ -126,7 +351,7 @@ export default function DashboardPage() {
           </div>
         ) : (
           <div className="bg-white border border-gray-200 divide-y divide-gray-100">
-            {recentOrders.map(order => (
+            {recentOrders.map((order) => (
               <Link
                 key={order.id}
                 href={`/orders/${order.order_number}`}
@@ -139,7 +364,7 @@ export default function DashboardPage() {
                 <div className="flex items-center gap-3 shrink-0">
                   <Badge variant={STATUS_BADGE[order.status] ?? 'neutral'}>{order.status}</Badge>
                   <span className="text-xs font-body text-gray-700">{formatCurrency(order.total)}</span>
-                  <span className="text-[11px] text-gray-400 font-body hidden sm:block">{formatDate(order.created_at)}</span>
+                  <span className="text-[11px] text-gray-400 font-body hidden sm:block">{formatTimeAgo(order.created_at)}</span>
                 </div>
               </Link>
             ))}

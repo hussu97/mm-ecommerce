@@ -1109,6 +1109,60 @@
         "title": "AggregatorSessionResponse",
         "type": "object"
       },
+      "ApplePayEligibilityResponse": {
+        "properties": {
+          "eligible": {
+            "title": "Eligible",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "eligible"
+        ],
+        "title": "ApplePayEligibilityResponse",
+        "type": "object"
+      },
+      "ApplePayIntentRequest": {
+        "properties": {
+          "order_number": {
+            "title": "Order Number",
+            "type": "string"
+          }
+        },
+        "required": [
+          "order_number"
+        ],
+        "title": "ApplePayIntentRequest",
+        "type": "object"
+      },
+      "ApplePayIntentResponse": {
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "string"
+          },
+          "client_secret": {
+            "title": "Client Secret",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "order_number": {
+            "title": "Order Number",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_secret",
+          "amount",
+          "currency",
+          "order_number"
+        ],
+        "title": "ApplePayIntentResponse",
+        "type": "object"
+      },
       "ApplyChargeRequest": {
         "properties": {
           "charge_id": {
@@ -3399,6 +3453,30 @@
           "revenue"
         ],
         "title": "BreakdownItem",
+        "type": "object"
+      },
+      "BreakdownRow": {
+        "description": "One slice of the day \u2014 a status, a channel, a fulfilment or a payment.",
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "orders": {
+            "title": "Orders",
+            "type": "integer"
+          },
+          "revenue": {
+            "title": "Revenue",
+            "type": "number"
+          }
+        },
+        "required": [
+          "label",
+          "orders",
+          "revenue"
+        ],
+        "title": "BreakdownRow",
         "type": "object"
       },
       "BulkStatusRequest": {
@@ -6848,6 +6926,173 @@
           "sent"
         ],
         "title": "DailySalesEmailResponse",
+        "type": "object"
+      },
+      "DashboardOps": {
+        "description": "Open work, as it stands right now.\n\nThese are current-state counts, not windowed to today, because an order that\nwent out for delivery last night is still the shop's problem this morning \u2014\nexcept the three explicitly named `_today`, which are the day's events.",
+        "properties": {
+          "active_couriers": {
+            "title": "Active Couriers",
+            "type": "integer"
+          },
+          "custom_orders_due_today": {
+            "title": "Custom Orders Due Today",
+            "type": "integer"
+          },
+          "low_stock_items": {
+            "title": "Low Stock Items",
+            "type": "integer"
+          },
+          "open_custom_orders": {
+            "title": "Open Custom Orders",
+            "type": "integer"
+          },
+          "open_tills": {
+            "title": "Open Tills",
+            "type": "integer"
+          },
+          "out_for_delivery": {
+            "title": "Out For Delivery",
+            "type": "integer"
+          },
+          "payment_failed_today": {
+            "title": "Payment Failed Today",
+            "type": "integer"
+          },
+          "pending_purchase_orders": {
+            "title": "Pending Purchase Orders",
+            "type": "integer"
+          },
+          "refunds_amount_today": {
+            "title": "Refunds Amount Today",
+            "type": "number"
+          },
+          "refunds_today": {
+            "title": "Refunds Today",
+            "type": "integer"
+          },
+          "undelivered": {
+            "title": "Undelivered",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "out_for_delivery",
+          "undelivered",
+          "payment_failed_today",
+          "refunds_today",
+          "refunds_amount_today",
+          "open_custom_orders",
+          "custom_orders_due_today",
+          "low_stock_items",
+          "pending_purchase_orders",
+          "open_tills",
+          "active_couriers"
+        ],
+        "title": "DashboardOps",
+        "type": "object"
+      },
+      "DashboardSummary": {
+        "description": "The day's headline figures, over every non-cancelled order created today.",
+        "properties": {
+          "avg_order_value": {
+            "title": "Avg Order Value",
+            "type": "number"
+          },
+          "delivered": {
+            "title": "Delivered",
+            "type": "integer"
+          },
+          "orders": {
+            "title": "Orders",
+            "type": "integer"
+          },
+          "orders_growth": {
+            "title": "Orders Growth",
+            "type": "number"
+          },
+          "revenue": {
+            "title": "Revenue",
+            "type": "number"
+          },
+          "revenue_growth": {
+            "title": "Revenue Growth",
+            "type": "number"
+          }
+        },
+        "required": [
+          "orders",
+          "revenue",
+          "avg_order_value",
+          "delivered",
+          "orders_growth",
+          "revenue_growth"
+        ],
+        "title": "DashboardSummary",
+        "type": "object"
+      },
+      "DashboardTodayResponse": {
+        "properties": {
+          "business_date": {
+            "title": "Business Date",
+            "type": "string"
+          },
+          "by_channel": {
+            "items": {
+              "$ref": "#/components/schemas/BreakdownRow"
+            },
+            "title": "By Channel",
+            "type": "array"
+          },
+          "by_fulfillment": {
+            "items": {
+              "$ref": "#/components/schemas/BreakdownRow"
+            },
+            "title": "By Fulfillment",
+            "type": "array"
+          },
+          "by_payment": {
+            "items": {
+              "$ref": "#/components/schemas/BreakdownRow"
+            },
+            "title": "By Payment",
+            "type": "array"
+          },
+          "by_status": {
+            "items": {
+              "$ref": "#/components/schemas/BreakdownRow"
+            },
+            "title": "By Status",
+            "type": "array"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "ops": {
+            "$ref": "#/components/schemas/DashboardOps"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/DashboardSummary"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "business_date",
+          "timezone",
+          "generated_at",
+          "summary",
+          "by_status",
+          "by_channel",
+          "by_fulfillment",
+          "by_payment",
+          "ops"
+        ],
+        "title": "DashboardTodayResponse",
         "type": "object"
       },
       "DayAvailabilityResponse": {
@@ -34253,6 +34498,33 @@
         ]
       }
     },
+    "/api/v1/dashboard/today": {
+      "get": {
+        "description": "The current trading day at a glance, over every order and every channel.",
+        "operationId": "dashboard_today_api_v1_dashboard_today_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardTodayResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Dashboard Today",
+        "tags": [
+          "Dashboard"
+        ]
+      }
+    },
     "/api/v1/delivery-zones/batch-groups": {
       "get": {
         "description": "Every schedule, with the zones on it.\n\nDeclared beside `/{polygon_id}` routes, so the literal path has to be\nmatched before anything that would read \"batch-groups\" as an id.",
@@ -43337,6 +43609,103 @@
         "summary": "Restore Item",
         "tags": [
           "Payment Methods"
+        ]
+      }
+    },
+    "/api/v1/payments/apple-pay/eligibility": {
+      "get": {
+        "description": "Whether in-page Apple Pay may be offered on checkout.\n\nPublic, and not account-specific: it answers only \"is Stripe the active card\ngateway\", the one thing the client cannot see for itself. A guest checking\nout has no session to authenticate this with before their cart mints one, so\ngating it behind auth would hide the option from exactly the customers Apple\nPay helps most. The optional `amount` is the order total the client is\nquoting, used only to route the gateway check; the intent endpoint, which\ndoes spend money, is owner-only and re-checks against the real order.",
+        "operationId": "apple_pay_eligibility_api_v1_payments_apple_pay_eligibility_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "amount",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Amount"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplePayEligibilityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Apple Pay Eligibility",
+        "tags": [
+          "Payments"
+        ]
+      }
+    },
+    "/api/v1/payments/apple-pay/intent": {
+      "post": {
+        "description": "Mint a Stripe PaymentIntent so the browser can take an Apple Pay payment.\n\nOwner-only, and refused unless Stripe is the active card\ngateway (Ziina does not offer Apple Pay). The intent carries the order\nnumber in its metadata, so it settles through the same\n`payment_intent.succeeded` webhook every card payment already uses \u2014 this\nendpoint writes no order status of its own.",
+        "operationId": "create_apple_pay_intent_api_v1_payments_apple_pay_intent_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplePayIntentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplePayIntentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Create Apple Pay Intent",
+        "tags": [
+          "Payments"
         ]
       }
     },

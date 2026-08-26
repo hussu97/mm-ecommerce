@@ -17,6 +17,7 @@
     "@mm/config": "workspace:*",
     "@mm/types": "workspace:*",
     "@sentry/nextjs": "^10.42.0",
+    "@stripe/stripe-js": "^9.14.0",
     "@vercel/speed-insights": "^2.0.0",
     "@vis.gl/react-google-maps": "^1.7.1",
     "client-only": "^0.0.1",

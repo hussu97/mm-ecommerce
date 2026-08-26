@@ -595,6 +595,27 @@ export interface PaymentSessionResponse {
   confirmed?: boolean;
 }
 
+/**
+ * Whether in-page Apple Pay may be *offered* — the server's half of the
+ * decision: Stripe is the active card gateway. The browser's own "can this
+ * device do Apple Pay" is the client's to check on top of this.
+ */
+export interface ApplePayEligibility {
+  eligible: boolean;
+}
+
+/**
+ * A Stripe PaymentIntent for an order, ready for the browser to confirm with an
+ * Apple Pay token. `amount` is the server-computed figure so the Apple Pay
+ * sheet displays what the card is actually charged.
+ */
+export interface ApplePayIntent {
+  client_secret: string;
+  amount: string;
+  currency: string;
+  order_number: string;
+}
+
 /** Result of pricing delivery against the active zone map. */
 export interface DeliveryQuote {
   /**
