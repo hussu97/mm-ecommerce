@@ -35,27 +35,3 @@ export function accountEmailOf(user: User | null): string | null {
   if (!email || /@guest\.local$/i.test(email)) return null;
   return email;
 }
-
-/**
- * The accounts allowed to see and use in-page Apple Pay on checkout.
- *
- * An explicit allowlist, mirrored on the server (`apple_pay_service`), because
- * this is a pre-release test surface for named people rather than a permission
- * the shop grants. The server is the real gate — it refuses the intent for
- * anyone else — so this is only the client's half of hiding a feature a guest
- * or another customer must never see.
- */
-export const APPLE_PAY_TEST_EMAILS = ['h_abbasi97@hotmail.com'];
-
-/**
- * Whether *user* is a signed-in account on the Apple Pay allowlist.
- *
- * Guests are excluded twice over: they carry `is_guest`, and their synthetic
- * `…@guest.local` address is not on the list anyway. A `null` user — the state
- * a guest is in as far as `useAuth` is concerned — is not on the list either.
- */
-export function isApplePayTestUser(user: User | null): boolean {
-  if (!user || user.is_guest) return false;
-  const email = user.email?.trim().toLowerCase() ?? '';
-  return APPLE_PAY_TEST_EMAILS.includes(email);
-}

@@ -42458,7 +42458,7 @@
     },
     "/api/v1/payments/apple-pay/eligibility": {
       "get": {
-        "description": "Whether the caller may be offered in-page Apple Pay on checkout.\n\nRestricted, server-side, to the small allowlist in `apple_pay_service` \u2014 a\nguest or any other account gets `eligible: false`, so the option can never\nrender for them however the client is coaxed. The optional `amount` is the\norder total the client is quoting, used only to route the gateway check;\nthe intent endpoint re-checks against the real order and is the actual\nguard on money.",
+        "description": "Whether in-page Apple Pay may be offered on checkout.\n\nPublic, and not account-specific: it answers only \"is Stripe the active card\ngateway\", the one thing the client cannot see for itself. A guest checking\nout has no session to authenticate this with before their cart mints one, so\ngating it behind auth would hide the option from exactly the customers Apple\nPay helps most. The optional `amount` is the order total the client is\nquoting, used only to route the gateway check; the intent endpoint, which\ndoes spend money, is owner-only and re-checks against the real order.",
         "operationId": "apple_pay_eligibility_api_v1_payments_apple_pay_eligibility_get",
         "parameters": [
           {
@@ -42500,11 +42500,6 @@
             "description": "Validation Error"
           }
         },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
         "summary": "Apple Pay Eligibility",
         "tags": [
           "Payments"
@@ -42513,7 +42508,7 @@
     },
     "/api/v1/payments/apple-pay/intent": {
       "post": {
-        "description": "Mint a Stripe PaymentIntent so the browser can take an Apple Pay payment.\n\nAllowlisted and owner-only, and refused unless Stripe is the active card\ngateway (Ziina does not offer Apple Pay). The intent carries the order\nnumber in its metadata, so it settles through the same\n`payment_intent.succeeded` webhook every card payment already uses \u2014 this\nendpoint writes no order status of its own.",
+        "description": "Mint a Stripe PaymentIntent so the browser can take an Apple Pay payment.\n\nOwner-only, and refused unless Stripe is the active card\ngateway (Ziina does not offer Apple Pay). The intent carries the order\nnumber in its metadata, so it settles through the same\n`payment_intent.succeeded` webhook every card payment already uses \u2014 this\nendpoint writes no order status of its own.",
         "operationId": "create_apple_pay_intent_api_v1_payments_apple_pay_intent_post",
         "requestBody": {
           "content": {

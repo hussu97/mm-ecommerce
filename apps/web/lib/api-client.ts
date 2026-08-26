@@ -494,12 +494,12 @@ export const paymentsApi = {
     }),
 
   /**
-   * Whether the signed-in account may be offered in-page Apple Pay.
+   * Whether in-page Apple Pay may be offered on checkout.
    *
-   * Server-gated to a test allowlist and to Stripe being the active card
-   * gateway — a guest or any other account gets `{ eligible: false }`, so the
-   * option cannot render for them however the client is coaxed. `amount` is the
-   * total being quoted, used only to route the gateway check.
+   * Public and not account-specific — it answers only "is Stripe the active
+   * card gateway", so `{ eligible: false }` when it is not. `amount` is the
+   * total being quoted, used only to route the gateway check. The browser's own
+   * Apple Pay capability is checked client-side on top of this.
    */
   applePayEligibility: (amount?: number) =>
     api.get<ApplePayEligibility>(

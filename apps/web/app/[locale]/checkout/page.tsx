@@ -9,7 +9,7 @@ import {
 } from '@/lib/api';
 import { toPaymentMethod, toWireMethod, type PaymentMethod } from '@/lib/types';
 import { useAuth } from '@/lib/auth-context';
-import { accountEmailOf, ensureCheckoutAuth, isApplePayTestUser } from '@/lib/checkout-auth';
+import { accountEmailOf, ensureCheckoutAuth } from '@/lib/checkout-auth';
 import { Button } from '@/components/ui/Button';
 import { SpeedBadge } from '@/components/product/DeliveryEstimate';
 import { Input } from '@/components/ui/Input';
@@ -206,7 +206,9 @@ function CheckoutContent() {
   const [addressIntent, setAddressIntent] = useState<'select' | 'verifyPhone'>('select');
   const [showExtras, setShowExtras] = useState(false);
   /**
-   * Whether the test-only Apple Pay option is the one chosen.
+   * Whether the Apple Pay option is the one chosen — `null` until the customer
+   * picks, which defaults to Apple Pay wherever it is offered (the one-tap path
+   * is the one to lead with when the device can do it).
    *
    * Held apart from `form.paymentMethod` on purpose: Apple Pay is a *card*, so
    * the order is still written as a card order and the checkout stays
@@ -214,7 +216,7 @@ function CheckoutContent() {
    * the card is collected — an in-page sheet instead of the hosted page — so it
    * is a view-model flag, not a payment method, and never reaches the wire.
    */
-  const [applePaySelected, setApplePaySelected] = useState(false);
+  const [applePaySelected, setApplePaySelected] = useState<boolean | null>(null);
   const [pickupBranches, setPickupBranches] = useState<PickupBranch[]>([]);
   /**
    * The section the button just pointed at, lit for a moment.
@@ -513,19 +515,21 @@ function CheckoutContent() {
     ? Number(retryOrder.low_order_fee ?? 0)
     : (preview?.low_order_fee ?? 0);
 
-  // The test-only in-page Apple Pay path. `enabled` is the account gate — false
-  // for a guest and for every non-allowlisted customer, so the hook does no
-  // Stripe work and offers nothing for them. `available` narrows that further
-  // to a device and a gateway that can actually take it; the option below and
-  // the button lower down both hang off it, so on any browser that cannot do
-  // Apple Pay neither ever renders. A returned unpaid order replays its own
-  // gateway, so Apple Pay is not offered on that path.
-  const applePayGated = isApplePayTestUser(user) && !retryOrder;
-  const applePay = useApplePay({ enabled: applePayGated, amount: total });
-  const applePayOffered = applePayGated && applePay.available;
-  // Keep the selection legal: if Apple Pay stops being offered, fall back to
-  // the card/cash choice the form already holds.
-  const isApplePay = applePaySelected && applePayOffered;
+  // In-page Apple Pay. Offered to everyone the device and the gateway allow:
+  // `available` resolves true only when Stripe is the active card gateway (the
+  // server's eligibility check), the browser can actually do Apple Pay
+  // (`canMakePayment`), and the publishable key is present — so on any browser
+  // that cannot do Apple Pay the option below and the button lower down never
+  // render. A returned unpaid order replays its own gateway, so Apple Pay is
+  // not offered on that path.
+  const applePay = useApplePay({ enabled: !retryOrder, amount: total });
+  const applePayOffered = !retryOrder && applePay.available;
+  // Default to Apple Pay wherever it is offered — `null` means the customer has
+  // not picked yet, and the lead option is the one-tap one. An explicit tap on
+  // Card or Cash sets `false` and sticks. Guarded by `applePayOffered`, so if
+  // Apple Pay stops being offered the selection falls back to the card/cash
+  // choice the form already holds.
+  const isApplePay = applePayOffered && (applePaySelected ?? true);
   const selectedPayment: 'card' | 'cod' | 'apple_pay' = isApplePay ? 'apple_pay' : paymentMethod;
   // What the card row says it accepts. The hosted card page carries both
   // wallets, so ordinarily it names them both — but when Apple Pay is broken
@@ -1372,12 +1376,11 @@ function CheckoutContent() {
              cash handling on the delivery side. */}
       <Section label={t('checkout.payment_method')}>
         <div className="space-y-2">
-          {/* Apple Pay — the test-only extra option, offered topmost as the
-              one-tap path. Rendered only when the account is allowlisted,
-              Stripe is the active gateway, and the device can actually do Apple
-              Pay (`applePayOffered`). It is a card underneath, so the order is
-              written no differently; what it changes is that the pay button
-              below becomes the in-page sheet. */}
+          {/* Apple Pay — offered topmost as the one-tap path. Rendered only
+              when Stripe is the active gateway and the device can actually do
+              Apple Pay (`applePayOffered`). It is a card underneath, so the
+              order is written no differently; what it changes is that the pay
+              button below becomes the in-page sheet. */}
           {applePayOffered && (
             <button
               type="button"

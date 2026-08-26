@@ -65,9 +65,9 @@ class PaymentStatusResponse(BaseModel):
 
 
 class ApplePayEligibilityResponse(BaseModel):
-    #: Whether this caller may be *offered* in-page Apple Pay: they are on the
-    #: allowlist and Stripe is the active card gateway. The browser's own
-    #: "can this device do Apple Pay" check is the client's to make.
+    #: Whether in-page Apple Pay may be offered: Stripe is the active card
+    #: gateway. The browser's own "can this device do Apple Pay" check is the
+    #: client's to make on top of this.
     eligible: bool
 
 
@@ -135,22 +135,22 @@ async def apple_pay_eligibility(
     request: Request,
     amount: float | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     """
-    Whether the caller may be offered in-page Apple Pay on checkout.
+    Whether in-page Apple Pay may be offered on checkout.
 
-    Restricted, server-side, to the small allowlist in `apple_pay_service` — a
-    guest or any other account gets `eligible: false`, so the option can never
-    render for them however the client is coaxed. The optional `amount` is the
-    order total the client is quoting, used only to route the gateway check;
-    the intent endpoint re-checks against the real order and is the actual
-    guard on money.
+    Public, and not account-specific: it answers only "is Stripe the active card
+    gateway", the one thing the client cannot see for itself. A guest checking
+    out has no session to authenticate this with before their cart mints one, so
+    gating it behind auth would hide the option from exactly the customers Apple
+    Pay helps most. The optional `amount` is the order total the client is
+    quoting, used only to route the gateway check; the intent endpoint, which
+    does spend money, is owner-only and re-checks against the real order.
     """
     from decimal import Decimal
 
     amt = Decimal(str(amount)) if amount and amount > 0 else None
-    result = await apple_pay_service.eligibility(db, current_user, amount=amt)
+    result = await apple_pay_service.eligibility(db, amount=amt)
     return ApplePayEligibilityResponse(**result)
 
 
@@ -169,7 +169,7 @@ async def create_apple_pay_intent(
     """
     Mint a Stripe PaymentIntent so the browser can take an Apple Pay payment.
 
-    Allowlisted and owner-only, and refused unless Stripe is the active card
+    Owner-only, and refused unless Stripe is the active card
     gateway (Ziina does not offer Apple Pay). The intent carries the order
     number in its metadata, so it settles through the same
     `payment_intent.succeeded` webhook every card payment already uses — this

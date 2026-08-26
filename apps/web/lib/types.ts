@@ -596,10 +596,9 @@ export interface PaymentSessionResponse {
 }
 
 /**
- * Whether this account may be *offered* in-page Apple Pay — the server's half
- * of the decision: it is on the allowlist and Stripe is the active card
- * gateway. The browser's own "can this device do Apple Pay" is the client's to
- * check on top of this. A guest or any other account always gets `false`.
+ * Whether in-page Apple Pay may be *offered* — the server's half of the
+ * decision: Stripe is the active card gateway. The browser's own "can this
+ * device do Apple Pay" is the client's to check on top of this.
  */
 export interface ApplePayEligibility {
   eligible: boolean;
