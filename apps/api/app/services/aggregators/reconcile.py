@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -244,9 +244,32 @@ async def reconcile_order(db: AsyncSession, agg, *, run_id=None) -> None:
 
 
 async def reconcile_channel(db: AsyncSession, channel: str, *, run_id=None) -> int:
-    """Reconcile every stored order for one channel. Returns rows written."""
+    """Reconcile the channel's new-or-changed orders. Returns rows written.
+
+    Incremental, not a full re-scan: an order is (re)reconciled only when it has
+    no reconciliation row yet, or its `updated_at` has advanced past the last
+    `reconciled_at`. The daily pass therefore touches recent and changed orders
+    rather than the whole history every time, while still catching a late
+    statement — that re-upserts the order and bumps `updated_at` above the prior
+    `reconciled_at`, pulling it back in. Idempotent and safe to re-run.
+    """
+    recon = AggregatorReconciliation
     orders = await db.scalars(
-        select(AggregatorOrder).where(AggregatorOrder.channel == channel)
+        select(AggregatorOrder)
+        .outerjoin(
+            recon,
+            and_(
+                recon.channel == AggregatorOrder.channel,
+                recon.external_order_id == AggregatorOrder.external_order_id,
+            ),
+        )
+        .where(
+            AggregatorOrder.channel == channel,
+            or_(
+                recon.id.is_(None),
+                AggregatorOrder.updated_at > recon.reconciled_at,
+            ),
+        )
     )
     count = 0
     for agg in orders:

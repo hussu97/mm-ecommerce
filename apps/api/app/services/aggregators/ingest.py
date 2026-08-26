@@ -358,8 +358,8 @@ async def _sweep_channel(
             written = len(finance.statements) + len(finance.payouts)
             truncation = finance.truncation_note
             # Reconcile after the finance write, so Layer B compares against the
-            # freshest statement commission. Reconciles all stored orders for the
-            # channel (idempotent), not just this window's.
+            # freshest statement commission. Incremental — only orders new or
+            # changed since their last reconciliation (see reconcile_channel).
             reconciled = await reconcile.reconcile_channel(db, channel, run_id=run.id)
     except AggregatorAuthError as exc:
         run.status = RUN_FAILED
