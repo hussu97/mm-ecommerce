@@ -1408,12 +1408,22 @@ export interface GrubOpsOrderList {
   unmapped_count: number;
 }
 
-// ─── Aggregator reconciliation ────────────────────────────────────────────────
+// ─── Aggregator reconciliation & outlet↔branch mappings ───────────────────────
 //
-// The aggregator↔MM order match, one row per aggregator order the maker-checker
-// pass looked at. Money fields are numbers or null — null where the side that
-// would carry the figure is missing (an unmatched order has no MM total, and so
-// no amount variance to speak of).
+// The row/list/summary/mapping shapes are the generated contract, imported from
+// `@mm/types` (`AggregatorReconciliationOut`, `AggregatorReconciliationList`,
+// `ReconSummaryRow`, `ReconSummaryOut`, `AggregatorBranchMapOut`,
+// `AggregatorBranchMapIn`) by the reconciliation/mappings pages and `lib/api.ts`
+// rather than shadowed here (rule 8). The hand-written copies that used to live
+// here typed the money fields as `number | null`; on the wire they are
+// `string | null` — Decimals serialised as strings — so read them through
+// `Number(...)` / `formatCurrency`, which is exactly the drift these duplicates
+// carried before they were removed.
+//
+// The two unions below stay local: the contract types both `match_status` and
+// `channel` as a bare `string`, so these are the console's own record of the
+// value set — they drive the channel `<Select>` and the match-status
+// badge/label lookups, and have no generated counterpart to move onto.
 
 /**
  * Which sides the reconciler could line up.
@@ -1424,89 +1434,5 @@ export interface GrubOpsOrderList {
  */
 export type ReconMatchStatus = 'matched' | 'unmatched_agg' | 'unmatched_mm' | 'no_maker_side';
 
-export interface ReconRow {
-  id: string;
-  channel: string;
-  external_order_id: string | null;
-  branch_id: string | null;
-  branch_name: string | null;
-  mm_order_id: string | null;
-  match_status: ReconMatchStatus;
-  item_flag: boolean;
-  refund_flag: boolean;
-  refund_agg: number | null;
-  refund_mm: number | null;
-  commission_expected: number | null;
-  commission_actual: number | null;
-  commission_variance: number | null;
-  commission_rate_effective: number | null;
-  total_agg: number | null;
-  total_mm: number | null;
-  amount_variance: number | null;
-  flags: string[];
-  reconciled_at: string | null;
-}
-
-export interface ReconList {
-  items: ReconRow[];
-  total: number;
-}
-
-export interface ReconSummaryRow {
-  channel: string;
-  total: number;
-  matched: number;
-  unmatched_agg: number;
-  no_maker_side: number;
-  item_flags: number;
-  refund_flags: number;
-  commission_variance_count: number;
-  commission_actual_sum: number;
-  avg_rate_effective: number;
-}
-
-export interface ReconSummary {
-  by_channel: ReconSummaryRow[];
-  totals: ReconSummaryRow;
-}
-
-// ─── Aggregator outlet↔branch mappings ────────────────────────────────────────
-//
-// One row of `aggregator_branch_map`: the identifiers a marketplace uses for one
-// of our branches, so an inbound order or a reconciliation feed can be tied back
-// to the branch it belongs to. The reconciler and the ingest both read these —
-// an outlet id nobody has mapped is why a channel's orders arrive branchless.
-
 /** The five marketplaces a branch can be mapped to — same set the reconciler knows. */
 export type BranchMapChannel = 'careem' | 'deliveroo' | 'talabat' | 'noon' | 'keeta';
-
-export interface BranchMapRow {
-  id: string;
-  channel: BranchMapChannel;
-  branch_id: string;
-  /** Resolved from `branch_id` server-side; null if the branch has since gone. */
-  branch_name: string | null;
-  /** The marketplace's own id for this outlet/store. Null until somebody fills it. */
-  external_outlet_id: string | null;
-  external_brand_id: string | null;
-  external_company_id: string | null;
-  /** A free-form channel-specific reference, when the ids above are not enough. */
-  channel_ref: string | null;
-  is_active: boolean;
-}
-
-/**
- * The body of an upsert. The pair (`channel`, `branch_id`) is the key the API
- * writes on — sending the same pair again edits the existing row rather than
- * adding a second. The id fields are optional so a half-known mapping can be
- * saved and completed later.
- */
-export interface BranchMapInput {
-  channel: BranchMapChannel;
-  branch_id: string;
-  external_outlet_id?: string | null;
-  external_brand_id?: string | null;
-  external_company_id?: string | null;
-  channel_ref?: string | null;
-  is_active: boolean;
-}

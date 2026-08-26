@@ -19,15 +19,19 @@ import type {
   GrubOpsMappingList,
   GrubOpsSyncSummary,
   GrubOpsOrderList,
-  ReconList,
-  ReconSummary,
-  BranchMapRow,
-  BranchMapInput,
 } from './types';
+import type { Schemas } from '@mm/types';
 import type {
   PublicKeyCredentialCreationOptionsJSON,
   PublicKeyCredentialRequestOptionsJSON,
 } from '@simplewebauthn/browser';
+
+// Aggregator reconciliation + branch-map shapes come straight from the generated
+// contract (rule 8); these aliases keep the friendly names the code below uses.
+type ReconList = Schemas['AggregatorReconciliationList'];
+type ReconSummary = Schemas['ReconSummaryOut'];
+type BranchMapRow = Schemas['AggregatorBranchMapOut'];
+type BranchMapInput = Schemas['AggregatorBranchMapIn'];
 
 /**
  * Where the API lives, from the browser's point of view.

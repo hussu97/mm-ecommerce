@@ -4,13 +4,17 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { reconciliationApi } from '@/lib/api';
 import { branchesApi } from '@/lib/pos-api';
-import type {
-  ReconRow,
-  ReconMatchStatus,
-  ReconSummary,
-  ReconSummaryRow,
-} from '@/lib/types';
+import type { Schemas } from '@mm/types';
+import type { ReconMatchStatus } from '@/lib/types';
 import type { Branch } from '@/lib/pos-types';
+
+// Row/summary shapes are the generated contract (rule 8); `ReconMatchStatus`
+// stays local because the contract types `match_status` as a bare `string`.
+// Money fields on these are `string | null` on the wire (Decimals serialised as
+// strings), so they are read through `Number(...)` / `formatCurrency` below.
+type ReconRow = Schemas['AggregatorReconciliationOut'];
+type ReconSummary = Schemas['ReconSummaryOut'];
+type ReconSummaryRow = Schemas['ReconSummaryRow'];
 import { Badge, LoadError, Pagination, Select, Spinner } from '@/components/ui';
 import { DataTable, type DataColumn } from '@/components/ui/DataTable';
 import { useApiList } from '@/hooks/useApiList';
@@ -75,9 +79,10 @@ function channelName(code: string): string {
  * value at or below 1 is taken as a fraction and scaled, anything larger is
  * taken as already a percentage.
  */
-function formatRate(value: number | null | undefined): string {
+function formatRate(value: number | string | null | undefined): string {
   if (value == null) return '—';
-  const pct = Math.abs(value) <= 1 ? value * 100 : value;
+  const n = Number(value);
+  const pct = Math.abs(n) <= 1 ? n * 100 : n;
   return `${pct.toFixed(1)}%`;
 }
 
@@ -123,6 +128,10 @@ export default function ReconciliationPage() {
 
   const [summary, setSummary] = useState<ReconSummary | null>(null);
   const [summaryError, setSummaryError] = useState('');
+  // Bumped by the retry button to re-run the load below; the fetch lives in the
+  // effect rather than in a callback the effect calls, so nothing sets state
+  // synchronously on the way in (react-hooks/set-state-in-effect).
+  const [summaryReload, setSummaryReload] = useState(0);
 
   useEffect(() => {
     void branchesApi
@@ -134,23 +143,31 @@ export default function ReconciliationPage() {
   // The stat cards answer to channel and branch, but not to match-status or the
   // flagged toggle — those narrow the table, and a roll-up that moved with them
   // would stop being the "here is everything" number the cards are for.
-  const loadSummary = useCallback(async () => {
-    try {
-      const data = await reconciliationApi.summary({
-        channel: channel || undefined,
-        branch_id: branchId || undefined,
-      });
-      setSummary(data);
-      setSummaryError('');
-    } catch (e) {
-      setSummary(null);
-      setSummaryError(e instanceof Error ? e.message : 'Could not load the summary');
-    }
-  }, [channel, branchId]);
-
+  //
+  // Loaded inline with an `active` guard — the shape `useApiList` uses — so a
+  // slow response for a channel that has since changed can't paint over a newer
+  // one. Re-runs on mount, on a channel/branch change, and on a retry.
   useEffect(() => {
-    void loadSummary();
-  }, [loadSummary]);
+    let active = true;
+    void (async () => {
+      try {
+        const data = await reconciliationApi.summary({
+          channel: channel || undefined,
+          branch_id: branchId || undefined,
+        });
+        if (!active) return;
+        setSummary(data);
+        setSummaryError('');
+      } catch (e) {
+        if (!active) return;
+        setSummary(null);
+        setSummaryError(e instanceof Error ? e.message : 'Could not load the summary');
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [channel, branchId, summaryReload]);
 
   // Server-side pagination by limit/offset. `useApiList` speaks page/perPage, so
   // the fetcher turns the page into an offset and the `{ items, total }` answer
@@ -202,16 +219,21 @@ export default function ReconciliationPage() {
     },
     {
       header: 'Match',
-      render: r => (
-        <Badge variant={MATCH_VARIANTS[r.match_status]}>{MATCH_LABELS[r.match_status]}</Badge>
-      ),
+      render: r => {
+        // The contract types `match_status` as a bare string; the reconciler
+        // only ever emits one of the four `ReconMatchStatus` codes.
+        const status = r.match_status as ReconMatchStatus;
+        return <Badge variant={MATCH_VARIANTS[status]}>{MATCH_LABELS[status]}</Badge>;
+      },
     },
     {
       header: 'Commission (exp / act / var)',
       className: 'text-right whitespace-nowrap',
       render: r => {
+        // Money is a string on the wire; coerce once for the sign/zero tests.
         const variance = r.commission_variance;
-        const off = variance != null && variance !== 0;
+        const varianceNum = variance == null ? null : Number(variance);
+        const off = varianceNum != null && varianceNum !== 0;
         return (
           <div className="text-right tabular-nums">
             <div className="text-gray-700">
@@ -219,7 +241,7 @@ export default function ReconciliationPage() {
               {money(r.commission_actual)}
             </div>
             <div className={off ? 'text-xs font-medium text-red-600' : 'text-xs text-gray-400'}>
-              {variance == null ? '—' : `${variance > 0 ? '+' : ''}${formatCurrency(variance)}`}
+              {varianceNum == null ? '—' : `${varianceNum > 0 ? '+' : ''}${formatCurrency(variance)}`}
             </div>
           </div>
         );
@@ -285,7 +307,7 @@ export default function ReconciliationPage() {
         </p>
       </div>
 
-      {summaryError && <LoadError message={summaryError} onRetry={loadSummary} />}
+      {summaryError && <LoadError message={summaryError} onRetry={() => setSummaryReload(n => n + 1)} />}
 
       {/* Summary — per-channel roll-up and a grand total. */}
       {summary && cards.length > 0 && (
@@ -363,7 +385,7 @@ export default function ReconciliationPage() {
 }
 
 /** A money field that is allowed to be absent — a dash rather than "AED 0.00". */
-function money(value: number | null | undefined): string {
+function money(value: number | string | null | undefined): string {
   return value == null ? '—' : formatCurrency(value);
 }
 

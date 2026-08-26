@@ -4,8 +4,14 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { branchMapApi, ApiError } from '@/lib/api';
 import { branchesApi } from '@/lib/pos-api';
-import type { BranchMapRow, BranchMapChannel, BranchMapInput } from '@/lib/types';
+import type { Schemas } from '@mm/types';
+import type { BranchMapChannel } from '@/lib/types';
 import type { Branch } from '@/lib/pos-types';
+
+// Row/input shapes are the generated contract (rule 8); `BranchMapChannel` stays
+// local because the contract types `channel` as a bare `string`.
+type BranchMapRow = Schemas['AggregatorBranchMapOut'];
+type BranchMapInput = Schemas['AggregatorBranchMapIn'];
 import { Badge, Button, Input, LoadError, Select, Spinner } from '@/components/ui';
 import { DataTable, type DataColumn } from '@/components/ui/DataTable';
 import { Modal } from '@/components/pos/ResourcePage';
@@ -129,7 +135,10 @@ export default function MappingsPage() {
   function openEdit(row: BranchMapRow) {
     setEditing(row);
     setForm({
-      channel: row.channel,
+      // The contract types `channel` as a bare string; the form's select is
+      // driven by the `BranchMapChannel` union, and a stored row only ever holds
+      // one of those values.
+      channel: row.channel as BranchMapChannel,
       branch_id: row.branch_id,
       external_outlet_id: row.external_outlet_id ?? '',
       external_brand_id: row.external_brand_id ?? '',
