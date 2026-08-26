@@ -17,13 +17,12 @@ import type { Order } from '@/lib/types';
  * The checkout stays provider-agnostic everywhere else: a card is a card and
  * which processor settles it is the server's business. Apple Pay is the one
  * exception, because the sheet is a Stripe surface drawn by Stripe.js against a
- * PaymentIntent — so this hook exists, is loaded only for the test accounts the
- * page gates on, and offers itself only when three things are all true: the
- * account is eligible (server says Stripe is the active card gateway), the
- * device can actually do Apple Pay (`canMakePayment().applePay`), and the
- * publishable key is present. Miss any one and `available` stays false and the
- * option never renders — which is exactly the required behaviour on a browser
- * that cannot do Apple Pay.
+ * PaymentIntent — so this hook exists and offers itself only when three things
+ * are all true: Stripe is the active card gateway (the server's eligibility
+ * check), the device can actually do Apple Pay (`canMakePayment().applePay`),
+ * and the publishable key is present. Miss any one and `available` stays false
+ * and the option never renders — which is exactly the required behaviour on a
+ * browser that cannot do Apple Pay.
  *
  * The money path is the ordinary one. `pay()` shows the sheet, and on
  * authorisation creates the order and a PaymentIntent and confirms it in-page;
@@ -55,7 +54,7 @@ export interface ApplePayHandlers {
 }
 
 interface UseApplePayInput {
-  /** Only ever true for an allowlisted, signed-in test account — the page decides. */
+  /** Whether to attempt Apple Pay at all — the page turns it off for a returned unpaid order. */
   enabled: boolean;
   /** The current order total, used to probe eligibility and the device. */
   amount: number;

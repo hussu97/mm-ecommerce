@@ -1,11 +1,14 @@
 """
-In-page Apple Pay on the storefront checkout, for a named allowlist of testers.
+In-page Apple Pay on the storefront checkout.
 
 This is the one place the storefront is allowed to know it is talking to Stripe.
 Everywhere else a card is a card and which processor settles it is the router's
 business (`payment_gateway_router`) — but an Apple Pay sheet is a Stripe-specific
 surface, drawn by Stripe.js against a PaymentIntent, so the feature exists only
-when Stripe is the active card gateway and only for the accounts named below.
+when Stripe is the active card gateway. Beyond that it is offered to everyone
+the device and the gateway allow; the browser decides whether Apple Pay is
+actually available and the gateway check below decides whether Stripe is settling
+cards, and there is no account gate above either.
 
 The money path is deliberately the ordinary one. The PaymentIntent minted here
 carries the order number in its metadata, so `payment_intent.succeeded`
@@ -22,7 +25,7 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import BadRequestError, ForbiddenError
+from app.core.exceptions import BadRequestError
 from app.models.order import OrderStatusEnum
 from app.models.payment_transaction import (
     PaymentTransaction,
@@ -42,15 +45,6 @@ from app.services.providers.stripe_provider import provider as stripe_provider
 
 logger = logging.getLogger(__name__)
 
-#: The accounts allowed to see and use in-page Apple Pay.
-#:
-#: An explicit allowlist rather than a role, because this is a pre-release test
-#: surface for named people, not a permission the shop grants. A constant rather
-#: than an env var on purpose: it is not a secret, and a var forgotten in one
-#: environment silently becoming an empty allowlist there is the compose-env
-#: trap (W9) pointed the other way — a gate that quietly opens to nobody.
-APPLE_PAY_TEST_EMAILS = frozenset({"h_abbasi97@hotmail.com"})
-
 #: The floor eligibility is coarsely checked against when the caller names no
 #: amount. Stripe refuses an AED charge under 2.00 at its own edge, so this is
 #: the smallest amount any order could ever be routed at — enough to answer
@@ -58,14 +52,6 @@ APPLE_PAY_TEST_EMAILS = frozenset({"h_abbasi97@hotmail.com"})
 #: The intent endpoint re-checks against the real order total and is the actual
 #: guard.
 _ELIGIBILITY_PROBE_AMOUNT = Decimal("2.00")
-
-
-def is_test_user(user: User | None) -> bool:
-    """Whether *user* is a signed-in account on the Apple Pay allowlist."""
-    if user is None or getattr(user, "is_guest", False):
-        return False
-    email = (getattr(user, "email", "") or "").strip().lower()
-    return email in APPLE_PAY_TEST_EMAILS
 
 
 async def _stripe_is_default_card_gateway(db: AsyncSession, amount: Decimal) -> bool:
@@ -80,19 +66,16 @@ async def _stripe_is_default_card_gateway(db: AsyncSession, amount: Decimal) -> 
     return bool(options) and options[0].code == stripe_provider.code
 
 
-async def eligibility(
-    db: AsyncSession, user: User | None, *, amount: Decimal | None = None
-) -> dict:
+async def eligibility(db: AsyncSession, *, amount: Decimal | None = None) -> dict:
     """
-    Whether this caller may be offered in-page Apple Pay.
+    Whether in-page Apple Pay may be offered here at all.
 
-    Two gates, both server-side: the account is on the allowlist, and Stripe is
-    the active card gateway. The browser's own "can it actually do Apple Pay"
-    check is the client's to make — it needs the device, and the server cannot
-    see it.
+    One server-side gate: Stripe is the active card gateway (Apple Pay is a
+    Stripe surface, and Ziina does not offer it). Not account-specific — anyone
+    checking out is offered it — so the browser's own "can this device actually
+    do Apple Pay" check, which the client makes on top of this, is what narrows
+    it to the devices that can.
     """
-    if not is_test_user(user):
-        return {"eligible": False}
     probe = amount if amount and amount > 0 else _ELIGIBILITY_PROBE_AMOUNT
     return {"eligible": await _stripe_is_default_card_gateway(db, probe)}
 
@@ -119,22 +102,16 @@ async def create_intent(db: AsyncSession, order_number: str, user: User) -> dict
     """
     Mint a Stripe PaymentIntent for an order so the browser can take Apple Pay.
 
-    Enforces the allowlist and order ownership, refuses an order that is
-    cancelled or already paid, resets a `payment_failed` order to `created` for
-    a retry (mirroring `payment_service.create_session`), and refuses unless
-    Stripe is the active card gateway for the order's amount — Apple Pay is a
-    Stripe surface and Ziina does not offer it.
+    Enforces order ownership, refuses an order that is cancelled or already
+    paid, resets a `payment_failed` order to `created` for a retry (mirroring
+    `payment_service.create_session`), and refuses unless Stripe is the active
+    card gateway for the order's amount — Apple Pay is a Stripe surface and
+    Ziina does not offer it.
 
     Returns the `client_secret` the browser confirms against, plus the
     server-computed amount so the Apple Pay sheet displays the figure the card
     is actually charged rather than one the client re-derived.
     """
-    if not is_test_user(user):
-        # A hard refusal, not a quiet `eligible: false`: this is the endpoint
-        # that spends money, and a caller reaching it is not one the client
-        # gate let through.
-        raise ForbiddenError("Apple Pay is not available for this account")
-
     order = await _load_order(db, order_number)
     _assert_may_act_on(order, user.id, admin=user.is_admin)
 

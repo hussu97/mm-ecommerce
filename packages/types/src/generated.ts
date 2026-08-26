@@ -4252,14 +4252,15 @@ export interface paths {
         };
         /**
          * Apple Pay Eligibility
-         * @description Whether the caller may be offered in-page Apple Pay on checkout.
+         * @description Whether in-page Apple Pay may be offered on checkout.
          *
-         *     Restricted, server-side, to the small allowlist in `apple_pay_service` — a
-         *     guest or any other account gets `eligible: false`, so the option can never
-         *     render for them however the client is coaxed. The optional `amount` is the
-         *     order total the client is quoting, used only to route the gateway check;
-         *     the intent endpoint re-checks against the real order and is the actual
-         *     guard on money.
+         *     Public, and not account-specific: it answers only "is Stripe the active card
+         *     gateway", the one thing the client cannot see for itself. A guest checking
+         *     out has no session to authenticate this with before their cart mints one, so
+         *     gating it behind auth would hide the option from exactly the customers Apple
+         *     Pay helps most. The optional `amount` is the order total the client is
+         *     quoting, used only to route the gateway check; the intent endpoint, which
+         *     does spend money, is owner-only and re-checks against the real order.
          */
         get: operations["apple_pay_eligibility_api_v1_payments_apple_pay_eligibility_get"];
         put?: never;
@@ -4283,7 +4284,7 @@ export interface paths {
          * Create Apple Pay Intent
          * @description Mint a Stripe PaymentIntent so the browser can take an Apple Pay payment.
          *
-         *     Allowlisted and owner-only, and refused unless Stripe is the active card
+         *     Owner-only, and refused unless Stripe is the active card
          *     gateway (Ziina does not offer Apple Pay). The intent carries the order
          *     number in its metadata, so it settles through the same
          *     `payment_intent.succeeded` webhook every card payment already uses — this
