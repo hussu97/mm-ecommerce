@@ -61,6 +61,39 @@ class KeetaOrdersResult(BaseModel):
     ingested: int
 
 
+class AggregatorBranchMapIn(BaseModel):
+    """An outlet↔branch mapping to create or update from the admin.
+
+    The mapping lives in the DB (seeded by migration 152, edited here) rather
+    than in code, so a re-onboarded outlet or a new branch is a row change, not
+    a deploy. Keyed on `(channel, branch_id)`; posting the same pair updates it.
+    """
+
+    channel: str
+    branch_id: UUID
+    external_outlet_id: str | None = None
+    external_brand_id: str | None = None
+    external_company_id: str | None = None
+    channel_ref: str | None = None
+    is_active: bool = True
+
+
+class AggregatorBranchMapOut(BaseModel):
+    """One outlet↔branch mapping row, with the branch name for display."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    channel: str
+    branch_id: UUID
+    branch_name: str | None = None
+    external_outlet_id: str | None = None
+    external_brand_id: str | None = None
+    external_company_id: str | None = None
+    channel_ref: str | None = None
+    is_active: bool
+
+
 class AggregatorReconciliationOut(BaseModel):
     """One reconciliation row for the dashboard — the maker-checker's output.
 

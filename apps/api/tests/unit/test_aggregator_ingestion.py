@@ -216,25 +216,10 @@ def test_registry_has_the_four_httpx_channels_and_not_keeta():
     assert ingest.PROVIDERS["careem"].uses_tls_impersonation is False
 
 
-def test_static_outlet_mapping_covers_all_channels_and_branches():
-    from app.services.aggregators.mapping import OUTLET_KEY_TO_HINT, STATIC_OUTLETS
-
-    # All five channels are seeded (Keeta's shop ids are known).
-    assert set(STATIC_OUTLETS) == {"noon", "talabat", "careem", "deliveroo", "keeta"}
-    # Every seeded outlet has a real id and a resolvable branch hint.
-    for outlets in STATIC_OUTLETS.values():
-        for outlet_key, ids in outlets.items():
-            assert ids.get("external_outlet_id"), outlet_key
-            assert outlet_key in OUTLET_KEY_TO_HINT
-    # Coverage is Sharjah/Barsha/DSO, and differs per channel per the source table.
-    assert set(STATIC_OUTLETS["noon"]) == {"sharjah", "barsha_heights", "dso"}
-    assert set(STATIC_OUTLETS["talabat"]) == {"sharjah", "barsha_heights"}
-    assert set(STATIC_OUTLETS["deliveroo"]) == {"sharjah", "barsha_heights", "dso"}
-    assert set(STATIC_OUTLETS["keeta"]) == {"sharjah", "barsha_heights", "dso"}
-    # Careem's Sharjah is shut, so it is mapped for Barsha + DSO only.
-    assert set(STATIC_OUTLETS["careem"]) == {"barsha_heights", "dso"}
-    # Karama is not in the source table — not mapped on any channel.
-    assert all("karama" not in outlets for outlets in STATIC_OUTLETS.values())
+async def test_branch_map_admin_requires_permission(client):
+    # No authenticated user → the catalogue.manage gate refuses the read.
+    resp = await client.get("/api/v1/aggregators/branch-map")
+    assert resp.status_code in (401, 403)
 
 
 async def test_keeta_is_bootstrap_driven_not_httpx():

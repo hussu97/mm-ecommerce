@@ -193,6 +193,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/aggregators/branch-map": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Branch Map
+         * @description Every outlet↔branch mapping, for the admin to view and edit.
+         */
+        get: operations["list_branch_map_api_v1_aggregators_branch_map_get"];
+        put?: never;
+        /**
+         * Upsert Branch Map Row
+         * @description Create or update one mapping — the DB is the source of truth, edited here.
+         */
+        post: operations["upsert_branch_map_row_api_v1_aggregators_branch_map_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/aggregators/branch-map/{map_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Branch Map Row
+         * @description Remove a mapping — the branch stops being enumerated on that channel.
+         */
+        delete: operations["delete_branch_map_row_api_v1_aggregators_branch_map__map_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/aggregators/keeta/orders": {
         parameters: {
             query?: never;
@@ -7215,6 +7259,66 @@ export interface components {
             passkey_count: number;
             /** Phone */
             phone: string | null;
+        };
+        /**
+         * AggregatorBranchMapIn
+         * @description An outlet↔branch mapping to create or update from the admin.
+         *
+         *     The mapping lives in the DB (seeded by migration 152, edited here) rather
+         *     than in code, so a re-onboarded outlet or a new branch is a row change, not
+         *     a deploy. Keyed on `(channel, branch_id)`; posting the same pair updates it.
+         */
+        AggregatorBranchMapIn: {
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /** Channel */
+            channel: string;
+            /** Channel Ref */
+            channel_ref?: string | null;
+            /** External Brand Id */
+            external_brand_id?: string | null;
+            /** External Company Id */
+            external_company_id?: string | null;
+            /** External Outlet Id */
+            external_outlet_id?: string | null;
+            /**
+             * Is Active
+             * @default true
+             */
+            is_active: boolean;
+        };
+        /**
+         * AggregatorBranchMapOut
+         * @description One outlet↔branch mapping row, with the branch name for display.
+         */
+        AggregatorBranchMapOut: {
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /** Branch Name */
+            branch_name?: string | null;
+            /** Channel */
+            channel: string;
+            /** Channel Ref */
+            channel_ref?: string | null;
+            /** External Brand Id */
+            external_brand_id?: string | null;
+            /** External Company Id */
+            external_company_id?: string | null;
+            /** External Outlet Id */
+            external_outlet_id?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Active */
+            is_active: boolean;
         };
         /**
          * AggregatorReconciliationList
@@ -16520,6 +16624,103 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CustomOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_branch_map_api_v1_aggregators_branch_map_get: {
+        parameters: {
+            query?: {
+                channel?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AggregatorBranchMapOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upsert_branch_map_row_api_v1_aggregators_branch_map_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AggregatorBranchMapIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AggregatorBranchMapOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_branch_map_row_api_v1_aggregators_branch_map__map_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                map_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
                 };
             };
             /** @description Validation Error */

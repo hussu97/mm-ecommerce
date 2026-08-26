@@ -585,6 +585,161 @@
         "title": "AdminUserSummary",
         "type": "object"
       },
+      "AggregatorBranchMapIn": {
+        "description": "An outlet\u2194branch mapping to create or update from the admin.\n\nThe mapping lives in the DB (seeded by migration 152, edited here) rather\nthan in code, so a re-onboarded outlet or a new branch is a row change, not\na deploy. Keyed on `(channel, branch_id)`; posting the same pair updates it.",
+        "properties": {
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "channel_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel Ref"
+          },
+          "external_brand_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Brand Id"
+          },
+          "external_company_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Company Id"
+          },
+          "external_outlet_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Outlet Id"
+          },
+          "is_active": {
+            "default": true,
+            "title": "Is Active",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "channel",
+          "branch_id"
+        ],
+        "title": "AggregatorBranchMapIn",
+        "type": "object"
+      },
+      "AggregatorBranchMapOut": {
+        "description": "One outlet\u2194branch mapping row, with the branch name for display.",
+        "properties": {
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Name"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "channel_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel Ref"
+          },
+          "external_brand_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Brand Id"
+          },
+          "external_company_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Company Id"
+          },
+          "external_outlet_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Outlet Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "channel",
+          "branch_id",
+          "is_active"
+        ],
+        "title": "AggregatorBranchMapOut",
+        "type": "object"
+      },
       "AggregatorReconciliationList": {
         "description": "A page of reconciliation rows, plus the unpaginated total for the filter.",
         "properties": {
@@ -28311,6 +28466,163 @@
         "summary": "Update Status",
         "tags": [
           "Custom Orders"
+        ]
+      }
+    },
+    "/api/v1/aggregators/branch-map": {
+      "get": {
+        "description": "Every outlet\u2194branch mapping, for the admin to view and edit.",
+        "operationId": "list_branch_map_api_v1_aggregators_branch_map_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "channel",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AggregatorBranchMapOut"
+                  },
+                  "title": "Response List Branch Map Api V1 Aggregators Branch Map Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Branch Map",
+        "tags": [
+          "Aggregators"
+        ]
+      },
+      "post": {
+        "description": "Create or update one mapping \u2014 the DB is the source of truth, edited here.",
+        "operationId": "upsert_branch_map_row_api_v1_aggregators_branch_map_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AggregatorBranchMapIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AggregatorBranchMapOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Upsert Branch Map Row",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/branch-map/{map_id}": {
+      "delete": {
+        "description": "Remove a mapping \u2014 the branch stops being enumerated on that channel.",
+        "operationId": "delete_branch_map_row_api_v1_aggregators_branch_map__map_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "map_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Map Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Delete Branch Map Row Api V1 Aggregators Branch Map  Map Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Delete Branch Map Row",
+        "tags": [
+          "Aggregators"
         ]
       }
     },

@@ -50,65 +50,12 @@ DEFAULT_AREA_TO_BRANCH_HINT: dict[str, str] = {
     "al majaz": "sharjah",
 }
 
-#: The outlet-key each channel files a branch under, → the branch hint. Matched
-#: against a branch's name, city and reference, so it survives whatever
-#: reference the DSO/Karama branches were seeded with (see
-#: `scripts.seed_aggregator_branches`, which names them "Dubai Silicon Oasis"
-#: and "Al Karama").
-OUTLET_KEY_TO_HINT: dict[str, str] = {
-    "sharjah": "sharjah",
-    "barsha_heights": "barsha",
-    "dso": "silicon oasis",
-    "karama": "karama",
-}
-
-#: The stable per-(channel, outlet) external ids for this account, from the
-#: operator's own outlet table (moved into this repo as we consolidate). Ids are
-#: stable outlet identifiers, not branch references, so encoding them here does
-#: not repeat the "hardcoded ref" mistake. Coverage is Sharjah / Barsha / DSO;
-#: not every channel trades from every branch:
-#:   - Talabat: Sharjah + Barsha only.
-#:   - Careem: Barsha + DSO only — its Sharjah outlet is shut, so it is not
-#:     mapped (carries brand/company ids for the two it keeps).
-#:   - Noon, Deliveroo, Keeta: all three of Sharjah/Barsha/DSO.
-#: Keeta IS seeded here (its shop ids are known) — the branch map is what lets a
-#: Keeta order, pushed in-page by the worker, resolve its branch. **Karama is not
-#: in the source table, so it is intentionally not mapped on any channel**; its
-#: branch still exists (see `scripts.seed_aggregator_branches`) and a row is a
-#: one-line addition here if it is onboarded.
-STATIC_OUTLETS: dict[str, dict[str, dict]] = {
-    "noon": {
-        "sharjah": {"external_outlet_id": "MLTNGM1GBF"},
-        "barsha_heights": {"external_outlet_id": "MLTNGM9FCH"},
-        "dso": {"external_outlet_id": "MLTNGMG2B1"},
-    },
-    "talabat": {
-        "sharjah": {"external_outlet_id": "711571"},
-        "barsha_heights": {"external_outlet_id": "728173"},
-    },
-    "careem": {
-        "barsha_heights": {
-            "external_outlet_id": "1067984",
-            "external_brand_id": "1029671",
-            "external_company_id": "1026653",
-        },
-        "dso": {
-            "external_outlet_id": "1069463",
-            "external_brand_id": "1029671",
-            "external_company_id": "1026653",
-        },
-    },
-    "deliveroo": {
-        "sharjah": {"external_outlet_id": "693360"},
-        "barsha_heights": {"external_outlet_id": "693359"},
-        "dso": {"external_outlet_id": "693361"},
-    },
-    "keeta": {
-        "sharjah": {"external_outlet_id": "1644174206"},
-        "barsha_heights": {"external_outlet_id": "1644189187"},
-        "dso": {"external_outlet_id": "1644170195"},
-    },
-}
+#: The initial outlet↔branch mapping is DB data, loaded by migration
+#: `152_aggregator_branch_map_seed` and thereafter editable through the admin
+#: API (`/aggregators/branch-map`) — deliberately NOT a constant here, so a
+#: re-onboarded outlet or a new branch is a row edit, not a code deploy. This
+#: module keeps only the *behaviour*: the upsert, the Foodics helper, and the
+#: live Careem discovery that writes the same rows from the portal's own list.
 
 
 async def _resolve_branch(db: AsyncSession, hint: str):
@@ -238,42 +185,4 @@ async def map_careem(
             is_active=bool(outlet.get("active")),
         )
         mapped += 1
-    return mapped
-
-
-async def seed_static_mappings(
-    db: AsyncSession, *, outlet_hints: dict[str, str] | None = None
-) -> int:
-    """Seed the branch map for every channel from the known account outlets.
-
-    The counterpart to `map_careem` for the channels without a live discovery
-    call: it walks `STATIC_OUTLETS`, resolves each outlet-key to a branch through
-    `OUTLET_KEY_TO_HINT`, and upserts the row. Idempotent (upsert), and a branch
-    that cannot be resolved — e.g. DSO/Karama not yet seeded — is logged and
-    skipped, never mapped wrongly. Returns the number of rows written.
-    """
-    hints = outlet_hints or OUTLET_KEY_TO_HINT
-    mapped = 0
-    for channel, outlets in STATIC_OUTLETS.items():
-        for outlet_key, ids in outlets.items():
-            hint = hints.get(outlet_key)
-            branch_id = await _resolve_branch(db, hint) if hint else None
-            if branch_id is None:
-                logger.warning(
-                    "%s %s: no branch resolved (hint %r) — skipped; seed the "
-                    "branch first",
-                    channel,
-                    outlet_key,
-                    hint,
-                )
-                continue
-            fields = {k: v for k, v in ids.items() if k != "is_active"}
-            await upsert_branch_map(
-                db,
-                channel=channel,
-                branch_id=branch_id,
-                is_active=ids.get("is_active", True),
-                **fields,
-            )
-            mapped += 1
     return mapped

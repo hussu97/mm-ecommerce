@@ -27,6 +27,7 @@ from app.core.config import settings
 from app.core.deps import get_db
 from app.core.exceptions import (
     BadRequestError,
+    NotFoundError,
     ServiceUnavailableError,
     UnauthorizedError,
 )
@@ -37,11 +38,14 @@ from app.models.aggregator import (
     MATCH_MATCHED,
     MATCH_NO_MAKER_SIDE,
     MATCH_UNMATCHED_AGG,
+    AggregatorBranchMap,
     AggregatorReconciliation,
     AggregatorSession,
 )
 from app.models.branch import Branch
 from app.schemas.aggregator import (
+    AggregatorBranchMapIn,
+    AggregatorBranchMapOut,
     AggregatorReconciliationList,
     AggregatorReconciliationOut,
     AggregatorSessionPush,
@@ -51,7 +55,7 @@ from app.schemas.aggregator import (
     ReconSummaryOut,
     ReconSummaryRow,
 )
-from app.services.aggregators import crypto, session_store
+from app.services.aggregators import crypto, mapping, session_store
 from app.services.aggregators.ingest import _upsert_order
 from app.services.providers import keeta_provider
 
@@ -117,6 +121,90 @@ async def list_sessions(
         select(AggregatorSession).order_by(AggregatorSession.channel)
     )
     return list(rows)
+
+
+def _branch_map_out(row: AggregatorBranchMap, branch_name: str | None):
+    return AggregatorBranchMapOut(
+        id=row.id,
+        channel=row.channel,
+        branch_id=row.branch_id,
+        branch_name=branch_name,
+        external_outlet_id=row.external_outlet_id,
+        external_brand_id=row.external_brand_id,
+        external_company_id=row.external_company_id,
+        channel_ref=row.channel_ref,
+        is_active=row.is_active,
+    )
+
+
+@router.get(
+    "/branch-map",
+    response_model=list[AggregatorBranchMapOut],
+    dependencies=[Depends(require("catalogue.manage"))],
+)
+async def list_branch_map(
+    channel: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> list[AggregatorBranchMapOut]:
+    """Every outlet↔branch mapping, for the admin to view and edit."""
+    stmt = select(AggregatorBranchMap, Branch.name).outerjoin(
+        Branch, Branch.id == AggregatorBranchMap.branch_id
+    )
+    if channel:
+        stmt = stmt.where(AggregatorBranchMap.channel == channel)
+    stmt = stmt.order_by(AggregatorBranchMap.channel)
+    rows = (await db.execute(stmt)).all()
+    return [_branch_map_out(m, name) for m, name in rows]
+
+
+@router.post(
+    "/branch-map",
+    response_model=AggregatorBranchMapOut,
+    dependencies=[Depends(require("catalogue.manage"))],
+)
+async def upsert_branch_map_row(
+    body: AggregatorBranchMapIn,
+    db: AsyncSession = Depends(get_db),
+) -> AggregatorBranchMapOut:
+    """Create or update one mapping — the DB is the source of truth, edited here."""
+    if body.channel not in AGGREGATOR_CHANNELS:
+        raise BadRequestError(f"unknown aggregator channel: {body.channel}")
+    branch = await db.get(Branch, body.branch_id)
+    if branch is None:
+        raise NotFoundError("branch not found")
+    await mapping.upsert_branch_map(
+        db,
+        channel=body.channel,
+        branch_id=body.branch_id,
+        external_outlet_id=body.external_outlet_id,
+        external_brand_id=body.external_brand_id,
+        external_company_id=body.external_company_id,
+        channel_ref=body.channel_ref,
+        is_active=body.is_active,
+    )
+    row = await db.scalar(
+        select(AggregatorBranchMap).where(
+            AggregatorBranchMap.channel == body.channel,
+            AggregatorBranchMap.branch_id == body.branch_id,
+        )
+    )
+    return _branch_map_out(row, branch.name)
+
+
+@router.delete(
+    "/branch-map/{map_id}",
+    dependencies=[Depends(require("catalogue.manage"))],
+)
+async def delete_branch_map_row(
+    map_id: UUID,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    """Remove a mapping — the branch stops being enumerated on that channel."""
+    row = await db.get(AggregatorBranchMap, map_id)
+    if row is None:
+        raise NotFoundError("mapping not found")
+    await db.delete(row)
+    return {"deleted": str(map_id)}
 
 
 @router.post("/keeta/orders", response_model=KeetaOrdersResult)
