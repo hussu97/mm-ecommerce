@@ -23,7 +23,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base, TimestampMixin, UUIDMixin, business_date_format
 
 if TYPE_CHECKING:
+    from .aggregator import AggregatorBranchMap, FoodicsBranchMap
     from .device import Device
+    from .grubops import GrubOpsLocationMap
     from .pos_table import Section
     from .tax import TaxGroup
 
@@ -171,8 +173,30 @@ class Branch(Base, UUIDMixin, TimestampMixin):
         DateTime(timezone=True), nullable=True
     )
 
+    #: The IANA zone this branch trades in. Every branch is Asia/Dubai today and
+    #: `core/trading_hours` long assumed it as a global constant; carried per
+    #: branch so a future shop in another city reads its "HH:MM" hours in the
+    #: right zone rather than Dubai's.
+    timezone: Mapped[str] = mapped_column(
+        String(40), nullable=False, server_default="Asia/Dubai"
+    )
+
     # Relationships
     tax_group: Mapped[TaxGroup | None] = relationship("TaxGroup")
+    #: Integration capability, expressed as mapping rows rather than boolean
+    #: columns (the idiom `grubops_location_map` established): a branch is *on* a
+    #: system iff it has an active row. Read-only here — the rows are written by
+    #: the grubops/aggregator services — and `selectin` so the derived flags
+    #: below are safe to read on any loaded branch under the async session.
+    aggregator_maps: Mapped[list[AggregatorBranchMap]] = relationship(
+        "AggregatorBranchMap", lazy="selectin", viewonly=True
+    )
+    foodics_map: Mapped[FoodicsBranchMap | None] = relationship(
+        "FoodicsBranchMap", lazy="selectin", viewonly=True, uselist=False
+    )
+    grubops_location: Mapped[GrubOpsLocationMap | None] = relationship(
+        "GrubOpsLocationMap", lazy="selectin", viewonly=True, uselist=False
+    )
     devices: Mapped[list[Device]] = relationship(
         "Device", back_populates="branch", cascade="all, delete-orphan"
     )
@@ -242,6 +266,21 @@ class Branch(Base, UUIDMixin, TimestampMixin):
             "https://www.google.com/maps/search/?api=1"
             f"&query={self.latitude},{self.longitude}"
         )
+
+    @property
+    def has_grubops(self) -> bool:
+        """On GrubOps iff there is an active location map — the OOS/order path."""
+        return self.grubops_location is not None and self.grubops_location.is_active
+
+    @property
+    def has_foodics(self) -> bool:
+        """Has a Foodics POS behind it iff there is an active branch map."""
+        return self.foodics_map is not None and self.foodics_map.is_active
+
+    @property
+    def aggregators(self) -> list[str]:
+        """The channels this branch trades on, active rows only, sorted."""
+        return sorted(m.channel for m in self.aggregator_maps if m.is_active)
 
     def __repr__(self) -> str:
         return f"<Branch {self.reference} {self.name}>"

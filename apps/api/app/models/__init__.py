@@ -4,6 +4,19 @@ All SQLAlchemy models — imported here so Alembic can autodiscover them.
 
 from .address import Address  # noqa: F401
 from .admin_passkey import AdminPasskey, WebAuthnChallenge  # noqa: F401
+from .aggregator import (  # noqa: F401
+    AGGREGATOR_CHANNELS,
+    AggregatorBranchMap,
+    AggregatorOrder,
+    AggregatorOrderItem,
+    AggregatorPayout,
+    AggregatorReconciliation,
+    AggregatorSession,
+    AggregatorStatement,
+    AggregatorStatementLine,
+    AggregatorSyncRun,
+    FoodicsBranchMap,
+)
 from .audit_log import AuditLog  # noqa: F401
 from .base import Base  # noqa: F401 — must be first
 from .blog import BlogPost  # noqa: F401
@@ -363,4 +376,16 @@ __all__ = [
     "Reservation",
     "ReservationStatusEnum",
     "NotificationRule",
+    # Aggregator ingestion
+    "AGGREGATOR_CHANNELS",
+    "AggregatorBranchMap",
+    "FoodicsBranchMap",
+    "AggregatorSession",
+    "AggregatorSyncRun",
+    "AggregatorOrder",
+    "AggregatorOrderItem",
+    "AggregatorStatement",
+    "AggregatorStatementLine",
+    "AggregatorPayout",
+    "AggregatorReconciliation",
 ]
