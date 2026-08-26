@@ -7,7 +7,7 @@ import logging
 
 import typer
 
-from .browser import NotLoggedInError
+from .browser import NotLoggedInError, ensure_session
 from .channels.probes import CHANNEL_PROBES
 from .warm import warm_channel
 
@@ -49,6 +49,35 @@ def warm_sessions(
 ) -> None:
     """Refresh sessions (re-run the anti-bot sensor, refresh tokens) and push."""
     _run_for([channel] if channel else list(_CHANNELS))
+
+
+async def _bootstrap_channel(channel: str) -> None:
+    """Re-establish a stale session (logging in if needed), then capture + push."""
+    await ensure_session(channel)  # probe; on staleness, run the login flow
+    await warm_channel(channel)  # capture from the now-fresh state and push
+
+
+@app.command("bootstrap")
+def bootstrap(
+    channel: str = typer.Option(None, help="Channel to bootstrap"),
+    all_channels: bool = typer.Option(False, "--all", help="All channels"),
+) -> None:
+    """Ensure a live session (auto-login on staleness), then capture and push.
+
+    Unlike `warm-sessions`, this re-logs a channel in by itself when its stored
+    session has gone stale, instead of failing with a NotLoggedInError.
+    """
+    channels = list(_CHANNELS) if all_channels else [channel] if channel else []
+    for ch in channels:
+        if ch not in CHANNEL_PROBES:
+            logger.error("unknown channel %s (known: %s)", ch, ", ".join(_CHANNELS))
+            continue
+        try:
+            asyncio.run(_bootstrap_channel(ch))
+        except NotLoggedInError as exc:
+            logger.error("%s still not logged in after login attempt: %s", ch, exc)
+        except Exception:  # noqa: BLE001 — one channel must not stop the rest
+            logger.exception("%s bootstrap failed", ch)
 
 
 if __name__ == "__main__":

@@ -69,3 +69,52 @@ async def probe_channel(channel: str) -> tuple[list[dict], dict[str, str], str]:
     if any(w in final_url.lower() for w in ("login", "signin", "identity", "auth")):
         raise NotLoggedInError(f"{channel} session is stale (landed on {final_url})")
     return cookies, captured, final_url
+
+
+async def _run_login(channel: str) -> None:
+    """Open a context on the (stale) stored state, run the channel login, save it.
+
+    The login flow drives the context to a logged-in state; we then persist the
+    fresh `storage_state` so the follow-up `probe_channel` resumes it. Kept
+    separate from `probe_channel` so the warm path is untouched.
+    """
+    from playwright.async_api import async_playwright  # lazy
+
+    from .channels.login import LOGIN_FLOWS  # lazy — pulls the login module
+
+    login = LOGIN_FLOWS.get(channel)
+    if login is None:
+        raise NotLoggedInError(
+            f"{channel} has no automated login flow; establish its session manually."
+        )
+
+    state = _storage_state_path(channel)
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=settings.HEADLESS)
+        context = await browser.new_context(
+            storage_state=str(state) if state.exists() else None,
+            accept_downloads=True,
+        )
+        try:
+            await login(context)
+            os.makedirs(settings.STORAGE_STATE_DIR, exist_ok=True)
+            await context.storage_state(path=str(state))
+        finally:
+            await browser.close()
+
+
+async def ensure_session(channel: str) -> tuple[list[dict], dict[str, str], str]:
+    """Probe the channel; if the session is stale, log in and probe once more.
+
+    This is the bootstrap entry point (the future `bootstrap` CLI command calls
+    it): unlike the warm path it can re-establish a dead session on its own by
+    running the channel's login flow. `probe_channel` is left exactly as
+    warm.py depends on it — the retry lives here.
+    """
+    try:
+        return await probe_channel(channel)
+    except NotLoggedInError:
+        await _run_login(channel)
+        # One retry: if it is still stale, the login did not take — let the
+        # NotLoggedInError propagate so the caller reports a real failure.
+        return await probe_channel(channel)

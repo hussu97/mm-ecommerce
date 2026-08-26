@@ -32,5 +32,25 @@ class Settings(BaseSettings):
     OTP_IMAP_PASSWORD: str = Field(default="", repr=False)
     OTP_IMAP_FOLDER: str = "INBOX"
 
+    #: Per-channel portal login credentials, used only when a stored session has
+    #: gone stale and `ensure_session` has to re-establish it (mirrors the
+    #: per-channel `primary_login_email` / `password` keys the standalone
+    #: mm-aggregator scraper reads from its secrets YAML). Passwords are hidden
+    #: from reprs so they never leak into logs or tracebacks.
+    NOON_EMAIL: str = ""
+    NOON_PASSWORD: str = Field(default="", repr=False)
+
+    TALABAT_EMAIL: str = ""
+    TALABAT_PASSWORD: str = Field(default="", repr=False)
+
+    DELIVEROO_EMAIL: str = ""
+    DELIVEROO_PASSWORD: str = Field(default="", repr=False)
+
+    KEETA_EMAIL: str = ""
+    KEETA_PASSWORD: str = Field(default="", repr=False)
+
+    CAREEM_EMAIL: str = ""
+    CAREEM_PASSWORD: str = Field(default="", repr=False)
+
 
 settings = Settings()
