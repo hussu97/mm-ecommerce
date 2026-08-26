@@ -197,7 +197,7 @@ async def test_keeta_orders_push_ingests_parsed_orders(client, monkeypatch):
     async def fake_upsert(db, channel, order):
         upserts.append((channel, order))
 
-    monkeypatch.setattr("app.api.v1.aggregators._upsert_order", fake_upsert)
+    monkeypatch.setattr("app.services.aggregators.ingest.upsert_order", fake_upsert)
 
     resp = await client.post(
         "/api/v1/aggregators/keeta/orders",
@@ -207,3 +207,31 @@ async def test_keeta_orders_push_ingests_parsed_orders(client, monkeypatch):
     assert resp.status_code == 200
     assert resp.json() == {"ingested": 2}
     assert [c for c, _ in upserts] == ["keeta", "keeta"]
+
+
+async def test_keeta_orders_push_isolates_a_bad_payload(client, monkeypatch):
+    # One malformed payload must not fail the whole batch — it is logged and
+    # skipped, the good payloads still ingest.
+    monkeypatch.setattr("app.core.config.settings.AGGREGATOR_SESSION_PUSH_TOKEN", "tok")
+
+    def flaky_parse(payload):
+        if payload.get("bad"):
+            raise ValueError("unparseable keeta payload")
+        return [object()]
+
+    monkeypatch.setattr(
+        "app.services.providers.keeta_provider.provider.parse_orders", flaky_parse
+    )
+
+    async def fake_upsert(db, channel, order):
+        return None
+
+    monkeypatch.setattr("app.services.aggregators.ingest.upsert_order", fake_upsert)
+
+    resp = await client.post(
+        "/api/v1/aggregators/keeta/orders",
+        json={"payloads": [{"ok": 1}, {"bad": 1}, {"ok": 1}]},
+        headers={"Authorization": "Bearer tok"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"ingested": 2}

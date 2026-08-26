@@ -23,7 +23,7 @@ import logging
 import uuid
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +31,7 @@ from app.core import advisory_lock
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
 from app.models.aggregator import (
+    CHANNEL_KEETA,
     RUN_COMPLETED,
     RUN_FAILED,
     RUN_MODE_FINANCE,
@@ -116,7 +117,28 @@ async def _branch_for(
 
 
 # ── upserts ──────────────────────────────────────────────────────────────────
-async def _upsert_order(db: AsyncSession, channel: str, order: StandardOrder) -> None:
+#: Columns a thinner re-fetch may legitimately omit: the hourly *sales* pull has
+#: no settlement figures and the daily *finance* pull is what fills them, and a
+#: branch may fail to re-resolve on a later pass. These are COALESCEd on conflict
+#: so a later NULL never erases a value a richer pull already stored — a non-NULL
+#: (including a zero, which means "charged nothing") still updates. This is what
+#: the old comment here promised but the unconditional overwrite did not deliver.
+_PRESERVE_IF_NULL = (
+    "branch_id",
+    "gross_sales",
+    "net_sales",
+    "commission_amount",
+    "payment_fee",
+    "delivery_fee",
+    "vat_amount",
+    "cancellation_fee",
+    "refund_amount",
+    "net_payable",
+    "statement_id",
+)
+
+
+async def upsert_order(db: AsyncSession, channel: str, order: StandardOrder) -> None:
     branch_id = await _branch_for(db, channel, order.external_outlet_id)
     values = {
         "channel": channel,
@@ -138,21 +160,22 @@ async def _upsert_order(db: AsyncSession, channel: str, order: StandardOrder) ->
         "statement_id": order.statement_id,
         "raw": order.raw,
     }
-    # Do not overwrite a resolved branch or known money with a later null — a
-    # thinner re-fetch must not erase what a richer one already stored.
-    update = {
-        k: v for k, v in values.items() if k not in ("channel", "external_order_id")
-    }
-    update["updated_at"] = utcnow()
-    stmt = (
-        pg_insert(AggregatorOrder)
-        .values(**values)
-        .on_conflict_do_update(
-            constraint="uq_aggregator_order",
-            set_=update,
+    insert_stmt = pg_insert(AggregatorOrder).values(**values)
+    update = {}
+    for k in values:
+        if k in ("channel", "external_order_id"):
+            continue
+        proposed = getattr(insert_stmt.excluded, k)
+        update[k] = (
+            func.coalesce(proposed, getattr(AggregatorOrder, k))
+            if k in _PRESERVE_IF_NULL
+            else proposed
         )
-        .returning(AggregatorOrder.id)
-    )
+    update["updated_at"] = utcnow()
+    stmt = insert_stmt.on_conflict_do_update(
+        constraint="uq_aggregator_order",
+        set_=update,
+    ).returning(AggregatorOrder.id)
     order_pk = (await db.execute(stmt)).scalar_one()
 
     for item in order.items:
@@ -184,6 +207,30 @@ async def _upsert_order(db: AsyncSession, channel: str, order: StandardOrder) ->
                 constraint="uq_aggregator_order_item", set_=item_update
             )
         )
+
+
+async def ingest_keeta_payloads(db: AsyncSession, payloads: list[dict]) -> int:
+    """Parse and upsert a batch of in-page-fetched Keeta `getOrders` payloads.
+
+    Keeta is off the httpx sweep (its `mtgsig` signing lives in the page), so the
+    bootstrap worker fetches each response in-page and pushes the raw payloads to
+    the `/keeta/orders` endpoint, which calls this. Each payload is isolated: a
+    single malformed one is logged and skipped, not fatal to the batch. Returns
+    the number of orders written.
+    """
+    from app.services.providers import keeta_provider
+
+    ingested = 0
+    for payload in payloads:
+        try:
+            orders = keeta_provider.provider.parse_orders(payload)
+        except Exception:  # noqa: BLE001 — one bad payload must not fail the batch
+            logger.exception("keeta payload parse failed — skipped")
+            continue
+        for order in orders:
+            await upsert_order(db, CHANNEL_KEETA, order)
+            ingested += 1
+    return ingested
 
 
 async def _upsert_statement(
@@ -267,6 +314,15 @@ async def _new_run(db: AsyncSession, channel: str, mode: str) -> AggregatorSyncR
     return run
 
 
+#: How far back the daily finance sweep re-pulls statements/payouts. Statements
+#: publish weekly/biweekly and post days after the order, so a week-plus window
+#: catches a settlement that lands between two runs; the writes are idempotent so
+#: the overlap is free. Named here (not a bare literal) alongside the other
+#: cadence knobs in `settings` — kept a module constant rather than an env var
+#: because it is a correctness floor, not an operational dial.
+_FINANCE_LOOKBACK_DAYS = 8
+
+
 async def _sweep_channel(
     db: AsyncSession, channel: str, provider: BaseAggregatorClient, mode: str
 ) -> int:
@@ -287,11 +343,11 @@ async def _sweep_channel(
                 session, since=since, until=now
             )
             for order in result.orders:
-                await _upsert_order(db, channel, order)
+                await upsert_order(db, channel, order)
             written = len(result.orders)
             truncation = result.truncation_note
         else:
-            since = now - timedelta(days=8)
+            since = now - timedelta(days=_FINANCE_LOOKBACK_DAYS)
             finance: FinanceResult = await provider.fetch_finance(
                 session, since=since, until=now
             )

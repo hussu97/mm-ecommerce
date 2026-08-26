@@ -34,7 +34,6 @@ from app.core.exceptions import (
 from app.core.permissions import require
 from app.models.aggregator import (
     AGGREGATOR_CHANNELS,
-    CHANNEL_KEETA,
     MATCH_MATCHED,
     MATCH_NO_MAKER_SIDE,
     MATCH_UNMATCHED_AGG,
@@ -55,9 +54,7 @@ from app.schemas.aggregator import (
     ReconSummaryOut,
     ReconSummaryRow,
 )
-from app.services.aggregators import crypto, mapping, session_store
-from app.services.aggregators.ingest import _upsert_order
-from app.services.providers import keeta_provider
+from app.services.aggregators import crypto, ingest, mapping, session_store
 
 router = APIRouter()
 
@@ -220,11 +217,7 @@ async def push_keeta_orders(
     raw payloads here. Each is parsed by the Keeta provider and upserted exactly
     as the sweep upserts the other channels. Returns the count of orders written.
     """
-    ingested = 0
-    for payload in body.payloads:
-        for order in keeta_provider.provider.parse_orders(payload):
-            await _upsert_order(db, CHANNEL_KEETA, order)
-            ingested += 1
+    ingested = await ingest.ingest_keeta_payloads(db, body.payloads)
     return KeetaOrdersResult(ingested=ingested)
 
 
