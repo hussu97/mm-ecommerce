@@ -16,6 +16,14 @@ dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "ruff>=0.6"]
 [project.scripts]
 aggregator-bootstrap = "aggregator_bootstrap.cli:app"
 
+[tool.ruff.lint]
+# Match apps/api's effective ruleset exactly, and pin it explicitly rather than
+# relying on ruff's default `select`: apps/api caps ruff at <0.16 (default E4/E7/
+# E9,F) while this package floated to 0.16, whose default is far broader
+# (S/BLE/RUF/UP/SIM…) — so the same code linted clean there and failed here. An
+# explicit select is version-independent. `I` (isort) matches apps/api.
+select = ["E4", "E7", "E9", "F", "I"]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
