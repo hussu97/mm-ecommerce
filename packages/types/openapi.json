@@ -585,6 +585,230 @@
         "title": "AdminUserSummary",
         "type": "object"
       },
+      "AggregatorReconciliationList": {
+        "description": "A page of reconciliation rows, plus the unpaginated total for the filter.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AggregatorReconciliationOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "AggregatorReconciliationList",
+        "type": "object"
+      },
+      "AggregatorReconciliationOut": {
+        "description": "One reconciliation row for the dashboard \u2014 the maker-checker's output.\n\n`branch_name` is joined from `branches`; `flags` is the list of issue codes\nraised (never null on the wire \u2014 an unflagged order carries `[]`).",
+        "properties": {
+          "amount_variance": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Variance"
+          },
+          "branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Id"
+          },
+          "branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Name"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "commission_actual": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commission Actual"
+          },
+          "commission_expected": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commission Expected"
+          },
+          "commission_rate_effective": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commission Rate Effective"
+          },
+          "commission_variance": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commission Variance"
+          },
+          "external_order_id": {
+            "title": "External Order Id",
+            "type": "string"
+          },
+          "flags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Flags",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "item_flag": {
+            "title": "Item Flag",
+            "type": "boolean"
+          },
+          "match_status": {
+            "title": "Match Status",
+            "type": "string"
+          },
+          "mm_order_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mm Order Id"
+          },
+          "reconciled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reconciled At"
+          },
+          "refund_agg": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refund Agg"
+          },
+          "refund_flag": {
+            "title": "Refund Flag",
+            "type": "boolean"
+          },
+          "refund_mm": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refund Mm"
+          },
+          "total_agg": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Agg"
+          },
+          "total_mm": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Mm"
+          }
+        },
+        "required": [
+          "id",
+          "channel",
+          "external_order_id",
+          "match_status",
+          "item_flag",
+          "refund_flag"
+        ],
+        "title": "AggregatorReconciliationOut",
+        "type": "object"
+      },
       "AggregatorSessionPush": {
         "description": "A freshly captured marketplace session, pushed in for the ingest to replay.\n\nThe worker that runs the browser (and can solve OTP / a bot sensor) sends\nthe bundle here; the API seals it and stores it. The cookies carry the load-\nbearing anti-bot cookie, `header_profile` the exact request fingerprint.",
         "properties": {
@@ -10536,6 +10760,35 @@
           "source_order_id"
         ],
         "title": "JoinOrderRequest",
+        "type": "object"
+      },
+      "KeetaOrdersPush": {
+        "description": "A batch of in-page-fetched Keeta order payloads, pushed in for ingest.\n\nKeeta cannot be swept over httpx (its `mtgsig` request signing lives in the\npage), so the bootstrap worker fetches each `getOrders` response in-page and\nhands the raw payloads here. Each payload is parsed by `keeta_provider` into\nchannel-neutral orders and upserted, exactly as the httpx sweep does for the\nother four channels \u2014 this endpoint is simply Keeta's transport.",
+        "properties": {
+          "payloads": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Payloads",
+            "type": "array"
+          }
+        },
+        "title": "KeetaOrdersPush",
+        "type": "object"
+      },
+      "KeetaOrdersResult": {
+        "description": "How many orders the pushed Keeta payloads upserted.",
+        "properties": {
+          "ingested": {
+            "title": "Ingested",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ingested"
+        ],
+        "title": "KeetaOrdersResult",
         "type": "object"
       },
       "KitchenFlowCreate": {
@@ -21016,6 +21269,100 @@
         "title": "RecipeUpsert",
         "type": "object"
       },
+      "ReconSummaryOut": {
+        "description": "The summary read: per-channel rows and one combined total.",
+        "properties": {
+          "by_channel": {
+            "items": {
+              "$ref": "#/components/schemas/ReconSummaryRow"
+            },
+            "title": "By Channel",
+            "type": "array"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/ReconSummaryRow"
+          }
+        },
+        "required": [
+          "by_channel",
+          "totals"
+        ],
+        "title": "ReconSummaryOut",
+        "type": "object"
+      },
+      "ReconSummaryRow": {
+        "description": "The reconciliation tallies for one channel (or the `all` total row).\n\nCounts are over the filtered set; `commission_actual_sum` and\n`avg_rate_effective` are the money aggregates the couriers grammar is\nvalidated against.",
+        "properties": {
+          "avg_rate_effective": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Rate Effective"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "commission_actual_sum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commission Actual Sum"
+          },
+          "commission_variance_count": {
+            "title": "Commission Variance Count",
+            "type": "integer"
+          },
+          "item_flags": {
+            "title": "Item Flags",
+            "type": "integer"
+          },
+          "matched": {
+            "title": "Matched",
+            "type": "integer"
+          },
+          "no_maker_side": {
+            "title": "No Maker Side",
+            "type": "integer"
+          },
+          "refund_flags": {
+            "title": "Refund Flags",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "unmatched_agg": {
+            "title": "Unmatched Agg",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "channel",
+          "total",
+          "matched",
+          "unmatched_agg",
+          "no_maker_side",
+          "item_flags",
+          "refund_flags",
+          "commission_variance_count"
+        ],
+        "title": "ReconSummaryRow",
+        "type": "object"
+      },
       "RedirectCreate": {
         "properties": {
           "from_path": {
@@ -27964,6 +28311,267 @@
         "summary": "Update Status",
         "tags": [
           "Custom Orders"
+        ]
+      }
+    },
+    "/api/v1/aggregators/keeta/orders": {
+      "post": {
+        "description": "Ingest a batch of in-page-fetched Keeta order payloads.\n\nKeeta is not on the httpx sweep (its `mtgsig` signing lives in the page), so\nthe bootstrap worker fetches each `getOrders` response in-page and pushes the\nraw payloads here. Each is parsed by the Keeta provider and upserted exactly\nas the sweep upserts the other channels. Returns the count of orders written.",
+        "operationId": "push_keeta_orders_api_v1_aggregators_keeta_orders_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeetaOrdersPush"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeetaOrdersResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Push Keeta Orders",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/reconciliation": {
+      "get": {
+        "description": "The reconciliation rows for the dashboard, newest first, with the total.",
+        "operationId": "list_reconciliation_api_v1_aggregators_reconciliation_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "channel",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel"
+            }
+          },
+          {
+            "in": "query",
+            "name": "branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Branch Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "match_status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Match Status"
+            }
+          },
+          {
+            "description": "Only orders carrying an item/refund flag or a flag code",
+            "in": "query",
+            "name": "flagged",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only orders carrying an item/refund flag or a flag code",
+              "title": "Flagged"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AggregatorReconciliationList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Reconciliation",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/reconciliation/summary": {
+      "get": {
+        "description": "Per-channel reconciliation tallies plus one combined total, from SQL.",
+        "operationId": "reconciliation_summary_api_v1_aggregators_reconciliation_summary_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "channel",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel"
+            }
+          },
+          {
+            "in": "query",
+            "name": "branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Branch Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconSummaryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Reconciliation Summary",
+        "tags": [
+          "Aggregators"
         ]
       }
     },

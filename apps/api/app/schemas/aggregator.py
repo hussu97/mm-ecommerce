@@ -1,8 +1,11 @@
-"""What the bootstrap/warmer worker sends when it hands a session to the API."""
+"""What the bootstrap/warmer worker sends when it hands a session to the API,
+and what the reconciliation dashboard reads back."""
 
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -37,3 +40,87 @@ class AggregatorSessionResponse(BaseModel):
     last_bootstrap_at: datetime | None = None
     last_success_at: datetime | None = None
     last_error: str | None = None
+
+
+class KeetaOrdersPush(BaseModel):
+    """A batch of in-page-fetched Keeta order payloads, pushed in for ingest.
+
+    Keeta cannot be swept over httpx (its `mtgsig` request signing lives in the
+    page), so the bootstrap worker fetches each `getOrders` response in-page and
+    hands the raw payloads here. Each payload is parsed by `keeta_provider` into
+    channel-neutral orders and upserted, exactly as the httpx sweep does for the
+    other four channels — this endpoint is simply Keeta's transport.
+    """
+
+    payloads: list[dict] = Field(default_factory=list)
+
+
+class KeetaOrdersResult(BaseModel):
+    """How many orders the pushed Keeta payloads upserted."""
+
+    ingested: int
+
+
+class AggregatorReconciliationOut(BaseModel):
+    """One reconciliation row for the dashboard — the maker-checker's output.
+
+    `branch_name` is joined from `branches`; `flags` is the list of issue codes
+    raised (never null on the wire — an unflagged order carries `[]`).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    channel: str
+    external_order_id: str
+    branch_id: UUID | None = None
+    branch_name: str | None = None
+    mm_order_id: UUID | None = None
+    match_status: str
+    item_flag: bool
+    refund_flag: bool
+    refund_agg: Decimal | None = None
+    refund_mm: Decimal | None = None
+    commission_expected: Decimal | None = None
+    commission_actual: Decimal | None = None
+    commission_variance: Decimal | None = None
+    commission_rate_effective: Decimal | None = None
+    total_agg: Decimal | None = None
+    total_mm: Decimal | None = None
+    amount_variance: Decimal | None = None
+    flags: list[str] = Field(default_factory=list)
+    reconciled_at: datetime | None = None
+
+
+class AggregatorReconciliationList(BaseModel):
+    """A page of reconciliation rows, plus the unpaginated total for the filter."""
+
+    items: list[AggregatorReconciliationOut]
+    total: int
+
+
+class ReconSummaryRow(BaseModel):
+    """The reconciliation tallies for one channel (or the `all` total row).
+
+    Counts are over the filtered set; `commission_actual_sum` and
+    `avg_rate_effective` are the money aggregates the couriers grammar is
+    validated against.
+    """
+
+    channel: str
+    total: int
+    matched: int
+    unmatched_agg: int
+    no_maker_side: int
+    item_flags: int
+    refund_flags: int
+    commission_variance_count: int
+    commission_actual_sum: Decimal | None = None
+    avg_rate_effective: Decimal | None = None
+
+
+class ReconSummaryOut(BaseModel):
+    """The summary read: per-channel rows and one combined total."""
+
+    by_channel: list[ReconSummaryRow]
+    totals: ReconSummaryRow

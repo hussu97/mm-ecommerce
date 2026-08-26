@@ -127,8 +127,30 @@ def _item_discrepancy(agg_items, mm_items: list[OrderItem]) -> tuple[dict | None
     return (detail, flagged)
 
 
+#: Deliveroo hands back a CSV of *item* aggregates, not per-order rows; the
+#: ingest stores those as synthetic carrier orders (`deliveroo-items:<window>`,
+#: status `items_aggregate`) so the item feed is not lost. They are not real
+#: orders — there is nothing to match to an MM order and a `no_mm_order` flag on
+#: one would be noise — so reconciliation skips them.
+_CARRIER_ORDER_PREFIX = "deliveroo-items:"
+_CARRIER_ORDER_STATUS = "items_aggregate"
+
+
+def _is_carrier_order(agg) -> bool:
+    external = agg.external_order_id or ""
+    return (
+        external.startswith(_CARRIER_ORDER_PREFIX)
+        or agg.status == _CARRIER_ORDER_STATUS
+    )
+
+
 async def reconcile_order(db: AsyncSession, agg, *, run_id=None) -> None:
     """Compute and upsert one reconciliation row for one aggregator order."""
+    # A Deliveroo synthetic item-aggregate is not an order to reconcile — see
+    # `_is_carrier_order`. Return before writing any reconciliation row.
+    if _is_carrier_order(agg):
+        return
+
     has_grubops = await _branch_has_grubops(db, agg.branch_id)
 
     mm_order = None

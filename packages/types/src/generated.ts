@@ -193,6 +193,71 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/aggregators/keeta/orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Push Keeta Orders
+         * @description Ingest a batch of in-page-fetched Keeta order payloads.
+         *
+         *     Keeta is not on the httpx sweep (its `mtgsig` signing lives in the page), so
+         *     the bootstrap worker fetches each `getOrders` response in-page and pushes the
+         *     raw payloads here. Each is parsed by the Keeta provider and upserted exactly
+         *     as the sweep upserts the other channels. Returns the count of orders written.
+         */
+        post: operations["push_keeta_orders_api_v1_aggregators_keeta_orders_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/aggregators/reconciliation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Reconciliation
+         * @description The reconciliation rows for the dashboard, newest first, with the total.
+         */
+        get: operations["list_reconciliation_api_v1_aggregators_reconciliation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/aggregators/reconciliation/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Reconciliation Summary
+         * @description Per-channel reconciliation tallies plus one combined total, from SQL.
+         */
+        get: operations["reconciliation_summary_api_v1_aggregators_reconciliation_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/aggregators/session": {
         parameters: {
             query?: never;
@@ -7152,6 +7217,68 @@ export interface components {
             phone: string | null;
         };
         /**
+         * AggregatorReconciliationList
+         * @description A page of reconciliation rows, plus the unpaginated total for the filter.
+         */
+        AggregatorReconciliationList: {
+            /** Items */
+            items: components["schemas"]["AggregatorReconciliationOut"][];
+            /** Total */
+            total: number;
+        };
+        /**
+         * AggregatorReconciliationOut
+         * @description One reconciliation row for the dashboard — the maker-checker's output.
+         *
+         *     `branch_name` is joined from `branches`; `flags` is the list of issue codes
+         *     raised (never null on the wire — an unflagged order carries `[]`).
+         */
+        AggregatorReconciliationOut: {
+            /** Amount Variance */
+            amount_variance?: string | null;
+            /** Branch Id */
+            branch_id?: string | null;
+            /** Branch Name */
+            branch_name?: string | null;
+            /** Channel */
+            channel: string;
+            /** Commission Actual */
+            commission_actual?: string | null;
+            /** Commission Expected */
+            commission_expected?: string | null;
+            /** Commission Rate Effective */
+            commission_rate_effective?: string | null;
+            /** Commission Variance */
+            commission_variance?: string | null;
+            /** External Order Id */
+            external_order_id: string;
+            /** Flags */
+            flags?: string[];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Item Flag */
+            item_flag: boolean;
+            /** Match Status */
+            match_status: string;
+            /** Mm Order Id */
+            mm_order_id?: string | null;
+            /** Reconciled At */
+            reconciled_at?: string | null;
+            /** Refund Agg */
+            refund_agg?: string | null;
+            /** Refund Flag */
+            refund_flag: boolean;
+            /** Refund Mm */
+            refund_mm?: string | null;
+            /** Total Agg */
+            total_agg?: string | null;
+            /** Total Mm */
+            total_mm?: string | null;
+        };
+        /**
          * AggregatorSessionPush
          * @description A freshly captured marketplace session, pushed in for the ingest to replay.
          *
@@ -10367,6 +10494,30 @@ export interface components {
              * Format: uuid
              */
             source_order_id: string;
+        };
+        /**
+         * KeetaOrdersPush
+         * @description A batch of in-page-fetched Keeta order payloads, pushed in for ingest.
+         *
+         *     Keeta cannot be swept over httpx (its `mtgsig` request signing lives in the
+         *     page), so the bootstrap worker fetches each `getOrders` response in-page and
+         *     hands the raw payloads here. Each payload is parsed by `keeta_provider` into
+         *     channel-neutral orders and upserted, exactly as the httpx sweep does for the
+         *     other four channels — this endpoint is simply Keeta's transport.
+         */
+        KeetaOrdersPush: {
+            /** Payloads */
+            payloads?: {
+                [key: string]: unknown;
+            }[];
+        };
+        /**
+         * KeetaOrdersResult
+         * @description How many orders the pushed Keeta payloads upserted.
+         */
+        KeetaOrdersResult: {
+            /** Ingested */
+            ingested: number;
         };
         /** KitchenFlowCreate */
         KitchenFlowCreate: {
@@ -13787,6 +13938,45 @@ export interface components {
             /** Ingredients */
             ingredients?: components["schemas"]["RecipeLine"][];
         };
+        /**
+         * ReconSummaryOut
+         * @description The summary read: per-channel rows and one combined total.
+         */
+        ReconSummaryOut: {
+            /** By Channel */
+            by_channel: components["schemas"]["ReconSummaryRow"][];
+            totals: components["schemas"]["ReconSummaryRow"];
+        };
+        /**
+         * ReconSummaryRow
+         * @description The reconciliation tallies for one channel (or the `all` total row).
+         *
+         *     Counts are over the filtered set; `commission_actual_sum` and
+         *     `avg_rate_effective` are the money aggregates the couriers grammar is
+         *     validated against.
+         */
+        ReconSummaryRow: {
+            /** Avg Rate Effective */
+            avg_rate_effective?: string | null;
+            /** Channel */
+            channel: string;
+            /** Commission Actual Sum */
+            commission_actual_sum?: string | null;
+            /** Commission Variance Count */
+            commission_variance_count: number;
+            /** Item Flags */
+            item_flags: number;
+            /** Matched */
+            matched: number;
+            /** No Maker Side */
+            no_maker_side: number;
+            /** Refund Flags */
+            refund_flags: number;
+            /** Total */
+            total: number;
+            /** Unmatched Agg */
+            unmatched_agg: number;
+        };
         /** RedirectCreate */
         RedirectCreate: {
             /** From Path */
@@ -16330,6 +16520,110 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CustomOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    push_keeta_orders_api_v1_aggregators_keeta_orders_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KeetaOrdersPush"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KeetaOrdersResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_reconciliation_api_v1_aggregators_reconciliation_get: {
+        parameters: {
+            query?: {
+                channel?: string | null;
+                branch_id?: string | null;
+                match_status?: string | null;
+                /** @description Only orders carrying an item/refund flag or a flag code */
+                flagged?: boolean | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AggregatorReconciliationList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reconciliation_summary_api_v1_aggregators_reconciliation_summary_get: {
+        parameters: {
+            query?: {
+                channel?: string | null;
+                branch_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReconSummaryOut"];
                 };
             };
             /** @description Validation Error */
