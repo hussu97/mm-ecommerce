@@ -396,6 +396,35 @@ class Settings(BaseSettings):
     FOODICS_PASSWORD: str = ""
     FOODICS_TIMEOUT_SECONDS: float = 8.0
 
+    # ── Aggregator ingestion (Careem/Deliveroo/Talabat/Noon/Keeta) ────────────
+    #: The hourly sales sweep and daily finance/reconciliation sweep that mirror
+    #: each marketplace's own ledger into `aggregator_*` and reconcile it against
+    #: MM orders. Off until a session has been bootstrapped and the ingest
+    #: watched once — a wrong outlet map writes nonsense into the reconciliation.
+    #: Storefront only, like the GrubOps loops; the register never runs it.
+    AGGREGATOR_INGEST_ENABLED: bool = False
+    #: Fernet key that encrypts the derived session blobs (cookies, tokens, the
+    #: captured header fingerprint) at rest in `aggregator_session`. Empty means
+    #: no session can be stored or read — the ingest stays inert rather than
+    #: holding a marketplace's credentials in plaintext. Generate with
+    #: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
+    AGGREGATOR_CONFIG_ENCRYPTION_KEY: str = ""
+    #: Bearer the bootstrap/warmer worker presents to `POST /aggregators/session`
+    #: when it pushes a freshly captured session in. The one write path into
+    #: `aggregator_session`, so an empty token closes it.
+    AGGREGATOR_SESSION_PUSH_TOKEN: str = ""
+    #: How often the sales sweep runs. Orders mutate after creation
+    #: (confirmed→delivered→refunded), so it re-pulls a rolling window every
+    #: hour rather than only new orders.
+    AGGREGATOR_SALES_TICK_SECONDS: int = 3600
+    #: How far back the sales sweep re-pulls each tick, to catch status/refund
+    #: changes on orders it already has. Idempotent upsert makes the overlap free.
+    AGGREGATOR_SALES_WINDOW_HOURS: int = 3
+    #: How often the finance sweep runs. Statements and payouts publish weekly, so
+    #: a daily check is ample and keeps off the marketplaces' rate limits.
+    AGGREGATOR_FINANCE_TICK_SECONDS: int = 86400
+    AGGREGATOR_TIMEOUT_SECONDS: float = 20.0
+
     # ── Slider (courier) ──────────────────────────────────────────────────────
     #: The third courier, and the same contract as the other two: an empty key
     #: means a `slider` zone prices and sells exactly as it does today and
