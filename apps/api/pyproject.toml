@@ -38,6 +38,7 @@ dependencies = [
     # digits", which is what the hand-rolled check amounted to, was not a check.
     "phonenumbers>=9.0.0",
     "openpyxl>=3.1.5",
+    "curl-cffi>=0.16.2",
 ]
 
 [project.optional-dependencies]

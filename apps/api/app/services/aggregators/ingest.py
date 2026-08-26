@@ -80,12 +80,21 @@ PROVIDERS: dict[str, BaseAggregatorClient] = {}
 
 
 def _register_providers() -> None:
-    """Import providers lazily so a half-built one cannot break app import."""
+    """Import providers lazily so a half-built one cannot break app import.
+
+    The four httpx channels. Keeta is deliberately absent: its every request
+    needs an in-page `mtgsig` signature that cannot be replayed over httpx, so
+    it is ingested by the bootstrap worker in-page, not by this loop.
+    """
     if PROVIDERS:
         return
     from app.services.providers.careem_provider import provider as careem
+    from app.services.providers.deliveroo_provider import provider as deliveroo
+    from app.services.providers.noon_provider import provider as noon
+    from app.services.providers.talabat_provider import provider as talabat
 
-    PROVIDERS[careem.channel] = careem
+    for p in (careem, deliveroo, talabat, noon):
+        PROVIDERS[p.channel] = p
 
 
 def is_enabled() -> bool:

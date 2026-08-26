@@ -201,3 +201,28 @@ async def test_session_push_rejects_unknown_channel(client, monkeypatch):
         headers={"Authorization": "Bearer tok"},
     )
     assert resp.status_code == 400
+
+
+# ── provider registry ─────────────────────────────────────────────────────────
+def test_registry_has_the_four_httpx_channels_and_not_keeta():
+    from app.services.aggregators import ingest
+
+    ingest.PROVIDERS.clear()
+    ingest._register_providers()
+    assert set(ingest.PROVIDERS) == {"careem", "deliveroo", "talabat", "noon"}
+    # Talabat and Noon go out behind TLS impersonation; Careem/Deliveroo do not.
+    assert ingest.PROVIDERS["talabat"].uses_tls_impersonation is True
+    assert ingest.PROVIDERS["noon"].uses_tls_impersonation is True
+    assert ingest.PROVIDERS["careem"].uses_tls_impersonation is False
+
+
+async def test_keeta_is_bootstrap_driven_not_httpx():
+    from app.services.providers.aggregator_base import AggregatorUnavailableError
+    from app.services.providers.keeta_provider import provider as keeta
+
+    session = LoadedSession(channel="keeta", account_ref="")
+    import datetime as _dt
+
+    now = _dt.datetime.now(_dt.timezone.utc)
+    with pytest.raises(AggregatorUnavailableError):
+        await keeta.fetch_sales(session, since=now, until=now)
