@@ -50,6 +50,63 @@ DEFAULT_AREA_TO_BRANCH_HINT: dict[str, str] = {
     "al majaz": "sharjah",
 }
 
+#: The outlet-key each channel files a branch under, → the branch hint. Matched
+#: against a branch's name, city and reference, so it survives whatever
+#: reference the DSO/Karama branches were seeded with (see
+#: `scripts.seed_aggregator_branches`, which names them "Dubai Silicon Oasis"
+#: and "Al Karama").
+OUTLET_KEY_TO_HINT: dict[str, str] = {
+    "sharjah": "sharjah",
+    "barsha_heights": "barsha",
+    "dso": "silicon oasis",
+    "karama": "karama",
+}
+
+#: The stable per-(channel, outlet) external ids for this account, moved here
+#: from the retired scraper's `platform_accounts` config as we consolidate into
+#: this repo. Not every channel trades from every branch — Talabat is two
+#: branches, Deliveroo three, Careem three (Sharjah shut), Noon all four. Careem
+#: carries its brand/company ids and its Sharjah row is inactive (statusId 3).
+#: **Keeta is absent on purpose**: its shop ids are captured in-page by the
+#: bootstrap worker (they were blank in the config), so it is mapped from a live
+#: capture, not seeded here. Ids are stable outlet identifiers, not branch
+#: references, so encoding them here does not repeat the "hardcoded ref" mistake.
+STATIC_OUTLETS: dict[str, dict[str, dict]] = {
+    "noon": {
+        "sharjah": {"external_outlet_id": "MLTNGM1GBF"},
+        "barsha_heights": {"external_outlet_id": "MLTNGM9FCH"},
+        "dso": {"external_outlet_id": "MLTNGMG2B1"},
+        "karama": {"external_outlet_id": "MLTNGMTB9M"},
+    },
+    "talabat": {
+        "sharjah": {"external_outlet_id": "711571"},
+        "barsha_heights": {"external_outlet_id": "728173"},
+    },
+    "deliveroo": {
+        "sharjah": {"external_outlet_id": "693360"},
+        "barsha_heights": {"external_outlet_id": "693359"},
+        "dso": {"external_outlet_id": "693361"},
+    },
+    "careem": {
+        "barsha_heights": {
+            "external_outlet_id": "1067984",
+            "external_brand_id": "1029671",
+            "external_company_id": "1026653",
+        },
+        "dso": {
+            "external_outlet_id": "1069463",
+            "external_brand_id": "1029671",
+            "external_company_id": "1026653",
+        },
+        "sharjah": {
+            "external_outlet_id": "1087801",
+            "external_brand_id": "1029671",
+            "external_company_id": "1026653",
+            "is_active": False,
+        },
+    },
+}
+
 
 async def _resolve_branch(db: AsyncSession, hint: str):
     """The first active branch whose name, city or reference contains *hint*."""
@@ -178,4 +235,42 @@ async def map_careem(
             is_active=bool(outlet.get("active")),
         )
         mapped += 1
+    return mapped
+
+
+async def seed_static_mappings(
+    db: AsyncSession, *, outlet_hints: dict[str, str] | None = None
+) -> int:
+    """Seed the branch map for every channel from the known account outlets.
+
+    The counterpart to `map_careem` for the channels without a live discovery
+    call: it walks `STATIC_OUTLETS`, resolves each outlet-key to a branch through
+    `OUTLET_KEY_TO_HINT`, and upserts the row. Idempotent (upsert), and a branch
+    that cannot be resolved — e.g. DSO/Karama not yet seeded — is logged and
+    skipped, never mapped wrongly. Returns the number of rows written.
+    """
+    hints = outlet_hints or OUTLET_KEY_TO_HINT
+    mapped = 0
+    for channel, outlets in STATIC_OUTLETS.items():
+        for outlet_key, ids in outlets.items():
+            hint = hints.get(outlet_key)
+            branch_id = await _resolve_branch(db, hint) if hint else None
+            if branch_id is None:
+                logger.warning(
+                    "%s %s: no branch resolved (hint %r) — skipped; seed the "
+                    "branch first",
+                    channel,
+                    outlet_key,
+                    hint,
+                )
+                continue
+            fields = {k: v for k, v in ids.items() if k != "is_active"}
+            await upsert_branch_map(
+                db,
+                channel=channel,
+                branch_id=branch_id,
+                is_active=ids.get("is_active", True),
+                **fields,
+            )
+            mapped += 1
     return mapped

@@ -216,6 +216,29 @@ def test_registry_has_the_four_httpx_channels_and_not_keeta():
     assert ingest.PROVIDERS["careem"].uses_tls_impersonation is False
 
 
+def test_static_outlet_mapping_covers_all_channels_and_branches():
+    from app.services.aggregators.mapping import OUTLET_KEY_TO_HINT, STATIC_OUTLETS
+
+    # Keeta is mapped from an in-page capture (blank shop ids), not seeded here.
+    assert set(STATIC_OUTLETS) == {"noon", "talabat", "deliveroo", "careem"}
+    # Every seeded outlet has a real id and a resolvable branch hint.
+    for outlets in STATIC_OUTLETS.values():
+        for outlet_key, ids in outlets.items():
+            assert ids.get("external_outlet_id"), outlet_key
+            assert outlet_key in OUTLET_KEY_TO_HINT
+    # Branch coverage genuinely differs per channel.
+    assert set(STATIC_OUTLETS["noon"]) == {
+        "sharjah",
+        "barsha_heights",
+        "dso",
+        "karama",
+    }
+    assert set(STATIC_OUTLETS["talabat"]) == {"sharjah", "barsha_heights"}
+    assert set(STATIC_OUTLETS["deliveroo"]) == {"sharjah", "barsha_heights", "dso"}
+    # Careem's Sharjah outlet is permanently shut.
+    assert STATIC_OUTLETS["careem"]["sharjah"]["is_active"] is False
+
+
 async def test_keeta_is_bootstrap_driven_not_httpx():
     from app.services.providers.aggregator_base import AggregatorUnavailableError
     from app.services.providers.keeta_provider import provider as keeta

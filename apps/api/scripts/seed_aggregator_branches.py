@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.core.database import AsyncSessionFactory  # noqa: E402
 from app.models import Branch  # noqa: E402
 from app.models.branch import BranchTypeEnum  # noqa: E402
+from app.services.aggregators import mapping  # noqa: E402
 
 # The two aggregator-only kitchens. Reference is supplied per run (its default
 # below); everything else is the sensible fixed identity of the branch.
@@ -88,10 +89,17 @@ async def main() -> None:
         for key, spec in _BRANCHES.items():
             if await _ensure_branch(db, reference=refs[key], spec=spec):
                 created += 1
+        # Branches must be resolvable before the mappings can find them.
+        await db.flush()
+        print("Seeding aggregator branch mappings (all channels):")
+        mapped = await mapping.seed_static_mappings(db)
         # A script, not a request — it owns its transaction and commits.
         await db.commit()
 
-    print(f"Done — {created} created, {len(_BRANCHES) - created} left as-is.")
+    print(
+        f"Done — {created} branch(es) created, {len(_BRANCHES) - created} as-is; "
+        f"{mapped} aggregator branch mapping(s) upserted."
+    )
 
 
 if __name__ == "__main__":
