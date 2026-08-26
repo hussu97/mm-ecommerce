@@ -19,6 +19,7 @@ jobs:
       web: ${{ steps.filter.outputs.web }}
       admin: ${{ steps.filter.outputs.admin }}
       api: ${{ steps.filter.outputs.api }}
+      aggregator: ${{ steps.filter.outputs.aggregator }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -41,6 +42,12 @@ jobs:
               - 'apps/api/**'
               - 'nginx/**'
               - 'docker-compose*.yml'
+            # The worker's own tests, plus the cross-package Keeta contract test,
+            # which asserts against apps/api's keeta_provider — so a change to
+            # either side must re-run it.
+            aggregator:
+              - 'apps/aggregator-bootstrap/**'
+              - 'apps/api/**'
 
   lint-web:
     name: Lint, Test & Build (Web)
@@ -205,3 +212,42 @@ jobs:
         run: |
           cd apps/api
           python -m scripts.export_openapi --check
+
+  test-aggregator-bootstrap:
+    name: Lint & Test (Aggregator Bootstrap)
+    needs: changes
+    if: needs.changes.outputs.aggregator == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            apps/api/pyproject.toml
+            apps/aggregator-bootstrap/pyproject.toml
+
+      # The worker's own tests skip the cross-package Keeta contract test unless
+      # the mm-ecommerce API deps are importable. Installing apps/api alongside
+      # the worker is what makes that contract test actually run here.
+      - name: Install dependencies
+        run: |
+          uv pip install --system -e apps/api -e "apps/aggregator-bootstrap[dev]"
+
+      - name: Ruff check
+        run: |
+          cd apps/aggregator-bootstrap
+          ruff check .
+
+      # Run from the worker dir so pytest reads its pyproject (asyncio_mode=auto,
+      # testpaths). With the API installed, the Keeta contract test runs instead
+      # of skipping.
+      - name: Run pytest
+        run: |
+          cd apps/aggregator-bootstrap
+          pytest tests --tb=short

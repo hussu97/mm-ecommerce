@@ -12,6 +12,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 # The mm-ecommerce API package lives two levels up (apps/api); it holds the
 # provider whose parse contract we assert against. Added to the path so `app`
 # imports when the tests run under the api venv.
@@ -111,9 +113,14 @@ async def test_no_shop_ids_still_makes_one_combined_call():
 def _load_keeta_provider():
     if str(_API_ROOT) not in sys.path:
         sys.path.insert(0, str(_API_ROOT))
-    from app.services.providers import keeta_provider
-
-    return keeta_provider
+    # The provider (and the models it imports) needs the mm-ecommerce API deps
+    # (sqlalchemy, the app package). Those are absent from the worker's own venv,
+    # so this test SKIPS cleanly there and only runs in the CI job that installs
+    # apps/api alongside the worker (see .github/workflows/pr-check.yml).
+    return pytest.importorskip(
+        "app.services.providers.keeta_provider",
+        reason="mm-ecommerce API deps (sqlalchemy + app package) not installed",
+    )
 
 
 async def test_fetched_payload_matches_keeta_provider_parse_contract():

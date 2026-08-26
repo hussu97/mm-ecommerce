@@ -20,8 +20,11 @@ class Settings(BaseSettings):
     AGGREGATOR_SESSION_PUSH_TOKEN: str = ""
 
     #: Where persisted Playwright storage states live between runs, so a warm
-    #: touch resumes a logged-in context instead of logging in again.
-    STORAGE_STATE_DIR: str = "secrets/sessions"
+    #: touch resumes a logged-in context instead of logging in again. Defaults to
+    #: a stable absolute path that the Dockerfile declares as a VOLUME; a deploy
+    #: MUST mount a persistent volume here, or every run starts logged-out and
+    #: falls into the OTP/anti-bot login path. See the README ops section.
+    STORAGE_STATE_DIR: str = "/data/sessions"
     HEADLESS: bool = True
     PROBE_TIMEOUT_MS: int = 30000
 

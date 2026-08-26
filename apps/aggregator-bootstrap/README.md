@@ -35,6 +35,35 @@ aggregator-bootstrap warm-sessions            # all channels
 `AGGREGATOR_API_URL`, `AGGREGATOR_SESSION_PUSH_TOKEN`, `STORAGE_STATE_DIR`,
 `HEADLESS`, and the `OTP_IMAP_*` mailbox settings (see `config.py`).
 
+`STORAGE_STATE_DIR` defaults to `/data/sessions`, an absolute path the
+Dockerfile declares as a `VOLUME` — see Operations below for why it must be a
+mounted persistent volume.
+
+## Operations
+
+**A persistent volume MUST be mounted at `/data`.** The entire warm/bootstrap
+model depends on the logged-in `storage_state` surviving between runs: each run
+reopens the persisted session, refreshes the rotated anti-bot cookie, and writes
+it back. `STORAGE_STATE_DIR` defaults to `/data/sessions`, which the Dockerfile
+declares as a `VOLUME`.
+
+If nothing is mounted there, `/data` is ephemeral container storage — every
+scheduled run starts logged-out, and the fall-back is the OTP/anti-bot login
+path, which for Talabat and Keeta **deliberately raises** (those flows are not
+ported yet). The result is a worker that fails every run until a human
+re-establishes the session by hand.
+
+- **Kubernetes**: back `/data` with a `PersistentVolumeClaim` (a small
+  `ReadWriteOnce` volume is enough) mounted at `/data`. A CronJob's pods must
+  share the same PVC so the warmed session carries across runs.
+- **Docker / compose**: mount a named volume or host path, e.g.
+  `docker run -v mm-agg-sessions:/data …` or a `volumes:` entry mapping to
+  `/data`.
+
+The container runs as the non-root `pwuser`; the image pre-creates
+`/data/sessions` owned by `pwuser`, so a freshly-provisioned empty volume is
+writable without extra setup.
+
 ## Where it runs
 
 On a host with a **stable egress IP in the UAE region** — PerimeterX/Akamai bind
