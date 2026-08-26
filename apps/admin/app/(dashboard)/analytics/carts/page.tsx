@@ -29,6 +29,7 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { Badge, Button, Input, LoadError, Pagination, Select, Spinner } from '@/components/ui';
 import { DataTable } from '@/components/ui/DataTable';
 import { idleLabel, idleTone } from './format';
+import { AnalyticsTabs } from '../AnalyticsTabs';
 
 // ─── Filters ──────────────────────────────────────────────────────────────────
 
@@ -118,6 +119,9 @@ export default function LiveCartsPage() {
   return (
     <div>
       <LoadError message={loadError} onRetry={refetch} />
+      <div className="mb-6">
+        <AnalyticsTabs />
+      </div>
 
       <div className="flex flex-wrap items-start justify-between gap-3 mb-6">
         <div>
