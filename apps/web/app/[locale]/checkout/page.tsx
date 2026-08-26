@@ -527,6 +527,13 @@ function CheckoutContent() {
   // the card/cash choice the form already holds.
   const isApplePay = applePaySelected && applePayOffered;
   const selectedPayment: 'card' | 'cod' | 'apple_pay' = isApplePay ? 'apple_pay' : paymentMethod;
+  // What the card row says it accepts. The hosted card page carries both
+  // wallets, so ordinarily it names them both — but when Apple Pay is broken
+  // out into its own row above, naming it here as well would read as two ways
+  // to do one thing, so the card row drops it and keeps Google Pay.
+  const cardSublabel = applePayOffered
+    ? withFallback(t, 'checkout.payment_sublabel_google', 'Visa, Mastercard · Google Pay')
+    : t('checkout.payment_sublabel');
 
   /**
    * The three states worth a goal of their own, each fired once per checkout.
@@ -1064,8 +1071,15 @@ function CheckoutContent() {
   );
 
   /**
-   * The Apple-styled button that replaces "Place Order" when Apple Pay is the
+   * The Apple Pay button that replaces "Place Order" when Apple Pay is the
    * chosen method and everything else is done.
+   *
+   * Drawn by Safari itself via `-apple-pay-button` (see `.mm-apple-pay-button`
+   * in globals.css), so the mark, the SF font and the sizing are Apple's own
+   * rather than a facsimile — the button has no children on purpose, because
+   * the system paints all of it. `lang` lets it localise its own label. The
+   * Apple Pay sheet is the feedback while a payment runs, so a spinner here
+   * would only sit behind it; the button is simply disabled meanwhile.
    *
    * Only when the gate is `ready` (or already `submitting` this same payment):
    * before that the ordinary button is the right one, because it walks the
@@ -1076,24 +1090,12 @@ function CheckoutContent() {
   const applePayButton = (
     <button
       type="button"
+      lang={locale}
       onClick={handleApplePay}
       disabled={submitting}
       aria-label={withFallback(t, 'checkout.pay_with_apple_pay', 'Pay with Apple Pay')}
-      className="w-full h-12 flex items-center justify-center gap-1.5 rounded-md bg-black text-white font-medium transition-opacity hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed"
-    >
-      {submitting ? (
-        <Spinner size="sm" />
-      ) : (
-        <>
-          {/* The Apple logo, drawn rather than an icon-font glyph so it renders
-              the same on every device the sheet will open on. */}
-          <svg viewBox="0 0 24 24" aria-hidden="true" className="w-5 h-5 fill-current" focusable="false">
-            <path d="M17.05 12.54c-.02-2.02 1.65-2.99 1.73-3.04-.94-1.38-2.41-1.57-2.93-1.59-1.25-.13-2.44.73-3.07.73-.63 0-1.61-.71-2.65-.69-1.36.02-2.62.79-3.32 2.01-1.42 2.46-.36 6.1 1.02 8.1.67.98 1.47 2.08 2.52 2.04 1.01-.04 1.39-.65 2.61-.65 1.22 0 1.56.65 2.63.63 1.09-.02 1.78-1 2.45-1.98.77-1.13 1.09-2.23 1.11-2.29-.02-.01-2.13-.82-2.15-3.25zM15.03 6.6c.56-.68.94-1.62.83-2.56-.81.03-1.79.54-2.37 1.21-.52.6-.97 1.56-.85 2.48.9.07 1.83-.46 2.39-1.13z"/>
-          </svg>
-          <span className="text-base">{withFallback(t, 'checkout.apple_pay', 'Pay')}</span>
-        </>
-      )}
-    </button>
+      className="mm-apple-pay-button"
+    />
   );
 
   /** Whichever button this checkout is currently offering. */
@@ -1370,6 +1372,46 @@ function CheckoutContent() {
              cash handling on the delivery side. */}
       <Section label={t('checkout.payment_method')}>
         <div className="space-y-2">
+          {/* Apple Pay — the test-only extra option, offered topmost as the
+              one-tap path. Rendered only when the account is allowlisted,
+              Stripe is the active gateway, and the device can actually do Apple
+              Pay (`applePayOffered`). It is a card underneath, so the order is
+              written no differently; what it changes is that the pay button
+              below becomes the in-page sheet. */}
+          {applePayOffered && (
+            <button
+              type="button"
+              aria-pressed={selectedPayment === 'apple_pay'}
+              onClick={() => {
+                analytics.paymentMethodSelected({
+                  method: 'apple_pay',
+                  delivery_method: form.deliveryMethod,
+                  total,
+                });
+                setApplePaySelected(true);
+              }}
+              className={`w-full flex items-center gap-3 px-3.5 py-3 border rounded-sm text-start transition-colors ${
+                selectedPayment === 'apple_pay' ? 'border-primary bg-primary/5' : 'border-gray-200 hover:border-primary/40'
+              }`}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+                focusable="false"
+                className={`w-5 h-5 shrink-0 ${selectedPayment === 'apple_pay' ? 'fill-primary' : 'fill-gray-400'}`}
+              >
+                <path d="M17.05 12.54c-.02-2.02 1.65-2.99 1.73-3.04-.94-1.38-2.41-1.57-2.93-1.59-1.25-.13-2.44.73-3.07.73-.63 0-1.61-.71-2.65-.69-1.36.02-2.62.79-3.32 2.01-1.42 2.46-.36 6.1 1.02 8.1.67.98 1.47 2.08 2.52 2.04 1.01-.04 1.39-.65 2.61-.65 1.22 0 1.56.65 2.63.63 1.09-.02 1.78-1 2.45-1.98.77-1.13 1.09-2.23 1.11-2.29-.02-.01-2.13-.82-2.15-3.25zM15.03 6.6c.56-.68.94-1.62.83-2.56-.81.03-1.79.54-2.37 1.21-.52.6-.97 1.56-.85 2.48.9.07 1.83-.46 2.39-1.13z" />
+              </svg>
+              <span className="flex-1 min-w-0">
+                <span className="block font-body text-sm text-gray-800">
+                  {withFallback(t, 'checkout.apple_pay_label', 'Apple Pay')}
+                </span>
+                <span className="block font-body text-xs text-gray-400 mt-0.5">
+                  {withFallback(t, 'checkout.apple_pay_sublabel', 'Pay in one tap with Apple Pay')}
+                </span>
+              </span>
+            </button>
+          )}
           {paymentOptions.map((id) => {
             const isCod = id === 'cod';
             // Apple Pay, when offered, is a second card-family option, so the
@@ -1386,7 +1428,7 @@ function CheckoutContent() {
                     {isCod ? t('checkout.cash_on_delivery') : t('checkout.credit_debit_card')}
                   </span>
                   <span className="block font-body text-xs text-gray-400 mt-0.5">
-                    {isCod ? t('checkout.cod_pickup_sublabel') : t('checkout.payment_sublabel')}
+                    {isCod ? t('checkout.cod_pickup_sublabel') : cardSublabel}
                   </span>
                 </span>
               </>
@@ -1433,46 +1475,6 @@ function CheckoutContent() {
               </button>
             );
           })}
-
-          {/* Apple Pay — the test-only extra option. Rendered only when the
-              account is allowlisted, Stripe is the active gateway, and the
-              device can actually do Apple Pay (`applePayOffered`). It is a
-              card underneath, so the order is written no differently; what it
-              changes is that the pay button below becomes the in-page sheet. */}
-          {applePayOffered && (
-            <button
-              type="button"
-              aria-pressed={selectedPayment === 'apple_pay'}
-              onClick={() => {
-                analytics.paymentMethodSelected({
-                  method: 'apple_pay',
-                  delivery_method: form.deliveryMethod,
-                  total,
-                });
-                setApplePaySelected(true);
-              }}
-              className={`w-full flex items-center gap-3 px-3.5 py-3 border rounded-sm text-start transition-colors ${
-                selectedPayment === 'apple_pay' ? 'border-primary bg-primary/5' : 'border-gray-200 hover:border-primary/40'
-              }`}
-            >
-              <svg
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-                focusable="false"
-                className={`w-5 h-5 shrink-0 ${selectedPayment === 'apple_pay' ? 'fill-primary' : 'fill-gray-400'}`}
-              >
-                <path d="M17.05 12.54c-.02-2.02 1.65-2.99 1.73-3.04-.94-1.38-2.41-1.57-2.93-1.59-1.25-.13-2.44.73-3.07.73-.63 0-1.61-.71-2.65-.69-1.36.02-2.62.79-3.32 2.01-1.42 2.46-.36 6.1 1.02 8.1.67.98 1.47 2.08 2.52 2.04 1.01-.04 1.39-.65 2.61-.65 1.22 0 1.56.65 2.63.63 1.09-.02 1.78-1 2.45-1.98.77-1.13 1.09-2.23 1.11-2.29-.02-.01-2.13-.82-2.15-3.25zM15.03 6.6c.56-.68.94-1.62.83-2.56-.81.03-1.79.54-2.37 1.21-.52.6-.97 1.56-.85 2.48.9.07 1.83-.46 2.39-1.13z" />
-              </svg>
-              <span className="flex-1 min-w-0">
-                <span className="block font-body text-sm text-gray-800">
-                  {withFallback(t, 'checkout.apple_pay_label', 'Apple Pay')}
-                </span>
-                <span className="block font-body text-xs text-gray-400 mt-0.5">
-                  {withFallback(t, 'checkout.apple_pay_sublabel', 'Pay in one tap with Apple Pay')}
-                </span>
-              </span>
-            </button>
-          )}
         </div>
       </Section>
 
