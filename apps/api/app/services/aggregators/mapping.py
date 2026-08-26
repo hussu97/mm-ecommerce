@@ -62,30 +62,29 @@ OUTLET_KEY_TO_HINT: dict[str, str] = {
     "karama": "karama",
 }
 
-#: The stable per-(channel, outlet) external ids for this account, moved here
-#: from the retired scraper's `platform_accounts` config as we consolidate into
-#: this repo. Not every channel trades from every branch — Talabat is two
-#: branches, Deliveroo three, Careem three (Sharjah shut), Noon all four. Careem
-#: carries its brand/company ids and its Sharjah row is inactive (statusId 3).
-#: **Keeta is absent on purpose**: its shop ids are captured in-page by the
-#: bootstrap worker (they were blank in the config), so it is mapped from a live
-#: capture, not seeded here. Ids are stable outlet identifiers, not branch
-#: references, so encoding them here does not repeat the "hardcoded ref" mistake.
+#: The stable per-(channel, outlet) external ids for this account, from the
+#: operator's own outlet table (moved into this repo as we consolidate). Ids are
+#: stable outlet identifiers, not branch references, so encoding them here does
+#: not repeat the "hardcoded ref" mistake. Coverage is Sharjah / Barsha / DSO;
+#: not every channel trades from every branch:
+#:   - Talabat: Sharjah + Barsha only.
+#:   - Careem: Barsha + DSO only — its Sharjah outlet is shut, so it is not
+#:     mapped (carries brand/company ids for the two it keeps).
+#:   - Noon, Deliveroo, Keeta: all three of Sharjah/Barsha/DSO.
+#: Keeta IS seeded here (its shop ids are known) — the branch map is what lets a
+#: Keeta order, pushed in-page by the worker, resolve its branch. **Karama is not
+#: in the source table, so it is intentionally not mapped on any channel**; its
+#: branch still exists (see `scripts.seed_aggregator_branches`) and a row is a
+#: one-line addition here if it is onboarded.
 STATIC_OUTLETS: dict[str, dict[str, dict]] = {
     "noon": {
         "sharjah": {"external_outlet_id": "MLTNGM1GBF"},
         "barsha_heights": {"external_outlet_id": "MLTNGM9FCH"},
         "dso": {"external_outlet_id": "MLTNGMG2B1"},
-        "karama": {"external_outlet_id": "MLTNGMTB9M"},
     },
     "talabat": {
         "sharjah": {"external_outlet_id": "711571"},
         "barsha_heights": {"external_outlet_id": "728173"},
-    },
-    "deliveroo": {
-        "sharjah": {"external_outlet_id": "693360"},
-        "barsha_heights": {"external_outlet_id": "693359"},
-        "dso": {"external_outlet_id": "693361"},
     },
     "careem": {
         "barsha_heights": {
@@ -98,12 +97,16 @@ STATIC_OUTLETS: dict[str, dict[str, dict]] = {
             "external_brand_id": "1029671",
             "external_company_id": "1026653",
         },
-        "sharjah": {
-            "external_outlet_id": "1087801",
-            "external_brand_id": "1029671",
-            "external_company_id": "1026653",
-            "is_active": False,
-        },
+    },
+    "deliveroo": {
+        "sharjah": {"external_outlet_id": "693360"},
+        "barsha_heights": {"external_outlet_id": "693359"},
+        "dso": {"external_outlet_id": "693361"},
+    },
+    "keeta": {
+        "sharjah": {"external_outlet_id": "1644174206"},
+        "barsha_heights": {"external_outlet_id": "1644189187"},
+        "dso": {"external_outlet_id": "1644170195"},
     },
 }
 
