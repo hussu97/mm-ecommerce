@@ -21,6 +21,8 @@ import type {
   GrubOpsOrderList,
   ReconList,
   ReconSummary,
+  BranchMapRow,
+  BranchMapInput,
 } from './types';
 import type {
   PublicKeyCredentialCreationOptionsJSON,
@@ -643,6 +645,23 @@ export const reconciliationApi = {
   /** Per-channel roll-up and a grand total, for the stat cards. */
   summary: (params?: { channel?: string; branch_id?: string }) =>
     api.get<ReconSummary>(`/aggregators/reconciliation/summary${buildQs(params)}`),
+};
+
+// ─── Aggregator outlet↔branch mappings ────────────────────────────────────────
+
+/**
+ * The outlet↔branch map every aggregator integration reads: which of our
+ * branches a marketplace's outlet/brand/company ids point at.
+ *
+ * `upsert` writes on the pair (`channel`, `branch_id`) — POSTing the same pair
+ * again edits that row rather than adding a second, so the console never has to
+ * decide between create and update itself. `remove` deletes by row id.
+ */
+export const branchMapApi = {
+  list: (params?: { channel?: string }) =>
+    api.get<BranchMapRow[]>(`/aggregators/branch-map${buildQs(params)}`),
+  upsert: (data: BranchMapInput) => api.post<BranchMapRow>('/aggregators/branch-map', data),
+  remove: (id: string) => api.delete<void>(`/aggregators/branch-map/${id}`),
 };
 
 // ─── Bulk Actions ─────────────────────────────────────────────────────────────

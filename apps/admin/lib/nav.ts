@@ -63,6 +63,10 @@ export const NAV: Array<
   // Beside GrubOps because it is the other half of the aggregator relationship:
   // GrubOps is what we tell them, this is checking what they paid us back.
   { href: '/aggregators/reconciliation', label: 'Reconciliation', icon: 'account_balance' },
+  // The other side of the same relationship: which of our branches each
+  // marketplace's outlet ids point at. Without a mapping a channel's orders and
+  // its reconciliation feed arrive branchless, which is why it sits by Reconciliation.
+  { href: '/aggregators/mappings', label: 'Mappings', icon: 'link' },
   { href: '/languages',     label: 'Languages',       icon: 'translate' },
   { href: '/translations',  label: 'Translations',    icon: 'text_fields' },
 

@@ -1469,3 +1469,44 @@ export interface ReconSummary {
   by_channel: ReconSummaryRow[];
   totals: ReconSummaryRow;
 }
+
+// ─── Aggregator outlet↔branch mappings ────────────────────────────────────────
+//
+// One row of `aggregator_branch_map`: the identifiers a marketplace uses for one
+// of our branches, so an inbound order or a reconciliation feed can be tied back
+// to the branch it belongs to. The reconciler and the ingest both read these —
+// an outlet id nobody has mapped is why a channel's orders arrive branchless.
+
+/** The five marketplaces a branch can be mapped to — same set the reconciler knows. */
+export type BranchMapChannel = 'careem' | 'deliveroo' | 'talabat' | 'noon' | 'keeta';
+
+export interface BranchMapRow {
+  id: string;
+  channel: BranchMapChannel;
+  branch_id: string;
+  /** Resolved from `branch_id` server-side; null if the branch has since gone. */
+  branch_name: string | null;
+  /** The marketplace's own id for this outlet/store. Null until somebody fills it. */
+  external_outlet_id: string | null;
+  external_brand_id: string | null;
+  external_company_id: string | null;
+  /** A free-form channel-specific reference, when the ids above are not enough. */
+  channel_ref: string | null;
+  is_active: boolean;
+}
+
+/**
+ * The body of an upsert. The pair (`channel`, `branch_id`) is the key the API
+ * writes on — sending the same pair again edits the existing row rather than
+ * adding a second. The id fields are optional so a half-known mapping can be
+ * saved and completed later.
+ */
+export interface BranchMapInput {
+  channel: BranchMapChannel;
+  branch_id: string;
+  external_outlet_id?: string | null;
+  external_brand_id?: string | null;
+  external_company_id?: string | null;
+  channel_ref?: string | null;
+  is_active: boolean;
+}

@@ -15,6 +15,7 @@ import { Badge, LoadError, Pagination, Select, Spinner } from '@/components/ui';
 import { DataTable, type DataColumn } from '@/components/ui/DataTable';
 import { useApiList } from '@/hooks/useApiList';
 import { formatCurrency, formatDateTime } from '@/lib/utils';
+import { AggregatorTabs } from '../AggregatorTabs';
 
 /**
  * Where the aggregator's books and ours are reconciled.
@@ -273,6 +274,8 @@ export default function ReconciliationPage() {
 
   return (
     <div className="space-y-6">
+      <AggregatorTabs />
+
       <div>
         <h1 className="font-display text-2xl text-gray-800">Reconciliation</h1>
         <p className="text-xs text-gray-400 font-body mt-0.5">
