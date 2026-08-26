@@ -870,7 +870,7 @@ async def mark_collected(
     # sale). Guarded on the check still being open on the register, so it is a
     # no-op the second time — which is also what self-heals a pickup order that
     # reached `delivered` on a laptop but whose till check was never closed.
-    if order.pos_status in order_lifecycle._OPEN_ON_THE_REGISTER:
+    if order.pos_status in order_lifecycle.OPEN_ON_THE_REGISTER:
         await pos_order_service.close_order(db, order=order, user=user)
         order = await _load(db, order_id)
 
