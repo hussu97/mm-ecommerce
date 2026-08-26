@@ -52,10 +52,6 @@ const ENDPOINT_OPTIONS = [
   { value: '', label: 'All Endpoints' },
   { value: 'status', label: 'Status (courier)' },
   { value: 'tracking', label: 'Tracking (courier)' },
-  // Slider's dashboard configures a staging webhook separately, and ours is
-  // pointed at production on purpose: those pushes are acknowledged and
-  // journalled here and change nothing at all.
-  { value: 'staging', label: 'Staging (Slider, inert)' },
   { value: 'payments', label: '/payments/webhooks/…' },
   { value: 'webhooks', label: '/webhooks/…' },
 ];

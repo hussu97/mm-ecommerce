@@ -30,8 +30,8 @@ every Slider zone was carved out of one of those two. That is what makes it safe
 to publish the map before the courier is proven: the rollout is a no-op for
 every customer except the trial account.
 
-The list is deliberately not tied to `APP_ENV` or `SLIDER_ENV`. An
-environment-shaped gate opens a trial to everyone the moment the environment
+The list is deliberately not tied to `APP_ENV` or to any environment selector.
+An environment-shaped gate opens a trial to everyone the moment the environment
 changes, which is the mistake the noon Send trial was written to avoid.
 Emptying the list is how this trial ends — and that one setting ends both halves
 at once, because it also grants the free delivery in `trial_customer`.

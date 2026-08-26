@@ -56,22 +56,18 @@ __all__ = [
     "provider",
 ]
 
-#: Their two environments, including the `/v1` prefix every path we call sits
+#: Their production host, including the `/v1` prefix every path we call sits
 #: under. `_call` concatenates (`config.host + path`) rather than `urljoin`,
 #: which is what lets a versioned base carry its prefix — `urljoin` would
 #: discard the `/v1` and every call would 404.
 #:
-#: Confirmed live on 2026-08-21: both answer `POST /v1/deliveries/fare` with a
-#: 401 unauthenticated, so the host and the path layout are right. They replace
-#: `api.staging.slider.ae` / `api.slider.ae`, which were guessed and never
-#: resolved — the whole `slider.ae` zone SERVFAILs, apex included.
-#:
-#: `SLIDER_ENV` may also be an absolute `http(s)://` origin, which wins over
-#: both and remains the fix that does not need a deploy if these ever move.
-HOSTS = {
-    "staging": "https://api-sandbox.slider-app.com/v1",
-    "production": "https://api.slider-app.com/v1",
-}
+#: Confirmed live on 2026-08-21: it answers `POST /v1/deliveries/fare` with a
+#: 401 unauthenticated, so the host and the path layout are right. It replaces
+#: `api.slider.ae`, which was guessed and never resolved — the whole `slider.ae`
+#: zone SERVFAILs, apex included. If it ever moves, that is a code change and a
+#: deploy: the sandbox and the `SLIDER_ENV` override were removed when the pilot
+#: went to production.
+BASE_URL = "https://api.slider-app.com/v1"
 
 #: Errors worth trying again. A courier that is briefly unreachable should not
 #: fail a dispatch, and a 429 is a queue rather than a refusal. Deliberately
@@ -119,19 +115,11 @@ def aed(value: Any) -> Decimal | None:
 class SliderConfig:
     api_key: str
     account_id: str
-    env: str
     timeout: float
 
     @property
     def host(self) -> str:
-        env = (self.env or "").strip()
-        if env.startswith("http://") or env.startswith("https://"):
-            return env.rstrip("/")
-        return HOSTS.get(env, HOSTS["staging"])
-
-    @property
-    def is_production(self) -> bool:
-        return self.env == "production"
+        return BASE_URL
 
     @property
     def is_configured(self) -> bool:
@@ -149,7 +137,6 @@ def _config() -> SliderConfig:
     return SliderConfig(
         api_key=settings.SLIDER_API_KEY,
         account_id=settings.SLIDER_ACCOUNT_ID,
-        env=settings.SLIDER_ENV,
         timeout=settings.SLIDER_TIMEOUT_SECONDS,
     )
 

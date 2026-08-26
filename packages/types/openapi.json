@@ -52446,26 +52446,6 @@
         ]
       }
     },
-    "/api/v1/webhooks/slider/staging": {
-      "post": {
-        "description": "Slider's **staging** pushes, pointed at production on purpose, and inert.\n\nTheir dashboard configures a staging and a production webhook separately.\nPointing the staging one here means real Slider traffic can be watched while\nthe integration is still being proved \u2014 acknowledged, journalled, and\nnothing else.\n\nIt writes **nothing**: no `webhook_events` row, no `order_deliveries` update,\nno `apply_webhook`, not even an order lookup. A staging delivery id is\nmeaningless against production data, and a staging `delivered` that moved a\nreal order would refund a cake that is sitting on a shelf.\n\nThat is enforced by `test_the_staging_webhook_writes_nothing`, which posts a\nwell-formed `delivered` payload naming a real order and asserts the order and\nits delivery row are byte-identical afterwards. A comment saying \"staging\ndoes nothing\" would not stop somebody wiring it up later; a test does.\n\nRows land in the admin's Webhook logs as `provider = \"slider\"`,\n`endpoint = \"staging\"`. Note `LOG_RETENTION_DAYS` is 7, so this is a window\non live traffic rather than an archive.\n\n`db` is taken so the recorder's own session is opened alongside the request's\nin the ordinary way; nothing here reads or writes through it. The journal\ngoes to `webhook_log_service.Recorder`, which runs on a dedicated session\nthat survives a rollback \u2014 exactly the property wanted for a record of \"this\narrived\".",
-        "operationId": "slider_staging_webhook_api_v1_webhooks_slider_staging_post",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Slider Staging Webhook",
-        "tags": [
-          "Webhooks"
-        ]
-      }
-    },
     "/api/v1/webhooks/stripe": {
       "post": {
         "description": "Compatibility endpoint for Stripe dashboard webhooks.",

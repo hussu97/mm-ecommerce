@@ -199,7 +199,6 @@ def test_the_register_can_book_a_courier():
         "NOON_SEND_ENV",
         "SLIDER_API_KEY",
         "SLIDER_ACCOUNT_ID",
-        "SLIDER_ENV",
         # The gate, not a credential — and the one most easily forgotten. It
         # decides whether a Slider zone's order goes to Slider or back to the
         # courier that carried it before, so a register without it would route

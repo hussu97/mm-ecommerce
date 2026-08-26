@@ -983,9 +983,9 @@ is a no-op for every customer but one, deliberately.
 > anywhere it can be delivered to. Emptying it ends both together — Slider opens
 > to its zones and nobody gets free delivery. It is matched against a
 > **signed-in** customer's own account email; a guest typing the same address
-> never qualifies. It is deliberately not tied to `APP_ENV` or `SLIDER_ENV`,
-> because an environment-shaped gate opens a trial to everybody the moment the
-> environment changes.
+> never qualifies. It is deliberately not tied to `APP_ENV` or to any
+> environment selector, because an environment-shaped gate opens a trial to
+> everybody the moment the environment changes.
 >
 > The waiver zeroes what the **customer** pays and nothing else. `quoted_cost`
 > and `cost_total` on `order_deliveries` still record what Slider charged us, so
@@ -994,73 +994,82 @@ is a no-op for every customer but one, deliberately.
 
 | Secret | Value | Notes |
 |--------|-------|-------|
-| `SLIDER_API_KEY` | from the Slider dashboard | `sk_test_…` for the sandbox, `sk_live_…` for production — swap it and `SLIDER_ACCOUNT_ID` together with `SLIDER_ENV`. Sent as `X-Slider-Key` — their API ignores a Bearer token, and answers one exactly as it answers no credentials at all. Empty means every Slider zone falls back, exactly as an empty Lalamove or noon Send key does. Not an outage |
-| `SLIDER_ACCOUNT_ID` | from the Slider dashboard | Sent in the request **body** as `account_id`; an `X-Account-Id` header is ignored. **Environment-specific** — the sandbox account is not the production account, so this changes when `SLIDER_ENV` does, in step with the key |
+| `SLIDER_API_KEY` | from the Slider dashboard | `sk_live_…`. The sandbox and the `SLIDER_ENV` selector were removed when the pilot went to production, so there is one host now. Swap it and `SLIDER_ACCOUNT_ID` together. Sent as `X-Slider-Key` — their API ignores a Bearer token, and answers one exactly as it answers no credentials at all. Empty means every Slider zone falls back, exactly as an empty Lalamove or noon Send key does. Not an outage |
+| `SLIDER_ACCOUNT_ID` | from the Slider dashboard | Sent in the request **body** as `account_id`; an `X-Account-Id` header is ignored. This is the **production** account, not the sandbox one it was proved against |
 | `SLIDER_WEBHOOK_TOKEN` | a secret you generate | Set the same value in Slider's dashboard. **Enforced** — an empty token rejects every push, unlike `NOON_SEND_ENFORCE_WEBHOOK_KEY` |
-| `SLIDER_STAGING_WEBHOOK_TOKEN` | a second secret you generate | For the staging webhook, which is pointed at production on purpose. See below |
 | `SLIDER_TRIAL_EMAILS` | empty until the pilot starts | Then `h_abbasi97@hotmail.com`. Comma-separated |
 
 The rest fall back in the deploy workflow:
 
 | Secret | Falls back to | Notes |
 |--------|---------------|-------|
-| `SLIDER_ENV` | `staging` | `staging` = `https://api-sandbox.slider-app.com/v1`, `production` = `https://api.slider-app.com/v1`, or an absolute `https://` origin which wins over both. Both confirmed live 2026-08-21 (`POST /v1/deliveries/fare` answers 401 unauthenticated). The override stays for the day those move — a wrong host fails as DNS on the first real booking |
 | `SLIDER_TIMEOUT_SECONDS` | `8` | |
 | `SLIDER_BIKE_MAX_KM` | `35` | **Road** kilometres, and half of the vehicle rule: a bike only if the drop is in the *same emirate* as the kitchen **and** within this. See the open question below |
 | `SLIDER_DETOUR_FACTOR` | `1.44` | Straight line to road distance, measured over the 97 areas of the fare survey. Used only when Slider has not told us a distance itself |
 | `SLIDER_WEBHOOK_HEADER` | `X-Slider-Token` | Must match the "Token Header Key" field in Slider's dashboard, which ships **empty** — set it explicitly or the token may never be sent |
-| `SLIDER_STAGING_WEBHOOK_HEADER` | `X-Slider-Token` | Same, for the staging webhook |
+
+The host is fixed at `https://api.slider-app.com/v1` in `slider_provider.BASE_URL`
+(confirmed live 2026-08-21, `POST /v1/deliveries/fare` answers 401
+unauthenticated). If it ever moves, that is now a code change and a deploy — the
+absolute-origin `SLIDER_ENV` override that used to fix it without one went with
+the sandbox.
 
 ```bash
 gh secret set SLIDER_API_KEY --repo hussu97/mm-ecommerce
 gh secret set SLIDER_ACCOUNT_ID --repo hussu97/mm-ecommerce
 gh secret set SLIDER_WEBHOOK_TOKEN --repo hussu97/mm-ecommerce
-gh secret set SLIDER_STAGING_WEBHOOK_TOKEN --repo hussu97/mm-ecommerce
 gh secret set SLIDER_TRIAL_EMAILS --repo hussu97/mm-ecommerce
 ```
 
-> **Blocked on Slider, 2026-08-21 — the production VM's IP is refused.** The
-> API answers `34.18.98.2` (the GCP VM) with a `403` nginx page for the same
-> request it answers from elsewhere with a normal `401` JSON — credentials or
-> no credentials, so it is the source IP and not the key. **Slider must
-> allowlist `34.18.98.2`** before a booking can succeed from production.
+> **Pre-flight blocker, re-check against the production host.** The recorded
+> 403 was Slider's **sandbox** answering the GCP VM (`34.18.98.2`) with an nginx
+> page where it answers a normal `401` JSON from elsewhere — the source IP, not
+> the key. It has never been established that the **production** host allows the
+> VM, and nothing below matters if it does not. Check first, from the VM:
 >
-> Do not read this 403 as the `User-Agent` one described in the provider's
-> module docstring. That 403 is cured by sending a UA; this one persists with
-> it. Two failures of the same shape and different causes.
+> ```bash
+> curl -sS -o /dev/null -w '%{http_code}\n' -X POST \
+>   https://api.slider-app.com/v1/deliveries/fare \
+>   -H 'User-Agent: MeltingMomentsCakes/1.0 (+https://meltingmomentscakes.com)' \
+>   -H 'Content-Type: application/json' -d '{}'
+> ```
+>
+> `401`/`422` (JSON) = reachable, carry on. `403` (an nginx page) = the IP is
+> refused and **Slider must allowlist `34.18.98.2`** before a booking can
+> succeed. Do not read that 403 as the `User-Agent` one in the provider's module
+> docstring — the UA is already sent above and this one persists through it.
 
-**Two things to fix in the Slider dashboard first.**
+**Fix in the Slider dashboard first.**
 
-1. The **staging Webhook URL** is an email address (`h_abbasi97@hotmail.com`) in
-   a URL field. Nothing will ever be delivered to it. It needs to be
-   `https://<prod-host>/api/v1/webhooks/slider/staging`.
-2. **Both Token Header Key fields are empty.** A token with no header key may
-   not be sent at all, or may arrive in a header we are not reading. Set both to
-   `X-Slider-Token`, matching `SLIDER_*_WEBHOOK_HEADER`.
+1. The production **Webhook URL** →
+   `https://api.meltingmomentscakes.com/api/v1/webhooks/slider`.
+2. The **Token Header Key** field ships **empty**. A token with no header key
+   may not be sent at all, or may arrive in a header we are not reading. Set it
+   to `X-Slider-Token`, matching `SLIDER_WEBHOOK_HEADER`.
+3. Clear any staging webhook — the inert `/api/v1/webhooks/slider/staging` route
+   was removed when the pilot went to production, so that URL is now a 404.
 
-The production webhook goes to `https://<prod-host>/api/v1/webhooks/slider`. The
-staging one is pointed at production on purpose: `/api/v1/webhooks/slider/staging`
-acknowledges the push, writes a `webhook_logs` row and does **nothing else** — no
-`webhook_events`, no `order_deliveries`, no order lookup. Real Slider traffic can
-then be watched in Admin → Webhook logs (`provider = slider`, `endpoint =
-staging`) while the integration is still being proved. `LOG_RETENTION_DAYS` is 7,
-so it is a window rather than an archive.
+**Cutover.** Migrations `126_cost_banded_map_v2`, `127_slider_courier` and
+`128_slider_zones` shipped the re-split map, the courier row and the six Slider
+zones; each keeps naming the courier that carries it today, so publishing them
+was a no-op for everyone but the pilot account. Confirm they are applied
+(`alembic current`), then:
 
-**Deploy order.** Each step is independently reversible:
-
-1. `alembic upgrade 126_cost_banded_map_v2` — the re-split map, every zone still
-   naming the courier that carries it today, and every zone carrying the
-   alternates `125_zone_alternates` gave the map before it.
-2. Ship the Slider code with `SLIDER_API_KEY` and `SLIDER_TRIAL_EMAILS` empty.
-   `alembic upgrade 127_slider_courier` registers the courier row.
-3. `alembic upgrade 128_slider_zones` — the six zones name Slider, and their
-   alternates move with them. Still a no-op; nobody is on the list. The zones
-   **keep** the Lalamove runs they were riding, which is what keeps their
-   arrival promise and their batching identical for everybody off the list.
-4. Set `SLIDER_API_KEY` and `SLIDER_ACCOUNT_ID`.
-5. Set `SLIDER_TRIAL_EMAILS`. The pilot begins, one account, and that one
-   setting grants both halves at once.
-6. Empty the list to end it.
+1. Merge the staging-removal change and deploy with `SLIDER_TRIAL_EMAILS`
+   **empty**. Set `SLIDER_API_KEY`, `SLIDER_ACCOUNT_ID` and
+   `SLIDER_WEBHOOK_TOKEN`; delete the now-unknown `SLIDER_ENV`,
+   `SLIDER_STAGING_WEBHOOK_TOKEN` and `SLIDER_STAGING_WEBHOOK_HEADER` secrets.
+   Still a no-op: with nobody on the list every Slider zone is quoted, stamped
+   and dispatched on its fallback (noon Send inside Sharjah, Lalamove elsewhere)
+   by `courier_service.effective_provider`.
+2. Confirm the config reached the container — the 2026-08-05 failure was secrets
+   on the VM that no container was passed:
+   `docker compose -f docker-compose.prod.yml exec api env | grep SLIDER`.
+   Expect the four set values, the numeric fallbacks and an empty
+   `SLIDER_TRIAL_EMAILS`; expect **no** `SLIDER_ENV` and no `SLIDER_STAGING_*`.
+3. Set `SLIDER_TRIAL_EMAILS` to `h_abbasi97@hotmail.com` and redeploy. The pilot
+   begins, one account, and that one setting grants both halves at once.
+4. Empty the list to end it.
 
 > **Verified end-to-end 2026-08-21 — create, fetch and cancel all work.** Run
 > against the sandbox from a permitted IP: `POST /deliveries` returned
@@ -1093,19 +1102,21 @@ so it is a window rather than an archive.
 > integration were all of the same kind — a plausible guess where a published
 > name existed.
 
-> **Open question, worth answering before step 5.** Can Slider's bike cross an
-> emirate boundary? Their `/deliveries/fare` says yes — it offered a bike for
-> Sharjah→Ajman at 12 km and for nine Sharjah→Dubai routes out to 34.4 km. The
-> code assumes no. It is worth about AED 5 an order across Ajman and Dubai, and
-> if the answer is yes the only change is in `slider_service.vehicle_for`.
+> **Open question, worth answering before opening the pilot.** Can Slider's bike
+> cross an emirate boundary? Their `/deliveries/fare` says yes — it offered a
+> bike for Sharjah→Ajman at 12 km and for nine Sharjah→Dubai routes out to
+> 34.4 km. The code assumes no. It is worth about AED 5 an order across Ajman and
+> Dubai, and if the answer is yes the only change is in
+> `slider_service.vehicle_for`.
 >
 > **Resolved 2026-08-21 — the hostnames.** They were guessed as
 > `api.staging.slider.ae` / `api.slider.ae`, and the whole `slider.ae` zone
 > SERVFAILs, apex included: every booking would have failed as DNS. The real
-> pair is `https://api-sandbox.slider-app.com/v1` and
-> `https://api.slider-app.com/v1`, now the defaults in
-> `slider_provider.HOSTS`. Note the `/v1`: `_call` concatenates rather than
-> `urljoin`, so a versioned base keeps its prefix.
+> production host is `https://api.slider-app.com/v1`, now
+> `slider_provider.BASE_URL`. (The sandbox pair
+> `https://api-sandbox.slider-app.com/v1` and the `SLIDER_ENV` selector between
+> them were removed when the pilot went to production.) Note the `/v1`: `_call`
+> concatenates rather than `urljoin`, so a versioned base keeps its prefix.
 
 **Registering a branch.** Which outlet a rider collects from is a property of the
 branch, not of the deployment — Lalamove already reads the pickup coordinates and

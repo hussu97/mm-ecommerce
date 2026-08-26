@@ -286,9 +286,9 @@ def _slider_token(request: Request, header_name: str) -> str | None:
 
     Read by name at request time rather than declared as a FastAPI `Header`
     parameter, because the name is configuration: their dashboard has a "Token
-    Header Key" field per environment, and both of ours were empty when this was
-    written. A token with no header name may not be sent at all, or may arrive
-    somewhere nobody is reading.
+    Header Key" field, and ours was empty when this was written. A token with no
+    header name may not be sent at all, or may arrive somewhere nobody is
+    reading.
     """
     return request.headers.get((header_name or "").strip() or "X-Slider-Token")
 
@@ -363,76 +363,6 @@ async def slider_webhook(request: Request, db: AsyncSession = Depends(get_db)):
                 result={"received": True, "error": str(exc)}, error=str(exc)
             )
             return {"received": True, "error": str(exc)}
-    finally:
-        await recorder.save()
-
-
-@router.post("/slider/staging", status_code=status.HTTP_200_OK)
-async def slider_staging_webhook(request: Request, db: AsyncSession = Depends(get_db)):
-    """
-    Slider's **staging** pushes, pointed at production on purpose, and inert.
-
-    Their dashboard configures a staging and a production webhook separately.
-    Pointing the staging one here means real Slider traffic can be watched while
-    the integration is still being proved — acknowledged, journalled, and
-    nothing else.
-
-    It writes **nothing**: no `webhook_events` row, no `order_deliveries` update,
-    no `apply_webhook`, not even an order lookup. A staging delivery id is
-    meaningless against production data, and a staging `delivered` that moved a
-    real order would refund a cake that is sitting on a shelf.
-
-    That is enforced by `test_the_staging_webhook_writes_nothing`, which posts a
-    well-formed `delivered` payload naming a real order and asserts the order and
-    its delivery row are byte-identical afterwards. A comment saying "staging
-    does nothing" would not stop somebody wiring it up later; a test does.
-
-    Rows land in the admin's Webhook logs as `provider = "slider"`,
-    `endpoint = "staging"`. Note `LOG_RETENTION_DAYS` is 7, so this is a window
-    on live traffic rather than an archive.
-
-    `db` is taken so the recorder's own session is opened alongside the request's
-    in the ordinary way; nothing here reads or writes through it. The journal
-    goes to `webhook_log_service.Recorder`, which runs on a dedicated session
-    that survives a rollback — exactly the property wanted for a record of "this
-    arrived".
-    """
-    presented = _slider_token(request, settings.SLIDER_STAGING_WEBHOOK_HEADER)
-    recorder = Recorder(
-        "slider",
-        "staging",
-        request=request,
-        key_fingerprint=_key_fingerprint(presented),
-    )
-    try:
-        try:
-            payload = await request.json()
-        except Exception:
-            recorder.finish(result={"received": True}, error="unreadable body")
-            return {"received": True}
-
-        recorder.payload = payload
-        if isinstance(payload, dict):
-            recorder.event_type = str(payload.get("status") or "").strip() or None
-            # Theirs and ours — see the production endpoint above.
-            recorder.external_id = str(payload.get("order_number") or "") or None
-            recorder.order_number = (
-                str(payload.get("order_id") or payload.get("reference") or "") or None
-            )
-
-        if not _slider_token_is_valid(presented, settings.SLIDER_STAGING_WEBHOOK_TOKEN):
-            recorder.signature_valid = False
-            recorder.finish(result={"received": True, "error": "unauthorised"})
-            return {"received": True, "error": "unauthorised"}
-        recorder.signature_valid = True
-
-        logger.info(
-            "Slider staging webhook for %s: %s",
-            recorder.order_number or recorder.external_id or "?",
-            json.dumps(payload, default=str)[:2000],
-        )
-        recorder.finish(result={"received": True})
-        return {"received": True}
     finally:
         await recorder.save()
 

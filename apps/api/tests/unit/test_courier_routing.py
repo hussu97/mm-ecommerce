@@ -417,9 +417,8 @@ async def test_a_guest_typing_the_pilot_address_never_reaches_slider(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("app_env", ["development", "staging", "production"])
-@pytest.mark.parametrize("slider_env", ["staging", "production"])
 async def test_no_environment_widens_the_pilot(
-    slider_ready, monkeypatch, slider_spies, app_env, slider_env
+    slider_ready, monkeypatch, slider_spies, app_env
 ):
     """
     The gate is the list and nothing else. An environment-shaped gate opens a
@@ -427,7 +426,6 @@ async def test_no_environment_widens_the_pilot(
     the noon Send trial was written to avoid and this one inherits the avoidance.
     """
     monkeypatch.setattr(settings, "APP_ENV", app_env)
-    monkeypatch.setattr(settings, "SLIDER_ENV", slider_env)
 
     await courier_service.dispatch(
         _Db(_slider_delivery()), _order(email="someone@else.com")

@@ -152,14 +152,11 @@ jobs:
           AGGREGATOR_TIMEOUT_SECONDS=${{ secrets.AGGREGATOR_TIMEOUT_SECONDS || '20.0' }}
           SLIDER_API_KEY=${{ secrets.SLIDER_API_KEY }}
           SLIDER_ACCOUNT_ID=${{ secrets.SLIDER_ACCOUNT_ID }}
-          SLIDER_ENV=${{ secrets.SLIDER_ENV || 'staging' }}
           SLIDER_TIMEOUT_SECONDS=${{ secrets.SLIDER_TIMEOUT_SECONDS || '8' }}
           SLIDER_BIKE_MAX_KM=${{ secrets.SLIDER_BIKE_MAX_KM || '35' }}
           SLIDER_DETOUR_FACTOR=${{ secrets.SLIDER_DETOUR_FACTOR || '1.44' }}
           SLIDER_WEBHOOK_TOKEN=${{ secrets.SLIDER_WEBHOOK_TOKEN }}
           SLIDER_WEBHOOK_HEADER=${{ secrets.SLIDER_WEBHOOK_HEADER || 'X-Slider-Token' }}
-          SLIDER_STAGING_WEBHOOK_TOKEN=${{ secrets.SLIDER_STAGING_WEBHOOK_TOKEN }}
-          SLIDER_STAGING_WEBHOOK_HEADER=${{ secrets.SLIDER_STAGING_WEBHOOK_HEADER || 'X-Slider-Token' }}
           SLIDER_TRIAL_EMAILS=${{ secrets.SLIDER_TRIAL_EMAILS }}
           MAPBOX_ACCESS_TOKEN=${{ secrets.MAPBOX_ACCESS_TOKEN }}
           MAPBOX_MIN_ROUTE_INTERVAL_S=${{ secrets.MAPBOX_MIN_ROUTE_INTERVAL_S || '60' }}

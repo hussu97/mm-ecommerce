@@ -383,7 +383,6 @@ def _client(handler, **config) -> SliderClient:
     values = {
         "api_key": "test-key",
         "account_id": "acct_1",
-        "env": "https://slider.test",
         "timeout": 2.0,
     }
     values.update(config)
@@ -525,30 +524,23 @@ async def test_a_refusal_is_not_tried_again_and_says_it_is_a_refusal(
     assert "outside the service area" in str(exc.value)
 
 
-def test_an_absolute_origin_in_the_environment_wins():
+def test_the_base_url_carries_its_v1_prefix():
     """
-    Their hostnames are the one part of this integration that could not be
-    verified from inside the repository, and a wrong one fails as DNS on the
-    first real booking. Fixing that should not need a deploy.
+    There is one host now — the sandbox and the `SLIDER_ENV` override went when
+    the pilot moved to production. The `/v1` is load-bearing: `_call`
+    concatenates rather than `urljoin`s, so a base without it 404s every call.
+    A wrong hostname is now a code change and a deploy, so pin it here.
     """
-    assert SliderConfig("k", "a", "https://api.slider.example/", 8.0).host == (
-        "https://api.slider.example"
-    )
     assert (
-        SliderConfig("k", "a", "production", 8.0).host
-        == (slider_provider.HOSTS["production"])
-    )
-    # An unrecognised value takes staging rather than production. Guessing
-    # wrong in that direction costs a test order; the other way costs a rider.
-    assert (
-        SliderConfig("k", "a", "nonsense", 8.0).host
-        == (slider_provider.HOSTS["staging"])
+        SliderConfig("k", "a", 8.0).host
+        == "https://api.slider-app.com/v1"
+        == slider_provider.BASE_URL
     )
 
 
 def test_an_empty_key_means_not_configured_rather_than_broken():
-    assert not SliderConfig("", "a", "production", 8.0).is_configured
-    assert SliderConfig("k", "", "production", 8.0).is_configured
+    assert not SliderConfig("", "a", 8.0).is_configured
+    assert SliderConfig("k", "", 8.0).is_configured
 
 
 # ── the estimate and the booking must agree ───────────────────────────────────

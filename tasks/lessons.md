@@ -1290,6 +1290,11 @@ opposite is wanted, so the sandbox webhook has to be pointed at the live route
 for the DB to move. Reading the route's docstring before choosing a URL saved
 an afternoon of "the webhook arrives and nothing happens".
 
+_Update 2026-08-26: the `/api/v1/webhooks/slider/staging` route, the sandbox
+host and the `SLIDER_ENV` selector were removed when the pilot moved to
+production. The lesson above is kept as written — it was true when the sandbox
+existed, and editing it to match today's code would erase the record._
+
 ### Look for the screen before building the screen (2026-08-23)
 
 Asked to make aggregator commission rates editable, I wrote a whole

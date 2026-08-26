@@ -1,46 +1,31 @@
 """
-The Slider webhook endpoints.
+The Slider webhook endpoint.
 
-Two of them, and the difference between them is the whole point.
-
-`/webhooks/slider` is the real one: it deduplicates, applies the status and can
-move an order to `delivered`. Slider does not sign requests — what they send is
-a **static token in a header we choose the name of** — so that token is the
-entire boundary between a genuine status update and anybody who guesses the URL,
-and unlike a signature there is nothing behind it. It is therefore **enforced**,
-which is the deliberate difference from the noon Send routes next door, where
+`/webhooks/slider` deduplicates, applies the status and can move an order to
+`delivered`. Slider does not sign requests — what they send is a **static token
+in a header we choose the name of** — so that token is the entire boundary
+between a genuine status update and anybody who guesses the URL, and unlike a
+signature there is nothing behind it. It is therefore **enforced**, which is the
+deliberate difference from the noon Send routes next door, where
 `NOON_SEND_ENFORCE_WEBHOOK_KEY` is false in production because enforcing it once
 dropped every status update for a live trial.
 
-`/webhooks/slider/staging` is pointed at production on purpose and does
-**nothing**. Their dashboard configures the two environments separately, and
-aiming the staging one here means real Slider traffic can be watched while the
-integration is still being proved. A staging delivery id is meaningless against
-production data, and a staging `delivered` that moved a real order would refund
-a cake sitting on a shelf.
-
-Both must answer 200 to everything. A webhook URL that fails is retried and then
+It must answer 200 to everything. A webhook URL that fails is retried and then
 disabled, after which every later order silently loses its status; swallowing
 one malformed push is the cheaper mistake.
+
+The inert `/webhooks/slider/staging` route — which acknowledged Slider's sandbox
+pushes and wrote nothing — was removed when the pilot moved to production.
 """
 
 from __future__ import annotations
 
-import uuid
-from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock
-
 import pytest
 
-from app.models.order import Order, OrderStatusEnum
-from app.models.order_delivery import OrderDelivery
-
 TOKEN = "slider-production-token"
-STAGING_TOKEN = "slider-staging-token"
 HEADER = "X-Slider-Token"
 
 URL = "/api/v1/webhooks/slider"
-STAGING_URL = "/api/v1/webhooks/slider/staging"
 
 #: Their status push, in the shape their reference documents. Note which way
 #: round the two identifiers go: `order_number` is the handle **Slider**
@@ -70,8 +55,6 @@ def tokens(monkeypatch):
 
     monkeypatch.setattr(cfg.settings, "SLIDER_WEBHOOK_TOKEN", TOKEN)
     monkeypatch.setattr(cfg.settings, "SLIDER_WEBHOOK_HEADER", HEADER)
-    monkeypatch.setattr(cfg.settings, "SLIDER_STAGING_WEBHOOK_TOKEN", STAGING_TOKEN)
-    monkeypatch.setattr(cfg.settings, "SLIDER_STAGING_WEBHOOK_HEADER", HEADER)
 
 
 @pytest.fixture(autouse=True)
@@ -125,11 +108,10 @@ class TestTheTokenIsEnforced:
 
     async def test_a_token_in_the_wrong_header_is_refused(self, client):
         """
-        Slider's dashboard has a "Token Header Key" field per environment and
-        both of ours shipped **empty**. A token with no header name may not be
-        sent at all, or may arrive somewhere nobody is reading — so the name is
-        configuration, read at request time, and a token in any other header is
-        no token.
+        Slider's dashboard has a "Token Header Key" field and ours shipped
+        **empty**. A token with no header name may not be sent at all, or may
+        arrive somewhere nobody is reading — so the name is configuration, read
+        at request time, and a token in any other header is no token.
         """
         response = await client.post(URL, json=PUSH, headers={"X-Api-Key": TOKEN})
         assert response.json()["error"] == "unauthorised"
@@ -214,124 +196,3 @@ class TestTheRequestIsWrittenDown:
         (row,) = journal
         assert row.signature_valid is False
         assert row.payload == PUSH
-
-
-# ── the staging endpoint ──────────────────────────────────────────────────────
-
-
-def _snapshot(instance) -> dict:
-    """Every mapped column's value, so "unchanged" can be asserted rather than
-    hoped for."""
-    return {
-        column.key: getattr(instance, column.key)
-        for column in instance.__table__.columns
-    }
-
-
-@pytest.fixture
-def a_real_order(mock_db):
-    """
-    An order and its delivery row, reachable through the session the request is
-    given — so a staging handler that *did* resolve an order would find one and
-    a change would show.
-    """
-    order = Order(
-        id=uuid.uuid4(),
-        order_number="MM-1001",
-        status=OrderStatusEnum.OUT_FOR_DELIVERY,
-        total=Decimal("185.00"),
-    )
-    delivery = OrderDelivery(
-        order_id=order.id,
-        provider="slider",
-        courier_order_id="4820193",
-        courier_status="in_transit",
-    )
-
-    result = MagicMock()
-    result.scalars.return_value.first.return_value = delivery
-    result.scalar_one_or_none = MagicMock(return_value=delivery)
-    mock_db.execute = AsyncMock(return_value=result)
-    return order, delivery
-
-
-class TestTheStagingEndpointWritesNothing:
-    """
-    A comment saying "staging does nothing" would not stop somebody wiring it up
-    later. This is what does.
-    """
-
-    async def test_a_delivered_push_leaves_the_order_and_its_delivery_untouched(
-        self, client, mock_db, a_real_order
-    ):
-        order, delivery = a_real_order
-        before = (_snapshot(order), _snapshot(delivery))
-
-        response = await client.post(
-            STAGING_URL, json=PUSH, headers={HEADER: STAGING_TOKEN}
-        )
-
-        assert response.status_code == 200
-        assert response.json() == {"received": True}
-        assert (_snapshot(order), _snapshot(delivery)) == before
-
-    async def test_it_never_reaches_the_database_at_all(
-        self, client, mock_db, a_real_order
-    ):
-        """
-        Stronger than comparing the two rows, and the assertion that would fail
-        first: no `webhook_events` insert, no order lookup, no commit. Nothing
-        that touches the request's session happens here.
-        """
-        await client.post(STAGING_URL, json=PUSH, headers={HEADER: STAGING_TOKEN})
-
-        mock_db.execute.assert_not_awaited()
-        mock_db.add.assert_not_called()
-        mock_db.commit.assert_not_awaited()
-
-    async def test_the_real_endpoint_does_reach_the_database(
-        self, client, mock_db, a_real_order
-    ):
-        """
-        The control. Without it the two assertions above would keep passing if
-        the whole Slider integration were deleted.
-        """
-        await client.post(URL, json=PUSH, headers={HEADER: TOKEN})
-        mock_db.execute.assert_awaited()
-
-    async def test_it_has_its_own_token(self, client, a_real_order):
-        """
-        Their dashboard configures the two environments separately, so the
-        production token must not open the staging route or vice versa.
-        """
-        assert (
-            await client.post(STAGING_URL, json=PUSH, headers={HEADER: TOKEN})
-        ).json()["error"] == "unauthorised"
-        assert (
-            await client.post(URL, json=PUSH, headers={HEADER: STAGING_TOKEN})
-        ).json()["error"] == "unauthorised"
-
-    async def test_it_is_journalled_under_its_own_endpoint_name(
-        self, client, journal, a_real_order
-    ):
-        """
-        Which is how it is found in the admin: provider `slider`, endpoint
-        `staging`. `LOG_RETENTION_DAYS` is 7, so it is a window on live traffic
-        rather than an archive.
-        """
-        await client.post(STAGING_URL, json=PUSH, headers={HEADER: STAGING_TOKEN})
-
-        (row,) = journal
-        assert row.provider == "slider"
-        assert row.endpoint == "staging"
-        assert row.event_type == "delivered"
-        assert row.order_number == "MM-1001"
-        assert row.payload == PUSH
-
-    async def test_an_unparseable_body_is_still_answered(self, client):
-        response = await client.post(
-            STAGING_URL,
-            content=b"not json",
-            headers={HEADER: STAGING_TOKEN, "Content-Type": "application/json"},
-        )
-        assert response.status_code == 200

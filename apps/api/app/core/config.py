@@ -436,17 +436,17 @@ class Settings(BaseSettings):
     #: order more than Lalamove; Ajman alone is cheaper on every measured area,
     #: because Lalamove's 17 AED base is high and Ajman is close.
     #:
-    #: Sent as `X-Slider-Key`. A Bearer token is ignored by their API.
+    #: Sent as `X-Slider-Key`. A Bearer token is ignored by their API. Swap it
+    #: and `SLIDER_ACCOUNT_ID` together — the production account is not the
+    #: sandbox one they were proved against.
     SLIDER_API_KEY: str = ""
     #: The account the deliveries are booked against. Sent in the request
     #: **body** as `account_id` — an `X-Account-Id` header is ignored.
     SLIDER_ACCOUNT_ID: str = ""
-    #: `staging` or `production` — or an absolute `https://` origin, which wins
-    #: over both. The two names resolve in `slider_provider.HOSTS`, confirmed
-    #: live on 2026-08-21. The override stays for the day those move: a wrong
-    #: host fails as DNS on the first real booking, and fixing that should not
-    #: need a deploy.
-    SLIDER_ENV: str = "staging"
+    #: The one host is `slider_provider.BASE_URL`
+    #: (`https://api.slider-app.com/v1`), confirmed live on 2026-08-21. The
+    #: sandbox and the `SLIDER_ENV` override were removed when the pilot moved to
+    #: production; a moved hostname is now a code change and a deploy.
     SLIDER_TIMEOUT_SECONDS: float = 8.0
     #: The vehicle rule, and the whole of it: **a bike may not cross an emirate
     #: boundary**, so from the Sharjah kitchen the bike tier is usable inside
@@ -481,13 +481,6 @@ class Settings(BaseSettings):
     #: or may arrive in a header nobody is reading.
     SLIDER_WEBHOOK_TOKEN: str = ""
     SLIDER_WEBHOOK_HEADER: str = "X-Slider-Token"
-    #: The same pair for the **staging** webhook, which their dashboard
-    #: configures separately and which we point at production on purpose: real
-    #: Slider traffic then gets acknowledged and journalled where it can be
-    #: watched. That endpoint writes nothing else — see
-    #: `POST /api/v1/webhooks/slider/staging`.
-    SLIDER_STAGING_WEBHOOK_TOKEN: str = ""
-    SLIDER_STAGING_WEBHOOK_HEADER: str = "X-Slider-Token"
     #: The accounts running the Slider pilot on production. Comma-separated, and
     #: matched against a **signed-in** customer's own address — a guest checkout
     #: never qualifies, because an email is a string anybody may type.
