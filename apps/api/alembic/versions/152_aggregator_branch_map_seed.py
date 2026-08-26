@@ -90,6 +90,7 @@ def upgrade() -> None:
                 WHERE NOT EXISTS (
                     SELECT 1 FROM branches WHERE lower(name) = lower(:name)
                 )
+                ON CONFLICT DO NOTHING
                 """
             ),
             b,
