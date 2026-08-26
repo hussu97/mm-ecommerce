@@ -585,6 +585,151 @@
         "title": "AdminUserSummary",
         "type": "object"
       },
+      "AggregatorSessionPush": {
+        "description": "A freshly captured marketplace session, pushed in for the ingest to replay.\n\nThe worker that runs the browser (and can solve OTP / a bot sensor) sends\nthe bundle here; the API seals it and stores it. The cookies carry the load-\nbearing anti-bot cookie, `header_profile` the exact request fingerprint.",
+        "properties": {
+          "account_ref": {
+            "default": "",
+            "title": "Account Ref",
+            "type": "string"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "cookie_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cookie Expires At"
+          },
+          "cookies": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Cookies",
+            "type": "object"
+          },
+          "header_profile": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Header Profile",
+            "type": "object"
+          },
+          "token_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Expires At"
+          },
+          "tokens": {
+            "additionalProperties": true,
+            "title": "Tokens",
+            "type": "object"
+          }
+        },
+        "required": [
+          "channel"
+        ],
+        "title": "AggregatorSessionPush",
+        "type": "object"
+      },
+      "AggregatorSessionResponse": {
+        "description": "The stored session's health, echoed back to the worker.",
+        "properties": {
+          "account_ref": {
+            "title": "Account Ref",
+            "type": "string"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "cookie_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cookie Expires At"
+          },
+          "last_bootstrap_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Bootstrap At"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "last_success_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Success At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "token_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Expires At"
+          }
+        },
+        "required": [
+          "channel",
+          "account_ref",
+          "status"
+        ],
+        "title": "AggregatorSessionResponse",
+        "type": "object"
+      },
       "ApplyChargeRequest": {
         "properties": {
           "charge_id": {
@@ -27822,6 +27967,97 @@
         ]
       }
     },
+    "/api/v1/aggregators/session": {
+      "post": {
+        "description": "Store (or replace) the session for one channel, sealed at rest.",
+        "operationId": "push_session_api_v1_aggregators_session_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AggregatorSessionPush"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AggregatorSessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Push Session",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/sessions": {
+      "get": {
+        "description": "Session health per channel \u2014 the monitoring read (no secrets exposed).",
+        "operationId": "list_sessions_api_v1_aggregators_sessions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AggregatorSessionResponse"
+                  },
+                  "title": "Response List Sessions Api V1 Aggregators Sessions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Sessions",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
     "/api/v1/analytics/customers": {
       "get": {
         "description": "Customer type breakdown: registered vs guest, new vs returning.",
@@ -42915,7 +43151,7 @@
     },
     "/api/v1/pos/orders/{order_id}/cancel": {
       "post": {
-        "description": "Cancel an aggregator order from the counter \u2014 the red button beside Packed.\n\n**Aggregator only, deliberately.** Cancelling here runs the full\n`cancelled` machinery: it releases the stock, voids the check on the register\nand \u2014 the point of doing it from the counter rather than a laptop \u2014 declines\nthe Foodics order so the marketplace stops the rider. For a *website*\norder that same move would refund the customer's card and cancel a booked MM\ncourier, which is an admin decision on the order screen, not a counter\nbutton; so a stale device asking to cancel one is refused here rather than\nquietly issuing a refund.\n\nReachable from `arrived_at_pos` (the map allows it) and from `packed` (it\ndoes not \u2014 `order_service.update_status` widens it for an aggregator order\nvia `AGGREGATOR_CANCELLABLE_FROM`; the Foodics decline then applies only while\nthe order is still pending, and an already-accepted one is recorded for a\nperson to void in the console). `update_status` raises if the order cannot be\ncancelled, which is what a person pressing a button should get.\n\nIdempotent on an already-cancelled order, like `accept` and `packed`.",
+        "description": "Cancel an aggregator or website order from the counter \u2014 the red button\nbeside Packed.\n\n**Aggregator and website, deliberately; not a cashier check.** Cancelling\nhere runs the full `cancelled` machinery, and what that does depends on the\norder:\n- *aggregator*: releases the stock, voids the check on the register and \u2014\n  the point of doing it from the counter rather than a laptop \u2014 declines the\n  Foodics order so the marketplace stops the rider.\n- *website* (`source == online`), pickup **and** delivery: refunds the\n  customer's card and cancels any booked MM courier. This is intentional \u2014\n  the product decision is that the counter may cancel a website order \u2014 and\n  the register device shows a red confirmation dialog as the safeguard,\n  because it is real money moving. Courier-cancel is a natural no-op for a\n  pickup order, which never booked one.\n\nA *cashier* counter check is **not** cancelled here \u2014 it is voided through\nthe void flow (`pos.orders.void` \u2192 `void_order`), which is what keeps the\ntill reconciled; so it stays rejected.\n\nReachable from `arrived_at_pos` (the map allows it) and from `packed` (it\ndoes not \u2014 `order_service.update_status` widens it via\n`AGGREGATOR_CANCELLABLE_FROM` for an aggregator order and\n`ONLINE_CANCELLABLE_FROM` for a website one; the Foodics decline then applies\nonly while an aggregator order is still pending). `update_status` raises if\nthe order cannot be cancelled, which is what a person pressing a button\nshould get.\n\nIdempotent on an already-cancelled order, like `accept` and `packed`.",
         "operationId": "cancel_order_api_v1_pos_orders__order_id__cancel_post",
         "parameters": [
           {
@@ -43070,7 +43306,7 @@
     },
     "/api/v1/pos/orders/{order_id}/collected": {
       "post": {
-        "description": "The customer has taken the order at the counter. Said by whoever handed it over.\n\n**The pickup counterpart of `handed-over`.** A store-pickup order has no\ndriver and no courier telemetry \u2014 nothing reports back that the customer\ncollected it. Until now the only way to record it was an admin on a laptop\nmarking the whole order delivered; the shop that actually handed the box\nover had no button. This is that button.\n\n`delivered` is the stored status; the storefront and the receipt render it as\n\"Collected\" because the order is `pickup`. A delivery order is rejected \u2014 its\nhand-over is `handed-over` (\u2192 `out_for_delivery`), driven by the courier.\n\nDeliberately thin, like `mark_packed`/`mark_handed_over`: `order_service`\nowns the transition rules and side effects, `email_service` owns which email\nthe status earns. Idempotent, because two people will press it.",
+        "description": "The customer has taken the order at the counter. Said by whoever handed it over.\n\n**The pickup counterpart of `handed-over`.** A store-pickup order has no\ndriver and no courier telemetry \u2014 nothing reports back that the customer\ncollected it. Until now the only way to record it was an admin on a laptop\nmarking the whole order delivered; the shop that actually handed the box\nover had no button. This is that button.\n\nIt does **two** things: it closes the register check (so the admin \"Counter\"\ncolumn reads CLOSED, not ACTIVE) *and* it records the collection as\n`delivered`. The two used to be separate \u2014 collecting only advanced the\ndelivery status, leaving the check open at `pos_status=active` with a null\n`closed_at` for ever \u2014 which is the bug this heals: closing runs first and\nindependently of the delivered check, so a pickup order already `delivered`\nbut never closed on the till self-heals the next time this is pressed.\n\n`delivered` is the stored status; the storefront and the receipt render it as\n\"Collected\" because the order is `pickup`. A delivery order is rejected \u2014 its\nhand-over is `handed-over` (\u2192 `out_for_delivery`), driven by the courier.\n\nDeliberately thin, like `mark_packed`/`mark_handed_over`: `pos_order_service`\nowns closing the check (fees, stock, table release), `order_service` owns the\ndelivery transition rules and side effects, `email_service` owns which email\nthe status earns. Idempotent, because two people will press it.",
         "operationId": "mark_collected_api_v1_pos_orders__order_id__collected_post",
         "parameters": [
           {
