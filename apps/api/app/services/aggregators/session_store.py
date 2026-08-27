@@ -1,9 +1,10 @@
 """Load and save the encrypted marketplace session.
 
-The seam between the two worlds: a browser bootstrap (which can solve OTP and
-run an anti-bot sensor) writes a session here through `POST /aggregators/session`;
-the httpx providers read it and replay it, and the token warmer writes a
-refreshed token back. One row per `(channel, account_ref)`.
+The seam between the two worlds: a browser bootstrap writes a session here
+through `POST /aggregators/session`; the httpx providers read it and replay it;
+a restarted worker pulls the Playwright blob back through
+`GET /aggregators/worker/sessions` so a deploy is not a re-login. One row per
+`(channel, account_ref)`.
 
 Follows the transaction convention: everything here `flush()`es and lets the
 request-scoped session commit. The one caller that must persist regardless of
@@ -87,6 +88,7 @@ async def upsert_bootstrap(
     cookies: dict[str, str],
     tokens: dict,
     header_profile: dict[str, str],
+    storage_state: dict | None = None,
     token_expires_at: datetime | None = None,
     cookie_expires_at: datetime | None = None,
 ) -> AggregatorSession:
@@ -94,7 +96,8 @@ async def upsert_bootstrap(
 
     Called by the bootstrap/warmer push. Sets the row `live` and stamps
     `last_bootstrap_at` — a new login is by definition the freshest the session
-    ever gets.
+    ever gets. `storage_state` is optional: an older worker that only captured
+    cookies must not wipe a blob a headed login already stored.
     """
     row = await _row(db, channel, account_ref)
     if row is None:
@@ -103,6 +106,8 @@ async def upsert_bootstrap(
     row.cookies_encrypted = crypto.encrypt_json(cookies)
     row.tokens_encrypted = crypto.encrypt_json(tokens)
     row.header_profile_encrypted = crypto.encrypt_json(header_profile)
+    if storage_state:
+        row.storage_state_encrypted = crypto.encrypt_json(storage_state)
     row.token_expires_at = token_expires_at
     row.cookie_expires_at = cookie_expires_at
     row.status = SESSION_LIVE
@@ -153,10 +158,10 @@ async def record_success(db: AsyncSession, channel: str, account_ref: str = "") 
 async def mark_needs_bootstrap(
     db: AsyncSession, channel: str, account_ref: str = "", *, error: str
 ) -> None:
-    """Flag a session the httpx layer can no longer save — only a browser can.
+    """Flag a session the httpx layer can no longer save — only a headed login can.
 
-    The signal the monitoring alerts on and the warmer/bootstrap worker picks
-    up. Distinct from `dead`, which a human sets when a channel is retired.
+    The signal the monitoring alerts on and the worker surfaces. Distinct from
+    `dead`, which a human sets when a channel is retired.
     """
     row = await _row(db, channel, account_ref)
     if row is None:
@@ -176,3 +181,36 @@ async def mark_dead(
     row.status = SESSION_DEAD
     row.last_error = error[:2000]
     await db.flush()
+
+
+async def list_worker_bundles(db: AsyncSession) -> list[dict]:
+    """Decrypted sessions for the worker to hydrate after a deploy/restart.
+
+    Dead rows are omitted — a retired channel should not come back to life on
+    the next container start. `needs_bootstrap` rows are still returned: they
+    may hold a storage_state that a headed login can resume from, and the
+    worker decides whether the probe still authenticates.
+    """
+    rows = await db.scalars(
+        select(AggregatorSession)
+        .where(AggregatorSession.status != SESSION_DEAD)
+        .order_by(AggregatorSession.channel)
+    )
+    bundles: list[dict] = []
+    for row in rows:
+        bundles.append(
+            {
+                "channel": row.channel,
+                "account_ref": row.account_ref,
+                "cookies": crypto.decrypt_json(row.cookies_encrypted) or {},
+                "tokens": crypto.decrypt_json(row.tokens_encrypted) or {},
+                "header_profile": crypto.decrypt_json(row.header_profile_encrypted)
+                or {},
+                "storage_state": crypto.decrypt_json(row.storage_state_encrypted),
+                "token_expires_at": row.token_expires_at,
+                "cookie_expires_at": row.cookie_expires_at,
+                "status": row.status,
+                "last_warmed_at": row.last_warmed_at,
+            }
+        )
+    return bundles

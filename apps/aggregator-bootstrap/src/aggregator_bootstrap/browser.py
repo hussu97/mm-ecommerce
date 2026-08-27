@@ -1,120 +1,512 @@
-"""The Playwright side: open a logged-in context and read one real request.
+"""The browser side: real Chrome for login, Playwright only to harvest.
 
-Playwright is imported lazily, inside the functions that use it, so the rest of
-the package (and its tests) import without the browser library installed — the
-worker only needs it at run time, in its own container.
+Playwright is imported lazily so unit tests import this module
+without a browser installed.
 
-The model is "capture from a logged-in session": a persisted `storage_state`
-(established once, by a human or the OTP login flow) is reopened each run, the
-channel's probe page is loaded, and the first authenticated API call it makes is
-intercepted so its headers become the fingerprint. If the probe lands on a login
-page the session is stale and `NotLoggedInError` is raised — re-login (OTP) is a
-separate, heavier step.
+The model is "one human login, then hydrate forever":
+
+- `login_interactive` starts **Google Chrome as an OS process** (dedicated
+  profile, remote-debugging port, no Playwright attached). Cloudflare therefore
+  sees a normal headed Chrome. We only `connect_over_cdp` after a session
+  cookie appears (or the operator is clearly past the challenge), then persist
+  `storage_state` + sessionStorage.
+- `probe_channel` reopens that profile, loads the probe page, and intercepts
+  one authenticated request so its headers become the fingerprint the httpx
+  ingest replays.
+- If the probe lands on a login page the session is fully dead —
+  `NeedsHumanLogin`. The worker does not drive IMAP OTP.
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
 import os
+import shutil
+import sqlite3
+import tempfile
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
 
+from .channels.login import LOGIN_START_URLS, page_looks_authenticated
 from .channels.probes import CHANNEL_PROBES, ChannelProbe
 from .config import settings
+from .engine import async_playwright, evaluate_in_page
+from .fingerprint import (
+    chrome_binary,
+    chrome_profile_dir,
+    context_kwargs,
+    free_debug_port,
+    standalone_chrome_args,
+    warm_persistent_kwargs,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class NotLoggedInError(RuntimeError):
-    """The stored session no longer authenticates — a full re-login is needed."""
+    """The stored session no longer authenticates — a human login is needed."""
+
+
+class NeedsHumanLogin(NotLoggedInError):
+    """The session cannot be saved from here; run `login --channel` headed."""
+
+
+#: How long the headed login waits for the operator (OTP, captcha, passkey).
+_LOGIN_WAIT_SECONDS = 45 * 60
+
+#: Let Cloudflare's JS challenge run with no CDP client attached.
+_UNATTACHED_SECONDS = 12
+
+#: Cookie names that mean "this channel's portal session exists".
+_SESSION_COOKIE_NAMES: dict[str, tuple[str, ...]] = {
+    "deliveroo": ("token",),
+    "talabat": ("accessToken", "refreshToken"),
+    "noon": ("access_token", "token", "noon_customer_token"),
+    "keeta": ("token", "access_token", "SESSION"),
+    "careem": ("token", "access_token", "sid", "authorization"),
+}
+
+
+@dataclass
+class ProbeResult:
+    """Everything one probe (or headed login) lifts off a live context."""
+
+    cookies: list[dict]
+    request_headers: dict[str, str]
+    final_url: str
+    playwright_state: dict[str, Any]
+    session_storage: dict[str, str] = field(default_factory=dict)
+    origin: str = ""
+
+
+@dataclass
+class _Opened:
+    context: Any
+    browser: Any
+    persistent: bool
+    chrome: Any = None  # subprocess.Popen when we spawned Chrome ourselves
+
+    async def close(self) -> None:
+        if self.persistent and self.chrome is None:
+            await self.context.close()
+        elif self.browser is not None and self.chrome is None:
+            await self.browser.close()
+        _stop_chrome(self.chrome)
 
 
 def _storage_state_path(channel: str) -> Path:
     return Path(settings.STORAGE_STATE_DIR) / f"{channel}.session.json"
 
 
-async def probe_channel(channel: str) -> tuple[list[dict], dict[str, str], str]:
-    """Load the channel's probe page and return (cookies, request_headers, url).
+def _extra_state_path(channel: str) -> Path:
+    """Origin-scoped sessionStorage the Playwright `storage_state` does not keep."""
+    return Path(settings.STORAGE_STATE_DIR) / f"{channel}.extra.json"
 
-    `cookies` is Playwright's cookie list; `request_headers` are the headers of
-    the first API call matching the probe's `match`; `url` is where the page
-    ended (used to detect a login redirect).
-    """
-    from playwright.async_api import async_playwright  # lazy
 
-    probe: ChannelProbe = CHANNEL_PROBES[channel]
+def persist_playwright_state(channel: str, playwright_state: dict[str, Any]) -> Path:
+    """Write a Playwright `storage_state` file the next context can reopen."""
+    path = _storage_state_path(channel)
+    os.makedirs(path.parent, exist_ok=True)
+    path.write_text(json.dumps(playwright_state), encoding="utf-8")
+    return path
+
+
+def persist_extra_state(
+    channel: str, session_storage_by_origin: dict[str, dict[str, str]]
+) -> Path:
+    path = _extra_state_path(channel)
+    os.makedirs(path.parent, exist_ok=True)
+    path.write_text(json.dumps(session_storage_by_origin), encoding="utf-8")
+    return path
+
+
+def load_extra_state(channel: str) -> dict[str, dict[str, str]]:
+    path = _extra_state_path(channel)
+    if not path.exists():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    return {
+        origin: dict(items)
+        for origin, items in loaded.items()
+        if isinstance(items, dict)
+    }
+
+
+def _session_storage_init_script(by_origin: dict[str, dict[str, str]]) -> str:
+    payload = json.dumps(by_origin)
+    return f"""
+() => {{
+  const byOrigin = {payload};
+  const items = byOrigin[location.origin];
+  if (!items) return;
+  for (const [key, value] of Object.entries(items)) {{
+    try {{ sessionStorage.setItem(key, value); }} catch (e) {{}}
+  }}
+}}
+"""
+
+
+async def _collect_session_storage(page) -> dict[str, str]:
+    try:
+        return await evaluate_in_page(
+            page,
+            """() => {
+              const out = {};
+              for (let i = 0; i < sessionStorage.length; i++) {
+                const key = sessionStorage.key(i);
+                if (key) out[key] = sessionStorage.getItem(key);
+              }
+              return out;
+            }""",
+        )
+    except Exception:  # noqa: BLE001 — origin may not allow storage
+        return {}
+
+
+def _origin_of(url: str) -> str:
+    parsed = urlparse(url)
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _page_is_closed(page) -> bool:
+    try:
+        return bool(page.is_closed())
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def chrome_cookie_names(profile: Path) -> set[str]:
+    """Cookie *names* in a live Chrome profile (values are often encrypted)."""
+    candidates = [
+        profile / "Default" / "Network" / "Cookies",
+        profile / "Default" / "Cookies",
+    ]
+    src = next((path for path in candidates if path.exists()), None)
+    if src is None:
+        return set()
+    tmp = Path(tempfile.mkdtemp(prefix="agg-cookies-"))
+    try:
+        dst = tmp / "Cookies"
+        shutil.copy2(src, dst)
+        for suffix in ("-wal", "-shm"):
+            extra = Path(str(src) + suffix)
+            if extra.exists():
+                shutil.copy2(extra, Path(str(dst) + suffix))
+        con = sqlite3.connect(f"file:{dst}?mode=ro", uri=True)
+        try:
+            rows = con.execute("SELECT name FROM cookies").fetchall()
+        finally:
+            con.close()
+        return {str(row[0]) for row in rows if row and row[0]}
+    except Exception:  # noqa: BLE001 — WAL copy can be inconsistent
+        return set()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _session_cookies_present(channel: str, names: set[str]) -> bool:
+    wanted = _SESSION_COOKIE_NAMES.get(channel, ())
+    return any(name in names for name in wanted)
+
+
+def _stop_chrome(proc: Any) -> None:
+    if proc is None:
+        return
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except Exception:  # noqa: BLE001
+        proc.kill()
+
+
+async def _wait_for_cdp(port: int, *, timeout_s: float = 30) -> None:
+    import httpx
+
+    deadline = time.monotonic() + timeout_s
+    url = f"http://127.0.0.1:{port}/json/version"
+    async with httpx.AsyncClient() as client:
+        while time.monotonic() < deadline:
+            try:
+                response = await client.get(url, timeout=1.0)
+                if response.status_code == 200:
+                    return
+            except Exception:  # noqa: BLE001 — Chrome is still booting
+                pass
+            await asyncio.sleep(0.25)
+    raise NeedsHumanLogin(f"Chrome did not open a debug port on {port}")
+
+
+def _spawn_chrome(*, profile: Path, port: int, url: str) -> Any:
+    import subprocess
+
+    binary = chrome_binary()
+    if not binary:
+        raise NeedsHumanLogin(
+            "Google Chrome is not installed. Install it from "
+            "https://www.google.com/chrome/ then re-run login."
+        )
+    os.makedirs(profile, exist_ok=True)
+    args = standalone_chrome_args(
+        binary=binary, user_data_dir=profile, port=port, url=url
+    )
+    logger.info("spawning Chrome profile=%s port=%s", profile, port)
+    return subprocess.Popen(  # noqa: S603 — args are ours, not user input
+        args,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+async def _connect_cdp(pw, port: int):
+    browser = await pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+    if not browser.contexts:
+        raise NeedsHumanLogin("Chrome opened but has no browser context")
+    context = browser.contexts[0]
+    page = context.pages[0] if context.pages else await context.new_page()
+    return browser, context, page
+
+
+async def _snapshot_context(channel: str, context, page, captured: dict[str, str]) -> ProbeResult:
+    final_url = page.url
+    cookies = await context.cookies()
+    os.makedirs(settings.STORAGE_STATE_DIR, exist_ok=True)
+    state_path = _storage_state_path(channel)
+    await context.storage_state(path=str(state_path))
+    playwright_state = json.loads(state_path.read_text(encoding="utf-8"))
+    session_storage = await _collect_session_storage(page)
+    origin = _origin_of(final_url)
+    if origin and session_storage:
+        extra = load_extra_state(channel)
+        extra[origin] = session_storage
+        persist_extra_state(channel, extra)
+    return ProbeResult(
+        cookies=cookies,
+        request_headers=dict(captured),
+        final_url=final_url,
+        playwright_state=playwright_state,
+        session_storage=session_storage,
+        origin=origin,
+    )
+
+
+async def _launch_persistent(pw, user_data_dir: Path, *, headed: bool):
+    os.makedirs(user_data_dir, exist_ok=True)
+    kwargs = warm_persistent_kwargs(headed=headed)
+    try:
+        return await pw.chromium.launch_persistent_context(str(user_data_dir), **kwargs)
+    except Exception as exc:
+        if kwargs.get("channel") != "chrome":
+            raise
+        logger.warning("branded Chrome unavailable (%s); falling back to Chromium", exc)
+        fallback = dict(kwargs)
+        fallback.pop("channel", None)
+        return await pw.chromium.launch_persistent_context(str(user_data_dir), **fallback)
+
+
+async def _open_context(pw, channel: str, *, headed: bool) -> _Opened:
+    """Open the channel's Chrome profile for a warm/probe (already logged in)."""
+    extra = load_extra_state(channel)
+    profile = chrome_profile_dir(settings.STORAGE_STATE_DIR, channel)
+    context = await _launch_persistent(pw, profile, headed=headed)
+    if extra:
+        await context.add_init_script(_session_storage_init_script(extra))
+    return _Opened(context=context, browser=context.browser, persistent=True)
+
+
+async def _open_storage_state_context(pw, channel: str) -> _Opened:
+    """Headless warm when we only have a storage_state blob, not a Chrome profile."""
+    extra = load_extra_state(channel)
+    try:
+        browser = await pw.chromium.launch(headless=True, channel="chrome")
+    except Exception:
+        browser = await pw.chromium.launch(headless=True)
     state = _storage_state_path(channel)
+    context = await browser.new_context(
+        **context_kwargs(
+            storage_state=str(state) if state.exists() else None,
+            headed=False,
+        )
+    )
+    if extra:
+        await context.add_init_script(_session_storage_init_script(extra))
+    return _Opened(context=context, browser=browser, persistent=False)
+
+
+async def _first_page(opened: _Opened):
+    if opened.context.pages:
+        return opened.context.pages[0]
+    return await opened.context.new_page()
+
+
+async def probe_channel(channel: str) -> ProbeResult:
+    """Load the channel's probe page and return cookies, headers, persisted state.
+
+    Raises `NeedsHumanLogin` when the stored session lands on a login page.
+    """
+    probe: ChannelProbe = CHANNEL_PROBES[channel]
     captured: dict[str, str] = {}
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=settings.HEADLESS)
-        context = await browser.new_context(
-            storage_state=str(state) if state.exists() else None,
-            accept_downloads=True,
-        )
-        page = await context.new_page()
-
-        async def _on_request(request) -> None:
-            if not captured and probe.match in request.url:
-                captured.update(request.headers)
-
-        page.on("request", _on_request)
-        await page.goto(probe.probe_url, timeout=settings.PROBE_TIMEOUT_MS)
-        # Give the SPA a moment to fire its data calls.
-        await page.wait_for_timeout(5000)
-
-        final_url = page.url
-        cookies = await context.cookies()
-        # Persist the (possibly refreshed) state so the next warm resumes it.
-        os.makedirs(settings.STORAGE_STATE_DIR, exist_ok=True)
-        await context.storage_state(path=str(state))
-        await browser.close()
-
-    if any(w in final_url.lower() for w in ("login", "signin", "identity", "auth")):
-        raise NotLoggedInError(f"{channel} session is stale (landed on {final_url})")
-    return cookies, captured, final_url
-
-
-async def _run_login(channel: str) -> None:
-    """Open a context on the (stale) stored state, run the channel login, save it.
-
-    The login flow drives the context to a logged-in state; we then persist the
-    fresh `storage_state` so the follow-up `probe_channel` resumes it. Kept
-    separate from `probe_channel` so the warm path is untouched.
-    """
-    from playwright.async_api import async_playwright  # lazy
-
-    from .channels.login import LOGIN_FLOWS  # lazy — pulls the login module
-
-    login = LOGIN_FLOWS.get(channel)
-    if login is None:
-        raise NotLoggedInError(
-            f"{channel} has no automated login flow; establish its session manually."
-        )
-
-    state = _storage_state_path(channel)
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=settings.HEADLESS)
-        context = await browser.new_context(
-            storage_state=str(state) if state.exists() else None,
-            accept_downloads=True,
-        )
+        profile = chrome_profile_dir(settings.STORAGE_STATE_DIR, channel)
+        if profile.exists():
+            opened = await _open_context(pw, channel, headed=not settings.HEADLESS)
+        else:
+            opened = await _open_storage_state_context(pw, channel)
         try:
-            await login(context)
-            os.makedirs(settings.STORAGE_STATE_DIR, exist_ok=True)
-            await context.storage_state(path=str(state))
+            page = await _first_page(opened)
+
+            def _on_request(request) -> None:
+                if not captured and probe.match in request.url:
+                    captured.update(request.headers)
+
+            page.on("request", _on_request)
+            await page.goto(
+                probe.probe_url,
+                wait_until="domcontentloaded",
+                timeout=max(settings.PROBE_TIMEOUT_MS, 60_000),
+            )
+            await asyncio.sleep(3)
+            result = await _snapshot_context(channel, opened.context, page, captured)
         finally:
-            await browser.close()
+            await opened.close()
+
+    if _url_looks_logged_out(result.final_url):
+        raise NeedsHumanLogin(
+            f"{channel} session is stale (landed on {result.final_url}). "
+            f"Run: aggregator-bootstrap login --channel {channel}"
+        )
+    return result
 
 
-async def ensure_session(channel: str) -> tuple[list[dict], dict[str, str], str]:
-    """Probe the channel; if the session is stale, log in and probe once more.
+def _url_looks_logged_out(url: str) -> bool:
+    lower = url.lower()
+    return any(w in lower for w in ("login", "signin", "identity", "auth", "passport"))
 
-    This is the bootstrap entry point (the future `bootstrap` CLI command calls
-    it): unlike the warm path it can re-establish a dead session on its own by
-    running the channel's login flow. `probe_channel` is left exactly as
-    warm.py depends on it — the retry lives here.
+
+async def login_interactive(channel: str) -> ProbeResult:
+    """Open real Chrome, wait for the operator to sign in, persist state.
+
+    Chrome runs as a normal process for the Cloudflare check. Playwright
+    attaches over CDP only after a session cookie shows up, then captures
+    storage_state. Closing the window before that aborts the login.
     """
+    if channel not in CHANNEL_PROBES:
+        raise NeedsHumanLogin(f"unknown channel {channel}")
+
+    start_url = LOGIN_START_URLS[channel]
+    probe: ChannelProbe = CHANNEL_PROBES[channel]
+    captured: dict[str, str] = {}
+    profile = chrome_profile_dir(settings.STORAGE_STATE_DIR, channel)
+    port = free_debug_port()
+    chrome = _spawn_chrome(profile=profile, port=port, url=start_url)
+
+    print(  # noqa: T201 — the operator is sitting at this window
+        f"\n=== {channel} ===\n"
+        f"Google Chrome just opened as a normal window (nothing is controlling\n"
+        f"it — that is what lets Cloudflare pass). If it asks you to wait or\n"
+        f"tick a box, do that, then sign in.\n"
+        f"Leave the window open. I attach only after you are in the portal\n"
+        f"(up to {_LOGIN_WAIT_SECONDS // 60} minutes) and then capture the session.\n",
+        flush=True,
+    )
+
     try:
-        return await probe_channel(channel)
-    except NotLoggedInError:
-        await _run_login(channel)
-        # One retry: if it is still stale, the login did not take — let the
-        # NotLoggedInError propagate so the caller reports a real failure.
-        return await probe_channel(channel)
+        await _wait_for_cdp(port)
+        await asyncio.sleep(_UNATTACHED_SECONDS)
+
+        started = time.monotonic()
+        deadline = started + _LOGIN_WAIT_SECONDS
+        attached = False
+        browser = context = page = None
+
+        async with async_playwright() as pw:
+            while time.monotonic() < deadline:
+                if chrome.poll() is not None:
+                    raise NeedsHumanLogin(
+                        f"{channel}: the Chrome window was closed before login finished"
+                    )
+                names = chrome_cookie_names(profile)
+                ready = _session_cookies_present(channel, names)
+                past_challenge = "cf_clearance" in names
+                sqlite_silent = not names and (time.monotonic() - started) > 180
+                if not attached and (ready or past_challenge or sqlite_silent):
+                    try:
+                        browser, context, page = await _connect_cdp(pw, port)
+                        attached = True
+
+                        def _on_request(request) -> None:
+                            if probe.match in request.url:
+                                captured.update(request.headers)
+
+                        page.on("request", _on_request)
+                        logger.info("%s: attached to Chrome after challenge", channel)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.info("CDP attach retry: %s", exc)
+                        await asyncio.sleep(2)
+                        continue
+
+                if attached and page is not None and not _page_is_closed(page):
+                    try:
+                        if await page_looks_authenticated(channel, page):
+                            break
+                    except Exception as exc:  # noqa: BLE001
+                        logger.info("auth probe blip: %s", exc)
+                await asyncio.sleep(2)
+            else:
+                raise NeedsHumanLogin(
+                    f"{channel}: timed out waiting for a logged-in session"
+                    + (f" at {page.url}" if page is not None else "")
+                )
+
+            assert context is not None and page is not None
+            # Snapshot the live session first. The reporting probe is how we
+            # lift API headers; it is allowed to fail — cookies already matter.
+            result = await _snapshot_context(channel, context, page, captured)
+            try:
+                await page.goto(
+                    probe.probe_url,
+                    wait_until="domcontentloaded",
+                    timeout=max(settings.PROBE_TIMEOUT_MS, 90_000),
+                )
+                await asyncio.sleep(4)
+                if await page_looks_authenticated(channel, page):
+                    result = await _snapshot_context(
+                        channel, context, page, captured
+                    )
+                else:
+                    logger.warning(
+                        "%s: probe page is %s; keeping the login snapshot",
+                        channel,
+                        page.url,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "%s: probe navigation failed after login; keeping snapshot (%s)",
+                    channel,
+                    exc,
+                )
+    finally:
+        _stop_chrome(chrome)
+
+    print(f"Captured {channel} session ({len(result.cookies)} cookies).", flush=True)
+    return result
+
+
+async def ensure_session(channel: str) -> ProbeResult:
+    """Probe the channel. A stale session is a human login, not an OTP poll."""
+    return await probe_channel(channel)

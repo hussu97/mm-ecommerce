@@ -22,7 +22,9 @@ nothing above this line learns a marketplace's vocabulary.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
@@ -44,6 +46,52 @@ except Exception:  # noqa: BLE001 - absence is a supported state, not an error
     _HAS_CURL_CFFI = False
 
 _warned_no_curl = False
+
+#: Chrome 151 on Windows — the same UA Foodics uses. Applied only when the
+#: captured profile did not carry a User-Agent, so a cookie minted under a
+#: real browser UA is never overwritten.
+_CHROME_MAJOR = "151"
+_CHROME_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+)
+_ACCEPT_LANGUAGE = "en-AE,en;q=0.9,ar-AE;q=0.8,ar;q=0.7"
+
+_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+
+
+class _RateLimiter:
+    """One token every `1/rate` seconds, process-wide per client instance."""
+
+    def __init__(self, per_second: float) -> None:
+        self._interval = 1.0 / per_second if per_second > 0 else 0.0
+        self._lock = asyncio.Lock()
+        self._next_at = 0.0
+
+    async def acquire(self) -> None:
+        if self._interval <= 0:
+            return
+        async with self._lock:
+            now = time.monotonic()
+            wait = self._next_at - now
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._next_at = time.monotonic() + self._interval
+
+
+def _retry_after_seconds(response: Any, *, default: float = 2.0) -> float:
+    raw = None
+    headers = getattr(response, "headers", None) or {}
+    try:
+        raw = headers.get("Retry-After") or headers.get("retry-after")
+    except Exception:  # noqa: BLE001
+        raw = None
+    if raw is None:
+        return default
+    try:
+        return max(float(raw), 0.5)
+    except (TypeError, ValueError):
+        return default
 
 
 class AggregatorUnavailableError(RuntimeError):
@@ -77,6 +125,7 @@ class BaseAggregatorClient(ABC):
 
     def __init__(self, *, timeout: float | None = None) -> None:
         self._timeout = timeout or settings.AGGREGATOR_TIMEOUT_SECONDS
+        self._limiter = _RateLimiter(settings.AGGREGATOR_REQUESTS_PER_SECOND)
 
     # ── fingerprint assembly ────────────────────────────────────────────────
     def build_headers(
@@ -85,10 +134,23 @@ class BaseAggregatorClient(ABC):
         """The captured header profile, plus the replayed cookie, plus per-call extras.
 
         The profile is sent verbatim — changing the UA invalidates the anti-bot
-        cookie that was minted under it. `extra` is for the per-request headers a
-        provider adds (a bearer, a CSRF token, an operation name).
+        cookie that was minted under it. Missing UA / Accept-Language are filled
+        with the UAE Chrome defaults so a thin capture still looks like the
+        console. `extra` is for the per-request headers a provider adds.
         """
         headers: dict[str, str] = dict(session.header_profile or {})
+        lower = {k.lower(): k for k in headers}
+        if "user-agent" not in lower:
+            headers["User-Agent"] = _CHROME_UA
+        if "accept-language" not in lower:
+            headers["Accept-Language"] = _ACCEPT_LANGUAGE
+        if "sec-ch-ua" not in lower:
+            headers["sec-ch-ua"] = (
+                f'"Google Chrome";v="{_CHROME_MAJOR}", '
+                f'"Chromium";v="{_CHROME_MAJOR}", "Not A(Brand";v="8"'
+            )
+            headers["sec-ch-ua-mobile"] = "?0"
+            headers["sec-ch-ua-platform"] = '"Windows"'
         cookie = self.cookie_header(session.cookies)
         if cookie:
             headers["Cookie"] = cookie
@@ -173,15 +235,25 @@ class BaseAggregatorClient(ABC):
         the TLS-impersonating transport for the anti-bot channels when available.
         """
         merged = self.build_headers(session, headers)
+        last_response: Any = None
         try:
-            if self.uses_tls_impersonation and _HAS_CURL_CFFI:
-                return await self._curl_request(
-                    method, url, merged, params, json_body, data
-                )
-            self._warn_if_impersonation_wanted()
-            return await self._httpx_request(
-                method, url, merged, params, json_body, data
-            )
+            for attempt in range(2):
+                await self._limiter.acquire()
+                if self.uses_tls_impersonation and _HAS_CURL_CFFI:
+                    last_response = await self._curl_request(
+                        method, url, merged, params, json_body, data
+                    )
+                else:
+                    self._warn_if_impersonation_wanted()
+                    last_response = await self._httpx_request(
+                        method, url, merged, params, json_body, data
+                    )
+                status = getattr(last_response, "status_code", 0)
+                if status in _RETRY_STATUSES and attempt == 0:
+                    await asyncio.sleep(_retry_after_seconds(last_response))
+                    continue
+                return last_response
+            return last_response
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             raise AggregatorUnavailableError(
                 f"{self.channel} unreachable: {exc}"

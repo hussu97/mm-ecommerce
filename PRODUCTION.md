@@ -962,6 +962,7 @@ it here and redeploying.
 | `AGGREGATOR_SALES_WINDOW_HOURS` | `3` | How far back the sales sweep re-pulls each tick, to catch status/refund changes |
 | `AGGREGATOR_FINANCE_TICK_SECONDS` | `86400` | How often the finance/reconciliation sweep runs; statements publish weekly so daily is ample |
 | `AGGREGATOR_TIMEOUT_SECONDS` | `20.0` | Aggregator HTTP timeout |
+| `AGGREGATOR_REQUESTS_PER_SECOND` | `1.0` | Ceiling on outbound calls per marketplace (PerimeterX/Akamai). `0` disables |
 
 ```bash
 gh secret set GRUBOPS_USERNAME --repo hussu97/mm-ecommerce

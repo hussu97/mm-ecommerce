@@ -18,7 +18,9 @@ raw `getOrders` response payloads unchanged — the exact shape the mm-ecommerce
 Ported from mm-aggregator-automation `channels/keeta/exports.py`
 (`_fetch_keeta_history_rows` / `_request_keeta_browser_json`). Playwright is
 imported nowhere here — the function is handed an already-open context, so this
-module (and its tests) import without the browser library.
+module (and its tests) import without the browser library. `evaluate_in_page`
+runs the fetch in the page's main world so `mtgsig` and sessionStorage are
+visible.
 """
 
 from __future__ import annotations
@@ -27,6 +29,8 @@ import logging
 from datetime import date, datetime, time
 from typing import Any
 from zoneinfo import ZoneInfo
+
+from .engine import evaluate_in_page
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +130,7 @@ def _date_ms(value: date, *, end_of_day: bool = False) -> str:
 async def _read_shop_ids(page: Any) -> list[str]:
     """The shop ids the portal put in sessionStorage, or [] if none/unreadable."""
     try:
-        result = await page.evaluate(_SHOP_IDS_JS)
+        result = await evaluate_in_page(page, _SHOP_IDS_JS)
     except Exception:  # noqa: BLE001 — a missing key must not abort the pull
         logger.warning("keeta: could not read SHOP_IDS from sessionStorage")
         return []
@@ -154,7 +158,8 @@ async def _get_orders_page(
         "shopIds": shop_ids,
         "merchantOpType": 29,
     }
-    return await page.evaluate(
+    return await evaluate_in_page(
+        page,
         _GET_ORDERS_JS,
         {"endpoint": KEETA_ORDER_HISTORY_ENDPOINT, "payload": payload},
     )

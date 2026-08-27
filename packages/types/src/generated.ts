@@ -342,6 +342,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/aggregators/worker/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Hydrate Sessions
+         * @description Decrypted sessions for the worker to write as local storage_state.
+         *
+         *     Authenticated with the push bearer, not a user login: this is the deploy
+         *     and restart path, and it carries live credentials. The admin health read
+         *     at GET /sessions never returns these blobs.
+         */
+        get: operations["hydrate_sessions_api_v1_aggregators_worker_sessions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/analytics/customers": {
         parameters: {
             query?: never;
@@ -7415,9 +7439,10 @@ export interface components {
          * AggregatorSessionPush
          * @description A freshly captured marketplace session, pushed in for the ingest to replay.
          *
-         *     The worker that runs the browser (and can solve OTP / a bot sensor) sends
-         *     the bundle here; the API seals it and stores it. The cookies carry the load-
-         *     bearing anti-bot cookie, `header_profile` the exact request fingerprint.
+         *     The worker that runs the browser sends the bundle here; the API seals it
+         *     and stores it. The cookies carry the load-bearing anti-bot cookie,
+         *     `header_profile` the exact request fingerprint, `storage_state` the
+         *     Playwright blob a restarted worker hydrates.
          */
         AggregatorSessionPush: {
             /**
@@ -7437,6 +7462,10 @@ export interface components {
             header_profile?: {
                 [key: string]: string;
             };
+            /** Storage State */
+            storage_state?: {
+                [key: string]: unknown;
+            } | null;
             /** Token Expires At */
             token_expires_at?: string | null;
             /** Tokens */
@@ -7465,6 +7494,46 @@ export interface components {
             status: string;
             /** Token Expires At */
             token_expires_at?: string | null;
+        };
+        /**
+         * AggregatorWorkerSession
+         * @description The decrypted session a worker hydrates from after a deploy/restart.
+         *
+         *     Secrets on the wire, authenticated with the same push bearer as POST
+         *     `/session`. The admin health read (`GET /sessions`) never returns this.
+         */
+        AggregatorWorkerSession: {
+            /**
+             * Account Ref
+             * @default
+             */
+            account_ref: string;
+            /** Channel */
+            channel: string;
+            /** Cookie Expires At */
+            cookie_expires_at?: string | null;
+            /** Cookies */
+            cookies?: {
+                [key: string]: string;
+            };
+            /** Header Profile */
+            header_profile?: {
+                [key: string]: string;
+            };
+            /** Last Warmed At */
+            last_warmed_at?: string | null;
+            /** Status */
+            status: string;
+            /** Storage State */
+            storage_state?: {
+                [key: string]: unknown;
+            } | null;
+            /** Token Expires At */
+            token_expires_at?: string | null;
+            /** Tokens */
+            tokens?: {
+                [key: string]: unknown;
+            };
         };
         /** ApplePayEligibilityResponse */
         ApplePayEligibilityResponse: {
@@ -17023,6 +17092,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AggregatorSessionResponse"][];
+                };
+            };
+        };
+    };
+    hydrate_sessions_api_v1_aggregators_worker_sessions_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AggregatorWorkerSession"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

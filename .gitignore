@@ -94,5 +94,9 @@ scripts/menu/*.html
 # npm lockfile for the standalone marketing scripts (pnpm owns the workspace)
 scripts/marketing/package-lock.json
 
-# Screenshots and reports from `pnpm --filter admin mobile-audit`.
-.mobile-audit/
+# Aggregator worker local session cache. Never commit — these are live logins.
+.aggregator-sessions/
+apps/aggregator-bootstrap/.sessions/
+*.chrome-profile/
+*.chrome/
+

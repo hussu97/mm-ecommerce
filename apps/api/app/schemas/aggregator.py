@@ -13,9 +13,10 @@ from pydantic import BaseModel, ConfigDict, Field
 class AggregatorSessionPush(BaseModel):
     """A freshly captured marketplace session, pushed in for the ingest to replay.
 
-    The worker that runs the browser (and can solve OTP / a bot sensor) sends
-    the bundle here; the API seals it and stores it. The cookies carry the load-
-    bearing anti-bot cookie, `header_profile` the exact request fingerprint.
+    The worker that runs the browser sends the bundle here; the API seals it
+    and stores it. The cookies carry the load-bearing anti-bot cookie,
+    `header_profile` the exact request fingerprint, `storage_state` the
+    Playwright blob a restarted worker hydrates.
     """
 
     channel: str
@@ -23,8 +24,31 @@ class AggregatorSessionPush(BaseModel):
     cookies: dict[str, str] = Field(default_factory=dict)
     tokens: dict = Field(default_factory=dict)
     header_profile: dict[str, str] = Field(default_factory=dict)
+    #: Playwright storage_state + origin-scoped sessionStorage. Optional so an
+    #: older worker that only captured cookies still pushes; the API then keeps
+    #: whatever blob it already has rather than wiping it.
+    storage_state: dict | None = None
     token_expires_at: datetime | None = None
     cookie_expires_at: datetime | None = None
+
+
+class AggregatorWorkerSession(BaseModel):
+    """The decrypted session a worker hydrates from after a deploy/restart.
+
+    Secrets on the wire, authenticated with the same push bearer as POST
+    `/session`. The admin health read (`GET /sessions`) never returns this.
+    """
+
+    channel: str
+    account_ref: str = ""
+    cookies: dict[str, str] = Field(default_factory=dict)
+    tokens: dict = Field(default_factory=dict)
+    header_profile: dict[str, str] = Field(default_factory=dict)
+    storage_state: dict | None = None
+    token_expires_at: datetime | None = None
+    cookie_expires_at: datetime | None = None
+    status: str
+    last_warmed_at: datetime | None = None
 
 
 class AggregatorSessionResponse(BaseModel):

@@ -49,6 +49,7 @@ from app.schemas.aggregator import (
     AggregatorReconciliationOut,
     AggregatorSessionPush,
     AggregatorSessionResponse,
+    AggregatorWorkerSession,
     KeetaOrdersPush,
     KeetaOrdersResult,
     ReconSummaryOut,
@@ -100,6 +101,7 @@ async def push_session(
         cookies=body.cookies,
         tokens=body.tokens,
         header_profile=body.header_profile,
+        storage_state=body.storage_state,
         token_expires_at=body.token_expires_at,
         cookie_expires_at=body.cookie_expires_at,
     )
@@ -118,6 +120,27 @@ async def list_sessions(
         select(AggregatorSession).order_by(AggregatorSession.channel)
     )
     return list(rows)
+
+
+@router.get(
+    "/worker/sessions",
+    response_model=list[AggregatorWorkerSession],
+)
+async def hydrate_sessions(
+    _: None = Depends(_require_push_token),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Decrypted sessions for the worker to write as local storage_state.
+
+    Authenticated with the push bearer, not a user login: this is the deploy
+    and restart path, and it carries live credentials. The admin health read
+    at GET /sessions never returns these blobs.
+    """
+    if not crypto.is_configured():
+        raise ServiceUnavailableError(
+            "AGGREGATOR_CONFIG_ENCRYPTION_KEY is unset; cannot read a session"
+        )
+    return await session_store.list_worker_bundles(db)
 
 
 def _branch_map_out(row: AggregatorBranchMap, branch_name: str | None):

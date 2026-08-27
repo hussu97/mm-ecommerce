@@ -170,6 +170,17 @@ def test_build_headers_replays_profile_and_cookie():
     assert headers["Cookie"] == "session-token=abc; _px3=xyz"
 
 
+def test_build_headers_fills_uae_chrome_when_the_profile_is_thin():
+    from app.services.providers.aggregator_base import _ACCEPT_LANGUAGE, _CHROME_UA
+
+    client = CareemClient()
+    session = LoadedSession(channel="careem", account_ref="", cookies={"t": "1"})
+    headers = client.build_headers(session)
+    assert headers["User-Agent"] == _CHROME_UA
+    assert headers["Accept-Language"] == _ACCEPT_LANGUAGE
+    assert headers["Cookie"] == "t=1"
+
+
 # ── session push auth (fail-closed) ───────────────────────────────────────────
 async def test_session_push_rejected_when_unconfigured(client, monkeypatch):
     monkeypatch.setattr("app.core.config.settings.AGGREGATOR_SESSION_PUSH_TOKEN", "")
@@ -201,6 +212,26 @@ async def test_session_push_rejects_unknown_channel(client, monkeypatch):
         headers={"Authorization": "Bearer tok"},
     )
     assert resp.status_code == 400
+
+
+async def test_worker_hydrate_rejected_when_unconfigured(client, monkeypatch):
+    monkeypatch.setattr("app.core.config.settings.AGGREGATOR_SESSION_PUSH_TOKEN", "")
+    resp = await client.get(
+        "/api/v1/aggregators/worker/sessions",
+        headers={"Authorization": "Bearer anything"},
+    )
+    assert resp.status_code == 401
+
+
+async def test_worker_hydrate_rejects_a_wrong_token(client, monkeypatch):
+    monkeypatch.setattr(
+        "app.core.config.settings.AGGREGATOR_SESSION_PUSH_TOKEN", "the-real-token"
+    )
+    resp = await client.get(
+        "/api/v1/aggregators/worker/sessions",
+        headers={"Authorization": "Bearer wrong"},
+    )
+    assert resp.status_code == 401
 
 
 # ── provider registry ─────────────────────────────────────────────────────────

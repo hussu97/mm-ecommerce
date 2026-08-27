@@ -6,77 +6,63 @@ OTP, Talabat and Noon sit behind PerimeterX/Akamai, and none publish a partner
 API this shop is on. This worker is where the browser lives (Playwright), kept
 deliberately out of `apps/api`, and deploys as its own job.
 
-## What it does
+## Auth model
 
-1. **Capture** — opens a logged-in Playwright context (from a persisted
-   `storage_state`), loads a channel's probe page, and reads the first real
-   authenticated request it makes. That gives the cookies (including the
-   load-bearing anti-bot cookie), the tokens, and the exact header fingerprint.
-2. **Push** — `POST`s that bundle to `/api/v1/aggregators/session` with the
-   shared bearer; the API seals it and the ingest loops replay it.
-3. **Warm** — re-runs capture every few hours so the rotated anti-bot cookie
-   (`_px3`, `bm_sv`) and short-lived tokens stay fresh **without** a re-login.
-   Only when the stored session is fully stale is a full OTP login needed.
+A human signs in **once**. Everything after that is a refresh, not a re-login.
 
-Keeta is special: its data is pulled *in-page* (its requests are signed in the
-page) and pushed to `/aggregators/keeta/orders`. That in-page pull is the one
-piece still to be ported from the standalone scraper.
+1. **Login** (`aggregator-bootstrap login --channel noon`) — a real Google
+   Chrome window (not Playwright, not Chrome-for-Testing). Cloudflare runs with
+   no automation attached; you complete the check, OTP, captcha, or passkey.
+   Once the portal session cookie exists, the worker connects over CDP, captures
+   cookies / tokens / Playwright `storage_state` / sessionStorage, and writes
+   them locally.
+2. **Push** — that bundle is `POST`ed to `/api/v1/aggregators/session`. The API
+   Fernet-seals it onto `aggregator_session`, including
+   `storage_state_encrypted`. **The database is the source of truth.**
+3. **Hydrate** — on every worker start (a deploy, a crash, a new VM image with
+   an empty `/data` volume) `warm-sessions` `GET`s
+   `/api/v1/aggregators/worker/sessions` with the push bearer and rewrites the
+   local `storage_state` files. No login.
+4. **Warm** — reopens the hydrated state, loads a probe page so PerimeterX /
+   Akamai rotate `_px3` / `bm_sv`, and pushes the refreshed blob back. Still no
+   login.
+5. **Ingest** — the API's hourly httpx sweep replays the cookie/token fingerprint
+   (TLS impersonation on Talabat/Noon), rate-limited to
+   `AGGREGATOR_REQUESTS_PER_SECOND` (default 1).
+
+If a warm lands on a login page the session is fully dead. The worker logs
+`needs a headed login` and the API row flips to `needs_bootstrap`. It does
+**not** poll IMAP for OTPs. Re-run `login --channel X`.
+
+Keeta is special: its data is pulled *in-page* (requests are `mtgsig`-signed)
+and pushed to `/aggregators/keeta/orders`. Hydrate still restores the browser
+state so that in-page pull survives a restart.
 
 ## Commands
 
 ```
-aggregator-bootstrap capture-and-push --channel careem
+aggregator-bootstrap login --channel careem
+aggregator-bootstrap hydrate              # pull DB → local files
 aggregator-bootstrap capture-and-push --all
-aggregator-bootstrap warm-sessions            # all channels
+aggregator-bootstrap warm-sessions        # hydrate + warm all (VM cron)
 ```
 
 ## Configuration
 
 `AGGREGATOR_API_URL`, `AGGREGATOR_SESSION_PUSH_TOKEN`, `STORAGE_STATE_DIR`,
-`HEADLESS`, and the `OTP_IMAP_*` mailbox settings (see `config.py`).
-
-`STORAGE_STATE_DIR` defaults to `/data/sessions`, an absolute path the
-Dockerfile declares as a `VOLUME` — see Operations below for why it must be a
-mounted persistent volume.
+`HEADLESS`. `STORAGE_STATE_DIR` defaults to `/data/sessions` — a cache. The
+API row is what a new container hydrates from.
 
 ## Operations
 
-**A persistent volume MUST be mounted at `/data`.** The entire warm/bootstrap
-model depends on the logged-in `storage_state` surviving between runs: each run
-reopens the persisted session, refreshes the rotated anti-bot cookie, and writes
-it back. `STORAGE_STATE_DIR` defaults to `/data/sessions`, which the Dockerfile
-declares as a `VOLUME`.
+A persistent volume at `/data` is still useful (survives an API blip), but it
+is no longer load-bearing: a deploy that ships a fresh empty volume hydrates
+from `aggregator_session` on the first `warm-sessions` tick.
 
-If nothing is mounted there, `/data` is ephemeral container storage — every
-scheduled run starts logged-out, and the fall-back is the OTP/anti-bot login
-path, which for Talabat and Keeta **deliberately raises** (those flows are not
-ported yet). The result is a worker that fails every run until a human
-re-establishes the session by hand.
-
-- **Kubernetes**: back `/data` with a `PersistentVolumeClaim` (a small
-  `ReadWriteOnce` volume is enough) mounted at `/data`. A CronJob's pods must
-  share the same PVC so the warmed session carries across runs.
-- **Docker / compose**: mount a named volume or host path, e.g.
-  `docker run -v mm-agg-sessions:/data …` or a `volumes:` entry mapping to
-  `/data`.
-
-The container runs as the non-root `pwuser`; the image pre-creates
-`/data/sessions` owned by `pwuser`, so a freshly-provisioned empty volume is
-writable without extra setup.
-
-## Where it runs
-
-On a host with a **stable egress IP in the UAE region** — PerimeterX/Akamai bind
-their cookies loosely to IP/ASN, so the worker, the warmer and the API's ingest
-should egress consistently, or the captured anti-bot cookie may be rejected. Do
-**not** run it on the small app VM: the browser's RAM is the whole reason it is a
+The container runs as the non-root `pwuser`. Run it on a host with **stable
+egress in the UAE region** — PerimeterX/Akamai bind cookies loosely to IP/ASN.
+Do **not** run it on the small app VM: the browser's RAM is why it is a
 separate job.
 
-## Status
-
-Framework, generic capture (all five channels via `channels/probes.py`), push,
-warm, and the CLI are complete and unit-tested. Still to port from
-`mm-aggregator-automation`: the automated OTP **login** flows (for re-login when
-a `storage_state` goes fully stale) and Keeta's in-page order pull. Until those
-land, a session is established by a one-time manual login into the profile the
-`storage_state` is captured from.
+Default CMD is `warm-sessions` (hydrate + warm). First-time minting is
+`login`, run headed from a laptop that can reach the API, once per channel.

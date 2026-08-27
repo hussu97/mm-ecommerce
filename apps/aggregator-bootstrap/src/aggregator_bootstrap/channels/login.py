@@ -1,27 +1,15 @@
-"""Per-channel automated login flows, driving a Playwright context to logged-in.
+"""Per-channel login surfaces and "are we in?" probes.
 
-`ensure_session` (browser.py) calls one of these when a stored `storage_state`
-has gone stale, so the worker re-establishes the session by itself instead of
-waiting on a human to hand-build one. Each flow navigates to the channel's
-login surface, fills the portal credentials from `config.settings`, clears the
-one-time-code / anti-bot gate where it can, and leaves the passed-in context
-authenticated; the caller persists `storage_state` afterwards.
+The worker does **not** mint a session by driving OTP from a mailbox. A human
+signs in once (`aggregator-bootstrap login --channel X`); the database then
+holds the Playwright state and the worker hydrates from it. The functions
+below are still the source of truth for each portal's login URL and for
+whether a page is already authenticated — the headed login waits on those
+probes, and the warm path uses them to detect a dead state.
 
-These are async ports of the login portions of the standalone
-mm-aggregator-automation scraper (`channels/<ch>/{discovery,exports}.py`). The
-scraper drove Playwright's *sync* API; the worker is async, so the mechanics —
-`await` on every locator call, frame lookups, keyboard entry — are rewritten,
-but the selectors, URLs, and gate handling are carried across verbatim.
-
-Playwright is imported lazily (only its exception types, inside the functions)
-so the module imports without the browser library, exactly like browser.py.
-
-Two gates are surfaced rather than bypassed:
-- `AntiBotChallengeError` — a PerimeterX / "press and hold to confirm you are a
-  human" wall (Talabat) or a captcha/device-verification wall (Keeta). The
-  automation deliberately does not try to defeat it.
-- `LoginChallengeError` — an OTP was required but none could be read from the
-  mailbox (IMAP not configured, or it never arrived).
+The credential-filling helpers (email/password/OTP) remain for a last-resort
+manual re-run; `ensure_session` no longer calls them. A stale session is
+`NeedsHumanLogin`, not an IMAP poll.
 """
 
 from __future__ import annotations
@@ -455,8 +443,8 @@ async def login_careem(context) -> None:
     )
 
 
-#: Channel -> login flow. `ensure_session` looks the channel up here after a
-#: stale-session probe; a channel absent from this map has no automated login.
+#: Channel -> login flow. Kept for a deliberate `--otp` re-run; the headed
+#: `login` command and `ensure_session` do not call these.
 LOGIN_FLOWS: dict[str, Callable[..., Awaitable[None]]] = {
     "deliveroo": login_deliveroo,
     "talabat": login_talabat,
@@ -464,3 +452,66 @@ LOGIN_FLOWS: dict[str, Callable[..., Awaitable[None]]] = {
     "keeta": login_keeta,
     "careem": login_careem,
 }
+
+#: Where the headed login opens. Careem has no dedicated `/login` path — the
+#: partners origin redirects to identity if the session is empty.
+LOGIN_START_URLS: dict[str, str] = {
+    "deliveroo": DELIVEROO_LOGIN_URL,
+    "talabat": TALABAT_LOGIN_URL,
+    "noon": NOON_RMS_URL,
+    "keeta": KEETA_PORTAL_URL,
+    "careem": "https://partners.careem.com/",
+}
+
+_LOGIN_URL_MARKERS = ("login", "signin", "identity", "auth", "passport")
+
+
+def _url_looks_like_login(url: str) -> bool:
+    lower = url.lower()
+    return any(marker in lower for marker in _LOGIN_URL_MARKERS)
+
+
+async def _careem_is_authenticated(page) -> bool:
+    if "partners.careem.com" not in page.url:
+        return False
+    return not _url_looks_like_login(page.url)
+
+
+async def _deliveroo_is_authenticated(page) -> bool:
+    if "partner-hub.deliveroo.com" not in page.url:
+        return False
+    return "/login" not in page.url
+
+
+async def _noon_is_authenticated(page) -> bool:
+    """RMS is authenticated when the login iframe is gone and the app rendered.
+
+    The wallet URL is also the login URL, so "no iframe yet" is not a login —
+    the embed takes a few seconds to appear. Require a real RMS surface.
+    """
+    if _noon_login_frame(page) is not None:
+        return False
+    if _url_looks_like_login(page.url) and "restaurant.noon.partners" not in page.url:
+        return False
+    try:
+        body = (await page.locator("body").inner_text(timeout=3_000)).lower()
+    except Exception:  # noqa: BLE001
+        return False
+    return any(
+        marker in body for marker in ("wallet", "finance", "payout", "statement")
+    )
+
+
+async def page_looks_authenticated(channel: str, page) -> bool:
+    """Whether the current page is a logged-in portal surface for `channel`."""
+    if channel == "deliveroo":
+        return await _deliveroo_is_authenticated(page)
+    if channel == "talabat":
+        return await _talabat_is_authenticated_app(page)
+    if channel == "noon":
+        return await _noon_is_authenticated(page)
+    if channel == "keeta":
+        return await _keeta_has_authenticated_surface(page)
+    if channel == "careem":
+        return await _careem_is_authenticated(page)
+    return not _url_looks_like_login(page.url)

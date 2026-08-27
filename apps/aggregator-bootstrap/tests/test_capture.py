@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from aggregator_bootstrap.session_capture import build_session
+from aggregator_bootstrap.session_capture import (
+    build_session,
+    bundle_browser_state,
+    earliest_token_expiry,
+    jwt_expiry,
+    split_browser_state,
+)
 
 
 def test_careem_puts_authorization_in_the_header_profile():
@@ -61,3 +67,64 @@ def test_deliveroo_lifts_token_cookie():
     s = build_session("deliveroo", cookies, headers)
     assert s["tokens"]["token"] == "dl-jwt"
     assert s["cookies"]["token"] == "dl-jwt"
+
+
+def test_build_session_bundles_storage_state_and_harvests_refresh():
+    cookies = [
+        {"name": "token", "value": "dl-jwt"},
+        {"name": "refreshToken", "value": "rt-1"},
+    ]
+    state = {
+        "cookies": cookies,
+        "origins": [
+            {
+                "origin": "https://partner-hub.deliveroo.com",
+                "localStorage": [{"name": "refresh_token", "value": "rt-ls"}],
+            }
+        ],
+    }
+    s = build_session(
+        "deliveroo",
+        cookies,
+        {"user-agent": "C"},
+        playwright_state=state,
+        session_storage={"SHOP_IDS": "[1]"},
+        origin="https://partner-hub.deliveroo.com",
+    )
+    assert s["tokens"]["refreshToken"] == "rt-1"
+    assert s["tokens"]["refresh_token"] == "rt-ls"
+    assert s["storage_state"]["playwright"]["cookies"][0]["name"] == "token"
+    assert (
+        s["storage_state"]["session_storage"]["https://partner-hub.deliveroo.com"][
+            "SHOP_IDS"
+        ]
+        == "[1]"
+    )
+
+
+def test_jwt_expiry_reads_exp_and_ignores_garbage():
+    import base64
+    import json
+
+    payload = (
+        base64.urlsafe_b64encode(json.dumps({"exp": 2_000_000_000}).encode())
+        .decode()
+        .rstrip("=")
+    )
+    token = f"aaa.{payload}.bbb"
+    exp = jwt_expiry(token)
+    assert exp is not None
+    assert exp.year == 2033
+    assert jwt_expiry("not-a-jwt") is None
+    assert earliest_token_expiry({"a": token}) is not None
+
+
+def test_bundle_round_trips():
+    bundled = bundle_browser_state(
+        {"cookies": [], "origins": []},
+        session_storage={"k": "v"},
+        origin="https://example.com",
+    )
+    playwright, extra = split_browser_state(bundled)
+    assert extra["https://example.com"]["k"] == "v"
+    assert playwright["cookies"] == []

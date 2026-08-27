@@ -965,7 +965,7 @@
         "type": "object"
       },
       "AggregatorSessionPush": {
-        "description": "A freshly captured marketplace session, pushed in for the ingest to replay.\n\nThe worker that runs the browser (and can solve OTP / a bot sensor) sends\nthe bundle here; the API seals it and stores it. The cookies carry the load-\nbearing anti-bot cookie, `header_profile` the exact request fingerprint.",
+        "description": "A freshly captured marketplace session, pushed in for the ingest to replay.\n\nThe worker that runs the browser sends the bundle here; the API seals it\nand stores it. The cookies carry the load-bearing anti-bot cookie,\n`header_profile` the exact request fingerprint, `storage_state` the\nPlaywright blob a restarted worker hydrates.",
         "properties": {
           "account_ref": {
             "default": "",
@@ -1001,6 +1001,18 @@
             },
             "title": "Header Profile",
             "type": "object"
+          },
+          "storage_state": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage State"
           },
           "token_expires_at": {
             "anyOf": [
@@ -1107,6 +1119,97 @@
           "status"
         ],
         "title": "AggregatorSessionResponse",
+        "type": "object"
+      },
+      "AggregatorWorkerSession": {
+        "description": "The decrypted session a worker hydrates from after a deploy/restart.\n\nSecrets on the wire, authenticated with the same push bearer as POST\n`/session`. The admin health read (`GET /sessions`) never returns this.",
+        "properties": {
+          "account_ref": {
+            "default": "",
+            "title": "Account Ref",
+            "type": "string"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "cookie_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cookie Expires At"
+          },
+          "cookies": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Cookies",
+            "type": "object"
+          },
+          "header_profile": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Header Profile",
+            "type": "object"
+          },
+          "last_warmed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Warmed At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "storage_state": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage State"
+          },
+          "token_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Expires At"
+          },
+          "tokens": {
+            "additionalProperties": true,
+            "title": "Tokens",
+            "type": "object"
+          }
+        },
+        "required": [
+          "channel",
+          "status"
+        ],
+        "title": "AggregatorWorkerSession",
         "type": "object"
       },
       "ApplePayEligibilityResponse": {
@@ -29218,6 +29321,60 @@
           }
         ],
         "summary": "List Sessions",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/worker/sessions": {
+      "get": {
+        "description": "Decrypted sessions for the worker to write as local storage_state.\n\nAuthenticated with the push bearer, not a user login: this is the deploy\nand restart path, and it carries live credentials. The admin health read\nat GET /sessions never returns these blobs.",
+        "operationId": "hydrate_sessions_api_v1_aggregators_worker_sessions_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AggregatorWorkerSession"
+                  },
+                  "title": "Response Hydrate Sessions Api V1 Aggregators Worker Sessions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Hydrate Sessions",
         "tags": [
           "Aggregators"
         ]

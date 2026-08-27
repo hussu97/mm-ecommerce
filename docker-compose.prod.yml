@@ -188,6 +188,7 @@ services:
       AGGREGATOR_SALES_WINDOW_HOURS: ${AGGREGATOR_SALES_WINDOW_HOURS:-3}
       AGGREGATOR_FINANCE_TICK_SECONDS: ${AGGREGATOR_FINANCE_TICK_SECONDS:-86400}
       AGGREGATOR_TIMEOUT_SECONDS: ${AGGREGATOR_TIMEOUT_SECONDS:-20.0}
+      AGGREGATOR_REQUESTS_PER_SECOND: ${AGGREGATOR_REQUESTS_PER_SECOND:-1.0}
       # ── Slider ──────────────────────────────────────────────────────────
       # The third courier. Every one of these has to be here and not only in
       # `.env`: this block is an allow-list, and a variable the VM holds but

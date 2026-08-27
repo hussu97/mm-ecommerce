@@ -1,14 +1,13 @@
-"""Capture and push a session — the operation both the bootstrap and warm run.
+"""Capture and push a session — bootstrap, warm, and post-deploy hydrate.
 
 Capturing from a logged-in `storage_state` and pushing is the same for a first
-bootstrap and a periodic warm; the difference is only whether a login had to
-happen first (a full bootstrap does the OTP login to establish the state; a warm
-assumes it exists and just re-runs the sensor by loading a page). Both end here.
+login and a periodic warm. The difference is only how the state got there: a
+headed `login` writes it; a deploy/restart hydrates it from the API; a warm
+reopens it, rotates the anti-bot cookie, and pushes the refresh back.
 
 Keeta is the exception: it has no httpx sweep, so warming it also pulls its
 orders in-page (its `mtgsig` signing lives in the page) and pushes the raw
-payloads to the `/keeta/orders` endpoint — see `keeta_pull.pull_keeta_orders_in_page`,
-which `warm_channel` routes Keeta to.
+payloads to `/aggregators/keeta/orders`.
 """
 
 from __future__ import annotations
@@ -16,13 +15,32 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from .browser import NotLoggedInError, _storage_state_path
+from .browser import NeedsHumanLogin, NotLoggedInError, _storage_state_path
 from .config import settings
+from .hydrate import hydrate_from_api
 from .keeta_pull import fetch_keeta_orders
 from .push import push_keeta_orders, push_session
-from .session_capture import capture
+from .session_capture import capture, payload_from_probe
 
 logger = logging.getLogger(__name__)
+
+
+async def hydrate_then_warm(channel: str | None = None) -> dict[str, Any]:
+    """Pull sessions from the API, then warm one channel or all of them.
+
+    Called on every worker start so a new image with an empty volume resumes
+    the previous session instead of looking logged-out.
+    """
+    try:
+        restored = await hydrate_from_api()
+        logger.info("hydrated channels from API: %s", restored or "(none)")
+    except Exception:  # noqa: BLE001 — local files may still be good
+        logger.exception(
+            "hydrate from API failed; continuing with any local storage_state"
+        )
+    if channel:
+        return await warm_channel(channel)
+    return {"hydrated": True}
 
 
 async def warm_channel(channel: str) -> dict[str, Any]:
@@ -33,11 +51,27 @@ async def warm_channel(channel: str) -> dict[str, Any]:
     than capturing a session fingerprint for the sweep to replay.
     """
     if channel == "keeta":
+        # Still recapture the browser state so a Keeta warm refreshes cookies
+        # in the DB, then pull orders in-page.
+        try:
+            payload = await capture("keeta")
+            await push_session(payload)
+        except NeedsHumanLogin:
+            logger.error("keeta needs a headed login; skipping in-page pull")
+            raise
         return await pull_keeta_orders_in_page()
     payload = await capture(channel)
     result = await push_session(payload)
     logger.info("pushed %s session: %s", channel, result.get("status"))
     return result
+
+
+async def push_probe(channel: str, result) -> dict[str, Any]:
+    """Push a session assembled from an already-open probe (headed login)."""
+    payload = payload_from_probe(channel, result)
+    pushed = await push_session(payload)
+    logger.info("pushed %s session after login: %s", channel, pushed.get("status"))
+    return pushed
 
 
 async def pull_keeta_orders_in_page(*, months_back: int = 1) -> dict[str, Any]:
@@ -48,7 +82,9 @@ async def pull_keeta_orders_in_page(*, months_back: int = 1) -> dict[str, Any]:
     hands the raw payloads to the API, which parses each with `keeta_provider`.
     Playwright is imported lazily, so this module imports without the browser lib.
     """
-    from playwright.async_api import async_playwright  # lazy
+    from .engine import async_playwright
+
+    from .browser import _open_context
 
     state = _storage_state_path("keeta")
     if not state.exists():
@@ -57,14 +93,11 @@ async def pull_keeta_orders_in_page(*, months_back: int = 1) -> dict[str, Any]:
         )
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=settings.HEADLESS)
-        context = await browser.new_context(
-            storage_state=str(state), accept_downloads=True
-        )
+        opened = await _open_context(pw, "keeta", headed=not settings.HEADLESS)
         try:
-            payloads = await fetch_keeta_orders(context, months_back=months_back)
+            payloads = await fetch_keeta_orders(opened.context, months_back=months_back)
         finally:
-            await browser.close()
+            await opened.close()
 
     if not payloads:
         logger.warning("keeta: no getOrders payloads fetched; nothing to push")
@@ -75,4 +108,10 @@ async def pull_keeta_orders_in_page(*, months_back: int = 1) -> dict[str, Any]:
     return result
 
 
-__all__ = ["warm_channel", "pull_keeta_orders_in_page", "push_keeta_orders"]
+__all__ = [
+    "warm_channel",
+    "pull_keeta_orders_in_page",
+    "push_keeta_orders",
+    "hydrate_then_warm",
+    "push_probe",
+]

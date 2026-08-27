@@ -424,6 +424,9 @@ class Settings(BaseSettings):
     #: a daily check is ample and keeps off the marketplaces' rate limits.
     AGGREGATOR_FINANCE_TICK_SECONDS: int = 86400
     AGGREGATOR_TIMEOUT_SECONDS: float = 20.0
+    #: Ceiling on outbound calls to each marketplace. PerimeterX/Akamai score
+    #: bursts; the sales sweep is hourly so 1 req/s is ample. 0 disables it.
+    AGGREGATOR_REQUESTS_PER_SECOND: float = 1.0
 
     # ── Slider (courier) ──────────────────────────────────────────────────────
     #: The third courier, and the same contract as the other two: an empty key

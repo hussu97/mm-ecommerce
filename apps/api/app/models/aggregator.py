@@ -211,7 +211,9 @@ class AggregatorSession(Base, UUIDMixin, TimestampMixin):
     by the httpx refresh-token grant; `cookie_expires_at` can only be renewed by
     a lightweight headless "touch" that re-runs the portal's sensor. The warmer
     acts on whichever is approaching; `status` flips to `needs_bootstrap` when
-    neither can save it and only a full browser login (with OTP) will.
+    neither can save it and only a headed browser login will. The Playwright
+    `storage_state` blob is what lets a *new* worker (new image, empty volume)
+    resume that login instead of asking for it again.
     """
 
     __tablename__ = "aggregator_session"
@@ -227,6 +229,11 @@ class AggregatorSession(Base, UUIDMixin, TimestampMixin):
     cookies_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     tokens_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     header_profile_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Full Playwright `storage_state` (cookies with domain/path/expiry +
+    #: localStorage) plus origin-scoped sessionStorage. This is what a new
+    #: worker hydrates after a deploy: the name→value `cookies` column is
+    #: enough for httpx replay, but not enough to reopen a logged-in browser.
+    storage_state_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     token_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

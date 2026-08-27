@@ -4,6 +4,10 @@ The same HTTPS-with-bearer push the standalone scraper used for bulk ingest: the
 worker holds the shared `AGGREGATOR_SESSION_PUSH_TOKEN`, the API checks it in
 constant time. The session blobs are sealed on arrival, so the token is the only
 secret in flight.
+
+`pull_sessions` is the deploy/restart counterpart: the API is the source of
+truth, and a new worker with an empty volume hydrates local `storage_state`
+files from the encrypted row rather than asking for a login.
 """
 
 from __future__ import annotations
@@ -16,7 +20,13 @@ from .config import settings
 
 
 def _headers() -> dict[str, str]:
-    return {"Authorization": f"Bearer {settings.AGGREGATOR_SESSION_PUSH_TOKEN}"}
+    token = (settings.AGGREGATOR_SESSION_PUSH_TOKEN or "").strip()
+    if not token:
+        raise RuntimeError(
+            "AGGREGATOR_SESSION_PUSH_TOKEN is empty. Set it in apps/api/.env "
+            "(or the worker env). GitHub secrets only reach production after a deploy."
+        )
+    return {"Authorization": f"Bearer {token}"}
 
 
 async def push_session(payload: dict[str, Any]) -> dict[str, Any]:
@@ -26,6 +36,22 @@ async def push_session(payload: dict[str, Any]) -> dict[str, Any]:
         resp = await client.post(url, json=payload, headers=_headers())
         resp.raise_for_status()
         return resp.json()
+
+
+async def pull_sessions() -> list[dict[str, Any]]:
+    """GET every live session blob the worker is allowed to hydrate from.
+
+    Empty list if the API has nothing yet (first login still to happen), not
+    an error. A 401/5xx still raises — those are config/availability faults.
+    """
+    url = f"{settings.AGGREGATOR_API_URL}/api/v1/aggregators/worker/sessions"
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(url, headers=_headers())
+        resp.raise_for_status()
+        body = resp.json()
+    if isinstance(body, list):
+        return body
+    return body.get("sessions") or []
 
 
 async def push_keeta_orders(payloads: list[dict]) -> dict[str, Any]:
