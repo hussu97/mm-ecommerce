@@ -55,23 +55,26 @@ def login(
     auto: bool = typer.Option(
         False,
         "--auto",
-        help="Fill stored email/password after Cloudflare (Deliveroo).",
+        help="Drive stored login: Deliveroo email/password, Noon email+Graph OTP.",
     ),
 ) -> None:
     """Open a headed browser, wait for you to sign in, capture and push.
 
-    Default: you complete OTP/captcha/passkey in the window. `--auto` (Deliveroo
-    only) types the email/password from `aggregator_account` once the login
-    form is visible. The resulting Playwright state is pushed to the API.
+    Default: you complete OTP/captcha/passkey in the window. `--auto` drives
+    Deliveroo (email/password) or Noon (email + Graph OTP after mailbox-auth).
+    The resulting Playwright state is pushed to the API.
     """
     if channel not in CHANNEL_PROBES:
         raise typer.BadParameter(f"unknown channel {channel}")
     try:
         if auto:
-            account = _load_account(channel)
+            account = _load_account(channel, require_password=(channel != "noon"))
             result = asyncio.run(
                 login_with_account(
-                    channel, email=account.email, password=account.password
+                    channel,
+                    email=account.email,
+                    password=account.password,
+                    mailbox=account.mailbox or None,
                 )
             )
         else:
@@ -90,15 +93,23 @@ def login(
         raise typer.Exit(code=1) from exc
 
 
-def _load_account(channel: str) -> PortalAccount:
+def _load_account(
+    channel: str, *, require_password: bool = True
+) -> PortalAccount:
     try:
         account = asyncio.run(pull_account(channel))
     except Exception as exc:  # noqa: BLE001
         logger.warning("could not pull account from API (%s); trying env", exc)
         account = from_env(channel)
-    if account is None or not account.email or not account.password:
+    if account is None or not account.email:
         raise typer.BadParameter(
-            f"no stored {channel} credentials. "
+            f"no stored {channel} email. "
+            f"Save it on Admin → Aggregators → Logins "
+            f"(or: aggregator-bootstrap store-account --channel {channel})"
+        )
+    if require_password and not account.password:
+        raise typer.BadParameter(
+            f"no stored {channel} password. "
             f"Run: aggregator-bootstrap store-account --channel {channel}"
         )
     logger.info(

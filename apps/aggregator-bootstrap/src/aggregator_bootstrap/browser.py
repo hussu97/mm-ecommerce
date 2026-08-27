@@ -36,6 +36,7 @@ from .channels.login import (
     LOGIN_START_URLS,
     deliveroo_login_form_visible,
     fill_deliveroo_login,
+    login_noon,
     page_looks_authenticated,
 )
 from .channels.probes import CHANNEL_PROBES, ChannelProbe
@@ -512,24 +513,35 @@ async def login_interactive(channel: str) -> ProbeResult:
     return result
 
 
-async def login_with_account(channel: str, *, email: str, password: str) -> ProbeResult:
-    """Headed Chrome, fill stored credentials after Cloudflare, then capture.
+async def login_with_account(
+    channel: str,
+    *,
+    email: str,
+    password: str = "",
+    mailbox: dict[str, Any] | None = None,
+) -> ProbeResult:
+    """Headed Chrome, drive stored login after anti-bot, then capture.
 
-    Same unattached-Chrome start as `login_interactive` so CF sees a real
-    browser. Once the login form is on the page (or a session cookie already
-    exists), we attach over CDP and type the DB-stored email/password.
-    Only Deliveroo is wired: it is email+password with no OTP.
+    Same unattached-Chrome start as `login_interactive` so CF/Akamai sees a
+    real browser. Wired channels:
+
+    - **deliveroo** — email+password once the login form is visible
+    - **noon** — email → Graph OTP via `login_noon` (needs mailbox-auth)
     """
-    if channel != "deliveroo":
+    if channel not in ("deliveroo", "noon"):
         raise NeedsHumanLogin(
             f"{channel} auto-login is not wired yet; run `login --channel "
             f"{channel}` headed, or store the recipe and wait for that channel's "
             "fill helper."
         )
-    if not email or not password:
+    if channel == "deliveroo" and (not email or not password):
         raise NeedsHumanLogin(
             "Deliveroo account has no email/password in the DB. "
             "Run `store-account --channel deliveroo` first."
+        )
+    if channel == "noon" and not email:
+        raise NeedsHumanLogin(
+            "Noon account has no email in the DB. Save it on Admin → Logins."
         )
     if channel not in CHANNEL_PROBES:
         raise NeedsHumanLogin(f"unknown channel {channel}")
@@ -542,13 +554,19 @@ async def login_with_account(channel: str, *, email: str, password: str) -> Prob
     chrome = _spawn_chrome(profile=profile, port=port, url=start_url)
     filled = False
 
-    print(  # noqa: T201 — the operator may still need to tick Cloudflare
-        f"\n=== {channel} (auto) ===\n"
-        f"Google Chrome opened. If Cloudflare asks you to wait or tick a box,\n"
-        f"do that. I fill the email/password from the stored account once the\n"
-        f"login form is visible (up to {_LOGIN_WAIT_SECONDS // 60} minutes).\n",
-        flush=True,
-    )
+    if channel == "noon":
+        hint = (
+            f"Google Chrome opened on Noon RMS. I fill the email and poll the\n"
+            f"linked Graph mailbox for the OTP (up to {_LOGIN_WAIT_SECONDS // 60} "
+            f"minutes). If Akamai challenges, complete it in the window.\n"
+        )
+    else:
+        hint = (
+            f"Google Chrome opened. If Cloudflare asks you to wait or tick a box,\n"
+            f"do that. I fill the email/password from the stored account once the\n"
+            f"login form is visible (up to {_LOGIN_WAIT_SECONDS // 60} minutes).\n"
+        )
+    print(f"\n=== {channel} (auto) ===\n{hint}", flush=True)  # noqa: T201
 
     try:
         await _wait_for_cdp(port)
@@ -580,6 +598,12 @@ async def login_with_account(channel: str, *, email: str, password: str) -> Prob
 
                         page.on("request", _on_request)
                         logger.info("%s: attached to Chrome for auto-login", channel)
+                        if channel == "noon" and not filled:
+                            logger.info("%s: driving email + Graph OTP", channel)
+                            await login_noon(
+                                context, mailbox=mailbox, email=email
+                            )
+                            filled = True
                     except Exception as exc:  # noqa: BLE001
                         logger.info("CDP attach retry: %s", exc)
                         await asyncio.sleep(2)
@@ -589,7 +613,11 @@ async def login_with_account(channel: str, *, email: str, password: str) -> Prob
                     try:
                         if await page_looks_authenticated(channel, page):
                             break
-                        if not filled and await deliveroo_login_form_visible(page):
+                        if (
+                            channel == "deliveroo"
+                            and not filled
+                            and await deliveroo_login_form_visible(page)
+                        ):
                             logger.info("%s: filling stored credentials", channel)
                             await fill_deliveroo_login(
                                 page, email=email, password=password

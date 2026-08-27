@@ -263,9 +263,22 @@ async def _dismiss_noon_passkey_prompt(page) -> None:
             continue
 
 
-async def login_noon(context, *, mailbox: dict | None = None) -> None:
-    if not settings.NOON_EMAIL:
-        raise LoginError("NOON_EMAIL is not configured.")
+async def login_noon(
+    context,
+    *,
+    mailbox: dict | None = None,
+    email: str | None = None,
+) -> None:
+    """Drive Noon RMS email → Graph OTP → optional passkey skip.
+
+    `email` comes from `aggregator_account` when `--auto` runs; falls back to
+    `NOON_EMAIL` so a laptop override still works without a DB rewrite.
+    """
+    address = (email or settings.NOON_EMAIL or "").strip()
+    if not address:
+        raise LoginError(
+            "Noon login needs an email on the account recipe or NOON_EMAIL."
+        )
     page = await context.new_page()
     await page.goto(NOON_RMS_URL, wait_until="domcontentloaded", timeout=60_000)
     await page.wait_for_timeout(5_000)
@@ -277,7 +290,7 @@ async def login_noon(context, *, mailbox: dict | None = None) -> None:
     identifier_input = login_frame.locator("input[name='channelIdentifier']")
     otp_since = datetime.now(UTC)
     if await identifier_input.count():
-        await identifier_input.fill(settings.NOON_EMAIL)
+        await identifier_input.fill(address)
         await login_frame.locator("button[type='submit']").click()
         await page.wait_for_timeout(5_000)
 
