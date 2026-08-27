@@ -77,14 +77,13 @@ async def push_probe(channel: str, result) -> dict[str, Any]:
 async def pull_keeta_orders_in_page(*, months_back: int = 1) -> dict[str, Any]:
     """Fetch Keeta's getOrders in-page (mtgsig-signed) and push the payloads.
 
-    Opens a browser context from the stored Keeta storage_state, evaluates the
-    signed `getOrders` fetch in the page (`keeta_pull.fetch_keeta_orders`), and
-    hands the raw payloads to the API, which parses each with `keeta_provider`.
-    Playwright is imported lazily, so this module imports without the browser lib.
+    Uses the hydrated Playwright `storage_state` + sessionStorage, *not* the
+    headed Chrome profile. That profile often keeps a stale HK login redirect
+    that clears `LOGIN_ACCOUNTID` even when the API session blob is good.
+    Playwright is imported lazily so this module imports without the browser lib.
     """
+    from .browser import _open_storage_state_context
     from .engine import async_playwright
-
-    from .browser import _open_context
 
     state = _storage_state_path("keeta")
     if not state.exists():
@@ -93,7 +92,7 @@ async def pull_keeta_orders_in_page(*, months_back: int = 1) -> dict[str, Any]:
         )
 
     async with async_playwright() as pw:
-        opened = await _open_context(pw, "keeta", headed=not settings.HEADLESS)
+        opened = await _open_storage_state_context(pw, "keeta")
         try:
             payloads = await fetch_keeta_orders(opened.context, months_back=months_back)
         finally:

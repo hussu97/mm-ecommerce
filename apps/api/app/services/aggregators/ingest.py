@@ -21,7 +21,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import timedelta
+from datetime import date, datetime, timedelta
+from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -138,6 +140,23 @@ _PRESERVE_IF_NULL = (
 )
 
 
+def _json_safe(value: Any) -> Any:
+    """JSONB column values cannot hold Decimal/datetime — coerce for storage.
+
+    Keeta's flatten path divides fils into `Decimal` on the same dict that becomes
+    `StandardOrder.raw`; without this the upsert raises TypeError mid-batch.
+    """
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
 async def upsert_order(db: AsyncSession, channel: str, order: StandardOrder) -> None:
     branch_id = await _branch_for(db, channel, order.external_outlet_id)
     values = {
@@ -158,7 +177,7 @@ async def upsert_order(db: AsyncSession, channel: str, order: StandardOrder) -> 
         "refund_amount": order.refund_amount,
         "net_payable": order.net_payable,
         "statement_id": order.statement_id,
-        "raw": order.raw,
+        "raw": _json_safe(order.raw) if order.raw is not None else None,
     }
     insert_stmt = pg_insert(AggregatorOrder).values(**values)
     update = {}
@@ -247,7 +266,7 @@ async def _upsert_statement(
         "total_fees": statement.total_fees,
         "total_vat": statement.total_vat,
         "currency": statement.currency,
-        "raw": statement.raw,
+        "raw": _json_safe(statement.raw) if statement.raw is not None else None,
     }
     update = {k: v for k, v in values.items() if k not in ("channel", "statement_id")}
     update["updated_at"] = utcnow()
