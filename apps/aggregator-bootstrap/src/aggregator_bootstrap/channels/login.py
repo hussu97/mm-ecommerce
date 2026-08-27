@@ -316,6 +316,14 @@ async def login_noon(context, *, mailbox: dict | None = None) -> None:
 # detected and surfaced (AntiBotChallengeError) rather than bumped against.
 
 KEETA_PORTAL_URL = "https://merchant.mykeeta.com/?region=AE"
+#: Headed login must open the AE login form directly. Opening `/?region=AE`
+#: alone often redirects to `pc/login?...region=HK` (Hong Kong), which then
+#: sticks the session on the wrong marketplace.
+KEETA_LOGIN_URL = (
+    "https://merchant.mykeeta.com/pc/login"
+    "?service=merchants&locale=en&region=AE&loginRegion=AE"
+    "&backurl=https%3A%2F%2Fmerchant.mykeeta.com%2F%3Fregion%3DAE"
+)
 _KEETA_VERIFICATION_PATTERNS = (
     "captcha",
     "verification code",
@@ -341,26 +349,36 @@ async def _keeta_verification_wall(page) -> bool:
 
 
 async def _keeta_has_authenticated_surface(page) -> bool:
+    """True only when the portal has a real merchant session, not the AE landing.
+
+    The marketing / pre-login `/?region=AE` page has no password field and no
+    "sign in" string in some locales, so the old body/URL heuristic treated it
+    as logged-in and pushed an empty session. Require LOGIN_ACCOUNTID (and
+    prefer SHOP_IDS) in sessionStorage instead.
+    """
     if "passport.mykeeta.com" in page.url:
+        return False
+    if "/pc/login" in page.url or "/login" in page.url.lower():
+        return False
+    try:
+        markers = await page.evaluate(
+            """() => ({
+              accountId: sessionStorage.getItem("LOGIN_ACCOUNTID") || "",
+              shopIds: sessionStorage.getItem("SHOP_IDS") || "",
+              region: sessionStorage.getItem("region") || "",
+            })"""
+        )
+    except Exception:  # noqa: BLE001
+        return False
+    if not isinstance(markers, dict):
+        return False
+    account = str(markers.get("accountId") or "").strip()
+    if not account:
         return False
     body = await _keeta_body_lower(page)
     if "sign in" in body or "become a keeta partner" in body:
         return False
-    for marker in (
-        "order manager",
-        "store management",
-        "shop management",
-        "finance",
-        "settlement",
-        "dashboard",
-    ):
-        if marker in body:
-            return True
-    try:
-        no_password = await page.locator("input[type='password']").count() == 0
-    except Exception:  # noqa: BLE001
-        no_password = False
-    return no_password and "merchant.mykeeta.com" in page.url
+    return True
 
 
 async def _keeta_first_visible(page, selectors):
@@ -500,7 +518,7 @@ LOGIN_START_URLS: dict[str, str] = {
     "deliveroo": DELIVEROO_LOGIN_URL,
     "talabat": TALABAT_LOGIN_URL,
     "noon": NOON_RMS_URL,
-    "keeta": KEETA_PORTAL_URL,
+    "keeta": KEETA_LOGIN_URL,
     "careem": "https://partners.careem.com/",
 }
 
