@@ -228,6 +228,7 @@ class BaseAggregatorClient(ABC):
         params: dict[str, Any] | None = None,
         json_body: Any | None = None,
         data: Any | None = None,
+        timeout: float | None = None,
     ) -> Any:
         """One call, returning the transport's raw response (JSON or CSV/text).
 
@@ -236,17 +237,30 @@ class BaseAggregatorClient(ABC):
         """
         merged = self.build_headers(session, headers)
         last_response: Any = None
+        call_timeout = timeout if timeout is not None else self._timeout
         try:
             for attempt in range(2):
                 await self._limiter.acquire()
                 if self.uses_tls_impersonation and _HAS_CURL_CFFI:
                     last_response = await self._curl_request(
-                        method, url, merged, params, json_body, data
+                        method,
+                        url,
+                        merged,
+                        params,
+                        json_body,
+                        data,
+                        timeout=call_timeout,
                     )
                 else:
                     self._warn_if_impersonation_wanted()
                     last_response = await self._httpx_request(
-                        method, url, merged, params, json_body, data
+                        method,
+                        url,
+                        merged,
+                        params,
+                        json_body,
+                        data,
+                        timeout=call_timeout,
                     )
                 status = getattr(last_response, "status_code", 0)
                 if status in _RETRY_STATUSES and attempt == 0:
@@ -267,8 +281,12 @@ class BaseAggregatorClient(ABC):
         params: dict[str, Any] | None,
         json_body: Any | None,
         data: Any | None,
+        *,
+        timeout: float | None = None,
     ) -> httpx.Response:
-        async with httpx.AsyncClient(timeout=self._timeout, http2=True) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout or self._timeout, http2=True
+        ) as client:
             return await client.request(
                 method,
                 url,
@@ -287,6 +305,8 @@ class BaseAggregatorClient(ABC):
         params: dict[str, Any] | None,
         json_body: Any | None,
         data: Any | None,
+        *,
+        timeout: float | None = None,
     ) -> Any:
         async with curl_requests.AsyncSession() as client:  # type: ignore[union-attr]
             return await client.request(
@@ -297,7 +317,7 @@ class BaseAggregatorClient(ABC):
                 json=json_body,
                 data=data,
                 impersonate=self.impersonate_target,
-                timeout=self._timeout,
+                timeout=timeout or self._timeout,
             )
 
     def _warn_if_impersonation_wanted(self) -> None:

@@ -86,6 +86,9 @@ _EXPORT_STATUS_TERMINAL_BAD = {
 }
 _EXPORT_POLL_TIMEOUT_SECONDS = 180
 _EXPORT_POLL_INTERVAL_SECONDS = 5
+#: Year-long order exports can be several MB; the default 20s aggregator timeout
+#: is too tight once PerimeterX has let the download start.
+_CSV_DOWNLOAD_TIMEOUT_SECONDS = 120.0
 
 # ── Finance pagination ────────────────────────────────────────────────────────
 _FINANCE_PAGE_SIZE = 100
@@ -616,7 +619,13 @@ class TalabatClient(BaseAggregatorClient):
         """GET the completed export's CSV, replaying the bearer as the browser did."""
         token = self._access_token(session)
         headers = {"authorization": f"Bearer {token}"} if token else None
-        response = await self.request_raw(session, "GET", download_url, headers=headers)
+        response = await self.request_raw(
+            session,
+            "GET",
+            download_url,
+            headers=headers,
+            timeout=_CSV_DOWNLOAD_TIMEOUT_SECONDS,
+        )
         if self._is_auth_failure(response):
             raise AggregatorUnavailableError(
                 f"{self.channel} report download was challenged/blocked"
