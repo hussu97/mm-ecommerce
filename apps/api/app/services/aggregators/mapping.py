@@ -186,3 +186,52 @@ async def map_careem(
         )
         mapped += 1
     return mapped
+
+
+async def outlet_ids_for_channel(db: AsyncSession, channel: str) -> list[str]:
+    """Active `external_outlet_id` values for a channel — the store ids exports scope to."""
+    rows = await db.scalars(
+        select(AggregatorBranchMap.external_outlet_id).where(
+            AggregatorBranchMap.channel == channel,
+            AggregatorBranchMap.is_active.is_(True),
+            AggregatorBranchMap.external_outlet_id.is_not(None),
+        )
+    )
+    return [str(outlet_id) for outlet_id in rows if outlet_id]
+
+
+async def finance_accounts_for_channel(
+    db: AsyncSession, channel: str
+) -> list[dict[str, str]]:
+    """Finance API account descriptors from the branch map.
+
+    Each active row becomes `{grid, billingParentId, chainId}` — the shape
+    Talabat's finance gateway expects. Other channels can reuse the same helper
+    when their portal keys payouts on outlet + brand ids stored in the map.
+    """
+    rows = await db.scalars(
+        select(AggregatorBranchMap).where(
+            AggregatorBranchMap.channel == channel,
+            AggregatorBranchMap.is_active.is_(True),
+            AggregatorBranchMap.external_outlet_id.is_not(None),
+        )
+    )
+    accounts: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for row in rows:
+        grid = str(row.external_outlet_id or "").strip()
+        if not grid:
+            continue
+        brand = str(row.external_brand_id or grid).strip() or grid
+        key = (grid, brand)
+        if key in seen:
+            continue
+        seen.add(key)
+        accounts.append(
+            {
+                "grid": grid,
+                "billingParentId": brand,
+                "chainId": brand,
+            }
+        )
+    return accounts

@@ -55,13 +55,13 @@ def login(
     auto: bool = typer.Option(
         False,
         "--auto",
-        help="Drive stored login: Deliveroo email/password, Noon email+Graph OTP.",
+        help="Drive stored login: Deliveroo email/password; Noon/Talabat email+Graph OTP.",
     ),
 ) -> None:
     """Open a headed browser, wait for you to sign in, capture and push.
 
     Default: you complete OTP/captcha/passkey in the window. `--auto` drives
-    Deliveroo (email/password) or Noon (email + Graph OTP after mailbox-auth).
+    Deliveroo (email/password) or Noon/Talabat (email + Graph OTP after mailbox-auth).
     The resulting Playwright state is pushed to the API.
     """
     if channel not in CHANNEL_PROBES:

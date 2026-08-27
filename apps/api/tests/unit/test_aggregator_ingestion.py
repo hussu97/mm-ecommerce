@@ -611,6 +611,29 @@ def test_noon_wallet_json_lines_shape_parses():
     assert rows[0]["entryType"] == "statement"
 
 
+def test_talabat_csv_parses_orders_and_line_items():
+    from app.services.providers.talabat_provider import TalabatClient
+
+    csv_text = (
+        "Order ID,Store ID,Order received at,Order status,Subtotal,Commission,"
+        "Order Items\n"
+        "TB123,711571,2026-08-26 14:30,Delivered,40.00,8.00,"
+        '"2 Chocolate Cake"\n'
+        "TB124,728173,2026-08-26 15:00,Cancelled,25.00,,"
+        '"1 Red Velvet"\n'
+    )
+    orders = TalabatClient()._orders_from_csv(csv_text)
+    assert len(orders) == 2
+    assert orders[0].external_order_id == "TB123"
+    assert orders[0].external_outlet_id == "711571"
+    assert orders[0].status == "Delivered"
+    assert len(orders[0].items) == 1
+    assert orders[0].items[0].item_name == "Chocolate Cake"
+    assert orders[0].items[0].quantity == Decimal("2")
+    assert orders[0].items[0].amount_is_known is True
+    assert orders[1].status == "Cancelled"
+
+
 def test_registry_has_the_four_httpx_channels_and_not_keeta():
     from app.services.aggregators import ingest
 

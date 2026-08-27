@@ -92,19 +92,24 @@ _KEETA_STATUS_TO_MM: dict[str, OrderStatusEnum] = {
     "50": OrderStatusEnum.CANCELLED,
 }
 
-#: Deliveroo's human status words → MM status.
-_DELIVEROO_STATUS_TO_MM: dict[str, OrderStatusEnum] = {
+#: English status words shared by Deliveroo, Talabat, and similar portals.
+_ENGLISH_AGGREGATOR_STATUS_TO_MM: dict[str, OrderStatusEnum] = {
     "delivered": OrderStatusEnum.DELIVERED,
     "completed": OrderStatusEnum.DELIVERED,
+    "picked up": OrderStatusEnum.DELIVERED,
     "canceled": OrderStatusEnum.CANCELLED,
     "cancelled": OrderStatusEnum.CANCELLED,
     "rejected": OrderStatusEnum.CANCELLED,
     "failed": OrderStatusEnum.CANCELLED,
+    "declined": OrderStatusEnum.CANCELLED,
 }
 
 _STATUS_MAPS = {
     "keeta": _KEETA_STATUS_TO_MM,
-    "deliveroo": _DELIVEROO_STATUS_TO_MM,
+    "deliveroo": _ENGLISH_AGGREGATOR_STATUS_TO_MM,
+    "talabat": _ENGLISH_AGGREGATOR_STATUS_TO_MM,
+    "noon": _ENGLISH_AGGREGATOR_STATUS_TO_MM,
+    "careem": _ENGLISH_AGGREGATOR_STATUS_TO_MM,
 }
 
 

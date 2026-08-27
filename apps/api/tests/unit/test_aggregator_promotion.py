@@ -56,8 +56,14 @@ def test_deliveroo_status_words_map():
     assert promote._target_status("deliveroo", "en route") is None
 
 
+def test_talabat_status_words_map():
+    assert promote._target_status("talabat", "Delivered") == OrderStatusEnum.DELIVERED
+    assert promote._target_status("talabat", "cancelled") == OrderStatusEnum.CANCELLED
+    assert promote._target_status("talabat", "preparing") is None
+
+
 def test_unknown_channel_has_no_mapping():
-    assert promote._target_status("careem", "delivered") is None
+    assert promote._target_status("fake_channel", "delivered") is None
 
 
 # ── money mapping ────────────────────────────────────────────────────────────

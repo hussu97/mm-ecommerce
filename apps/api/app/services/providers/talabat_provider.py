@@ -44,9 +44,12 @@ import csv
 import io
 import logging
 import re
+from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.aggregator import CHANNEL_TALABAT, GRAIN_LINE
 from app.services.aggregators.normalized import (
@@ -412,6 +415,43 @@ class TalabatClient(BaseAggregatorClient):
             if a.get("grid") is not None
         ]
         return grids
+
+    @staticmethod
+    def _account_ids_in(tokens: dict) -> bool:
+        for key in ("account_ids", "store_ids", "accountIds"):
+            value = tokens.get(key)
+            if isinstance(value, list) and value:
+                return True
+        return False
+
+    async def prepare_session(
+        self, db: AsyncSession, session: LoadedSession | None
+    ) -> LoadedSession | None:
+        """Fill store/finance account descriptors from `aggregator_branch_map`.
+
+        The bootstrap often captures only the bearer and anti-bot cookies; the
+        outlet ids the Report Builder and finance queries scope to live in the
+        branch map (same pattern as Deliveroo's `prepare_session`).
+        """
+        if session is None:
+            return None
+        from app.services.aggregators import mapping
+
+        tokens = dict(session.tokens or {})
+        changed = False
+        if not self._account_ids_in(tokens):
+            outlets = await mapping.outlet_ids_for_channel(db, self.channel)
+            if outlets:
+                tokens["account_ids"] = outlets
+                changed = True
+        if not self._finance_accounts(replace(session, tokens=tokens)):
+            accounts = await mapping.finance_accounts_for_channel(db, self.channel)
+            if accounts:
+                tokens["finance_accounts"] = accounts
+                changed = True
+        if changed:
+            return replace(session, tokens=tokens)
+        return session
 
     # ── GraphQL transport ─────────────────────────────────────────────────────
     async def _graphql(

@@ -386,7 +386,7 @@ async def _sweep_channel(
 ) -> int:
     """One channel's sweep for one mode. Returns records written; 0 on skip."""
     session = await session_store.load(db, channel)
-    session = await session_store.enrich_noon_from_account(db, session)
+    session = await session_store.enrich_session(db, session)
     prepare = getattr(provider, "prepare_session", None)
     if callable(prepare):
         session = await prepare(db, session)

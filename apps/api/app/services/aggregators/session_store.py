@@ -94,6 +94,17 @@ async def enrich_noon_from_account(
     return merge_noon_scope_from_extras(session, acct.extras or {})
 
 
+async def enrich_session(
+    db: AsyncSession, session: LoadedSession | None
+) -> LoadedSession | None:
+    """Channel-specific session enrichment before a sweep (account extras, etc.)."""
+    if session is None:
+        return session
+    if session.channel == "noon":
+        return await enrich_noon_from_account(db, session)
+    return session
+
+
 async def _row(
     db: AsyncSession, channel: str, account_ref: str = ""
 ) -> AggregatorSession | None:

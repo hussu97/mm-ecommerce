@@ -151,10 +151,24 @@ async def _talabat_is_authenticated_app(page) -> bool:
     )
 
 
-async def login_talabat(context, *, mailbox: dict | None = None) -> None:
-    if not settings.TALABAT_EMAIL or not settings.TALABAT_PASSWORD:
-        raise LoginError("TALABAT_EMAIL / TALABAT_PASSWORD are not configured.")
-    page = await context.new_page()
+async def login_talabat(
+    context,
+    *,
+    mailbox: dict | None = None,
+    email: str | None = None,
+    password: str | None = None,
+    page=None,
+) -> None:
+    address = (email or settings.TALABAT_EMAIL or "").strip()
+    pwd = password or settings.TALABAT_PASSWORD or ""
+    if not address or not pwd:
+        raise LoginError(
+            "Talabat login needs email/password on the account recipe or "
+            "TALABAT_EMAIL / TALABAT_PASSWORD."
+        )
+    owned_page = page is None
+    if page is None:
+        page = await context.new_page()
     await page.goto(TALABAT_LOGIN_URL, wait_until="domcontentloaded", timeout=60_000)
     await page.wait_for_timeout(3_000)
     await _dismiss_talabat_cookie_banner(page)
@@ -179,8 +193,8 @@ async def login_talabat(context, *, mailbox: dict | None = None) -> None:
             f"Talabat login page did not expose credential inputs at {page.url}"
         ) from exc
 
-    await email_input.fill(settings.TALABAT_EMAIL)
-    await password_input.fill(settings.TALABAT_PASSWORD)
+    await email_input.fill(address)
+    await password_input.fill(pwd)
     otp_since = datetime.now(UTC)
     await page.locator("button[type='submit']").click(timeout=5_000)
     await page.wait_for_timeout(4_000)
@@ -216,6 +230,9 @@ async def login_talabat(context, *, mailbox: dict | None = None) -> None:
     await page.keyboard.type(otp[:6])
     await page.wait_for_url("**/dashboard", timeout=30_000)
     await page.wait_for_timeout(5_000)
+    if owned_page:
+        return
+    return page
 
 
 # --- Noon -------------------------------------------------------------------
