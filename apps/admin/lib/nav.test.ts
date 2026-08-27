@@ -22,6 +22,13 @@ describe('activeNavHref', () => {
     expect(activeNavHref('/analytics')).toBe('/analytics');
   });
 
+  it('lights Logs from any of its three tab routes', () => {
+    // Email, Webhooks and Audit are tabs of Logs; none has its own nav entry.
+    expect(activeNavHref('/logs/email')).toBe('/logs');
+    expect(activeNavHref('/logs/webhooks')).toBe('/logs');
+    expect(activeNavHref('/logs/audit')).toBe('/logs');
+  });
+
   it('lights a section up from one of its detail pages', () => {
     // `/orders/[orderNumber]` has no nav entry of its own, so the section it
     // belongs to is the answer.
