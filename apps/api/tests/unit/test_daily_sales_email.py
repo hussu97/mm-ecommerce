@@ -206,9 +206,9 @@ async def test_xlsx_has_the_five_sections_with_discount_and_charges_negative():
     assert shj_charges[header.index("talabat")] == -900.0  # 800 + 100, negative
 
 
-# ── Scheduling: which completed days a tick sends ────────────────────────────
+# ── Scheduling: a day sends once the last branch's close + buffer has passed ──
 
-_NOW = datetime(2026, 8, 25, 6, 0, tzinfo=ZoneInfo("Asia/Dubai"))
+_DUBAI = ZoneInfo("Asia/Dubai")
 
 
 @asynccontextmanager
@@ -231,11 +231,13 @@ def _branches_db(branches):
     return SimpleNamespace(execute=execute)
 
 
-async def _run_tick(*, in_progress: dict[str, str], already_sent: set[str]):
-    """Drive `_tick` with `business_date_for` and the send/guard stubbed out, so
-    the test states the branch's in-progress business day directly and reads back
-    which dates got mailed."""
-    branches = [SimpleNamespace(name=n) for n in in_progress]
+def _branch(name, opening_from="09:00", opening_to="23:00"):
+    return SimpleNamespace(name=name, opening_from=opening_from, opening_to=opening_to)
+
+
+async def _run_tick(*, now: datetime, branches: list, already_sent: set[str]):
+    """Drive `_tick` at a given instant with real branch hours, the send and the
+    already-sent guard stubbed, and read back which business dates got mailed."""
     sent: list[str] = []
 
     async def fake_send(_db, *, date_from, date_to, recipients):
@@ -246,12 +248,7 @@ async def _run_tick(*, in_progress: dict[str, str], already_sent: set[str]):
         patch.object(
             dse.business_day_service,
             "resolve_timezone",
-            AsyncMock(return_value=ZoneInfo("Asia/Dubai")),
-        ),
-        patch.object(
-            dse.business_day_service,
-            "business_date_for",
-            lambda branch, moment, tz: in_progress[branch.name],
+            AsyncMock(return_value=_DUBAI),
         ),
         patch.object(
             dse,
@@ -261,17 +258,43 @@ async def _run_tick(*, in_progress: dict[str, str], already_sent: set[str]):
         patch.object(dse, "send", fake_send),
         patch.object(dse.advisory_lock, "held", _lock_ok),
     ):
-        await dse._tick(_branches_db(branches), now=_NOW)
+        await dse._tick(_branches_db(branches), now=now)
     return sent
 
 
 @pytest.mark.asyncio
-async def test_it_sends_every_completed_day_in_the_window_oldest_first():
-    # Nothing mailed yet: it sends the just-ended day and catches up the two
-    # before it — never the in-progress day. This is the fix: a missed night is
-    # caught up, not lost.
+async def test_it_sends_todays_report_after_the_last_close_plus_buffer():
+    # Two branches, closing 22:00 and 23:00. At 23:50 the later close (23:00) plus
+    # the 45-minute settle buffer (23:45) is behind us, so today is due. The three
+    # prior days are already mailed, isolating "today sends".
     sent = await _run_tick(
-        in_progress={"A": "2026-08-25", "B": "2026-08-25"}, already_sent=set()
+        now=datetime(2026, 8, 25, 23, 50, tzinfo=_DUBAI),
+        branches=[_branch("A", opening_to="22:00"), _branch("B", opening_to="23:00")],
+        already_sent={"2026-08-22", "2026-08-23", "2026-08-24"},
+    )
+    assert sent == ["2026-08-25"]
+
+
+@pytest.mark.asyncio
+async def test_it_holds_today_until_the_settle_buffer_has_passed():
+    # 23:30 is after the 23:00 close but inside the 45-minute buffer (due 23:45),
+    # so today is held; the prior days are already sent, so nothing goes out.
+    sent = await _run_tick(
+        now=datetime(2026, 8, 25, 23, 30, tzinfo=_DUBAI),
+        branches=[_branch("A", opening_to="23:00")],
+        already_sent={"2026-08-22", "2026-08-23", "2026-08-24"},
+    )
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_it_catches_up_completed_days_oldest_first_never_the_in_progress_day():
+    # Midday: today's close (23:00) has not passed, so the in-progress day is held,
+    # while the three completed days before it are all due and unmailed.
+    sent = await _run_tick(
+        now=datetime(2026, 8, 25, 12, 0, tzinfo=_DUBAI),
+        branches=[_branch("A", opening_to="23:00")],
+        already_sent=set(),
     )
     assert sent == ["2026-08-22", "2026-08-23", "2026-08-24"]
     assert "2026-08-25" not in sent
@@ -280,7 +303,8 @@ async def test_it_sends_every_completed_day_in_the_window_oldest_first():
 @pytest.mark.asyncio
 async def test_it_skips_days_already_mailed():
     sent = await _run_tick(
-        in_progress={"A": "2026-08-25", "B": "2026-08-25"},
+        now=datetime(2026, 8, 25, 12, 0, tzinfo=_DUBAI),
+        branches=[_branch("A", opening_to="23:00")],
         already_sent={"2026-08-22", "2026-08-23"},
     )
     assert sent == ["2026-08-24"]
@@ -289,19 +313,35 @@ async def test_it_skips_days_already_mailed():
 @pytest.mark.asyncio
 async def test_it_sends_nothing_when_the_window_is_all_mailed():
     sent = await _run_tick(
-        in_progress={"A": "2026-08-25", "B": "2026-08-25"},
+        now=datetime(2026, 8, 25, 12, 0, tzinfo=_DUBAI),
+        branches=[_branch("A", opening_to="23:00")],
         already_sent={"2026-08-22", "2026-08-23", "2026-08-24"},
     )
     assert sent == []
 
 
 @pytest.mark.asyncio
-async def test_it_waits_for_the_last_branch_before_sending_a_day():
-    # B is still trading 2026-08-24 while A has rolled to the 25th. The 24th is
-    # not complete everywhere, so it is held back; the 23rd (done for both) sends.
-    # A branch closing late or past midnight can no longer poison the estate.
-    sent = await _run_tick(
-        in_progress={"A": "2026-08-25", "B": "2026-08-24"}, already_sent=set()
+async def test_a_past_midnight_branch_holds_its_day_until_it_actually_closes():
+    # A kitchen open 09:00 → 02:00 shuts the 24th's trading at 02:00 on the 25th,
+    # later than a 23:00 branch. The 24th's report must wait for that 02:00 close
+    # (+ buffer, so 02:45), not fire at the earlier branch's close.
+    late = _branch("Late", opening_from="09:00", opening_to="02:00")
+    early = _branch("Early", opening_to="23:00")
+
+    # 02:30 on the 25th: past midnight but before the 02:45 due time — the 24th is
+    # held, while the 23rd (whose 02:00 close was the 24th) is already due.
+    held = await _run_tick(
+        now=datetime(2026, 8, 25, 2, 30, tzinfo=_DUBAI),
+        branches=[late, early],
+        already_sent=set(),
     )
-    assert "2026-08-24" not in sent
-    assert "2026-08-23" in sent
+    assert "2026-08-24" not in held
+    assert "2026-08-23" in held
+
+    # 03:00 on the 25th: the 02:00 close plus buffer has passed, so the 24th sends.
+    due = await _run_tick(
+        now=datetime(2026, 8, 25, 3, 0, tzinfo=_DUBAI),
+        branches=[late, early],
+        already_sent={"2026-08-22", "2026-08-23"},
+    )
+    assert due == ["2026-08-24"]

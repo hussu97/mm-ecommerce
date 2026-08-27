@@ -34,7 +34,7 @@ from io import BytesIO
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import advisory_lock
+from app.core import advisory_lock, trading_hours
 from app.core.database import AsyncSessionFactory
 from app.models.branch import Branch
 from app.models.email_log import EmailLog
@@ -52,9 +52,12 @@ _ZERO = Decimal("0")
 #: Same flat 64-bit namespace as every other advisory lock. "mmBATCH" + 5.
 _ADVISORY_LOCK_KEY = 0x6D6D_4241_5443_4805
 
-#: How long after the last branch closes before the mail goes out — enough for a
-#: straggler delivery webhook to land without making anyone wait for it.
-_CLOSE_BUFFER = timedelta(minutes=15)
+#: How long after the last branch's configured close the mail goes out. The
+#: report counts *delivered* trade, so a rider still out at close — a website or
+#: aggregator order handed over after we snapshot — would be undercounted. Forty
+#: five minutes lets that tail settle without pushing the mail deep into the
+#: night; shorten it for a faster but rougher send.
+_CLOSE_BUFFER = timedelta(minutes=45)
 
 _TICK_SECONDS = 600
 
@@ -342,14 +345,11 @@ async def send(
 
 
 #: How many recently-ended business days a tick will still send if they were
-#: missed. The report used to be sendable only in the ~45-minute slice between the
-#: last branch's close and local midnight, with no catch-up: a deploy, a restart,
-#: or a single slow tick in that window lost the night permanently, and a branch
-#: closing at or past midnight poisoned the window for the whole estate. Now a
-#: tick sends any *completed* business day still unsent within this look-back, so
-#: a missed night is caught up on the next tick rather than lost. Three days
-#: covers a weekend outage without ever backfilling ancient history (the
-#: `_already_sent` guard skips anything already mailed).
+#: missed. A day is sent once every branch's configured close for it, plus
+#: `_CLOSE_BUFFER`, is in the past — so a deploy, a restart, or a slow tick around
+#: closing time no longer loses the night: the next tick within this look-back
+#: catches it up. Three days covers a weekend outage without ever backfilling
+#: ancient history (the `_already_sent` guard skips anything already mailed).
 _CATCHUP_DAYS = 3
 
 
@@ -367,6 +367,30 @@ async def _already_sent(db: AsyncSession, business_date: str) -> bool:
     return count > 0
 
 
+def _branch_close(branch: Branch, day: date) -> datetime | None:
+    """The instant `branch` shuts on trading day `day`, or None if its configured
+    hours do not parse.
+
+    `opening_to` is a wall-clock ``"HH:MM"`` on the shop's own clock. A branch
+    whose close is at or before its open trades past midnight (09:00 → 02:00), so
+    its close for `day` lands on the following morning — the +1440 shift, the same
+    reading `trading_hours` uses everywhere else. Returned as a real instant so
+    the caller can compare it to `now` without any date arithmetic of its own."""
+    opens = trading_hours.minutes_of(branch.opening_from)
+    closes = trading_hours.minutes_of(branch.opening_to)
+    if closes is None:
+        return None
+    minute = closes + 1440 if opens is not None and closes <= opens else closes
+    return trading_hours.at_minute(day, minute)
+
+
+def _last_close(branches: list[Branch], day: date) -> datetime | None:
+    """When the *last* of these branches shuts on `day` — the moment the estate's
+    trading for that day is over. None if no branch's hours parse."""
+    closes = [c for b in branches if (c := _branch_close(b, day)) is not None]
+    return max(closes) if closes else None
+
+
 async def _tick(db: AsyncSession, now: datetime | None = None) -> None:
     tz = await business_day_service.resolve_timezone(db)
     now = now or datetime.now(tz)
@@ -379,22 +403,22 @@ async def _tick(db: AsyncSession, now: datetime | None = None) -> None:
     if not branches:
         return
 
-    # The earliest business day still in progress across all branches, measured
-    # `_CLOSE_BUFFER` in the past so a day only counts as ended once its rollover
-    # is comfortably behind us. Any date strictly before this has closed for every
-    # branch — no `opening_to`/midnight arithmetic, so a past-midnight closer no
-    # longer poisons the run. `business_date_for` already applies each branch's own
-    # cut-off, which is the same boundary orders book under.
-    ref = now - _CLOSE_BUFFER
-    frontier = min(business_day_service.business_date_for(b, ref, tz) for b in branches)
-    frontier_date = date.fromisoformat(frontier)
-
-    # Every completed day in the look-back, oldest first, that has not been mailed.
-    targets = [
-        (frontier_date - timedelta(days=offset)).isoformat()
-        for offset in range(_CATCHUP_DAYS, 0, -1)
-    ]
-    pending = [t for t in targets if not await _already_sent(db, t)]
+    # Candidate business days: today back through the look-back, oldest first. A
+    # day is due once the *last* branch's close for it, plus the settle buffer,
+    # has passed. For a past-midnight branch that close is the following morning,
+    # and because the comparison is on the instant that resolves itself — no
+    # frontier, no rollover arithmetic here. Today is included so tonight's report
+    # goes out tonight; it is simply held until its own close has passed.
+    today = now.astimezone(trading_hours.TZ).date()
+    pending: list[str] = []
+    for offset in range(_CATCHUP_DAYS, -1, -1):
+        day = today - timedelta(days=offset)
+        last_close = _last_close(branches, day)
+        if last_close is None or now < last_close + _CLOSE_BUFFER:
+            continue
+        business_date = day.isoformat()
+        if not await _already_sent(db, business_date):
+            pending.append(business_date)
     if not pending:
         return
 
