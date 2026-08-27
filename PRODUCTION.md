@@ -979,6 +979,24 @@ pull (the VM has under 1 GB RAM). 22:00 lands the day's orders ~1 h before the
 `aggregator_session.last_warmed_at`. A **dead** session needs a one-off headed
 `login` from a laptop; the health log surfaces it.
 
+**Item map review queue (`external_item_map`).** Promotion maps each scraped line
+to a catalogue product: an **approved** `external_item_map` override wins, else a
+direct name/SKU match, and every name it meets is recorded as an *unapproved*
+proposal (like the GrubOps map — a guess never attaches on its own). Curate it:
+```sql
+-- unmapped or unreviewed names, worst first (no product guessed):
+SELECT system, external_name, product_id, match_method FROM external_item_map
+  WHERE NOT approved ORDER BY (product_id IS NULL) DESC, system, external_name;
+-- approve a correct guess, or point a name at the right product then approve:
+UPDATE external_item_map SET product_id='<product-uuid>', mm_kind='product',
+  match_method='manual', approved=true, approved_by='<you>' WHERE id='<row>';
+```
+Until a name is approved, promotion still uses its direct name match (so exact
+matches work immediately); an unmatched line stays `product_id` null and moves no
+stock until mapped here. Names key on a normalised (lower-cased, trimmed) form, so
+size-suffixed variants (`… (500 grams)`) are the usual thing to map by hand. A
+future admin screen will replace the SQL (the GrubOps map has one to mirror).
+
 ```bash
 gh secret set GRUBOPS_USERNAME --repo hussu97/mm-ecommerce
 gh secret set GRUBOPS_PASSWORD --repo hussu97/mm-ecommerce

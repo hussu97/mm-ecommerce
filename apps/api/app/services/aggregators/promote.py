@@ -65,6 +65,7 @@ from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.pos_order import OrderSourceEnum, OrderTax
 from app.models.product import Product
 from app.services.aggregators import reconcile
+from app.services.catalog import external_item_map_service
 from app.services.orders import order_fees, order_lifecycle
 
 logger = logging.getLogger(__name__)
@@ -173,16 +174,28 @@ def _money_fields(agg: AggregatorOrder) -> dict:
     }
 
 
-async def _match_product(db: AsyncSession, item_name: str | None) -> tuple:
-    """Best-effort catalog match for a scraped line, returning (product_id, sku).
+async def _match_product(
+    db: AsyncSession, channel: str, item_name: str | None
+) -> tuple:
+    """Resolve a scraped line name to a catalogue product, returning (product_id, sku).
 
-    Scraped items carry only a name, so the match is on the product's exact
-    (case-insensitive) name, then its SKU as a fallback. An unmatched line keeps
-    `product_id` null — no stock moves for it — and is counted by the caller. A
-    future `aggregator_item_map` would add overrides for names that differ from the
-    catalog (size-suffixed variants like "… (500 grams)")."""
+    Order of precedence:
+    1. an **approved** `external_item_map` override — a human's curated mapping,
+       the place to fix a name the catalogue spells differently (a size-suffixed
+       variant like "… (500 grams)", say);
+    2. a direct exact (case-insensitive) product name, then SKU, match.
+
+    Whatever the outcome, the name is recorded as a map *proposal* so an unmapped
+    or newly-seen item surfaces in the review queue rather than silently staying
+    unlinked. An unmatched line keeps `product_id` null — no stock moves for it.
+    """
     if not item_name or not item_name.strip():
         return None, ""
+    # 1. approved override wins.
+    pid, sku = await external_item_map_service.resolve_product(db, channel, item_name)
+    if pid is not None:
+        return pid, sku
+    # 2. direct name / SKU match.
     name = item_name.strip()
     hit = (
         await db.execute(
@@ -198,6 +211,11 @@ async def _match_product(db: AsyncSession, item_name: str | None) -> tuple:
                 select(Product.id, Product.sku).where(Product.sku == name).limit(1)
             )
         ).first()
+    guess = hit[0] if hit is not None else None
+    # 3. record the sighting for review (idempotent; never overwrites a curated row).
+    await external_item_map_service.record_proposal(
+        db, channel, item_name, guess_product_id=guess
+    )
     if hit is None:
         return None, ""
     return hit[0], hit[1] or ""
@@ -225,7 +243,7 @@ async def _add_lines(db: AsyncSession, order: Order, agg: AggregatorOrder) -> in
         total = (
             money(it.gross_sales) if it.gross_sales is not None else money(unit * qty)
         )
-        product_id, sku = await _match_product(db, it.item_name)
+        product_id, sku = await _match_product(db, agg.channel, it.item_name)
         if product_id is None:
             unmapped += 1
         db.add(

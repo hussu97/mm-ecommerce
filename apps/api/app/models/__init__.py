@@ -78,6 +78,7 @@ from .device_push_token import (  # noqa: F401
     PushPlatformEnum,
 )
 from .email_log import EmailLog  # noqa: F401
+from .external_item_map import ExternalItemMap  # noqa: F401
 from .grubops import (  # noqa: F401
     GrubOpsItemMap,
     GrubOpsLocationMap,

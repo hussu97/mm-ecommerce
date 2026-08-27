@@ -13,6 +13,8 @@ import uuid
 from decimal import Decimal
 from types import SimpleNamespace
 
+import pytest
+
 from app.models.order import OrderStatusEnum
 from app.services.aggregators import promote
 
@@ -186,7 +188,9 @@ class _MatchResult:
 
 
 class _MatchDB:
-    """Fake db: first execute() answers the name query, second the SKU fallback."""
+    """Fake db for the direct name/SKU match: first execute() answers the name
+    query, second the SKU fallback. Proposal writes (also execute()) are harmless
+    extra calls that return an empty result."""
 
     def __init__(self, name_hit=None, sku_hit=None):
         self._hits = [name_hit, sku_hit]
@@ -198,26 +202,73 @@ class _MatchDB:
         return _MatchResult(row)
 
 
-async def test_match_product_by_name():
+@pytest.fixture
+def no_override(monkeypatch):
+    """No approved map override, and swallow the proposal write — isolates the
+    direct name/SKU match path."""
+
+    async def _no_override(db, system, name):
+        return None, ""
+
+    async def _noop(db, system, name, **kw):
+        return None
+
+    monkeypatch.setattr(
+        promote.external_item_map_service, "resolve_product", _no_override
+    )
+    monkeypatch.setattr(promote.external_item_map_service, "record_proposal", _noop)
+
+
+async def test_match_product_by_name(no_override):
     pid = uuid.uuid4()
     db = _MatchDB(name_hit=(pid, "SKU1"))
-    assert await promote._match_product(db, "Basque Cheesecake") == (pid, "SKU1")
+    assert await promote._match_product(db, "keeta", "Basque Cheesecake") == (
+        pid,
+        "SKU1",
+    )
     assert db.calls == 1  # matched on name, no SKU fallback needed
 
 
-async def test_match_product_falls_back_to_sku():
+async def test_match_product_falls_back_to_sku(no_override):
     pid = uuid.uuid4()
     db = _MatchDB(name_hit=None, sku_hit=(pid, "SKU2"))
-    assert await promote._match_product(db, "SKU2") == (pid, "SKU2")
+    assert await promote._match_product(db, "keeta", "SKU2") == (pid, "SKU2")
     assert db.calls == 2  # name missed, SKU matched
 
 
-async def test_match_product_unmatched_is_null():
+async def test_match_product_unmatched_is_null(no_override):
     db = _MatchDB(name_hit=None, sku_hit=None)
-    assert await promote._match_product(db, "Nonexistent Item") == (None, "")
+    assert await promote._match_product(db, "keeta", "Nonexistent Item") == (None, "")
 
 
-async def test_match_product_blank_name_skips_db():
+async def test_match_product_blank_name_skips_db(no_override):
     db = _MatchDB(name_hit=(uuid.uuid4(), "X"))
-    assert await promote._match_product(db, "  ") == (None, "")
+    assert await promote._match_product(db, "keeta", "  ") == (None, "")
     assert db.calls == 0  # no query for an empty name
+
+
+async def test_approved_override_wins_over_name_match(monkeypatch):
+    """An approved map override short-circuits the direct match entirely."""
+    override_pid = uuid.uuid4()
+
+    async def _override(db, system, name):
+        assert system == "keeta"
+        return override_pid, "OVERRIDE-SKU"
+
+    called = {"proposal": 0}
+
+    async def _record(db, system, name, **kw):
+        called["proposal"] += 1
+
+    monkeypatch.setattr(promote.external_item_map_service, "resolve_product", _override)
+    monkeypatch.setattr(promote.external_item_map_service, "record_proposal", _record)
+
+    db = _MatchDB(name_hit=(uuid.uuid4(), "WRONG"))  # a different name-match, ignored
+    assert await promote._match_product(
+        db, "keeta", "Brookie Cookie Melt (500 grams)"
+    ) == (
+        override_pid,
+        "OVERRIDE-SKU",
+    )
+    assert db.calls == 0  # never reached the direct name query
+    assert called["proposal"] == 0  # an approved override records no proposal

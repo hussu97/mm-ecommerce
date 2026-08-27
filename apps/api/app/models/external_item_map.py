@@ -1,0 +1,128 @@
+"""One external system's item → this catalogue's product (or option).
+
+The generalised sibling of `grubops_item_map`: instead of being bound to GrubOps,
+one row maps an item as some *external system* names it — an aggregator's scraped
+item name (Keeta, Deliveroo, …), a GrubOps recipe id, a Foodics sku — to an MM
+`Product` or `ModifierOption`. `system` says which world the `external_ref` lives
+in, so a single table serves every integration and the same catalogue product can
+carry a different name in each.
+
+Matching an external name to a product is a *guess*, so — exactly like the GrubOps
+map — nothing acts on a row until a human sets `approved`: the aggregator promotion
+resolver reads only approved rows, and an unapproved row is a proposal sitting in a
+review queue. `match_method`/`match_score` record how the guess was made; a manual
+edit marks the row `manual`. `external_name` is the verbatim display string for that
+review screen — the resolver keys on `external_ref` (the normalised match key), not
+on it, because names drift and the key does not.
+"""
+
+from __future__ import annotations
+
+import uuid
+from typing import Any
+
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.models.base import Base, TimestampMixin, UUIDMixin
+
+#: The external worlds an item id/name can come from. A controlled internal
+#: vocabulary (rule 6: String + CHECK), spelled out here and mirrored in the
+#: migration. The aggregator channels plus the two POS-side systems, so the one
+#: table can eventually hold GrubOps/Foodics mappings too.
+EXTERNAL_SYSTEMS: tuple[str, ...] = (
+    "grubops",
+    "foodics",
+    "careem",
+    "deliveroo",
+    "talabat",
+    "noon",
+    "keeta",
+)
+_SYSTEMS_SQL = ", ".join(f"'{s}'" for s in EXTERNAL_SYSTEMS)
+
+KIND_PRODUCT = "product"
+KIND_OPTION = "option"
+MM_KINDS = (KIND_PRODUCT, KIND_OPTION)
+
+METHOD_EXACT = "exact"
+METHOD_FUZZY = "fuzzy"
+METHOD_MANUAL = "manual"
+MATCH_METHODS = (METHOD_EXACT, METHOD_FUZZY, METHOD_MANUAL)
+
+
+class ExternalItemMap(Base, UUIDMixin, TimestampMixin):
+    """One external item identifier, mapped to a catalogue product or option."""
+
+    __tablename__ = "external_item_map"
+
+    #: Which external system `external_ref` belongs to.
+    system: Mapped[str] = mapped_column(String(20), nullable=False)
+    #: The external match key — the normalised item name for a scraped aggregator
+    #: line, a recipe/modifier id for an id-based system. What the resolver joins on.
+    external_ref: Mapped[str] = mapped_column(String(200), nullable=False)
+    #: The verbatim external display name, for the review screen only.
+    external_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    #: Which side of the catalogue this maps to; `product` today for aggregators.
+    mm_kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=KIND_PRODUCT
+    )
+    product_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    modifier_option_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("modifier_options.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+
+    #: The gate. A row does nothing until a human approves it — the resolver reads
+    #: only approved rows; an unapproved one is a proposal awaiting review.
+    approved: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    approved_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    match_method: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=METHOD_FUZZY
+    )
+    match_score: Mapped[Any | None] = mapped_column(Numeric(5, 2), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("system", "external_ref", name="uq_external_item_map_ref"),
+        CheckConstraint(
+            f"system IN ({_SYSTEMS_SQL})", name="ck_external_item_map_system"
+        ),
+        CheckConstraint(
+            "mm_kind IN ('product', 'option')", name="ck_external_item_map_kind"
+        ),
+        CheckConstraint(
+            "match_method IN ('exact', 'fuzzy', 'manual')",
+            name="ck_external_item_map_method",
+        ),
+        # At most one catalogue entity, and it must match `mm_kind` when set. A row
+        # with neither set is a proposal for a name we have seen but not yet mapped.
+        CheckConstraint(
+            "NOT (product_id IS NOT NULL AND modifier_option_id IS NOT NULL) "
+            "AND (product_id IS NULL OR mm_kind = 'product') "
+            "AND (modifier_option_id IS NULL OR mm_kind = 'option')",
+            name="ck_external_item_map_one_entity",
+        ),
+        Index("ix_external_item_map_system_approved", "system", "approved"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ExternalItemMap {self.system} {self.external_ref!r}>"
