@@ -91,6 +91,24 @@ def test_money_fields_no_vat_is_zero_rate():
     assert fields["aggregator_delivery_fee"] == Decimal("0")
 
 
+def test_display_code_shortens_the_long_keeta_id():
+    # Keeta's scraped orderViewId is a 16-digit machine string; DSO/Al-Karama
+    # orders are never on GrubTech, so promotion is the only place a short
+    # driver code can be set. It must be the last four, not the whole id.
+    assert promote._display_code("5047842447122109") == "2109"
+
+
+def test_display_code_keeps_an_already_short_marketplace_number():
+    # Noon/Deliveroo hand out a short numeric order number that IS the code.
+    assert promote._display_code("5717") == "5717"
+    assert promote._display_code("0037") == "0037"
+
+
+def test_display_code_none_when_no_reference():
+    assert promote._display_code(None) is None
+    assert promote._display_code("") is None
+
+
 # ── ownership decision ───────────────────────────────────────────────────────
 async def test_off_platform_branch_is_created(monkeypatch):
     """DSO/Karama (no GrubOps) is owned by promotion — it builds the order."""

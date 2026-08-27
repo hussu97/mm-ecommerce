@@ -327,6 +327,26 @@ async def _drive_status(db: AsyncSession, order: Order, agg: AggregatorOrder) ->
             return
 
 
+def _display_code(external_reference: str | None) -> str | None:
+    """The short, driver-facing pickup code for a promotion-owned order.
+
+    Promotion owns exactly the orders GrubOps never sees — the branches not on
+    GrubTech (DSO/Al Karama on Keeta) — so unlike grubops `_driver_code` there is
+    no console sequence number to read. This is that function's reference-only
+    subset: a marketplace id that is already short and numeric IS the code
+    (Noon "5717", Deliveroo "0037"); a long machine id — Keeta's 16-digit
+    `orderViewId` — collapses to its last four, so the handoff ticket shows a
+    short code instead of the whole string. `external_reference` still keeps the
+    full marketplace id. Kept in step with grubops `_driver_code` rules 2 and 4.
+    """
+    ext = str(external_reference).strip() if external_reference else ""
+    if not ext:
+        return None
+    if ext.isdigit() and len(ext) <= 6:
+        return ext
+    return ext[-4:]
+
+
 async def _build_order(db: AsyncSession, agg: AggregatorOrder, label: str) -> Order:
     order = Order(
         order_number=await _order_number(db),
@@ -340,6 +360,7 @@ async def _build_order(db: AsyncSession, agg: AggregatorOrder, label: str) -> Or
         source=OrderSourceEnum.AGGREGATOR.value,
         aggregator_channel=label,
         external_reference=agg.external_order_id,
+        aggregator_display_code=_display_code(agg.external_order_id),
         branch_id=agg.branch_id,
         business_date=agg.business_date,
         payment_method="cod",
