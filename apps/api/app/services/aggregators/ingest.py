@@ -32,7 +32,7 @@ from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -158,6 +158,22 @@ _PRESERVE_IF_NULL = (
 )
 
 
+def _touched_at(model: Any, update: dict[str, Any]) -> Any:
+    """`updated_at` that advances only when a real value changed on conflict.
+
+    The upserts re-write the same rows every run (Keeta alone re-pulls ~2 months
+    of orders each pass), and an unconditional `updated_at = now()` made every one
+    look freshly changed — so the incremental `reconcile_channel`/`promote_channel`
+    passes, which key off `updated_at > *_at`, re-processed the whole history
+    daily. This keeps `updated_at` stable when the proposed values (already
+    COALESCE-adjusted for the preserve columns) are not distinct from the stored
+    ones, so a no-op re-upsert stays a no-op downstream. The row is still written;
+    only the change signal is honest.
+    """
+    changed = or_(*[getattr(model, col).is_distinct_from(expr) for col, expr in update.items()])
+    return case((changed, utcnow()), else_=model.updated_at)
+
+
 def _json_safe(value: Any) -> Any:
     """JSONB column values cannot hold Decimal/datetime — coerce for storage.
 
@@ -208,7 +224,7 @@ async def upsert_order(db: AsyncSession, channel: str, order: StandardOrder) -> 
             if k in _PRESERVE_IF_NULL
             else proposed
         )
-    update["updated_at"] = utcnow()
+    update["updated_at"] = _touched_at(AggregatorOrder, update)
     stmt = insert_stmt.on_conflict_do_update(
         constraint="uq_aggregator_order",
         set_=update,
@@ -236,7 +252,7 @@ async def upsert_order(db: AsyncSession, channel: str, order: StandardOrder) -> 
         item_update = {
             k: v for k, v in item_values.items() if k not in ("channel", "source_key")
         }
-        item_update["updated_at"] = utcnow()
+        item_update["updated_at"] = _touched_at(AggregatorOrderItem, item_update)
         await db.execute(
             pg_insert(AggregatorOrderItem)
             .values(**item_values)
@@ -287,7 +303,7 @@ async def _upsert_statement(
         "raw": _json_safe(statement.raw) if statement.raw is not None else None,
     }
     update = {k: v for k, v in values.items() if k not in ("channel", "statement_id")}
-    update["updated_at"] = utcnow()
+    update["updated_at"] = _touched_at(AggregatorStatement, update)
     await db.execute(
         pg_insert(AggregatorStatement)
         .values(**values)
@@ -310,7 +326,7 @@ async def _upsert_statement(
         line_update = {
             k: v for k, v in line_values.items() if k not in ("channel", "source_key")
         }
-        line_update["updated_at"] = utcnow()
+        line_update["updated_at"] = _touched_at(AggregatorStatementLine, line_update)
         await db.execute(
             pg_insert(AggregatorStatementLine)
             .values(**line_values)
@@ -333,7 +349,7 @@ async def _upsert_payout(db: AsyncSession, channel: str, payout) -> None:
         "currency": payout.currency,
     }
     update = {k: v for k, v in values.items() if k not in ("channel", "transfer_id")}
-    update["updated_at"] = utcnow()
+    update["updated_at"] = _touched_at(AggregatorPayout, update)
     await db.execute(
         pg_insert(AggregatorPayout)
         .values(**values)
