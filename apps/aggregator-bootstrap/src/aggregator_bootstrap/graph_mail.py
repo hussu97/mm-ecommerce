@@ -25,7 +25,7 @@ AUTHORIZE_SCOPES = (
     "https://graph.microsoft.com/User.Read"
 )
 TOKEN_SCOPES = "https://graph.microsoft.com/Mail.Read offline_access"
-DEFAULT_REDIRECT = "http://127.0.0.1:8765/callback"
+DEFAULT_REDIRECT = "http://localhost:8765/callback"
 DEFAULT_TENANT = "consumers"
 
 

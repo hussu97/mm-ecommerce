@@ -186,7 +186,7 @@ def _wait_for_auth_code(redirect_uri: str, *, timeout: float = 300.0) -> str:
     from urllib.parse import parse_qs, urlparse
 
     parsed = urlparse(redirect_uri)
-    host = parsed.hostname or "127.0.0.1"
+    host = parsed.hostname or "localhost"
     port = parsed.port or 8765
     holder: dict[str, str] = {}
 

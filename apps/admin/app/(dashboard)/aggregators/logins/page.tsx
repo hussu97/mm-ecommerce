@@ -99,7 +99,7 @@ function emptyForm(channel: (typeof CHANNELS)[number], existing?: AccountRow): F
     mailbox_client_id: mailbox?.client_id ?? '',
     mailbox_client_secret: '',
     mailbox_tenant: mailbox?.tenant || 'consumers',
-    mailbox_redirect_uri: mailbox?.redirect_uri || 'http://127.0.0.1:8765/callback',
+    mailbox_redirect_uri: mailbox?.redirect_uri || 'http://localhost:8765/callback',
     mailbox_host: mailbox?.host ?? '',
     mailbox_port: mailbox?.port != null ? String(mailbox.port) : '993',
     mailbox_username: mailbox?.username ?? '',
@@ -430,7 +430,7 @@ export default function LoginsPage() {
                       label="Redirect URI"
                       value={form.mailbox_redirect_uri}
                       onChange={e => setForm({ ...form, mailbox_redirect_uri: e.target.value })}
-                      placeholder="http://127.0.0.1:8765/callback"
+                      placeholder="http://localhost:8765/callback"
                       helper="Must match the redirect registered on this aggregator's Azure app."
                     />
                   </>
