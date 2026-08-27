@@ -130,11 +130,12 @@ def _item_discrepancy(agg_items, mm_items: list[OrderItem]) -> tuple[dict | None
     return (detail, flagged)
 
 
-#: Deliveroo hands back a CSV of *item* aggregates, not per-order rows; the
-#: ingest stores those as synthetic carrier orders (`deliveroo-items:<window>`,
-#: status `items_aggregate`) so the item feed is not lost. They are not real
-#: orders — there is nothing to match to an MM order and a `no_mm_order` flag on
-#: one would be noise — so reconciliation skips them.
+#: A defensive guard for legacy synthetic item-aggregate rows. Deliveroo now
+#: comes per-order through the Partner Hub provider (real order ids, line-grain
+#: items), so nothing writes these any more; but an older `deliveroo-items:<window>`
+#: carrier row (status `items_aggregate`) is not a real order — there is nothing
+#: to match to an MM order and a `no_mm_order` flag on one would be noise — so
+#: reconciliation skips any that remain.
 _CARRIER_ORDER_PREFIX = "deliveroo-items:"
 _CARRIER_ORDER_STATUS = "items_aggregate"
 

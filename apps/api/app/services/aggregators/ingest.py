@@ -51,6 +51,7 @@ from app.models.aggregator import (
     AggregatorOrder,
     AggregatorOrderItem,
     AggregatorPayout,
+    AggregatorSession,
     AggregatorStatement,
     AggregatorStatementLine,
     AggregatorSyncRun,
@@ -579,6 +580,43 @@ async def _run_daily_with_retry() -> None:
     logger.error("aggregator daily pass still not recorded after %s attempts", _RETRY_ATTEMPTS)
 
 
+#: A live session with no success/warm in this long is reported stale. Comfortably
+#: longer than the daily cadence, so an ordinary day never trips it.
+_HEALTH_STALE_AFTER = timedelta(days=2)
+
+
+async def _log_health() -> None:
+    """Log one health line per pass — a WARNING naming any channel that is not live
+    or has gone stale, so the VM's log-based alerting has a single signal to watch
+    (there is no ops push/email sink; these structured logs are the channel). Keeta
+    records `last_warmed_at` rather than `last_success_at` — it is pushed in by the
+    worker — so warming counts as liveness for it. Never raises."""
+    try:
+        async with AsyncSessionFactory() as db:
+            rows = list(await db.scalars(select(AggregatorSession)))
+    except Exception:  # noqa: BLE001 — health reporting must not fail a run
+        logger.exception("aggregator health check failed")
+        return
+    now = utcnow()
+    unhealthy: list[str] = []
+    for r in rows:
+        if r.status != SESSION_LIVE:
+            unhealthy.append(f"{r.channel}={r.status}")
+            continue
+        last = r.last_success_at or r.last_warmed_at
+        if last is not None:
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            if now - last > _HEALTH_STALE_AFTER:
+                unhealthy.append(f"{r.channel}=stale({(now - last).days}d)")
+    if unhealthy:
+        logger.warning(
+            "aggregator health: %s need attention", ", ".join(sorted(unhealthy))
+        )
+    else:
+        logger.info("aggregator health: all sessions live")
+
+
 async def run_scheduler_forever() -> None:
     """The once-daily aggregator pass, at `AGGREGATOR_RUN_HOUR_DXB` Dubai time.
 
@@ -596,6 +634,7 @@ async def run_scheduler_forever() -> None:
         if is_enabled() and not await _slot_ran_since(_last_due_at(utcnow())):
             logger.info("aggregator scheduler: last daily slot missed — catching up now")
             await _run_daily_with_retry()
+            await _log_health()
     except asyncio.CancelledError:
         raise
     except Exception:  # noqa: BLE001 — a failed catch-up must not kill the loop
@@ -606,6 +645,7 @@ async def run_scheduler_forever() -> None:
             nxt = _next_run_at(utcnow())
             await asyncio.sleep(max(0.0, (nxt - utcnow()).total_seconds()))
             await _run_daily_with_retry()
+            await _log_health()
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 — one bad day must not stop them all
