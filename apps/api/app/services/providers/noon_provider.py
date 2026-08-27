@@ -206,14 +206,14 @@ def _rows_from_json(text: str) -> list[dict[str, Any]]:
         candidates: Any = data
     elif isinstance(data, dict):
         candidates = None
-        for key in ("data", "rows", "entries", "results", "items", "list"):
+        for key in ("data", "rows", "entries", "results", "items", "list", "lines"):
             value = data.get(key)
             if isinstance(value, list):
                 candidates = value
                 break
         if candidates is None and isinstance(data.get("data"), dict):
             inner = data["data"]
-            for key in ("rows", "entries", "results", "items", "list"):
+            for key in ("rows", "entries", "results", "items", "list", "lines"):
                 value = inner.get(key)
                 if isinstance(value, list):
                     candidates = value

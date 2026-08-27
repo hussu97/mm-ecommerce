@@ -65,7 +65,9 @@ def upgrade() -> None:
                 || CASE
                     WHEN aa.extras->>'locale' IS NULL
                       OR aa.extras->>'locale' = ''
-                    THEN jsonb_build_object('locale', :locale)
+                    THEN jsonb_build_object('locale', '"""
+            + _DEFAULT_LOCALE
+            + """')
                     ELSE '{}'::jsonb
                    END,
                 updated_at = now()
@@ -77,8 +79,7 @@ def upgrade() -> None:
             WHERE aa.channel = 'noon'
               AND aa.account_ref = ''
             """
-        ),
-        {"locale": _DEFAULT_LOCALE},
+        )
     )
 
 
@@ -118,8 +119,9 @@ def downgrade() -> None:
                 updated_at = now()
             WHERE channel = 'noon'
               AND account_ref = ''
-              AND extras->>'locale' = :locale
+              AND extras->>'locale' = '"""
+            + _DEFAULT_LOCALE
+            + """'
             """
-        ),
-        {"locale": _DEFAULT_LOCALE},
+        )
     )

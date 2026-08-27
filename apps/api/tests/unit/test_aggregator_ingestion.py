@@ -568,7 +568,47 @@ def test_deliveroo_headers_send_bearer_and_token_cookie():
     assert headers["X-Roo-Org-Id"] == "497912"
 
 
-# ── provider registry ─────────────────────────────────────────────────────────
+def test_noon_scope_merges_from_account_extras_without_overwriting_capture():
+    from app.services.aggregators.session_store import (
+        LoadedSession,
+        merge_noon_scope_from_extras,
+    )
+
+    session = LoadedSession(
+        channel="noon",
+        account_ref="",
+        cookies={"bm_sv": "x"},
+        tokens={},
+        header_profile={"user-agent": "Chrome/151"},
+    )
+    merged = merge_noon_scope_from_extras(
+        session,
+        {
+            "restaurant_code": "R5967280642376629909871448A",
+            "project": "PRJ135208",
+            "locale": "en-ae",
+        },
+    )
+    assert merged.tokens["restaurant_code"] == "R5967280642376629909871448A"
+    assert merged.tokens["project"] == "PRJ135208"
+    assert merged.header_profile["n-restaurantcode"] == "R5967280642376629909871448A"
+    assert merged.header_profile["x-project"] == "PRJ135208"
+    assert merged.header_profile["x-platform"] == "web"
+
+
+def test_noon_wallet_json_lines_shape_parses():
+    from app.services.providers.noon_provider import _parse_tabular
+
+    body = (
+        '{"status":"success","data":{"lines":[{"referenceNr":"ST1",'
+        '"entryType":"statement","date":"2026-08-22","amount":10.5}]}}'
+    )
+    rows = _parse_tabular(body)
+    assert len(rows) == 1
+    assert rows[0]["referenceNr"] == "ST1"
+    assert rows[0]["entryType"] == "statement"
+
+
 def test_registry_has_the_four_httpx_channels_and_not_keeta():
     from app.services.aggregators import ingest
 

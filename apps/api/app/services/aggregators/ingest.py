@@ -368,11 +368,23 @@ async def _new_run(db: AsyncSession, channel: str, mode: str) -> AggregatorSyncR
     return run
 
 
+#: One-shot backfill window when bootstrapping a channel for the first time — an
+#: adhoc `sweep_channel_once` can pass this to widen the ordinary daily lookback.
+_BACKFILL_LOOKBACK_DAYS = 365
+
+
 async def _sweep_channel(
-    db: AsyncSession, channel: str, provider: BaseAggregatorClient, mode: str
+    db: AsyncSession,
+    channel: str,
+    provider: BaseAggregatorClient,
+    mode: str,
+    *,
+    lookback_days: int | None = None,
+    lookback_hours: int | None = None,
 ) -> int:
     """One channel's sweep for one mode. Returns records written; 0 on skip."""
     session = await session_store.load(db, channel)
+    session = await session_store.enrich_noon_from_account(db, session)
     prepare = getattr(provider, "prepare_session", None)
     if callable(prepare):
         session = await prepare(db, session)
@@ -384,7 +396,14 @@ async def _sweep_channel(
     written = 0
     reconciled = 0
     truncation: str | None = None
-    since = now - timedelta(days=settings.AGGREGATOR_LOOKBACK_DAYS)
+    # The default window is the shared daily lookback; an adhoc sweep can widen it
+    # (e.g. a first-time channel backfill) via lookback_days / lookback_hours.
+    if lookback_hours is not None:
+        since = now - timedelta(hours=lookback_hours)
+    elif lookback_days is not None:
+        since = now - timedelta(days=lookback_days)
+    else:
+        since = now - timedelta(days=settings.AGGREGATOR_LOOKBACK_DAYS)
     try:
         if mode == RUN_MODE_SALES:
             result: SalesResult = await provider.fetch_sales(
@@ -432,6 +451,31 @@ async def _sweep_channel(
         logger.info("aggregator %s %s truncated: %s", channel, mode, truncation)
     await session_store.record_success(db, channel)
     return written
+
+
+async def sweep_channel_once(
+    channel: str,
+    mode: str,
+    *,
+    lookback_days: int | None = None,
+    lookback_hours: int | None = None,
+) -> int:
+    """Adhoc one-channel sweep (sales or finance) with an optional wider window."""
+    _register_providers()
+    provider = PROVIDERS.get(channel)
+    if provider is None:
+        raise ValueError(f"unknown or non-httpx aggregator channel: {channel}")
+    async with AsyncSessionFactory() as db:
+        written = await _sweep_channel(
+            db,
+            channel,
+            provider,
+            mode,
+            lookback_days=lookback_days,
+            lookback_hours=lookback_hours,
+        )
+        await db.commit()
+        return written
 
 
 async def _sweep_all(mode: str, lock_key: int) -> int:
