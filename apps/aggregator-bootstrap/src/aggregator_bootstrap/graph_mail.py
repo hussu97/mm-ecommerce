@@ -20,11 +20,8 @@ from urllib.parse import urlencode
 import httpx
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
-AUTHORIZE_SCOPES = (
-    "offline_access https://graph.microsoft.com/Mail.Read "
-    "https://graph.microsoft.com/User.Read"
-)
-TOKEN_SCOPES = "https://graph.microsoft.com/Mail.Read offline_access"
+AUTHORIZE_SCOPES = "Mail.Read offline_access"
+TOKEN_SCOPES = "offline_access https://graph.microsoft.com/Mail.Read"
 DEFAULT_REDIRECT = "http://localhost"
 DEFAULT_TENANT = "consumers"
 
