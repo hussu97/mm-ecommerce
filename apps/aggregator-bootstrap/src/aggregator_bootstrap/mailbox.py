@@ -1,21 +1,20 @@
-"""Read an email OTP from the configured IMAP mailbox.
+"""Read an email OTP from the per-channel mailbox recipe.
 
 Some channels (Noon RMS, Talabat) gate a fresh login behind a one-time code
 mailed to the operator address. The login flows in `channels/login.py` request
-the code, then await `wait_for_otp` to pull it back out of the inbox so the run
-stays unattended.
+the code, then await `wait_for_otp` to pull it back out of that aggregator's
+inbox so the run stays unattended.
 
-`imaplib` is blocking stdlib, so the actual IMAP poll runs in a worker thread
-(`asyncio.to_thread`) and `wait_for_otp` polls it until the code lands or the
-timeout elapses. Nothing here imports Playwright or any third-party dependency,
-so it stays importable — and unit-testable against a fake IMAP server — without
-the browser library installed.
+Preferred path is Microsoft Graph: each aggregator stores its own Azure app
+(client id + secret) plus a refresh token on `aggregator_account`. IMAP is
+the fallback. Blocking I/O runs in a worker thread (`asyncio.to_thread`).
 """
 
 from __future__ import annotations
 
 import asyncio
 import imaplib
+import logging
 import re
 import time
 from datetime import UTC, datetime
@@ -25,6 +24,8 @@ from email.message import Message
 from email.utils import parsedate_to_datetime
 
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 #: A 4–8 digit run is the OTP. Kept identical to the standalone scraper's rule.
 DEFAULT_OTP_PATTERN = re.compile(r"\b(\d{4,8})\b")
@@ -98,6 +99,17 @@ def _message_matches(
     return True
 
 
+def uses_graph(mailbox: dict | None) -> bool:
+    """True when this recipe should read OTP via Microsoft Graph, not IMAP."""
+    box = mailbox or {}
+    provider = str(box.get("provider") or "").strip().lower()
+    if provider == "graph":
+        return True
+    if provider == "imap":
+        return False
+    return bool(box.get("refresh_token"))
+
+
 def _fetch_latest_otp(
     *,
     sender_filter: str | None,
@@ -107,13 +119,43 @@ def _fetch_latest_otp(
     max_messages: int = 25,
     mailbox: dict | None = None,
 ) -> str | None:
-    """One blocking IMAP sweep. Returns the newest matching code, or None.
+    """One blocking sweep. Returns the newest matching code, or None.
 
-    Prefers the per-channel `mailbox` dict from `aggregator_account` (host,
-    port, username, password, folder). Falls back to `OTP_IMAP_*` env so a
-    laptop override still works before the DB row is filled.
+    Graph (Hotmail via the Azure app) wins when the recipe says so; otherwise
+    IMAP. Prefers the per-channel `mailbox` dict from `aggregator_account`.
     """
     box = mailbox or {}
+    if uses_graph(box):
+        from .graph_mail import GraphMailboxError
+        from .graph_mail import fetch_latest_otp as graph_otp
+
+        token = str(box.get("refresh_token") or "").strip()
+        if not token:
+            raise OTPPollingError(
+                "Microsoft Graph mailbox is selected but not connected. "
+                "Run: aggregator-bootstrap mailbox-auth --channel <channel>"
+            )
+        try:
+            code, rotated = graph_otp(
+                mailbox=box,
+                refresh_token=token,
+                sender_filter=sender_filter
+                or str(box.get("sender_filter") or "")
+                or None,
+                subject_filter=subject_filter
+                or str(box.get("subject_filter") or "")
+                or None,
+                since=since,
+                otp_pattern=otp_pattern,
+                max_messages=max_messages,
+            )
+        except GraphMailboxError as exc:
+            raise OTPPollingError(str(exc)) from exc
+        if rotated:
+            box["refresh_token"] = rotated
+        return code
+
+    # IMAP path — host/user/password from the recipe, else OTP_IMAP_* env.
     effective_sender = sender_filter or str(box.get("sender_filter") or "") or None
     effective_subject = subject_filter or str(box.get("subject_filter") or "") or None
     host = str(box.get("host") or settings.OTP_IMAP_HOST or "").strip()
@@ -170,6 +212,28 @@ def _fetch_latest_otp(
     return None
 
 
+async def _persist_rotated_refresh(channel: str, refresh_token: str) -> None:
+    """Write a rotated Graph refresh token back onto that channel's recipe."""
+    from .accounts import push_account
+
+    try:
+        await push_account(
+            {
+                "channel": channel,
+                "mailbox": {
+                    "provider": "graph",
+                    "refresh_token": refresh_token,
+                },
+            }
+        )
+    except Exception:  # noqa: BLE001 — OTP already succeeded; log and continue
+        logger.warning(
+            "%s: Graph rotated the refresh token but storing it failed",
+            channel,
+            exc_info=True,
+        )
+
+
 async def wait_for_otp(
     *,
     sender_filter: str | None,
@@ -179,14 +243,17 @@ async def wait_for_otp(
     poll_interval: float = 5.0,
     otp_pattern: re.Pattern[str] = DEFAULT_OTP_PATTERN,
     mailbox: dict | None = None,
+    channel: str | None = None,
 ) -> str:
-    """Poll the IMAP mailbox until a matching OTP arrives (or `timeout` elapses).
+    """Poll Graph or IMAP until a matching OTP arrives (or `timeout` elapses).
 
-    `mailbox` is the per-channel recipe from `aggregator_account`; omitted, the
-    worker falls back to `OTP_IMAP_*`. The blocking IMAP work runs in a worker
-    thread so the browser's event loop keeps turning. Raises `OTPPollingError`
-    if nothing matches in time.
+    `mailbox` is the per-channel recipe from `aggregator_account`. Graph
+    (`provider=graph` + refresh token) is preferred when configured; otherwise
+    IMAP / `OTP_IMAP_*`. The blocking work runs in a worker thread so the
+    browser's event loop keeps turning. Raises `OTPPollingError` if nothing
+    matches in time.
     """
+    original_refresh = str((mailbox or {}).get("refresh_token") or "")
     deadline = time.monotonic() + timeout
     while True:
         code = await asyncio.to_thread(
@@ -198,6 +265,9 @@ async def wait_for_otp(
             mailbox=mailbox,
         )
         if code:
+            rotated = str((mailbox or {}).get("refresh_token") or "")
+            if channel and rotated and rotated != original_refresh:
+                await _persist_rotated_refresh(channel, rotated)
             return code
         if time.monotonic() >= deadline:
             raise OTPPollingError(

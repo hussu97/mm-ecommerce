@@ -42,6 +42,7 @@ state so that in-page pull survives a restart.
 
 ```
 aggregator-bootstrap store-account --channel deliveroo --email you@x --password '…' --extra org_id=497912
+aggregator-bootstrap mailbox-auth --channel talabat   # one-time Microsoft Graph connect
 aggregator-bootstrap login --channel deliveroo --auto   # fill stored creds after Cloudflare
 aggregator-bootstrap login --channel careem             # headed, you sign in
 aggregator-bootstrap hydrate              # pull DB → local files
@@ -50,12 +51,15 @@ aggregator-bootstrap warm-sessions        # hydrate + warm all (VM cron)
 ```
 
 `store-account` writes the encrypted `aggregator_account` row (login method +
-email/password + optional IMAP mailbox for OTP channels). The same recipe is
-edited in the admin **Logins** tab. Passwords are Fernet-sealed by the API and
-never returned on the admin health read. Deliveroo is `email_password` (no OTP),
-so `--auto` can re-auth on a machine that can pass Cloudflare. OTP channels
-(Talabat, Noon) need a linked mailbox before the worker can pull the code
-unattended.
+email/password + optional OTP mailbox). The same recipe is edited in the admin
+**Logins** tab. Each OTP channel stores **its own** Microsoft app (client id +
+secret) on that row — there is no global `EMAIL_MS_*` pair. After saving the
+app, `mailbox-auth --channel X` signs that aggregator in once and stores a
+refresh token. Passwords and secrets are Fernet-sealed by the API and never
+returned on the admin health read. Deliveroo is `email_password` (no OTP), so
+`--auto` can re-auth on a machine that can pass Cloudflare. OTP channels
+(Talabat, Noon) need a connected Graph mailbox before the worker can pull the
+code unattended. IMAP remains as a fallback on the same form.
 
 ## Configuration
 

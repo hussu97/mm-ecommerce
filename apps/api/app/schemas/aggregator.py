@@ -67,13 +67,20 @@ class AggregatorSessionResponse(BaseModel):
 
 
 class AggregatorMailboxWrite(BaseModel):
-    """IMAP details the worker uses to read an OTP, written sealed at rest.
+    """OTP mailbox for one aggregator, written sealed at rest.
 
-    `password` may be omitted on a later save to keep the stored secret. Host
-    and username identify the inbox; `sender_filter` / `subject_filter` narrow
-    which mail is treated as the code (Talabat `no reply` / Noon `verify`).
+    Two providers share this object so each channel can have its own recipe:
+
+    - `imap` — host/user/password (legacy).
+    - `graph` — that channel's own Microsoft app (`client_id` + `client_secret`)
+      plus, after `mailbox-auth`, a `refresh_token`. Secrets may be omitted on
+      a later save to keep the stored value.
+
+    `sender_filter` / `subject_filter` narrow which mail is treated as the
+    code (Talabat `no reply` / Noon `verify`).
     """
 
+    provider: str | None = None
     host: str | None = None
     port: int | None = Field(default=None, ge=1, le=65535)
     username: str | None = None
@@ -81,28 +88,40 @@ class AggregatorMailboxWrite(BaseModel):
     folder: str | None = None
     sender_filter: str | None = None
     subject_filter: str | None = None
+    client_id: str | None = None
+    client_secret: str | None = None
+    tenant: str | None = None
+    redirect_uri: str | None = None
+    refresh_token: str | None = None
 
 
 class AggregatorMailboxPublic(BaseModel):
-    """Admin view of a linked OTP mailbox — never the IMAP password."""
+    """Admin view of a linked OTP mailbox — never secrets."""
 
+    provider: str = "imap"
     host: str = ""
     port: int = 993
     username: str = ""
     folder: str = "INBOX"
     sender_filter: str = ""
     subject_filter: str = ""
+    client_id: str = ""
+    tenant: str = "consumers"
+    redirect_uri: str = ""
     has_password: bool = False
+    has_client_secret: bool = False
+    has_refresh_token: bool = False
 
 
 class AggregatorAccountPush(BaseModel):
     """A durable login recipe for one channel, stored sealed at rest.
 
     Distinct from the session cookie jar: this is the email/password, the
-    login method (including OTP vs no OTP), and the IMAP mailbox the worker
-    reads an OTP from. `password` / `mailbox.password` may be omitted on a
-    later save to keep the stored secret. `extras` is non-secret portal
-    config (Deliveroo `org_id`).
+    login method (including OTP vs no OTP), and the OTP mailbox the worker
+    reads a code from (per-channel Microsoft Graph app, or IMAP). `password` /
+    `mailbox.password` / `mailbox.client_secret` may be omitted on a later
+    save to keep the stored secret. `extras` is non-secret portal config
+    (Deliveroo `org_id`).
     """
 
     channel: str
@@ -134,7 +153,7 @@ class AggregatorWorkerAccount(BaseModel):
     """Decrypted login recipe for the worker. Secrets on the wire, on purpose.
 
     Authenticated with the same push bearer as POST `/session`. The admin
-    health read never returns portal or IMAP passwords.
+    health read never returns portal or mailbox secrets.
     """
 
     channel: str

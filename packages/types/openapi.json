@@ -657,7 +657,7 @@
         "type": "object"
       },
       "AggregatorAccountPush": {
-        "description": "A durable login recipe for one channel, stored sealed at rest.\n\nDistinct from the session cookie jar: this is the email/password, the\nlogin method (including OTP vs no OTP), and the IMAP mailbox the worker\nreads an OTP from. `password` / `mailbox.password` may be omitted on a\nlater save to keep the stored secret. `extras` is non-secret portal\nconfig (Deliveroo `org_id`).",
+        "description": "A durable login recipe for one channel, stored sealed at rest.\n\nDistinct from the session cookie jar: this is the email/password, the\nlogin method (including OTP vs no OTP), and the OTP mailbox the worker\nreads a code from (per-channel Microsoft Graph app, or IMAP). `password` /\n`mailbox.password` / `mailbox.client_secret` may be omitted on a later\nsave to keep the stored secret. `extras` is non-secret portal config\n(Deliveroo `org_id`).",
         "properties": {
           "account_ref": {
             "default": "",
@@ -891,16 +891,31 @@
         "type": "object"
       },
       "AggregatorMailboxPublic": {
-        "description": "Admin view of a linked OTP mailbox \u2014 never the IMAP password.",
+        "description": "Admin view of a linked OTP mailbox \u2014 never secrets.",
         "properties": {
+          "client_id": {
+            "default": "",
+            "title": "Client Id",
+            "type": "string"
+          },
           "folder": {
             "default": "INBOX",
             "title": "Folder",
             "type": "string"
           },
+          "has_client_secret": {
+            "default": false,
+            "title": "Has Client Secret",
+            "type": "boolean"
+          },
           "has_password": {
             "default": false,
             "title": "Has Password",
+            "type": "boolean"
+          },
+          "has_refresh_token": {
+            "default": false,
+            "title": "Has Refresh Token",
             "type": "boolean"
           },
           "host": {
@@ -913,6 +928,16 @@
             "title": "Port",
             "type": "integer"
           },
+          "provider": {
+            "default": "imap",
+            "title": "Provider",
+            "type": "string"
+          },
+          "redirect_uri": {
+            "default": "",
+            "title": "Redirect Uri",
+            "type": "string"
+          },
           "sender_filter": {
             "default": "",
             "title": "Sender Filter",
@@ -921,6 +946,11 @@
           "subject_filter": {
             "default": "",
             "title": "Subject Filter",
+            "type": "string"
+          },
+          "tenant": {
+            "default": "consumers",
+            "title": "Tenant",
             "type": "string"
           },
           "username": {
@@ -933,8 +963,30 @@
         "type": "object"
       },
       "AggregatorMailboxWrite": {
-        "description": "IMAP details the worker uses to read an OTP, written sealed at rest.\n\n`password` may be omitted on a later save to keep the stored secret. Host\nand username identify the inbox; `sender_filter` / `subject_filter` narrow\nwhich mail is treated as the code (Talabat `no reply` / Noon `verify`).",
+        "description": "OTP mailbox for one aggregator, written sealed at rest.\n\nTwo providers share this object so each channel can have its own recipe:\n\n- `imap` \u2014 host/user/password (legacy).\n- `graph` \u2014 that channel's own Microsoft app (`client_id` + `client_secret`)\n  plus, after `mailbox-auth`, a `refresh_token`. Secrets may be omitted on\n  a later save to keep the stored value.\n\n`sender_filter` / `subject_filter` narrow which mail is treated as the\ncode (Talabat `no reply` / Noon `verify`).",
         "properties": {
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "client_secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Secret"
+          },
           "folder": {
             "anyOf": [
               {
@@ -981,6 +1033,39 @@
             ],
             "title": "Port"
           },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "redirect_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redirect Uri"
+          },
+          "refresh_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Token"
+          },
           "sender_filter": {
             "anyOf": [
               {
@@ -1002,6 +1087,17 @@
               }
             ],
             "title": "Subject Filter"
+          },
+          "tenant": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant"
           },
           "username": {
             "anyOf": [
@@ -1400,7 +1496,7 @@
         "type": "object"
       },
       "AggregatorWorkerAccount": {
-        "description": "Decrypted login recipe for the worker. Secrets on the wire, on purpose.\n\nAuthenticated with the same push bearer as POST `/session`. The admin\nhealth read never returns portal or IMAP passwords.",
+        "description": "Decrypted login recipe for the worker. Secrets on the wire, on purpose.\n\nAuthenticated with the same push bearer as POST `/session`. The admin\nhealth read never returns portal or mailbox secrets.",
         "properties": {
           "account_ref": {
             "default": "",

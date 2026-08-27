@@ -13,6 +13,7 @@ import { AggregatorTabs } from '../AggregatorTabs';
 type AccountRow = Schemas['AggregatorAccountPublic'];
 type AccountInput = Schemas['AggregatorAccountPush'];
 type LoginMethod = NonNullable<AccountInput['login_method']>;
+type MailboxProvider = 'graph' | 'imap';
 
 const CHANNELS = ['careem', 'deliveroo', 'talabat', 'noon', 'keeta'] as const;
 
@@ -54,6 +55,11 @@ interface FormState {
   email: string;
   password: string;
   org_id: string;
+  mailbox_provider: MailboxProvider;
+  mailbox_client_id: string;
+  mailbox_client_secret: string;
+  mailbox_tenant: string;
+  mailbox_redirect_uri: string;
   mailbox_host: string;
   mailbox_port: string;
   mailbox_username: string;
@@ -64,6 +70,23 @@ interface FormState {
   clear_mailbox: boolean;
 }
 
+function mailboxHasClientSecret(row: AccountRow | undefined): boolean {
+  return Boolean(row?.mailbox?.has_client_secret);
+}
+
+function mailboxHasRefreshToken(row: AccountRow | undefined): boolean {
+  return Boolean(row?.mailbox?.has_refresh_token);
+}
+
+function mailboxProviderOf(mailbox: AccountRow['mailbox'] | undefined): MailboxProvider {
+  const provider = mailbox?.provider;
+  if (provider === 'imap') return 'imap';
+  if (provider === 'graph') return 'graph';
+  if (mailbox?.client_id) return 'graph';
+  if (mailbox?.host || mailbox?.username) return 'imap';
+  return 'graph';
+}
+
 function emptyForm(channel: (typeof CHANNELS)[number], existing?: AccountRow): FormState {
   const mailbox = existing?.mailbox;
   return {
@@ -72,6 +95,11 @@ function emptyForm(channel: (typeof CHANNELS)[number], existing?: AccountRow): F
     email: existing?.email ?? '',
     password: '',
     org_id: existing?.extras && typeof existing.extras.org_id === 'string' ? existing.extras.org_id : '',
+    mailbox_provider: mailboxProviderOf(mailbox),
+    mailbox_client_id: mailbox?.client_id ?? '',
+    mailbox_client_secret: '',
+    mailbox_tenant: mailbox?.tenant || 'consumers',
+    mailbox_redirect_uri: mailbox?.redirect_uri || 'http://127.0.0.1:8765/callback',
     mailbox_host: mailbox?.host ?? '',
     mailbox_port: mailbox?.port != null ? String(mailbox.port) : '993',
     mailbox_username: mailbox?.username ?? '',
@@ -142,6 +170,17 @@ export default function LoginsPage() {
       toast.error('This login method needs a portal password (first save).');
       return;
     }
+    if (!form.clear_mailbox && methodNeedsOtp(form.login_method) && form.mailbox_provider === 'graph') {
+      const hasSecret = mailboxHasClientSecret(existing);
+      if (!form.mailbox_client_id.trim() && !existing?.mailbox?.client_id) {
+        toast.error("Save this aggregator's Microsoft client id first.");
+        return;
+      }
+      if (!form.mailbox_client_secret && !hasSecret) {
+        toast.error("Save this aggregator's Microsoft client secret on first save.");
+        return;
+      }
+    }
     setSaving(true);
     try {
       const extras: Record<string, string> = {};
@@ -156,16 +195,29 @@ export default function LoginsPage() {
       };
       if (form.password) body.password = form.password;
       if (!form.clear_mailbox && methodNeedsOtp(form.login_method)) {
-        const port = Number.parseInt(form.mailbox_port, 10);
-        body.mailbox = {
-          host: form.mailbox_host.trim() || null,
-          port: Number.isFinite(port) ? port : 993,
-          username: form.mailbox_username.trim() || null,
-          folder: form.mailbox_folder.trim() || 'INBOX',
-          sender_filter: form.mailbox_sender_filter.trim() || null,
-          subject_filter: form.mailbox_subject_filter.trim() || null,
-        };
-        if (form.mailbox_password) body.mailbox.password = form.mailbox_password;
+        if (form.mailbox_provider === 'graph') {
+          body.mailbox = {
+            provider: 'graph',
+            client_id: form.mailbox_client_id.trim() || null,
+            tenant: form.mailbox_tenant.trim() || 'consumers',
+            redirect_uri: form.mailbox_redirect_uri.trim() || null,
+            sender_filter: form.mailbox_sender_filter.trim() || null,
+            subject_filter: form.mailbox_subject_filter.trim() || null,
+          };
+          if (form.mailbox_client_secret) body.mailbox.client_secret = form.mailbox_client_secret;
+        } else {
+          const port = Number.parseInt(form.mailbox_port, 10);
+          body.mailbox = {
+            provider: 'imap',
+            host: form.mailbox_host.trim() || null,
+            port: Number.isFinite(port) ? port : 993,
+            username: form.mailbox_username.trim() || null,
+            folder: form.mailbox_folder.trim() || 'INBOX',
+            sender_filter: form.mailbox_sender_filter.trim() || null,
+            subject_filter: form.mailbox_subject_filter.trim() || null,
+          };
+          if (form.mailbox_password) body.mailbox.password = form.mailbox_password;
+        }
       }
       await aggregatorAccountsApi.upsert(body);
       toast.success(`${channelName(form.channel)} login saved.`);
@@ -217,16 +269,23 @@ export default function LoginsPage() {
     },
     {
       header: 'OTP mailbox',
-      render: r =>
-        r.has_mailbox ? (
-          <span className="text-xs text-gray-600">
-            {r.mailbox?.username || r.mailbox?.host}
-          </span>
-        ) : r.otp_required ? (
-          <Badge variant="warning">Needed</Badge>
-        ) : (
-          <span className="text-gray-300">—</span>
-        ),
+      render: r => {
+        const mailbox = r.mailbox;
+        const provider = mailboxProviderOf(mailbox);
+        const connected = mailboxHasRefreshToken(r);
+        if (r.has_mailbox && provider === 'graph') {
+          return (
+            <span className="text-xs text-gray-600">
+              Microsoft Graph{connected ? ' connected' : ' — run mailbox-auth'}
+            </span>
+          );
+        }
+        if (r.has_mailbox) {
+          return <span className="text-xs text-gray-600">{mailbox?.username || mailbox?.host}</span>;
+        }
+        if (r.otp_required) return <Badge variant="warning">Needed</Badge>;
+        return <span className="text-gray-300">—</span>;
+      },
     },
     {
       header: 'Actions',
@@ -246,7 +305,8 @@ export default function LoginsPage() {
       <div>
         <h1 className="font-display text-2xl text-gray-800">Logins</h1>
         <p className="text-xs text-gray-400 font-body mt-0.5">
-          How the worker signs in to each marketplace. Passwords are stored sealed and never shown again.
+          How the worker signs in to each marketplace. Each OTP channel stores its
+          own Microsoft app. Secrets are sealed and never shown again.
         </p>
       </div>
 
@@ -320,49 +380,103 @@ export default function LoginsPage() {
                   OTP mailbox
                 </p>
                 <p className="text-xs text-gray-400 font-body">
-                  IMAP details for the inbox that receives the one-time code. Hotmail /
-                  Outlook: <code>imap-mail.outlook.com</code>, port 993. The worker
-                  reads the OTP from here so a headed login is not required every time.
+                  Each aggregator uses its own Microsoft app (client id + secret), stored
+                  on this row — not a global env var. After saving, connect the mailbox
+                  once from a laptop:{' '}
+                  <code>aggregator-bootstrap mailbox-auth --channel {form.channel}</code>
                 </p>
-                <Input
-                  label="IMAP host"
-                  value={form.mailbox_host}
-                  onChange={e => setForm({ ...form, mailbox_host: e.target.value })}
-                  placeholder="imap-mail.outlook.com"
-                />
-                <Input
-                  label="Port"
-                  inputMode="numeric"
-                  value={form.mailbox_port}
-                  onChange={e => setForm({ ...form, mailbox_port: e.target.value })}
-                />
-                <Input
-                  label="Mailbox username"
-                  autoComplete="off"
-                  value={form.mailbox_username}
-                  onChange={e => setForm({ ...form, mailbox_username: e.target.value })}
-                  placeholder="Usually the same as the portal email"
-                />
-                <Input
-                  label="Mailbox password"
-                  type="password"
-                  autoComplete="new-password"
-                  value={form.mailbox_password}
-                  onChange={e => setForm({ ...form, mailbox_password: e.target.value })}
-                  placeholder={
-                    form.clear_mailbox
-                      ? 'Cleared on save'
-                      : byChannel.get(form.channel)?.mailbox?.has_password
-                        ? 'Leave blank to keep the stored password'
-                        : 'App password, not the Hotmail login if 2FA is on'
+                <Select
+                  label="Mailbox provider"
+                  value={form.mailbox_provider}
+                  onChange={e =>
+                    setForm({ ...form, mailbox_provider: e.target.value as MailboxProvider })
                   }
+                  options={[
+                    { value: 'graph', label: "Microsoft Graph (this aggregator's app)" },
+                    { value: 'imap', label: 'IMAP (legacy)' },
+                  ]}
                 />
-                <Input
-                  label="Folder"
-                  value={form.mailbox_folder}
-                  onChange={e => setForm({ ...form, mailbox_folder: e.target.value })}
-                  placeholder="INBOX"
-                />
+                {form.mailbox_provider === 'graph' ? (
+                  <>
+                    <Input
+                      label="Microsoft client id"
+                      autoComplete="off"
+                      value={form.mailbox_client_id}
+                      onChange={e => setForm({ ...form, mailbox_client_id: e.target.value })}
+                      placeholder="Azure app id for this aggregator only"
+                    />
+                    <Input
+                      label="Microsoft client secret"
+                      type="password"
+                      autoComplete="new-password"
+                      value={form.mailbox_client_secret}
+                      onChange={e => setForm({ ...form, mailbox_client_secret: e.target.value })}
+                      placeholder={
+                        form.clear_mailbox
+                          ? 'Cleared on save'
+                          : mailboxHasClientSecret(byChannel.get(form.channel))
+                            ? 'Leave blank to keep the stored secret'
+                            : 'Required on first save'
+                      }
+                    />
+                    <Input
+                      label="Tenant"
+                      value={form.mailbox_tenant}
+                      onChange={e => setForm({ ...form, mailbox_tenant: e.target.value })}
+                      placeholder="consumers"
+                      helper="Hotmail / outlook.com use consumers. Work mailboxes use the tenant id."
+                    />
+                    <Input
+                      label="Redirect URI"
+                      value={form.mailbox_redirect_uri}
+                      onChange={e => setForm({ ...form, mailbox_redirect_uri: e.target.value })}
+                      placeholder="http://127.0.0.1:8765/callback"
+                      helper="Must match the redirect registered on this aggregator's Azure app."
+                    />
+                  </>
+                ) : (
+                  <>
+                    <Input
+                      label="IMAP host"
+                      value={form.mailbox_host}
+                      onChange={e => setForm({ ...form, mailbox_host: e.target.value })}
+                      placeholder="imap-mail.outlook.com"
+                    />
+                    <Input
+                      label="Port"
+                      inputMode="numeric"
+                      value={form.mailbox_port}
+                      onChange={e => setForm({ ...form, mailbox_port: e.target.value })}
+                    />
+                    <Input
+                      label="Mailbox username"
+                      autoComplete="off"
+                      value={form.mailbox_username}
+                      onChange={e => setForm({ ...form, mailbox_username: e.target.value })}
+                      placeholder="Usually the same as the portal email"
+                    />
+                    <Input
+                      label="Mailbox password"
+                      type="password"
+                      autoComplete="new-password"
+                      value={form.mailbox_password}
+                      onChange={e => setForm({ ...form, mailbox_password: e.target.value })}
+                      placeholder={
+                        form.clear_mailbox
+                          ? 'Cleared on save'
+                          : byChannel.get(form.channel)?.mailbox?.has_password
+                            ? 'Leave blank to keep the stored password'
+                            : 'App password, not the Hotmail login if 2FA is on'
+                      }
+                    />
+                    <Input
+                      label="Folder"
+                      value={form.mailbox_folder}
+                      onChange={e => setForm({ ...form, mailbox_folder: e.target.value })}
+                      placeholder="INBOX"
+                    />
+                  </>
+                )}
                 <Input
                   label="Sender filter"
                   value={form.mailbox_sender_filter}

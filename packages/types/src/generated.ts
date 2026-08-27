@@ -7426,10 +7426,11 @@ export interface components {
          * @description A durable login recipe for one channel, stored sealed at rest.
          *
          *     Distinct from the session cookie jar: this is the email/password, the
-         *     login method (including OTP vs no OTP), and the IMAP mailbox the worker
-         *     reads an OTP from. `password` / `mailbox.password` may be omitted on a
-         *     later save to keep the stored secret. `extras` is non-secret portal
-         *     config (Deliveroo `org_id`).
+         *     login method (including OTP vs no OTP), and the OTP mailbox the worker
+         *     reads a code from (per-channel Microsoft Graph app, or IMAP). `password` /
+         *     `mailbox.password` / `mailbox.client_secret` may be omitted on a later
+         *     save to keep the stored secret. `extras` is non-secret portal config
+         *     (Deliveroo `org_id`).
          */
         AggregatorAccountPush: {
             /**
@@ -7518,19 +7519,34 @@ export interface components {
         };
         /**
          * AggregatorMailboxPublic
-         * @description Admin view of a linked OTP mailbox — never the IMAP password.
+         * @description Admin view of a linked OTP mailbox — never secrets.
          */
         AggregatorMailboxPublic: {
+            /**
+             * Client Id
+             * @default
+             */
+            client_id: string;
             /**
              * Folder
              * @default INBOX
              */
             folder: string;
             /**
+             * Has Client Secret
+             * @default false
+             */
+            has_client_secret: boolean;
+            /**
              * Has Password
              * @default false
              */
             has_password: boolean;
+            /**
+             * Has Refresh Token
+             * @default false
+             */
+            has_refresh_token: boolean;
             /**
              * Host
              * @default
@@ -7542,6 +7558,16 @@ export interface components {
              */
             port: number;
             /**
+             * Provider
+             * @default imap
+             */
+            provider: string;
+            /**
+             * Redirect Uri
+             * @default
+             */
+            redirect_uri: string;
+            /**
              * Sender Filter
              * @default
              */
@@ -7552,6 +7578,11 @@ export interface components {
              */
             subject_filter: string;
             /**
+             * Tenant
+             * @default consumers
+             */
+            tenant: string;
+            /**
              * Username
              * @default
              */
@@ -7559,13 +7590,23 @@ export interface components {
         };
         /**
          * AggregatorMailboxWrite
-         * @description IMAP details the worker uses to read an OTP, written sealed at rest.
+         * @description OTP mailbox for one aggregator, written sealed at rest.
          *
-         *     `password` may be omitted on a later save to keep the stored secret. Host
-         *     and username identify the inbox; `sender_filter` / `subject_filter` narrow
-         *     which mail is treated as the code (Talabat `no reply` / Noon `verify`).
+         *     Two providers share this object so each channel can have its own recipe:
+         *
+         *     - `imap` — host/user/password (legacy).
+         *     - `graph` — that channel's own Microsoft app (`client_id` + `client_secret`)
+         *       plus, after `mailbox-auth`, a `refresh_token`. Secrets may be omitted on
+         *       a later save to keep the stored value.
+         *
+         *     `sender_filter` / `subject_filter` narrow which mail is treated as the
+         *     code (Talabat `no reply` / Noon `verify`).
          */
         AggregatorMailboxWrite: {
+            /** Client Id */
+            client_id?: string | null;
+            /** Client Secret */
+            client_secret?: string | null;
             /** Folder */
             folder?: string | null;
             /** Host */
@@ -7574,10 +7615,18 @@ export interface components {
             password?: string | null;
             /** Port */
             port?: number | null;
+            /** Provider */
+            provider?: string | null;
+            /** Redirect Uri */
+            redirect_uri?: string | null;
+            /** Refresh Token */
+            refresh_token?: string | null;
             /** Sender Filter */
             sender_filter?: string | null;
             /** Subject Filter */
             subject_filter?: string | null;
+            /** Tenant */
+            tenant?: string | null;
             /** Username */
             username?: string | null;
         };
@@ -7708,7 +7757,7 @@ export interface components {
          * @description Decrypted login recipe for the worker. Secrets on the wire, on purpose.
          *
          *     Authenticated with the same push bearer as POST `/session`. The admin
-         *     health read never returns portal or IMAP passwords.
+         *     health read never returns portal or mailbox secrets.
          */
         AggregatorWorkerAccount: {
             /**

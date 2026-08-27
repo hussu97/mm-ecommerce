@@ -685,10 +685,10 @@ export const branchMapApi = {
 
 /**
  * How we sign in to each marketplace: login method (OTP vs not), portal
- * email/password, and the IMAP mailbox the worker reads an OTP from.
- *
- * Passwords are write-only — the GET never returns them. Omit `password` /
- * `mailbox.password` on a later save to keep the stored secret.
+ * email/password, and the OTP mailbox (per-channel Microsoft Graph app, or
+ * IMAP). Secrets are write-only — the GET never returns them. Omit
+ * `password` / `mailbox.password` / `mailbox.client_secret` on a later save
+ * to keep the stored secret.
  */
 export const aggregatorAccountsApi = {
   list: () => api.get<AggregatorAccount[]>('/aggregators/accounts'),

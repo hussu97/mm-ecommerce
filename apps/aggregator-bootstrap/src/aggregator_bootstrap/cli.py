@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 import typer
 
@@ -165,6 +166,113 @@ def store_account(
         echoed.get("email"),
         echoed.get("has_password"),
         echoed.get("extras"),
+    )
+
+
+def _wait_for_auth_code(redirect_uri: str, *, timeout: float = 300.0) -> str:
+    """Listen on the Azure redirect URI until the browser comes back with a code."""
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from urllib.parse import parse_qs, urlparse
+
+    parsed = urlparse(redirect_uri)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 8765
+    holder: dict[str, str] = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            query = parse_qs(urlparse(self.path).query)
+            code = (query.get("code") or [""])[0]
+            error = (query.get("error_description") or query.get("error") or [""])[0]
+            if code:
+                holder["code"] = code
+            if error:
+                holder["error"] = error
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            if holder.get("code"):
+                self.wfile.write(b"Microsoft sign-in complete. You can close this tab.")
+            else:
+                self.wfile.write(b"Sign-in did not return a code. Check the terminal.")
+
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A003
+            return
+
+    server = HTTPServer((host, port), Handler)
+    server.timeout = 1.0
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and "code" not in holder and "error" not in holder:
+        server.handle_request()
+    server.server_close()
+    if holder.get("code"):
+        return holder["code"]
+    raise typer.BadParameter(holder.get("error") or "timed out waiting for Microsoft sign-in")
+
+
+@app.command("mailbox-auth")
+def mailbox_auth(
+    channel: str = typer.Option(..., help="Channel whose Microsoft app to connect"),
+) -> None:
+    """One-time Microsoft sign-in for this aggregator's Graph mailbox.
+
+    Uses the client id + secret already saved on that channel's login recipe
+    (Admin → Logins). Opens a browser, stores the refresh token on the same
+    row. Each aggregator has its own Azure app — this command never reads a
+    global EMAIL_MS_* pair.
+    """
+    import webbrowser
+
+    from .graph_mail import GraphApp, GraphMailboxError, exchange_code
+
+    if channel not in CHANNEL_PROBES:
+        raise typer.BadParameter(f"unknown channel {channel}")
+    account = asyncio.run(pull_account(channel))
+    if account is None:
+        raise typer.BadParameter(
+            f"no stored {channel} login recipe. Save the Microsoft client id "
+            f"and secret on Admin → Aggregators → Logins first."
+        )
+    try:
+        app = GraphApp.from_mailbox(account.mailbox)
+    except GraphMailboxError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    url = app.authorize_url(state=channel)
+    logger.info(
+        "Opening Microsoft sign-in for %s (tenant=%s). If the browser does "
+        "not open, visit the URL printed below.",
+        channel,
+        app.tenant,
+    )
+    print(url)  # noqa: T201 — the operator needs the URL
+    webbrowser.open(url)
+    try:
+        code = _wait_for_auth_code(app.redirect_uri)
+        tokens = exchange_code(app, code)
+    except GraphMailboxError as exc:
+        logger.error("%s mailbox-auth failed: %s", channel, exc)
+        raise typer.Exit(code=1) from exc
+    refresh = str(tokens.get("refresh_token") or "")
+    if not refresh:
+        raise typer.Exit(code=1)
+    body = {
+        "channel": channel,
+        "mailbox": {
+            "provider": "graph",
+            "client_id": app.client_id,
+            "tenant": app.tenant,
+            "redirect_uri": app.redirect_uri,
+            "refresh_token": refresh,
+        },
+    }
+    try:
+        asyncio.run(push_account(body))
+    except Exception as exc:  # noqa: BLE001
+        logger.error("could not store the refresh token: %s", exc)
+        raise typer.Exit(code=1) from exc
+    logger.info(
+        "%s Microsoft mailbox connected (refresh token stored; secret never logged)",
+        channel,
     )
 
 

@@ -2,9 +2,10 @@
 
 `aggregator_account` is the durable half of aggregator auth: which flow to
 run, the Fernet-sealed portal email/password, and (when the flow needs an
-OTP) the Fernet-sealed IMAP mailbox the worker reads the code from. Distinct
-from `session_store`, which holds the *derived* cookie jar. Follows the
-transaction convention — `flush()` here, the request-scoped session commits.
+OTP) the Fernet-sealed mailbox the worker reads the code from — one
+Microsoft Graph app per aggregator, or IMAP. Distinct from `session_store`,
+which holds the *derived* cookie jar. Follows the transaction convention —
+`flush()` here, the request-scoped session commits.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from app.models.aggregator import (
 from . import crypto
 
 _MAILBOX_KEYS = (
+    "provider",
     "host",
     "port",
     "username",
@@ -36,7 +38,13 @@ _MAILBOX_KEYS = (
     "folder",
     "sender_filter",
     "subject_filter",
+    "client_id",
+    "client_secret",
+    "tenant",
+    "redirect_uri",
+    "refresh_token",
 )
+_SECRET_MAILBOX_KEYS = frozenset({"password", "client_secret", "refresh_token"})
 
 
 @dataclass
@@ -84,10 +92,10 @@ def merge_mailbox(
     *,
     clear: bool = False,
 ) -> dict[str, Any] | None:
-    """Keep the stored IMAP password when a PUT omits it.
+    """Keep stored secrets when a PUT omits them.
 
-    `clear` drops the mailbox entirely (OTP still required, but the worker
-    falls back to env until a new mailbox is saved). An empty incoming dict
+    Covers the IMAP password *and* the per-channel Microsoft app secret /
+    refresh token. `clear` drops the mailbox entirely. An empty incoming dict
     with no existing row is stored as None.
     """
     if clear:
@@ -98,7 +106,7 @@ def merge_mailbox(
     for key in _MAILBOX_KEYS:
         if key not in incoming or incoming[key] is None:
             continue
-        if key == "password" and incoming[key] == "":
+        if key in _SECRET_MAILBOX_KEYS and incoming[key] == "":
             continue
         out[key] = incoming[key]
     if out.get("port") is not None:
@@ -106,6 +114,9 @@ def merge_mailbox(
             out["port"] = int(out["port"])
         except (TypeError, ValueError) as exc:
             raise BadRequestError("mailbox port must be an integer") from exc
+    provider = str(out.get("provider") or "").strip().lower()
+    if provider == "graph":
+        return out if (out.get("client_id") or out.get("refresh_token")) else None
     if not (out.get("host") or out.get("username")):
         return None
     return out
@@ -114,14 +125,23 @@ def merge_mailbox(
 def _mailbox_public(mailbox: dict[str, Any] | None) -> dict | None:
     if not mailbox:
         return None
+    provider = str(mailbox.get("provider") or "").strip().lower() or (
+        "graph" if mailbox.get("refresh_token") or mailbox.get("client_id") else "imap"
+    )
     return {
+        "provider": provider,
         "host": str(mailbox.get("host") or ""),
         "port": int(mailbox.get("port") or 993),
         "username": str(mailbox.get("username") or ""),
         "folder": str(mailbox.get("folder") or "INBOX"),
         "sender_filter": str(mailbox.get("sender_filter") or ""),
         "subject_filter": str(mailbox.get("subject_filter") or ""),
+        "client_id": str(mailbox.get("client_id") or ""),
+        "tenant": str(mailbox.get("tenant") or "consumers"),
+        "redirect_uri": str(mailbox.get("redirect_uri") or ""),
         "has_password": bool(mailbox.get("password")),
+        "has_client_secret": bool(mailbox.get("client_secret")),
+        "has_refresh_token": bool(mailbox.get("refresh_token")),
     }
 
 
@@ -136,7 +156,14 @@ def public_view(account: LoadedAccount) -> dict:
         "email": account.email,
         "has_password": bool(account.password),
         "has_mailbox": bool(
-            mailbox and (mailbox.get("host") or mailbox.get("username"))
+            mailbox
+            and (
+                mailbox.get("provider") == "graph"
+                or mailbox.get("client_id")
+                or mailbox.get("has_refresh_token")
+                or mailbox.get("host")
+                or mailbox.get("username")
+            )
         ),
         "mailbox": mailbox,
         "extras": account.extras or {},

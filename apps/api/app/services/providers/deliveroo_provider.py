@@ -1,56 +1,45 @@
-"""Deliveroo Partner Hub, as its reporting-platform exports answer.
+"""Deliveroo Partner Hub console API, as the SPA calls it.
 
-Deliveroo publishes no partner API this shop is on, so — like the browser the
-bootstrap drove — this client works the Partner Hub *reporting platform*: it asks
-the platform to build a CSV over a date window, waits for it, downloads it, and
-parses the CSV. There is no bot wall (so plain `httpx` replays the session), and
-the only credential is the `token` cookie, which `build_headers` already sends
-from `session.cookies`. Everything is scoped to one `orgId` (497912 for this
-brand's account); see `_org_id`.
+Deliveroo publishes no partner API this shop is on. The Partner Hub login is
+`POST /api/session` with the stored email/password; that returns an
+`access_token` JWT (identity.deliveroo.com, `amr=pwd`). The SPA stores it as
+the `token` cookie *and* sends `Authorization: Bearer`. Cookie-only replay of
+an expired Chrome capture is why earlier VM sweeps 401'd; Bearer + a fresh
+JWT is what `/api/session` and the restaurant/invoice endpoints accept.
 
-Two data paths, ported from the Playwright exporter:
+Two data paths, confirmed against the live hub from the production VM:
 
-- **Sales** — the reporting platform's `orders` and `items_sold` reports. Both
-  are built the same way: `POST /api/reporting_platform/reports` to trigger,
-  poll `GET /api/reporting_platform/reports` until the report is ready, then
-  `GET /api/reporting_platform/reports/{id}/download` for the CSV. Deliveroo caps
-  a custom range at 15 days, so the window is chunked. The `orders` report is one
-  row per completed order (the sales truth); the `items_sold` report is a
-  *period-window aggregate* per menu item (`grain=aggregate`), not order-scoped,
-  so it is carried on one synthetic aggregate order per outlet per window (see
-  `_items_carrier`).
+- **Sales** — `GET /api/restaurants/{id}/orders?start_date&end_date` lists the
+  window (one row per order: number, status, fils amount, placed_at). Line
+  items come from `GET /api/orders/{order_id}`. Restaurant ids are the same
+  outlet ids seeded in `aggregator_branch_map` (693359 / 693360 / 693361).
 
-- **Finance** — the invoice/statement exports. `GET /api/invoices` lists the
-  published statements; each has a numeric id used both as its `statement_id`
-  and to pull `GET /api/invoices/{id}/download?file_type=statement_csv`, whose
-  rows become the per-order settlement lines (real commission, VAT, adjustments).
-  Each invoice also yields one scheduled payout keyed on its due date.
+- **Finance** — `GET /api/invoices?org_id=` returns the published statements
+  (totals, period, due date, download links). Per-order settlement lines still
+  come from `statement_csv` when Cloudflare lets the download through; a 403
+  on the file is truncation, not a dead session.
 
-**What is confirmed vs inferred.** The download URL shapes
-(`/api/reporting_platform/reports/{id}/download`,
-`/api/invoices/{id}/download?file_type=statement_csv`), the `orgId`, and every
-CSV column mapping are ported verbatim from the working exporter. The *request*
-side of listing/triggering (the report-create body and the reports/invoices JSON
-shapes) was UI-driven in the Playwright code, so it is reconstructed here and
-read defensively — `.get`, `_first`, money left `None` (unknown, not zero) — and
-every record keeps its `raw`, so the shapes are refined against real payloads
-without re-porting. A report that never becomes ready, or a CSV that will not
-download, is recorded as a `truncation_note` rather than raised, so a short pull
-is visible instead of silent.
+The reconstructed `POST /api/reporting_platform/reports` path 404/401s; the
+hub never served reports that way to this token.
 """
 
 from __future__ import annotations
 
-import asyncio
+import base64
 import csv
 import io
+import json
 import logging
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from app.models.aggregator import CHANNEL_DELIVEROO, GRAIN_AGGREGATE
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.money import money_or_none
+from app.models.aggregator import CHANNEL_DELIVEROO, GRAIN_LINE, SESSION_LIVE
+from app.models.base import utcnow
 from app.services.aggregators.normalized import (
     FinanceResult,
     SalesResult,
@@ -67,24 +56,27 @@ logger = logging.getLogger(__name__)
 
 _HUB = "https://partner-hub.deliveroo.com"
 _API = f"{_HUB}/api"
+_LOGIN_URL = f"{_API}/session"
+_REFRESH_URL = f"{_API}/session/refresh"
 
 #: The org the captured session belongs to (from the account audit). Only used
 #: when the session carries no org ref of its own — see `_org_id`.
 _DEFAULT_ORG_ID = "497912"
 
-#: The shop's clock. A business date is a Dubai date, whatever zone the source
-#: states its timestamps in — Deliveroo's statement CSV is explicitly UTC.
+#: Outlet ids this account owns today, matching migration 152. Used only when
+#: the login payload did not list restaurants — see `_restaurant_ids`.
+_DEFAULT_RESTAURANT_IDS = ("693359", "693360", "693361")
+
+#: Re-login this far before JWT `exp` so a sweep never presents an expired
+#: Bearer. The identity token this login mints lasts under an hour.
+_REFRESH_SKEW = timedelta(minutes=5)
+
 _BUSINESS_TZ = ZoneInfo("Asia/Dubai")
 
-#: Deliveroo's reporting platform rejects a custom range wider than 15 days.
-_MAX_WINDOW_DAYS = 15
-
-#: How long to wait for a triggered report to build before giving up on that
-#: window and noting the gap. ~2 min at 4s per poll.
-_REPORT_POLL_ATTEMPTS = 30
-_REPORT_POLL_SECONDS = 4.0
-
-_REPORT_READY = {"complete", "completed", "ready", "done", "available", "success"}
+_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
 
 
 def _num(value: Any) -> Decimal | None:
@@ -120,9 +112,16 @@ def _num(value: Any) -> Decimal | None:
         return None
 
 
-def _abs(value: Decimal | None) -> Decimal | None:
-    """`abs`, but None-preserving — a fee the CSV did not state stays unknown."""
-    return abs(value) if value is not None else None
+def _fils(value: Any) -> Decimal | None:
+    """Partner Hub money: `{fractional: 4000}` is AED 40.00 (fils / 100)."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, dict):
+        fractional = value.get("fractional")
+        if fractional is None:
+            return _num(value.get("formatted") or value.get("amount"))
+        return money_or_none(Decimal(str(fractional)) / Decimal(100))
+    return money_or_none(value)
 
 
 def _first(mapping: Any, *keys: str) -> Any:
@@ -177,14 +176,13 @@ def _parse_date(value: Any) -> date | None:
     return None
 
 
-def _local_dt(date_str: str | None, time_str: str | None) -> datetime | None:
-    """A Dubai-local timestamp from the orders report's split date/time columns,
-    which are already stated in local time."""
-    stamp = f"{(date_str or '').strip()} {(time_str or '').strip()}".strip()
+def _parse_dt(value: Any) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
     try:
-        return datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S").replace(
-            tzinfo=_BUSINESS_TZ
-        )
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         return None
 
@@ -198,33 +196,62 @@ def _utc_to_business(value: str | None) -> datetime | None:
     try:
         naive = datetime.strptime(value.strip(), "%Y-%m-%d %H:%M:%S")
     except ValueError:
-        return None
+        return _parse_dt(value)
     return naive.replace(tzinfo=timezone.utc).astimezone(_BUSINESS_TZ)
 
 
-def _windows(from_date: date, to_date: date) -> list[tuple[date, date]]:
-    """The requested range split into <=15-day chunks the platform will accept."""
-    windows: list[tuple[date, date]] = []
-    cursor = from_date
-    while cursor <= to_date:
-        end = min(cursor + timedelta(days=_MAX_WINDOW_DAYS - 1), to_date)
-        windows.append((cursor, end))
-        cursor = end + timedelta(days=1)
-    return windows
+def _jwt_exp(token: str) -> datetime | None:
+    try:
+        payload = token.split(".")[1]
+        pad = "=" * (-len(payload) % 4)
+        data = json.loads(base64.urlsafe_b64decode(payload + pad))
+        exp = data.get("exp")
+        if exp is None:
+            return None
+        return datetime.fromtimestamp(int(exp), tz=timezone.utc)
+    except Exception:  # noqa: BLE001 — a malformed JWT is "no expiry", not a crash
+        return None
+
+
+def _restaurant_ids_from_login(body: dict[str, Any]) -> list[str]:
+    ids: list[str] = []
+    for company in body.get("restaurant_companies") or []:
+        if not isinstance(company, dict):
+            continue
+        for row in company.get("restaurants") or []:
+            if isinstance(row, dict) and row.get("id"):
+                ids.append(str(row["id"]))
+    return ids
 
 
 class DeliverooClient(BaseAggregatorClient):
     channel = CHANNEL_DELIVEROO
     uses_tls_impersonation = False
 
-    # ── scoping ──────────────────────────────────────────────────────────────
-    def _org_id(self, session: LoadedSession) -> str:
-        """The `orgId` every reporting-platform call is scoped to.
+    def build_headers(
+        self, session: LoadedSession, extra: dict[str, str] | None = None
+    ) -> dict[str, str]:
+        """Cookie `token` plus `Authorization: Bearer` — the SPA sends both.
 
-        Prefers a value the session carries (so a re-bootstrap onto another
-        brand's org needs no code change); falls back to the audited default,
-        which is the only org this account has today.
+        `/api/session` and `/api/invoices` accept the JWT as the `token` cookie;
+        some routes only accept the Bearer. Sending both matches the browser.
         """
+        headers = super().build_headers(session, extra)
+        token = (session.tokens or {}).get("access_token") or (
+            session.cookies or {}
+        ).get("token")
+        if token and not any(k.lower() == "authorization" for k in headers):
+            headers["Authorization"] = f"Bearer {token}"
+        org = self._org_id(session)
+        headers.setdefault("X-Roo-Org-Id", org)
+        headers.setdefault("X-Hub-Api-Caller", "partner-hub")
+        headers.setdefault("Origin", _HUB)
+        headers.setdefault("Referer", f"{_HUB}/analytics?orgId={org}")
+        headers.setdefault("Accept", "application/json, text/plain, */*")
+        return headers
+
+    def _org_id(self, session: LoadedSession) -> str:
+        """The `orgId` / `org_id` every call is scoped to."""
         for source in (session.tokens or {}, session.header_profile or {}):
             value = _first(
                 source, "org_id", "orgId", "organisation_id", "organization_id"
@@ -233,244 +260,264 @@ class DeliverooClient(BaseAggregatorClient):
                 return str(value)
         return _DEFAULT_ORG_ID
 
+    def _restaurant_ids(self, session: LoadedSession) -> list[str]:
+        tokens = session.tokens or {}
+        raw = tokens.get("restaurant_ids") or tokens.get("restaurantIds")
+        if isinstance(raw, list) and raw:
+            return [str(x) for x in raw if x]
+        if isinstance(raw, str) and raw.strip():
+            return [part.strip() for part in raw.split(",") if part.strip()]
+        extras = tokens.get("restaurants")
+        if isinstance(extras, list) and extras:
+            return [str(x) for x in extras if x]
+        return list(_DEFAULT_RESTAURANT_IDS)
+
+    def _token_is_fresh(self, session: LoadedSession) -> bool:
+        exp = session.token_expires_at
+        if exp is None:
+            return False
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        return exp > utcnow() + _REFRESH_SKEW
+
+    async def prepare_session(
+        self, db: AsyncSession, session: LoadedSession | None
+    ) -> LoadedSession | None:
+        """Mint or refresh a Partner Hub JWT from `aggregator_account`.
+
+        Called by ingest before a sweep so Deliveroo does not depend on a
+        headed Chrome capture. Email/password only — no OTP on this channel.
+        """
+        if (
+            session is not None
+            and session.status == SESSION_LIVE
+            and self._token_is_fresh(session)
+        ):
+            return session
+        if session is not None and session.status == SESSION_LIVE:
+            refreshed = await self._refresh(db, session)
+            if refreshed is not None:
+                return refreshed
+        return await self._login(db, session)
+
+    async def _login(
+        self, db: AsyncSession, previous: LoadedSession | None
+    ) -> LoadedSession | None:
+        from app.services.aggregators import account_store, session_store
+
+        account = await account_store.load(db, self.channel)
+        if account is None or not account.email or not account.password:
+            logger.warning("deliveroo: no stored email/password; cannot HTTP-login")
+            return previous
+        import httpx
+
+        async with httpx.AsyncClient(timeout=self._timeout, http2=True) as client:
+            response = await client.post(
+                _LOGIN_URL,
+                headers={
+                    "User-Agent": _BROWSER_UA,
+                    "Accept": "application/json",
+                    "Accept-Language": "en-GB,en;q=0.9,ar;q=0.8",
+                    "Origin": _HUB,
+                    "Referer": f"{_HUB}/login",
+                    "Content-Type": "application/json",
+                },
+                json={"email": account.email, "password": account.password},
+            )
+        if response.status_code >= 400:
+            logger.warning("deliveroo login returned %s", response.status_code)
+            return previous
+        body = response.json()
+        token = body.get("access_token") or ""
+        if not token:
+            logger.warning("deliveroo login returned no access_token")
+            return previous
+        org_id = str(
+            (account.extras or {}).get("org_id")
+            or _first(body, "org_id", "orgId")
+            or _DEFAULT_ORG_ID
+        )
+        companies = body.get("restaurant_companies") or []
+        if companies and isinstance(companies[0], dict) and companies[0].get("id"):
+            org_id = str(companies[0]["id"])
+        restaurant_ids = _restaurant_ids_from_login(body) or list(
+            _DEFAULT_RESTAURANT_IDS
+        )
+        exp = _jwt_exp(token)
+        header_profile = dict(previous.header_profile or {}) if previous else {}
+        header_profile.setdefault("user-agent", _BROWSER_UA)
+        header_profile.setdefault("accept-language", "en-GB,en;q=0.9,ar;q=0.8")
+        await session_store.upsert_bootstrap(
+            db,
+            channel=self.channel,
+            cookies={"token": token},
+            tokens={
+                "access_token": token,
+                "session_id": body.get("session_id"),
+                "org_id": org_id,
+                "restaurant_ids": restaurant_ids,
+            },
+            header_profile=header_profile,
+            token_expires_at=exp,
+            cookie_expires_at=exp,
+        )
+        logger.info(
+            "deliveroo HTTP login ok; %s restaurants, token exp %s",
+            len(restaurant_ids),
+            exp.isoformat() if exp else "unknown",
+        )
+        return await session_store.load(db, self.channel)
+
+    async def _refresh(
+        self, db: AsyncSession, session: LoadedSession
+    ) -> LoadedSession | None:
+        from app.services.aggregators import session_store
+
+        try:
+            data = await self.request_json(session, "POST", _REFRESH_URL, json_body={})
+        except Exception:  # noqa: BLE001 — fall through to a full login
+            logger.info("deliveroo token refresh failed; will re-login")
+            return None
+        token = ""
+        if isinstance(data, dict):
+            token = str(data.get("access_token") or data.get("accessToken") or "")
+        if not token:
+            return None
+        exp = _jwt_exp(token)
+        tokens = dict(session.tokens or {})
+        tokens["access_token"] = token
+        cookies = dict(session.cookies or {})
+        cookies["token"] = token
+        await session_store.upsert_bootstrap(
+            db,
+            channel=self.channel,
+            cookies=cookies,
+            tokens=tokens,
+            header_profile=dict(session.header_profile or {}),
+            token_expires_at=exp,
+            cookie_expires_at=exp,
+        )
+        return await session_store.load(db, self.channel)
+
     # ── sales ────────────────────────────────────────────────────────────────
     async def fetch_sales(
         self, session: LoadedSession, *, since: datetime, until: datetime
     ) -> SalesResult:
-        org_id = self._org_id(session)
+        start = since.date().isoformat()
+        end = until.date().isoformat()
         orders: list[StandardOrder] = []
         gaps: list[str] = []
-        for w_start, w_end in _windows(since.date(), until.date()):
-            orders_csv = await self._report_csv(
-                session, org_id, "orders", w_start, w_end
+        for restaurant_id in self._restaurant_ids(session):
+            listing = await self.request_json(
+                session,
+                "GET",
+                f"{_API}/restaurants/{restaurant_id}/orders",
+                params={"start_date": start, "end_date": end},
             )
-            if orders_csv is None:
-                gaps.append(f"orders {w_start.isoformat()}..{w_end.isoformat()}")
-            else:
-                orders.extend(self._parse_orders_csv(orders_csv))
-
-            items_csv = await self._report_csv(
-                session, org_id, "items_sold", w_start, w_end
-            )
-            if items_csv is None:
-                gaps.append(f"items {w_start.isoformat()}..{w_end.isoformat()}")
-            else:
-                orders.extend(self._parse_items_csv(items_csv, w_start, w_end))
+            rows = _as_list(listing, "orders", "data")
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                order_id = str(row.get("order_id") or row.get("id") or "")
+                parsed = self._parse_list_order(row, restaurant_id)
+                if parsed is None:
+                    continue
+                if order_id:
+                    try:
+                        detail = await self.request_json(
+                            session, "GET", f"{_API}/orders/{order_id}"
+                        )
+                    except Exception:  # noqa: BLE001 — keep the list row
+                        detail = None
+                        gaps.append(order_id)
+                    if isinstance(detail, dict):
+                        parsed = self._merge_order_detail(parsed, detail, restaurant_id)
+                orders.append(parsed)
         return SalesResult(
             orders=orders,
             truncation_note=(
-                "Deliveroo reports not ready in time for: " + "; ".join(gaps)
+                "Deliveroo order detail missing for: " + ", ".join(gaps)
                 if gaps
                 else None
             ),
         )
 
-    async def _report_csv(
-        self,
-        session: LoadedSession,
-        org_id: str,
-        report_type: str,
-        start_date: date,
-        end_date: date,
-    ) -> str | None:
-        """Trigger, await and download one reporting-platform CSV as text.
-
-        Returns None (rather than raising) when the report does not build in the
-        poll budget or the download is not a clean 200 — the caller records that
-        as truncation, so a short pull is visible instead of silently complete.
-        An auth failure surfaces earlier, on the JSON trigger/poll calls, where
-        the base maps it.
-        """
-        report_id = await self._create_report(
-            session, org_id, report_type, start_date, end_date
-        )
-        if report_id is None:
+    def _parse_list_order(
+        self, row: dict[str, Any], restaurant_id: str
+    ) -> StandardOrder | None:
+        order_id = str(row.get("order_id") or row.get("id") or "").strip()
+        order_number = str(row.get("order_number") or "").strip()
+        external_id = order_id or order_number
+        if not external_id:
             return None
-        for _ in range(_REPORT_POLL_ATTEMPTS):
-            if await self._report_ready(session, org_id, report_id):
-                return await self._download_report(session, org_id, report_id)
-            await asyncio.sleep(_REPORT_POLL_SECONDS)
-        return None
-
-    async def _create_report(
-        self,
-        session: LoadedSession,
-        org_id: str,
-        report_type: str,
-        start_date: date,
-        end_date: date,
-    ) -> str | None:
-        data = await self.request_json(
-            session,
-            "POST",
-            f"{_API}/reporting_platform/reports",
-            params={"orgId": org_id},
-            json_body={
-                "report_type": report_type,
-                "order_source": "core",
-                "start_date": start_date.isoformat(),
-                "end_date": end_date.isoformat(),
-                # The exporter selected "all sites"; the platform's own default is
-                # the whole org, so no per-site id is sent (and none is hardcoded).
-                "site_selection": "all",
-            },
-        )
-        node = data.get("report") if isinstance(data, dict) else None
-        source = node if isinstance(node, dict) else data
-        report_id = _first(source, "id", "report_id", "reportId", "uuid")
-        return str(report_id) if report_id is not None else None
-
-    async def _report_ready(
-        self, session: LoadedSession, org_id: str, report_id: str
-    ) -> bool:
-        listing = await self.request_json(
-            session,
-            "GET",
-            f"{_API}/reporting_platform/reports",
-            params={"orgId": org_id},
-        )
-        for row in _as_list(listing, "reports", "data"):
-            rid = _first(row, "id", "report_id", "reportId", "uuid")
-            if rid is not None and str(rid) == report_id:
-                status = _first(row, "status", "state") or ""
-                return str(status).strip().lower() in _REPORT_READY
-        return False
-
-    async def _download_report(
-        self, session: LoadedSession, org_id: str, report_id: str
-    ) -> str | None:
-        response = await self.request_raw(
-            session,
-            "GET",
-            f"{_API}/reporting_platform/reports/{report_id}/download",
-            params={"orgId": org_id},
-        )
-        if getattr(response, "status_code", 0) != 200:
-            return None
-        return getattr(response, "text", None)
-
-    def _parse_orders_csv(self, text: str) -> list[StandardOrder]:
-        """One completed order per row — the sales truth.
-
-        Column mapping ported verbatim from `parse_deliveroo_orders_report_csv`.
-        The outlet is keyed by its restaurant name (the only outlet discriminator
-        the report carries); the ingest resolves it to a branch through
-        `aggregator_branch_map`.
-        """
-        reader = csv.DictReader(io.StringIO(text))
-        orders: list[StandardOrder] = []
-        for row in reader:
-            status = (row.get("Order status") or "").strip().lower().replace(" ", "_")
-            if status != "completed":
-                continue
-            placed_at = _local_dt(row.get("Date submitted"), row.get("Time submitted"))
-            business_at = (
-                _local_dt(row.get("Date delivered"), row.get("Time delivered"))
-                or placed_at
+        timeline = row.get("timeline") if isinstance(row.get("timeline"), dict) else {}
+        placed_at = _parse_dt(
+            timeline.get("placed_at") if timeline else None
+        ) or _parse_dt(row.get("placed_at"))
+        business_date = None
+        if placed_at is not None:
+            local = (
+                placed_at.astimezone(_BUSINESS_TZ) if placed_at.tzinfo else placed_at
             )
-            if business_at is None:
-                continue
-            order_number = (row.get("Order number") or "").strip()
-            if not order_number:
-                continue
-            outlet = (row.get("Restaurant name") or "").strip() or None
-            gross = _num(row.get("Subtotal"))
-            commission = _abs(_num(row.get("Deliveroo commission")))
-            vat = _abs(_num(row.get("VAT on Deliveroo commission")))
-            net_payable = (
-                gross - commission - vat
-                if None not in (gross, commission, vat)
-                else None
-            )
-            orders.append(
-                StandardOrder(
-                    external_order_id=order_number,
-                    external_outlet_id=outlet,
-                    business_date=_iso(business_at.date()),
-                    placed_at=placed_at or business_at,
-                    status=status,
-                    currency="AED",
-                    gross_sales=gross,
-                    net_sales=gross,
-                    commission_amount=commission,
-                    vat_amount=vat,
-                    net_payable=net_payable,
-                    raw=dict(row),
-                )
-            )
-        return orders
-
-    def _parse_items_csv(
-        self, text: str, period_start: date, period_end: date
-    ) -> list[StandardOrder]:
-        """The period-window item aggregates, grouped into one carrier order per
-        outlet.
-
-        The `items_sold` report is not order-scoped — it is a sum per menu item
-        over the window — so its rows cannot hang off a real order. Each outlet's
-        rows are gathered onto one synthetic `aggregate` order (see
-        `_items_carrier`) whose money is left `None` so it never inflates sales
-        totals; the reconciliation ignores non-`line` grain. Column mapping ported
-        from `parse_deliveroo_items_sold_report_csv`.
-        """
-        reader = csv.DictReader(io.StringIO(text))
-        by_outlet: dict[str, list[StandardOrderItem]] = {}
-        for index, row in enumerate(reader, start=1):
-            outlet = (row.get("Restaurant name") or "").strip()
-            item_name = (row.get("Item name") or "").strip()
-            if not outlet or not item_name:
-                continue
-            category = (row.get("Category") or "").strip() or None
-            subtotal = _num(row.get("Subtotal"))
-            item_key = (
-                f"{outlet}:{category or 'uncategorized'}:{item_name}"
-                f":{period_start.isoformat()}:{period_end.isoformat()}"
-            )
-            by_outlet.setdefault(outlet, []).append(
-                StandardOrderItem(
-                    source_key=f"{item_key}:{index}",
-                    grain=GRAIN_AGGREGATE,
-                    item_name=item_name,
-                    category_name=category,
-                    quantity=_num(row.get("Quantity")),
-                    unit_price=_num(row.get("Price")),
-                    gross_sales=subtotal,
-                    net_sales=subtotal,
-                    amount_is_known=subtotal is not None,
-                    period_start=period_start.isoformat(),
-                    period_end=period_end.isoformat(),
-                )
-            )
-        return [
-            self._items_carrier(outlet, items, period_start, period_end)
-            for outlet, items in by_outlet.items()
-        ]
-
-    @staticmethod
-    def _items_carrier(
-        outlet: str,
-        items: list[StandardOrderItem],
-        period_start: date,
-        period_end: date,
-    ) -> StandardOrder:
-        """A synthetic parent for one outlet's window aggregates.
-
-        `SalesResult` carries items only nested under a `StandardOrder`, and these
-        aggregates belong to no single order, so they ride one clearly-namespaced
-        carrier per `(outlet, window)`. It holds no money (all `None`) and a
-        distinct `items_aggregate` status, so it adds item rows without adding a
-        sale — the id namespace keeps it out of the real order keyspace.
-        """
+            business_date = local.date().isoformat()
+        gross = _fils(row.get("amount"))
+        status = (row.get("status") or "").strip() or None
         return StandardOrder(
-            external_order_id=(
-                f"deliveroo-items:{outlet}"
-                f":{period_start.isoformat()}:{period_end.isoformat()}"
-            ),
-            external_outlet_id=outlet,
-            business_date=period_end.isoformat(),
-            status="items_aggregate",
+            external_order_id=external_id,
+            external_outlet_id=restaurant_id,
+            business_date=business_date,
+            placed_at=placed_at,
+            status=status,
             currency="AED",
-            items=items,
+            gross_sales=gross,
+            net_sales=gross,
+            raw=dict(row),
+        )
+
+    def _merge_order_detail(
+        self, order: StandardOrder, detail: dict[str, Any], restaurant_id: str
+    ) -> StandardOrder:
+        items: list[StandardOrderItem] = []
+        for index, item in enumerate(_as_list(detail, "items", "order_items"), start=1):
+            if not isinstance(item, dict):
+                continue
+            name = (item.get("name") or item.get("item_name") or "").strip()
+            qty = item.get("quantity")
+            unit = _fils(item.get("unit_price") or item.get("price"))
+            total = _fils(
+                item.get("total_price") or item.get("total") or item.get("amount")
+            )
+            items.append(
+                StandardOrderItem(
+                    source_key=f"{order.external_order_id}:{index}",
+                    grain=GRAIN_LINE,
+                    item_name=name or None,
+                    quantity=Decimal(str(qty)) if qty is not None else None,
+                    unit_price=unit,
+                    gross_sales=total,
+                    net_sales=total,
+                    amount_is_known=total is not None,
+                    business_date=order.business_date,
+                )
+            )
+        raw = dict(order.raw or {})
+        raw["detail"] = detail
+        return StandardOrder(
+            external_order_id=order.external_order_id,
+            external_outlet_id=order.external_outlet_id or restaurant_id,
+            business_date=order.business_date,
+            placed_at=order.placed_at,
+            status=order.status or (detail.get("status") or None),
+            currency=order.currency,
+            gross_sales=order.gross_sales
+            or _fils(detail.get("amount") or detail.get("total")),
+            net_sales=order.net_sales
+            or _fils(detail.get("amount") or detail.get("total")),
+            commission_amount=order.commission_amount,
+            vat_amount=order.vat_amount,
+            net_payable=order.net_payable,
+            items=items or order.items,
+            raw=raw,
         )
 
     # ── finance (statements + payouts) ───────────────────────────────────────
@@ -489,7 +536,6 @@ class DeliverooClient(BaseAggregatorClient):
             period_end = _parse_date(
                 _first(invoice, "period_end", "end_date", "to", "billing_end")
             )
-            # Keep only invoices overlapping the requested window.
             if period_end and period_end < from_date:
                 continue
             if period_start and period_start > to_date:
@@ -499,10 +545,17 @@ class DeliverooClient(BaseAggregatorClient):
                 continue
             statement_id = str(invoice_id)
             due_date = _parse_date(
-                _first(invoice, "payment_due_date", "due_date", "paid_at", "pay_date")
+                _first(
+                    invoice,
+                    "payment_due_date",
+                    "due_date",
+                    "due_at",
+                    "paid_at",
+                    "pay_date",
+                )
             )
-            net_payable = _num(
-                _first(invoice, "net_payable", "total", "amount", "amount_due")
+            net_payable = _fils(invoice.get("total")) or _num(
+                _first(invoice, "net_payable", "amount", "amount_due")
             )
             currency = _first(invoice, "currency", "currency_code") or "AED"
 
@@ -533,7 +586,7 @@ class DeliverooClient(BaseAggregatorClient):
                     payment_due_date=_iso(due_date),
                     transfer_amount=net_payable,
                     transfer_status="scheduled",
-                    payment_reference=statement_id,
+                    payment_reference=str(_first(invoice, "reference") or statement_id),
                     currency=currency,
                 )
             )
@@ -551,7 +604,7 @@ class DeliverooClient(BaseAggregatorClient):
         self, session: LoadedSession, org_id: str
     ) -> list[dict[str, Any]]:
         listing = await self.request_json(
-            session, "GET", f"{_API}/invoices", params={"orgId": org_id}
+            session, "GET", f"{_API}/invoices", params={"org_id": org_id}
         )
         return [
             row
@@ -566,11 +619,20 @@ class DeliverooClient(BaseAggregatorClient):
             session,
             "GET",
             f"{_API}/invoices/{invoice_id}/download",
-            params={"file_type": "statement_csv", "orgId": org_id},
+            params={
+                "file_type": "statement_csv",
+                "invoice_origin": "restaurant-payments",
+            },
         )
-        if getattr(response, "status_code", 0) != 200:
+        status = getattr(response, "status_code", 0)
+        text = getattr(response, "text", None) or ""
+        ctype = ""
+        headers = getattr(response, "headers", None)
+        if headers is not None:
+            ctype = str(headers.get("content-type") or "")
+        if status != 200 or "text/html" in ctype or text.lstrip().startswith("<!"):
             return None
-        return getattr(response, "text", None)
+        return text
 
     def _statement_lines(
         self, statement_id: str, text: str

@@ -151,7 +151,7 @@ async def _talabat_is_authenticated_app(page) -> bool:
     )
 
 
-async def login_talabat(context) -> None:
+async def login_talabat(context, *, mailbox: dict | None = None) -> None:
     if not settings.TALABAT_EMAIL or not settings.TALABAT_PASSWORD:
         raise LoginError("TALABAT_EMAIL / TALABAT_PASSWORD are not configured.")
     page = await context.new_page()
@@ -199,11 +199,14 @@ async def login_talabat(context) -> None:
             subject_filter=TALABAT_OTP_SUBJECT,
             since=otp_since,
             timeout=90,
+            mailbox=mailbox,
+            channel="talabat",
         )
     except OTPPollingError as exc:
         raise LoginChallengeError(
-            "Talabat requested a 2FA OTP but none could be read from the IMAP "
-            "mailbox. Configure OTP_IMAP_* or complete the login manually."
+            "Talabat requested a 2FA OTP but none could be read from the "
+            "linked mailbox. Save this channel's Microsoft app on Admin → "
+            "Logins, run mailbox-auth, or complete the login manually."
         ) from exc
 
     inputs = page.locator("input[type='tel']")
@@ -260,7 +263,7 @@ async def _dismiss_noon_passkey_prompt(page) -> None:
             continue
 
 
-async def login_noon(context) -> None:
+async def login_noon(context, *, mailbox: dict | None = None) -> None:
     if not settings.NOON_EMAIL:
         raise LoginError("NOON_EMAIL is not configured.")
     page = await context.new_page()
@@ -290,11 +293,14 @@ async def login_noon(context) -> None:
             subject_filter=NOON_OTP_SUBJECT,
             since=otp_since,
             timeout=90,
+            mailbox=mailbox,
+            channel="noon",
         )
     except OTPPollingError as exc:
         raise LoginChallengeError(
             "Noon RMS requested an email OTP but none could be read from the "
-            "IMAP mailbox. Configure OTP_IMAP_* or complete the login manually."
+            "linked mailbox. Save this channel's Microsoft app on Admin → "
+            "Logins, run mailbox-auth, or complete the login manually."
         ) from exc
     await otp_input.fill(otp)
     await login_frame.locator("button[type='submit']").click()

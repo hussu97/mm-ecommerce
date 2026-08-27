@@ -321,6 +321,59 @@ def test_public_view_mailbox_never_includes_imap_password():
     assert view["mailbox"]["has_password"] is True
 
 
+def test_merge_mailbox_keeps_graph_secrets_when_omitted():
+    from app.services.aggregators.account_store import (
+        LoadedAccount,
+        merge_mailbox,
+        public_view,
+    )
+
+    merged = merge_mailbox(
+        {
+            "provider": "graph",
+            "client_id": "app-talabat",
+            "client_secret": "secret-talabat",
+            "refresh_token": "rt-talabat",
+            "tenant": "consumers",
+        },
+        {"provider": "graph", "client_id": "app-talabat", "client_secret": ""},
+    )
+    assert merged["client_secret"] == "secret-talabat"
+    assert merged["refresh_token"] == "rt-talabat"
+
+    view = public_view(
+        LoadedAccount(
+            channel="talabat",
+            login_method="email_password_otp",
+            email="h@x",
+            mailbox=merged,
+        )
+    )
+    assert view["has_mailbox"] is True
+    assert view["mailbox"]["provider"] == "graph"
+    assert view["mailbox"]["client_id"] == "app-talabat"
+    assert view["mailbox"]["has_client_secret"] is True
+    assert view["mailbox"]["has_refresh_token"] is True
+    assert "client_secret" not in view["mailbox"]
+    assert "refresh_token" not in view["mailbox"]
+
+
+def test_merge_mailbox_graph_does_not_require_imap_host():
+    from app.services.aggregators.account_store import merge_mailbox
+
+    merged = merge_mailbox(
+        None,
+        {
+            "provider": "graph",
+            "client_id": "app-noon",
+            "client_secret": "secret-noon",
+            "tenant": "consumers",
+        },
+    )
+    assert merged["client_id"] == "app-noon"
+    assert "host" not in merged or not merged.get("host")
+
+
 def test_merge_mailbox_keeps_password_when_omitted():
     from app.services.aggregators.account_store import merge_mailbox
 
@@ -354,6 +407,55 @@ def test_deliveroo_login_method_is_email_password():
     assert CHANNEL_LOGIN_METHODS["deliveroo"] == LOGIN_EMAIL_PASSWORD
 
 
+def test_deliveroo_fils_money_is_aed_not_the_raw_integer():
+    from decimal import Decimal
+
+    from app.services.providers.deliveroo_provider import _fils
+
+    assert _fils({"fractional": 4000, "formatted": "AED 40"}) == Decimal("40.00")
+    assert _fils({"fractional": 71683}) == Decimal("716.83")
+    assert _fils(None) is None
+
+
+def test_deliveroo_list_order_uses_restaurant_id_as_outlet():
+    from app.services.providers.deliveroo_provider import DeliverooClient
+
+    order = DeliverooClient()._parse_list_order(
+        {
+            "order_number": "4332",
+            "order_id": "7e9d337d-2981-36e9-a3b6-3b07f74c918e",
+            "status": "delivered",
+            "amount": {"fractional": 4000, "formatted": "AED 40"},
+            "timeline": {"placed_at": "2026-08-26T17:48:25.328106+04:00"},
+        },
+        "693359",
+    )
+    assert order is not None
+    assert order.external_order_id == "7e9d337d-2981-36e9-a3b6-3b07f74c918e"
+    assert order.external_outlet_id == "693359"
+    assert order.status == "delivered"
+    assert order.gross_sales is not None
+    assert str(order.gross_sales) == "40.00"
+    assert order.business_date == "2026-08-26"
+
+
+def test_deliveroo_headers_send_bearer_and_token_cookie():
+    from app.services.aggregators.session_store import LoadedSession
+    from app.services.providers.deliveroo_provider import DeliverooClient
+
+    session = LoadedSession(
+        channel="deliveroo",
+        account_ref="",
+        cookies={"token": "jwt-here"},
+        tokens={"access_token": "jwt-here", "org_id": "497912"},
+        header_profile={"user-agent": "Chrome/131"},
+    )
+    headers = DeliverooClient().build_headers(session)
+    assert headers["Authorization"] == "Bearer jwt-here"
+    assert "token=jwt-here" in headers["Cookie"]
+    assert headers["X-Roo-Org-Id"] == "497912"
+
+
 # ── provider registry ─────────────────────────────────────────────────────────
 def test_registry_has_the_four_httpx_channels_and_not_keeta():
     from app.services.aggregators import ingest
@@ -365,6 +467,7 @@ def test_registry_has_the_four_httpx_channels_and_not_keeta():
     assert ingest.PROVIDERS["talabat"].uses_tls_impersonation is True
     assert ingest.PROVIDERS["noon"].uses_tls_impersonation is True
     assert ingest.PROVIDERS["careem"].uses_tls_impersonation is False
+    assert ingest.PROVIDERS["deliveroo"].uses_tls_impersonation is False
 
 
 async def test_branch_map_admin_requires_permission(client):

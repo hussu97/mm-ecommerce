@@ -181,7 +181,7 @@ services:
       # the ingest inert rather than storing credentials in plaintext); the
       # numeric and boolean defaults are real so an unset value cannot write an
       # empty string over a field pydantic would refuse at import.
-      AGGREGATOR_INGEST_ENABLED: ${AGGREGATOR_INGEST_ENABLED:-false}
+      AGGREGATOR_INGEST_ENABLED: ${AGGREGATOR_INGEST_ENABLED:-true}
       AGGREGATOR_CONFIG_ENCRYPTION_KEY: ${AGGREGATOR_CONFIG_ENCRYPTION_KEY:-}
       AGGREGATOR_SESSION_PUSH_TOKEN: ${AGGREGATOR_SESSION_PUSH_TOKEN:-}
       AGGREGATOR_SALES_TICK_SECONDS: ${AGGREGATOR_SALES_TICK_SECONDS:-3600}

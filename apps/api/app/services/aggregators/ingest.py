@@ -328,6 +328,9 @@ async def _sweep_channel(
 ) -> int:
     """One channel's sweep for one mode. Returns records written; 0 on skip."""
     session = await session_store.load(db, channel)
+    prepare = getattr(provider, "prepare_session", None)
+    if callable(prepare):
+        session = await prepare(db, session)
     if session is None or session.status != SESSION_LIVE:
         return 0
 
