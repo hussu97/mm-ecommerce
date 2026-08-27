@@ -19,6 +19,12 @@ active row here, the way it is *on* GrubOps iff it has a `grubops_location_map`
 row. `foodics_branch_map` completes the set so "has Foodics" is a row too, and a
 branch can carry any mix of the three integrations — or none.
 
+**How we sign in.** `aggregator_account` — the durable login recipe for one
+channel: which flow to run (`login_method`) plus Fernet-sealed credentials.
+The session cookies are a *product* of that login; they expire. The email and
+password (or OTP mailbox) do not, so the worker can re-auth on the VM instead
+of shipping a laptop-minted cookie jar.
+
 **How we talk to them.** `aggregator_session` — the derived, encrypted session
 (cookies + tokens + the captured header fingerprint) a bootstrap logged in to
 obtain, replayed by the httpx providers so the hourly job never opens a browser.
@@ -87,6 +93,54 @@ SESSION_STATUSES: tuple[str, ...] = (
     SESSION_NEEDS_BOOTSTRAP,
     SESSION_DEAD,
 )
+
+# ── Login recipes ───────────────────────────────────────────────────────────
+# How the worker signs in. Selectors and URLs stay in code (`login.py`); this
+# is the *kind* of flow, so a new channel is a CHECK widen plus a login
+# function, not a JSON blob of CSS selectors that nobody can test.
+LOGIN_EMAIL_PASSWORD = "email_password"
+LOGIN_EMAIL_OTP = "email_otp"
+LOGIN_EMAIL_PASSWORD_OTP = "email_password_otp"
+LOGIN_SSO = "sso"
+LOGIN_MANUAL = "manual"
+LOGIN_METHODS: tuple[str, ...] = (
+    LOGIN_EMAIL_PASSWORD,
+    LOGIN_EMAIL_OTP,
+    LOGIN_EMAIL_PASSWORD_OTP,
+    LOGIN_SSO,
+    LOGIN_MANUAL,
+)
+_LOGIN_METHODS_SQL = ", ".join(f"'{m}'" for m in LOGIN_METHODS)
+
+#: Flows that type a portal password. Noon is email-then-OTP, no password.
+METHODS_NEED_PASSWORD: frozenset[str] = frozenset(
+    {LOGIN_EMAIL_PASSWORD, LOGIN_EMAIL_PASSWORD_OTP}
+)
+#: Flows that wait on a mailed one-time code. The IMAP mailbox on the
+#: account row is how the worker reads that code unattended.
+METHODS_NEED_OTP: frozenset[str] = frozenset(
+    {LOGIN_EMAIL_OTP, LOGIN_EMAIL_PASSWORD_OTP}
+)
+#: Flows that fill a portal email field.
+METHODS_NEED_EMAIL: frozenset[str] = frozenset(
+    {LOGIN_EMAIL_PASSWORD, LOGIN_EMAIL_OTP, LOGIN_EMAIL_PASSWORD_OTP}
+)
+
+
+def method_needs_otp(login_method: str) -> bool:
+    return login_method in METHODS_NEED_OTP
+
+
+#: The flow each portal actually uses today. Stored on the account row so an
+#: operator can see it; the worker still dispatches on this column, not this
+#: map, in case one brand's Careem tenant differs from another's.
+CHANNEL_LOGIN_METHODS: dict[str, str] = {
+    CHANNEL_DELIVEROO: LOGIN_EMAIL_PASSWORD,
+    CHANNEL_TALABAT: LOGIN_EMAIL_PASSWORD_OTP,
+    CHANNEL_NOON: LOGIN_EMAIL_OTP,
+    CHANNEL_KEETA: LOGIN_EMAIL_PASSWORD,
+    CHANNEL_CAREEM: LOGIN_MANUAL,
+}
 
 # ── Sync-run lifecycle ──────────────────────────────────────────────────────
 RUN_PLANNED = "planned"
@@ -196,6 +250,50 @@ class FoodicsBranchMap(Base, UUIDMixin, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<FoodicsBranchMap branch={self.branch_id} foodics={self.foodics_branch_id}>"
+
+
+class AggregatorAccount(Base, UUIDMixin, TimestampMixin):
+    """How we sign in to one marketplace account, and with which secrets.
+
+    Distinct from `aggregator_session`: that row is the *derived* cookie/token
+    jar, which Cloudflare and token expiry kill on a short clock. This row is
+    the durable recipe — `login_method` names the flow in `login.py` (including
+    whether an email OTP is required), `credentials_encrypted` holds the
+    Fernet blob `{email, password}` the worker fills, and
+    `mailbox_encrypted` holds the IMAP login the worker uses to read that OTP.
+    `extras` is non-secret portal config (Deliveroo `org_id`).
+
+    Portal and mailbox passwords never leave these columns in the clear. The
+    admin health read returns `has_password` / `has_mailbox` and the emails;
+    only the worker bearer decrypts.
+    """
+
+    __tablename__ = "aggregator_account"
+
+    channel: Mapped[str] = mapped_column(String(20), nullable=False)
+    account_ref: Mapped[str] = mapped_column(
+        String(64), nullable=False, server_default=""
+    )
+    login_method: Mapped[str] = mapped_column(String(32), nullable=False)
+    credentials_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: IMAP host/user/password/folder + optional sender/subject filters, so an
+    #: OTP channel can pull the code from the inbox that actually receives it.
+    mailbox_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extras: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("channel", "account_ref", name="uq_aggregator_account"),
+        CheckConstraint(
+            f"channel IN ({_CHANNELS_SQL})", name="ck_aggregator_account_channel"
+        ),
+        CheckConstraint(
+            f"login_method IN ({_LOGIN_METHODS_SQL})",
+            name="ck_aggregator_account_login_method",
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"<AggregatorAccount {self.channel} method={self.login_method}>"
 
 
 class AggregatorSession(Base, UUIDMixin, TimestampMixin):

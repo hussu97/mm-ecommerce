@@ -6,6 +6,7 @@ from .address import Address  # noqa: F401
 from .admin_passkey import AdminPasskey, WebAuthnChallenge  # noqa: F401
 from .aggregator import (  # noqa: F401
     AGGREGATOR_CHANNELS,
+    AggregatorAccount,
     AggregatorBranchMap,
     AggregatorOrder,
     AggregatorOrderItem,
@@ -378,6 +379,7 @@ __all__ = [
     "NotificationRule",
     # Aggregator ingestion
     "AGGREGATOR_CHANNELS",
+    "AggregatorAccount",
     "AggregatorBranchMap",
     "FoodicsBranchMap",
     "AggregatorSession",

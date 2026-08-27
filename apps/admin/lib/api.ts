@@ -32,6 +32,8 @@ type ReconList = Schemas['AggregatorReconciliationList'];
 type ReconSummary = Schemas['ReconSummaryOut'];
 type BranchMapRow = Schemas['AggregatorBranchMapOut'];
 type BranchMapInput = Schemas['AggregatorBranchMapIn'];
+type AggregatorAccount = Schemas['AggregatorAccountPublic'];
+type AggregatorAccountInput = Schemas['AggregatorAccountPush'];
 
 /**
  * Where the API lives, from the browser's point of view.
@@ -677,6 +679,21 @@ export const branchMapApi = {
     api.get<BranchMapRow[]>(`/aggregators/branch-map${buildQs(params)}`),
   upsert: (data: BranchMapInput) => api.post<BranchMapRow>('/aggregators/branch-map', data),
   remove: (id: string) => api.delete<void>(`/aggregators/branch-map/${id}`),
+};
+
+// ─── Aggregator login recipes ─────────────────────────────────────────────────
+
+/**
+ * How we sign in to each marketplace: login method (OTP vs not), portal
+ * email/password, and the IMAP mailbox the worker reads an OTP from.
+ *
+ * Passwords are write-only — the GET never returns them. Omit `password` /
+ * `mailbox.password` on a later save to keep the stored secret.
+ */
+export const aggregatorAccountsApi = {
+  list: () => api.get<AggregatorAccount[]>('/aggregators/accounts'),
+  upsert: (data: AggregatorAccountInput) =>
+    api.post<AggregatorAccount>('/aggregators/accounts', data),
 };
 
 // ─── Bulk Actions ─────────────────────────────────────────────────────────────

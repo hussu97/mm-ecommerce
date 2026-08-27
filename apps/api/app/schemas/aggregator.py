@@ -66,6 +66,87 @@ class AggregatorSessionResponse(BaseModel):
     last_error: str | None = None
 
 
+class AggregatorMailboxWrite(BaseModel):
+    """IMAP details the worker uses to read an OTP, written sealed at rest.
+
+    `password` may be omitted on a later save to keep the stored secret. Host
+    and username identify the inbox; `sender_filter` / `subject_filter` narrow
+    which mail is treated as the code (Talabat `no reply` / Noon `verify`).
+    """
+
+    host: str | None = None
+    port: int | None = Field(default=None, ge=1, le=65535)
+    username: str | None = None
+    password: str | None = None
+    folder: str | None = None
+    sender_filter: str | None = None
+    subject_filter: str | None = None
+
+
+class AggregatorMailboxPublic(BaseModel):
+    """Admin view of a linked OTP mailbox — never the IMAP password."""
+
+    host: str = ""
+    port: int = 993
+    username: str = ""
+    folder: str = "INBOX"
+    sender_filter: str = ""
+    subject_filter: str = ""
+    has_password: bool = False
+
+
+class AggregatorAccountPush(BaseModel):
+    """A durable login recipe for one channel, stored sealed at rest.
+
+    Distinct from the session cookie jar: this is the email/password, the
+    login method (including OTP vs no OTP), and the IMAP mailbox the worker
+    reads an OTP from. `password` / `mailbox.password` may be omitted on a
+    later save to keep the stored secret. `extras` is non-secret portal
+    config (Deliveroo `org_id`).
+    """
+
+    channel: str
+    account_ref: str = ""
+    login_method: str | None = None
+    email: str | None = None
+    password: str | None = None
+    mailbox: AggregatorMailboxWrite | None = None
+    clear_mailbox: bool = False
+    extras: dict | None = None
+
+
+class AggregatorAccountPublic(BaseModel):
+    """Admin health for one login recipe — never a password."""
+
+    channel: str
+    account_ref: str = ""
+    login_method: str
+    otp_required: bool = False
+    email: str = ""
+    has_password: bool
+    has_mailbox: bool = False
+    mailbox: AggregatorMailboxPublic | None = None
+    extras: dict = Field(default_factory=dict)
+    updated_at: datetime | None = None
+
+
+class AggregatorWorkerAccount(BaseModel):
+    """Decrypted login recipe for the worker. Secrets on the wire, on purpose.
+
+    Authenticated with the same push bearer as POST `/session`. The admin
+    health read never returns portal or IMAP passwords.
+    """
+
+    channel: str
+    account_ref: str = ""
+    login_method: str
+    otp_required: bool = False
+    email: str = ""
+    password: str = ""
+    mailbox: dict = Field(default_factory=dict)
+    extras: dict = Field(default_factory=dict)
+
+
 class KeetaOrdersPush(BaseModel):
     """A batch of in-page-fetched Keeta order payloads, pushed in for ingest.
 

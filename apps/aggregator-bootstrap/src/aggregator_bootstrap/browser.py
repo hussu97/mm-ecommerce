@@ -32,7 +32,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from .channels.login import LOGIN_START_URLS, page_looks_authenticated
+from .channels.login import (
+    LOGIN_START_URLS,
+    deliveroo_login_form_visible,
+    fill_deliveroo_login,
+    page_looks_authenticated,
+)
 from .channels.probes import CHANNEL_PROBES, ChannelProbe
 from .config import settings
 from .engine import async_playwright, evaluate_in_page
@@ -476,6 +481,131 @@ async def login_interactive(channel: str) -> ProbeResult:
             assert context is not None and page is not None
             # Snapshot the live session first. The reporting probe is how we
             # lift API headers; it is allowed to fail — cookies already matter.
+            result = await _snapshot_context(channel, context, page, captured)
+            try:
+                await page.goto(
+                    probe.probe_url,
+                    wait_until="domcontentloaded",
+                    timeout=max(settings.PROBE_TIMEOUT_MS, 90_000),
+                )
+                await asyncio.sleep(4)
+                if await page_looks_authenticated(channel, page):
+                    result = await _snapshot_context(
+                        channel, context, page, captured
+                    )
+                else:
+                    logger.warning(
+                        "%s: probe page is %s; keeping the login snapshot",
+                        channel,
+                        page.url,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "%s: probe navigation failed after login; keeping snapshot (%s)",
+                    channel,
+                    exc,
+                )
+    finally:
+        _stop_chrome(chrome)
+
+    print(f"Captured {channel} session ({len(result.cookies)} cookies).", flush=True)
+    return result
+
+
+async def login_with_account(channel: str, *, email: str, password: str) -> ProbeResult:
+    """Headed Chrome, fill stored credentials after Cloudflare, then capture.
+
+    Same unattached-Chrome start as `login_interactive` so CF sees a real
+    browser. Once the login form is on the page (or a session cookie already
+    exists), we attach over CDP and type the DB-stored email/password.
+    Only Deliveroo is wired: it is email+password with no OTP.
+    """
+    if channel != "deliveroo":
+        raise NeedsHumanLogin(
+            f"{channel} auto-login is not wired yet; run `login --channel "
+            f"{channel}` headed, or store the recipe and wait for that channel's "
+            "fill helper."
+        )
+    if not email or not password:
+        raise NeedsHumanLogin(
+            "Deliveroo account has no email/password in the DB. "
+            "Run `store-account --channel deliveroo` first."
+        )
+    if channel not in CHANNEL_PROBES:
+        raise NeedsHumanLogin(f"unknown channel {channel}")
+
+    start_url = LOGIN_START_URLS[channel]
+    probe: ChannelProbe = CHANNEL_PROBES[channel]
+    captured: dict[str, str] = {}
+    profile = chrome_profile_dir(settings.STORAGE_STATE_DIR, channel)
+    port = free_debug_port()
+    chrome = _spawn_chrome(profile=profile, port=port, url=start_url)
+    filled = False
+
+    print(  # noqa: T201 — the operator may still need to tick Cloudflare
+        f"\n=== {channel} (auto) ===\n"
+        f"Google Chrome opened. If Cloudflare asks you to wait or tick a box,\n"
+        f"do that. I fill the email/password from the stored account once the\n"
+        f"login form is visible (up to {_LOGIN_WAIT_SECONDS // 60} minutes).\n",
+        flush=True,
+    )
+
+    try:
+        await _wait_for_cdp(port)
+        await asyncio.sleep(_UNATTACHED_SECONDS)
+
+        started = time.monotonic()
+        deadline = started + _LOGIN_WAIT_SECONDS
+        attached = False
+        browser = context = page = None
+
+        async with async_playwright() as pw:
+            while time.monotonic() < deadline:
+                if chrome.poll() is not None:
+                    raise NeedsHumanLogin(
+                        f"{channel}: the Chrome window was closed before login finished"
+                    )
+                names = chrome_cookie_names(profile)
+                ready = _session_cookies_present(channel, names)
+                past_challenge = "cf_clearance" in names
+                waited_out_cf = (time.monotonic() - started) > 45
+                if not attached and (ready or past_challenge or waited_out_cf):
+                    try:
+                        browser, context, page = await _connect_cdp(pw, port)
+                        attached = True
+
+                        def _on_request(request) -> None:
+                            if probe.match in request.url:
+                                captured.update(request.headers)
+
+                        page.on("request", _on_request)
+                        logger.info("%s: attached to Chrome for auto-login", channel)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.info("CDP attach retry: %s", exc)
+                        await asyncio.sleep(2)
+                        continue
+
+                if attached and page is not None and not _page_is_closed(page):
+                    try:
+                        if await page_looks_authenticated(channel, page):
+                            break
+                        if not filled and await deliveroo_login_form_visible(page):
+                            logger.info("%s: filling stored credentials", channel)
+                            await fill_deliveroo_login(
+                                page, email=email, password=password
+                            )
+                            filled = True
+                    except Exception as exc:  # noqa: BLE001
+                        logger.info("auto-login step blip: %s", exc)
+                await asyncio.sleep(2)
+            else:
+                raise NeedsHumanLogin(
+                    f"{channel}: timed out waiting for a logged-in session"
+                    + (f" at {page.url}" if page is not None else "")
+                    + ("" if filled else " (login form never appeared)")
+                )
+
+            assert context is not None and page is not None
             result = await _snapshot_context(channel, context, page, captured)
             try:
                 await page.goto(

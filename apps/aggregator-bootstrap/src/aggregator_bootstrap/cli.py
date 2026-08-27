@@ -7,7 +7,13 @@ import logging
 
 import typer
 
-from .browser import NeedsHumanLogin, NotLoggedInError, login_interactive
+from .accounts import PortalAccount, from_env, pull_account, push_account
+from .browser import (
+    NeedsHumanLogin,
+    NotLoggedInError,
+    login_interactive,
+    login_with_account,
+)
 from .channels.probes import CHANNEL_PROBES
 from .hydrate import hydrate_from_api
 from .warm import hydrate_then_warm, push_probe, warm_channel
@@ -45,17 +51,30 @@ def _run_for(channels: list[str], *, hydrate_first: bool) -> None:
 @app.command("login")
 def login(
     channel: str = typer.Option(..., help="Channel to sign in to"),
+    auto: bool = typer.Option(
+        False,
+        "--auto",
+        help="Fill stored email/password after Cloudflare (Deliveroo).",
+    ),
 ) -> None:
     """Open a headed browser, wait for you to sign in, capture and push.
 
-    This is the only way a session is minted. OTP/captcha/passkey happen in
-    the window. The resulting Playwright state is pushed to the API so the VM
-    worker can hydrate it after a deploy or restart without asking you again.
+    Default: you complete OTP/captcha/passkey in the window. `--auto` (Deliveroo
+    only) types the email/password from `aggregator_account` once the login
+    form is visible. The resulting Playwright state is pushed to the API.
     """
     if channel not in CHANNEL_PROBES:
         raise typer.BadParameter(f"unknown channel {channel}")
     try:
-        result = asyncio.run(login_interactive(channel))
+        if auto:
+            account = _load_account(channel)
+            result = asyncio.run(
+                login_with_account(
+                    channel, email=account.email, password=account.password
+                )
+            )
+        else:
+            result = asyncio.run(login_interactive(channel))
         try:
             asyncio.run(push_probe(channel, result))
         except Exception:  # noqa: BLE001 — local files are already written
@@ -68,6 +87,85 @@ def login(
     except NeedsHumanLogin as exc:
         logger.error("%s: %s", channel, exc)
         raise typer.Exit(code=1) from exc
+
+
+def _load_account(channel: str) -> PortalAccount:
+    try:
+        account = asyncio.run(pull_account(channel))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("could not pull account from API (%s); trying env", exc)
+        account = from_env(channel)
+    if account is None or not account.email or not account.password:
+        raise typer.BadParameter(
+            f"no stored {channel} credentials. "
+            f"Run: aggregator-bootstrap store-account --channel {channel}"
+        )
+    logger.info(
+        "%s: using stored account %s method=%s",
+        channel,
+        account.email,
+        account.login_method or "?",
+    )
+    return account
+
+
+@app.command("store-account")
+def store_account(
+    channel: str = typer.Option(..., help="Channel this recipe belongs to"),
+    email: str = typer.Option("", help="Portal login email; default env *_EMAIL"),
+    password: str = typer.Option(
+        "",
+        help="Portal login password; default env *_PASSWORD. Never logged.",
+    ),
+    login_method: str = typer.Option(
+        "",
+        help="email_password | email_otp | email_password_otp | sso | manual",
+    ),
+    extra: list[str] | None = typer.Option(
+        None,
+        "--extra",
+        help="Non-secret portal config as key=value (repeatable). e.g. org_id=497912",
+    ),
+) -> None:
+    """Encrypt and store a login recipe on aggregator_account via the API.
+
+    The password is sealed by the API under AGGREGATOR_CONFIG_ENCRYPTION_KEY.
+    It never sits in git. Omit --password to keep a previously stored secret
+    while updating email or extras.
+    """
+    if channel not in CHANNEL_PROBES:
+        raise typer.BadParameter(f"unknown channel {channel}")
+    env = from_env(channel)
+    body: dict = {"channel": channel, "account_ref": ""}
+    resolved_email = email.strip() or (env.email if env else "")
+    resolved_password = password or (env.password if env else "")
+    if resolved_email:
+        body["email"] = resolved_email
+    if resolved_password:
+        body["password"] = resolved_password
+    if login_method.strip():
+        body["login_method"] = login_method.strip()
+    extras: dict[str, str] = {}
+    for item in extra or []:
+        if "=" not in item:
+            raise typer.BadParameter(f"--extra must be key=value, got {item!r}")
+        key, _, value = item.partition("=")
+        extras[key.strip()] = value.strip()
+    if extras:
+        body["extras"] = extras
+    try:
+        echoed = asyncio.run(push_account(body))
+    except Exception as exc:
+        logger.error("store-account failed: %s", exc)
+        raise typer.Exit(code=1) from exc
+    logger.info(
+        "stored %s login_method=%s email=%s has_password=%s extras=%s",
+        echoed.get("channel"),
+        echoed.get("login_method"),
+        echoed.get("email"),
+        echoed.get("has_password"),
+        echoed.get("extras"),
+    )
 
 
 @app.command("hydrate")

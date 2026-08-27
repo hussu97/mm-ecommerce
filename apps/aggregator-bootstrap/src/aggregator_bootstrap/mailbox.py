@@ -105,25 +105,41 @@ def _fetch_latest_otp(
     since: datetime | None,
     otp_pattern: re.Pattern[str] = DEFAULT_OTP_PATTERN,
     max_messages: int = 25,
+    mailbox: dict | None = None,
 ) -> str | None:
     """One blocking IMAP sweep. Returns the newest matching code, or None.
 
-    Reads connection settings from `OTP_IMAP_*`. Messages older than `since`
-    (by their Date header) are skipped so a stale code from a previous run is
-    never mistaken for the one we just requested.
+    Prefers the per-channel `mailbox` dict from `aggregator_account` (host,
+    port, username, password, folder). Falls back to `OTP_IMAP_*` env so a
+    laptop override still works before the DB row is filled.
     """
-    if not settings.OTP_IMAP_HOST:
-        raise OTPPollingError("OTP_IMAP_HOST is not configured.")
-    if not settings.OTP_IMAP_USER or not settings.OTP_IMAP_PASSWORD:
-        raise OTPPollingError("OTP_IMAP_USER / OTP_IMAP_PASSWORD are not configured.")
+    box = mailbox or {}
+    effective_sender = sender_filter or str(box.get("sender_filter") or "") or None
+    effective_subject = subject_filter or str(box.get("subject_filter") or "") or None
+    host = str(box.get("host") or settings.OTP_IMAP_HOST or "").strip()
+    try:
+        port = int(box.get("port") or settings.OTP_IMAP_PORT or 993)
+    except (TypeError, ValueError):
+        port = 993
+    user = str(box.get("username") or settings.OTP_IMAP_USER or "").strip()
+    password = str(box.get("password") or settings.OTP_IMAP_PASSWORD or "")
+    folder = str(box.get("folder") or settings.OTP_IMAP_FOLDER or "INBOX").strip() or "INBOX"
+    if not host:
+        raise OTPPollingError(
+            "no IMAP host: store a mailbox on the aggregator login recipe, "
+            "or set OTP_IMAP_HOST."
+        )
+    if not user or not password:
+        raise OTPPollingError(
+            "IMAP username/password are missing. Store them on the aggregator "
+            "login recipe, or set OTP_IMAP_USER / OTP_IMAP_PASSWORD."
+        )
 
-    with imaplib.IMAP4_SSL(settings.OTP_IMAP_HOST, settings.OTP_IMAP_PORT) as client:
-        client.login(settings.OTP_IMAP_USER, settings.OTP_IMAP_PASSWORD)
-        status, _ = client.select(settings.OTP_IMAP_FOLDER, readonly=True)
+    with imaplib.IMAP4_SSL(host, port) as client:
+        client.login(user, password)
+        status, _ = client.select(folder, readonly=True)
         if status != "OK":
-            raise OTPPollingError(
-                f"Unable to open IMAP folder {settings.OTP_IMAP_FOLDER!r}."
-            )
+            raise OTPPollingError(f"Unable to open IMAP folder {folder!r}.")
         status, data = client.uid("search", None, "ALL")
         if status != "OK":
             raise OTPPollingError("Unable to search IMAP mailbox.")
@@ -139,8 +155,8 @@ def _fetch_latest_otp(
             if not _message_matches(
                 subject=subject,
                 sender=sender,
-                sender_filter=sender_filter,
-                subject_filter=subject_filter,
+                sender_filter=effective_sender,
+                subject_filter=effective_subject,
             ):
                 continue
             received_at = _message_received_at(message)
@@ -162,11 +178,14 @@ async def wait_for_otp(
     timeout: float = 120.0,
     poll_interval: float = 5.0,
     otp_pattern: re.Pattern[str] = DEFAULT_OTP_PATTERN,
+    mailbox: dict | None = None,
 ) -> str:
     """Poll the IMAP mailbox until a matching OTP arrives (or `timeout` elapses).
 
-    The blocking IMAP work runs in a worker thread so the browser's event loop
-    keeps turning. Raises `OTPPollingError` if nothing matches in time.
+    `mailbox` is the per-channel recipe from `aggregator_account`; omitted, the
+    worker falls back to `OTP_IMAP_*`. The blocking IMAP work runs in a worker
+    thread so the browser's event loop keeps turning. Raises `OTPPollingError`
+    if nothing matches in time.
     """
     deadline = time.monotonic() + timeout
     while True:
@@ -176,6 +195,7 @@ async def wait_for_otp(
             subject_filter=subject_filter,
             since=since,
             otp_pattern=otp_pattern,
+            mailbox=mailbox,
         )
         if code:
             return code

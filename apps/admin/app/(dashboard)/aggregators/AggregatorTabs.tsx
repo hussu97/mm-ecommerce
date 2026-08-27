@@ -6,17 +6,18 @@ import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 
 /**
- * The sub-navigation shared by the two aggregator screens.
+ * The sub-navigation shared by the aggregator screens.
  *
  * The console's `TabBar` switches a piece of state within one page; these tabs
- * are two separate routes, so they are links rather than buttons — the active
- * one is decided by the URL, not by a `useState`. The styling deliberately
- * mirrors `TabBar` (the same underline, the same uppercase label) so the two
- * screens read as one section with two tabs rather than two unrelated pages.
+ * are separate routes, so they are links rather than buttons — the active one
+ * is decided by the URL, not by a `useState`. The styling deliberately
+ * mirrors `TabBar` (the same underline, the same uppercase label) so the
+ * screens read as one section with tabs rather than unrelated pages.
  */
 const TABS = [
   { href: '/aggregators/reconciliation', label: 'Reconciliation' },
   { href: '/aggregators/mappings', label: 'Mappings' },
+  { href: '/aggregators/logins', label: 'Logins' },
 ];
 
 export function AggregatorTabs() {

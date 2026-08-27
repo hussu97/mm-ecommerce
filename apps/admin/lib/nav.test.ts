@@ -29,6 +29,11 @@ describe('activeNavHref', () => {
     expect(activeNavHref('/logs/audit')).toBe('/logs');
   });
 
+  it('lights Logins as its own marketplace entry, not Reconciliation', () => {
+    expect(activeNavHref('/aggregators/logins')).toBe('/aggregators/logins');
+    expect(activeNavHref('/aggregators/mappings')).toBe('/aggregators/mappings');
+  });
+
   it('lights a section up from one of its detail pages', () => {
     // `/orders/[orderNumber]` has no nav entry of its own, so the section it
     // belongs to is the answer.

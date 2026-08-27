@@ -37,14 +37,15 @@ export const NAV: Array<
   // incident, not the moment to go hunting three sections down.
   { href: '/payment-gateways', label: 'Payment Gateways', icon: 'credit_card' },
 
-  // The aggregator relationship, in one place at last: what we push to the
-  // marketplaces (GrubOps), what they paid us back (Reconciliation), and which
-  // of our branches each outlet id maps to (Mappings). Three sides of one
-  // relationship that used to be scattered through "Online store".
+  // The aggregator relationship, in one place: what we push to the
+  // marketplaces (GrubOps), what they paid us back (Reconciliation), which
+  // of our branches each outlet id maps to (Mappings), and how we sign in
+  // (Logins).
   { section: 'Marketplaces' },
   { href: '/grubops',       label: 'GrubOps',         icon: 'restaurant_menu' },
   { href: '/aggregators/reconciliation', label: 'Reconciliation', icon: 'account_balance' },
   { href: '/aggregators/mappings', label: 'Mappings', icon: 'link' },
+  { href: '/aggregators/logins', label: 'Logins', icon: 'login' },
 
   // The physical side: shops, tills, stock, and the config behind them.
   { section: 'Operations' },

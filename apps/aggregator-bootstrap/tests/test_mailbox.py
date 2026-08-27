@@ -71,6 +71,30 @@ async def test_wait_for_otp_reads_code_from_sample_email(monkeypatch):
     assert code == "483920"
 
 
+async def test_wait_for_otp_prefers_the_account_mailbox(monkeypatch):
+    seen: dict[str, object] = {}
+
+    def _factory(host, port):
+        seen["host"] = host
+        seen["port"] = port
+        return _FakeIMAP()
+
+    monkeypatch.setattr(mailbox.imaplib, "IMAP4_SSL", _factory)
+    code = await wait_for_otp(
+        sender_filter="noon",
+        subject_filter="verify",
+        timeout=5,
+        mailbox={
+            "host": "imap-mail.outlook.com",
+            "port": 993,
+            "username": "h@x",
+            "password": "app-password",
+        },
+    )
+    assert code == "483920"
+    assert seen["host"] == "imap-mail.outlook.com"
+
+
 async def test_wait_for_otp_filters_by_sender(monkeypatch):
     # A sender the message does not match yields no code -> timeout error.
     monkeypatch.setattr(mailbox.imaplib, "IMAP4_SSL", lambda host, port: _FakeIMAP())

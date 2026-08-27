@@ -193,6 +193,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/aggregators/account": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Upsert Account
+         * @description Store (or replace) the login recipe for one channel, sealed at rest.
+         *
+         *     Worker/CLI write path. The admin console uses POST `/accounts`.
+         */
+        put: operations["upsert_account_api_v1_aggregators_account_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/aggregators/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Accounts
+         * @description Login recipes per channel — method, OTP, mailbox host; never a password.
+         */
+        get: operations["list_accounts_api_v1_aggregators_accounts_get"];
+        put?: never;
+        /**
+         * Upsert Account Admin
+         * @description Create or update a login recipe from the admin Logins tab.
+         */
+        post: operations["upsert_account_admin_api_v1_aggregators_accounts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/aggregators/branch-map": {
         parameters: {
             query?: never;
@@ -334,6 +380,29 @@ export interface paths {
          * @description Session health per channel — the monitoring read (no secrets exposed).
          */
         get: operations["list_sessions_api_v1_aggregators_sessions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/aggregators/worker/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Hydrate Accounts
+         * @description Decrypted login recipes for the worker to drive a portal.
+         *
+         *     Authenticated with the push bearer. The admin health read at GET
+         *     `/accounts` never returns passwords.
+         */
+        get: operations["hydrate_accounts_api_v1_aggregators_worker_accounts_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7314,6 +7383,80 @@ export interface components {
             phone: string | null;
         };
         /**
+         * AggregatorAccountPublic
+         * @description Admin health for one login recipe — never a password.
+         */
+        AggregatorAccountPublic: {
+            /**
+             * Account Ref
+             * @default
+             */
+            account_ref: string;
+            /** Channel */
+            channel: string;
+            /**
+             * Email
+             * @default
+             */
+            email: string;
+            /** Extras */
+            extras?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Has Mailbox
+             * @default false
+             */
+            has_mailbox: boolean;
+            /** Has Password */
+            has_password: boolean;
+            /** Login Method */
+            login_method: string;
+            mailbox?: components["schemas"]["AggregatorMailboxPublic"] | null;
+            /**
+             * Otp Required
+             * @default false
+             */
+            otp_required: boolean;
+            /** Updated At */
+            updated_at?: string | null;
+        };
+        /**
+         * AggregatorAccountPush
+         * @description A durable login recipe for one channel, stored sealed at rest.
+         *
+         *     Distinct from the session cookie jar: this is the email/password, the
+         *     login method (including OTP vs no OTP), and the IMAP mailbox the worker
+         *     reads an OTP from. `password` / `mailbox.password` may be omitted on a
+         *     later save to keep the stored secret. `extras` is non-secret portal
+         *     config (Deliveroo `org_id`).
+         */
+        AggregatorAccountPush: {
+            /**
+             * Account Ref
+             * @default
+             */
+            account_ref: string;
+            /** Channel */
+            channel: string;
+            /**
+             * Clear Mailbox
+             * @default false
+             */
+            clear_mailbox: boolean;
+            /** Email */
+            email?: string | null;
+            /** Extras */
+            extras?: {
+                [key: string]: unknown;
+            } | null;
+            /** Login Method */
+            login_method?: string | null;
+            mailbox?: components["schemas"]["AggregatorMailboxWrite"] | null;
+            /** Password */
+            password?: string | null;
+        };
+        /**
          * AggregatorBranchMapIn
          * @description An outlet↔branch mapping to create or update from the admin.
          *
@@ -7372,6 +7515,71 @@ export interface components {
             id: string;
             /** Is Active */
             is_active: boolean;
+        };
+        /**
+         * AggregatorMailboxPublic
+         * @description Admin view of a linked OTP mailbox — never the IMAP password.
+         */
+        AggregatorMailboxPublic: {
+            /**
+             * Folder
+             * @default INBOX
+             */
+            folder: string;
+            /**
+             * Has Password
+             * @default false
+             */
+            has_password: boolean;
+            /**
+             * Host
+             * @default
+             */
+            host: string;
+            /**
+             * Port
+             * @default 993
+             */
+            port: number;
+            /**
+             * Sender Filter
+             * @default
+             */
+            sender_filter: string;
+            /**
+             * Subject Filter
+             * @default
+             */
+            subject_filter: string;
+            /**
+             * Username
+             * @default
+             */
+            username: string;
+        };
+        /**
+         * AggregatorMailboxWrite
+         * @description IMAP details the worker uses to read an OTP, written sealed at rest.
+         *
+         *     `password` may be omitted on a later save to keep the stored secret. Host
+         *     and username identify the inbox; `sender_filter` / `subject_filter` narrow
+         *     which mail is treated as the code (Talabat `no reply` / Noon `verify`).
+         */
+        AggregatorMailboxWrite: {
+            /** Folder */
+            folder?: string | null;
+            /** Host */
+            host?: string | null;
+            /** Password */
+            password?: string | null;
+            /** Port */
+            port?: number | null;
+            /** Sender Filter */
+            sender_filter?: string | null;
+            /** Subject Filter */
+            subject_filter?: string | null;
+            /** Username */
+            username?: string | null;
         };
         /**
          * AggregatorReconciliationList
@@ -7494,6 +7702,47 @@ export interface components {
             status: string;
             /** Token Expires At */
             token_expires_at?: string | null;
+        };
+        /**
+         * AggregatorWorkerAccount
+         * @description Decrypted login recipe for the worker. Secrets on the wire, on purpose.
+         *
+         *     Authenticated with the same push bearer as POST `/session`. The admin
+         *     health read never returns portal or IMAP passwords.
+         */
+        AggregatorWorkerAccount: {
+            /**
+             * Account Ref
+             * @default
+             */
+            account_ref: string;
+            /** Channel */
+            channel: string;
+            /**
+             * Email
+             * @default
+             */
+            email: string;
+            /** Extras */
+            extras?: {
+                [key: string]: unknown;
+            };
+            /** Login Method */
+            login_method: string;
+            /** Mailbox */
+            mailbox?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Otp Required
+             * @default false
+             */
+            otp_required: boolean;
+            /**
+             * Password
+             * @default
+             */
+            password: string;
         };
         /**
          * AggregatorWorkerSession
@@ -16840,6 +17089,94 @@ export interface operations {
             };
         };
     };
+    upsert_account_api_v1_aggregators_account_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AggregatorAccountPush"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AggregatorAccountPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_accounts_api_v1_aggregators_accounts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AggregatorAccountPublic"][];
+                };
+            };
+        };
+    };
+    upsert_account_admin_api_v1_aggregators_accounts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AggregatorAccountPush"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AggregatorAccountPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_branch_map_api_v1_aggregators_branch_map_get: {
         parameters: {
             query?: {
@@ -17092,6 +17429,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AggregatorSessionResponse"][];
+                };
+            };
+        };
+    };
+    hydrate_accounts_api_v1_aggregators_worker_accounts_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AggregatorWorkerAccount"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

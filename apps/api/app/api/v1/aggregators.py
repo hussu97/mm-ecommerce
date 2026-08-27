@@ -1,16 +1,15 @@
-"""The one write path into `aggregator_session`, and a health read.
+"""The write paths into aggregator auth, and the health reads.
 
 The ingest itself takes no HTTP — it is a background loop. This router exists so
-the bootstrap/warmer worker (which runs a browser elsewhere, off the app VM) can
-hand a freshly captured session in over HTTPS, exactly the way the standalone
-scraper pushed to `/api/ingest/bulk`. It authenticates on a shared bearer
-(`AGGREGATOR_SESSION_PUSH_TOKEN`) rather than a user login, because the caller
-is a machine, not a person — and an unset token closes the path rather than
-leaving it open.
+the bootstrap/warmer worker can hand in a freshly captured session
+(`POST /session`) and the durable login recipe (`PUT /account`). Both
+authenticate on a shared bearer (`AGGREGATOR_SESSION_PUSH_TOKEN`) rather than a
+user login, because the caller is a machine — and an unset token closes the
+path rather than leaving it open.
 
-The health read is behind the same reporting permission the aggregator dashboard
-uses, so an operator can see which sessions are live without holding the push
-token.
+The health reads are behind the same reporting permission the aggregator
+dashboard uses. Session health never returns cookies; account health never
+returns the password.
 """
 
 from __future__ import annotations
@@ -43,19 +42,28 @@ from app.models.aggregator import (
 )
 from app.models.branch import Branch
 from app.schemas.aggregator import (
+    AggregatorAccountPublic,
+    AggregatorAccountPush,
     AggregatorBranchMapIn,
     AggregatorBranchMapOut,
     AggregatorReconciliationList,
     AggregatorReconciliationOut,
     AggregatorSessionPush,
     AggregatorSessionResponse,
+    AggregatorWorkerAccount,
     AggregatorWorkerSession,
     KeetaOrdersPush,
     KeetaOrdersResult,
     ReconSummaryOut,
     ReconSummaryRow,
 )
-from app.services.aggregators import crypto, ingest, mapping, session_store
+from app.services.aggregators import (
+    account_store,
+    crypto,
+    ingest,
+    mapping,
+    session_store,
+)
 
 router = APIRouter()
 
@@ -141,6 +149,94 @@ async def hydrate_sessions(
             "AGGREGATOR_CONFIG_ENCRYPTION_KEY is unset; cannot read a session"
         )
     return await session_store.list_worker_bundles(db)
+
+
+@router.put("/account", response_model=AggregatorAccountPublic)
+async def upsert_account(
+    body: AggregatorAccountPush,
+    _: None = Depends(_require_push_token),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Store (or replace) the login recipe for one channel, sealed at rest.
+
+    Worker/CLI write path. The admin console uses POST `/accounts`.
+    """
+    return await _store_account(body, db)
+
+
+@router.post(
+    "/accounts",
+    response_model=AggregatorAccountPublic,
+    dependencies=[Depends(require("catalogue.manage"))],
+)
+async def upsert_account_admin(
+    body: AggregatorAccountPush,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Create or update a login recipe from the admin Logins tab."""
+    return await _store_account(body, db)
+
+
+async def _store_account(body: AggregatorAccountPush, db: AsyncSession) -> dict:
+    if body.channel not in AGGREGATOR_CHANNELS:
+        raise BadRequestError(f"unknown aggregator channel: {body.channel}")
+    if not crypto.is_configured():
+        raise ServiceUnavailableError(
+            "AGGREGATOR_CONFIG_ENCRYPTION_KEY is unset; cannot store an account"
+        )
+    mailbox = (
+        body.mailbox.model_dump(exclude_unset=True)
+        if body.mailbox is not None
+        else None
+    )
+    await account_store.upsert(
+        db,
+        channel=body.channel,
+        account_ref=body.account_ref,
+        login_method=body.login_method,
+        email=body.email,
+        password=body.password,
+        mailbox=mailbox,
+        clear_mailbox=body.clear_mailbox,
+        extras=body.extras,
+    )
+    loaded = await account_store.load(db, body.channel, body.account_ref)
+    assert loaded is not None
+    return account_store.public_view(loaded)
+
+
+@router.get(
+    "/accounts",
+    response_model=list[AggregatorAccountPublic],
+    dependencies=[Depends(require("catalogue.manage"))],
+)
+async def list_accounts(
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Login recipes per channel — method, OTP, mailbox host; never a password."""
+    if not crypto.is_configured():
+        return []
+    return await account_store.list_public(db)
+
+
+@router.get(
+    "/worker/accounts",
+    response_model=list[AggregatorWorkerAccount],
+)
+async def hydrate_accounts(
+    _: None = Depends(_require_push_token),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Decrypted login recipes for the worker to drive a portal.
+
+    Authenticated with the push bearer. The admin health read at GET
+    `/accounts` never returns passwords.
+    """
+    if not crypto.is_configured():
+        raise ServiceUnavailableError(
+            "AGGREGATOR_CONFIG_ENCRYPTION_KEY is unset; cannot read an account"
+        )
+    return await account_store.list_worker(db)
 
 
 def _branch_map_out(row: AggregatorBranchMap, branch_name: str | None):

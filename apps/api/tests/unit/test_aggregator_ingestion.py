@@ -234,6 +234,126 @@ async def test_worker_hydrate_rejects_a_wrong_token(client, monkeypatch):
     assert resp.status_code == 401
 
 
+async def test_account_put_rejected_when_unconfigured(client, monkeypatch):
+    monkeypatch.setattr("app.core.config.settings.AGGREGATOR_SESSION_PUSH_TOKEN", "")
+    resp = await client.put(
+        "/api/v1/aggregators/account",
+        json={"channel": "deliveroo", "email": "a@b.c", "password": "x"},
+        headers={"Authorization": "Bearer anything"},
+    )
+    assert resp.status_code == 401
+
+
+async def test_account_put_rejects_unknown_channel(client, monkeypatch):
+    monkeypatch.setattr("app.core.config.settings.AGGREGATOR_SESSION_PUSH_TOKEN", "tok")
+    resp = await client.put(
+        "/api/v1/aggregators/account",
+        json={"channel": "not-a-channel", "email": "a@b.c", "password": "x"},
+        headers={"Authorization": "Bearer tok"},
+    )
+    assert resp.status_code == 400
+
+
+async def test_worker_accounts_rejected_when_unconfigured(client, monkeypatch):
+    monkeypatch.setattr("app.core.config.settings.AGGREGATOR_SESSION_PUSH_TOKEN", "")
+    resp = await client.get(
+        "/api/v1/aggregators/worker/accounts",
+        headers={"Authorization": "Bearer anything"},
+    )
+    assert resp.status_code == 401
+
+
+def test_merge_credentials_keeps_password_when_omitted():
+    from app.services.aggregators.account_store import merge_credentials
+
+    merged = merge_credentials(
+        {"email": "old@x", "password": "secret"},
+        email="new@x",
+        password=None,
+    )
+    assert merged["email"] == "new@x"
+    assert merged["password"] == "secret"
+
+
+def test_public_view_never_includes_the_password():
+    from app.services.aggregators.account_store import LoadedAccount, public_view
+
+    view = public_view(
+        LoadedAccount(
+            channel="deliveroo",
+            login_method="email_password",
+            email="h@x",
+            password="must-not-leak",
+            extras={"org_id": "497912"},
+        )
+    )
+    assert "password" not in view
+    assert view["has_password"] is True
+    assert view["email"] == "h@x"
+    assert view["login_method"] == "email_password"
+    assert view["otp_required"] is False
+    assert view["has_mailbox"] is False
+    assert view["mailbox"] is None
+
+
+def test_public_view_mailbox_never_includes_imap_password():
+    from app.services.aggregators.account_store import LoadedAccount, public_view
+
+    view = public_view(
+        LoadedAccount(
+            channel="talabat",
+            login_method="email_password_otp",
+            email="h@x",
+            password="portal",
+            mailbox={
+                "host": "imap-mail.outlook.com",
+                "port": 993,
+                "username": "h@x",
+                "password": "imap-secret",
+                "folder": "INBOX",
+            },
+        )
+    )
+    assert view["otp_required"] is True
+    assert view["has_mailbox"] is True
+    assert view["mailbox"]["username"] == "h@x"
+    assert "password" not in view["mailbox"]
+    assert view["mailbox"]["has_password"] is True
+
+
+def test_merge_mailbox_keeps_password_when_omitted():
+    from app.services.aggregators.account_store import merge_mailbox
+
+    merged = merge_mailbox(
+        {"host": "old.example", "password": "secret", "username": "a@b"},
+        {"host": "imap-mail.outlook.com", "password": ""},
+    )
+    assert merged["host"] == "imap-mail.outlook.com"
+    assert merged["password"] == "secret"
+
+
+def test_merge_mailbox_clear_drops_the_row():
+    from app.services.aggregators.account_store import merge_mailbox
+
+    assert merge_mailbox({"host": "x", "password": "y"}, None, clear=True) is None
+
+
+async def test_admin_accounts_require_permission(client):
+    resp = await client.get("/api/v1/aggregators/accounts")
+    assert resp.status_code in (401, 403)
+    resp = await client.post(
+        "/api/v1/aggregators/accounts",
+        json={"channel": "deliveroo", "email": "a@b.c", "password": "x"},
+    )
+    assert resp.status_code in (401, 403)
+
+
+def test_deliveroo_login_method_is_email_password():
+    from app.models.aggregator import CHANNEL_LOGIN_METHODS, LOGIN_EMAIL_PASSWORD
+
+    assert CHANNEL_LOGIN_METHODS["deliveroo"] == LOGIN_EMAIL_PASSWORD
+
+
 # ── provider registry ─────────────────────────────────────────────────────────
 def test_registry_has_the_four_httpx_channels_and_not_keeta():
     from app.services.aggregators import ingest

@@ -585,6 +585,156 @@
         "title": "AdminUserSummary",
         "type": "object"
       },
+      "AggregatorAccountPublic": {
+        "description": "Admin health for one login recipe \u2014 never a password.",
+        "properties": {
+          "account_ref": {
+            "default": "",
+            "title": "Account Ref",
+            "type": "string"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "email": {
+            "default": "",
+            "title": "Email",
+            "type": "string"
+          },
+          "extras": {
+            "additionalProperties": true,
+            "title": "Extras",
+            "type": "object"
+          },
+          "has_mailbox": {
+            "default": false,
+            "title": "Has Mailbox",
+            "type": "boolean"
+          },
+          "has_password": {
+            "title": "Has Password",
+            "type": "boolean"
+          },
+          "login_method": {
+            "title": "Login Method",
+            "type": "string"
+          },
+          "mailbox": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AggregatorMailboxPublic"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "otp_required": {
+            "default": false,
+            "title": "Otp Required",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "channel",
+          "login_method",
+          "has_password"
+        ],
+        "title": "AggregatorAccountPublic",
+        "type": "object"
+      },
+      "AggregatorAccountPush": {
+        "description": "A durable login recipe for one channel, stored sealed at rest.\n\nDistinct from the session cookie jar: this is the email/password, the\nlogin method (including OTP vs no OTP), and the IMAP mailbox the worker\nreads an OTP from. `password` / `mailbox.password` may be omitted on a\nlater save to keep the stored secret. `extras` is non-secret portal\nconfig (Deliveroo `org_id`).",
+        "properties": {
+          "account_ref": {
+            "default": "",
+            "title": "Account Ref",
+            "type": "string"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "clear_mailbox": {
+            "default": false,
+            "title": "Clear Mailbox",
+            "type": "boolean"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "extras": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extras"
+          },
+          "login_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Login Method"
+          },
+          "mailbox": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AggregatorMailboxWrite"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password"
+          }
+        },
+        "required": [
+          "channel"
+        ],
+        "title": "AggregatorAccountPush",
+        "type": "object"
+      },
       "AggregatorBranchMapIn": {
         "description": "An outlet\u2194branch mapping to create or update from the admin.\n\nThe mapping lives in the DB (seeded by migration 152, edited here) rather\nthan in code, so a re-onboarded outlet or a new branch is a row change, not\na deploy. Keyed on `(channel, branch_id)`; posting the same pair updates it.",
         "properties": {
@@ -738,6 +888,134 @@
           "is_active"
         ],
         "title": "AggregatorBranchMapOut",
+        "type": "object"
+      },
+      "AggregatorMailboxPublic": {
+        "description": "Admin view of a linked OTP mailbox \u2014 never the IMAP password.",
+        "properties": {
+          "folder": {
+            "default": "INBOX",
+            "title": "Folder",
+            "type": "string"
+          },
+          "has_password": {
+            "default": false,
+            "title": "Has Password",
+            "type": "boolean"
+          },
+          "host": {
+            "default": "",
+            "title": "Host",
+            "type": "string"
+          },
+          "port": {
+            "default": 993,
+            "title": "Port",
+            "type": "integer"
+          },
+          "sender_filter": {
+            "default": "",
+            "title": "Sender Filter",
+            "type": "string"
+          },
+          "subject_filter": {
+            "default": "",
+            "title": "Subject Filter",
+            "type": "string"
+          },
+          "username": {
+            "default": "",
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "title": "AggregatorMailboxPublic",
+        "type": "object"
+      },
+      "AggregatorMailboxWrite": {
+        "description": "IMAP details the worker uses to read an OTP, written sealed at rest.\n\n`password` may be omitted on a later save to keep the stored secret. Host\nand username identify the inbox; `sender_filter` / `subject_filter` narrow\nwhich mail is treated as the code (Talabat `no reply` / Noon `verify`).",
+        "properties": {
+          "folder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder"
+          },
+          "host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host"
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password"
+          },
+          "port": {
+            "anyOf": [
+              {
+                "maximum": 65535.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          },
+          "sender_filter": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sender Filter"
+          },
+          "subject_filter": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Filter"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "title": "AggregatorMailboxWrite",
         "type": "object"
       },
       "AggregatorReconciliationList": {
@@ -1119,6 +1397,55 @@
           "status"
         ],
         "title": "AggregatorSessionResponse",
+        "type": "object"
+      },
+      "AggregatorWorkerAccount": {
+        "description": "Decrypted login recipe for the worker. Secrets on the wire, on purpose.\n\nAuthenticated with the same push bearer as POST `/session`. The admin\nhealth read never returns portal or IMAP passwords.",
+        "properties": {
+          "account_ref": {
+            "default": "",
+            "title": "Account Ref",
+            "type": "string"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "email": {
+            "default": "",
+            "title": "Email",
+            "type": "string"
+          },
+          "extras": {
+            "additionalProperties": true,
+            "title": "Extras",
+            "type": "object"
+          },
+          "login_method": {
+            "title": "Login Method",
+            "type": "string"
+          },
+          "mailbox": {
+            "additionalProperties": true,
+            "title": "Mailbox",
+            "type": "object"
+          },
+          "otp_required": {
+            "default": false,
+            "title": "Otp Required",
+            "type": "boolean"
+          },
+          "password": {
+            "default": "",
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "channel",
+          "login_method"
+        ],
+        "title": "AggregatorWorkerAccount",
         "type": "object"
       },
       "AggregatorWorkerSession": {
@@ -28817,6 +29144,142 @@
         ]
       }
     },
+    "/api/v1/aggregators/account": {
+      "put": {
+        "description": "Store (or replace) the login recipe for one channel, sealed at rest.\n\nWorker/CLI write path. The admin console uses POST `/accounts`.",
+        "operationId": "upsert_account_api_v1_aggregators_account_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AggregatorAccountPush"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AggregatorAccountPublic"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upsert Account",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/accounts": {
+      "get": {
+        "description": "Login recipes per channel \u2014 method, OTP, mailbox host; never a password.",
+        "operationId": "list_accounts_api_v1_aggregators_accounts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AggregatorAccountPublic"
+                  },
+                  "title": "Response List Accounts Api V1 Aggregators Accounts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Accounts",
+        "tags": [
+          "Aggregators"
+        ]
+      },
+      "post": {
+        "description": "Create or update a login recipe from the admin Logins tab.",
+        "operationId": "upsert_account_admin_api_v1_aggregators_accounts_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AggregatorAccountPush"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AggregatorAccountPublic"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Upsert Account Admin",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
     "/api/v1/aggregators/branch-map": {
       "get": {
         "description": "Every outlet\u2194branch mapping, for the admin to view and edit.",
@@ -29321,6 +29784,60 @@
           }
         ],
         "summary": "List Sessions",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/worker/accounts": {
+      "get": {
+        "description": "Decrypted login recipes for the worker to drive a portal.\n\nAuthenticated with the push bearer. The admin health read at GET\n`/accounts` never returns passwords.",
+        "operationId": "hydrate_accounts_api_v1_aggregators_worker_accounts_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AggregatorWorkerAccount"
+                  },
+                  "title": "Response Hydrate Accounts Api V1 Aggregators Worker Accounts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Hydrate Accounts",
         "tags": [
           "Aggregators"
         ]

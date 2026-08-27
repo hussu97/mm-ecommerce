@@ -1,15 +1,13 @@
 """Per-channel login surfaces and "are we in?" probes.
 
-The worker does **not** mint a session by driving OTP from a mailbox. A human
-signs in once (`aggregator-bootstrap login --channel X`); the database then
-holds the Playwright state and the worker hydrates from it. The functions
-below are still the source of truth for each portal's login URL and for
-whether a page is already authenticated — the headed login waits on those
-probes, and the warm path uses them to detect a dead state.
+The worker does **not** mint a session by driving OTP from a mailbox by
+default. A human signs in once (`aggregator-bootstrap login --channel X`);
+the database then holds the Playwright state and the worker hydrates from it.
 
-The credential-filling helpers (email/password/OTP) remain for a last-resort
-manual re-run; `ensure_session` no longer calls them. A stale session is
-`NeedsHumanLogin`, not an IMAP poll.
+Channels whose recipe is `email_password` (Deliveroo today) can re-auth from
+the encrypted `aggregator_account` row: `login --channel deliveroo --auto`
+fills the form after Cloudflare has passed. OTP/captcha channels stay headed.
+
 """
 
 from __future__ import annotations
@@ -39,6 +37,9 @@ class AntiBotChallengeError(LoginError):
 # analytics landing page.
 
 DELIVEROO_LOGIN_URL = "https://partner-hub.deliveroo.com/login"
+#: Deliveroo is email+password, no OTP. The worker can fill this from the
+#: `aggregator_account` row once Cloudflare has let the login form through.
+DELIVEROO_LOGIN_METHOD = "email_password"
 
 
 async def _dismiss_deliveroo_cookie_banner(page) -> None:
@@ -53,18 +54,52 @@ async def _dismiss_deliveroo_cookie_banner(page) -> None:
                 continue
 
 
-async def login_deliveroo(context) -> None:
-    if not settings.DELIVEROO_EMAIL or not settings.DELIVEROO_PASSWORD:
-        raise LoginError("DELIVEROO_EMAIL / DELIVEROO_PASSWORD are not configured.")
-    page = await context.new_page()
-    await page.goto(DELIVEROO_LOGIN_URL, wait_until="domcontentloaded", timeout=60_000)
+async def deliveroo_login_form_visible(page) -> bool:
+    try:
+        return await page.get_by_test_id("login-email").count() > 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def fill_deliveroo_login(page, *, email: str, password: str) -> None:
+    """Type credentials into an already-open Partner Hub login page."""
     await _dismiss_deliveroo_cookie_banner(page)
     if "/login" not in page.url:
-        return  # the stored session still lands us inside the hub
-    await page.get_by_test_id("login-email").fill(settings.DELIVEROO_EMAIL)
-    await page.get_by_test_id("login-password").fill(settings.DELIVEROO_PASSWORD)
+        return
+    if not await deliveroo_login_form_visible(page):
+        raise LoginError("Deliveroo login form was not on the page after Cloudflare.")
+    await page.get_by_test_id("login-email").fill(email)
+    await page.get_by_test_id("login-password").fill(password)
     await page.get_by_test_id("login-submit").click()
-    await page.wait_for_url("**/analytics**", timeout=30_000)
+    # Hub landing is usually /analytics; reporting-platform is also a win.
+    # The honest signal is that we left /login.
+    await page.wait_for_function(
+        "() => !location.pathname.includes('/login')",
+        timeout=60_000,
+    )
+
+
+def _deliveroo_credentials(
+    email: str | None = None, password: str | None = None
+) -> tuple[str, str]:
+    e = (email or settings.DELIVEROO_EMAIL or "").strip()
+    p = (password or settings.DELIVEROO_PASSWORD or "").strip()
+    if not e or not p:
+        raise LoginError(
+            "Deliveroo email/password are not configured "
+            "(store them with `store-account --channel deliveroo`, or set "
+            "DELIVEROO_EMAIL / DELIVEROO_PASSWORD)."
+        )
+    return e, p
+
+
+async def login_deliveroo(
+    context, *, email: str | None = None, password: str | None = None
+) -> None:
+    e, p = _deliveroo_credentials(email, password)
+    page = await context.new_page()
+    await page.goto(DELIVEROO_LOGIN_URL, wait_until="domcontentloaded", timeout=60_000)
+    await fill_deliveroo_login(page, email=e, password=p)
 
 
 # --- Talabat ----------------------------------------------------------------
@@ -443,8 +478,8 @@ async def login_careem(context) -> None:
     )
 
 
-#: Channel -> login flow. Kept for a deliberate `--otp` re-run; the headed
-#: `login` command and `ensure_session` do not call these.
+#: Channel -> login flow. `login --auto` calls these for email_password
+#: channels after Cloudflare has passed; OTP/captcha channels stay headed.
 LOGIN_FLOWS: dict[str, Callable[..., Awaitable[None]]] = {
     "deliveroo": login_deliveroo,
     "talabat": login_talabat,

@@ -41,11 +41,21 @@ state so that in-page pull survives a restart.
 ## Commands
 
 ```
-aggregator-bootstrap login --channel careem
+aggregator-bootstrap store-account --channel deliveroo --email you@x --password '…' --extra org_id=497912
+aggregator-bootstrap login --channel deliveroo --auto   # fill stored creds after Cloudflare
+aggregator-bootstrap login --channel careem             # headed, you sign in
 aggregator-bootstrap hydrate              # pull DB → local files
 aggregator-bootstrap capture-and-push --all
 aggregator-bootstrap warm-sessions        # hydrate + warm all (VM cron)
 ```
+
+`store-account` writes the encrypted `aggregator_account` row (login method +
+email/password + optional IMAP mailbox for OTP channels). The same recipe is
+edited in the admin **Logins** tab. Passwords are Fernet-sealed by the API and
+never returned on the admin health read. Deliveroo is `email_password` (no OTP),
+so `--auto` can re-auth on a machine that can pass Cloudflare. OTP channels
+(Talabat, Noon) need a linked mailbox before the worker can pull the code
+unattended.
 
 ## Configuration
 
