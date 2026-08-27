@@ -28,6 +28,10 @@ jobs:
       web: ${{ steps.filter.outputs.web == 'true' || github.event_name == 'workflow_dispatch' }}
       admin: ${{ steps.filter.outputs.admin == 'true' || github.event_name == 'workflow_dispatch' }}
       api: ${{ steps.filter.outputs.api == 'true' || github.event_name == 'workflow_dispatch' }}
+      # The Playwright bootstrap image is ~4.7GB and rarely changes. Gate its
+      # rebuild+push+pull on its own sources so a routine API deploy never
+      # rebuilds or re-pulls it — that churn is what filled the 20GB VM disk.
+      bootstrap: ${{ steps.filter.outputs.bootstrap == 'true' || github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -55,6 +59,9 @@ jobs:
               - 'apps/aggregator-bootstrap/**'
               - 'nginx/**'
               - 'docker-compose*.yml'
+              - '.github/workflows/deploy.yml'
+            bootstrap:
+              - 'apps/aggregator-bootstrap/**'
               - '.github/workflows/deploy.yml'
 
   # ── Test & deploy ────────────────────────────────────────────────────────────
@@ -341,8 +348,10 @@ jobs:
       # and pulled on the VM, where a cron runs it one-shot every few hours to
       # warm the aggregator sessions and re-pull Keeta orders. Its own context
       # (apps/aggregator-bootstrap) — the Dockerfile COPYs pyproject/src relative
-      # to it.
+      # to it. Only rebuilt when its own sources change (see the `bootstrap`
+      # path filter); a routine API deploy skips this ~4.7GB build entirely.
       - name: Build and push aggregator-bootstrap image
+        if: needs.changes.outputs.bootstrap == 'true'
         uses: docker/build-push-action@v6
         with:
           context: apps/aggregator-bootstrap
@@ -502,7 +511,7 @@ jobs:
             -o ConnectTimeout=30 \
             -o ServerAliveInterval=30 \
             -o ServerAliveCountMax=20 \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} 'stdbuf -oL -eL bash -s' <<'SCRIPT'
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "BOOTSTRAP_CHANGED='${{ needs.changes.outputs.bootstrap }}' stdbuf -oL -eL bash -s" <<'SCRIPT'
           set -eo pipefail
 
           cd /opt/melting-moments-cakes
@@ -511,12 +520,35 @@ jobs:
           git fetch origin main
           git reset --hard origin/main
 
+          # Reclaim superseded images BEFORE pulling, not after. The old cleanup
+          # ran only at the end of a successful deploy, so a deploy that filled
+          # the disk while pulling (or a dozen deploys in one day, faster than
+          # the old 12h age filter would release anything) had no space freed
+          # first — which is exactly how the 20GB disk hit 100% and the
+          # pre-migration backup failed. Dangling-only (`-f`, no `-a`): a pull
+          # retags :latest and orphans the previous image, so this removes every
+          # superseded layer while keeping each in-use :latest — including the
+          # bootstrap image, which no running container references (it is run
+          # one-shot) and `-a` would therefore wrongly delete. Steady state is
+          # the live images plus, briefly mid-deploy, the one they just replaced.
+          echo "Reclaiming superseded images before pulling..."
+          docker image prune -f < /dev/null || true
+          docker builder prune -f < /dev/null || true
+
           echo "Pulling pre-built API image from GHCR..."
           docker pull ghcr.io/hussu97/mm-ecommerce-api:latest
 
-          echo "Pulling the aggregator bootstrap worker image..."
-          docker pull ghcr.io/hussu97/mm-ecommerce-aggregator-bootstrap:latest \
-            || echo "WARNING: bootstrap worker image pull failed — warm cron will retry"
+          # Only pull the ~4.7GB Playwright image when its sources actually
+          # changed (the `bootstrap` path filter). On every other deploy the
+          # image already on the VM is current, so re-pulling it is pure disk
+          # churn and pull time — the thing that kept filling the disk.
+          if [ "$BOOTSTRAP_CHANGED" = "true" ]; then
+            echo "Pulling the aggregator bootstrap worker image..."
+            docker pull ghcr.io/hussu97/mm-ecommerce-aggregator-bootstrap:latest \
+              || echo "WARNING: bootstrap worker image pull failed — warm cron will retry"
+          else
+            echo "Bootstrap sources unchanged — keeping the existing image, skipping pull."
+          fi
 
           # A migration can drop a table, and `alembic downgrade` cannot bring
           # the rows back — only the empty shape. Until 2026-08-06 this job ran
@@ -655,25 +687,21 @@ jobs:
                 || echo "    WARNING: expires within 7 days"
             done' < /dev/null || true
 
-          # -f alone only removes *dangling* images, so every tagged image the
-          # VM has ever pulled stayed on the 20GB disk: it reached 71% full
-          # with 4.6GB of superseded tags. -a removes tagged images no running
-          # container uses.
-          #
-          # The window was 168h, described as a rollback window. It was not one:
-          # `rollback.yml` resolves a SHA, `docker pull`s that tag from GHCR and
-          # re-tags it as :latest, so it never reads this cache and a local copy
-          # buys nothing but pull time. What 7 days did buy, at a cadence that
-          # reaches a dozen-plus deploys a day, was 59 dangling images and ~4GB
-          # of a 20GB disk. 12h keeps today's images for a fast re-`up` and
-          # discards the rest.
-          echo "Pruning old images..."
-          docker image prune -af --filter "until=12h" < /dev/null
+          # A second dangling sweep after the restart: the image the containers
+          # were running at the start of this deploy lost its :latest tag when
+          # the new one was pulled, and is now free (nothing runs it anymore).
+          # No age filter — the pre-pull sweep above explains why `until=12h`
+          # was the bug (it kept every image younger than the deploy cadence)
+          # and why dangling-only is what "keep just the live image" means here:
+          # a rollback re-pulls its SHA from GHCR (`rollback.yml`) rather than
+          # reading any local copy, so nothing is lost by not hoarding old tags.
+          echo "Pruning superseded images..."
+          docker image prune -f < /dev/null
 
-          # nginx is built on the VM (--build above), and that cache is never
-          # reclaimed either — it had grown to 3.2GB. Same window as above.
+          # nginx is built on the VM (--build above) and its cache is never
+          # reclaimed otherwise — it had grown to 3.2GB.
           echo "Pruning stale build cache..."
-          docker builder prune -f --filter "until=12h" < /dev/null
+          docker builder prune -f < /dev/null
 
           # journald shipped uncapped (default: 10% of the disk = 2GB here) and
           # had reached 810MB. Cap it so logs cannot crowd out the DB. Guarded
