@@ -641,6 +641,31 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
         or order_map.source_channel
     )
 
+    # Convergence: if order promotion already gap-filled this order (a
+    # Barsha/Sharjah sale GrubOps had not yet produced), adopt that MM row rather
+    # than insert a second one — the existing `uq_orders_source_external_reference`
+    # unique key (source='aggregator', external_reference) forbids a duplicate, and
+    # GrubOps is authoritative from here. Its status ladder runs on the adopted
+    # order as usual. The gap-fill carried no product_id (a records mirror moves no
+    # stock), so this rare handover leaves the shelf as the promotion left it rather
+    # than reconciling it here.
+    if order_map.external_id:
+        adopted = await db.scalar(
+            select(Order)
+            .where(
+                Order.source == OrderSourceEnum.AGGREGATOR.value,
+                Order.external_reference == order_map.external_id,
+            )
+            .options(selectinload(Order.items))
+        )
+        if adopted is not None:
+            logger.info(
+                "GrubOps order %s adopts promotion gap-fill %s",
+                order_map.grubops_order_id,
+                adopted.order_number,
+            )
+            return adopted
+
     order = Order(
         order_number=await _generate_order_number(db),
         user_id=None,

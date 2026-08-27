@@ -460,15 +460,51 @@ async def sweep_finance_once() -> int:
     return await _sweep_all(RUN_MODE_FINANCE, _FINANCE_LOCK_KEY)
 
 
+#: "mmBATCH" + 7, after the sales/finance locks — promotion serialises on its own.
+_PROMOTE_LOCK_KEY = 0x6D6D_4241_5443_4807
+
+
+async def sweep_promote_once() -> int:
+    """Promote every channel's new-or-changed orders into MM orders.
+
+    Runs over the `aggregator_order` table, so it covers Keeta (pushed in by the
+    bootstrap worker) as well as the httpx channels — independent of how an order
+    landed. Gated on its own flag, under its own advisory lock. Returns MM orders
+    touched.
+    """
+    if not is_enabled() or not settings.AGGREGATOR_PROMOTE_ENABLED:
+        return 0
+    from app.models.aggregator import AGGREGATOR_CHANNELS
+    from app.services.aggregators import promote
+
+    async with advisory_lock.held(_PROMOTE_LOCK_KEY, name="aggregator promote") as mine:
+        if not mine:
+            return 0
+        touched = 0
+        async with AsyncSessionFactory() as db:
+            for channel in AGGREGATOR_CHANNELS:
+                try:
+                    touched += await promote.promote_channel(db, channel)
+                    await db.commit()
+                except Exception:  # noqa: BLE001 — one channel must not stop the rest
+                    await db.rollback()
+                    logger.exception("aggregator %s promotion failed", channel)
+        return touched
+
+
 async def run_daily_once() -> tuple[int, int]:
     """One full daily pass: the sales sweep then the finance sweep.
 
     Returns `(sales_written, finance_written)`. Finance runs after sales so the
-    reconciliation inside it compares against the freshest orders. Both no-op when
-    the ingest is disabled or a channel has no live session.
+    reconciliation inside it compares against the freshest orders; promotion runs
+    last, over whatever the sweeps (and the Keeta push) have landed. Each no-ops
+    when disabled or when a channel has no live session.
     """
     sales = await sweep_sales_once()
     finance = await sweep_finance_once()
+    promoted = await sweep_promote_once()
+    if promoted:
+        logger.info("aggregator promotion filed %s MM order(s)", promoted)
     return sales, finance
 
 

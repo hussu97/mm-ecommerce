@@ -182,6 +182,7 @@ services:
       # numeric and boolean defaults are real so an unset value cannot write an
       # empty string over a field pydantic would refuse at import.
       AGGREGATOR_INGEST_ENABLED: ${AGGREGATOR_INGEST_ENABLED:-true}
+      AGGREGATOR_PROMOTE_ENABLED: ${AGGREGATOR_PROMOTE_ENABLED:-false}
       AGGREGATOR_CONFIG_ENCRYPTION_KEY: ${AGGREGATOR_CONFIG_ENCRYPTION_KEY:-}
       AGGREGATOR_SESSION_PUSH_TOKEN: ${AGGREGATOR_SESSION_PUSH_TOKEN:-}
       AGGREGATOR_RUN_HOUR_DXB: ${AGGREGATOR_RUN_HOUR_DXB:-23}

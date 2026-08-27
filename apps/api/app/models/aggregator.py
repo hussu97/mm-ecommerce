@@ -464,12 +464,26 @@ class AggregatorOrder(Base, UUIDMixin, TimestampMixin):
     statement_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     raw: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
+    #: The MM order this aggregator order was promoted into (or the GrubOps order
+    #: it converged onto for a Barsha/Sharjah sale), and when promotion last
+    #: synced it. Null until promoted; `promoted_at` drives the incremental
+    #: `promote_channel` pass the way `reconciled_at` drives reconciliation.
+    mm_order_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("orders.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    promoted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     __table_args__ = (
         UniqueConstraint("channel", "external_order_id", name="uq_aggregator_order"),
         CheckConstraint(
             f"channel IN ({_CHANNELS_SQL})", name="ck_aggregator_order_channel"
         ),
         Index("ix_aggregator_order_business_date", "channel", "business_date"),
+        Index("ix_aggregator_order_promoted", "channel", "promoted_at"),
     )
 
     def __repr__(self) -> str:

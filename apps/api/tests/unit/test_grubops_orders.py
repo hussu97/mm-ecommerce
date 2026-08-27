@@ -107,6 +107,8 @@ async def test_a_line_priced_only_on_a_modifier_gets_a_nonzero_total():
     db.add = added.append
     db.flush = AsyncMock()
     db.execute = AsyncMock()
+    # No promotion gap-fill to adopt — this is a fresh create.
+    db.scalar = AsyncMock(return_value=None)
 
     with (
         patch.object(g, "_resolve_branch", AsyncMock(return_value=uuid.uuid4())),
