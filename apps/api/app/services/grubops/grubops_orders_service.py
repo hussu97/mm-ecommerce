@@ -42,7 +42,8 @@ from app.core.money import money
 from app.core.phone import describe_phone
 from app.models.base import utcnow
 from app.models.branch import Branch
-from app.models.grubops import GrubOpsItemMap, GrubOpsLocationMap
+from app.models.external_item_map import KIND_OPTION, KIND_PRODUCT, ExternalItemMap
+from app.models.grubops import GrubOpsLocationMap
 from app.models.grubops_order import GrubOpsOrderMap
 from app.models.order import Order, OrderItem, OrderStatusEnum
 from app.models.order_status_event import (
@@ -341,20 +342,24 @@ async def _resolve_branch(db, location_id: str | None) -> uuid.UUID | None:
 async def _reverse_maps(
     db, recipe_ids: set[str], modifier_ids: set[str]
 ) -> tuple[dict[str, uuid.UUID], dict[str, dict[str, Any]]]:
-    """GrubOps recipe/modifier id → our product / option, from the same
-    approved `grubops_item_map` the OOS sync maintains.
+    """GrubOps recipe/modifier id → our product / option, from the same approved
+    `external_item_map` (system `grubops`) the OOS sync maintains.
 
     Only approved rows resolve — an unapproved guess must not silently attach a
-    real order line to the wrong product.
+    real order line to the wrong product. A GrubOps recipe lives on `external_ref`
+    and a modifier on `external_sub_ref` (under its recipe), so the lookups filter
+    by `mm_kind` to keep the two apart.
     """
     products: dict[str, uuid.UUID] = {}
     options: dict[str, dict[str, Any]] = {}
     if recipe_ids:
         rows = await db.execute(
-            select(GrubOpsItemMap.grubops_recipe_id, GrubOpsItemMap.product_id).where(
-                GrubOpsItemMap.grubops_recipe_id.in_(recipe_ids),
-                GrubOpsItemMap.product_id.isnot(None),
-                GrubOpsItemMap.approved.is_(True),
+            select(ExternalItemMap.external_ref, ExternalItemMap.product_id).where(
+                ExternalItemMap.system == "grubops",
+                ExternalItemMap.mm_kind == KIND_PRODUCT,
+                ExternalItemMap.external_ref.in_(recipe_ids),
+                ExternalItemMap.product_id.isnot(None),
+                ExternalItemMap.approved.is_(True),
             )
         )
         for gid, pid in rows:
@@ -362,12 +367,14 @@ async def _reverse_maps(
     if modifier_ids:
         rows = await db.execute(
             select(
-                GrubOpsItemMap.grubops_modifier_id,
-                GrubOpsItemMap.modifier_option_id,
+                ExternalItemMap.external_sub_ref,
+                ExternalItemMap.modifier_option_id,
             ).where(
-                GrubOpsItemMap.grubops_modifier_id.in_(modifier_ids),
-                GrubOpsItemMap.modifier_option_id.isnot(None),
-                GrubOpsItemMap.approved.is_(True),
+                ExternalItemMap.system == "grubops",
+                ExternalItemMap.mm_kind == KIND_OPTION,
+                ExternalItemMap.external_sub_ref.in_(modifier_ids),
+                ExternalItemMap.modifier_option_id.isnot(None),
+                ExternalItemMap.approved.is_(True),
             )
         )
         for gid, oid in rows:

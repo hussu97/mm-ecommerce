@@ -41,6 +41,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.branch import Branch
+from app.models.external_item_map import ExternalItemMap
 from app.models.grubops import (
     KIND_OPTION,
     KIND_PRODUCT,
@@ -48,7 +49,6 @@ from app.models.grubops import (
     MATCH_FUZZY,
     TYPE_MODIFIER,
     TYPE_RECIPE,
-    GrubOpsItemMap,
     GrubOpsLocationMap,
 )
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
@@ -414,7 +414,13 @@ async def sync_mappings(db: AsyncSession) -> SyncSummary:
 
     existing = {
         (row.product_id, row.modifier_option_id): row
-        for row in (await db.execute(select(GrubOpsItemMap))).scalars().all()
+        for row in (
+            await db.execute(
+                select(ExternalItemMap).where(ExternalItemMap.system == "grubops")
+            )
+        )
+        .scalars()
+        .all()
     }
 
     claimed: set[str] = set()
@@ -492,7 +498,7 @@ async def sync_mappings(db: AsyncSession) -> SyncSummary:
 
 def _upsert(
     db: AsyncSession,
-    row: GrubOpsItemMap | None,
+    row: ExternalItemMap | None,
     summary: SyncSummary,
     *,
     kind: str,
@@ -510,29 +516,31 @@ def _upsert(
     one field whose whole job is to be current on the review screen.
     """
     if row is not None:
-        row.grubops_name = candidate.name
+        row.external_name = candidate.name
         summary.refreshed += 1
         return
 
     is_recipe = candidate.grubops_type == TYPE_RECIPE
     db.add(
-        GrubOpsItemMap(
+        ExternalItemMap(
+            system="grubops",
             mm_kind=kind,
             product_id=product_id,
             modifier_option_id=option_id,
-            grubops_brand_id=candidate.brand_id,
+            scope=candidate.brand_id,
             # A modifier keeps its recipe as well as its own id. GrubOps takes
             # the whole identity on a write and answers `{"recipeId": ["must
             # not be null"]}` without it — a modifier is only meaningful under
             # the recipe it belongs to, which is the same reason it took both
-            # to match in the first place.
-            grubops_recipe_id=(
+            # to match in the first place. The recipe is the `external_ref`; the
+            # modifier id rides on `external_sub_ref`.
+            external_ref=(
                 candidate.item_id if is_recipe else candidate.parent_recipe_id
             ),
-            grubops_modifier_id=None if is_recipe else candidate.item_id,
-            grubops_child_modifier_id=None,
-            grubops_type=candidate.grubops_type,
-            grubops_name=candidate.name,
+            external_sub_ref=None if is_recipe else candidate.item_id,
+            external_child_ref=None,
+            external_type=candidate.grubops_type,
+            external_name=candidate.name,
             match_method=method,
             match_score=round(score * 100, 2),
             approved=False,

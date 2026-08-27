@@ -15,9 +15,6 @@ import type {
   BranchProductAvailability, StockDuration,
   UrlRedirect,
   GrubOpsLocation,
-  GrubOpsMapping,
-  GrubOpsMappingList,
-  GrubOpsSyncSummary,
   GrubOpsOrderList,
 } from './types';
 import type { Schemas } from '@mm/types';
@@ -34,6 +31,13 @@ type BranchMapRow = Schemas['AggregatorBranchMapOut'];
 type BranchMapInput = Schemas['AggregatorBranchMapIn'];
 type AggregatorAccount = Schemas['AggregatorAccountPublic'];
 type AggregatorAccountInput = Schemas['AggregatorAccountPush'];
+
+// The unified external-system item map (GrubOps + every aggregator) — one table,
+// one generic API. Names straight from the generated contract (rule 8).
+type ItemMappingList = Schemas['ItemMappingList'];
+type ItemMappingResponse = Schemas['ItemMappingResponse'];
+type ItemMappingUpdate = Schemas['ItemMappingUpdate'];
+type ItemMappingSyncSummary = Schemas['ItemMappingSyncSummary'];
 
 /**
  * Where the API lives, from the browser's point of view.
@@ -607,25 +611,6 @@ export const grubopsApi = {
   /** The per-branch switch. Off for a branch whose register is not live yet. */
   updateLocation: (id: string, data: { is_active?: boolean; grubops_location_id?: string }) =>
     api.put<GrubOpsLocation>(`/grubops/locations/${id}`, data),
-  mappings: (params: {
-    approved?: boolean;
-    kind?: string;
-    /** Match on our name, the GrubOps name, or a GrubOps id. */
-    search?: string;
-    /** `queue` (needs-decision first) or `name` (alphabetical by our name). */
-    sort?: 'queue' | 'name';
-    page?: number;
-    page_size?: number;
-  }) => api.get<GrubOpsMappingList>(`/grubops/mappings${buildQs(params)}`),
-  updateMapping: (id: string, data: object) =>
-    api.put<GrubOpsMapping>(`/grubops/mappings/${id}`, data),
-  /**
-   * Re-read their menu and propose mappings for anything new.
-   *
-   * Safe to press twice: an approved or hand-corrected row is never
-   * overwritten, only its display name is refreshed.
-   */
-  sync: () => api.post<GrubOpsSyncSummary>('/grubops/mappings/sync', {}),
   /** The ingest log: aggregator orders that came in, and anything that failed. */
   orders: (params: {
     channel?: string;
@@ -638,6 +623,36 @@ export const grubopsApi = {
     page?: number;
     page_size?: number;
   }) => api.get<GrubOpsOrderList>(`/grubops/orders${buildQs(params)}`),
+};
+
+// ─── Item mappings (unified external-system item map) ─────────────────────────
+
+/**
+ * The one review queue for every external-system item map — GrubOps and each
+ * aggregator, one table behind one generic API. Replaces the old
+ * GrubOps-specific `/grubops/mappings` endpoints.
+ *
+ * `sync` is a GrubOps-only re-read of their menu (`system=grubops`); it only
+ * ever adds suggestions and never overwrites an approved or hand-corrected row,
+ * only refreshes its display name.
+ */
+export const itemMappingsApi = {
+  list: (params: {
+    /** One external system (`grubops`, `keeta`, `deliveroo`, `talabat`, `noon`, `careem`) or omit for all. */
+    system?: string;
+    approved?: boolean;
+    kind?: string;
+    /** Match on our name, the external name, or an external id. */
+    search?: string;
+    /** `queue` (needs-decision first) or `name` (alphabetical by our name). */
+    sort?: 'queue' | 'name';
+    page?: number;
+    page_size?: number;
+  }) => api.get<ItemMappingList>(`/item-mappings${buildQs(params)}`),
+  update: (id: string, data: ItemMappingUpdate) =>
+    api.put<ItemMappingResponse>(`/item-mappings/${id}`, data),
+  sync: (system: string) =>
+    api.post<ItemMappingSyncSummary>(`/item-mappings/sync${buildQs({ system })}`, {}),
 };
 
 // ─── Aggregator reconciliation ────────────────────────────────────────────────

@@ -60,6 +60,13 @@ METHOD_FUZZY = "fuzzy"
 METHOD_MANUAL = "manual"
 MATCH_METHODS = (METHOD_EXACT, METHOD_FUZZY, METHOD_MANUAL)
 
+#: GrubOps' own item types, carried on `external_type` (null for name-keyed
+#: systems). RECIPE → a product; MODIFIER/NESTED_MODIFIER → an option.
+TYPE_RECIPE = "RECIPE"
+TYPE_MODIFIER = "MODIFIER"
+TYPE_NESTED_MODIFIER = "NESTED_MODIFIER"
+EXTERNAL_TYPES = (TYPE_RECIPE, TYPE_MODIFIER, TYPE_NESTED_MODIFIER)
+
 
 class ExternalItemMap(Base, UUIDMixin, TimestampMixin):
     """One external item identifier, mapped to a catalogue product or option."""
@@ -68,9 +75,23 @@ class ExternalItemMap(Base, UUIDMixin, TimestampMixin):
 
     #: Which external system `external_ref` belongs to.
     system: Mapped[str] = mapped_column(String(20), nullable=False)
-    #: The external match key — the normalised item name for a scraped aggregator
-    #: line, a recipe/modifier id for an id-based system. What the resolver joins on.
+    #: An optional scope the ids live under — a GrubOps brand id, say. Null for a
+    #: system (like the aggregators) whose ref is globally unique. Carried on the
+    #: identity key and echoed back on the push-out payload.
+    scope: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: The primary external match key — the normalised item name for a scraped
+    #: aggregator line, or the recipe id for a GrubOps item. What the resolver joins
+    #: a product on.
     external_ref: Mapped[str] = mapped_column(String(200), nullable=False)
+    #: A second external id for a composite identity — a GrubOps modifier id under
+    #: its recipe (the modifier id alone is ambiguous). Null for name-keyed systems.
+    external_sub_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: A third id for a nested identity — a GrubOps nested/child modifier. Null
+    #: otherwise.
+    external_child_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: The external system's own item type where it has one — GrubOps
+    #: RECIPE/MODIFIER/NESTED_MODIFIER. Null for systems keyed only by name.
+    external_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     #: The verbatim external display name, for the review screen only.
     external_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
@@ -102,7 +123,20 @@ class ExternalItemMap(Base, UUIDMixin, TimestampMixin):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
-        UniqueConstraint("system", "external_ref", name="uq_external_item_map_ref"),
+        # One row per external identity. The identity is the whole composite key,
+        # not just `external_ref`, so a GrubOps modifier (recipe + modifier id) is
+        # distinct from its recipe, and NULLS NOT DISTINCT (Postgres 15+) makes the
+        # name-keyed aggregator case — sub/child/scope all null — behave like a
+        # plain `(system, external_ref)` unique.
+        UniqueConstraint(
+            "system",
+            "scope",
+            "external_ref",
+            "external_sub_ref",
+            "external_child_ref",
+            name="uq_external_item_map_identity",
+            postgresql_nulls_not_distinct=True,
+        ),
         CheckConstraint(
             f"system IN ({_SYSTEMS_SQL})", name="ck_external_item_map_system"
         ),
@@ -112,6 +146,11 @@ class ExternalItemMap(Base, UUIDMixin, TimestampMixin):
         CheckConstraint(
             "match_method IN ('exact', 'fuzzy', 'manual')",
             name="ck_external_item_map_method",
+        ),
+        CheckConstraint(
+            "external_type IS NULL OR external_type IN "
+            "('RECIPE', 'MODIFIER', 'NESTED_MODIFIER')",
+            name="ck_external_item_map_type",
         ),
         # At most one catalogue entity, and it must match `mm_kind` when set. A row
         # with neither set is a proposal for a name we have seen but not yet mapped.

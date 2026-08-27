@@ -12,8 +12,12 @@
 // "Online store" section had grown into a fifteen-item drawer that mixed order
 // ops, reporting, CMS, i18n and the whole aggregator relationship. Each group
 // below is one job, and no group is larger than eight.
+// `match` lists extra path prefixes that also belong to an entry, for when one
+// drawer item fronts a set of sibling routes that are not nested under its href
+// — the Marketplaces entry lands on `/aggregators/reconciliation` but also owns
+// `/aggregators/*` and `/grubops`, so all of its tabs light the same item.
 export const NAV: Array<
-  { href: string; label: string; icon: string } | { section: string }
+  { href: string; label: string; icon: string; match?: string[] } | { section: string }
 > = [
   { href: '/',              label: 'Dashboard',       icon: 'dashboard' },
 
@@ -37,15 +41,16 @@ export const NAV: Array<
   // incident, not the moment to go hunting three sections down.
   { href: '/payment-gateways', label: 'Payment Gateways', icon: 'credit_card' },
 
-  // The aggregator relationship, in one place: what we push to the
-  // marketplaces (GrubOps), what they paid us back (Reconciliation), which
-  // of our branches each outlet id maps to (Mappings), and how we sign in
-  // (Logins).
+  // The whole aggregator relationship is now one tabbed screen —
+  // reconciliation, item mappings, branch mappings, logins and GrubOps —
+  // reached from a single drawer entry that lands on Reconciliation.
   { section: 'Marketplaces' },
-  { href: '/grubops',       label: 'GrubOps',         icon: 'restaurant_menu' },
-  { href: '/aggregators/reconciliation', label: 'Reconciliation', icon: 'account_balance' },
-  { href: '/aggregators/mappings', label: 'Mappings', icon: 'link' },
-  { href: '/aggregators/logins', label: 'Logins', icon: 'login' },
+  {
+    href: '/aggregators/reconciliation',
+    label: 'Marketplaces',
+    icon: 'storefront',
+    match: ['/aggregators', '/grubops'],
+  },
 
   // The physical side: shops, tills, stock, and the config behind them.
   { section: 'Operations' },
@@ -98,12 +103,20 @@ export const NAV: Array<
  * `/` is matched exactly, since it is a prefix of everything.
  */
 export function activeNavHref(pathname: string, nav: typeof NAV = NAV): string | null {
-  let best: string | null = null;
+  let best: { href: string; score: number } | null = null;
   for (const entry of nav) {
     if ('section' in entry) continue;
-    const { href } = entry;
-    const covers = href === '/' ? pathname === '/' : pathname === href || pathname.startsWith(`${href}/`);
-    if (covers && (best === null || href.length > best.length)) best = href;
+    // The entry's own href, plus any extra prefixes it declares it owns. The
+    // longest one that covers the path decides specificity — so a match prefix
+    // like `/aggregators` still yields to a more specific sibling href when one
+    // exists, and the entry's own href wins on its canonical route.
+    for (const prefix of [entry.href, ...(entry.match ?? [])]) {
+      const covers =
+        prefix === '/' ? pathname === '/' : pathname === prefix || pathname.startsWith(`${prefix}/`);
+      if (covers && (best === null || prefix.length > best.score)) {
+        best = { href: entry.href, score: prefix.length };
+      }
+    }
   }
-  return best;
+  return best?.href ?? null;
 }

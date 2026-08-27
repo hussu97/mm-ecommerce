@@ -89,5 +89,5 @@ async def record_proposal(
             match_method=METHOD_EXACT if guess_product_id is not None else METHOD_FUZZY,
             match_score=Decimal("100.00") if guess_product_id is not None else None,
         )
-        .on_conflict_do_nothing(constraint="uq_external_item_map_ref")
+        .on_conflict_do_nothing(constraint="uq_external_item_map_identity")
     )

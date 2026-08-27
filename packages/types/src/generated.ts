@@ -2790,74 +2790,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/grubops/mappings": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Mappings
-         * @description The review queue — needs-decision first, or alphabetical by our name.
-         */
-        get: operations["list_mappings_api_v1_grubops_mappings_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/grubops/mappings/sync": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Sync Mappings
-         * @description Re-read GrubOps' menu and propose mappings for anything new.
-         *
-         *     Safe to press twice, and safe to press after a menu change: an approved or
-         *     hand-corrected row is never overwritten, only its display name is
-         *     refreshed. What comes back is what to go and look at — the counts, and the
-         *     two lists of things that matched nothing on either side.
-         */
-        post: operations["sync_mappings_api_v1_grubops_mappings_sync_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/grubops/mappings/{mapping_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Update Mapping
-         * @description Correct a guess, or approve it.
-         *
-         *     Any edit to the GrubOps side marks the row `manual`, which is what stops the
-         *     next run of the matcher treating it as its own suggestion to refresh.
-         */
-        put: operations["update_mapping_api_v1_grubops_mappings__mapping_id__put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/grubops/orders": {
         parameters: {
             query?: never;
@@ -3715,6 +3647,70 @@ export interface paths {
         post?: never;
         /** Delete Warehouse */
         delete: operations["delete_warehouse_api_v1_inventory_warehouses__warehouse_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/item-mappings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Mappings
+         * @description The review queue — needs-decision first, or alphabetical by our name.
+         */
+        get: operations["list_mappings_api_v1_item_mappings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/item-mappings/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sync Mappings
+         * @description Re-read a system's menu and propose mappings for anything new.
+         *
+         *     Only GrubOps has a menu to re-read; the aggregators propose their own rows as
+         *     orders arrive. Safe to press twice: an approved or hand-corrected row is never
+         *     overwritten, only its display name refreshed.
+         */
+        post: operations["sync_mappings_api_v1_item_mappings_sync_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/item-mappings/{mapping_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update Mapping
+         * @description Correct a guess, or approve it. Any edit marks the row `manual`.
+         */
+        put: operations["update_mapping_api_v1_item_mappings__mapping_id__put"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -10489,88 +10485,6 @@ export interface components {
             is_active?: boolean | null;
         };
         /**
-         * GrubOpsMappingList
-         * @description A page of mappings, with the counts the screen puts in its tabs.
-         */
-        GrubOpsMappingList: {
-            /** Approved Count */
-            approved_count: number;
-            /** Items */
-            items: components["schemas"]["GrubOpsMappingResponse"][];
-            /** Pending Count */
-            pending_count: number;
-            /** Total */
-            total: number;
-        };
-        /**
-         * GrubOpsMappingResponse
-         * @description One suggested or confirmed pairing, as the review screen shows it.
-         */
-        GrubOpsMappingResponse: {
-            /** Approved */
-            approved: boolean;
-            /** Approved By */
-            approved_by?: string | null;
-            /** Grubops Brand Id */
-            grubops_brand_id: string;
-            /** Grubops Child Modifier Id */
-            grubops_child_modifier_id?: string | null;
-            /** Grubops Modifier Id */
-            grubops_modifier_id?: string | null;
-            /** Grubops Name */
-            grubops_name?: string | null;
-            /** Grubops Recipe Id */
-            grubops_recipe_id?: string | null;
-            /** Grubops Type */
-            grubops_type: string;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Last Error */
-            last_error?: string | null;
-            /** Last Pushed At */
-            last_pushed_at?: string | null;
-            /** Match Method */
-            match_method: string;
-            /** Match Score */
-            match_score?: number | null;
-            /** Mm Kind */
-            mm_kind: string;
-            /** Mm Name */
-            mm_name?: string | null;
-            /** Mm Parent Name */
-            mm_parent_name?: string | null;
-            /** Modifier Option Id */
-            modifier_option_id?: string | null;
-            /** Notes */
-            notes?: string | null;
-            /** Product Id */
-            product_id?: string | null;
-        };
-        /**
-         * GrubOpsMappingUpdate
-         * @description A correction, or an approval.
-         *
-         *     Setting `approved` is the act that puts a row into service; everything else
-         *     here exists so somebody can fix a bad guess before they do.
-         */
-        GrubOpsMappingUpdate: {
-            /** Approved */
-            approved?: boolean | null;
-            /** Grubops Child Modifier Id */
-            grubops_child_modifier_id?: string | null;
-            /** Grubops Modifier Id */
-            grubops_modifier_id?: string | null;
-            /** Grubops Recipe Id */
-            grubops_recipe_id?: string | null;
-            /** Grubops Type */
-            grubops_type?: string | null;
-            /** Notes */
-            notes?: string | null;
-        };
-        /**
          * GrubOpsOrderList
          * @description A page of ingested orders, with the counts the screen puts in its header.
          */
@@ -10627,22 +10541,6 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
-        };
-        /**
-         * GrubOpsSyncSummary
-         * @description What one press of "Sync from GrubOps" did.
-         */
-        GrubOpsSyncSummary: {
-            /** Created */
-            created: number;
-            /** Errors */
-            errors: string[];
-            /** Refreshed */
-            refreshed: number;
-            /** Unmatched Ours */
-            unmatched_ours: string[];
-            /** Unmatched Theirs */
-            unmatched_theirs: string[];
         };
         /** GuestSessionRequest */
         GuestSessionRequest: {
@@ -11091,6 +10989,104 @@ export interface components {
             updated_at: string;
             /** Warehouse Id */
             warehouse_id: string | null;
+        };
+        /** ItemMappingList */
+        ItemMappingList: {
+            /** Approved Count */
+            approved_count: number;
+            /** Items */
+            items: components["schemas"]["ItemMappingResponse"][];
+            /** Pending Count */
+            pending_count: number;
+            /** Total */
+            total: number;
+        };
+        /** ItemMappingResponse */
+        ItemMappingResponse: {
+            /** Approved */
+            approved: boolean;
+            /** Approved By */
+            approved_by?: string | null;
+            /** External Child Ref */
+            external_child_ref?: string | null;
+            /** External Name */
+            external_name?: string | null;
+            /** External Ref */
+            external_ref: string;
+            /** External Sub Ref */
+            external_sub_ref?: string | null;
+            /** External Type */
+            external_type?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Last Error */
+            last_error?: string | null;
+            /** Last Pushed At */
+            last_pushed_at?: string | null;
+            /** Match Method */
+            match_method: string;
+            /** Match Score */
+            match_score?: number | null;
+            /** Mm Kind */
+            mm_kind: string;
+            /** Mm Name */
+            mm_name?: string | null;
+            /** Mm Parent Name */
+            mm_parent_name?: string | null;
+            /** Modifier Option Id */
+            modifier_option_id?: string | null;
+            /** Notes */
+            notes?: string | null;
+            /** Product Id */
+            product_id?: string | null;
+            /** Scope */
+            scope?: string | null;
+            /** System */
+            system: string;
+        };
+        /** ItemMappingSyncSummary */
+        ItemMappingSyncSummary: {
+            /** Created */
+            created: number;
+            /** Errors */
+            errors: string[];
+            /** Refreshed */
+            refreshed: number;
+            /** Unmatched Ours */
+            unmatched_ours: string[];
+            /** Unmatched Theirs */
+            unmatched_theirs: string[];
+        };
+        /**
+         * ItemMappingUpdate
+         * @description Correct a guess or approve it. Any field left null is left unchanged.
+         *
+         *     Point the row at a catalogue entity with `product_id` **or**
+         *     `modifier_option_id` (with `mm_kind`); edit the external identity with the
+         *     `external_*` fields. Either kind of edit marks the row `manual`.
+         */
+        ItemMappingUpdate: {
+            /** Approved */
+            approved?: boolean | null;
+            /** External Child Ref */
+            external_child_ref?: string | null;
+            /** External Ref */
+            external_ref?: string | null;
+            /** External Sub Ref */
+            external_sub_ref?: string | null;
+            /** External Type */
+            external_type?: string | null;
+            /** Mm Kind */
+            mm_kind?: string | null;
+            /** Modifier Option Id */
+            modifier_option_id?: string | null;
+            /** Notes */
+            notes?: string | null;
+            /** Product Id */
+            product_id?: string | null;
         };
         /** JoinOrderRequest */
         JoinOrderRequest: {
@@ -22120,99 +22116,6 @@ export interface operations {
             };
         };
     };
-    list_mappings_api_v1_grubops_mappings_get: {
-        parameters: {
-            query?: {
-                approved?: boolean | null;
-                kind?: string | null;
-                /** @description Match on our item name, the GrubOps name, or a GrubOps id. */
-                search?: string | null;
-                /** @description `queue` (needs-decision first) or `name` (alphabetical by our item name). */
-                sort?: string;
-                page?: number;
-                page_size?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GrubOpsMappingList"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    sync_mappings_api_v1_grubops_mappings_sync_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GrubOpsSyncSummary"];
-                };
-            };
-        };
-    };
-    update_mapping_api_v1_grubops_mappings__mapping_id__put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                mapping_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["GrubOpsMappingUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GrubOpsMappingResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_grubops_orders_api_v1_grubops_orders_get: {
         parameters: {
             query?: {
@@ -24343,6 +24246,112 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_mappings_api_v1_item_mappings_get: {
+        parameters: {
+            query?: {
+                /** @description Filter to one system. */
+                system?: string | null;
+                approved?: boolean | null;
+                kind?: string | null;
+                /** @description Match on our item name, the external name, or an external id. */
+                search?: string | null;
+                sort?: string;
+                page?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemMappingList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sync_mappings_api_v1_item_mappings_sync_post: {
+        parameters: {
+            query: {
+                /** @description Which system to re-match. Only GrubOps today. */
+                system: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemMappingSyncSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_mapping_api_v1_item_mappings__mapping_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                mapping_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ItemMappingUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemMappingResponse"];
+                };
             };
             /** @description Validation Error */
             422: {

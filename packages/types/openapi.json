@@ -9726,301 +9726,6 @@
         "title": "GrubOpsLocationUpdate",
         "type": "object"
       },
-      "GrubOpsMappingList": {
-        "description": "A page of mappings, with the counts the screen puts in its tabs.",
-        "properties": {
-          "approved_count": {
-            "title": "Approved Count",
-            "type": "integer"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/GrubOpsMappingResponse"
-            },
-            "title": "Items",
-            "type": "array"
-          },
-          "pending_count": {
-            "title": "Pending Count",
-            "type": "integer"
-          },
-          "total": {
-            "title": "Total",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "approved_count",
-          "pending_count"
-        ],
-        "title": "GrubOpsMappingList",
-        "type": "object"
-      },
-      "GrubOpsMappingResponse": {
-        "description": "One suggested or confirmed pairing, as the review screen shows it.",
-        "properties": {
-          "approved": {
-            "title": "Approved",
-            "type": "boolean"
-          },
-          "approved_by": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Approved By"
-          },
-          "grubops_brand_id": {
-            "title": "Grubops Brand Id",
-            "type": "string"
-          },
-          "grubops_child_modifier_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Grubops Child Modifier Id"
-          },
-          "grubops_modifier_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Grubops Modifier Id"
-          },
-          "grubops_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Grubops Name"
-          },
-          "grubops_recipe_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Grubops Recipe Id"
-          },
-          "grubops_type": {
-            "title": "Grubops Type",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "last_error": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Error"
-          },
-          "last_pushed_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Pushed At"
-          },
-          "match_method": {
-            "title": "Match Method",
-            "type": "string"
-          },
-          "match_score": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Match Score"
-          },
-          "mm_kind": {
-            "title": "Mm Kind",
-            "type": "string"
-          },
-          "mm_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Mm Name"
-          },
-          "mm_parent_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Mm Parent Name"
-          },
-          "modifier_option_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Modifier Option Id"
-          },
-          "notes": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Notes"
-          },
-          "product_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Product Id"
-          }
-        },
-        "required": [
-          "id",
-          "mm_kind",
-          "grubops_brand_id",
-          "grubops_type",
-          "match_method",
-          "approved"
-        ],
-        "title": "GrubOpsMappingResponse",
-        "type": "object"
-      },
-      "GrubOpsMappingUpdate": {
-        "description": "A correction, or an approval.\n\nSetting `approved` is the act that puts a row into service; everything else\nhere exists so somebody can fix a bad guess before they do.",
-        "properties": {
-          "approved": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Approved"
-          },
-          "grubops_child_modifier_id": {
-            "anyOf": [
-              {
-                "maxLength": 64,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Grubops Child Modifier Id"
-          },
-          "grubops_modifier_id": {
-            "anyOf": [
-              {
-                "maxLength": 64,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Grubops Modifier Id"
-          },
-          "grubops_recipe_id": {
-            "anyOf": [
-              {
-                "maxLength": 64,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Grubops Recipe Id"
-          },
-          "grubops_type": {
-            "anyOf": [
-              {
-                "maxLength": 32,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Grubops Type"
-          },
-          "notes": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Notes"
-          }
-        },
-        "title": "GrubOpsMappingUpdate",
-        "type": "object"
-      },
       "GrubOpsOrderList": {
         "description": "A page of ingested orders, with the counts the screen puts in its header.",
         "properties": {
@@ -10177,49 +9882,6 @@
           "updated_at"
         ],
         "title": "GrubOpsOrderRow",
-        "type": "object"
-      },
-      "GrubOpsSyncSummary": {
-        "description": "What one press of \"Sync from GrubOps\" did.",
-        "properties": {
-          "created": {
-            "title": "Created",
-            "type": "integer"
-          },
-          "errors": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Errors",
-            "type": "array"
-          },
-          "refreshed": {
-            "title": "Refreshed",
-            "type": "integer"
-          },
-          "unmatched_ours": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Unmatched Ours",
-            "type": "array"
-          },
-          "unmatched_theirs": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Unmatched Theirs",
-            "type": "array"
-          }
-        },
-        "required": [
-          "created",
-          "refreshed",
-          "unmatched_ours",
-          "unmatched_theirs",
-          "errors"
-        ],
-        "title": "GrubOpsSyncSummary",
         "type": "object"
       },
       "GuestSessionRequest": {
@@ -11672,6 +11334,383 @@
           "updated_at"
         ],
         "title": "InventoryTransactionResponse",
+        "type": "object"
+      },
+      "ItemMappingList": {
+        "properties": {
+          "approved_count": {
+            "title": "Approved Count",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ItemMappingResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pending_count": {
+            "title": "Pending Count",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "approved_count",
+          "pending_count"
+        ],
+        "title": "ItemMappingList",
+        "type": "object"
+      },
+      "ItemMappingResponse": {
+        "properties": {
+          "approved": {
+            "title": "Approved",
+            "type": "boolean"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
+          "external_child_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Child Ref"
+          },
+          "external_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Name"
+          },
+          "external_ref": {
+            "title": "External Ref",
+            "type": "string"
+          },
+          "external_sub_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Sub Ref"
+          },
+          "external_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Type"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "last_pushed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Pushed At"
+          },
+          "match_method": {
+            "title": "Match Method",
+            "type": "string"
+          },
+          "match_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match Score"
+          },
+          "mm_kind": {
+            "title": "Mm Kind",
+            "type": "string"
+          },
+          "mm_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mm Name"
+          },
+          "mm_parent_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mm Parent Name"
+          },
+          "modifier_option_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modifier Option Id"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "product_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Id"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "system": {
+            "title": "System",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "system",
+          "mm_kind",
+          "external_ref",
+          "match_method",
+          "approved"
+        ],
+        "title": "ItemMappingResponse",
+        "type": "object"
+      },
+      "ItemMappingSyncSummary": {
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "integer"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "refreshed": {
+            "title": "Refreshed",
+            "type": "integer"
+          },
+          "unmatched_ours": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unmatched Ours",
+            "type": "array"
+          },
+          "unmatched_theirs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unmatched Theirs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "created",
+          "refreshed",
+          "unmatched_ours",
+          "unmatched_theirs",
+          "errors"
+        ],
+        "title": "ItemMappingSyncSummary",
+        "type": "object"
+      },
+      "ItemMappingUpdate": {
+        "description": "Correct a guess or approve it. Any field left null is left unchanged.\n\nPoint the row at a catalogue entity with `product_id` **or**\n`modifier_option_id` (with `mm_kind`); edit the external identity with the\n`external_*` fields. Either kind of edit marks the row `manual`.",
+        "properties": {
+          "approved": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved"
+          },
+          "external_child_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Child Ref"
+          },
+          "external_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Ref"
+          },
+          "external_sub_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Sub Ref"
+          },
+          "external_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Type"
+          },
+          "mm_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mm Kind"
+          },
+          "modifier_option_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modifier Option Id"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "product_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Id"
+          }
+        },
+        "title": "ItemMappingUpdate",
         "type": "object"
       },
       "JoinOrderRequest": {
@@ -37819,217 +37858,6 @@
         ]
       }
     },
-    "/api/v1/grubops/mappings": {
-      "get": {
-        "description": "The review queue \u2014 needs-decision first, or alphabetical by our name.",
-        "operationId": "list_mappings_api_v1_grubops_mappings_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "approved",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "boolean"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Approved"
-            }
-          },
-          {
-            "in": "query",
-            "name": "kind",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Kind"
-            }
-          },
-          {
-            "description": "Match on our item name, the GrubOps name, or a GrubOps id.",
-            "in": "query",
-            "name": "search",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Match on our item name, the GrubOps name, or a GrubOps id.",
-              "title": "Search"
-            }
-          },
-          {
-            "description": "`queue` (needs-decision first) or `name` (alphabetical by our item name).",
-            "in": "query",
-            "name": "sort",
-            "required": false,
-            "schema": {
-              "default": "queue",
-              "description": "`queue` (needs-decision first) or `name` (alphabetical by our item name).",
-              "pattern": "^(queue|name)$",
-              "title": "Sort",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "page",
-            "required": false,
-            "schema": {
-              "default": 1,
-              "minimum": 1,
-              "title": "Page",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "page_size",
-            "required": false,
-            "schema": {
-              "default": 50,
-              "maximum": 2000,
-              "minimum": 1,
-              "title": "Page Size",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GrubOpsMappingList"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "List Mappings",
-        "tags": [
-          "GrubOps"
-        ]
-      }
-    },
-    "/api/v1/grubops/mappings/sync": {
-      "post": {
-        "description": "Re-read GrubOps' menu and propose mappings for anything new.\n\nSafe to press twice, and safe to press after a menu change: an approved or\nhand-corrected row is never overwritten, only its display name is\nrefreshed. What comes back is what to go and look at \u2014 the counts, and the\ntwo lists of things that matched nothing on either side.",
-        "operationId": "sync_mappings_api_v1_grubops_mappings_sync_post",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GrubOpsSyncSummary"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Sync Mappings",
-        "tags": [
-          "GrubOps"
-        ]
-      }
-    },
-    "/api/v1/grubops/mappings/{mapping_id}": {
-      "put": {
-        "description": "Correct a guess, or approve it.\n\nAny edit to the GrubOps side marks the row `manual`, which is what stops the\nnext run of the matcher treating it as its own suggestion to refresh.",
-        "operationId": "update_mapping_api_v1_grubops_mappings__mapping_id__put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "mapping_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Mapping Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/GrubOpsMappingUpdate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GrubOpsMappingResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Update Mapping",
-        "tags": [
-          "GrubOps"
-        ]
-      }
-    },
     "/api/v1/grubops/orders": {
       "get": {
         "description": "The order ingest's own log: what came in, where it landed, what failed.\n\nRead-only. The ingest loop owns these rows; this screen is for spotting the\ntwo things a person needs to see \u2014 an order whose write-back errored, and an\norder carrying a line no mapping could resolve.",
@@ -41680,6 +41508,256 @@
         "summary": "Update Warehouse",
         "tags": [
           "Inventory"
+        ]
+      }
+    },
+    "/api/v1/item-mappings": {
+      "get": {
+        "description": "The review queue \u2014 needs-decision first, or alphabetical by our name.",
+        "operationId": "list_mappings_api_v1_item_mappings_get",
+        "parameters": [
+          {
+            "description": "Filter to one system.",
+            "in": "query",
+            "name": "system",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to one system.",
+              "title": "System"
+            }
+          },
+          {
+            "in": "query",
+            "name": "approved",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Approved"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "description": "Match on our item name, the external name, or an external id.",
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Match on our item name, the external name, or an external id.",
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "queue",
+              "pattern": "^(queue|name)$",
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemMappingList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Mappings",
+        "tags": [
+          "Item Mappings"
+        ]
+      }
+    },
+    "/api/v1/item-mappings/sync": {
+      "post": {
+        "description": "Re-read a system's menu and propose mappings for anything new.\n\nOnly GrubOps has a menu to re-read; the aggregators propose their own rows as\norders arrive. Safe to press twice: an approved or hand-corrected row is never\noverwritten, only its display name refreshed.",
+        "operationId": "sync_mappings_api_v1_item_mappings_sync_post",
+        "parameters": [
+          {
+            "description": "Which system to re-match. Only GrubOps today.",
+            "in": "query",
+            "name": "system",
+            "required": true,
+            "schema": {
+              "description": "Which system to re-match. Only GrubOps today.",
+              "title": "System",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemMappingSyncSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Sync Mappings",
+        "tags": [
+          "Item Mappings"
+        ]
+      }
+    },
+    "/api/v1/item-mappings/{mapping_id}": {
+      "put": {
+        "description": "Correct a guess, or approve it. Any edit marks the row `manual`.",
+        "operationId": "update_mapping_api_v1_item_mappings__mapping_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mapping_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Mapping Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemMappingUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemMappingResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Update Mapping",
+        "tags": [
+          "Item Mappings"
         ]
       }
     },

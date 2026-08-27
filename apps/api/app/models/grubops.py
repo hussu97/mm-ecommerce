@@ -5,8 +5,7 @@ The aggregators — Noon, Talabat, Deliveroo — are fed from GrubTech's GrubOps
 console, so an item that runs out has to be said twice: once on the terminal,
 once in GrubOps. These tables are what let the second one be said by a machine.
 
-Three tables, because there are three separate questions and conflating any two
-of them is how a sync starts lying.
+Two tables here, plus one that has moved out.
 
 **Which branches exist over there.** `grubops_location_map`. Only Sharjah and
 Barsha Heights trade on GrubOps; Karama and DSO do not. A branch with no row is
@@ -14,17 +13,14 @@ simply never enumerated — the same "a row is an exception" idiom
 `branch_products` uses, and it means the two off-platform branches cost no code
 rather than a special case.
 
-**Which item is which.** `grubops_item_map`. GrubOps keys its menu by
-`recipeId`/`modifierId` and knows nothing about our uuids, so the join between
-the two catalogues has to be stored. It is built by matching on name, which is
-a guess, so every row carries how it was matched and nobody acts on it until a
-human has set `approved`. An unapproved row is inert: the sync reads
-`WHERE approved` and skips the rest.
-
-Identity here is deliberately **not** per-branch. A `recipeId` is catalogue-wide
-— the login's own token says `brandIds=ALL, locationIds=ALL` — and the location
-is supplied per call from the table above. So a product sold at both branches is
-one row pushed to two locations, and a mapping fixed once is fixed everywhere.
+**Which item is which** used to live here as `grubops_item_map`; it was folded
+into the generalized `external_item_map` (system `grubops`), which serves every
+integration's item mappings from one table. The matcher and the sync read/write
+it there now; a GrubOps recipe is its `external_ref`, a modifier its
+`external_sub_ref`, the brand its `scope`. Identity is deliberately **not**
+per-branch — a `recipeId` is catalogue-wide (`brandIds=ALL, locationIds=ALL`) and
+the location is supplied per call from the table above — so a product sold at both
+branches is one mapping pushed to two locations.
 
 **What we last told them.** `grubops_sync_state`. The reconcile loop pushes
 differences, not state, and without a record of the last push every tick would
@@ -37,15 +33,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
 
 from sqlalchemy import (
     Boolean,
-    CheckConstraint,
     DateTime,
     ForeignKey,
-    Index,
-    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -103,86 +95,6 @@ class GrubOpsLocationMap(Base, UUIDMixin, TimestampMixin):
         return f"<GrubOpsLocationMap branch={self.branch_id} loc={self.grubops_location_id}>"
 
 
-class GrubOpsItemMap(Base, UUIDMixin, TimestampMixin):
-    """
-    One product or one modifier option, and the GrubOps item it is.
-
-    Exactly one of `product_id` / `modifier_option_id` is set, and `mm_kind`
-    says which — a CHECK enforces the pair so a half-filled row cannot be
-    written and then quietly skipped at push time.
-
-    Which of the three GrubOps id columns is filled follows `grubops_type`:
-    `RECIPE` uses `grubops_recipe_id`, `MODIFIER` uses `grubops_modifier_id`
-    alongside its parent recipe, and `NESTED_MODIFIER` adds
-    `grubops_child_modifier_id`. They are separate columns rather than one
-    polymorphic `item_id` because the payload GrubOps wants names all three
-    separately, and collapsing them here would only mean picking them apart
-    again in the provider.
-    """
-
-    __tablename__ = "grubops_item_map"
-
-    mm_kind: Mapped[str] = mapped_column(String(16), nullable=False)
-    product_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("products.id", ondelete="CASCADE"),
-        nullable=True,
-    )
-    modifier_option_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("modifier_options.id", ondelete="CASCADE"),
-        nullable=True,
-    )
-
-    grubops_brand_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    grubops_recipe_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    grubops_modifier_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    grubops_child_modifier_id: Mapped[str | None] = mapped_column(
-        String(64), nullable=True
-    )
-    grubops_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    #: What GrubOps calls it, kept for the review screen only. The sync never
-    #: reads it — names drift, ids do not.
-    grubops_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-
-    match_method: Mapped[str] = mapped_column(String(16), nullable=False)
-    match_score: Mapped[Any | None] = mapped_column(Numeric(5, 2), nullable=True)
-    #: The gate. Name matching is a guess and this is where a human says the
-    #: guess is right; nothing is ever pushed for an unapproved row.
-    approved: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="false"
-    )
-    approved_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    __table_args__ = (
-        CheckConstraint(
-            "(mm_kind = 'product' AND product_id IS NOT NULL "
-            "AND modifier_option_id IS NULL) OR "
-            "(mm_kind = 'option' AND modifier_option_id IS NOT NULL "
-            "AND product_id IS NULL)",
-            name="ck_grubops_item_map_one_entity",
-        ),
-        CheckConstraint(
-            "grubops_type IN ('RECIPE', 'MODIFIER', 'NESTED_MODIFIER')",
-            name="ck_grubops_item_map_type",
-        ),
-        CheckConstraint(
-            "match_method IN ('exact', 'fuzzy', 'manual')",
-            name="ck_grubops_item_map_method",
-        ),
-        # One GrubOps identity per catalogue entity. Two rows for one product
-        # would mean two pushes disagreeing about the same shelf.
-        UniqueConstraint("product_id", name="uq_grubops_item_map_product"),
-        UniqueConstraint("modifier_option_id", name="uq_grubops_item_map_option"),
-        # The sync's own filter, and the review screen's busiest one.
-        Index("ix_grubops_item_map_approved", "approved"),
-    )
-
-    def __repr__(self) -> str:
-        return f"<GrubOpsItemMap {self.mm_kind} type={self.grubops_type} approved={self.approved}>"
-
-
 class GrubOpsSyncState(Base, UUIDMixin, TimestampMixin):
     """
     The last thing we told GrubOps about one item at one branch.
@@ -204,9 +116,12 @@ class GrubOpsSyncState(Base, UUIDMixin, TimestampMixin):
         ForeignKey("branches.id", ondelete="CASCADE"),
         nullable=False,
     )
-    grubops_item_map_id: Mapped[uuid.UUID] = mapped_column(
+    #: The item this sync-state is for — now a row in the generalized
+    #: `external_item_map` (system `grubops`), since GrubOps' own item map was
+    #: folded into it. Ids were preserved on the merge, so old rows still resolve.
+    external_item_map_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("grubops_item_map.id", ondelete="CASCADE"),
+        ForeignKey("external_item_map.id", ondelete="CASCADE"),
         nullable=False,
     )
     #: Null means "never pushed", which is not the same as "pushed available"
@@ -224,7 +139,7 @@ class GrubOpsSyncState(Base, UUIDMixin, TimestampMixin):
 
     __table_args__ = (
         UniqueConstraint(
-            "branch_id", "grubops_item_map_id", name="uq_grubops_sync_state"
+            "branch_id", "external_item_map_id", name="uq_grubops_sync_state"
         ),
     )
 

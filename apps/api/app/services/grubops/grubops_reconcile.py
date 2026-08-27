@@ -44,7 +44,8 @@ from app.core import advisory_lock
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
 from app.models.branch import Branch
-from app.models.grubops import GrubOpsItemMap, GrubOpsLocationMap, GrubOpsSyncState
+from app.models.external_item_map import ExternalItemMap
+from app.models.grubops import GrubOpsLocationMap, GrubOpsSyncState
 from app.models.menu import BranchModifierOption, BranchProduct
 from app.services.catalog import availability_service
 from app.services.grubops import grubops_service
@@ -121,7 +122,10 @@ async def desired_state(db: AsyncSession, branch_id: uuid.UUID) -> list[Desired]
     mappings = (
         (
             await db.execute(
-                select(GrubOpsItemMap).where(GrubOpsItemMap.approved.is_(True))
+                select(ExternalItemMap).where(
+                    ExternalItemMap.system == "grubops",
+                    ExternalItemMap.approved.is_(True),
+                )
             )
         )
         .scalars()
@@ -139,11 +143,11 @@ async def desired_state(db: AsyncSession, branch_id: uuid.UUID) -> list[Desired]
         desired.append(
             Desired(
                 item_map_id=mapping.id,
-                brand_id=mapping.grubops_brand_id,
-                recipe_id=mapping.grubops_recipe_id,
-                modifier_id=mapping.grubops_modifier_id,
-                child_modifier_id=mapping.grubops_child_modifier_id,
-                grubops_type=mapping.grubops_type,
+                brand_id=mapping.scope,
+                recipe_id=mapping.external_ref,
+                modifier_id=mapping.external_sub_ref,
+                child_modifier_id=mapping.external_child_ref,
+                grubops_type=mapping.external_type,
                 available=available,
                 until=until,
             )
@@ -158,7 +162,7 @@ async def _reconcile_branch(db: AsyncSession, location: GrubOpsLocationMap) -> i
         return 0
 
     states = {
-        row.grubops_item_map_id: row
+        row.external_item_map_id: row
         for row in (
             await db.execute(
                 select(GrubOpsSyncState).where(

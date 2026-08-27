@@ -16,8 +16,10 @@ import { cn } from '@/lib/utils';
  */
 const TABS = [
   { href: '/aggregators/reconciliation', label: 'Reconciliation' },
-  { href: '/aggregators/mappings', label: 'Mappings' },
+  { href: '/aggregators/item-mappings', label: 'Item Mappings' },
+  { href: '/aggregators/mappings', label: 'Branch Mappings' },
   { href: '/aggregators/logins', label: 'Logins' },
+  { href: '/grubops', label: 'GrubOps' },
 ];
 
 export function AggregatorTabs() {

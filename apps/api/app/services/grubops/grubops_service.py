@@ -39,8 +39,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
+from app.models.external_item_map import ExternalItemMap
 from app.models.grubops import (
-    GrubOpsItemMap,
     GrubOpsLocationMap,
     GrubOpsSyncState,
 )
@@ -273,12 +273,12 @@ async def record_pushed(
         return
 
     existing = {
-        row.grubops_item_map_id: row
+        row.external_item_map_id: row
         for row in (
             await db.execute(
                 select(GrubOpsSyncState).where(
                     GrubOpsSyncState.branch_id == branch_id,
-                    GrubOpsSyncState.grubops_item_map_id.in_(
+                    GrubOpsSyncState.external_item_map_id.in_(
                         [d.item_map_id for d in deltas]
                     ),
                 )
@@ -293,7 +293,7 @@ async def record_pushed(
         row = existing.get(delta.item_map_id)
         if row is None:
             row = GrubOpsSyncState(
-                branch_id=branch_id, grubops_item_map_id=delta.item_map_id
+                branch_id=branch_id, external_item_map_id=delta.item_map_id
             )
             db.add(row)
         row.last_pushed_available = delta.available
@@ -317,12 +317,12 @@ async def record_failure(
     if not deltas:
         return
     existing = {
-        row.grubops_item_map_id: row
+        row.external_item_map_id: row
         for row in (
             await db.execute(
                 select(GrubOpsSyncState).where(
                     GrubOpsSyncState.branch_id == branch_id,
-                    GrubOpsSyncState.grubops_item_map_id.in_(
+                    GrubOpsSyncState.external_item_map_id.in_(
                         [d.item_map_id for d in deltas]
                     ),
                 )
@@ -335,7 +335,7 @@ async def record_failure(
         row = existing.get(delta.item_map_id)
         if row is None:
             row = GrubOpsSyncState(
-                branch_id=branch_id, grubops_item_map_id=delta.item_map_id
+                branch_id=branch_id, external_item_map_id=delta.item_map_id
             )
             db.add(row)
         row.last_error = error[:500]
@@ -370,17 +370,19 @@ async def _push_many(
 
         conditions = []
         if product_ids:
-            conditions.append(GrubOpsItemMap.product_id.in_(product_ids))
+            conditions.append(ExternalItemMap.product_id.in_(product_ids))
         if option_ids:
-            conditions.append(GrubOpsItemMap.modifier_option_id.in_(option_ids))
+            conditions.append(ExternalItemMap.modifier_option_id.in_(option_ids))
         if not conditions:
             return
 
         mappings = (
             (
                 await db.execute(
-                    select(GrubOpsItemMap).where(
-                        GrubOpsItemMap.approved.is_(True), or_(*conditions)
+                    select(ExternalItemMap).where(
+                        ExternalItemMap.system == "grubops",
+                        ExternalItemMap.approved.is_(True),
+                        or_(*conditions),
                     )
                 )
             )
@@ -395,11 +397,11 @@ async def _push_many(
         deltas = [
             Desired(
                 item_map_id=m.id,
-                brand_id=m.grubops_brand_id,
-                recipe_id=m.grubops_recipe_id,
-                modifier_id=m.grubops_modifier_id,
-                child_modifier_id=m.grubops_child_modifier_id,
-                grubops_type=m.grubops_type,
+                brand_id=m.scope,
+                recipe_id=m.external_ref,
+                modifier_id=m.external_sub_ref,
+                child_modifier_id=m.external_child_ref,
+                grubops_type=m.external_type,
                 available=in_stock,
                 until=None if in_stock else until,
             )

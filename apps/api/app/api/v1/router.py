@@ -51,6 +51,7 @@ from .inventory import (
 from .inventory import (
     transactions_router as inventory_transactions_router,
 )
+from .item_mappings import router as item_mappings_router
 from .marketing import (
     discounts_router,
     promotions_router,
@@ -98,6 +99,9 @@ api_router.include_router(categories_router, prefix="/categories", tags=["Catego
 api_router.include_router(redirects_router, prefix="/redirects", tags=["Redirects"])
 api_router.include_router(products_router, prefix="/products", tags=["Products"])
 api_router.include_router(grubops_router, prefix="/grubops", tags=["GrubOps"])
+api_router.include_router(
+    item_mappings_router, prefix="/item-mappings", tags=["Item Mappings"]
+)
 api_router.include_router(
     aggregators_router, prefix="/aggregators", tags=["Aggregators"]
 )
