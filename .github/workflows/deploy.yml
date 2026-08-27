@@ -336,6 +336,24 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # The Playwright/Keeta bootstrap worker image. Built here (the fast runner)
+      # and pulled on the VM, where a cron runs it one-shot every few hours to
+      # warm the aggregator sessions and re-pull Keeta orders. Its own context
+      # (apps/aggregator-bootstrap) — the Dockerfile COPYs pyproject/src relative
+      # to it.
+      - name: Build and push aggregator-bootstrap image
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/aggregator-bootstrap
+          file: apps/aggregator-bootstrap/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/mm-ecommerce-aggregator-bootstrap:latest
+            ghcr.io/${{ github.repository_owner }}/mm-ecommerce-aggregator-bootstrap:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
@@ -431,7 +449,6 @@ jobs:
           FOODICS_PASSWORD=${{ secrets.FOODICS_PASSWORD }}
           FOODICS_TIMEOUT_SECONDS=${{ secrets.FOODICS_TIMEOUT_SECONDS || '8' }}
           AGGREGATOR_INGEST_ENABLED=${{ secrets.AGGREGATOR_INGEST_ENABLED || 'true' }}
-          AGGREGATOR_PROMOTE_ENABLED=${{ secrets.AGGREGATOR_PROMOTE_ENABLED || 'false' }}
           AGGREGATOR_CONFIG_ENCRYPTION_KEY=${{ secrets.AGGREGATOR_CONFIG_ENCRYPTION_KEY }}
           AGGREGATOR_SESSION_PUSH_TOKEN=${{ secrets.AGGREGATOR_SESSION_PUSH_TOKEN }}
           AGGREGATOR_RUN_HOUR_DXB=${{ secrets.AGGREGATOR_RUN_HOUR_DXB || '23' }}
@@ -496,6 +513,10 @@ jobs:
           echo "Pulling pre-built API image from GHCR..."
           docker pull ghcr.io/hussu97/mm-ecommerce-api:latest
 
+          echo "Pulling the aggregator bootstrap worker image..."
+          docker pull ghcr.io/hussu97/mm-ecommerce-aggregator-bootstrap:latest \
+            || echo "WARNING: bootstrap worker image pull failed — warm cron will retry"
+
           # A migration can drop a table, and `alembic downgrade` cannot bring
           # the rows back — only the empty shape. Until 2026-08-06 this job ran
           # migrations against the live database with nothing taken first, so
@@ -546,6 +567,21 @@ jobs:
 
           echo "Restarting the APIs with the new image..."
           docker compose -f docker-compose.prod.yml up -d --force-recreate --remove-orphans api pos-api
+
+          # Install the aggregator warm cron from the repo so it survives every
+          # deploy (the git reset above refreshed the file). The worker itself is
+          # a profiled compose service — never started by `up`, only `run` one-shot
+          # by this cron — so headless Chrome never sits resident on this small VM.
+          echo "Installing the aggregator warm cron..."
+          if sudo -n true 2>/dev/null; then
+            sudo cp apps/aggregator-bootstrap/deploy/aggregator-warm.cron /etc/cron.d/aggregator-warm \
+              && sudo chown root:root /etc/cron.d/aggregator-warm \
+              && sudo chmod 644 /etc/cron.d/aggregator-warm \
+              && echo "aggregator warm cron installed" \
+              || echo "WARNING: could not install aggregator warm cron"
+          else
+            echo "WARNING: no passwordless sudo — install /etc/cron.d/aggregator-warm by hand"
+          fi
 
           echo "Waiting for API to be healthy..."
           API_READY=false

@@ -470,10 +470,10 @@ async def sweep_promote_once() -> int:
 
     Runs over the `aggregator_order` table, so it covers Keeta (pushed in by the
     bootstrap worker) as well as the httpx channels — independent of how an order
-    landed. Gated on its own flag, under its own advisory lock. Returns MM orders
-    touched.
+    landed. Part of the one aggregator feature (`AGGREGATOR_INGEST_ENABLED`), under
+    its own advisory lock. Returns MM orders touched.
     """
-    if not is_enabled() or not settings.AGGREGATOR_PROMOTE_ENABLED:
+    if not is_enabled():
         return 0
     from app.models.aggregator import AGGREGATOR_CHANNELS
     from app.services.aggregators import promote

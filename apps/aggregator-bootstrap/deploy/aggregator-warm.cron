@@ -1,0 +1,12 @@
+# Aggregator session warming + Keeta order pull — installed to /etc/cron.d by
+# deploy.yml so a redeploy always re-establishes it (nothing manual to lose).
+#
+# One-shot each run: this VM has under 1 GB of RAM, so the worker (headless
+# Chrome) is started only for the ~30s warm and then exits, freeing its memory —
+# never held between runs. `warm-sessions` hydrates the sessions from the API,
+# refreshes the anti-bot cookies/tokens, re-pulls Keeta's orders and pushes them
+# back. The 22:00 run lands fresh Keeta orders ~1h before the API's 23:00
+# promotion/reconciliation pass; the other three keep the sessions alive.
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+0 4,10,16,22 * * * root cd /opt/melting-moments-cakes && /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions 2>&1 | /usr/bin/logger -t aggregator-warm

@@ -955,14 +955,26 @@ it here and redeploying.
 | `FOODICS_EMAIL` | (unset) | Console owner email |
 | `FOODICS_PASSWORD` | (unset) | Console owner password — the provider logs in with it to derive the session. GitHub secret |
 | `FOODICS_TIMEOUT_SECONDS` | `8` | Foodics HTTP timeout |
-| `AGGREGATOR_INGEST_ENABLED` | `true` | Aggregator sales/finance sweep kill switch (Careem/Deliveroo/Talabat/Noon/Keeta). Enabled on prod now that Deliveroo sessions bootstrap via HTTP login. Storefront only |
-| `AGGREGATOR_PROMOTE_ENABLED` | `false` | Whether the daily pass also promotes scraped orders into real MM orders (order + items + status) for every branch — a records mirror that never touches the POS. Off by default; enable deliberately once the ledger is trusted |
+| `AGGREGATOR_INGEST_ENABLED` | `true` | The one aggregator switch: the daily sales/finance sweep, reconciliation, **and** order promotion (scraped orders → real MM orders for every branch, a records mirror that never touches the POS). Storefront only |
 | `AGGREGATOR_CONFIG_ENCRYPTION_KEY` | (unset) | Fernet key encrypting the derived session blobs at rest in `aggregator_session`. Empty keeps the ingest inert rather than storing credentials in plaintext. `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. GitHub secret |
 | `AGGREGATOR_SESSION_PUSH_TOKEN` | (unset) | Bearer the bootstrap/warmer worker presents to `POST /aggregators/session` — the one write path into `aggregator_session`. GitHub secret |
 | `AGGREGATOR_RUN_HOUR_DXB` | `23` | Hour (Asia/Dubai) of the once-daily pass that mirrors sales + finance and reconciles every aggregator. Wall-clock anchored with a boot catch-up so a redeploy never skips a run |
 | `AGGREGATOR_LOOKBACK_DAYS` | `10` | How many days back each daily pass re-pulls (one window for sales and finance); sized to swallow a multi-day outage, upserts idempotently |
 | `AGGREGATOR_TIMEOUT_SECONDS` | `20.0` | Aggregator HTTP timeout |
 | `AGGREGATOR_REQUESTS_PER_SECOND` | `1.0` | Ceiling on outbound calls per marketplace (PerimeterX/Akamai). `0` disables |
+
+**Aggregator bootstrap worker (Keeta pull + session warming).** Runs on this VM as
+the `aggregator-worker` compose service, but only under the `worker` profile — it
+is **not** started by `up`. A cron (`/etc/cron.d/aggregator-warm`, installed from
+`apps/aggregator-bootstrap/deploy/aggregator-warm.cron` on every deploy) runs it
+one-shot at 04/10/16/22 Dubai: `docker compose -f docker-compose.prod.yml run --rm
+aggregator-worker warm-sessions`. One-shot because the VM has under 1 GB RAM, so
+headless Chrome is alive only for the ~30 s warm and then frees its memory. The
+22:00 run lands fresh Keeta orders ~1 h before the API's 23:00 promotion pass.
+Check it: `sudo cat /etc/cron.d/aggregator-warm`, `journalctl -t aggregator-warm`,
+and the `aggregator_session.last_warmed_at` column. A **dead** session still needs
+a one-off headed `login` from a laptop; the cron only warms an already-captured
+session.
 
 ```bash
 gh secret set GRUBOPS_USERNAME --repo hussu97/mm-ecommerce

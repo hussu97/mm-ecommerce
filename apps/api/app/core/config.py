@@ -403,12 +403,6 @@ class Settings(BaseSettings):
     #: watched once — a wrong outlet map writes nonsense into the reconciliation.
     #: Storefront only, like the GrubOps loops; the register never runs it.
     AGGREGATOR_INGEST_ENABLED: bool = False
-    #: Whether the daily pass also *promotes* scraped orders into real MM orders
-    #: (order + items + status), for every branch. A records mirror that never
-    #: touches the POS; DSO/Karama are owned here, Barsha/Sharjah only gap-filled
-    #: where GrubOps/Foodics has no order. Its own switch, off by default, because
-    #: it creates orders and is enabled deliberately after the ledger is trusted.
-    AGGREGATOR_PROMOTE_ENABLED: bool = False
     #: Fernet key that encrypts the derived session blobs (cookies, tokens, the
     #: captured header fingerprint) at rest in `aggregator_session`. Empty means
     #: no session can be stored or read — the ingest stays inert rather than

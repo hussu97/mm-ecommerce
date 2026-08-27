@@ -182,7 +182,6 @@ services:
       # numeric and boolean defaults are real so an unset value cannot write an
       # empty string over a field pydantic would refuse at import.
       AGGREGATOR_INGEST_ENABLED: ${AGGREGATOR_INGEST_ENABLED:-true}
-      AGGREGATOR_PROMOTE_ENABLED: ${AGGREGATOR_PROMOTE_ENABLED:-false}
       AGGREGATOR_CONFIG_ENCRYPTION_KEY: ${AGGREGATOR_CONFIG_ENCRYPTION_KEY:-}
       AGGREGATOR_SESSION_PUSH_TOKEN: ${AGGREGATOR_SESSION_PUSH_TOKEN:-}
       AGGREGATOR_RUN_HOUR_DXB: ${AGGREGATOR_RUN_HOUR_DXB:-23}
@@ -512,9 +511,47 @@ services:
         sleep 12h & wait $${!};
       done"
 
+  # The Playwright/Keeta bootstrap worker — the one place a browser lives.
+  # `profiles: [worker]` keeps it OUT of the default `up`: this VM has under 1 GB
+  # of RAM, and an always-on Chrome would OOM the box (that, not the IP, is why
+  # the worker README kept it off the app VM; email/password auth removed the IP
+  # concern). Instead a cron on the VM runs it one-shot every few hours
+  # (`docker compose run --rm aggregator-worker warm-sessions`), so Chrome is
+  # alive only for the ~30s warm and then frees its memory. `warm-sessions`
+  # hydrates the sessions from the API, refreshes the anti-bot cookies, re-pulls
+  # Keeta's orders and pushes them back. Login stays a one-off headed run from a
+  # laptop; this only warms an already-captured session.
+  aggregator-worker:
+    image: ghcr.io/hussu97/mm-ecommerce-aggregator-bootstrap:latest
+    pull_policy: always
+    profiles: ["worker"]
+    environment:
+      AGGREGATOR_API_URL: ${AGGREGATOR_API_URL:-https://api.meltingmomentscakes.com}
+      AGGREGATOR_SESSION_PUSH_TOKEN: ${AGGREGATOR_SESSION_PUSH_TOKEN:-}
+      STORAGE_STATE_DIR: /data/sessions
+      HEADLESS: "true"
+    volumes:
+      - aggregator_sessions:/data
+    logging:
+      driver: gcplogs
+      options:
+        gcp-project: ${GCP_PROJECT_ID:-}
+        labels: "com.docker.compose.service"
+    networks:
+      - mm_network
+    deploy:
+      resources:
+        limits:
+          # Enough for one headless Chrome; it leans on swap on this small VM but
+          # only for the brief warm, never held between runs.
+          memory: 900m
+
 networks:
   mm_network:
     driver: bridge
 
 volumes:
   postgres_data:
+  # The worker's Playwright storage_state, persisted between one-shot runs so a
+  # new image resumes the captured login instead of starting logged-out.
+  aggregator_sessions:
