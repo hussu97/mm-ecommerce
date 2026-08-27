@@ -125,6 +125,39 @@ async def _async_false():
     return False
 
 
+async def test_deliveroo_augments_session_from_db_not_the_stale_constant(monkeypatch):
+    """The org + outlets come from the account and the branch map, so a session
+    that carries neither resolves the live outlets (incl. one the constant lacks)
+    rather than the hard-coded fallback."""
+    from app.services.providers import deliveroo_provider as dp
+    from app.services.aggregators.session_store import LoadedSession
+
+    outlets_in_db = ["693359", "693360", "693361", "701111"]  # 701111 not in constant
+
+    async def fake_scalars(_stmt):
+        return outlets_in_db
+
+    async def fake_load(_db, _channel):
+        return SimpleNamespace(extras={"org_id": "497912"}, email="e", password="p")
+
+    monkeypatch.setattr("app.services.aggregators.account_store.load", fake_load)
+    fake_db = SimpleNamespace(scalars=fake_scalars)
+
+    session = LoadedSession(
+        channel=dp.CHANNEL_DELIVEROO,
+        account_ref="",
+        status=dp.SESSION_LIVE,
+        tokens={},
+    )
+    out = await dp.provider._augment_from_db(fake_db, session)
+
+    assert out.tokens["org_id"] == "497912"
+    assert out.tokens["restaurant_ids"] == outlets_in_db
+    # the sync getters now read the DB-sourced values off the session
+    assert dp.provider._restaurant_ids(out) == outlets_in_db
+    assert "701111" in dp.provider._restaurant_ids(out)  # the constant never had it
+
+
 def test_crypto_refuses_without_a_key(monkeypatch):
     monkeypatch.setattr("app.core.config.settings.AGGREGATOR_CONFIG_ENCRYPTION_KEY", "")
     assert crypto.is_configured() is False

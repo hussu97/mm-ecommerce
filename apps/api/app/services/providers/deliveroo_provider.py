@@ -35,10 +35,16 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.money import money_or_none
-from app.models.aggregator import CHANNEL_DELIVEROO, GRAIN_LINE, SESSION_LIVE
+from app.models.aggregator import (
+    CHANNEL_DELIVEROO,
+    GRAIN_LINE,
+    SESSION_LIVE,
+    AggregatorBranchMap,
+)
 from app.models.base import utcnow
 from app.services.aggregators.normalized import (
     FinanceResult,
@@ -59,12 +65,13 @@ _API = f"{_HUB}/api"
 _LOGIN_URL = f"{_API}/session"
 _REFRESH_URL = f"{_API}/session/refresh"
 
-#: The org the captured session belongs to (from the account audit). Only used
-#: when the session carries no org ref of its own — see `_org_id`.
+#: Last-resort org / outlet ids, used only when neither the session, the account
+#: `extras`, nor the `aggregator_branch_map` rows carry them. These duplicate DB
+#: data (the org lives on `aggregator_account.extras.org_id`, the outlets are the
+#: `aggregator_branch_map` rows for this channel), so a fall to either is logged
+#: as a warning — reaching them means the DB is missing config it should hold,
+#: and the list is stale by construction (it never had the Karama outlet).
 _DEFAULT_ORG_ID = "497912"
-
-#: Outlet ids this account owns today, matching migration 152. Used only when
-#: the login payload did not list restaurants — see `_restaurant_ids`.
 _DEFAULT_RESTAURANT_IDS = ("693359", "693360", "693361")
 
 #: Re-login this far before JWT `exp` so a sweep never presents an expired
@@ -224,6 +231,31 @@ def _restaurant_ids_from_login(body: dict[str, Any]) -> list[str]:
     return ids
 
 
+def _outlet_ids_in(tokens: dict) -> bool:
+    """Whether a token blob already carries this account's outlet ids."""
+    raw = tokens.get("restaurant_ids") or tokens.get("restaurantIds")
+    if isinstance(raw, list) and raw:
+        return True
+    if isinstance(raw, str) and raw.strip():
+        return True
+    extras = tokens.get("restaurants")
+    return isinstance(extras, list) and bool(extras)
+
+
+async def _outlet_ids_from_map(db: AsyncSession) -> list[str]:
+    """This account's Deliveroo outlet ids from `aggregator_branch_map` — the DB
+    row that already holds them, so the sweep does not depend on a code constant
+    that (by construction) never had the Karama outlet."""
+    rows = await db.scalars(
+        select(AggregatorBranchMap.external_outlet_id).where(
+            AggregatorBranchMap.channel == CHANNEL_DELIVEROO,
+            AggregatorBranchMap.is_active.is_(True),
+            AggregatorBranchMap.external_outlet_id.is_not(None),
+        )
+    )
+    return [str(x) for x in rows if x]
+
+
 class DeliverooClient(BaseAggregatorClient):
     channel = CHANNEL_DELIVEROO
     uses_tls_impersonation = False
@@ -287,7 +319,16 @@ class DeliverooClient(BaseAggregatorClient):
 
         Called by ingest before a sweep so Deliveroo does not depend on a
         headed Chrome capture. Email/password only — no OTP on this channel.
+        The prepared session is then augmented with the org and outlet ids from
+        the DB (account `extras` + `aggregator_branch_map`) so the sweep never
+        relies on the stale hard-coded fallbacks.
         """
+        prepared = await self._resolve_session(db, session)
+        return await self._augment_from_db(db, prepared)
+
+    async def _resolve_session(
+        self, db: AsyncSession, session: LoadedSession | None
+    ) -> LoadedSession | None:
         if (
             session is not None
             and session.status == SESSION_LIVE
@@ -299,6 +340,49 @@ class DeliverooClient(BaseAggregatorClient):
             if refreshed is not None:
                 return refreshed
         return await self._login(db, session)
+
+    async def _augment_from_db(
+        self, db: AsyncSession, session: LoadedSession | None
+    ) -> LoadedSession | None:
+        """Fill the session's `org_id` / `restaurant_ids` from the DB when the
+        session itself does not carry them — so a Chrome-captured session (which
+        has neither) resolves outlets from `aggregator_branch_map` and the org
+        from the account, not from the stale module constants."""
+        if session is None:
+            return None
+        tokens = dict(session.tokens or {})
+        if not _first(tokens, "org_id", "orgId", "organisation_id", "organization_id"):
+            org = await self._org_from_account(db)
+            if org:
+                tokens["org_id"] = org
+            else:
+                logger.warning(
+                    "deliveroo: no org_id in session or account extras — "
+                    "falling back to stale default %s",
+                    _DEFAULT_ORG_ID,
+                )
+        if not _outlet_ids_in(tokens):
+            outlets = await _outlet_ids_from_map(db)
+            if outlets:
+                tokens["restaurant_ids"] = outlets
+            else:
+                logger.warning(
+                    "deliveroo: no restaurant ids in session or aggregator_branch_map "
+                    "— falling back to stale default %s",
+                    list(_DEFAULT_RESTAURANT_IDS),
+                )
+        session.tokens = tokens
+        return session
+
+    async def _org_from_account(self, db: AsyncSession) -> str | None:
+        from app.services.aggregators import account_store
+
+        account = await account_store.load(db, self.channel)
+        if account is not None and account.extras:
+            value = _first(account.extras, "org_id", "orgId")
+            if value:
+                return str(value)
+        return None
 
     async def _login(
         self, db: AsyncSession, previous: LoadedSession | None
@@ -340,8 +424,10 @@ class DeliverooClient(BaseAggregatorClient):
         companies = body.get("restaurant_companies") or []
         if companies and isinstance(companies[0], dict) and companies[0].get("id"):
             org_id = str(companies[0]["id"])
-        restaurant_ids = _restaurant_ids_from_login(body) or list(
-            _DEFAULT_RESTAURANT_IDS
+        restaurant_ids = (
+            _restaurant_ids_from_login(body)
+            or await _outlet_ids_from_map(db)
+            or list(_DEFAULT_RESTAURANT_IDS)
         )
         exp = _jwt_exp(token)
         header_profile = dict(previous.header_profile or {}) if previous else {}
