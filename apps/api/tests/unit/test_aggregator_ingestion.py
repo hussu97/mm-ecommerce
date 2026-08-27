@@ -77,7 +77,9 @@ def test_last_due_is_the_most_recent_slot_at_or_before_now(run_hour_23):
     now = datetime(2026, 8, 27, 10, 0, tzinfo=timezone.utc)  # 14:00 DXB, before 23:00
     last = ingest._last_due_at(now)
     assert last <= now and last.astimezone(_DXB).hour == 23
-    assert last.astimezone(_DXB).date() == (now.astimezone(_DXB).date() - timedelta(days=1))
+    assert last.astimezone(_DXB).date() == (
+        now.astimezone(_DXB).date() - timedelta(days=1)
+    )
 
 
 async def test_retry_stops_once_a_run_is_recorded(monkeypatch):
@@ -129,8 +131,8 @@ async def test_deliveroo_augments_session_from_db_not_the_stale_constant(monkeyp
     """The org + outlets come from the account and the branch map, so a session
     that carries neither resolves the live outlets (incl. one the constant lacks)
     rather than the hard-coded fallback."""
-    from app.services.providers import deliveroo_provider as dp
     from app.services.aggregators.session_store import LoadedSession
+    from app.services.providers import deliveroo_provider as dp
 
     outlets_in_db = ["693359", "693360", "693361", "701111"]  # 701111 not in constant
 

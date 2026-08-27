@@ -113,8 +113,9 @@ async def _order_number(db: AsyncSession) -> str:
     prefix = f"AGG-{datetime.now(_TZ):%Y%m%d}-"
     last = (
         await db.execute(
-            select(func.max(cast(func.split_part(Order.order_number, "-", 3), Integer)))
-            .where(Order.order_number.like(f"{prefix}%"))
+            select(
+                func.max(cast(func.split_part(Order.order_number, "-", 3), Integer))
+            ).where(Order.order_number.like(f"{prefix}%"))
         )
     ).scalar_one_or_none()
     return f"{prefix}{int(last or 0) + 1:03d}"
@@ -178,7 +179,9 @@ async def _add_lines(db: AsyncSession, order: Order, agg: AggregatorOrder) -> No
     for it in items:
         qty = int(it.quantity) if it.quantity is not None else 1
         unit = money(it.unit_price or Decimal("0"))
-        total = money(it.gross_sales) if it.gross_sales is not None else money(unit * qty)
+        total = (
+            money(it.gross_sales) if it.gross_sales is not None else money(unit * qty)
+        )
         db.add(
             OrderItem(
                 order_id=order.id,
@@ -299,7 +302,9 @@ async def promote_order(db: AsyncSession, agg: AggregatorOrder) -> Order | None:
     # Barsha/Sharjah: GrubOps/Foodics owns the order when it exists. Link to it so
     # the association is recorded, but never create or edit it here.
     if await reconcile._branch_has_grubops(db, agg.branch_id):
-        grubops_order = await reconcile._find_mm_order(db, agg.channel, agg.external_order_id)
+        grubops_order = await reconcile._find_mm_order(
+            db, agg.channel, agg.external_order_id
+        )
         if grubops_order is not None:
             agg.mm_order_id = grubops_order.id
             agg.promoted_at = utcnow()

@@ -13,8 +13,6 @@ import uuid
 from decimal import Decimal
 from types import SimpleNamespace
 
-import pytest
-
 from app.models.order import OrderStatusEnum
 from app.services.aggregators import promote
 
@@ -64,7 +62,9 @@ def test_unknown_channel_has_no_mapping():
 
 # ── money mapping ────────────────────────────────────────────────────────────
 def test_money_fields_split_vat_out_of_total():
-    fields = promote._money_fields(_agg(gross_sales=Decimal("42.00"), vat_amount=Decimal("2.00")))
+    fields = promote._money_fields(
+        _agg(gross_sales=Decimal("42.00"), vat_amount=Decimal("2.00"))
+    )
     assert fields["total"] == Decimal("42.00")
     assert fields["vat_amount"] == Decimal("2.00")
     assert fields["subtotal"] == Decimal("40.00")

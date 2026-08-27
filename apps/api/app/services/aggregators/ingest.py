@@ -171,7 +171,9 @@ def _touched_at(model: Any, update: dict[str, Any]) -> Any:
     ones, so a no-op re-upsert stays a no-op downstream. The row is still written;
     only the change signal is honest.
     """
-    changed = or_(*[getattr(model, col).is_distinct_from(expr) for col, expr in update.items()])
+    changed = or_(
+        *[getattr(model, col).is_distinct_from(expr) for col, expr in update.items()]
+    )
     return case((changed, utcnow()), else_=model.updated_at)
 
 
@@ -621,7 +623,9 @@ async def _run_daily_with_retry() -> None:
                 _RETRY_BACKOFF_SECONDS,
             )
             await asyncio.sleep(_RETRY_BACKOFF_SECONDS)
-    logger.error("aggregator daily pass still not recorded after %s attempts", _RETRY_ATTEMPTS)
+    logger.error(
+        "aggregator daily pass still not recorded after %s attempts", _RETRY_ATTEMPTS
+    )
 
 
 #: A live session with no success/warm in this long is reported stale. Comfortably
@@ -676,7 +680,9 @@ async def run_scheduler_forever() -> None:
     )
     try:
         if is_enabled() and not await _slot_ran_since(_last_due_at(utcnow())):
-            logger.info("aggregator scheduler: last daily slot missed — catching up now")
+            logger.info(
+                "aggregator scheduler: last daily slot missed — catching up now"
+            )
             await _run_daily_with_retry()
             await _log_health()
     except asyncio.CancelledError:
