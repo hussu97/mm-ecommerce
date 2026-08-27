@@ -4,7 +4,10 @@
 # Headed login on a laptop spawns branded Google Chrome as a normal OS process
 # (Cloudflare sees a real window). The container only warms an already-captured
 # profile; we still install Chrome so `channel="chrome"` works.
-FROM mcr.microsoft.com/playwright/python:v1.52.0-jammy
+#
+# `-noble` (Ubuntu 24.04) ships Python 3.12; the older `-jammy` ships 3.10, which
+# this package's `requires-python = ">=3.12"` rejects at `pip install`.
+FROM mcr.microsoft.com/playwright/python:v1.52.0-noble
 
 WORKDIR /app
 COPY pyproject.toml ./
