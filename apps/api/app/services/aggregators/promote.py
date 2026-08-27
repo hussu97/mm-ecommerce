@@ -15,15 +15,20 @@ The rules, per the branch:
   row carries an `mm_order_id`) promotion leaves it alone; only an order GrubOps
   never produced is created here.
 
-**Nothing here touches the POS.** A promoted order is a reporting record, not a
-kitchen ticket: it never attaches to a register, never rings a device, never
-mirrors out to Foodics. That falls out of two choices rather than a special case:
-status is driven through `order_lifecycle.transition` under
-`acting_as(AGGREGATOR)`, and every outward consequence — register publish,
-courier dispatch, refund, Foodics mirror-out — is already gated to a storefront
-order or to a non-aggregator actor (see `order_lifecycle._consequences`); and the
-promoted lines carry no `product_id`, so `_move_stock` is a no-op and the shelf
-is left exactly as the off-platform sale left it.
+**Nothing here touches the POS.** A promoted order never attaches to a register,
+never rings a device, never mirrors out to Foodics — status is driven through
+`order_lifecycle.transition` under `acting_as(AGGREGATOR)`, and every outward
+consequence (register publish, courier dispatch, refund, Foodics mirror-out) is
+already gated to a storefront order or a non-aggregator actor (see
+`order_lifecycle._consequences`).
+
+**It does draw down stock**, because these are real sales that took product off
+the shelf. Each line is mapped to a catalog product by name and the sale is
+decremented on creation (only `is_stock_product` items move); a cancellation
+restores it through the lifecycle. An unmatched line keeps `product_id` null and
+moves no stock. To keep this from double-drawing history, promotion is **windowed
+to the last `AGGREGATOR_PROMOTE_LOOKBACK_DAYS`** — the ledger sweep mirrors a wide
+window cheaply, but only recent orders become real, stock-affecting MM orders.
 
 Convergence: both this path and the GrubOps ingest resolve an aggregator order to
 one MM row through `orders (aggregator_channel, external_reference)` — the partial
@@ -39,13 +44,15 @@ convention nothing here commits — the caller's sweep does.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import Integer, cast, func, or_, select
+from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.money import money
 from app.models.aggregator import (
     GRAIN_LINE,
@@ -56,6 +63,7 @@ from app.models.base import utcnow
 from app.models.order import Order, OrderItem, OrderStatusEnum
 from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.pos_order import OrderSourceEnum, OrderTax
+from app.models.product import Product
 from app.services.aggregators import reconcile
 from app.services.orders import order_fees, order_lifecycle
 
@@ -160,15 +168,44 @@ def _money_fields(agg: AggregatorOrder) -> dict:
     }
 
 
-async def _add_lines(db: AsyncSession, order: Order, agg: AggregatorOrder) -> None:
-    """Write the order's lines from the aggregator's line-grain items.
+async def _match_product(db: AsyncSession, item_name: str | None) -> tuple:
+    """Best-effort catalog match for a scraped line, returning (product_id, sku).
 
-    `product_id` is deliberately left null: a promoted order is a record, not a
-    stock movement, and a null product is what keeps `_move_stock` (and therefore
-    the shelf) untouched. Aggregate-grain rows (a period window, no per-order
-    breakdown) carry nothing to file as a line and are skipped. Called only on a
-    freshly built order, so it never reads `order.items` (an async lazy-load on a
-    new row) — it only adds.
+    Scraped items carry only a name, so the match is on the product's exact
+    (case-insensitive) name, then its SKU as a fallback. An unmatched line keeps
+    `product_id` null — no stock moves for it — and is counted by the caller. A
+    future `aggregator_item_map` would add overrides for names that differ from the
+    catalog (size-suffixed variants like "… (500 grams)")."""
+    if not item_name or not item_name.strip():
+        return None, ""
+    name = item_name.strip()
+    hit = (
+        await db.execute(
+            select(Product.id, Product.sku)
+            .where(func.lower(Product.name) == name.lower())
+            .order_by(Product.id)
+            .limit(1)
+        )
+    ).first()
+    if hit is None:
+        hit = (
+            await db.execute(
+                select(Product.id, Product.sku).where(Product.sku == name).limit(1)
+            )
+        ).first()
+    if hit is None:
+        return None, ""
+    return hit[0], hit[1] or ""
+
+
+async def _add_lines(db: AsyncSession, order: Order, agg: AggregatorOrder) -> int:
+    """Write the order's lines from the aggregator's line-grain items, mapping each
+    to a catalog product by name where one is found. Returns the count of lines
+    left unmapped (product_id null — no stock moved for those).
+
+    Aggregate-grain rows (a period window, no per-order breakdown) carry nothing to
+    file as a line and are skipped. Called only on a freshly built order, so it
+    never reads `order.items` (an async lazy-load on a new row) — it only adds.
     """
     items = await db.scalars(
         select(AggregatorOrderItem).where(
@@ -176,18 +213,22 @@ async def _add_lines(db: AsyncSession, order: Order, agg: AggregatorOrder) -> No
             AggregatorOrderItem.grain == GRAIN_LINE,
         )
     )
+    unmapped = 0
     for it in items:
         qty = int(it.quantity) if it.quantity is not None else 1
         unit = money(it.unit_price or Decimal("0"))
         total = (
             money(it.gross_sales) if it.gross_sales is not None else money(unit * qty)
         )
+        product_id, sku = await _match_product(db, it.item_name)
+        if product_id is None:
+            unmapped += 1
         db.add(
             OrderItem(
                 order_id=order.id,
-                product_id=None,
+                product_id=product_id,
                 product_name=it.item_name or "Item",
-                product_sku="",
+                product_sku=sku,
                 product_translations={},
                 quantity=qty,
                 base_price=unit,
@@ -199,6 +240,30 @@ async def _add_lines(db: AsyncSession, order: Order, agg: AggregatorOrder) -> No
             )
         )
     await db.flush()
+    return unmapped
+
+
+async def _decrement_stock(db: AsyncSession, order_id) -> None:
+    """Take the promoted sale off the shelf for its stock-tracked lines — the same
+    rule the counter and GrubOps ingest use. Only `is_stock_product` products, only
+    on creation; a cancellation restores it through `order_lifecycle._move_stock`,
+    which recognises the aggregator source. Unmapped lines (null product_id) move no
+    stock."""
+    rows = (
+        await db.execute(
+            select(OrderItem.product_id, OrderItem.quantity).where(
+                OrderItem.order_id == order_id,
+                OrderItem.product_id.isnot(None),
+            )
+        )
+    ).all()
+    for product_id, quantity in rows:
+        await db.execute(
+            sql_update(Product)
+            .where(Product.id == product_id, Product.is_stock_product.is_(True))
+            .values(stock_quantity=Product.stock_quantity - quantity)
+            .execution_options(synchronize_session=False)
+        )
 
 
 async def _drive_status(db: AsyncSession, order: Order, agg: AggregatorOrder) -> None:
@@ -259,10 +324,21 @@ async def _build_order(db: AsyncSession, agg: AggregatorOrder, label: str) -> Or
     )
     db.add(order)
     await db.flush()
-    await _add_lines(db, order, agg)
+    unmapped = await _add_lines(db, order, agg)
+    if unmapped:
+        logger.info(
+            "promote %s %s: %d line(s) unmapped to a product — no stock moved for those",
+            agg.channel,
+            agg.external_order_id,
+            unmapped,
+        )
     # Load the collection now: driving status to cancelled walks order.items in
     # `_move_stock`, and an async lazy-load there would be a MissingGreenlet.
     await db.refresh(order, ["items"])
+    # Take the sale off the shelf for its stock-tracked lines. On creation only;
+    # a cancellation status below restores it via the lifecycle (net zero for an
+    # order that arrives already cancelled).
+    await _decrement_stock(db, order.id)
     if (agg.vat_amount or 0) > 0:
         fields = _money_fields(agg)
         db.add(
@@ -325,17 +401,26 @@ async def promote_order(db: AsyncSession, agg: AggregatorOrder) -> Order | None:
 
 
 async def promote_channel(db: AsyncSession, channel: str) -> int:
-    """Promote the channel's new-or-changed orders. Returns MM orders touched.
+    """Promote the channel's recent new-or-changed orders. Returns MM orders touched.
 
-    Incremental, like `reconcile_channel`: an order is (re)promoted only when it
-    has no `promoted_at` yet or its `updated_at` has advanced past it. Idempotent
-    and safe to re-run — the convergence key means a re-run updates rather than
-    duplicates. A single order's failure is logged and does not stop the pass.
+    Windowed to the last `AGGREGATOR_PROMOTE_LOOKBACK_DAYS` (by business date), so
+    a first run never backfills months of history into real, stock-affecting MM
+    orders — the sale already happened and the shelf was already drawn down.
+    Widen the window as we scale. Incremental within it, like `reconcile_channel`:
+    an order is (re)promoted only when it has no `promoted_at` yet or its
+    `updated_at` has advanced past it. Idempotent and safe to re-run — the
+    convergence key means a re-run updates rather than duplicates. A single order's
+    failure is logged and does not stop the pass.
     """
+    cutoff = (
+        datetime.now(_TZ).date()
+        - timedelta(days=max(settings.AGGREGATOR_PROMOTE_LOOKBACK_DAYS, 0))
+    ).isoformat()
     orders = await db.scalars(
         select(AggregatorOrder).where(
             AggregatorOrder.channel == channel,
             AggregatorOrder.branch_id.is_not(None),
+            AggregatorOrder.business_date >= cutoff,
             or_(
                 AggregatorOrder.promoted_at.is_(None),
                 AggregatorOrder.updated_at > AggregatorOrder.promoted_at,

@@ -955,7 +955,8 @@ it here and redeploying.
 | `FOODICS_EMAIL` | (unset) | Console owner email |
 | `FOODICS_PASSWORD` | (unset) | Console owner password — the provider logs in with it to derive the session. GitHub secret |
 | `FOODICS_TIMEOUT_SECONDS` | `8` | Foodics HTTP timeout |
-| `AGGREGATOR_INGEST_ENABLED` | `true` | The one aggregator switch: the daily sales/finance sweep, reconciliation, **and** order promotion (scraped orders → real MM orders for every branch, a records mirror that never touches the POS). Storefront only |
+| `AGGREGATOR_INGEST_ENABLED` | `true` | The one aggregator switch: the daily sales/finance sweep, reconciliation, **and** order promotion (scraped orders → real MM orders for every branch — product-mapped and stock-affecting, but never touching the POS). Storefront only |
+| `AGGREGATOR_PROMOTE_LOOKBACK_DAYS` | `1` | How many days back promotion turns scraped orders into real MM orders (with product mapping + stock). Kept narrow so a first run never backfills history and double-decrements stock; widen as we scale |
 | `AGGREGATOR_CONFIG_ENCRYPTION_KEY` | (unset) | Fernet key encrypting the derived session blobs at rest in `aggregator_session`. Empty keeps the ingest inert rather than storing credentials in plaintext. `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. GitHub secret |
 | `AGGREGATOR_SESSION_PUSH_TOKEN` | (unset) | Bearer the bootstrap/warmer worker presents to `POST /aggregators/session` — the one write path into `aggregator_session`. GitHub secret |
 | `AGGREGATOR_RUN_HOUR_DXB` | `23` | Hour (Asia/Dubai) of the once-daily pass that mirrors sales + finance and reconciles every aggregator. Wall-clock anchored with a boot catch-up so a redeploy never skips a run |

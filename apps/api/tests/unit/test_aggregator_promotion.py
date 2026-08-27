@@ -168,3 +168,50 @@ async def test_no_branch_is_skipped(monkeypatch):
     out = await promote.promote_order(_FakeDB(), agg)
     assert out is None
     assert agg.promoted_at is None
+
+
+# ── product mapping ──────────────────────────────────────────────────────────
+class _MatchResult:
+    def __init__(self, row):
+        self._row = row
+
+    def first(self):
+        return self._row
+
+
+class _MatchDB:
+    """Fake db: first execute() answers the name query, second the SKU fallback."""
+
+    def __init__(self, name_hit=None, sku_hit=None):
+        self._hits = [name_hit, sku_hit]
+        self.calls = 0
+
+    async def execute(self, _stmt):
+        row = self._hits[self.calls] if self.calls < len(self._hits) else None
+        self.calls += 1
+        return _MatchResult(row)
+
+
+async def test_match_product_by_name():
+    pid = uuid.uuid4()
+    db = _MatchDB(name_hit=(pid, "SKU1"))
+    assert await promote._match_product(db, "Basque Cheesecake") == (pid, "SKU1")
+    assert db.calls == 1  # matched on name, no SKU fallback needed
+
+
+async def test_match_product_falls_back_to_sku():
+    pid = uuid.uuid4()
+    db = _MatchDB(name_hit=None, sku_hit=(pid, "SKU2"))
+    assert await promote._match_product(db, "SKU2") == (pid, "SKU2")
+    assert db.calls == 2  # name missed, SKU matched
+
+
+async def test_match_product_unmatched_is_null():
+    db = _MatchDB(name_hit=None, sku_hit=None)
+    assert await promote._match_product(db, "Nonexistent Item") == (None, "")
+
+
+async def test_match_product_blank_name_skips_db():
+    db = _MatchDB(name_hit=(uuid.uuid4(), "X"))
+    assert await promote._match_product(db, "  ") == (None, "")
+    assert db.calls == 0  # no query for an empty name

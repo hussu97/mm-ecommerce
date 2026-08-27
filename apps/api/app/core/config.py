@@ -403,6 +403,14 @@ class Settings(BaseSettings):
     #: watched once — a wrong outlet map writes nonsense into the reconciliation.
     #: Storefront only, like the GrubOps loops; the register never runs it.
     AGGREGATOR_INGEST_ENABLED: bool = False
+    #: How many days back order *promotion* turns scraped orders into real MM
+    #: orders (with product mapping and stock). Separate from the ledger sweep
+    #: window (`AGGREGATOR_LOOKBACK_DAYS`): the sweep mirrors a wide window cheaply,
+    #: but promotion writes real stock-affecting orders, so it is kept narrow —
+    #: last day only for now — and widened as we scale. Guards against a first run
+    #: backfilling months of history and double-decrementing stock for sales that
+    #: already happened.
+    AGGREGATOR_PROMOTE_LOOKBACK_DAYS: int = 1
     #: Fernet key that encrypts the derived session blobs (cookies, tokens, the
     #: captured header fingerprint) at rest in `aggregator_session`. Empty means
     #: no session can be stored or read — the ingest stays inert rather than
