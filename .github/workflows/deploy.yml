@@ -52,6 +52,7 @@ jobs:
               - '.github/workflows/deploy.yml'
             api:
               - 'apps/api/**'
+              - 'apps/aggregator-bootstrap/**'
               - 'nginx/**'
               - 'docker-compose*.yml'
               - '.github/workflows/deploy.yml'
