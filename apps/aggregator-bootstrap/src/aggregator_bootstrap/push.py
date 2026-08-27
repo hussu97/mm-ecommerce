@@ -55,9 +55,22 @@ async def pull_sessions() -> list[dict[str, Any]]:
 
 
 async def push_keeta_orders(payloads: list[dict]) -> dict[str, Any]:
-    """POST in-page-fetched Keeta order payloads to /aggregators/keeta/orders."""
+    """POST in-page-fetched Keeta order payloads to /aggregators/keeta/orders.
+
+    Chunks by a few getOrders responses at a time — a full-month multi-shop
+    dump can be tens of MB and a single POST times out at the edge before the
+    API finishes the Decimal-safe upserts.
+    """
     url = f"{settings.AGGREGATOR_API_URL}/api/v1/aggregators/keeta/orders"
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(url, json={"payloads": payloads}, headers=_headers())
-        resp.raise_for_status()
-        return resp.json()
+    chunk_size = 2
+    ingested = 0
+    async with httpx.AsyncClient(timeout=180) as client:
+        for i in range(0, len(payloads), chunk_size):
+            chunk = payloads[i : i + chunk_size]
+            resp = await client.post(
+                url, json={"payloads": chunk}, headers=_headers()
+            )
+            resp.raise_for_status()
+            body = resp.json()
+            ingested += int(body.get("ingested") or 0)
+    return {"ingested": ingested}
