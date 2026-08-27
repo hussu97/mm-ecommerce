@@ -600,8 +600,11 @@ async def login_with_account(
                         logger.info("%s: attached to Chrome for auto-login", channel)
                         if channel == "noon" and not filled:
                             logger.info("%s: driving email + Graph OTP", channel)
-                            await login_noon(
-                                context, mailbox=mailbox, email=email
+                            page = await login_noon(
+                                context,
+                                mailbox=mailbox,
+                                email=email,
+                                page=page,
                             )
                             filled = True
                     except Exception as exc:  # noqa: BLE001

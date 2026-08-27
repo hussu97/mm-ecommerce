@@ -268,24 +268,28 @@ async def login_noon(
     *,
     mailbox: dict | None = None,
     email: str | None = None,
-) -> None:
+    page=None,
+):
     """Drive Noon RMS email → Graph OTP → optional passkey skip.
 
     `email` comes from `aggregator_account` when `--auto` runs; falls back to
     `NOON_EMAIL` so a laptop override still works without a DB rewrite.
+    Returns the Playwright page that holds the authenticated RMS session.
     """
     address = (email or settings.NOON_EMAIL or "").strip()
     if not address:
         raise LoginError(
             "Noon login needs an email on the account recipe or NOON_EMAIL."
         )
-    page = await context.new_page()
+    owned_page = page is None
+    if page is None:
+        page = await context.new_page()
     await page.goto(NOON_RMS_URL, wait_until="domcontentloaded", timeout=60_000)
     await page.wait_for_timeout(5_000)
 
     login_frame = _noon_login_frame(page)
     if not login_frame:
-        return  # already authenticated — the RMS route rendered without the frame
+        return page  # already authenticated — the RMS route rendered without the frame
 
     identifier_input = login_frame.locator("input[name='channelIdentifier']")
     otp_since = datetime.now(UTC)
@@ -296,10 +300,10 @@ async def login_noon(
 
     login_frame = _noon_login_frame(page)
     if not login_frame:
-        return
+        return page
     otp_input = login_frame.locator("input[data-input-otp='true']")
     if not await otp_input.count():
-        return
+        return page
     try:
         # Prefer Admin recipe filters (verify@noon.com / Verify your email);
         # fall back to the hard-coded substrings that match Noon OTPs.
@@ -313,6 +317,8 @@ async def login_noon(
             channel="noon",
         )
     except OTPPollingError as exc:
+        if owned_page:
+            await page.close()
         raise LoginChallengeError(
             "Noon RMS requested an email OTP but none could be read from the "
             "linked mailbox. Save this channel's Microsoft app on Admin → "
@@ -323,6 +329,7 @@ async def login_noon(
     await page.wait_for_timeout(8_000)
     await _dismiss_noon_passkey_prompt(page)
     await page.wait_for_timeout(4_000)
+    return page
 
 
 # --- Keeta ------------------------------------------------------------------
