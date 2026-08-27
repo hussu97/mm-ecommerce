@@ -413,16 +413,18 @@ class Settings(BaseSettings):
     #: when it pushes a freshly captured session in. The one write path into
     #: `aggregator_session`, so an empty token closes it.
     AGGREGATOR_SESSION_PUSH_TOKEN: str = ""
-    #: How often the sales sweep runs. Orders mutate after creation
-    #: (confirmed→delivered→refunded), so it re-pulls a rolling window every
-    #: hour rather than only new orders.
-    AGGREGATOR_SALES_TICK_SECONDS: int = 3600
-    #: How far back the sales sweep re-pulls each tick, to catch status/refund
-    #: changes on orders it already has. Idempotent upsert makes the overlap free.
-    AGGREGATOR_SALES_WINDOW_HOURS: int = 3
-    #: How often the finance sweep runs. Statements and payouts publish weekly, so
-    #: a daily check is ample and keeps off the marketplaces' rate limits.
-    AGGREGATOR_FINANCE_TICK_SECONDS: int = 86400
+    #: The hour (Asia/Dubai, 0–23) of the once-daily pass that mirrors sales +
+    #: finance and runs reconciliation/promotion for every aggregator in one go.
+    #: Wall-clock anchored so a redeploy cannot shift it; a slot missed while the
+    #: process was down is caught up on next boot. 23:00 keeps the pull after the
+    #: trading day has closed and off the marketplaces' busy hours.
+    AGGREGATOR_RUN_HOUR_DXB: int = 23
+    #: How many days back each daily pass re-pulls — one window for both sales and
+    #: finance. Orders mutate after creation and statements post days late, so the
+    #: run re-pulls a rolling multi-day window and upserts idempotently (the
+    #: overlap is free). Sized to swallow a multi-day outage: even after several
+    #: missed days, the next run backfills everything in range.
+    AGGREGATOR_LOOKBACK_DAYS: int = 10
     AGGREGATOR_TIMEOUT_SECONDS: float = 20.0
     #: Ceiling on outbound calls to each marketplace. PerimeterX/Akamai score
     #: bursts; the sales sweep is hourly so 1 req/s is ample. 0 disables it.

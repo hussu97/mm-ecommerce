@@ -46,6 +46,85 @@ def test_crypto_passes_none_through(encryption_key):
     assert crypto.decrypt_json("") is None
 
 
+# ── daily scheduler (wall-clock, catch-up, retry) ────────────────────────────
+from datetime import datetime, timedelta, timezone  # noqa: E402
+from zoneinfo import ZoneInfo  # noqa: E402
+
+from app.services.aggregators import ingest  # noqa: E402
+
+_DXB = ZoneInfo("Asia/Dubai")
+
+
+@pytest.fixture
+def run_hour_23(monkeypatch):
+    monkeypatch.setattr("app.core.config.settings.AGGREGATOR_RUN_HOUR_DXB", 23)
+
+
+def test_next_run_is_always_the_coming_23h_dubai(run_hour_23):
+    now = datetime(2026, 8, 27, 10, 0, tzinfo=timezone.utc)  # 14:00 DXB
+    nxt = ingest._next_run_at(now)
+    assert nxt > now and nxt.astimezone(_DXB).hour == 23
+    assert nxt.astimezone(_DXB).date() == now.astimezone(_DXB).date()
+
+
+def test_after_the_slot_next_run_rolls_to_tomorrow(run_hour_23):
+    now = datetime(2026, 8, 27, 20, 0, tzinfo=timezone.utc)  # 00:00 Aug 28 DXB
+    assert ingest._next_run_at(now).astimezone(_DXB).day == 28
+    assert ingest._last_due_at(now).astimezone(_DXB).day == 27  # today's 23:00 passed
+
+
+def test_last_due_is_the_most_recent_slot_at_or_before_now(run_hour_23):
+    now = datetime(2026, 8, 27, 10, 0, tzinfo=timezone.utc)  # 14:00 DXB, before 23:00
+    last = ingest._last_due_at(now)
+    assert last <= now and last.astimezone(_DXB).hour == 23
+    assert last.astimezone(_DXB).date() == (now.astimezone(_DXB).date() - timedelta(days=1))
+
+
+async def test_retry_stops_once_a_run_is_recorded(monkeypatch):
+    """A pass that records a run row on the first try does not retry."""
+    calls = {"daily": 0}
+
+    async def fake_daily():
+        calls["daily"] += 1
+        return (1, 0)
+
+    monkeypatch.setattr(ingest, "run_daily_once", fake_daily)
+    monkeypatch.setattr(ingest, "is_enabled", lambda: True)
+    monkeypatch.setattr(ingest, "_slot_ran_since", lambda since: _async_true())
+
+    await ingest._run_daily_with_retry()
+    assert calls["daily"] == 1
+
+
+async def test_retry_exhausts_when_nothing_records(monkeypatch):
+    """A pass that never records a run retries up to the attempt budget, then gives up."""
+    calls = {"daily": 0, "sleeps": 0}
+
+    async def fake_daily():
+        calls["daily"] += 1
+        return (0, 0)
+
+    async def fake_sleep(_seconds):
+        calls["sleeps"] += 1
+
+    monkeypatch.setattr(ingest, "run_daily_once", fake_daily)
+    monkeypatch.setattr(ingest, "is_enabled", lambda: True)
+    monkeypatch.setattr(ingest, "_slot_ran_since", lambda since: _async_false())
+    monkeypatch.setattr(ingest.asyncio, "sleep", fake_sleep)
+
+    await ingest._run_daily_with_retry()
+    assert calls["daily"] == ingest._RETRY_ATTEMPTS
+    assert calls["sleeps"] == ingest._RETRY_ATTEMPTS - 1  # no sleep after the last try
+
+
+async def _async_true():
+    return True
+
+
+async def _async_false():
+    return False
+
+
 def test_crypto_refuses_without_a_key(monkeypatch):
     monkeypatch.setattr("app.core.config.settings.AGGREGATOR_CONFIG_ENCRYPTION_KEY", "")
     assert crypto.is_configured() is False

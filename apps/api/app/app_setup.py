@@ -210,20 +210,18 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
 
                 background.append(asyncio.create_task(grubops_orders.run_forever()))
 
-            # The aggregator ingest: mirror each marketplace's own ledger (sales
-            # hourly, statements/payouts daily) into the aggregator_* tables over
-            # httpx, replaying a session a browser bootstrap captured. Two loops
-            # because the two cadences fail independently; one flag, since they
-            # are one feature. Storefront only, like its neighbours, and each
-            # loop holds its own advisory lock so a second copy no-ops.
+            # The aggregator ingest: once a day at AGGREGATOR_RUN_HOUR_DXB it
+            # mirrors each marketplace's ledger (sales + statements/payouts) into
+            # the aggregator_* tables over httpx, replaying a browser-captured
+            # session, and reconciles. One wall-clock scheduler with a boot
+            # catch-up, so a redeploy can never skip the daily run the way the old
+            # sleep-first tick loops did. Storefront only; each sweep holds its own
+            # advisory lock so a second copy no-ops.
             if settings.AGGREGATOR_INGEST_ENABLED:
                 from app.services.aggregators import ingest as aggregator_ingest
 
                 background.append(
-                    asyncio.create_task(aggregator_ingest.run_sales_forever())
-                )
-                background.append(
-                    asyncio.create_task(aggregator_ingest.run_finance_forever())
+                    asyncio.create_task(aggregator_ingest.run_scheduler_forever())
                 )
 
         logger.info("%s starting up [env=%s]", service, settings.APP_ENV)

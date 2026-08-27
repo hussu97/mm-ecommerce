@@ -958,9 +958,8 @@ it here and redeploying.
 | `AGGREGATOR_INGEST_ENABLED` | `true` | Aggregator sales/finance sweep kill switch (Careem/Deliveroo/Talabat/Noon/Keeta). Enabled on prod now that Deliveroo sessions bootstrap via HTTP login. Storefront only |
 | `AGGREGATOR_CONFIG_ENCRYPTION_KEY` | (unset) | Fernet key encrypting the derived session blobs at rest in `aggregator_session`. Empty keeps the ingest inert rather than storing credentials in plaintext. `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. GitHub secret |
 | `AGGREGATOR_SESSION_PUSH_TOKEN` | (unset) | Bearer the bootstrap/warmer worker presents to `POST /aggregators/session` — the one write path into `aggregator_session`. GitHub secret |
-| `AGGREGATOR_SALES_TICK_SECONDS` | `3600` | How often the sales sweep runs; re-pulls a rolling window each tick as orders mutate |
-| `AGGREGATOR_SALES_WINDOW_HOURS` | `3` | How far back the sales sweep re-pulls each tick, to catch status/refund changes |
-| `AGGREGATOR_FINANCE_TICK_SECONDS` | `86400` | How often the finance/reconciliation sweep runs; statements publish weekly so daily is ample |
+| `AGGREGATOR_RUN_HOUR_DXB` | `23` | Hour (Asia/Dubai) of the once-daily pass that mirrors sales + finance and reconciles every aggregator. Wall-clock anchored with a boot catch-up so a redeploy never skips a run |
+| `AGGREGATOR_LOOKBACK_DAYS` | `10` | How many days back each daily pass re-pulls (one window for sales and finance); sized to swallow a multi-day outage, upserts idempotently |
 | `AGGREGATOR_TIMEOUT_SECONDS` | `20.0` | Aggregator HTTP timeout |
 | `AGGREGATOR_REQUESTS_PER_SECOND` | `1.0` | Ceiling on outbound calls per marketplace (PerimeterX/Akamai). `0` disables |
 
