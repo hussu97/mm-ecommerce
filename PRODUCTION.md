@@ -1021,11 +1021,27 @@ gh secret set SLIDER_WEBHOOK_TOKEN --repo hussu97/mm-ecommerce
 gh secret set SLIDER_TRIAL_EMAILS --repo hussu97/mm-ecommerce
 ```
 
-> **Pre-flight blocker, re-check against the production host.** The recorded
-> 403 was Slider's **sandbox** answering the GCP VM (`34.18.98.2`) with an nginx
-> page where it answers a normal `401` JSON from elsewhere — the source IP, not
-> the key. It has never been established that the **production** host allows the
-> VM, and nothing below matters if it does not. Check first, from the VM:
+> **Blocker, confirmed on the PRODUCTION host 2026-08-27 — the VM's IP is
+> refused, and it is the only thing left.** The block was previously recorded
+> only against the sandbox; it is now proven against `api.slider-app.com`
+> itself. The same `POST /deliveries/fare`, with the same `User-Agent`, differs
+> only by source IP:
+>
+> * From the GCP VM (`34.18.98.2`): **`403`**, an HTML page from
+>   `server: awselb/2.0` — refused at Slider's AWS load balancer, at the edge,
+>   before the request reaches the app. Credentials are never evaluated.
+> * From any other IP, no key: **`401` JSON** (`"X-Slider-Key header is
+>   required"`) — the request reaches the app.
+> * From any other IP, **with the real production key**: **`200`** and a live
+>   fare (Sharjah→Ajman quoted a bike at AED 18.15, a car at AED 21.77).
+>
+> So the production key and account are valid and the integration works end to
+> end; **the sole blocker is that Slider must allowlist `34.18.98.2`** on their
+> production API. Nothing below matters until they do. Do not read the VM's 403
+> as the `User-Agent` one in the provider's module docstring — the UA is sent on
+> every call above and this 403 persists through it; it is an ELB IP block, not
+> a WAF UA block. Re-check from the VM after they allowlist — `401`/`422` (JSON)
+> means reachable, a `403` HTML page means still blocked:
 >
 > ```bash
 > curl -sS -o /dev/null -w '%{http_code}\n' -X POST \
@@ -1034,10 +1050,11 @@ gh secret set SLIDER_TRIAL_EMAILS --repo hussu97/mm-ecommerce
 >   -H 'Content-Type: application/json' -d '{}'
 > ```
 >
-> `401`/`422` (JSON) = reachable, carry on. `403` (an nginx page) = the IP is
-> refused and **Slider must allowlist `34.18.98.2`** before a booking can
-> succeed. Do not read that 403 as the `User-Agent` one in the provider's module
-> docstring — the UA is already sent above and this one persists through it.
+> Until then the pilot may stay switched on without harm: a trial order attempts
+> Slider, the 403 fails the booking, and `courier_service._dispatch_once` falls
+> it back to noon Send (Sharjah) or Lalamove (elsewhere) — the same courier that
+> carries everyone else. Nothing is stranded; only Slider-carried delivery,
+> which is the thing the pilot exists to prove, cannot happen yet.
 
 **Fix in the Slider dashboard first.**
 
