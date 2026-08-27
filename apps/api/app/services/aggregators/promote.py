@@ -27,8 +27,8 @@ the shelf. Each line is mapped to a catalog product by name and the sale is
 decremented on creation (only `is_stock_product` items move); a cancellation
 restores it through the lifecycle. An unmatched line keeps `product_id` null and
 moves no stock. To keep this from double-drawing history, promotion is **windowed
-to the last `AGGREGATOR_PROMOTE_LOOKBACK_DAYS`** — the ledger sweep mirrors a wide
-window cheaply, but only recent orders become real, stock-affecting MM orders.
+to the last `AGGREGATOR_LOOKBACK_DAYS`** — the single window the sweep uses too, so
+what is mirrored and what becomes a real MM order stay in lockstep.
 
 Convergence: both this path and the GrubOps ingest resolve an aggregator order to
 one MM row through `orders (aggregator_channel, external_reference)` — the partial
@@ -408,18 +408,18 @@ async def promote_order(db: AsyncSession, agg: AggregatorOrder) -> Order | None:
 async def promote_channel(db: AsyncSession, channel: str) -> int:
     """Promote the channel's recent new-or-changed orders. Returns MM orders touched.
 
-    Windowed to the last `AGGREGATOR_PROMOTE_LOOKBACK_DAYS` (by business date), so
-    a first run never backfills months of history into real, stock-affecting MM
-    orders — the sale already happened and the shelf was already drawn down.
-    Widen the window as we scale. Incremental within it, like `reconcile_channel`:
-    an order is (re)promoted only when it has no `promoted_at` yet or its
-    `updated_at` has advanced past it. Idempotent and safe to re-run — the
-    convergence key means a re-run updates rather than duplicates. A single order's
-    failure is logged and does not stop the pass.
+    Windowed to the last `AGGREGATOR_LOOKBACK_DAYS` (by business date) — the same
+    single window the sweep uses, so what is mirrored and what becomes a real MM
+    order stay in lockstep and a first run never backfills history into
+    stock-affecting orders. Widen the window as we scale. Incremental within it,
+    like `reconcile_channel`: an order is (re)promoted only when it has no
+    `promoted_at` yet or its `updated_at` has advanced past it. Idempotent and safe
+    to re-run — the convergence key means a re-run updates rather than duplicates.
+    A single order's failure is logged and does not stop the pass.
     """
     cutoff = (
         datetime.now(_TZ).date()
-        - timedelta(days=max(settings.AGGREGATOR_PROMOTE_LOOKBACK_DAYS, 0))
+        - timedelta(days=max(settings.AGGREGATOR_LOOKBACK_DAYS, 0))
     ).isoformat()
     orders = await db.scalars(
         select(AggregatorOrder).where(

@@ -403,14 +403,6 @@ class Settings(BaseSettings):
     #: watched once — a wrong outlet map writes nonsense into the reconciliation.
     #: Storefront only, like the GrubOps loops; the register never runs it.
     AGGREGATOR_INGEST_ENABLED: bool = False
-    #: How many days back order *promotion* turns scraped orders into real MM
-    #: orders (with product mapping and stock). Separate from the ledger sweep
-    #: window (`AGGREGATOR_LOOKBACK_DAYS`): the sweep mirrors a wide window cheaply,
-    #: but promotion writes real stock-affecting orders, so it is kept narrow —
-    #: last day only for now — and widened as we scale. Guards against a first run
-    #: backfilling months of history and double-decrementing stock for sales that
-    #: already happened.
-    AGGREGATOR_PROMOTE_LOOKBACK_DAYS: int = 1
     #: Fernet key that encrypts the derived session blobs (cookies, tokens, the
     #: captured header fingerprint) at rest in `aggregator_session`. Empty means
     #: no session can be stored or read — the ingest stays inert rather than
@@ -427,12 +419,11 @@ class Settings(BaseSettings):
     #: process was down is caught up on next boot. 23:00 keeps the pull after the
     #: trading day has closed and off the marketplaces' busy hours.
     AGGREGATOR_RUN_HOUR_DXB: int = 23
-    #: How many days back each daily pass re-pulls — one window for both sales and
-    #: finance. Orders mutate after creation and statements post days late, so the
-    #: run re-pulls a rolling multi-day window and upserts idempotently (the
-    #: overlap is free). Sized to swallow a multi-day outage: even after several
-    #: missed days, the next run backfills everything in range.
-    AGGREGATOR_LOOKBACK_DAYS: int = 10
+    #: The single lookback window for the whole daily pass — sales, finance AND
+    #: promotion all use it, so there is one consistent notion of "recent" and no
+    #: gap between what is mirrored and what becomes a real MM order. Kept at 1 day
+    #: for now (writes are idempotent, so re-pulling is free); widen it as we scale.
+    AGGREGATOR_LOOKBACK_DAYS: int = 1
     AGGREGATOR_TIMEOUT_SECONDS: float = 20.0
     #: Ceiling on outbound calls to each marketplace. PerimeterX/Akamai score
     #: bursts; the sales sweep is hourly so 1 req/s is ample. 0 disables it.
