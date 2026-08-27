@@ -219,10 +219,9 @@ async def login_talabat(context, *, mailbox: dict | None = None) -> None:
 
 
 # --- Noon -------------------------------------------------------------------
-# Ported from channels/noon/exports.py::_ensure_noon_rms_authenticated. Noon RMS
-# hosts its sign-in inside an embedded iframe (login-webview-embed.noon.partners):
-# fill the channel identifier (email), request the emailed OTP, then fill the
-# one-time-code input inside the same frame and dismiss the passkey nudge.
+# Noon RMS redirects unauthenticated users to `login.noon.partners` (full page)
+# or, on older builds, embeds `login-webview-embed.noon.partners` in an iframe.
+# Both surfaces share the same email → OTP flow.
 
 NOON_RMS_URL = "https://restaurant.noon.partners/_food-restaurant/finance/wallet"
 NOON_OTP_SENDER = "noon"
@@ -237,6 +236,46 @@ def _noon_login_frame(page):
         ):
             return frame
     return None
+
+
+def _noon_on_login_surface(page) -> bool:
+    if "login.noon.partners" in page.url:
+        return True
+    return _noon_login_frame(page) is not None
+
+
+def _noon_login_surface(page):
+    """The frame or top-level page that hosts the email/OTP controls."""
+    frame = _noon_login_frame(page)
+    if frame is not None:
+        return frame
+    if "login.noon.partners" in page.url:
+        return page
+    return None
+
+
+async def _noon_submit_email(surface, page, *, address: str) -> None:
+    """Email step: remembered-user shortcut, or type into channelIdentifier."""
+    remembered = surface.get_by_text("Continue with this user", exact=False)
+    if await remembered.count():
+        try:
+            body = (await surface.locator("body").inner_text(timeout=5_000)).lower()
+        except Exception:  # noqa: BLE001
+            body = ""
+        if address.lower() in body:
+            await remembered.first.click(timeout=5_000)
+            await page.wait_for_timeout(5_000)
+            return
+        different = surface.get_by_text("Use a different account", exact=False)
+        if await different.count():
+            await different.first.click(timeout=5_000)
+            await page.wait_for_timeout(3_000)
+
+    identifier_input = surface.locator("input[name='channelIdentifier']")
+    if await identifier_input.count():
+        await identifier_input.fill(address)
+        await surface.locator("button[type='submit']").click()
+        await page.wait_for_timeout(5_000)
 
 
 async def _dismiss_noon_passkey_prompt(page) -> None:
@@ -263,6 +302,18 @@ async def _dismiss_noon_passkey_prompt(page) -> None:
             continue
 
 
+async def _wait_noon_login_surface_gone(page, *, timeout_ms: int = 90_000) -> None:
+    """Block until Noon leaves the login page / iframe after OTP."""
+    import time
+
+    deadline = time.monotonic() + timeout_ms / 1000
+    while time.monotonic() < deadline:
+        if not _noon_on_login_surface(page):
+            return
+        await page.wait_for_timeout(500)
+    raise LoginError("Noon login page did not disappear after submitting the OTP")
+
+
 async def login_noon(
     context,
     *,
@@ -284,24 +335,26 @@ async def login_noon(
     owned_page = page is None
     if page is None:
         page = await context.new_page()
-    await page.goto(NOON_RMS_URL, wait_until="domcontentloaded", timeout=60_000)
+    if not _noon_on_login_surface(page) and not await _noon_is_authenticated(page):
+        await page.goto(NOON_RMS_URL, wait_until="domcontentloaded", timeout=60_000)
     await page.wait_for_timeout(5_000)
 
-    login_frame = _noon_login_frame(page)
-    if not login_frame:
-        return page  # already authenticated — the RMS route rendered without the frame
-
-    identifier_input = login_frame.locator("input[name='channelIdentifier']")
-    otp_since = datetime.now(UTC)
-    if await identifier_input.count():
-        await identifier_input.fill(address)
-        await login_frame.locator("button[type='submit']").click()
-        await page.wait_for_timeout(5_000)
-
-    login_frame = _noon_login_frame(page)
-    if not login_frame:
+    surface = _noon_login_surface(page)
+    if surface is None:
+        if await _noon_is_authenticated(page):
+            return page
         return page
-    otp_input = login_frame.locator("input[data-input-otp='true']")
+
+    identifier_input = surface.locator("input[name='channelIdentifier']")
+    otp_since = datetime.now(UTC)
+    await _noon_submit_email(surface, page, address=address)
+
+    surface = _noon_login_surface(page)
+    if surface is None:
+        if await _noon_is_authenticated(page):
+            return page
+        return page
+    otp_input = surface.locator("input[data-input-otp='true']")
     if not await otp_input.count():
         return page
     try:
@@ -325,10 +378,12 @@ async def login_noon(
             "Logins, run mailbox-auth, or complete the login manually."
         ) from exc
     await otp_input.fill(otp)
-    await login_frame.locator("button[type='submit']").click()
-    await page.wait_for_timeout(8_000)
+    await surface.locator("button[type='submit']").click()
+    await _wait_noon_login_surface_gone(page)
     await _dismiss_noon_passkey_prompt(page)
-    await page.wait_for_timeout(4_000)
+    await page.goto(NOON_RMS_URL, wait_until="domcontentloaded", timeout=60_000)
+    await page.wait_for_timeout(5_000)
+    await _dismiss_noon_passkey_prompt(page)
     return page
 
 
@@ -566,14 +621,14 @@ async def _deliveroo_is_authenticated(page) -> bool:
 
 
 async def _noon_is_authenticated(page) -> bool:
-    """RMS is authenticated when the login iframe is gone and the app rendered.
-
-    The wallet URL is also the login URL, so "no iframe yet" is not a login —
-    the embed takes a few seconds to appear. Require a real RMS surface.
-    """
-    if _noon_login_frame(page) is not None:
+    """RMS is authenticated when the login surface is gone and the app rendered."""
+    if _noon_on_login_surface(page):
         return False
-    if _url_looks_like_login(page.url) and "restaurant.noon.partners" not in page.url:
+    if "restaurant.noon.partners" not in page.url:
+        return False
+    if "/_food-restaurant/" in page.url or "/finance/" in page.url:
+        return True
+    if _url_looks_like_login(page.url):
         return False
     try:
         body = (await page.locator("body").inner_text(timeout=3_000)).lower()

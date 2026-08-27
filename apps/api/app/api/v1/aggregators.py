@@ -102,13 +102,30 @@ async def push_session(
         raise ServiceUnavailableError(
             "AGGREGATOR_CONFIG_ENCRYPTION_KEY is unset; cannot store a session"
         )
+    tokens = dict(body.tokens)
+    header_profile = dict(body.header_profile)
+    if body.channel == "noon":
+        acct = await account_store.load(db, body.channel, body.account_ref)
+        if acct is not None:
+            merged = session_store.merge_noon_scope_from_extras(
+                session_store.LoadedSession(
+                    channel=body.channel,
+                    account_ref=body.account_ref,
+                    cookies=body.cookies,
+                    tokens=tokens,
+                    header_profile=header_profile,
+                ),
+                acct.extras or {},
+            )
+            tokens = merged.tokens
+            header_profile = merged.header_profile
     return await session_store.upsert_bootstrap(
         db,
         channel=body.channel,
         account_ref=body.account_ref,
         cookies=body.cookies,
-        tokens=body.tokens,
-        header_profile=body.header_profile,
+        tokens=tokens,
+        header_profile=header_profile,
         storage_state=body.storage_state,
         token_expires_at=body.token_expires_at,
         cookie_expires_at=body.cookie_expires_at,

@@ -14,7 +14,7 @@ and says so at its own call site.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 from sqlalchemy import select
@@ -48,6 +48,50 @@ class LoadedSession:
     token_expires_at: datetime | None = None
     cookie_expires_at: datetime | None = None
     status: str = SESSION_NEEDS_BOOTSTRAP
+
+
+_NOON_SCOPE_KEYS = (
+    ("restaurant_code", "n-restaurantcode"),
+    ("project", "x-project"),
+    ("locale", "x-locale"),
+)
+
+
+def merge_noon_scope_from_extras(session: LoadedSession, extras: dict) -> LoadedSession:
+    """Fill missing Noon RMS headers from `aggregator_account.extras`.
+
+    Cookies and Akamai state still come from the capture; brand/project scope
+    is documented on the account row (migration 155 / branch map) so a session
+    push is not blocked when the first snapshot missed a finance request.
+    """
+    if not extras:
+        return session
+    tokens = dict(session.tokens)
+    profile = dict(session.header_profile)
+    for token_key, header_key in _NOON_SCOPE_KEYS:
+        value = extras.get(token_key)
+        if not value:
+            continue
+        if not tokens.get(token_key):
+            tokens[token_key] = str(value)
+        if header_key not in profile:
+            profile[header_key] = str(value)
+    if "x-platform" not in profile:
+        profile["x-platform"] = "web"
+    return replace(session, tokens=tokens, header_profile=profile)
+
+
+async def enrich_noon_from_account(
+    db: AsyncSession, session: LoadedSession | None
+) -> LoadedSession | None:
+    if session is None or session.channel != "noon":
+        return session
+    from app.services.aggregators import account_store
+
+    acct = await account_store.load(db, session.channel, session.account_ref)
+    if acct is None:
+        return session
+    return merge_noon_scope_from_extras(session, acct.extras or {})
 
 
 async def _row(
