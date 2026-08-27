@@ -301,9 +301,12 @@ async def login_noon(
     if not await otp_input.count():
         return
     try:
+        # Prefer Admin recipe filters (verify@noon.com / Verify your email);
+        # fall back to the hard-coded substrings that match Noon OTPs.
+        box = mailbox or {}
         otp = await wait_for_otp(
-            sender_filter=NOON_OTP_SENDER,
-            subject_filter=NOON_OTP_SUBJECT,
+            sender_filter=str(box.get("sender_filter") or "") or NOON_OTP_SENDER,
+            subject_filter=str(box.get("subject_filter") or "") or NOON_OTP_SUBJECT,
             since=otp_since,
             timeout=90,
             mailbox=mailbox,
