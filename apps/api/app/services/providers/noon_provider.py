@@ -56,7 +56,7 @@ import csv
 import io
 import json
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -81,6 +81,19 @@ _RMS = "https://restaurant.noon.partners"
 _ORDER_STATEMENT_URL = f"{_RMS}/_food-restaurant/finance/statement/orders"
 _WALLET_URL = f"{_RMS}/_food-restaurant/finance/wallet"
 _DEFAULT_LOCALE = "en-ae"
+
+#: Noon publishes wallet statements roughly weekly (~7–8 days between refs). The
+#: shared daily ingest lookback is 1 day (order-date channels), which almost
+#: always contains no statement *publication* date — so nightly sales looked
+#: empty even though the restaurant traded. Widen statement/payment discovery
+#: to cover at least one publish cycle; upserts stay idempotent.
+_PUBLICATION_LOOKBACK_DAYS = 14
+
+
+def _publication_since(since: datetime) -> datetime:
+    """Earliest date for wallet statement/payment discovery (weekly publish grain)."""
+    return since - timedelta(days=max(_PUBLICATION_LOOKBACK_DAYS - 1, 0))
+
 
 #: The grain the item rows would carry *if* a companion source ever supplied
 #: them — the RMS order-level statement carries none, so `fetch_sales` emits no
@@ -364,27 +377,40 @@ class NoonClient(BaseAggregatorClient):
     async def fetch_sales(
         self, session: LoadedSession, *, since: datetime, until: datetime
     ) -> SalesResult:
-        """Orders settled on statements published in the window.
+        """Orders settled on statements published in the (widened) window.
 
         noon's sales truth is the RMS order-level statement, so we first read the
         wallet Statement tab for the reference numbers in range, then ask the
         order-level endpoint for exactly those. Orders carry no item rows — the
         statement has no per-line detail (see the module docstring).
+
+        Statement *publication* is weekly; discovery uses
+        `_publication_since(since)` so a 1-day ingest pass still sees the latest
+        published statement(s).
         """
         statement_rows = await self._wallet_rows(session, "statement")
+        publish_since = _publication_since(since)
         in_window = [
             row
             for row in statement_rows
             if _entry_type(row) == "statement"
-            and _in_window(_row_date(row), since, until)
+            and _in_window(_row_date(row), publish_since, until)
         ]
         statement_ids = [
             ref
             for row in in_window
             if (ref := _first(row, "reference_nr", "referenceNr", "reference"))
         ]
-        truncation = _truncation_note(statement_rows, since)
+        truncation = _truncation_note(statement_rows, publish_since)
         if not statement_ids:
+            logger.info(
+                "noon sales: 0/%s wallet statements in publication window "
+                "%s..%s (ingest since=%s)",
+                len(statement_rows),
+                publish_since.date().isoformat(),
+                until.date().isoformat(),
+                since.date().isoformat(),
+            )
             return SalesResult(
                 orders=[],
                 truncation_note=truncation
@@ -470,25 +496,27 @@ class NoonClient(BaseAggregatorClient):
         """The wallet's published statements and the transfers noon has made.
 
         Both come from the wallet tabs' `Export Current View` — the Statement tab
-        for settlement summaries, the Payment tab for transfers.
+        for settlement summaries, the Payment tab for transfers. Discovery uses
+        the same widened publication lookback as sales (weekly grain).
         """
         payment_rows = await self._wallet_rows(session, "payment")
         statement_rows = await self._wallet_rows(session, "statement")
+        publish_since = _publication_since(since)
         payouts = [
             payout
             for row in payment_rows
             if _entry_type(row) == "payment"
-            and _in_window(_row_date(row), since, until)
+            and _in_window(_row_date(row), publish_since, until)
             and (payout := self._payout_from(row)) is not None
         ]
         statements = [
             statement
             for row in statement_rows
             if _entry_type(row) == "statement"
-            and _in_window(_row_date(row), since, until)
+            and _in_window(_row_date(row), publish_since, until)
             and (statement := self._statement_from(row)) is not None
         ]
-        truncation = _truncation_note(payment_rows + statement_rows, since)
+        truncation = _truncation_note(payment_rows + statement_rows, publish_since)
         return FinanceResult(
             statements=statements, payouts=payouts, truncation_note=truncation
         )

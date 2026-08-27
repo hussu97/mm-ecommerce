@@ -611,6 +611,25 @@ def test_noon_wallet_json_lines_shape_parses():
     assert rows[0]["entryType"] == "statement"
 
 
+def test_noon_publication_lookback_covers_weekly_statements():
+    """A 1-day ingest since still discovers statements published ~a week earlier."""
+    from datetime import date, datetime, timezone
+
+    from app.services.providers.noon_provider import (
+        _PUBLICATION_LOOKBACK_DAYS,
+        _in_window,
+        _publication_since,
+    )
+
+    until = datetime(2026, 8, 27, 19, 0, tzinfo=timezone.utc)
+    since = datetime(2026, 8, 26, 19, 0, tzinfo=timezone.utc)
+    publish_since = _publication_since(since)
+    assert (until.date() - publish_since.date()).days >= _PUBLICATION_LOOKBACK_DAYS - 1
+    # Latest live statement was 2026-08-22 — outside 1-day, inside 14-day.
+    assert not _in_window(date(2026, 8, 22), since, until)
+    assert _in_window(date(2026, 8, 22), publish_since, until)
+
+
 def test_talabat_csv_parses_orders_and_line_items():
     from app.services.providers.talabat_provider import TalabatClient
 

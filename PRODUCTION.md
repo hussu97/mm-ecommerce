@@ -969,12 +969,15 @@ authenticate themselves inside the API's daily sweep and need no worker. It runs
 on this VM as the `aggregator-worker` compose service under the `worker` profile —
 **not** started by `up`. A cron (`/etc/cron.d/aggregator-warm`, installed from
 `apps/aggregator-bootstrap/deploy/aggregator-warm.cron` on every deploy) runs it
-once a day at 22:00 Dubai: `docker compose -f docker-compose.prod.yml run --rm
-aggregator-worker warm-sessions --channel keeta`. A plain **cold start**, not a
-keep-alive — the container hydrates Keeta's captured session, pulls the orders
-in-page, pushes them, and exits, so headless Chrome is alive only for the ~30 s
-pull (the VM has under 1 GB RAM). 22:00 lands the day's orders ~1 h before the
-23:00 promotion/reconciliation pass. Check it: `sudo cat
+once a day at **22:00 Asia/Dubai** (`TZ=Asia/Dubai` in the cron file — the VM
+clock is UTC; without that line the job silently ran at 02:00 Dubai):
+`docker compose -f docker-compose.prod.yml run --rm aggregator-worker
+warm-sessions --channel keeta`. A plain **cold start**, not a keep-alive — the
+container hydrates Keeta's captured session, pulls the orders in-page, pushes
+them, and exits, so headless Chrome is alive only for the ~30 s pull (the VM has
+under 1 GB RAM). 22:00 DXB lands the day's orders ~1 h before the API's
+`AGGREGATOR_RUN_HOUR_DXB=23` sales/finance/promote pass (same Dubai timeline —
+one cron for Keeta, API self-schedules an hour later). Check it: `sudo cat
 /etc/cron.d/aggregator-warm`, `journalctl -t aggregator-keeta-pull`, and
 `aggregator_session.last_warmed_at`. A **dead** session needs a one-off headed
 `login` from a laptop; the health log surfaces it.

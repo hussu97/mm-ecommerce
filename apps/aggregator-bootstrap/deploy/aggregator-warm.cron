@@ -11,10 +11,14 @@
 # pulls the orders in-page and pushes them back, then exits — so Chrome is alive
 # only for the ~30s pull and never sits resident on this <1 GB VM. Running it more
 # than once a day bought no session-liveness benefit (the Keeta path only pulls;
-# it does not refresh a session), so it runs once, at 22:00 Dubai — ~1 h before
-# the API's 23:00 promotion/reconciliation pass, so that pass sees the day's
-# orders. A dead session needs a one-off headed `login` from a laptop regardless
-# of cadence; the health log surfaces it.
+# it does not refresh a session), so it runs once, at 22:00 Asia/Dubai — ~1 h
+# before the API's AGGREGATOR_RUN_HOUR_DXB=23 pass, so that pass sees the day's
+# orders. The VM clock is UTC; TZ=Asia/Dubai below is required so "22" means
+# Dubai wall-clock (without it the job silently ran at 02:00 Dubai). One cron,
+# one Dubai timeline — same as the API scheduler; do not add a second UTC cron.
+# A dead session needs a one-off headed `login` from a laptop regardless of
+# cadence; the health log surfaces it.
 SHELL=/bin/sh
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+TZ=Asia/Dubai
 0 22 * * * root cd /opt/melting-moments-cakes && /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions --channel keeta 2>&1 | /usr/bin/logger -t aggregator-keeta-pull
