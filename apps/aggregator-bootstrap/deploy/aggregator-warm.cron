@@ -1,12 +1,20 @@
-# Aggregator session warming + Keeta order pull — installed to /etc/cron.d by
-# deploy.yml so a redeploy always re-establishes it (nothing manual to lose).
+# Keeta daily order pull — installed to /etc/cron.d by deploy.yml so a redeploy
+# always re-establishes it (nothing manual to lose).
 #
-# One-shot each run: this VM has under 1 GB of RAM, so the worker (headless
-# Chrome) is started only for the ~30s warm and then exits, freeing its memory —
-# never held between runs. `warm-sessions` hydrates the sessions from the API,
-# refreshes the anti-bot cookies/tokens, re-pulls Keeta's orders and pushes them
-# back. The 22:00 run lands fresh Keeta orders ~1h before the API's 23:00
-# promotion/reconciliation pass; the other three keep the sessions alive.
+# Keeta is the only channel that needs a browser: every request is mtgsig-signed
+# in-page, so it cannot be replayed over httpx. Deliveroo (and the other httpx
+# channels) authenticate themselves inside the API's daily sweep with stored
+# email/password and need nothing here.
+#
+# This is a plain cold start, not a keep-alive "warm": the container boots,
+# hydrates Keeta's captured storage_state from the API, opens a headless browser,
+# pulls the orders in-page and pushes them back, then exits — so Chrome is alive
+# only for the ~30s pull and never sits resident on this <1 GB VM. Running it more
+# than once a day bought no session-liveness benefit (the Keeta path only pulls;
+# it does not refresh a session), so it runs once, at 22:00 Dubai — ~1 h before
+# the API's 23:00 promotion/reconciliation pass, so that pass sees the day's
+# orders. A dead session needs a one-off headed `login` from a laptop regardless
+# of cadence; the health log surfaces it.
 SHELL=/bin/sh
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-0 4,10,16,22 * * * root cd /opt/melting-moments-cakes && /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions 2>&1 | /usr/bin/logger -t aggregator-warm
+0 22 * * * root cd /opt/melting-moments-cakes && /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions --channel keeta 2>&1 | /usr/bin/logger -t aggregator-keeta-pull

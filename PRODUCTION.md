@@ -963,18 +963,21 @@ it here and redeploying.
 | `AGGREGATOR_TIMEOUT_SECONDS` | `20.0` | Aggregator HTTP timeout |
 | `AGGREGATOR_REQUESTS_PER_SECOND` | `1.0` | Ceiling on outbound calls per marketplace (PerimeterX/Akamai). `0` disables |
 
-**Aggregator bootstrap worker (Keeta pull + session warming).** Runs on this VM as
-the `aggregator-worker` compose service, but only under the `worker` profile — it
-is **not** started by `up`. A cron (`/etc/cron.d/aggregator-warm`, installed from
+**Keeta daily browser pull.** Keeta is the only channel that needs a browser (its
+requests are `mtgsig`-signed in-page). Deliveroo and the other httpx channels
+authenticate themselves inside the API's daily sweep and need no worker. It runs
+on this VM as the `aggregator-worker` compose service under the `worker` profile —
+**not** started by `up`. A cron (`/etc/cron.d/aggregator-warm`, installed from
 `apps/aggregator-bootstrap/deploy/aggregator-warm.cron` on every deploy) runs it
-one-shot at 04/10/16/22 Dubai: `docker compose -f docker-compose.prod.yml run --rm
-aggregator-worker warm-sessions`. One-shot because the VM has under 1 GB RAM, so
-headless Chrome is alive only for the ~30 s warm and then frees its memory. The
-22:00 run lands fresh Keeta orders ~1 h before the API's 23:00 promotion pass.
-Check it: `sudo cat /etc/cron.d/aggregator-warm`, `journalctl -t aggregator-warm`,
-and the `aggregator_session.last_warmed_at` column. A **dead** session still needs
-a one-off headed `login` from a laptop; the cron only warms an already-captured
-session.
+once a day at 22:00 Dubai: `docker compose -f docker-compose.prod.yml run --rm
+aggregator-worker warm-sessions --channel keeta`. A plain **cold start**, not a
+keep-alive — the container hydrates Keeta's captured session, pulls the orders
+in-page, pushes them, and exits, so headless Chrome is alive only for the ~30 s
+pull (the VM has under 1 GB RAM). 22:00 lands the day's orders ~1 h before the
+23:00 promotion/reconciliation pass. Check it: `sudo cat
+/etc/cron.d/aggregator-warm`, `journalctl -t aggregator-keeta-pull`, and
+`aggregator_session.last_warmed_at`. A **dead** session needs a one-off headed
+`login` from a laptop; the health log surfaces it.
 
 ```bash
 gh secret set GRUBOPS_USERNAME --repo hussu97/mm-ecommerce
