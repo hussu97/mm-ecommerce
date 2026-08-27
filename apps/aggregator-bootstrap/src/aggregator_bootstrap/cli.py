@@ -181,13 +181,25 @@ def store_account(
 
 
 def _wait_for_auth_code(redirect_uri: str, *, timeout: float = 300.0) -> str:
-    """Listen on the Azure redirect URI until the browser comes back with a code."""
+    """Listen on the Azure redirect URI until the browser comes back with a code.
+
+    Only works when the redirect has an explicit port we can bind (e.g.
+    ``http://localhost:8765/callback``). The credit-card scraper's shared
+    Microsoft app uses bare ``http://localhost`` — use `_prompt_for_auth_code`
+    for that flow instead.
+    """
     from http.server import BaseHTTPRequestHandler, HTTPServer
     from urllib.parse import parse_qs, urlparse
 
     parsed = urlparse(redirect_uri)
     host = parsed.hostname or "localhost"
-    port = parsed.port or 8765
+    port = parsed.port
+    if port is None:
+        raise typer.BadParameter(
+            f"redirect_uri {redirect_uri!r} has no port to bind. "
+            "Paste the ?code=… URL when prompted, or register a "
+            "http://localhost:8765/callback redirect on the Azure app."
+        )
     holder: dict[str, str] = {}
 
     class Handler(BaseHTTPRequestHandler):
@@ -221,6 +233,36 @@ def _wait_for_auth_code(redirect_uri: str, *, timeout: float = 300.0) -> str:
     raise typer.BadParameter(holder.get("error") or "timed out waiting for Microsoft sign-in")
 
 
+def _prompt_for_auth_code() -> str:
+    """Same paste-the-redirect flow as credit-card-scraper's OAuth Token Setup.
+
+    Microsoft redirects to ``http://localhost?code=…`` (page may fail to load —
+    that is fine). The operator copies the address bar URL (or the raw code)
+    and pastes it here.
+    """
+    from urllib.parse import parse_qs, urlparse
+
+    print(  # noqa: T201
+        "\nAfter Microsoft signs you in it redirects to http://localhost — the\n"
+        "page may not load. Copy the FULL browser URL (it contains ?code=…)\n"
+        "and paste it below (or paste just the code).\n",
+        flush=True,
+    )
+    raw = input("Paste redirect URL or code: ").strip()  # noqa: S322
+    if not raw:
+        raise typer.BadParameter("empty paste — re-run mailbox-auth")
+    if "code=" in raw or raw.startswith("http"):
+        query = parse_qs(urlparse(raw).query)
+        code = (query.get("code") or [""])[0].strip()
+        error = (query.get("error_description") or query.get("error") or [""])[0]
+        if error and not code:
+            raise typer.BadParameter(error)
+        if not code:
+            raise typer.BadParameter("no code= in that URL")
+        return code
+    return raw
+
+
 @app.command("mailbox-auth")
 def mailbox_auth(
     channel: str = typer.Option(..., help="Channel whose Microsoft app to connect"),
@@ -228,11 +270,12 @@ def mailbox_auth(
     """One-time Microsoft sign-in for this aggregator's Graph mailbox.
 
     Uses the client id + secret already saved on that channel's login recipe
-    (Admin → Logins). Opens a browser, stores the refresh token on the same
-    row. Each aggregator has its own Azure app — this command never reads a
-    global EMAIL_MS_* pair.
+    (Admin → Logins). Same pattern as credit-card-scraper: open Authorize,
+    paste the ``http://localhost?code=…`` redirect URL, store the refresh
+    token. Each aggregator has its own Azure app — never a global EMAIL_MS_*.
     """
     import webbrowser
+    from urllib.parse import urlparse
 
     from .graph_mail import GraphApp, GraphMailboxError, exchange_code
 
@@ -250,15 +293,20 @@ def mailbox_auth(
         raise typer.BadParameter(str(exc)) from exc
     url = app.authorize_url(state=channel)
     logger.info(
-        "Opening Microsoft sign-in for %s (tenant=%s). If the browser does "
-        "not open, visit the URL printed below.",
+        "Opening Microsoft sign-in for %s (tenant=%s, redirect=%s).",
         channel,
         app.tenant,
+        app.redirect_uri,
     )
     print(url)  # noqa: T201 — the operator needs the URL
     webbrowser.open(url)
     try:
-        code = _wait_for_auth_code(app.redirect_uri)
+        # Bare http://localhost (CCS shared app) → paste flow.
+        # Explicit :port callback → local listener.
+        if urlparse(app.redirect_uri).port is None:
+            code = _prompt_for_auth_code()
+        else:
+            code = _wait_for_auth_code(app.redirect_uri)
         tokens = exchange_code(app, code)
     except GraphMailboxError as exc:
         logger.error("%s mailbox-auth failed: %s", channel, exc)

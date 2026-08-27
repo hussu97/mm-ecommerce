@@ -14,7 +14,7 @@ def test_graph_app_is_built_from_that_channel_mailbox():
             "client_id": "app-talabat",
             "client_secret": "secret-talabat",
             "tenant": "consumers",
-            "redirect_uri": "http://localhost:8765/callback",
+            "redirect_uri": "http://localhost",
         }
     )
     assert app.client_id == "app-talabat"
