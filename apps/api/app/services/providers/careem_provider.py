@@ -29,9 +29,10 @@ windows sampled at build time.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.models.aggregator import CHANNEL_CAREEM
 from app.services.aggregators.normalized import (
@@ -198,7 +199,15 @@ class CareemClient(BaseAggregatorClient):
             )
             for row in _first(payload, "orders", "data") or []:
                 order = self._order_from(row, outlet["external_outlet_id"])
-                if order is not None:
+                if order is None:
+                    continue
+                # Careem's `partner-orders-minimal` ignores the startDate/endDate
+                # params and returns a rolling recent window, so honour the
+                # requested range ourselves — by the order's Dubai business date,
+                # the same basis the ingest's window uses. Without this a targeted
+                # historical rerun would pull whatever careem currently returns.
+                bdate = _dubai_date(order.placed_at)
+                if bdate is None or since.date() <= bdate <= until.date():
                     orders.append(order)
         return SalesResult(orders=orders)
 
@@ -235,10 +244,11 @@ class CareemClient(BaseAggregatorClient):
         # orders would collapse onto one branch. Fall back to the loop id.
         merchant = row.get("merchant")
         merchant_id = _first(merchant, "id") if isinstance(merchant, dict) else None
+        bdate = _dubai_date(placed_at)
         return StandardOrder(
             external_order_id=str(external),
             external_outlet_id=str(merchant_id or outlet_id),
-            business_date=placed_at.strftime("%Y-%m-%d") if placed_at else None,
+            business_date=bdate.isoformat() if bdate else None,
             placed_at=placed_at,
             status=_first(row, "status", "state", "orderStatus"),
             currency=_currency_code(_first(row, "currency", "currencyCode")),
@@ -313,6 +323,9 @@ class CareemClient(BaseAggregatorClient):
         )
 
 
+_DUBAI = ZoneInfo("Asia/Dubai")
+
+
 def _parse_dt(value: Any) -> datetime | None:
     if not value or not isinstance(value, str):
         return None
@@ -320,6 +333,16 @@ def _parse_dt(value: Any) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _dubai_date(dt: datetime | None) -> date | None:
+    """The Dubai calendar date of an instant (assume UTC if naive) — the business
+    day the order belongs to, matching the ingest's Dubai-aligned range window."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_DUBAI).date()
 
 
 def _date_str(value: Any) -> str | None:
