@@ -76,7 +76,7 @@ The two Next.js apps are thin presentation layers — all state and business log
 | PostgreSQL 16 | Primary database |
 | Stripe | Payment processing |
 | Resend | Transactional email |
-| Cloudflare R2 | Product image storage |
+| Google Cloud Storage | Product image + document storage |
 | Umami Cloud | Web analytics (SaaS) |
 
 ---
@@ -184,11 +184,9 @@ STRIPE_WEBHOOK_SECRET=whsec_...
 RESEND_API_KEY=re_...
 FROM_EMAIL=noreply@meltingmomentscakes.com
 
-CLOUDFLARE_R2_ACCESS_KEY=
-CLOUDFLARE_R2_SECRET_KEY=
-CLOUDFLARE_R2_BUCKET=melting-moments-cakes
-CLOUDFLARE_R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
-CLOUDFLARE_R2_PUBLIC_URL=https://pub-<hash>.r2.dev
+# Google Cloud Storage (bucket names, not secrets — auth is via ADC / the VM SA)
+GCS_IMAGE_BUCKET=mm-product-images
+GCS_INVOICE_BUCKET=melting-moments-data
 
 TABBY_API_KEY=
 TABBY_PUBLIC_KEY=
@@ -297,7 +295,7 @@ Base URL: `http://localhost:8000/api/v1`
 | `/payments` | Stripe payment session, webhook handler |
 | `/promo-codes` | Promo code validation |
 | `/delivery` | Delivery time slots and fee lookup |
-| `/uploads` | Image upload to Cloudflare R2 |
+| `/uploads` | Image upload to Google Cloud Storage |
 | `/analytics` | Internal analytics events |
 
 Full interactive documentation is available at `/docs` when the API is running.

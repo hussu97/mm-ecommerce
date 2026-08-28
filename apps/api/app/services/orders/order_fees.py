@@ -293,7 +293,13 @@ async def _own_channel_fees(
     )
 
 
-async def stamp(db: AsyncSession, order: Order) -> OrderFees:
+async def stamp(
+    db: AsyncSession,
+    order: Order,
+    *,
+    actual_commission: Decimal | None = None,
+    actual_payment_fee: Decimal | None = None,
+) -> OrderFees:
     """
     Write both fees onto the order, at the moment its total is final.
 
@@ -302,11 +308,26 @@ async def stamp(db: AsyncSession, order: Order) -> OrderFees:
     on an unchanged order writes the same numbers — so a retried ingest or a
     reopened-and-reclosed check costs nothing.
 
+    **Actuals beat the model.** `compute` works the fee out from the *configured*
+    rate — a static estimate. Once the marketplace settles the order it tells us
+    the fee it *actually* took (its statement's per-order commission / payment
+    handling), and that dynamic figure is the truth for P&L. So when a caller
+    passes `actual_commission` / `actual_payment_fee` (promotion does, from the
+    settled `aggregator_order`), each non-null actual overrides its modelled
+    counterpart on the order. A null actual — the order has not settled yet —
+    leaves the estimate in place. The reconciliation keeps its own modelled
+    figure by recomputing `compute`, so overriding the stored fee here does not
+    blind the commission-variance check.
+
     Flushes rather than commits, per the transaction convention: the
     request-scoped `get_db` dependency owns the commit.
     """
     fees = await compute(db, order)
-    order.aggregator_fee = fees.aggregator_fee
-    order.payment_fee = fees.payment_fee
+    order.aggregator_fee = (
+        actual_commission if actual_commission is not None else fees.aggregator_fee
+    )
+    order.payment_fee = (
+        actual_payment_fee if actual_payment_fee is not None else fees.payment_fee
+    )
     await db.flush()
     return fees

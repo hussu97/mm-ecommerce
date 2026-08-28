@@ -18,7 +18,7 @@ Plan: `.cursor/plans/aggregator_depth_e2e_dadcc6b3.plan.md`
 
 - `modifiers.py` — `StandardModifier` with quantity; `expand_modifiers()` for round-trip JSON
 - `normalized.py` — `StatementsResult` / `PayoutsResult`; extended `StandardOrder` / `StandardStatement`
-- `statement_docs.py` — private R2 archive under `aggregator-statements/{channel}/{statement_id}/` (uses existing `CLOUDFLARE_R2_*` creds)
+- `statement_docs.py` — private GCS archive under `invoices/{channel}/{statement_id}/` in `GCS_INVOICE_BUCKET` (auth via ADC / the VM service account)
 - `aggregator_base.py` — split `fetch_statements` / `fetch_payouts`; `fetch_finance` wrapper
 - `ingest.py` / `promote.py` — upsert new fields; option mapping with qty; statement line `mm_order_id` backfill
 

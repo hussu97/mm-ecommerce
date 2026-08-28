@@ -94,6 +94,68 @@ async def enrich_noon_from_account(
     return merge_noon_scope_from_extras(session, acct.extras or {})
 
 
+#: Per-channel identity that lives on the session's tokens but the provider used
+#: to hard-code. Each key is copied verbatim from `aggregator_account.extras`
+#: onto `session.tokens` (under the same name), and the provider reads it there
+#: with its constant as the fallback — so behaviour is identical until an
+#: operator populates the account row.
+#:   - talabat: `global_entity_id` (e.g. "TB_AE"), the `x-global-entity-id`
+#:     header / `globalEntityId` GraphQL arg on every Talabat request.
+#:   - careem:  `city_id` (e.g. "1" = Dubai), the `{city}` segment of the
+#:     per-outlet orders endpoint.
+_TALABAT_EXTRA_TOKEN_KEYS = ("global_entity_id",)
+_CAREEM_EXTRA_TOKEN_KEYS = ("city_id",)
+
+
+def _merge_extra_tokens(
+    session: LoadedSession, extras: dict, keys: tuple[str, ...]
+) -> LoadedSession:
+    """Copy the named `extras` values onto `session.tokens` where the capture
+    left them unset.
+
+    Null-safe by construction: an empty extras — or one that names none of
+    `keys`, or whose values the session already carries — returns the session
+    untouched, so the provider's built-in constant still stands. The same
+    account-extras idiom as noon's RMS scope, but tokens-only (these providers
+    read identity off `tokens`, not off headers)."""
+    if not extras:
+        return session
+    tokens = dict(session.tokens)
+    changed = False
+    for key in keys:
+        value = extras.get(key)
+        if value and not tokens.get(key):
+            tokens[key] = str(value)
+            changed = True
+    return replace(session, tokens=tokens) if changed else session
+
+
+async def enrich_talabat_from_account(
+    db: AsyncSession, session: LoadedSession | None
+) -> LoadedSession | None:
+    if session is None or session.channel != "talabat":
+        return session
+    from app.services.aggregators import account_store
+
+    acct = await account_store.load(db, session.channel, session.account_ref)
+    if acct is None:
+        return session
+    return _merge_extra_tokens(session, acct.extras or {}, _TALABAT_EXTRA_TOKEN_KEYS)
+
+
+async def enrich_careem_from_account(
+    db: AsyncSession, session: LoadedSession | None
+) -> LoadedSession | None:
+    if session is None or session.channel != "careem":
+        return session
+    from app.services.aggregators import account_store
+
+    acct = await account_store.load(db, session.channel, session.account_ref)
+    if acct is None:
+        return session
+    return _merge_extra_tokens(session, acct.extras or {}, _CAREEM_EXTRA_TOKEN_KEYS)
+
+
 async def enrich_session(
     db: AsyncSession, session: LoadedSession | None
 ) -> LoadedSession | None:
@@ -102,6 +164,10 @@ async def enrich_session(
         return session
     if session.channel == "noon":
         return await enrich_noon_from_account(db, session)
+    if session.channel == "talabat":
+        return await enrich_talabat_from_account(db, session)
+    if session.channel == "careem":
+        return await enrich_careem_from_account(db, session)
     return session
 
 

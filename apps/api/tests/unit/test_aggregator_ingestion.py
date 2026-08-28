@@ -236,6 +236,112 @@ async def test_careem_billing_accounts_are_deduped_company_brand_merchant(careem
     assert types == ["BRAND", "COMPANY", "MERCHANT", "MERCHANT", "MERCHANT"]
 
 
+# ── Careem city id from account extras (vs the Dubai fallback) ─────────────────
+def test_careem_city_id_falls_back_to_dubai_when_extras_absent():
+    """An empty session yields the historical `1` (Dubai) — behaviour unchanged."""
+    from app.services.providers import careem_provider as cp
+
+    session = LoadedSession(channel="careem", account_ref="", tokens={})
+    assert cp.CareemClient._city_id(session) == cp._DEFAULT_CITY_ID
+    assert cp._DEFAULT_CITY_ID == "1"
+
+
+def test_careem_city_id_reads_from_session_tokens():
+    """A populated `city_id` (injected from account extras) wins over the default."""
+    from app.services.providers import careem_provider as cp
+
+    session = LoadedSession(channel="careem", account_ref="", tokens={"city_id": "9"})
+    assert cp.CareemClient._city_id(session) == "9"
+
+
+async def test_careem_orders_url_uses_the_session_city_id(monkeypatch):
+    """The per-outlet orders URL carries the extras-sourced city, not a pinned 1."""
+    from app.services.providers import careem_provider as cp
+
+    client = cp.CareemClient()
+    seen_urls: list[str] = []
+
+    async def fake_request_json(self, session, method, url, **kwargs):
+        if url.endswith("/user/scope"):
+            return _SCOPE
+        seen_urls.append(url)
+        return {"orders": []}
+
+    monkeypatch.setattr(cp.CareemClient, "request_json", fake_request_json)
+    session = LoadedSession(channel="careem", account_ref="", tokens={"city_id": "9"})
+    await client.fetch_sales(
+        session, since=datetime(2026, 7, 1), until=datetime(2026, 7, 31)
+    )
+    assert seen_urls, "expected at least one per-outlet order fetch"
+    assert all("/v1/careem/9/company/" in url for url in seen_urls)
+
+
+async def test_careem_payout_pagination_stops_at_the_page_cap(monkeypatch):
+    """A `totalRecords` that never satisfies the break is stopped by the hard cap."""
+    from app.services.providers import careem_provider as cp
+
+    client = cp.CareemClient()
+    payout_pages = {"n": 0}
+
+    async def fake_request_json(self, session, method, url, **kwargs):
+        if url.endswith("/user/scope"):
+            return _SCOPE
+        # Always a full page and an unreachable total → only the cap can stop it.
+        payout_pages["n"] += 1
+        return {
+            "payoutRequests": [{"id": f"p{payout_pages['n']}"}],
+            "paginationInfo": {"totalRecords": 10**9},
+        }
+
+    monkeypatch.setattr(cp.CareemClient, "request_json", fake_request_json)
+    result = await client.fetch_payouts(
+        LoadedSession(channel="careem", account_ref=""),
+        since=datetime(2026, 7, 1),
+        until=datetime(2026, 7, 31),
+    )
+    assert payout_pages["n"] == cp._MAX_PAYOUT_PAGES
+    assert len(result.payouts) == cp._MAX_PAYOUT_PAGES
+
+
+# ── session enrichment from account extras (talabat entity, careem city) ──────
+async def test_talabat_enrich_session_pulls_global_entity_from_account(monkeypatch):
+    from app.services.aggregators import session_store as ss
+
+    async def fake_load(_db, _channel, _ref):
+        return SimpleNamespace(extras={"global_entity_id": "TB_KW"})
+
+    monkeypatch.setattr("app.services.aggregators.account_store.load", fake_load)
+    session = ss.LoadedSession(channel="talabat", account_ref="", tokens={})
+    out = await ss.enrich_session(SimpleNamespace(), session)
+    assert out.tokens["global_entity_id"] == "TB_KW"
+
+
+async def test_talabat_enrich_session_is_a_noop_without_extras(monkeypatch):
+    """No extras → the same session object → byte-identical requests as before."""
+    from app.services.aggregators import session_store as ss
+
+    async def fake_load(_db, _channel, _ref):
+        return SimpleNamespace(extras={})
+
+    monkeypatch.setattr("app.services.aggregators.account_store.load", fake_load)
+    session = ss.LoadedSession(channel="talabat", account_ref="", tokens={})
+    out = await ss.enrich_session(SimpleNamespace(), session)
+    assert out is session
+    assert "global_entity_id" not in out.tokens
+
+
+async def test_careem_enrich_session_pulls_city_id_from_account(monkeypatch):
+    from app.services.aggregators import session_store as ss
+
+    async def fake_load(_db, _channel, _ref):
+        return SimpleNamespace(extras={"city_id": "9"})
+
+    monkeypatch.setattr("app.services.aggregators.account_store.load", fake_load)
+    session = ss.LoadedSession(channel="careem", account_ref="", tokens={})
+    out = await ss.enrich_session(SimpleNamespace(), session)
+    assert out.tokens["city_id"] == "9"
+
+
 # ── reconciliation item delta ─────────────────────────────────────────────────
 def _agg_item(qty):
     return SimpleNamespace(grain=GRAIN_LINE, quantity=Decimal(str(qty)))
@@ -615,16 +721,17 @@ def test_noon_publication_lookback_covers_weekly_statements():
     """A 1-day ingest since still discovers statements published ~a week earlier."""
     from datetime import date, datetime, timezone
 
+    from app.core.config import settings
     from app.services.providers.noon_provider import (
-        _PUBLICATION_LOOKBACK_DAYS,
         _in_window,
         _publication_since,
     )
 
+    lookback = settings.AGGREGATOR_NOON_PUBLICATION_LOOKBACK_DAYS
     until = datetime(2026, 8, 27, 19, 0, tzinfo=timezone.utc)
     since = datetime(2026, 8, 26, 19, 0, tzinfo=timezone.utc)
     publish_since = _publication_since(since)
-    assert (until.date() - publish_since.date()).days >= _PUBLICATION_LOOKBACK_DAYS - 1
+    assert (until.date() - publish_since.date()).days >= lookback - 1
     # Latest live statement was 2026-08-22 — outside 1-day, inside 14-day.
     assert not _in_window(date(2026, 8, 22), since, until)
     assert _in_window(date(2026, 8, 22), publish_since, until)
@@ -914,3 +1021,108 @@ def test_deliveroo_multiple_modifier_groups_all_options_collected():
     assert names == {"Chocolate", "Cream", "Berries"}
     berries = next(m for m in item.modifiers if m.name == "Berries")
     assert berries.quantity == Decimal("2")
+
+
+# ── Deliveroo in-page finance ingest (DB mocked) ──────────────────────────────
+
+_DELIVEROO_STATEMENT_CSV = (
+    "Invoice Reference,55501\n"
+    "Period,Aug 2026\n"
+    "\n"
+    "Restaurant Name,Order ID,Delivery Date & Time (UTC),Activity,Note,"
+    "Order Value (د.إ),Adjustment Net (د.إ),"
+    "Deliveroo Commission (د.إ),"
+    "Commission / Adjustment VAT (د.إ),Total Payable\n"
+    "My Restaurant,ORD-1,2026-08-10 10:00:00,,, 50.00,,  -5.00,  -0.25,  44.75\n"
+    "My Restaurant,ORD-2,2026-08-11 12:30:00,,, 80.00,,  -8.00,  -0.40,  71.60\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_ingest_deliveroo_finance_payloads_parses_and_stamps_invoice():
+    """A pushed invoice payload upserts one statement with CSV lines and an
+    archived invoice key (store_statement_invoice mocked)."""
+    import base64 as _b64
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from app.services.aggregators import ingest
+    from app.services.aggregators.statement_docs import StoredStatementInvoice
+
+    payload = {
+        "invoice": {
+            "id": "INV-500",
+            "period_start": "2026-08-01",
+            "period_end": "2026-08-31",
+            "total": {"fractional": 11635},
+            "currency": "AED",
+        },
+        "statement_csv": _DELIVEROO_STATEMENT_CSV,
+        "statement_pdf_b64": _b64.b64encode(b"%PDF-1.4 fake").decode("ascii"),
+    }
+
+    stored = StoredStatementInvoice(
+        object_key="invoices/deliveroo/INV-500/INV-500.pdf",
+        content_type="application/pdf",
+        original_filename="INV-500.pdf",
+        fetched_at=None,
+        size_bytes=13,
+        attachments=None,
+    )
+
+    captured: dict = {}
+
+    async def _capture_upsert(db, channel, statement):
+        captured["channel"] = channel
+        captured["statement"] = statement
+
+    mock_db = MagicMock()
+    with (
+        patch(
+            "app.services.providers.deliveroo_provider.store_statement_invoice",
+            return_value=stored,
+        ),
+        patch.object(
+            ingest, "_upsert_statement", new=AsyncMock(side_effect=_capture_upsert)
+        ),
+    ):
+        statements, lines = await ingest.ingest_deliveroo_finance_payloads(
+            mock_db, [payload]
+        )
+
+    assert statements == 1
+    assert lines > 0
+    assert captured["channel"] == "deliveroo"
+    stmt = captured["statement"]
+    assert stmt.statement_id == "INV-500"
+    assert stmt.invoice_object_key == stored.object_key
+    order_ids = {ln.external_order_id for ln in stmt.lines if ln.external_order_id}
+    assert {"ORD-1", "ORD-2"} <= order_ids
+
+
+@pytest.mark.asyncio
+async def test_ingest_deliveroo_finance_payloads_skips_bad_payload():
+    """A malformed payload is skipped, not fatal to the batch."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from app.services.aggregators import ingest
+
+    good = {
+        "invoice": {"id": "INV-1", "total": {"fractional": 0}, "currency": "AED"},
+        "statement_csv": None,
+        "statement_pdf_b64": None,
+    }
+    mock_db = MagicMock()
+    with (
+        patch(
+            "app.services.providers.deliveroo_provider.store_statement_invoice",
+            return_value=None,
+        ),
+        patch.object(ingest, "_upsert_statement", new=AsyncMock()),
+    ):
+        statements, lines = await ingest.ingest_deliveroo_finance_payloads(
+            mock_db,
+            ["not a dict", good],  # type: ignore[list-item]
+        )
+
+    assert statements == 1
+    assert lines == 0

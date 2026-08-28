@@ -7656,6 +7656,51 @@
         "title": "DayAvailabilityResponse",
         "type": "object"
       },
+      "DeliverooFinancePush": {
+        "description": "A batch of in-page-fetched Deliveroo invoice payloads, pushed in for ingest.\n\nDeliveroo's invoice list replays over httpx, but the invoice download 403s\nbehind Cloudflare, so the bootstrap worker downloads each statement CSV and\nPDF in-page (carrying the browser's `cf_clearance`) and hands the raw\npayloads here. Each payload is one invoice:\n`{\"invoice\": <raw dict>, \"statement_csv\": <text|None>,\n\"statement_pdf_b64\": <b64|None>}`. `deliveroo_provider.parse_pushed_finance`\nturns it into a statement with per-order lines and an archived VAT PDF.",
+        "properties": {
+          "payloads": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Payloads",
+            "type": "array"
+          }
+        },
+        "title": "DeliverooFinancePush",
+        "type": "object"
+      },
+      "DeliverooFinanceResult": {
+        "description": "How many statements and lines the pushed Deliveroo invoice payloads upserted.",
+        "properties": {
+          "lines": {
+            "title": "Lines",
+            "type": "integer"
+          },
+          "statements": {
+            "title": "Statements",
+            "type": "integer"
+          },
+          "truncation_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Truncation Note"
+          }
+        },
+        "required": [
+          "statements",
+          "lines"
+        ],
+        "title": "DeliverooFinanceResult",
+        "type": "object"
+      },
       "DeliveryAreaResponse": {
         "description": "What delivery looks like at a pin, before there is a basket.\n\nSeparate from `/quote` because the questions are different. A quote needs a\ncart, a subtotal and a live courier estimate, and it exists to put a number\non one order. This answers \"what is delivery like where I live\" for a banner\non the homepage and a line on a product card \u2014 pages a customer reaches long\nbefore a cart exists.\n\nCheap on purpose: a point-in-polygon lookup against the cached map and\nnothing else. No courier is called, so it costs no money and adds no latency\nto a page that is mostly images.",
         "properties": {
@@ -23294,6 +23339,383 @@
         "title": "SetAvailabilityRequest",
         "type": "object"
       },
+      "SettlementPayoutInfo": {
+        "description": "The transfer that settled a statement, as far as the payout feed knows.",
+        "properties": {
+          "transfer_amount": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transfer Amount"
+          },
+          "transfer_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transfer Date"
+          },
+          "transfer_id": {
+            "title": "Transfer Id",
+            "type": "string"
+          },
+          "transfer_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transfer Status"
+          }
+        },
+        "required": [
+          "transfer_id"
+        ],
+        "title": "SettlementPayoutInfo",
+        "type": "object"
+      },
+      "SettlementPayoutRollup": {
+        "description": "One transfer against the statements it settled \u2014 the batch-payout check.\n\n`statements_net_total` is the summed declared net payable of the member\nstatements; `variance` is `transfer_amount \u2212 statements_net_total`, ~0 when\none payout exactly clears its batch of statements.",
+        "properties": {
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "flags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Flags",
+            "type": "array"
+          },
+          "statement_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Statement Ids",
+            "type": "array"
+          },
+          "statements_count": {
+            "title": "Statements Count",
+            "type": "integer"
+          },
+          "statements_net_total": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Statements Net Total"
+          },
+          "transfer_amount": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transfer Amount"
+          },
+          "transfer_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transfer Date"
+          },
+          "transfer_id": {
+            "title": "Transfer Id",
+            "type": "string"
+          },
+          "transfer_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transfer Status"
+          },
+          "variance": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variance"
+          },
+          "variance_flag": {
+            "title": "Variance Flag",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "channel",
+          "transfer_id",
+          "statements_count",
+          "variance_flag"
+        ],
+        "title": "SettlementPayoutRollup",
+        "type": "object"
+      },
+      "SettlementReconOut": {
+        "description": "The Layer A read: per-statement rows plus the per-payout rollup.",
+        "properties": {
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "from_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Date"
+          },
+          "payouts": {
+            "items": {
+              "$ref": "#/components/schemas/SettlementPayoutRollup"
+            },
+            "title": "Payouts",
+            "type": "array"
+          },
+          "statements": {
+            "items": {
+              "$ref": "#/components/schemas/SettlementStatementRecon"
+            },
+            "title": "Statements",
+            "type": "array"
+          },
+          "to_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Date"
+          }
+        },
+        "required": [
+          "channel",
+          "statements",
+          "payouts"
+        ],
+        "title": "SettlementReconOut",
+        "type": "object"
+      },
+      "SettlementStatementRecon": {
+        "description": "One statement reconciled across its sales, settlement and payout sides.\n\n`sales_total` sums the orders that settled on this statement;\n`settled_total` sums its order-grain lines; `statement_net_payable` is the\nstatement's own declared figure (null for talabat file-rows, which then\ncarry a `no_statement_total` flag instead of a false variance). Each\nvariance is null when a side is unknown, never a misleading 0.",
+        "properties": {
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
+          "flags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Flags",
+            "type": "array"
+          },
+          "lines_count": {
+            "title": "Lines Count",
+            "type": "integer"
+          },
+          "orders_count": {
+            "title": "Orders Count",
+            "type": "integer"
+          },
+          "orders_promoted": {
+            "title": "Orders Promoted",
+            "type": "integer"
+          },
+          "payment_due_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Due Date"
+          },
+          "payout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SettlementPayoutInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "payout_transfer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payout Transfer Id"
+          },
+          "period_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period End"
+          },
+          "period_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period Start"
+          },
+          "sales_total": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sales Total"
+          },
+          "sales_vs_settled": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sales Vs Settled"
+          },
+          "sales_vs_settled_flag": {
+            "title": "Sales Vs Settled Flag",
+            "type": "boolean"
+          },
+          "settled_total": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settled Total"
+          },
+          "settled_vs_statement": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settled Vs Statement"
+          },
+          "settled_vs_statement_flag": {
+            "title": "Settled Vs Statement Flag",
+            "type": "boolean"
+          },
+          "statement_id": {
+            "title": "Statement Id",
+            "type": "string"
+          },
+          "statement_net_payable": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Statement Net Payable"
+          }
+        },
+        "required": [
+          "channel",
+          "statement_id",
+          "orders_count",
+          "lines_count",
+          "orders_promoted",
+          "sales_vs_settled_flag",
+          "settled_vs_statement_flag"
+        ],
+        "title": "SettlementStatementRecon",
+        "type": "object"
+      },
       "SplitOrderRequest": {
         "properties": {
           "item_ids": {
@@ -29617,6 +30039,66 @@
         ]
       }
     },
+    "/api/v1/aggregators/deliveroo/finance": {
+      "post": {
+        "description": "Ingest a batch of in-page-fetched Deliveroo invoice payloads.\n\nDeliveroo's invoice list replays over httpx, but the invoice download 403s\nbehind Cloudflare, so the bootstrap worker downloads each statement CSV and\nPDF in-page (where the browser's `cf_clearance` applies) and pushes the raw\npayloads here. Each is parsed by `deliveroo_provider.parse_pushed_finance`\ninto a statement (with per-order lines and an archived VAT PDF) and upserted\nexactly as the httpx finance sweep does. Returns the statement and line\ncounts written.",
+        "operationId": "push_deliveroo_finance_api_v1_aggregators_deliveroo_finance_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeliverooFinancePush"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliverooFinanceResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Push Deliveroo Finance",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
     "/api/v1/aggregators/keeta/finance": {
       "post": {
         "description": "Ingest a batch of in-page-fetched Keeta finance payloads.\n\nKeeta's finance data is fetched in-page by the bootstrap worker (where the\nportal's JS signs the request) and pushed here. Each payload is parsed by\n`keeta_provider.parse_finance` into statements and payouts and upserted.\nWhen the payload is only download-task metadata (figures live in PDF invoices),\nthe parse returns empty lists with a truncation note \u2014 the response still\nreturns 200 with zero counts and includes the note so the worker can log it.",
@@ -29861,6 +30343,92 @@
           }
         ],
         "summary": "List Reconciliation",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/reconciliation/settlement": {
+      "get": {
+        "description": "Layer A: per-statement sales\u2194settlement\u2194payout rollup for one channel.\n\nRead-only. For each statement in the window it reports the sales total (the\norders that settled on it), the settlement total (its order-grain lines and\nits own declared net payable), the linked payout, and the two variances;\nplus a per-payout rollup that checks a batch transfer against the summed net\npayable of the statements it cleared.",
+        "operationId": "settlement_reconciliation_report_api_v1_aggregators_reconciliation_settlement_get",
+        "parameters": [
+          {
+            "description": "Aggregator channel to reconcile",
+            "in": "query",
+            "name": "channel",
+            "required": true,
+            "schema": {
+              "description": "Aggregator channel to reconcile",
+              "title": "Channel",
+              "type": "string"
+            }
+          },
+          {
+            "description": "ISO date; include statements from this period",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ISO date; include statements from this period",
+              "title": "From"
+            }
+          },
+          {
+            "description": "ISO date; include statements up to this period",
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ISO date; include statements up to this period",
+              "title": "To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettlementReconOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Settlement Reconciliation Report",
         "tags": [
           "Aggregators"
         ]
@@ -52754,16 +53322,16 @@
     },
     "/api/v1/uploads/image": {
       "delete": {
-        "description": "Delete an image from Cloudflare R2 by key or URL (admin only).",
+        "description": "Delete an image from Google Cloud Storage by key or URL (admin only).",
         "operationId": "delete_image_api_v1_uploads_image_delete",
         "parameters": [
           {
-            "description": "R2 object key or full public URL",
+            "description": "GCS object key or full public URL",
             "in": "query",
             "name": "key",
             "required": true,
             "schema": {
-              "description": "R2 object key or full public URL",
+              "description": "GCS object key or full public URL",
               "title": "Key",
               "type": "string"
             }
@@ -52795,17 +53363,17 @@
         ]
       },
       "post": {
-        "description": "Upload an image to Cloudflare R2 (admin only). Returns public URL.",
+        "description": "Upload an image to Google Cloud Storage (admin only). Returns public URL.",
         "operationId": "upload_image_api_v1_uploads_image_post",
         "parameters": [
           {
-            "description": "R2 folder prefix (e.g. products, categories)",
+            "description": "GCS folder prefix (e.g. products, categories)",
             "in": "query",
             "name": "folder",
             "required": false,
             "schema": {
               "default": "products",
-              "description": "R2 folder prefix (e.g. products, categories)",
+              "description": "GCS folder prefix (e.g. products, categories)",
               "title": "Folder",
               "type": "string"
             }

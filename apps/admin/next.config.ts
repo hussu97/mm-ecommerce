@@ -51,21 +51,13 @@ const nextConfig: NextConfig = {
     // config one. Add the host here whenever the media origin moves.
     remotePatterns: [
       {
-        protocol: "https",
-        hostname: "**.r2.cloudflarestorage.com",
-      },
-      {
-        protocol: "https",
-        hostname: "pub-**.r2.dev",
-      },
-      {
-        // Where the live catalogue's images actually are today: the Foodics
-        // menu import copied them into this bucket.
+        // Where the catalogue's images live: GCS bucket mm-product-images, and
+        // where new admin uploads now go too. Cloudflare R2 was retired.
         protocol: "https",
         hostname: "storage.googleapis.com",
       },
       {
-        // CLOUDFLARE_R2_PUBLIC_URL in production — what new uploads return.
+        // The media CDN alias in front of the same bucket.
         protocol: "https",
         hostname: "media.meltingmomentscakes.com",
       },

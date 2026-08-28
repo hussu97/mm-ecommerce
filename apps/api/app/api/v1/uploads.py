@@ -3,8 +3,6 @@ from __future__ import annotations
 import uuid
 from urllib.parse import urlparse
 
-import boto3
-from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import (
     APIRouter,
     Depends,
@@ -15,6 +13,7 @@ from fastapi import (
 )
 from pydantic import BaseModel
 
+from app.core import object_storage
 from app.core.config import settings
 from app.core.exceptions import BadGatewayError, BadRequestError
 from app.core.images import extension_for, optimize_image
@@ -33,27 +32,17 @@ class UploadResponse(BaseModel):
     key: str
 
 
-def _get_r2_client():
-    return boto3.client(
-        "s3",
-        endpoint_url=settings.CLOUDFLARE_R2_ENDPOINT,
-        aws_access_key_id=settings.CLOUDFLARE_R2_ACCESS_KEY,
-        aws_secret_access_key=settings.CLOUDFLARE_R2_SECRET_KEY,
-        region_name="auto",
-    )
-
-
 @router.post(
     "/image", response_model=UploadResponse, status_code=status.HTTP_201_CREATED
 )
 async def upload_image(
     file: UploadFile = File(...),
     folder: str = Query(
-        "products", description="R2 folder prefix (e.g. products, categories)"
+        "products", description="GCS folder prefix (e.g. products, categories)"
     ),
     _admin: User = Depends(require("catalogue.manage")),
 ):
-    """Upload an image to Cloudflare R2 (admin only). Returns public URL."""
+    """Upload an image to Google Cloud Storage (admin only). Returns public URL."""
     # Validate content type
     content_type = file.content_type or ""
     if content_type not in ALLOWED_CONTENT_TYPES:
@@ -75,24 +64,23 @@ async def upload_image(
     contents, content_type = optimize_image(contents, content_type)
 
     # Generate unique key. The extension has to follow the *re-encoded* type —
-    # a PNG that came back out as JPEG must not be stored under `.png`, or R2
+    # a PNG that came back out as JPEG must not be stored under `.png`, or GCS
     # serves JPEG bytes as `image/png`.
     ext = extension_for(content_type)
     key = f"{folder}/{uuid.uuid4()}{ext}"
 
     try:
-        client = _get_r2_client()
-        client.put_object(
-            Bucket=settings.CLOUDFLARE_R2_BUCKET,
-            Key=key,
-            Body=contents,
-            ContentType=content_type,
-            CacheControl="public, max-age=31536000",
+        object_storage.upload_object(
+            bucket=settings.GCS_IMAGE_BUCKET,
+            key=key,
+            body=contents,
+            content_type=content_type,
+            cache_control="public, max-age=31536000",
         )
-    except (BotoCoreError, ClientError) as e:
+    except Exception as e:
         raise BadGatewayError(f"Failed to upload image: {str(e)}")
 
-    public_url = f"{settings.CLOUDFLARE_R2_PUBLIC_URL.rstrip('/')}/{key}"
+    public_url = object_storage.public_url(settings.GCS_IMAGE_BUCKET, key)
 
     # Build the storefront's derivatives now, while nobody is waiting on them.
     # Whoever uploaded this will see it immediately because their own page view
@@ -105,19 +93,22 @@ async def upload_image(
 
 @router.delete("/image", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_image(
-    key: str = Query(..., description="R2 object key or full public URL"),
+    key: str = Query(..., description="GCS object key or full public URL"),
     _admin: User = Depends(require("catalogue.manage")),
 ):
-    """Delete an image from Cloudflare R2 by key or URL (admin only)."""
+    """Delete an image from Google Cloud Storage by key or URL (admin only)."""
     # Accept either a full URL or a raw key
     if key.startswith("http"):
         parsed = urlparse(key)
         object_key = parsed.path.lstrip("/")
+        # A full public URL is /{bucket}/{key}; strip the leading bucket segment.
+        prefix = f"{settings.GCS_IMAGE_BUCKET}/"
+        if object_key.startswith(prefix):
+            object_key = object_key[len(prefix) :]
     else:
         object_key = key
 
     try:
-        client = _get_r2_client()
-        client.delete_object(Bucket=settings.CLOUDFLARE_R2_BUCKET, Key=object_key)
-    except (BotoCoreError, ClientError) as e:
+        object_storage.delete_object(bucket=settings.GCS_IMAGE_BUCKET, key=object_key)
+    except Exception as e:
         raise BadGatewayError(f"Failed to delete image: {str(e)}")

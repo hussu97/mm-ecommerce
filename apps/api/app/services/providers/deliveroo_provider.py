@@ -57,7 +57,15 @@ from app.services.aggregators.normalized import (
     StatementsResult,
 )
 from app.services.aggregators.session_store import LoadedSession
-from app.services.providers.aggregator_base import BaseAggregatorClient
+from app.services.aggregators.statement_docs import (
+    StoredStatementInvoice,
+    store_statement_invoice,
+)
+from app.services.providers.aggregator_base import (
+    AggregatorAuthError,
+    AggregatorUnavailableError,
+    BaseAggregatorClient,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -552,7 +560,13 @@ class DeliverooClient(BaseAggregatorClient):
                         detail = await self.request_json(
                             session, "GET", f"{_API}/orders/{order_id}"
                         )
-                    except Exception:  # noqa: BLE001 — keep the list row
+                    except AggregatorAuthError:
+                        # A session that dies mid-detail is dead for the whole
+                        # sweep — let it propagate so ingest flips the session to
+                        # needs_bootstrap instead of silently dropping items and
+                        # recording every remaining order as a per-order "gap".
+                        raise
+                    except AggregatorUnavailableError:  # keep the list row
                         detail = None
                         gaps.append(order_id)
                     if isinstance(detail, dict):
@@ -680,6 +694,20 @@ class DeliverooClient(BaseAggregatorClient):
             ).strip()
             or None
         )
+        # Deliveroo withholds customer name/phone from the Partner Hub — the order
+        # detail exposes only a stable numeric consumer id ({"customer": {"id": N}}).
+        # That id is not PII, but it IS consistent across a consumer's orders, so
+        # storing it as a pseudonymous name lets the shop see repeat customers even
+        # though it can never see who they are. A real name (should Deliveroo ever
+        # start returning one) always wins over the id.
+        if customer_name is None:
+            customer_id = _first(
+                customer, "id", "customer_id", "customerId", "consumer_id", "consumerId"
+            ) or _first(
+                detail, "customer_id", "customerId", "consumer_id", "consumerId"
+            )
+            if customer_id is not None:
+                customer_name = f"Deliveroo customer {customer_id}"
         customer_phone = (
             str(
                 _first(customer, "phone", "phone_number", "phoneNumber", "mobile")
@@ -753,13 +781,15 @@ class DeliverooClient(BaseAggregatorClient):
             currency = _first(invoice, "currency", "currency_code") or "AED"
 
             lines: list[StandardStatementLine] = []
-            csv_text, _csv_bytes = await self._invoice_csv(
-                session, org_id, statement_id
-            )
+            csv_text, csv_bytes = await self._invoice_csv(session, org_id, statement_id)
             if csv_text is None:
                 gaps.append(statement_id)
             else:
                 lines = self._statement_lines(statement_id, csv_text)
+
+            invoice_archive = await self._archive_invoice(
+                session, org_id, statement_id, csv_bytes
+            )
 
             statements.append(
                 StandardStatement(
@@ -770,17 +800,114 @@ class DeliverooClient(BaseAggregatorClient):
                     net_payable=net_payable,
                     currency=currency,
                     lines=lines,
+                    invoice_object_key=(
+                        invoice_archive.object_key if invoice_archive else None
+                    ),
+                    invoice_content_type=(
+                        invoice_archive.content_type if invoice_archive else None
+                    ),
+                    invoice_original_filename=(
+                        invoice_archive.original_filename if invoice_archive else None
+                    ),
+                    invoice_fetched_at=(
+                        invoice_archive.fetched_at if invoice_archive else None
+                    ),
+                    invoice_attachments=(
+                        invoice_archive.attachments if invoice_archive else None
+                    ),
                     raw=invoice if isinstance(invoice, dict) else None,
                 )
             )
         return StatementsResult(
             statements=statements,
             truncation_note=(
-                "Deliveroo statement CSVs unavailable for invoices: " + ", ".join(gaps)
+                "Deliveroo statement/invoice downloads blocked (Cloudflare "
+                "challenge or IP-bound cf_clearance) for invoices: "
+                + ", ".join(gaps)
+                + " — per-order lines and VAT PDFs need an in-page/clearance "
+                "capture path, not httpx from the ingest host."
                 if gaps
                 else None
             ),
         )
+
+    async def _archive_invoice(
+        self,
+        session: LoadedSession,
+        org_id: str,
+        statement_id: str,
+        csv_bytes: bytes | None,
+    ) -> StoredStatementInvoice | None:
+        """Persist the settlement VAT document to private R2, best-effort.
+
+        Prefers the statement PDF (the document finance claims VAT from); falls
+        back to the statement CSV bytes we already fetched. Returns None when
+        every download is gated (Cloudflare) or R2 is unconfigured — the finance
+        sweep still records the statement summary. Never raises: an archive
+        failure must not fail the sweep.
+        """
+        pdf_bytes = await self._invoice_file(session, statement_id, "statement_pdf")
+        if pdf_bytes is None:
+            pdf_bytes = await self._invoice_file(session, statement_id, "invoice_pdf")
+        try:
+            if pdf_bytes:
+                return store_statement_invoice(
+                    channel=self.channel,
+                    statement_id=statement_id,
+                    filename=f"{statement_id}.pdf",
+                    body=pdf_bytes,
+                    content_type="application/pdf",
+                    extra_files=(
+                        [(f"{statement_id}.csv", csv_bytes, "text/csv")]
+                        if csv_bytes
+                        else None
+                    ),
+                )
+            if csv_bytes:
+                return store_statement_invoice(
+                    channel=self.channel,
+                    statement_id=statement_id,
+                    filename=f"{statement_id}.csv",
+                    body=csv_bytes,
+                    content_type="text/csv",
+                )
+        except Exception:  # noqa: BLE001 — archival is best-effort
+            logger.exception("deliveroo invoice archive failed for %s", statement_id)
+        return None
+
+    async def _invoice_file(
+        self, session: LoadedSession, invoice_id: str, file_type: str
+    ) -> bytes | None:
+        """Raw bytes of one invoice file_type, or None on a gate/HTML/non-200."""
+        try:
+            response = await self.request_raw(
+                session,
+                "GET",
+                f"{_API}/invoices/{invoice_id}/download",
+                params={
+                    "file_type": file_type,
+                    "invoice_origin": "restaurant-payments",
+                },
+            )
+        except AggregatorUnavailableError:
+            return None
+        status = getattr(response, "status_code", 0)
+        ctype = ""
+        resp_headers = getattr(response, "headers", None)
+        if resp_headers is not None:
+            ctype = str(resp_headers.get("content-type") or "")
+        raw_content = getattr(response, "content", None)
+        if (
+            status != 200
+            or "text/html" in ctype
+            or not isinstance(raw_content, (bytes, bytearray))
+        ):
+            return None
+        body = bytes(raw_content)
+        # A Cloudflare interstitial can come back 200 with an HTML body.
+        if body[:15].lstrip().startswith(b"<!"):
+            return None
+        return body
 
     async def fetch_payouts(
         self, session: LoadedSession, *, since: datetime, until: datetime
@@ -906,6 +1033,140 @@ class DeliverooClient(BaseAggregatorClient):
                     )
                 )
         return lines
+
+    # ── in-page push path (invoice downloads fetched by the bootstrap worker) ──
+    def parse_pushed_finance(self, payload: dict[str, Any]) -> StandardStatement | None:
+        """Turn one in-page-fetched invoice payload into a StandardStatement.
+
+        The invoice DOWNLOAD endpoint 403s over httpx behind Cloudflare, so the
+        bootstrap worker fetches the statement CSV and PDF *in-page* (carrying
+        the browser's `cf_clearance`) and pushes
+        `{"invoice": <raw dict>, "statement_csv": <text|None>,
+        "statement_pdf_b64": <b64|None>}`. This reconstructs the same
+        `StandardStatement` `fetch_statements` builds — the invoice summary from
+        the raw dict, per-order lines from the CSV via the shared
+        `_statement_lines`, and the archived VAT PDF (with the CSV alongside) —
+        so ingest stays thin. Returns None when the payload carries no keyable
+        invoice.
+        """
+        invoice = payload.get("invoice")
+        if not isinstance(invoice, dict):
+            return None
+        invoice_id = _first(invoice, "id", "invoice_id", "reference", "number")
+        if invoice_id is None:
+            return None
+        statement_id = str(invoice_id)
+
+        period_start = _parse_date(
+            _first(invoice, "period_start", "start_date", "from", "billing_start")
+        )
+        period_end = _parse_date(
+            _first(invoice, "period_end", "end_date", "to", "billing_end")
+        )
+        due_date = _parse_date(
+            _first(
+                invoice,
+                "payment_due_date",
+                "due_date",
+                "due_at",
+                "paid_at",
+                "pay_date",
+            )
+        )
+        net_payable = _fils(invoice.get("total")) or _num(
+            _first(invoice, "net_payable", "amount", "amount_due")
+        )
+        currency = _first(invoice, "currency", "currency_code") or "AED"
+
+        csv_text = payload.get("statement_csv")
+        lines = (
+            self._statement_lines(statement_id, csv_text)
+            if isinstance(csv_text, str) and csv_text
+            else []
+        )
+        csv_bytes = (
+            csv_text.encode("utf-8") if isinstance(csv_text, str) and csv_text else None
+        )
+
+        pdf_bytes: bytes | None = None
+        pdf_b64 = payload.get("statement_pdf_b64")
+        if pdf_b64:
+            try:
+                pdf_bytes = base64.b64decode(pdf_b64)
+            except Exception:  # noqa: BLE001 — a bad blob is "no PDF", not a crash
+                logger.warning(
+                    "deliveroo: invalid statement_pdf_b64 for %s", statement_id
+                )
+
+        invoice_archive = self._archive_pushed_invoice(
+            statement_id, pdf_bytes, csv_bytes
+        )
+
+        return StandardStatement(
+            statement_id=statement_id,
+            period_start=_iso(period_start),
+            period_end=_iso(period_end),
+            payment_due_date=_iso(due_date),
+            net_payable=net_payable,
+            currency=currency,
+            lines=lines,
+            invoice_object_key=(
+                invoice_archive.object_key if invoice_archive else None
+            ),
+            invoice_content_type=(
+                invoice_archive.content_type if invoice_archive else None
+            ),
+            invoice_original_filename=(
+                invoice_archive.original_filename if invoice_archive else None
+            ),
+            invoice_fetched_at=(
+                invoice_archive.fetched_at if invoice_archive else None
+            ),
+            invoice_attachments=(
+                invoice_archive.attachments if invoice_archive else None
+            ),
+            raw=invoice,
+        )
+
+    def _archive_pushed_invoice(
+        self,
+        statement_id: str,
+        pdf_bytes: bytes | None,
+        csv_bytes: bytes | None,
+    ) -> StoredStatementInvoice | None:
+        """Persist worker-fetched invoice bytes to private GCS, best-effort.
+
+        Prefers the statement PDF (the VAT document) with the CSV alongside;
+        falls back to the CSV alone. Never raises — an archive failure must not
+        fail the ingest.
+        """
+        try:
+            if pdf_bytes:
+                return store_statement_invoice(
+                    channel=self.channel,
+                    statement_id=statement_id,
+                    filename=f"{statement_id}.pdf",
+                    body=pdf_bytes,
+                    content_type="application/pdf",
+                    extra_files=(
+                        [(f"{statement_id}.csv", csv_bytes, "text/csv")]
+                        if csv_bytes
+                        else None
+                    ),
+                )
+            if csv_bytes:
+                return store_statement_invoice(
+                    channel=self.channel,
+                    statement_id=statement_id,
+                    filename=f"{statement_id}.csv",
+                    body=csv_bytes,
+                    content_type="text/csv",
+                )
+        except Exception:  # noqa: BLE001 — archival is best-effort
+            logger.exception(
+                "deliveroo pushed invoice archive failed for %s", statement_id
+            )
+        return None
 
 
 #: The module-level singleton, matching the careem/grubops/foodics providers —

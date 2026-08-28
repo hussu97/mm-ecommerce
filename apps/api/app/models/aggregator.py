@@ -573,10 +573,23 @@ class AggregatorStatement(Base, UUIDMixin, TimestampMixin):
     total_fees: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     total_vat: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    #: The payout that settled this statement, resolved by the rollup in
+    #: `ingest.link_statements_to_payouts`. One payout pays several statements at
+    #: once (a marketplace batches every statement due since the last transfer),
+    #: so the FK lives here — many statements → one `aggregator_payout.transfer_id`
+    #: — not on the payout, which could only name one. This is the payments leg of
+    #: the reconciliation chain: payout ← statement ← line ← order ← mm_order.
+    #: Not independently indexed: the composite `ix_aggregator_statement_payout
+    #: (channel, payout_transfer_id)` created in migration 161 already serves the
+    #: only lookup (`link_statements_to_payouts` filters channel + this column), so
+    #: a single-column `index=True` here would just be a redundant index the
+    #: migration never builds — i.e. model↔DB drift (CLAUDE.md §8).
+    payout_transfer_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     #: Marketplace outlet when the statement is per-branch (Talabat detailed).
     external_outlet_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    #: Private R2 object key for the archived settlement invoice
-    #: (`aggregator-statements/{channel}/{statement_id}/…`). Not a public URL.
+    #: Private GCS object key for the archived settlement invoice
+    #: (`invoices/{channel}/{statement_id}/…` in GCS_INVOICE_BUCKET). Not a public
+    #: URL — served via a short-lived signed URL.
     invoice_object_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     invoice_content_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
     invoice_original_filename: Mapped[str | None] = mapped_column(

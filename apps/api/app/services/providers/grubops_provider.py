@@ -29,8 +29,8 @@ written and then not used.
 
 `USER_PASSWORD_AUTH` against the pool directly is what the app is configured for
 — no SRP, no MFA challenge, no hosted-UI redirect — so this is a plain POST to
-`cognito-idp` and needs no AWS SDK. `httpx` is already here; boto3 is not, and
-adding it to sign an unsigned public call would be a dependency for nothing.
+`cognito-idp` and needs no AWS SDK. `httpx` is already here; an AWS SDK is not,
+and adding one to sign an unsigned public call would be a dependency for nothing.
 """
 
 from __future__ import annotations

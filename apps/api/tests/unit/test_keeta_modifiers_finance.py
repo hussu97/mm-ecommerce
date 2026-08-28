@@ -188,6 +188,189 @@ def test_parse_orders_item_no_modifiers_gives_empty_list():
     assert item.modifiers_text is None
 
 
+# ── 2b. real getOrders envelope: customer + numeric status decode ────────────
+# Trimmed from apps/aggregator-bootstrap/.aggregator-sessions/keeta-audit/
+# orders_sample.json (order data.list[0]) — real field spellings: baseOrder with
+# numeric `status`/`openPrivacyNumber`, envelope-level `recipientInfo`/`userInfo`,
+# and a `products[]` line carrying empty `groups`/`spuPvList` (as every real line
+# in the sample does).
+_REAL_ORDER_ENVELOPE = {
+    "code": 0,
+    "message": "success",
+    "data": {
+        "pageNum": 1,
+        "totalCount": 1,
+        "list": [
+            {
+                "baseOrder": {
+                    "orderViewId": 5047843723786410,
+                    "orderViewIdStr": "5047843723786410",
+                    "status": 30,
+                    "ctime": 1787821408351,
+                    "currency": "AED",
+                    "openPrivacyNumber": 0,
+                },
+                "merchantOrder": {
+                    "orderViewIdStr": "5047843723786410",
+                    "shopId": 1644336388,
+                    "shopName": "Melting Moments",
+                    "status": 30,
+                },
+                "products": [
+                    {
+                        "spuId": 99583665,
+                        "skuId": 113520023,
+                        "count": 1,
+                        "price": 4000,
+                        "name": "Nutella Cookie Melt (250 grams)",
+                        "currency": "AED",
+                        "spuPvList": [],
+                        "groups": [],
+                        "priceWithGroup": {"amount": 4000, "unitPrice": 4000},
+                    }
+                ],
+                "recipientInfo": {
+                    "name": "J4P773781744",
+                    "phone": "521461759",
+                    "interCode": "971",
+                    "privacyPhone": "",
+                },
+                "userInfo": {
+                    "userName": "***",
+                    "userPhone": "52*****59",
+                    "phone": "971******1759",
+                    "interCode": "971",
+                },
+                "feeDtl": {"merchantFee": {"commission": 900, "total": 2620}},
+            }
+        ],
+    },
+}
+
+
+def test_parse_orders_real_envelope_decodes_numeric_status():
+    orders = keeta.parse_orders(_REAL_ORDER_ENVELOPE)
+    assert len(orders) == 1
+    # baseOrder.status 30 → confirmed (lifecycle 30 per merchantOrderTraces).
+    assert orders[0].status == "confirmed"
+
+
+def test_parse_orders_real_envelope_populates_customer():
+    order = keeta.parse_orders(_REAL_ORDER_ENVELOPE)[0]
+    # recipientInfo.name is the recipient identity in the real payload.
+    assert order.customer_name == "J4P773781744"
+    # recipient phone prefixed with its interCode when unmasked.
+    assert order.customer_phone == "+971521461759"
+
+
+def test_parse_orders_real_envelope_empty_option_arrays_no_modifiers():
+    item = keeta.parse_orders(_REAL_ORDER_ENVELOPE)[0].items[0]
+    assert item.item_name == "Nutella Cookie Melt (250 grams)"
+    # groups[]/spuPvList[] are empty in the sample → no invented modifiers.
+    assert item.modifiers == []
+    assert item.modifiers_text is None
+
+
+def test_status_code_40_decodes_to_completed():
+    payload = {
+        "code": 0,
+        "data": {
+            "list": [
+                {
+                    "baseOrder": {"orderViewIdStr": "ORD-40", "status": 40},
+                    "merchantOrder": {"shopId": "shop-1", "orderAmount": 4000},
+                    "products": [{"name": "Cookie", "count": 1, "price": 4000}],
+                }
+            ]
+        },
+    }
+    assert keeta.parse_orders(payload)[0].status == "completed"
+
+
+def test_unknown_numeric_status_falls_back_to_raw():
+    payload = {
+        "code": 0,
+        "data": {
+            "list": [
+                {
+                    "baseOrder": {"orderViewIdStr": "ORD-99", "status": 99},
+                    "merchantOrder": {"shopId": "shop-1", "orderAmount": 4000},
+                    "products": [{"name": "Cookie", "count": 1, "price": 4000}],
+                }
+            ]
+        },
+    }
+    # 99 is not evidenced in the sample → kept as the raw normalized string.
+    assert keeta.parse_orders(payload)[0].status == "99"
+
+
+def test_parse_orders_masked_recipient_phone_not_intercode_prefixed():
+    payload = {
+        "code": 0,
+        "data": {
+            "list": [
+                {
+                    "baseOrder": {"orderViewIdStr": "ORD-M", "status": 40},
+                    "merchantOrder": {"shopId": "shop-1", "orderAmount": 4000},
+                    "products": [{"name": "Cookie", "count": 1, "price": 4000}],
+                    "recipientInfo": {
+                        "name": "***",
+                        "phone": "52*****75",
+                        "interCode": "971",
+                    },
+                }
+            ]
+        },
+    }
+    order = keeta.parse_orders(payload)[0]
+    # A masked number is stored verbatim, never fused with the interCode.
+    assert order.customer_phone == "52*****75"
+
+
+def test_parse_orders_structured_modifiers_from_groups():
+    """Real Keeta options live under products[].groups[] (empty in the sample);
+    exercise the group→leaf-option flattening with a Meituan-shaped group."""
+    payload = {
+        "code": 0,
+        "data": {
+            "list": [
+                {
+                    "baseOrder": {"orderViewIdStr": "ORD-G", "status": 40},
+                    "merchantOrder": {"shopId": "shop-1", "orderAmount": 6000},
+                    "products": [
+                        {
+                            "name": "Build-a-Box",
+                            "count": 1,
+                            "price": 6000,
+                            "skuId": "sku-box",
+                            "spuPvList": [],
+                            "groups": [
+                                {
+                                    "name": "Add-ons",
+                                    "foods": [
+                                        {
+                                            "name": "Extra Cookie",
+                                            "count": 2,
+                                            "price": 500,
+                                        },
+                                        {"name": "Gift Wrap", "count": 1},
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        },
+    }
+    item = keeta.parse_orders(payload)[0].items[0]
+    names = {m.name for m in item.modifiers}
+    assert names == {"Extra Cookie", "Gift Wrap"}
+    extra = next(m for m in item.modifiers if m.name == "Extra Cookie")
+    assert extra.quantity == Decimal("2")
+    assert item.modifiers_text is not None
+
+
 # ── 3. parse_finance ─────────────────────────────────────────────────────────
 
 _FINANCE_PAYLOAD_WITH_ROWS = {
@@ -341,3 +524,264 @@ async def test_ingest_keeta_finance_payloads_truncation_only_returns_zeros():
     assert pays == 0
     assert mock_stmt.call_count == 0
     assert mock_payout.call_count == 0
+
+
+# ── 5. finance FILE payloads (real bill XLSX + commission ZIP) ────────────────
+# These exercise the endpoint→file path the bootstrap worker feeds: the weekly
+# billing-report XLSX becomes per-order statement lines, and the monthly
+# commission-invoice ZIP is archived onto the statement. The XLSX is built with
+# the REAL "Order Summary" column layout and real sample values (rows 4–5 of the
+# downloaded bill.xlsx), so the column mapping is asserted against genuine data.
+import base64 as _base64  # noqa: E402
+import io as _io  # noqa: E402
+import zipfile as _zipfile  # noqa: E402
+from datetime import datetime as _dt  # noqa: E402
+from datetime import timezone as _tz  # noqa: E402
+
+# 1-indexed column → value, transcribed from the real bill.xlsx "Order Summary".
+_REAL_BILL_ROWS = [
+    {
+        4: "1644189187",
+        6: "15 Aug 2026",
+        7: "2026.08.15~2026.08.21",
+        9: "4927840114700030",
+        10: "Completed",
+        16: 40.0,  # Original item price (gross, AED major units)
+        21: -9.0,  # Subtotal of commission fee
+        22: -0.8,  # Bank fee
+        33: 26.2,  # Payable to Restaurant (net)
+        35: -9.0,  # Total Commission
+        36: "25%",
+    },
+    {
+        4: "1644189187",
+        6: "16 Aug 2026",
+        9: "4927840540851974",
+        10: "Completed",
+        16: 40.0,
+        22: -0.64,
+        33: 26.36,
+        # col 35 (Total Commission) intentionally left blank to assert that a
+        # missing money cell yields no fabricated commission line.
+    },
+]
+
+
+def _build_bill_xlsx_b64() -> str:
+    """A minimal 'Order Summary' workbook with header on row 3, data from row 4."""
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Order Summary"
+    # Rows 1–3 are titles/headers in the real file; only their presence matters.
+    ws.append(["Order information"])
+    ws.append([])
+    ws.append(["Brand Name"])  # header row 3
+    for spec in _REAL_BILL_ROWS:
+        values = [None] * 40
+        for col, value in spec.items():
+            values[col - 1] = value
+        ws.append(values)
+    buffer = _io.BytesIO()
+    wb.save(buffer)
+    return _base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def test_parse_finance_bill_xlsx_yields_statement_with_outlet_and_period():
+    payload = {
+        "statement_id": "DT2091796450566606888",
+        "taskViewId": "DT2091796450566606888",
+        "shopId": "1644189187",
+        "displayTimeText": "15 Aug 2026 ~ 22 Aug 2026",
+        "fileScene": "Billing report - Restaurant[1644189187]",
+        "bill_xlsx_b64": _build_bill_xlsx_b64(),
+    }
+    result = keeta.parse_finance(payload)
+
+    assert result.truncation_note is None
+    assert len(result.statements) == 1
+    stmt = result.statements[0]
+    assert stmt.statement_id == "DT2091796450566606888"
+    assert stmt.external_outlet_id == "1644189187"
+    assert stmt.period_start == "2026-08-15"
+    assert stmt.period_end == "2026-08-22"
+    assert stmt.currency == "AED"
+    # The bytes are stripped out of the archived raw JSONB.
+    assert "bill_xlsx_b64" not in (stmt.raw or {})
+
+
+def test_parse_finance_bill_xlsx_lines_map_real_columns():
+    payload = {
+        "statement_id": "DT2091796450566606888",
+        "shopId": "1644189187",
+        "displayTimeText": "15 Aug 2026 ~ 22 Aug 2026",
+        "bill_xlsx_b64": _build_bill_xlsx_b64(),
+    }
+    stmt = keeta.parse_finance(payload).statements[0]
+
+    lines = {(ln.external_order_id, ln.fee_category): ln for ln in stmt.lines}
+
+    # First order: all four money columns present → four distinct lines.
+    order1 = "4927840114700030"
+    assert lines[(order1, "gross_sales")].amount == Decimal("40.0")
+    assert lines[(order1, "commission")].amount == Decimal("-9.0")
+    assert lines[(order1, "bank_fee")].amount == Decimal("-0.8")
+    assert lines[(order1, "net_payable")].amount == Decimal("26.2")
+    # external_order_id is the join key to sales; line_date from Transaction date.
+    assert lines[(order1, "gross_sales")].external_order_id == order1
+    assert lines[(order1, "gross_sales")].line_date == "2026-08-15"
+    assert lines[(order1, "gross_sales")].currency == "AED"
+
+    # Second order carries no commission column → no commission line fabricated.
+    order2 = "4927840540851974"
+    assert (order2, "gross_sales") in lines
+    assert lines[(order2, "bank_fee")].amount == Decimal("-0.64")
+    assert lines[(order2, "net_payable")].amount == Decimal("26.36")
+    assert (order2, "commission") not in lines
+
+
+def test_parse_finance_commission_zip_is_archived_and_stamped():
+    from app.services.aggregators.statement_docs import StoredStatementInvoice
+
+    zip_buffer = _io.BytesIO()
+    with _zipfile.ZipFile(zip_buffer, "w") as zf:
+        zf.writestr("by_client-invoice-clientId[330066]-202607.pdf", b"%PDF-1.4 fake")
+    zip_b64 = _base64.b64encode(zip_buffer.getvalue()).decode("ascii")
+
+    payload = {
+        "statement_id": "KEETA_COMMISSION_202607",
+        "time": 202607,
+        "fileScene": "Commission invoice",
+        "invoice_zip_b64": zip_b64,
+    }
+
+    stored = StoredStatementInvoice(
+        object_key="aggregator-statements/keeta/KEETA_COMMISSION_202607/inv.zip",
+        content_type="application/zip",
+        original_filename="KEETA_COMMISSION_202607.zip",
+        fetched_at=_dt(2026, 7, 1, tzinfo=_tz.utc),
+        size_bytes=42,
+    )
+    with patch(
+        "app.services.aggregators.statement_docs.store_statement_invoice",
+        return_value=stored,
+    ) as mock_store:
+        result = keeta.parse_finance(payload)
+
+    assert mock_store.call_count == 1
+    assert len(result.statements) == 1
+    stmt = result.statements[0]
+    assert stmt.statement_id == "KEETA_COMMISSION_202607"
+    # Period synthesised from the YYYYMM `time`.
+    assert stmt.period_start == "2026-07-01"
+    assert stmt.period_end == "2026-07-31"
+    assert stmt.invoice_object_key == stored.object_key
+    assert stmt.invoice_content_type == "application/zip"
+    assert stmt.invoice_fetched_at == stored.fetched_at
+
+
+# ── 6. bill xlsx → weekly settlement PAYOUT (the "Invoice Details" sheet) ──────
+# The weekly TOTAL Keeta actually transfers lives in the bill's "Invoice Details"
+# sheet (net "Payable to Restaurant" per billing cycle), which the per-order
+# "Order Summary" parser never sums. These tests build the payload from the REAL
+# downloaded bill.xlsx bytes so the summed total, cycle-end date, status and the
+# stable transfer_id are asserted against genuine data.
+import pathlib as _pathlib  # noqa: E402
+
+_REAL_BILL_PATH = _pathlib.Path(
+    "/private/tmp/claude-502/"
+    "-Users-hussainabbasi-Documents-GitHub-mm-apps-mm-ecommerce/"
+    "fe338c4b-c9bb-4ec6-b7d2-d92403ab3dcd/scratchpad/bill.xlsx"
+)
+
+
+def _real_bill_xlsx_b64() -> str:
+    return _base64.b64encode(_REAL_BILL_PATH.read_bytes()).decode("ascii")
+
+
+def _real_bill_payload() -> dict:
+    return {
+        "statement_id": "DT2091796450566606888",
+        "taskViewId": "DT2091796450566606888",
+        "shopId": "1644189187",
+        "displayTimeText": "15 Aug 2026 ~ 22 Aug 2026",
+        "fileScene": "Billing report - Restaurant[1644189187]",
+        "bill_xlsx_b64": _real_bill_xlsx_b64(),
+    }
+
+
+@pytest.mark.skipif(
+    not _REAL_BILL_PATH.exists(), reason="real bill.xlsx fixture not present"
+)
+def test_parse_finance_bill_xlsx_settled_payout_sums_payable():
+    """The settled billing cycle yields one payout summing "Payable to Restaurant"."""
+    result = keeta.parse_finance(_real_bill_payload())
+
+    settled = [p for p in result.payouts if p.transfer_status == "settled"]
+    assert len(settled) == 1
+    payout = settled[0]
+    # 247.23+74.24+79.58+78.68+154.42+79.62+127.96 over the settled cycle rows.
+    assert payout.transfer_amount == Decimal("841.73")
+    # Cycle end (2026.08.15~2026.08.21) drives date, due date and the id suffix.
+    assert payout.transfer_date == "2026-08-21"
+    assert payout.payment_due_date == "2026-08-21"
+    assert payout.transfer_id == "KEETA_BILL_1644189187_2026-08-21"
+    assert payout.currency == "AED"
+    # taskViewId is the payment reference.
+    assert payout.payment_reference == "DT2091796450566606888"
+
+
+@pytest.mark.skipif(
+    not _REAL_BILL_PATH.exists(), reason="real bill.xlsx fixture not present"
+)
+def test_parse_finance_bill_xlsx_payout_couples_to_statement():
+    """Each bill payout carries the same statement_id as the weekly statement."""
+    result = keeta.parse_finance(_real_bill_payload())
+
+    assert len(result.statements) == 1
+    stmt = result.statements[0]
+    assert result.payouts, "expected at least one weekly payout"
+    for payout in result.payouts:
+        assert payout.statement_id == stmt.statement_id == "DT2091796450566606888"
+
+
+@pytest.mark.skipif(
+    not _REAL_BILL_PATH.exists(), reason="real bill.xlsx fixture not present"
+)
+def test_parse_finance_bill_xlsx_pending_cycle_is_pending_and_keyed_separately():
+    """The pending billing cycle is its own payout, marked pending, not settled."""
+    result = keeta.parse_finance(_real_bill_payload())
+
+    pending = [p for p in result.payouts if p.transfer_status == "pending"]
+    assert len(pending) == 1
+    payout = pending[0]
+    # The single "Settlement pending" row (cycle 2026.08.22~2026.08.31).
+    assert payout.transfer_amount == Decimal("322.97")
+    assert payout.transfer_date == "2026-08-31"
+    assert payout.transfer_id == "KEETA_BILL_1644189187_2026-08-31"
+    # Two distinct billing cycles → two distinct, stable transfer ids.
+    transfer_ids = {p.transfer_id for p in result.payouts}
+    assert len(transfer_ids) == len(result.payouts) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not _REAL_BILL_PATH.exists(), reason="real bill.xlsx fixture not present"
+)
+async def test_ingest_keeta_bill_xlsx_upserts_statement_and_payouts():
+    """The bill payload upserts one statement and one payout per billing cycle."""
+    from app.services.aggregators import ingest
+
+    mock_db = MagicMock()
+    with (
+        patch.object(ingest, "_upsert_statement", new_callable=AsyncMock),
+        patch.object(ingest, "_upsert_payout", new_callable=AsyncMock) as mock_payout,
+    ):
+        stmts, pays = await ingest.ingest_keeta_finance_payloads(
+            mock_db, [_real_bill_payload()]
+        )
+
+    assert stmts == 1
+    assert pays == 2
+    assert mock_payout.call_count == 2

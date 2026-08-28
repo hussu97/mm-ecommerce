@@ -128,12 +128,13 @@ class Settings(BaseSettings):
     RESEND_API_KEY: str = ""
     FROM_EMAIL: str = "noreply@meltingmomentscakes.com"
 
-    # ── Cloudflare R2 (object storage) ───────────────────────────────────────
-    CLOUDFLARE_R2_ACCESS_KEY: str = ""
-    CLOUDFLARE_R2_SECRET_KEY: str = ""
-    CLOUDFLARE_R2_BUCKET: str = "melting-moments-cakes"
-    CLOUDFLARE_R2_ENDPOINT: str = ""
-    CLOUDFLARE_R2_PUBLIC_URL: str = ""
+    # ── Google Cloud Storage (object storage) ────────────────────────────────
+    # Public-read bucket serving product images at
+    # https://storage.googleapis.com/{bucket}/{key}.
+    GCS_IMAGE_BUCKET: str = "mm-product-images"
+    # Private bucket (uniform access, public-access-prevention) for invoices and
+    # other finance/data documents. Access is via ADC (the VM service account).
+    GCS_INVOICE_BUCKET: str = "melting-moments-data"
 
     # ── Tabby (BNPL) ─────────────────────────────────────────────────────────
     TABBY_API_KEY: str = ""
@@ -424,6 +425,20 @@ class Settings(BaseSettings):
     #: gap between what is mirrored and what becomes a real MM order. Kept at 1 day
     #: for now (writes are idempotent, so re-pulling is free); widen it as we scale.
     AGGREGATOR_LOOKBACK_DAYS: int = 1
+    #: How far back promotion (and the mm-order / statement-line linkage it fills)
+    #: reaches, SEPARATE from the sales lookback. Settlement statements post days
+    #: to weeks after the sale, and a statement line can only link to its MM order
+    #: once that order has been promoted — so promotion must cover at least the
+    #: statement publication window, not just the 1-day sales window, or the
+    #: payout→statement→line→order→mm chain never closes for anything older than a
+    #: day. Idempotent, so a wider window only re-touches rows. 30 days comfortably
+    #: covers every marketplace's settlement cadence.
+    AGGREGATOR_PROMOTE_LOOKBACK_DAYS: int = 30
+    #: Noon publishes wallet statements ~weekly, so its finance discovery widens
+    #: the shared 1-day lookback to at least one publish cycle (else a nightly
+    #: finance pass almost always lands on a day with no statement publication and
+    #: looks empty). Marketplace-cadence knob, not a per-run dial.
+    AGGREGATOR_NOON_PUBLICATION_LOOKBACK_DAYS: int = 14
     AGGREGATOR_TIMEOUT_SECONDS: float = 20.0
     #: Ceiling on outbound calls to each marketplace. PerimeterX/Akamai score
     #: bursts; the sales sweep is hourly so 1 req/s is ample. 0 disables it.
@@ -585,10 +600,6 @@ class Settings(BaseSettings):
             "STRIPE_SECRET_KEY": self.STRIPE_SECRET_KEY,
             "STRIPE_WEBHOOK_SECRET": self.STRIPE_WEBHOOK_SECRET,
             "RESEND_API_KEY": self.RESEND_API_KEY,
-            "CLOUDFLARE_R2_ACCESS_KEY": self.CLOUDFLARE_R2_ACCESS_KEY,
-            "CLOUDFLARE_R2_SECRET_KEY": self.CLOUDFLARE_R2_SECRET_KEY,
-            "CLOUDFLARE_R2_ENDPOINT": self.CLOUDFLARE_R2_ENDPOINT,
-            "CLOUDFLARE_R2_PUBLIC_URL": self.CLOUDFLARE_R2_PUBLIC_URL,
         }
         for name, value in required.items():
             if not value:

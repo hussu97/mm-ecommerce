@@ -69,6 +69,7 @@ from app.services.aggregators import reconcile
 from app.services.aggregators.modifiers import modifiers_from_json
 from app.services.catalog import external_item_map_service
 from app.services.orders import order_fees, order_lifecycle
+from app.services.orders.order_pricing import VAT_RATE
 
 logger = logging.getLogger(__name__)
 
@@ -170,9 +171,26 @@ def _money_fields(agg: AggregatorOrder) -> dict:
         "aggregator_delivery_fee": money(agg.delivery_fee or Decimal("0")),
         "low_order_fee": Decimal("0"),
         "total": total,
-        "vat_rate": Decimal("0.05") if vat > 0 else Decimal("0"),
+        "vat_rate": VAT_RATE if vat > 0 else Decimal("0"),
         "vat_amount": vat,
         "total_excl_vat": excl,
+    }
+
+
+def _actual_fee_overrides(agg: AggregatorOrder) -> dict:
+    """The marketplace's own settled figures, when it has reported them.
+
+    `commission_amount` / `payment_fee` on the aggregator order are the fees the
+    marketplace ACTUALLY took, read off its statement — dynamic, per-order, and
+    null until the order settles. Handed to `order_fees.stamp`, each non-null one
+    overrides the static configured-rate estimate on the MM order, so a promoted
+    order's P&L reflects the real cut once it is known and the modelled cut until
+    then. This is the fee half of the sales↔statement coupling reaching the MM
+    order.
+    """
+    return {
+        "actual_commission": agg.commission_amount,
+        "actual_payment_fee": agg.payment_fee,
     }
 
 
@@ -413,7 +431,9 @@ def _display_code(external_reference: str | None) -> str | None:
     return ext[-4:]
 
 
-async def _build_order(db: AsyncSession, agg: AggregatorOrder, label: str) -> Order:
+async def _build_order(
+    db: AsyncSession, agg: AggregatorOrder, label: str, *, draw_stock: bool
+) -> Order:
     order = Order(
         order_number=await _order_number(db),
         user_id=None,
@@ -446,10 +466,15 @@ async def _build_order(db: AsyncSession, agg: AggregatorOrder, label: str) -> Or
     # Load the collection now: driving status to cancelled walks order.items in
     # `_move_stock`, and an async lazy-load there would be a MissingGreenlet.
     await db.refresh(order, ["items"])
-    # Take the sale off the shelf for its stock-tracked lines. On creation only;
-    # a cancellation status below restores it via the lifecycle (net zero for an
-    # order that arrives already cancelled).
-    await _decrement_stock(db, order.id)
+    # Take the sale off the shelf for its stock-tracked lines. On creation only,
+    # and ONLY for an order inside the near-realtime sales window (`draw_stock`):
+    # promotion now reaches back over the wider settlement window to close the
+    # payout→statement→line→order→mm chain, but drawing stock for weeks-old
+    # backfilled orders would corrupt inventory (the stock left the shelf when
+    # the order was fresh, not now). A cancellation status below restores it via
+    # the lifecycle (net zero for an order that arrives already cancelled).
+    if draw_stock:
+        await _decrement_stock(db, order.id)
     if (agg.vat_amount or 0) > 0:
         fields = _money_fields(agg)
         db.add(
@@ -463,7 +488,7 @@ async def _build_order(db: AsyncSession, agg: AggregatorOrder, label: str) -> Or
             )
         )
         await db.flush()
-    await order_fees.stamp(db, order)
+    await order_fees.stamp(db, order, **_actual_fee_overrides(agg))
     await _drive_status(db, order, agg)
     return order
 
@@ -474,7 +499,7 @@ async def _refresh_order(db: AsyncSession, order: Order, agg: AggregatorOrder) -
     for field, value in _money_fields(agg).items():
         setattr(order, field, value)
     await db.flush()
-    await order_fees.stamp(db, order)
+    await order_fees.stamp(db, order, **_actual_fee_overrides(agg))
     await _drive_status(db, order, agg)
 
 
@@ -497,16 +522,31 @@ async def _backfill_statement_lines(
     )
 
 
-async def promote_order(db: AsyncSession, agg: AggregatorOrder) -> Order | None:
+async def promote_order(
+    db: AsyncSession, agg: AggregatorOrder, *, draw_stock: bool = True
+) -> Order | None:
     """Create or update the MM order for one aggregator order, honouring the
-    per-branch ownership rules. Returns the MM order, or None when skipped."""
+    per-branch ownership rules. Returns the MM order, or None when skipped.
+
+    `draw_stock` gates the on-creation inventory decrement to the near-realtime
+    sales window — a backfilled order (older than the sales lookback, promoted
+    only to close the reconciliation chain) is filed without moving stock.
+    """
     if agg.branch_id is None:
         return None  # cannot file an order without a branch
 
     label = reconcile.CHANNEL_GRUBOPS_LABEL.get(agg.channel, agg.channel)
 
     # Barsha/Sharjah: GrubOps/Foodics owns the order when it exists. Link to it so
-    # the association is recorded, but never create or edit it here.
+    # the association is recorded, and never create it or touch its items/status
+    # here. The one exception, and it is deliberate: once the marketplace settles
+    # the order we overlay the ACTUAL commission / payment fee it charged onto the
+    # order's fee columns (only those), because the GrubOps ingest could only
+    # stamp the static configured-rate estimate and the real cut is what makes the
+    # P&L honest. It is a null-guarded overlay — nothing happens until a statement
+    # reports a figure — and the reconciliation recomputes its own modelled
+    # estimate rather than reading these columns, so the variance check is not
+    # blinded by the overlay.
     if await reconcile._branch_has_grubops(db, agg.branch_id):
         grubops_order = await reconcile._find_mm_order(
             db, agg.channel, agg.external_order_id
@@ -514,11 +554,16 @@ async def promote_order(db: AsyncSession, agg: AggregatorOrder) -> Order | None:
         if grubops_order is not None:
             agg.mm_order_id = grubops_order.id
             agg.promoted_at = utcnow()
+            await _backfill_statement_lines(
+                db, agg.channel, agg.external_order_id, grubops_order.id
+            )
+            if agg.commission_amount is not None or agg.payment_fee is not None:
+                await order_fees.stamp(db, grubops_order, **_actual_fee_overrides(agg))
             return grubops_order
 
     existing = await _find_convergence_order(db, agg.external_order_id)
     if existing is None:
-        order = await _build_order(db, agg, label)
+        order = await _build_order(db, agg, label, draw_stock=draw_stock)
     else:
         await db.refresh(existing, ["items"])
         await _refresh_order(db, existing, agg)
@@ -534,18 +579,28 @@ async def promote_order(db: AsyncSession, agg: AggregatorOrder) -> Order | None:
 async def promote_channel(db: AsyncSession, channel: str) -> int:
     """Promote the channel's recent new-or-changed orders. Returns MM orders touched.
 
-    Windowed to the last `AGGREGATOR_LOOKBACK_DAYS` (by business date) — the same
-    single window the sweep uses, so what is mirrored and what becomes a real MM
-    order stay in lockstep and a first run never backfills history into
-    stock-affecting orders. Widen the window as we scale. Incremental within it,
-    like `reconcile_channel`: an order is (re)promoted only when it has no
-    `promoted_at` yet or its `updated_at` has advanced past it. Idempotent and safe
-    to re-run — the convergence key means a re-run updates rather than duplicates.
-    A single order's failure is logged and does not stop the pass.
+    Windowed by business date to `AGGREGATOR_PROMOTE_LOOKBACK_DAYS`, which is
+    SEPARATE from and wider than the sales lookback: a settlement statement posts
+    days-to-weeks after the sale, and a statement line only links to its MM order
+    once that order is promoted — so promotion has to reach back over the whole
+    settlement window or the payout→statement→line→order→mm chain never closes for
+    anything older than the sales window (this is why a 1-day promotion left every
+    statement line unlinked). Stock, by contrast, is drawn only for orders inside
+    the tight sales window (`draw_stock`) — a weeks-old backfill is filed for
+    linkage without moving inventory. Incremental within the window, like
+    `reconcile_channel`: an order is (re)promoted only when it has no `promoted_at`
+    yet or its `updated_at` has advanced past it. Idempotent and safe to re-run —
+    the convergence key means a re-run updates rather than duplicates. A single
+    order's failure is logged and does not stop the pass.
     """
+    today = datetime.now(_TZ).date()
     cutoff = (
-        datetime.now(_TZ).date()
-        - timedelta(days=max(settings.AGGREGATOR_LOOKBACK_DAYS, 0))
+        today - timedelta(days=max(settings.AGGREGATOR_PROMOTE_LOOKBACK_DAYS, 0))
+    ).isoformat()
+    #: Orders on or after this date still move stock; older promoted orders are
+    #: linkage-only backfill.
+    stock_cutoff = (
+        today - timedelta(days=max(settings.AGGREGATOR_LOOKBACK_DAYS, 0))
     ).isoformat()
     orders = await db.scalars(
         select(AggregatorOrder).where(
@@ -561,7 +616,8 @@ async def promote_channel(db: AsyncSession, channel: str) -> int:
     count = 0
     for agg in orders:
         try:
-            if await promote_order(db, agg) is not None:
+            draw_stock = (agg.business_date or "") >= stock_cutoff
+            if await promote_order(db, agg, draw_stock=draw_stock) is not None:
                 count += 1
         except Exception:  # noqa: BLE001 — one order must not stop the pass
             logger.exception(

@@ -86,11 +86,8 @@ services:
       ZIINA_TIMEOUT_SECONDS: ${ZIINA_TIMEOUT_SECONDS:-10}
       RESEND_API_KEY: ${RESEND_API_KEY}
       FROM_EMAIL: ${FROM_EMAIL:-noreply@meltingmomentscakes.com}
-      CLOUDFLARE_R2_ACCESS_KEY: ${CLOUDFLARE_R2_ACCESS_KEY}
-      CLOUDFLARE_R2_SECRET_KEY: ${CLOUDFLARE_R2_SECRET_KEY}
-      CLOUDFLARE_R2_BUCKET: ${CLOUDFLARE_R2_BUCKET}
-      CLOUDFLARE_R2_ENDPOINT: ${CLOUDFLARE_R2_ENDPOINT}
-      CLOUDFLARE_R2_PUBLIC_URL: ${CLOUDFLARE_R2_PUBLIC_URL}
+      GCS_IMAGE_BUCKET: ${GCS_IMAGE_BUCKET:-mm-product-images}
+      GCS_INVOICE_BUCKET: ${GCS_INVOICE_BUCKET:-melting-moments-data}
       CORS_ORIGINS: ${CORS_ORIGINS}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-*}
       # The storefront API is the one that has to *refuse* device tokens,
@@ -186,6 +183,8 @@ services:
       AGGREGATOR_SESSION_PUSH_TOKEN: ${AGGREGATOR_SESSION_PUSH_TOKEN:-}
       AGGREGATOR_RUN_HOUR_DXB: ${AGGREGATOR_RUN_HOUR_DXB:-23}
       AGGREGATOR_LOOKBACK_DAYS: ${AGGREGATOR_LOOKBACK_DAYS:-1}
+      AGGREGATOR_PROMOTE_LOOKBACK_DAYS: ${AGGREGATOR_PROMOTE_LOOKBACK_DAYS:-30}
+      AGGREGATOR_NOON_PUBLICATION_LOOKBACK_DAYS: ${AGGREGATOR_NOON_PUBLICATION_LOOKBACK_DAYS:-14}
       AGGREGATOR_TIMEOUT_SECONDS: ${AGGREGATOR_TIMEOUT_SECONDS:-20.0}
       AGGREGATOR_REQUESTS_PER_SECOND: ${AGGREGATOR_REQUESTS_PER_SECOND:-1.0}
       # ── Slider ──────────────────────────────────────────────────────────
@@ -309,11 +308,8 @@ services:
       ZIINA_TIMEOUT_SECONDS: ${ZIINA_TIMEOUT_SECONDS:-10}
       RESEND_API_KEY: ${RESEND_API_KEY}
       FROM_EMAIL: ${FROM_EMAIL:-noreply@meltingmomentscakes.com}
-      CLOUDFLARE_R2_ACCESS_KEY: ${CLOUDFLARE_R2_ACCESS_KEY}
-      CLOUDFLARE_R2_SECRET_KEY: ${CLOUDFLARE_R2_SECRET_KEY}
-      CLOUDFLARE_R2_BUCKET: ${CLOUDFLARE_R2_BUCKET}
-      CLOUDFLARE_R2_ENDPOINT: ${CLOUDFLARE_R2_ENDPOINT}
-      CLOUDFLARE_R2_PUBLIC_URL: ${CLOUDFLARE_R2_PUBLIC_URL}
+      GCS_IMAGE_BUCKET: ${GCS_IMAGE_BUCKET:-mm-product-images}
+      GCS_INVOICE_BUCKET: ${GCS_INVOICE_BUCKET:-melting-moments-data}
       POS_CORS_ORIGINS: ${POS_CORS_ORIGINS:-}
       POS_ALLOWED_HOSTS: ${POS_ALLOWED_HOSTS:-*}
       POS_REQUIRE_POS_HOST: ${POS_REQUIRE_POS_HOST:-false}
@@ -531,7 +527,12 @@ services:
       AGGREGATOR_API_URL: ${AGGREGATOR_API_URL:-https://api.meltingmomentscakes.com}
       AGGREGATOR_SESSION_PUSH_TOKEN: ${AGGREGATOR_SESSION_PUSH_TOKEN:-}
       STORAGE_STATE_DIR: /data/sessions
-      HEADLESS: "true"
+      # MUST stay "false": the anti-bot channels (Akamai/PerimeterX/Cloudflare)
+      # drop headless real Chrome, so the warm cron has to run HEADED under the
+      # entrypoint's Xvfb virtual display. This compose env overrides the image's
+      # `ENV HEADLESS=false`, so a "true" here silently reverts every warm to
+      # headless and the sessions stop rotating (verified on the VM).
+      HEADLESS: "false"
     volumes:
       - aggregator_sessions:/data
     logging:
@@ -544,8 +545,8 @@ services:
     deploy:
       resources:
         limits:
-          # Enough for one headless Chrome; it leans on swap on this small VM but
-          # only for the brief warm, never held between runs.
+          # Enough for one headed Chrome under Xvfb; it leans on swap on this
+          # small VM but only for the brief warm, never held between runs.
           memory: 900m
 
 networks:

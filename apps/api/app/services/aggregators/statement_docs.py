@@ -5,14 +5,16 @@ claim VAT on marketplace fees. Providers already download these bytes to parse
 lines; this module persists them under a private prefix so the shop keeps a
 copy independent of the portal.
 
-Storage: Cloudflare R2 (same credentials as catalogue images), but under a
-**private** prefix — never the public CDN URL. Keys look like:
+Storage: the private Google Cloud Storage bucket `GCS_INVOICE_BUCKET`
+(uniform access, public-access-prevention) — never a public URL. Keys look
+like:
 
-    aggregator-statements/{channel}/{statement_id}/{filename}
+    invoices/{channel}/{statement_id}/{filename}
 
 `aggregator_statement.invoice_object_key` holds that key; content type and
 fetch time sit beside it. Multi-file channels (Talabat zip + PDF) can also
-append to `invoice_attachments` JSONB.
+append to `invoice_attachments` JSONB. Downloads use short-lived V4 signed
+URLs (see `presigned_get_url`).
 """
 
 from __future__ import annotations
@@ -23,15 +25,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-import boto3
-from botocore.exceptions import BotoCoreError, ClientError
-
+from app.core import object_storage
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-#: Private prefix — must not be served via CLOUDFLARE_R2_PUBLIC_URL for VAT docs.
-_PREFIX = "aggregator-statements"
+#: Private prefix — these are VAT docs and are never served publicly.
+_PREFIX = "invoices"
 
 
 @dataclass(frozen=True)
@@ -47,23 +47,8 @@ class StoredStatementInvoice:
     attachments: list[dict[str, Any]] | None = None
 
 
-def _r2_ready() -> bool:
-    return bool(
-        settings.CLOUDFLARE_R2_ENDPOINT
-        and settings.CLOUDFLARE_R2_ACCESS_KEY
-        and settings.CLOUDFLARE_R2_SECRET_KEY
-        and settings.CLOUDFLARE_R2_BUCKET
-    )
-
-
-def _client():
-    return boto3.client(
-        "s3",
-        endpoint_url=settings.CLOUDFLARE_R2_ENDPOINT,
-        aws_access_key_id=settings.CLOUDFLARE_R2_ACCESS_KEY,
-        aws_secret_access_key=settings.CLOUDFLARE_R2_SECRET_KEY,
-        region_name="auto",
-    )
+def _gcs_ready() -> bool:
+    return bool(settings.GCS_INVOICE_BUCKET)
 
 
 def _safe_segment(value: str) -> str:
@@ -87,37 +72,29 @@ def store_statement_invoice(
     content_type: str,
     extra_files: list[tuple[str, bytes, str]] | None = None,
 ) -> StoredStatementInvoice | None:
-    """Upload primary (and optional extra) statement invoice bytes to private R2.
+    """Upload primary (and optional extra) statement invoice bytes to private GCS.
 
-    Returns None when R2 is not configured or the body is empty — callers treat
+    Returns None when GCS is not configured or the body is empty — callers treat
     that as "parse without archive", not a hard failure of the finance sweep.
     """
     if not body:
         return None
-    if not _r2_ready():
-        logger.warning(
-            "statement invoice archive skipped — R2 credentials not configured"
-        )
+    if not _gcs_ready():
+        logger.warning("statement invoice archive skipped — GCS bucket not configured")
         return None
 
     key = object_key(channel, statement_id, filename)
     fetched_at = datetime.now(timezone.utc)
-    client = _client()
     try:
-        client.put_object(
-            Bucket=settings.CLOUDFLARE_R2_BUCKET,
-            Key=key,
-            Body=body,
-            ContentType=content_type,
+        object_storage.upload_object(
+            bucket=settings.GCS_INVOICE_BUCKET,
+            key=key,
+            body=body,
+            content_type=content_type,
             # Private VAT docs — no public cache headers.
-            CacheControl="private, no-store",
-            Metadata={
-                "channel": channel,
-                "statement_id": statement_id,
-                "kind": "statement-invoice",
-            },
+            cache_control="private, no-store",
         )
-    except (BotoCoreError, ClientError):
+    except Exception:
         logger.exception(
             "failed to archive statement invoice %s/%s", channel, statement_id
         )
@@ -129,17 +106,12 @@ def store_statement_invoice(
             continue
         extra_key = object_key(channel, statement_id, extra_name)
         try:
-            client.put_object(
-                Bucket=settings.CLOUDFLARE_R2_BUCKET,
-                Key=extra_key,
-                Body=extra_body,
-                ContentType=extra_type,
-                CacheControl="private, no-store",
-                Metadata={
-                    "channel": channel,
-                    "statement_id": statement_id,
-                    "kind": "statement-invoice-attachment",
-                },
+            object_storage.upload_object(
+                bucket=settings.GCS_INVOICE_BUCKET,
+                key=extra_key,
+                body=extra_body,
+                content_type=extra_type,
+                cache_control="private, no-store",
             )
             attachments.append(
                 {
@@ -149,7 +121,7 @@ def store_statement_invoice(
                     "size_bytes": len(extra_body),
                 }
             )
-        except (BotoCoreError, ClientError):
+        except Exception:
             logger.exception(
                 "failed to archive statement attachment %s/%s/%s",
                 channel,
@@ -169,17 +141,10 @@ def store_statement_invoice(
 
 def presigned_get_url(object_key: str, *, expires_seconds: int = 3600) -> str | None:
     """Short-lived download URL for an archived statement invoice (admin use)."""
-    if not object_key or not _r2_ready():
+    if not object_key or not _gcs_ready():
         return None
-    try:
-        return _client().generate_presigned_url(
-            "get_object",
-            Params={
-                "Bucket": settings.CLOUDFLARE_R2_BUCKET,
-                "Key": object_key,
-            },
-            ExpiresIn=expires_seconds,
-        )
-    except (BotoCoreError, ClientError):
-        logger.exception("presign failed for %s", object_key)
-        return None
+    return object_storage.signed_url(
+        bucket=settings.GCS_INVOICE_BUCKET,
+        key=object_key,
+        expires_seconds=expires_seconds,
+    )

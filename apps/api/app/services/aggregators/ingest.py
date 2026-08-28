@@ -33,6 +33,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import case, func, or_, select
+from sqlalchemy import update as sql_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -77,10 +78,14 @@ __all__ = [
     "run_scheduler_forever",
     "sweep_sales_once",
     "sweep_finance_once",
+    "sweep_promote_once",
+    "sweep_reconcile_once",
+    "link_statements_to_payouts",
     "run_daily_once",
     "PROVIDERS",
     "ingest_keeta_payloads",
     "ingest_keeta_finance_payloads",
+    "ingest_deliveroo_finance_payloads",
 ]
 
 #: "mmBATCH" + 5/6, after the GrubOps order loop (…4804). Each loop needs a key
@@ -354,6 +359,40 @@ async def ingest_keeta_finance_payloads(
     return statements_written, payouts_written
 
 
+async def ingest_deliveroo_finance_payloads(
+    db: AsyncSession, payloads: list[dict]
+) -> tuple[int, int]:
+    """Parse and upsert a batch of in-page-fetched Deliveroo invoice payloads.
+
+    Deliveroo's invoice *list* replays over httpx, but the invoice *download*
+    403s behind Cloudflare, so the bootstrap worker fetches each statement CSV
+    and PDF in-page (carrying the browser's `cf_clearance`) and pushes the raw
+    payloads to `/deliveroo/finance`, which calls this. Each payload is one
+    invoice; `deliveroo_provider.parse_pushed_finance` reconstructs the
+    `StandardStatement` (summary + per-order CSV lines + archived VAT PDF), which
+    is then upserted exactly as the httpx finance sweep upserts a statement. Each
+    payload is isolated — a single malformed one is logged and skipped. Returns
+    `(statements_written, lines_written)`.
+    """
+    from app.models.aggregator import CHANNEL_DELIVEROO
+    from app.services.providers import deliveroo_provider
+
+    statements_written = 0
+    lines_written = 0
+    for payload in payloads:
+        try:
+            statement = deliveroo_provider.provider.parse_pushed_finance(payload)
+        except Exception:  # noqa: BLE001 — one bad payload must not fail the batch
+            logger.exception("deliveroo finance payload parse failed — skipped")
+            continue
+        if statement is None:
+            continue
+        await _upsert_statement(db, CHANNEL_DELIVEROO, statement)
+        statements_written += 1
+        lines_written += len(statement.lines)
+    return statements_written, lines_written
+
+
 async def _upsert_statement(
     db: AsyncSession, channel: str, statement: StandardStatement
 ) -> None:
@@ -438,6 +477,82 @@ async def _upsert_statement(
             )
         )
 
+    # Couple every order this statement settled back to it, so the order→statement
+    # link holds for EVERY channel — not only the ones whose sales feed already
+    # carries the statement id (noon's RMS does; deliveroo/talabat/keeta learn it
+    # here, from the statement's own per-order lines). Fills a null only: a sales
+    # pull that already knew the settling statement is left as it is. This is the
+    # missing half of the payout→statement→line→order→mm chain — the line already
+    # names the order, and now the order names the statement.
+    settled_order_ids = {
+        line.external_order_id for line in statement.lines if line.external_order_id
+    }
+    if settled_order_ids:
+        await db.execute(
+            sql_update(AggregatorOrder)
+            .where(
+                AggregatorOrder.channel == channel,
+                AggregatorOrder.external_order_id.in_(settled_order_ids),
+                AggregatorOrder.statement_id.is_(None),
+            )
+            .values(statement_id=statement.statement_id)
+            .execution_options(synchronize_session=False)
+        )
+
+
+async def link_statements_to_payouts(db: AsyncSession, channel: str) -> int:
+    """Couple each statement to the payout that settled it. Returns links made.
+
+    A marketplace pays in batches: one transfer clears every statement that came
+    due since the last transfer (verified on noon — a payout of 8328.29 is exactly
+    the 5046.48 + 3281.81 of the two statements due before it). So the link is
+    statement→payout, MANY statements to one `transfer_id`, and it is resolved by
+    the payment window rather than by amount (talabat's statements carry no
+    net_payable at all — they are per-invoice-file rows — so an amount match
+    could never fire). Each statement is settled by the FIRST payout on or after
+    its `payment_due_date`. Only a still-null `payout_transfer_id` is filled, so a
+    re-run is idempotent and a hand-corrected link is never clobbered. This is the
+    payments leg of the reconciliation chain: payout ← statement ← line ← order ←
+    mm_order.
+    """
+    statements = list(
+        await db.scalars(
+            select(AggregatorStatement).where(
+                AggregatorStatement.channel == channel,
+                AggregatorStatement.payout_transfer_id.is_(None),
+                AggregatorStatement.payment_due_date.is_not(None),
+            )
+        )
+    )
+    if not statements:
+        return 0
+    payouts = sorted(
+        (
+            p
+            for p in await db.scalars(
+                select(AggregatorPayout).where(
+                    AggregatorPayout.channel == channel,
+                    AggregatorPayout.transfer_date.is_not(None),
+                )
+            )
+        ),
+        key=lambda p: p.transfer_date,
+    )
+    if not payouts:
+        return 0
+    linked = 0
+    for statement in statements:
+        due = statement.payment_due_date
+        # The first payout whose transfer landed on or after this statement's due
+        # date is the one that cleared it (payouts are date-sorted).
+        settling = next((p for p in payouts if p.transfer_date >= due), None)
+        if settling is not None:
+            statement.payout_transfer_id = settling.transfer_id
+            linked += 1
+    if linked:
+        await db.flush()
+    return linked
+
 
 async def _upsert_payout(db: AsyncSession, channel: str, payout) -> None:
     values = {
@@ -496,7 +611,6 @@ async def _sweep_channel(
     run = await _new_run(db, channel, mode)
     now = utcnow()
     written = 0
-    reconciled = 0
     truncation: str | None = None
     # The default window is the shared daily lookback; an adhoc sweep can widen it
     # (e.g. a first-time channel backfill) via lookback_days / lookback_hours.
@@ -512,8 +626,18 @@ async def _sweep_channel(
                 session, since=since, until=now
             )
             for order in result.orders:
-                await upsert_order(db, channel, order)
-            written = len(result.orders)
+                # One malformed order must not abort the whole channel's sweep and
+                # roll back every good order with it — isolate it, like the
+                # reconcile/promote passes and the Keeta push path already do.
+                try:
+                    await upsert_order(db, channel, order)
+                    written += 1
+                except Exception:  # noqa: BLE001 — one order must not stop the rest
+                    logger.exception(
+                        "aggregator %s sales: order %s failed to upsert",
+                        channel,
+                        order.external_order_id,
+                    )
             truncation = result.truncation_note
         else:
             finance: FinanceResult = await provider.fetch_finance(
@@ -523,12 +647,15 @@ async def _sweep_channel(
                 await _upsert_statement(db, channel, statement)
             for payout in finance.payouts:
                 await _upsert_payout(db, channel, payout)
+            # The statement→payout rollup runs channel-agnostically in
+            # `sweep_reconcile_once`, so it covers the push channels (Keeta,
+            # Deliveroo finance) that never reach this httpx sweep too.
             written = len(finance.statements) + len(finance.payouts)
             truncation = finance.truncation_note
-            # Reconcile after the finance write, so Layer B compares against the
-            # freshest statement commission. Incremental — only orders new or
-            # changed since their last reconciliation (see reconcile_channel).
-            reconciled = await reconcile.reconcile_channel(db, channel, run_id=run.id)
+            # Reconciliation runs channel-agnostically after promotion
+            # (`sweep_reconcile_once`), so it covers Keeta — which is pushed in and
+            # never reaches this httpx finance sweep — as well as the httpx
+            # channels, rather than only the ones swept here.
     except AggregatorAuthError as exc:
         run.status = RUN_FAILED
         run.error = str(exc)[:2000]
@@ -546,8 +673,6 @@ async def _sweep_channel(
     run.status = RUN_COMPLETED
     run.finished_at = utcnow()
     run.stats = {"written": written, "from": since.isoformat(), "to": now.isoformat()}
-    if reconciled:
-        run.stats["reconciled"] = reconciled
     if truncation:
         run.stats["truncation"] = truncation
         logger.info("aggregator %s %s truncated: %s", channel, mode, truncation)
@@ -639,19 +764,67 @@ async def sweep_promote_once() -> int:
         return touched
 
 
-async def run_daily_once() -> tuple[int, int]:
-    """One full daily pass: the sales sweep then the finance sweep.
+#: "mmBATCH" + 8, after sales/finance/promote — reconciliation serialises alone.
+_RECONCILE_LOCK_KEY = 0x6D6D_4241_5443_4808
 
-    Returns `(sales_written, finance_written)`. Finance runs after sales so the
-    reconciliation inside it compares against the freshest orders; promotion runs
-    last, over whatever the sweeps (and the Keeta push) have landed. Each no-ops
-    when disabled or when a channel has no live session.
+
+async def sweep_reconcile_once() -> int:
+    """Reconcile every channel's new-or-changed orders against their MM orders.
+
+    Runs over `aggregator_order` for EVERY `AGGREGATOR_CHANNELS`, independent of
+    how the data arrived — so Keeta, which is pushed in by the bootstrap worker
+    and never reaches the httpx finance sweep, is reconciled just like the httpx
+    channels (it never was before: reconciliation used to run only inside that
+    sweep, which iterates the httpx `PROVIDERS` and so silently skipped Keeta).
+    Runs after promotion in the daily pass, so it compares against the freshest
+    statements and promoted orders. Its own advisory lock; one bad channel is
+    logged and does not stop the rest. Returns reconciliation rows written.
+    """
+    if not is_enabled():
+        return 0
+    from app.models.aggregator import AGGREGATOR_CHANNELS
+
+    async with advisory_lock.held(
+        _RECONCILE_LOCK_KEY, name="aggregator reconcile"
+    ) as mine:
+        if not mine:
+            return 0
+        touched = 0
+        async with AsyncSessionFactory() as db:
+            for channel in AGGREGATOR_CHANNELS:
+                try:
+                    # Close the payments leg first (statement→payout rollup), so
+                    # a finance query joining payout↔statement↔line↔order sees the
+                    # freshest links. Channel-agnostic, so it covers the push
+                    # channels (Keeta/Deliveroo) the httpx sweep never touches.
+                    await link_statements_to_payouts(db, channel)
+                    touched += await reconcile.reconcile_channel(db, channel)
+                    await db.commit()
+                except Exception:  # noqa: BLE001 — one channel must not stop the rest
+                    await db.rollback()
+                    logger.exception("aggregator %s reconcile failed", channel)
+        return touched
+
+
+async def run_daily_once() -> tuple[int, int]:
+    """One full daily pass: sales → finance → promote → reconcile.
+
+    Returns `(sales_written, finance_written)`. Finance runs after sales so it
+    settles the freshest orders; promotion runs next, closing the
+    order→mm_order (and statement-line→mm_order) links over whatever the sweeps
+    and the Keeta push landed; reconciliation runs last, over EVERY channel, so
+    it compares against the freshest statements and the just-promoted orders and
+    covers Keeta as well as the httpx channels. Each no-ops when disabled or when
+    a channel has no live session.
     """
     sales = await sweep_sales_once()
     finance = await sweep_finance_once()
     promoted = await sweep_promote_once()
     if promoted:
         logger.info("aggregator promotion filed %s MM order(s)", promoted)
+    reconciled = await sweep_reconcile_once()
+    if reconciled:
+        logger.info("aggregator reconciliation wrote %s row(s)", reconciled)
     return sales, finance
 
 

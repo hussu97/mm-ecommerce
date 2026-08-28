@@ -599,3 +599,253 @@ async def test_fetch_bundle_statements_parses_without_archival():
     assert "detailed-2026-08-01-2026-08-31-BRA" in ids
     assert "detailed-2026-08-01-2026-08-31-BRB" in ids
     assert any(len(s.lines) > 0 for s in result)
+
+
+# ── 7. Invoice archival, download auth classification, truncation note ─────────
+
+
+def _counts_graphql_mock() -> AsyncMock:
+    """A `_graphql` stand-in returning a within-limits bulk-count response."""
+    return AsyncMock(
+        return_value={
+            "finances": {
+                "getBulkAdditionalStatementDownloadCounts": {
+                    "fileCounts": {"totalFilesCount": 1},
+                    "fileLimits": {"directDownloadLimit": 100},
+                }
+            }
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_fetch_bundle_statements_archives_and_sets_invoice_key():
+    """A successful bundle download archives the zip and stamps invoice fields."""
+    from app.services.aggregators.statement_docs import StoredStatementInvoice
+
+    client = TalabatClient()
+    session = MagicMock()
+
+    stored = StoredStatementInvoice(
+        object_key=(
+            "aggregator-statements/talabat/bundle-2026-08-01-2026-08-31/"
+            "additionalStatementsArchive_2026-08-01_to_2026-08-31.zip"
+        ),
+        content_type="application/zip",
+        original_filename="additionalStatementsArchive_2026-08-01_to_2026-08-31.zip",
+        fetched_at=datetime(2026, 8, 28, 12, 0),
+        size_bytes=len(_BUNDLE_BYTES),
+        attachments=None,
+    )
+
+    with (
+        patch.object(client, "_graphql", side_effect=_counts_graphql_mock()),
+        patch.object(
+            client, "_bundle_download_url", return_value="https://fake-url/bundle.zip"
+        ),
+        patch.object(client, "_download_bundle", return_value=_BUNDLE_BYTES),
+        patch(
+            "app.services.aggregators.statement_docs.store_statement_invoice",
+            return_value=stored,
+        ) as mock_store,
+    ):
+        result = await client._fetch_bundle_statements(
+            session,
+            accounts=[{"grid": "g1"}],
+            from_date=date(2026, 8, 1),
+            to_date=date(2026, 8, 31),
+        )
+
+    # store_statement_invoice called exactly once with the zip bytes.
+    mock_store.assert_called_once()
+    kwargs = mock_store.call_args.kwargs
+    assert kwargs["channel"] == "talabat"
+    assert kwargs["content_type"] == "application/zip"
+    assert kwargs["body"] == _BUNDLE_BYTES
+    assert kwargs["filename"].endswith(".zip")
+
+    assert len(result) == 2
+    for stmt in result:
+        assert stmt.invoice_object_key == stored.object_key
+        assert stmt.invoice_content_type == "application/zip"
+        assert stmt.invoice_original_filename == stored.original_filename
+        assert stmt.invoice_fetched_at == stored.fetched_at
+
+
+@pytest.mark.asyncio
+async def test_fetch_bundle_statements_unconfigured_r2_keeps_statements():
+    """When store_statement_invoice returns None (R2 off), statements survive."""
+    client = TalabatClient()
+    session = MagicMock()
+
+    with (
+        patch.object(client, "_graphql", side_effect=_counts_graphql_mock()),
+        patch.object(
+            client, "_bundle_download_url", return_value="https://fake-url/bundle.zip"
+        ),
+        patch.object(client, "_download_bundle", return_value=_BUNDLE_BYTES),
+        patch(
+            "app.services.aggregators.statement_docs.store_statement_invoice",
+            return_value=None,
+        ),
+    ):
+        result = await client._fetch_bundle_statements(
+            session,
+            accounts=[{"grid": "g1"}],
+            from_date=date(2026, 8, 1),
+            to_date=date(2026, 8, 31),
+        )
+
+    assert len(result) == 2
+    for stmt in result:
+        assert stmt.invoice_object_key is None
+        assert len(stmt.lines) >= 0
+
+
+class _FakeResponse:
+    def __init__(self, status_code: int, *, text: str = "", content: bytes = b""):
+        self.status_code = status_code
+        self.text = text
+        self.content = content
+
+
+@pytest.mark.asyncio
+async def test_download_bundle_auth_failure_raises_auth_error():
+    """A 403 on the bundle GET is a dead session → AggregatorAuthError."""
+    from app.services.providers.aggregator_base import AggregatorAuthError
+
+    client = TalabatClient()
+    session = MagicMock()
+    session.cookies = {}
+    session.tokens = {}
+
+    with patch.object(
+        client, "request_raw", new=AsyncMock(return_value=_FakeResponse(403))
+    ):
+        with pytest.raises(AggregatorAuthError):
+            await client._download_bundle(session, "https://fake-url/bundle.zip")
+
+
+@pytest.mark.asyncio
+async def test_download_bundle_perimeterx_body_raises_auth_error():
+    """A 200 whose body is a PerimeterX challenge is also a dead session."""
+    from app.services.providers.aggregator_base import AggregatorAuthError
+
+    client = TalabatClient()
+    session = MagicMock()
+    session.cookies = {}
+    session.tokens = {}
+
+    challenge = _FakeResponse(
+        200, text="Please enable JS and disable any ad blocker — px-captcha"
+    )
+    with patch.object(client, "request_raw", new=AsyncMock(return_value=challenge)):
+        with pytest.raises(AggregatorAuthError):
+            await client._download_bundle(session, "https://fake-url/bundle.zip")
+
+
+@pytest.mark.asyncio
+async def test_download_bundle_server_error_stays_unavailable():
+    """A genuine 5xx is transient → AggregatorUnavailableError, not auth."""
+    from app.services.providers.aggregator_base import AggregatorUnavailableError
+
+    client = TalabatClient()
+    session = MagicMock()
+    session.cookies = {}
+    session.tokens = {}
+
+    with patch.object(
+        client, "request_raw", new=AsyncMock(return_value=_FakeResponse(503))
+    ):
+        with pytest.raises(AggregatorUnavailableError):
+            await client._download_bundle(session, "https://fake-url/bundle.zip")
+
+
+@pytest.mark.asyncio
+async def test_download_csv_auth_failure_raises_auth_error():
+    """The sales CSV download flips to AggregatorAuthError on a challenge too."""
+    from app.services.providers.aggregator_base import AggregatorAuthError
+
+    client = TalabatClient()
+    session = MagicMock()
+    session.cookies = {}
+    session.tokens = {}
+
+    with patch.object(
+        client, "request_raw", new=AsyncMock(return_value=_FakeResponse(401))
+    ):
+        with pytest.raises(AggregatorAuthError):
+            await client._download_csv(session, "https://fake-url/report.csv")
+
+
+@pytest.mark.asyncio
+async def test_fetch_statements_sets_truncation_note_on_bundle_failure():
+    """A failed xlsx bundle leaves a truncation_note; metadata statements survive."""
+    from app.services.providers.aggregator_base import AggregatorUnavailableError
+
+    client = TalabatClient()
+    session = MagicMock()
+
+    metadata_rows = [
+        {
+            "statementId": "TUAE-02049097",
+            "statementDate": "2026-07-31",
+            "amountGross": "100.00",
+            "currency": "AED",
+        }
+    ]
+
+    with (
+        patch.object(client, "_finance_accounts", return_value=[{"grid": "g1"}]),
+        patch.object(
+            client, "_paginate_finance", new=AsyncMock(return_value=metadata_rows)
+        ),
+        patch.object(
+            client,
+            "_fetch_bundle_statements",
+            new=AsyncMock(
+                side_effect=AggregatorUnavailableError("bundle download HTTP 503")
+            ),
+        ),
+    ):
+        result = await client.fetch_statements(
+            session, since=datetime(2026, 7, 1), until=datetime(2026, 7, 31)
+        )
+
+    assert result.truncation_note is not None
+    assert "xlsx" in result.truncation_note.lower()
+    # The metadata statement is still returned — the failure did not drop it.
+    assert len(result.statements) == 1
+    assert result.statements[0].statement_id == "TUAE-02049097"
+
+
+# ── global entity id from account extras (vs the TB_AE fallback) ───────────────
+def _session_with_tokens(tokens: dict):
+    session = MagicMock()
+    session.tokens = tokens
+    return session
+
+
+def test_global_entity_id_falls_back_to_tb_ae_when_extras_absent():
+    """An empty session yields the historical constant — behaviour unchanged."""
+    from app.services.providers.talabat_provider import _GLOBAL_ENTITY_ID
+
+    client = TalabatClient()
+    assert client._global_entity_id(_session_with_tokens({})) == _GLOBAL_ENTITY_ID
+    assert _GLOBAL_ENTITY_ID == "TB_AE"
+
+
+def test_global_entity_id_reads_from_session_tokens():
+    """A populated `global_entity_id` (injected from account extras) wins."""
+    client = TalabatClient()
+    session = _session_with_tokens({"global_entity_id": "TB_KW"})
+    assert client._global_entity_id(session) == "TB_KW"
+
+
+def test_global_entity_id_ignores_blank_token():
+    """A blank/whitespace token is treated as absent, not as an empty entity."""
+    from app.services.providers.talabat_provider import _GLOBAL_ENTITY_ID
+
+    client = TalabatClient()
+    session = _session_with_tokens({"global_entity_id": "   "})
+    assert client._global_entity_id(session) == _GLOBAL_ENTITY_ID

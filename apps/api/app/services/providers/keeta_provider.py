@@ -49,7 +49,7 @@ import base64
 import json
 import logging
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -321,6 +321,284 @@ def _date_str(value: date | None) -> str | None:
     return value.strftime("%Y-%m-%d") if value else None
 
 
+# ── Finance file-payload parsing (bill xlsx + commission zip) ────────────────
+# The bootstrap worker downloads Keeta's presigned billing-report XLSX and
+# commission-invoice ZIP (both plain-httpx once the LIST call yields the signed
+# URL) and pushes them base64-encoded. These helpers turn the worker's date
+# spellings into `date` objects and periods; the money inside the XLSX is stated
+# in AED **major units** (the sheet shows "40.0", "-9.0", "26.2"), so it is read
+# with `_money` directly — never `_from_minor_units`, which is only for the fils
+# in the getOrders path.
+def _keeta_short_date(value: Any) -> date | None:
+    """Parse Keeta's report date — `'15 Aug 2026'`, optionally `'... at HH:MM:SS'`."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    head = text.split(" at ")[0].strip()
+    for fmt in ("%d %b %Y", "%d %B %Y"):
+        try:
+            return datetime.strptime(head, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _period_from_display(value: Any) -> tuple[date | None, date | None]:
+    """`'15 Aug 2026 ~ 22 Aug 2026'` → (start, end); `(None, None)` if unparsable."""
+    if value is None:
+        return (None, None)
+    text = str(value).strip()
+    for sep in ("~", " - ", " to "):
+        if sep in text:
+            left, right = text.split(sep, 1)
+            return (_keeta_short_date(left), _keeta_short_date(right))
+    return (None, None)
+
+
+def _dotted_date(value: Any) -> date | None:
+    """Parse Keeta's billing-cycle date — `'2026.08.15'` → date, else None."""
+    if value is None:
+        return None
+    try:
+        return datetime.strptime(str(value).strip(), "%Y.%m.%d").date()
+    except ValueError:
+        return None
+
+
+def _billing_cycle_bounds(value: Any) -> tuple[date | None, date | None]:
+    """`'2026.08.15~2026.08.21'` → (start, end); `(None, None)` if unparsable.
+
+    This is the "Invoice Details" `Billing Cycle` spelling — dotted `YYYY.MM.DD`
+    around a `~` — distinct from `displayTimeText`'s `'15 Aug 2026 ~ 22 Aug 2026'`
+    that `_period_from_display` handles.
+    """
+    if value is None:
+        return (None, None)
+    text = str(value).strip()
+    if "~" not in text:
+        return (None, None)
+    left, right = text.split("~", 1)
+    return (_dotted_date(left), _dotted_date(right))
+
+
+def _period_from_yyyymm(value: Any) -> tuple[date | None, date | None]:
+    """A `YYYYMM` int/str (e.g. `202607`) → (first day, last day of that month)."""
+    try:
+        n = int(str(value).strip())
+    except (TypeError, ValueError):
+        return (None, None)
+    year, month = divmod(n, 100)
+    if not (1 <= month <= 12 and 2000 <= year <= 2100):
+        return (None, None)
+    start = date(year, month, 1)
+    first_of_next = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+    return (start, first_of_next - timedelta(days=1))
+
+
+#: Finance file payloads carry the report/invoice bytes; their presence is what
+#: routes `parse_finance` down the file path rather than the row-tree path.
+_FINANCE_FILE_KEYS = ("bill_xlsx_b64", "invoice_zip_b64", "invoice_pdf_b64")
+
+
+def _has_finance_file(row: dict[str, Any]) -> bool:
+    return any(_get_value(row, key) for key in _FINANCE_FILE_KEYS)
+
+
+def _strip_blobs(row: dict[str, Any]) -> dict[str, Any]:
+    """The row minus the base64 file blobs — so `raw` JSONB stays small."""
+    if not isinstance(row, dict):
+        return row
+    return {k: v for k, v in row.items() if k not in _FINANCE_FILE_KEYS}
+
+
+#: "Order Summary" sheet: header on row 3, data from row 4. Money columns are
+#: 1-indexed (matching the reverse-engineered layout). Each becomes its own
+#: statement line so gross / commission / bank-fee / net stay distinguishable.
+_BILL_SHEET = "Order Summary"
+_BILL_ORDER_NO_COL = 9  # 16-digit Order Number == sales external_order_id
+_BILL_TXN_DATE_COL = 6  # "15 Aug 2026"
+#: category → (source column, line_type, fee_category).
+_BILL_LINE_SPEC: tuple[tuple[str, int, str, str], ...] = (
+    ("gross", 16, "sales", "gross_sales"),  # Original item price (VAT incl)
+    ("commission", 35, "commission", "commission"),  # Total Commission (VAT incl)
+    ("bank_fee", 22, "fee", "bank_fee"),  # Bank fee (VAT incl)
+    ("net", 33, "payout", "net_payable"),  # Payable to Restaurant (net)
+)
+
+
+def _cell(values: tuple[Any, ...], col: int) -> Any:
+    """A 1-indexed column from an openpyxl `values_only` row, padded to None."""
+    idx = col - 1
+    return values[idx] if 0 <= idx < len(values) else None
+
+
+def _parse_bill_xlsx(
+    xlsx_bytes: bytes, statement_id: str
+) -> list[StandardStatementLine]:
+    """Parse the "Order Summary" sheet into per-order statement lines.
+
+    One order yields up to four lines — gross, commission, bank fee, net —
+    keyed to the 16-digit Order Number (the join key to the sales
+    `external_order_id`). Blank money cells are left out (a missing figure is
+    unknown, never 0); a real 0.0 in the sheet is kept as stated. Amounts are AED
+    major units, so `_money` reads them without any /100 conversion.
+    """
+    import io
+
+    from openpyxl import load_workbook
+
+    # NOT read_only: Keeta's file omits the `<dimension>` tag, so read-only mode
+    # reports a 1×1 sheet and reads nothing. The files are small (~16 KB), so a
+    # full parse is cheap and correct.
+    try:
+        workbook = load_workbook(io.BytesIO(xlsx_bytes), data_only=True)
+    except Exception:  # noqa: BLE001 — a corrupt sheet must not abort the parse
+        logger.warning("keeta: unreadable bill xlsx for %s", statement_id)
+        return []
+    try:
+        if _BILL_SHEET not in workbook.sheetnames:
+            logger.warning(
+                "keeta: bill xlsx for %s has no %r sheet", statement_id, _BILL_SHEET
+            )
+            return []
+        sheet = workbook[_BILL_SHEET]
+        lines: list[StandardStatementLine] = []
+        for values in sheet.iter_rows(min_row=4, values_only=True):
+            order_no = _cell(values, _BILL_ORDER_NO_COL)
+            if order_no is None or not str(order_no).strip():
+                continue
+            order_no = str(order_no).strip()
+            line_date = _date_str(_keeta_short_date(_cell(values, _BILL_TXN_DATE_COL)))
+            for category, col, line_type, fee_category in _BILL_LINE_SPEC:
+                amount = _money(_cell(values, col))
+                if amount is None:
+                    continue
+                lines.append(
+                    StandardStatementLine(
+                        source_key=f"{statement_id}:{order_no}:{category}",
+                        statement_id=statement_id,
+                        external_order_id=order_no,
+                        line_date=line_date,
+                        line_type=line_type,
+                        fee_category=fee_category,
+                        amount=amount,
+                        currency="AED",
+                    )
+                )
+        return lines
+    finally:
+        workbook.close()
+
+
+# "Invoice Details" sheet: the weekly *settlement* view — one row per shop per
+# transaction day, carrying the net "Payable to Restaurant" and the billing cycle
+# it settles under. Header on row 1, data from row 2; columns are 1-indexed to
+# match the real file's layout (confirmed against the downloaded bill.xlsx). This
+# is the payout side of the bill — the TOTAL Keeta actually transfers per weekly
+# cycle, which the "Order Summary" per-order parser never sums.
+_PAYOUT_SHEET = "Invoice Details"
+_PAYOUT_RESTAURANT_ID_COL = 4  # "Restaurant ID" — shop id fallback
+_PAYOUT_PAYABLE_COL = 8  # "Payable to Restaurant" (net, AED major units)
+_PAYOUT_STATUS_COL = 9  # "Settled" / "Settlement pending"
+_PAYOUT_CYCLE_COL = 10  # "2026.08.15~2026.08.21"
+
+
+def _parse_bill_payouts(
+    xlsx_bytes: bytes,
+    statement_id: str,
+    payload_shop_id: str | None,
+    task_view_id: str | None,
+) -> list[StandardPayout]:
+    """Parse the "Invoice Details" sheet into one payout per weekly billing cycle.
+
+    Keeta settles weekly: every billing cycle in the sheet is a distinct transfer
+    to the restaurant, so rows are grouped by their `Billing Cycle` value. A
+    group's `transfer_amount` is the sum of its "Payable to Restaurant" figures
+    (AED **major** units — read with `_money`, never `_from_minor_units`), its
+    `transfer_date`/`payment_due_date` is the cycle-end date, and its
+    `transfer_status` is `"settled"` only when every row of the cycle reads
+    `"Settled"` (any pending row makes the whole cycle `"pending"`).
+
+    The `transfer_id` is `KEETA_BILL_{shopId}_{cycleEnd}` — stable and unique per
+    (shop, week), so re-ingesting the same bill upserts in place rather than
+    duplicating. Each payout carries the caller's `statement_id`, coupling it to
+    the weekly statement, and `payment_reference` is the download task's
+    `taskViewId`. A cycle whose payables are all blank stays `None` (unknown),
+    never a fabricated 0; a cycle whose end date will not parse is skipped (it
+    cannot be keyed) rather than emitted under a guessed id.
+    """
+    import io
+
+    from openpyxl import load_workbook
+
+    # NOT read_only — same `<dimension>`-tag omission as the Order Summary parser.
+    try:
+        workbook = load_workbook(io.BytesIO(xlsx_bytes), data_only=True)
+    except Exception:  # noqa: BLE001 — a corrupt sheet yields no payouts, not a crash
+        logger.warning("keeta: unreadable bill xlsx (payouts) for %s", statement_id)
+        return []
+    try:
+        if _PAYOUT_SHEET not in workbook.sheetnames:
+            return []
+        sheet = workbook[_PAYOUT_SHEET]
+        # cycle string → aggregation state, ordered by first appearance.
+        groups: dict[str, dict[str, Any]] = {}
+        for values in sheet.iter_rows(min_row=2, values_only=True):
+            cycle_cell = _cell(values, _PAYOUT_CYCLE_COL)
+            cycle_key = str(cycle_cell).strip() if cycle_cell is not None else ""
+            if not cycle_key:
+                continue
+            group = groups.setdefault(
+                cycle_key,
+                {"total": None, "all_settled": True, "shop_id": None},
+            )
+            payable = _money(_cell(values, _PAYOUT_PAYABLE_COL))
+            if payable is not None:
+                group["total"] = (
+                    payable if group["total"] is None else group["total"] + payable
+                )
+            status_cell = _cell(values, _PAYOUT_STATUS_COL)
+            status = _normalize_status(
+                str(status_cell).strip() if status_cell is not None else None
+            )
+            if status != "settled":
+                group["all_settled"] = False
+            if group["shop_id"] is None:
+                rid = _cell(values, _PAYOUT_RESTAURANT_ID_COL)
+                if rid is not None and str(rid).strip():
+                    group["shop_id"] = str(rid).strip()
+
+        payouts: list[StandardPayout] = []
+        for cycle_key, group in groups.items():
+            _start, cycle_end = _billing_cycle_bounds(cycle_key)
+            cycle_end_str = _date_str(cycle_end)
+            if cycle_end_str is None:
+                logger.warning(
+                    "keeta: bill payout cycle %r unparsable for %s — skipped",
+                    cycle_key,
+                    statement_id,
+                )
+                continue
+            shop_id = payload_shop_id or group["shop_id"] or "unknown"
+            payouts.append(
+                StandardPayout(
+                    transfer_id=f"KEETA_BILL_{shop_id}_{cycle_end_str}",
+                    statement_id=statement_id,
+                    transfer_date=cycle_end_str,
+                    payment_due_date=cycle_end_str,
+                    transfer_amount=group["total"],
+                    transfer_status="settled" if group["all_settled"] else "pending",
+                    payment_reference=task_view_id or statement_id,
+                    currency="AED",
+                )
+            )
+        return payouts
+    finally:
+        workbook.close()
+
+
 def _normalize_status(value: str | None) -> str | None:
     if not value:
         return None
@@ -328,11 +606,136 @@ def _normalize_status(value: str | None) -> str | None:
     return normalized or None
 
 
-def _mods_text(item: dict[str, Any]) -> str | None:
-    value = _get_value(item, "modifiers") or _get_value(item, "attributes")
-    if value in (None, "", []):
+# Keeta/Meituan numeric order-status codes → readable lowercase names.
+# Justified from orders_sample.json: `merchantOrderTraces` records the lifecycle
+# 10 → 20 → 30 for a live order, with `unconfirmedStatusTime` stamping entry to
+# status 20 and `confirmedStatusTime` stamping entry to status 30; the settled
+# history rows all carry status 40. Codes not evidenced by the sample (a
+# cancellation/refund code among them) are intentionally left unmapped and fall
+# back to the raw numeric string rather than being guessed.
+_STATUS_CODES = {
+    "10": "submitted",
+    "20": "pending",
+    "30": "confirmed",
+    "40": "completed",
+}
+
+
+def _decode_status(value: str | None) -> str | None:
+    """Decode Keeta's numeric status to a readable name, else keep the raw value.
+
+    A non-numeric status (an already-worded fixture, a future spelling) passes
+    through `_normalize_status` unchanged; an unknown numeric code is returned as
+    its normalized digits rather than a made-up name.
+    """
+    normalized = _normalize_status(value)
+    if normalized is None:
         return None
-    return json.dumps(value, ensure_ascii=False, default=str)
+    return _STATUS_CODES.get(normalized, normalized)
+
+
+def _mods_text(item: dict[str, Any]) -> str | None:
+    """Raw option dump for debugging — real lines carry `groups`/`spuPvList`,
+    older/synthetic fixtures `modifiers`/`attributes`; serialize whichever is
+    present."""
+    for key in ("groups", "spuPvList", "modifiers", "attributes"):
+        value = _get_value(item, key)
+        if value not in (None, "", []):
+            return json.dumps(value, ensure_ascii=False, default=str)
+    return None
+
+
+def _item_modifier_sources(item: dict[str, Any]) -> list[Any]:
+    """Collect the raw chosen-option payloads on one Keeta product line.
+
+    Real Keeta lines carry chosen options in two places, both verified present on
+    every `products[]` entry in orders_sample.json (though empty in that sample,
+    so the per-option leaf spelling could not be pinned to it):
+      - `groups[]`  — add-on / combo groups; each group wraps its option items in
+        a nested list, so we flatten one level to the leaf options.
+      - `spuPvList[]` — SPU property/variant selections, already option-shaped.
+    Older/synthetic fixtures use `modifiers`/`attributes`; those are kept as
+    fallbacks. Every source is funnelled through `expand_modifiers`, so the leaf
+    option shape is matched with the same name/qty/price/ref fallbacks the other
+    channels use (an unrecognised leaf is dropped, never invented).
+    """
+    sources: list[Any] = []
+
+    groups = _get_value(item, "groups")
+    if isinstance(groups, list):
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            nested: list[Any] | None = None
+            for key in ("foods", "spus", "skus", "products", "items", "options"):
+                value = _get_value(group, key)
+                if isinstance(value, list) and value:
+                    nested = value
+                    break
+            # A group with a nested option list contributes its leaves; a flat
+            # group dict is itself treated as the chosen option.
+            sources.extend(nested if nested is not None else [group])
+
+    spu_pv = _get_value(item, "spuPvList")
+    if isinstance(spu_pv, list):
+        sources.extend(pv for pv in spu_pv if isinstance(pv, dict))
+
+    legacy = _get_value(item, "modifiers") or _get_value(item, "attributes")
+    if legacy not in (None, "", []):
+        sources.extend(legacy if isinstance(legacy, list) else [legacy])
+
+    return sources
+
+
+def _customer_name(row: dict[str, Any]) -> str | None:
+    """Recipient/user display name from the getOrders envelope.
+
+    `recipientInfo.name` is the delivery recipient (sometimes a portal code like
+    `J4P773781744`, sometimes masked to `***`); `userInfo.userName` is the
+    account name (usually masked). We store whatever is present — a masked value
+    is what the portal gave, not an invented one.
+    """
+    recipient = row.get("recipientInfo")
+    if isinstance(recipient, dict):
+        name = _first_text(recipient, ("name",))
+        if name:
+            return name
+    user_info = row.get("userInfo")
+    if isinstance(user_info, dict):
+        return _first_text(user_info, ("userName", "user_name", "name"))
+    return None
+
+
+def _customer_phone(row: dict[str, Any]) -> str | None:
+    """Best-available customer phone from the getOrders envelope.
+
+    Priority: the masked privacy line `openPrivacyNumber` when the order carries
+    one (0/absent means none), then the recipient's number (prefixed with its
+    `interCode` when the number is not itself masked), then the account's masked
+    number. None means the payload stated nothing.
+    """
+    open_privacy = _get_value(row, "openPrivacyNumber")
+    if open_privacy not in (None, 0, "0", ""):
+        text = str(open_privacy).strip()
+        if text:
+            return text
+    for source_key in ("recipientInfo", "userInfo"):
+        source = row.get(source_key)
+        if not isinstance(source, dict):
+            continue
+        phone = _first_text(source, ("privacyPhone", "phone", "userPhone"))
+        if not phone:
+            continue
+        inter_code = _first_text(source, ("interCode", "inter_code"))
+        if (
+            inter_code
+            and "*" not in phone
+            and not phone.startswith("+")
+            and not phone.startswith(inter_code)
+        ):
+            return f"+{inter_code}{phone}"
+        return phone
+    return None
 
 
 # ── Row extraction (the getOrders / finance envelope, flattened) ─────────────
@@ -395,6 +798,12 @@ def _flatten_keeta_order(row: dict[str, Any]) -> dict[str, Any] | None:
             if isinstance(item, dict)
         ],
     }
+    # Customer identity lives on the envelope, not in base/merchant order — carry
+    # it through so `_order_from` can read recipient/user name and phone.
+    for passthrough in ("recipientInfo", "userInfo"):
+        value = row.get(passthrough)
+        if isinstance(value, dict):
+            flattened[passthrough] = value
     fee_detail = row.get("feeDtl")
     merchant_fee = (
         fee_detail.get("merchantFee") if isinstance(fee_detail, dict) else None
@@ -566,7 +975,16 @@ class KeetaClient(BaseAggregatorClient):
         The response nests the orders at `data.list[]`, each an envelope of
         `baseOrder` / `merchantOrder` / `products[]` / `feeDtl.merchantFee`;
         `_extract_rows` flattens that. One order becomes one `StandardOrder`
-        with per-line `GRAIN_LINE` items, deduped on `(outlet, order id)`.
+        with per-line `GRAIN_LINE` items, deduped on the order id.
+
+        Dedupe is on the order id **alone**, not `(outlet, order id)`: the tree
+        walk in `_extract_rows` also surfaces each envelope's nested `baseOrder`
+        sub-dict as a standalone row (it carries `orderViewId`, so it satisfies
+        `_looks_like_row`), and that phantom has no `shopId` — so an
+        outlet-qualified key let it through as a second, empty, null-outlet copy
+        of every order. The flattened envelope is always emitted before its
+        phantom, and a Keeta `orderViewId` is globally unique, so keeping the
+        first row per id keeps the rich one and drops the phantom.
         """
         orders: list[StandardOrder] = []
         seen: set[str] = set()
@@ -574,10 +992,9 @@ class KeetaClient(BaseAggregatorClient):
             order = self._order_from(row)
             if order is None:
                 continue
-            dedupe_key = f"{order.external_outlet_id}:{order.external_order_id}"
-            if dedupe_key in seen:
+            if order.external_order_id in seen:
                 continue
-            seen.add(dedupe_key)
+            seen.add(order.external_order_id)
             orders.append(order)
         return orders
 
@@ -613,10 +1030,12 @@ class KeetaClient(BaseAggregatorClient):
             external_outlet_id=_first_text(row, _OUTLET_ID_KEYS),
             business_date=_date_str(business_date),
             placed_at=placed_at,
-            status=_normalize_status(
+            status=_decode_status(
                 _first_text(row, ("status", "orderStatus", "order_status"))
             ),
             currency=_first_text(row, _CURRENCY_KEYS) or "AED",
+            customer_name=_customer_name(row),
+            customer_phone=_customer_phone(row),
             gross_sales=gross_sales,
             net_sales=net_sales,
             commission_amount=_abs_money(
@@ -659,7 +1078,7 @@ class KeetaClient(BaseAggregatorClient):
                 or item_name
             )
             gross = _first_money(item, ("totalAmount", "totalPrice", "amount", "price"))
-            raw_mods = _get_value(item, "modifiers") or _get_value(item, "attributes")
+            modifier_sources = _item_modifier_sources(item)
             items.append(
                 StandardOrderItem(
                     source_key=f"{order_id}:{item_key}:{index}",
@@ -671,9 +1090,7 @@ class KeetaClient(BaseAggregatorClient):
                     gross_sales=gross,
                     net_sales=gross,
                     amount_is_known=gross is not None,
-                    modifiers=expand_modifiers(raw_mods)
-                    if raw_mods not in (None, "", [])
-                    else [],
+                    modifiers=expand_modifiers(modifier_sources),
                     modifiers_text=_mods_text(item),
                     business_date=business_date,
                 )
@@ -692,11 +1109,32 @@ class KeetaClient(BaseAggregatorClient):
         nothing to settle yet, so it returns empty with a note rather than
         inventing zeros.
 
-        When the row carries `invoice_pdf_b64` / `invoice_zip_b64` (base64 bytes
-        the bootstrap worker downloaded in-page), those fields are preserved on
-        `raw` for a future PDF-first archival pass — nothing is uploaded until
-        prod discovery confirms the canonical VAT document per channel.
+        Two payload shapes reach here, distinguished by whether they carry file
+        bytes (`_has_finance_file`):
+
+        - **File payloads** — the bootstrap worker downloaded a presigned billing
+          report (`bill_xlsx_b64`) or commission invoice (`invoice_zip_b64` /
+          `invoice_pdf_b64`) and pushed the bytes plus the statement identity
+          (`statement_id`/`taskViewId`, period, `shopId`, `fileScene`). The whole
+          payload is one statement: its XLSX becomes per-order lines, its ZIP/PDF
+          is archived and stamped onto the statement.
+        - **Row-tree payloads** — a bare finance-list JSON (legacy / already-
+          resolved rows). `_extract_rows` walks it into statement + payout rows.
         """
+        if isinstance(payload, dict) and _has_finance_file(payload):
+            statement = self._statement_from(payload, 1)
+            if statement is None:
+                return FinanceResult(
+                    statements=[],
+                    payouts=[],
+                    truncation_note=(
+                        "Keeta finance file payload carried bytes but no statement "
+                        "id (taskViewId / statement_id / time) — cannot key it."
+                    ),
+                )
+            payouts = self._bill_payouts_from(payload, statement.statement_id)
+            return FinanceResult(statements=[statement], payouts=payouts)
+
         rows = _extract_rows(payload)
         statements: list[StandardStatement] = []
         payouts: list[StandardPayout] = []
@@ -728,7 +1166,13 @@ class KeetaClient(BaseAggregatorClient):
     def _statement_from(
         self, row: dict[str, Any], index: int
     ) -> StandardStatement | None:
-        statement_id = _first_text(row, _STATEMENT_ID_KEYS)
+        statement_id = _first_text(row, _STATEMENT_ID_KEYS + ("taskViewId",))
+        if not statement_id:
+            # Monthly commission invoices carry a `time` (YYYYMM) but no id of
+            # their own — synthesise a stable one so the statement upserts.
+            time_val = _get_value(row, "time")
+            if time_val not in (None, "", 0):
+                statement_id = f"KEETA_COMMISSION_{str(time_val).strip()}"
         if not statement_id:
             return None
         period_start = _first_date(
@@ -746,7 +1190,25 @@ class KeetaClient(BaseAggregatorClient):
                 "statementDate",
             ),
         )
+        if period_start is None and period_end is None:
+            # File payloads state the period as `displayTimeText`
+            # ("15 Aug 2026 ~ 22 Aug 2026") or, for the monthly invoice, `time`.
+            display_start, display_end = _period_from_display(
+                _get_value(row, "displayTimeText")
+            )
+            if display_start or display_end:
+                period_start, period_end = display_start, display_end
+            else:
+                period_start, period_end = _period_from_yyyymm(_get_value(row, "time"))
         currency = _first_text(row, _CURRENCY_KEYS) or "AED"
+
+        # Archive the commission invoice (zip/pdf) when the worker sent its bytes;
+        # the billing-report xlsx is data, not a VAT document, so it is parsed
+        # into lines rather than archived.
+        stored = None
+        if _get_value(row, "invoice_zip_b64") or _get_value(row, "invoice_pdf_b64"):
+            stored = _archive_keeta_invoice(row, statement_id)
+
         return StandardStatement(
             statement_id=statement_id,
             period_start=_date_str(period_start),
@@ -784,13 +1246,32 @@ class KeetaClient(BaseAggregatorClient):
             ),
             total_vat=_abs_money(_first_money(row, ("vat", "vatAmount", "taxAmount"))),
             currency=currency,
+            external_outlet_id=_first_text(row, _OUTLET_ID_KEYS),
+            invoice_object_key=stored.object_key if stored else None,
+            invoice_content_type=stored.content_type if stored else None,
+            invoice_original_filename=stored.original_filename if stored else None,
+            invoice_fetched_at=stored.fetched_at if stored else None,
+            invoice_attachments=stored.attachments if stored else None,
             lines=self._statement_lines_from(row, statement_id, index),
-            raw=row,
+            raw=_strip_blobs(row),
         )
 
     def _statement_lines_from(
         self, row: dict[str, Any], statement_id: str, index: int
     ) -> list[StandardStatementLine]:
+        # A billing-report xlsx is the per-order detail: decode it and walk the
+        # "Order Summary" sheet into gross/commission/bank-fee/net lines.
+        xlsx_b64 = _get_value(row, "bill_xlsx_b64")
+        if xlsx_b64:
+            try:
+                xlsx_bytes = base64.b64decode(xlsx_b64)
+            except Exception:  # noqa: BLE001 — a bad blob yields no lines, not a crash
+                logger.warning(
+                    "keeta: invalid bill_xlsx_b64 for %s — no lines", statement_id
+                )
+                return []
+            return _parse_bill_xlsx(xlsx_bytes, statement_id)
+
         amount = _first_money(
             row,
             (
@@ -829,6 +1310,33 @@ class KeetaClient(BaseAggregatorClient):
                 currency=_first_text(row, _CURRENCY_KEYS) or "AED",
             )
         ]
+
+    def _bill_payouts_from(
+        self, row: dict[str, Any], statement_id: str
+    ) -> list[StandardPayout]:
+        """Weekly settlement payouts from a bill xlsx's "Invoice Details" sheet.
+
+        Only a bill-report payload (carrying `bill_xlsx_b64`) has a settlement
+        total to parse; a commission-invoice zip/pdf payload has none, so this
+        returns `[]`. The payouts are keyed and coupled to `statement_id` (the
+        same id the weekly statement uses) inside `_parse_bill_payouts`.
+        """
+        xlsx_b64 = _get_value(row, "bill_xlsx_b64")
+        if not xlsx_b64:
+            return []
+        try:
+            xlsx_bytes = base64.b64decode(xlsx_b64)
+        except Exception:  # noqa: BLE001 — a bad blob yields no payouts, not a crash
+            logger.warning(
+                "keeta: invalid bill_xlsx_b64 for %s — no payouts", statement_id
+            )
+            return []
+        return _parse_bill_payouts(
+            xlsx_bytes,
+            statement_id,
+            _first_text(row, _OUTLET_ID_KEYS),
+            _first_text(row, ("taskViewId",)),
+        )
 
     def _payout_from(self, row: dict[str, Any]) -> StandardPayout | None:
         transfer_id = _first_text(row, _TRANSFER_ID_KEYS)

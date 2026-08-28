@@ -208,6 +208,29 @@ class KeetaFinanceResult(BaseModel):
     truncation_note: str | None = None
 
 
+class DeliverooFinancePush(BaseModel):
+    """A batch of in-page-fetched Deliveroo invoice payloads, pushed in for ingest.
+
+    Deliveroo's invoice list replays over httpx, but the invoice download 403s
+    behind Cloudflare, so the bootstrap worker downloads each statement CSV and
+    PDF in-page (carrying the browser's `cf_clearance`) and hands the raw
+    payloads here. Each payload is one invoice:
+    `{"invoice": <raw dict>, "statement_csv": <text|None>,
+    "statement_pdf_b64": <b64|None>}`. `deliveroo_provider.parse_pushed_finance`
+    turns it into a statement with per-order lines and an archived VAT PDF.
+    """
+
+    payloads: list[dict] = Field(default_factory=list)
+
+
+class DeliverooFinanceResult(BaseModel):
+    """How many statements and lines the pushed Deliveroo invoice payloads upserted."""
+
+    statements: int
+    lines: int
+    truncation_note: str | None = None
+
+
 class AggregatorBranchMapIn(BaseModel):
     """An outlet↔branch mapping to create or update from the admin.
 
@@ -304,3 +327,83 @@ class ReconSummaryOut(BaseModel):
 
     by_channel: list[ReconSummaryRow]
     totals: ReconSummaryRow
+
+
+# ── Layer A: settlement reconciliation (sales↔statement↔payout) ───────────────
+class SettlementPayoutInfo(BaseModel):
+    """The transfer that settled a statement, as far as the payout feed knows."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    transfer_id: str
+    transfer_amount: Decimal | None = None
+    transfer_date: str | None = None
+    transfer_status: str | None = None
+
+
+class SettlementStatementRecon(BaseModel):
+    """One statement reconciled across its sales, settlement and payout sides.
+
+    `sales_total` sums the orders that settled on this statement;
+    `settled_total` sums its order-grain lines; `statement_net_payable` is the
+    statement's own declared figure (null for talabat file-rows, which then
+    carry a `no_statement_total` flag instead of a false variance). Each
+    variance is null when a side is unknown, never a misleading 0.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    channel: str
+    statement_id: str
+    period_start: str | None = None
+    period_end: str | None = None
+    payment_due_date: str | None = None
+    currency: str | None = None
+    sales_total: Decimal | None = None
+    settled_total: Decimal | None = None
+    statement_net_payable: Decimal | None = None
+    orders_count: int
+    lines_count: int
+    orders_promoted: int
+    payout_transfer_id: str | None = None
+    payout: SettlementPayoutInfo | None = None
+    sales_vs_settled: Decimal | None = None
+    sales_vs_settled_flag: bool
+    settled_vs_statement: Decimal | None = None
+    settled_vs_statement_flag: bool
+    flags: list[str] = Field(default_factory=list)
+
+
+class SettlementPayoutRollup(BaseModel):
+    """One transfer against the statements it settled — the batch-payout check.
+
+    `statements_net_total` is the summed declared net payable of the member
+    statements; `variance` is `transfer_amount − statements_net_total`, ~0 when
+    one payout exactly clears its batch of statements.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    channel: str
+    transfer_id: str
+    transfer_amount: Decimal | None = None
+    transfer_date: str | None = None
+    transfer_status: str | None = None
+    statement_ids: list[str] = Field(default_factory=list)
+    statements_count: int
+    statements_net_total: Decimal | None = None
+    variance: Decimal | None = None
+    variance_flag: bool
+    flags: list[str] = Field(default_factory=list)
+
+
+class SettlementReconOut(BaseModel):
+    """The Layer A read: per-statement rows plus the per-payout rollup."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    channel: str
+    from_date: str | None = None
+    to_date: str | None = None
+    statements: list[SettlementStatementRecon]
+    payouts: list[SettlementPayoutRollup]

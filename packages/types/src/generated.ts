@@ -283,6 +283,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/aggregators/deliveroo/finance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Push Deliveroo Finance
+         * @description Ingest a batch of in-page-fetched Deliveroo invoice payloads.
+         *
+         *     Deliveroo's invoice list replays over httpx, but the invoice download 403s
+         *     behind Cloudflare, so the bootstrap worker downloads each statement CSV and
+         *     PDF in-page (where the browser's `cf_clearance` applies) and pushes the raw
+         *     payloads here. Each is parsed by `deliveroo_provider.parse_pushed_finance`
+         *     into a statement (with per-order lines and an archived VAT PDF) and upserted
+         *     exactly as the httpx finance sweep does. Returns the statement and line
+         *     counts written.
+         */
+        post: operations["push_deliveroo_finance_api_v1_aggregators_deliveroo_finance_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/aggregators/keeta/finance": {
         parameters: {
             query?: never;
@@ -347,6 +375,32 @@ export interface paths {
          * @description The reconciliation rows for the dashboard, newest first, with the total.
          */
         get: operations["list_reconciliation_api_v1_aggregators_reconciliation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/aggregators/reconciliation/settlement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Settlement Reconciliation Report
+         * @description Layer A: per-statement sales↔settlement↔payout rollup for one channel.
+         *
+         *     Read-only. For each statement in the window it reports the sales total (the
+         *     orders that settled on it), the settlement total (its order-grain lines and
+         *     its own declared net payable), the linked payout, and the two variances;
+         *     plus a per-payout rollup that checks a batch transfer against the summed net
+         *     payable of the statements it cleared.
+         */
+        get: operations["settlement_reconciliation_report_api_v1_aggregators_reconciliation_settlement_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6882,12 +6936,12 @@ export interface paths {
         put?: never;
         /**
          * Upload Image
-         * @description Upload an image to Cloudflare R2 (admin only). Returns public URL.
+         * @description Upload an image to Google Cloud Storage (admin only). Returns public URL.
          */
         post: operations["upload_image_api_v1_uploads_image_post"];
         /**
          * Delete Image
-         * @description Delete an image from Cloudflare R2 by key or URL (admin only).
+         * @description Delete an image from Google Cloud Storage by key or URL (admin only).
          */
         delete: operations["delete_image_api_v1_uploads_image_delete"];
         options?: never;
@@ -9835,6 +9889,36 @@ export interface components {
             reason?: string | null;
             /** Remaining */
             remaining: number;
+        };
+        /**
+         * DeliverooFinancePush
+         * @description A batch of in-page-fetched Deliveroo invoice payloads, pushed in for ingest.
+         *
+         *     Deliveroo's invoice list replays over httpx, but the invoice download 403s
+         *     behind Cloudflare, so the bootstrap worker downloads each statement CSV and
+         *     PDF in-page (carrying the browser's `cf_clearance`) and hands the raw
+         *     payloads here. Each payload is one invoice:
+         *     `{"invoice": <raw dict>, "statement_csv": <text|None>,
+         *     "statement_pdf_b64": <b64|None>}`. `deliveroo_provider.parse_pushed_finance`
+         *     turns it into a statement with per-order lines and an archived VAT PDF.
+         */
+        DeliverooFinancePush: {
+            /** Payloads */
+            payloads?: {
+                [key: string]: unknown;
+            }[];
+        };
+        /**
+         * DeliverooFinanceResult
+         * @description How many statements and lines the pushed Deliveroo invoice payloads upserted.
+         */
+        DeliverooFinanceResult: {
+            /** Lines */
+            lines: number;
+            /** Statements */
+            statements: number;
+            /** Truncation Note */
+            truncation_note?: string | null;
         };
         /**
          * DeliveryAreaResponse
@@ -14984,6 +15068,117 @@ export interface components {
             /** Price */
             price?: number | string | null;
         };
+        /**
+         * SettlementPayoutInfo
+         * @description The transfer that settled a statement, as far as the payout feed knows.
+         */
+        SettlementPayoutInfo: {
+            /** Transfer Amount */
+            transfer_amount?: string | null;
+            /** Transfer Date */
+            transfer_date?: string | null;
+            /** Transfer Id */
+            transfer_id: string;
+            /** Transfer Status */
+            transfer_status?: string | null;
+        };
+        /**
+         * SettlementPayoutRollup
+         * @description One transfer against the statements it settled — the batch-payout check.
+         *
+         *     `statements_net_total` is the summed declared net payable of the member
+         *     statements; `variance` is `transfer_amount − statements_net_total`, ~0 when
+         *     one payout exactly clears its batch of statements.
+         */
+        SettlementPayoutRollup: {
+            /** Channel */
+            channel: string;
+            /** Flags */
+            flags?: string[];
+            /** Statement Ids */
+            statement_ids?: string[];
+            /** Statements Count */
+            statements_count: number;
+            /** Statements Net Total */
+            statements_net_total?: string | null;
+            /** Transfer Amount */
+            transfer_amount?: string | null;
+            /** Transfer Date */
+            transfer_date?: string | null;
+            /** Transfer Id */
+            transfer_id: string;
+            /** Transfer Status */
+            transfer_status?: string | null;
+            /** Variance */
+            variance?: string | null;
+            /** Variance Flag */
+            variance_flag: boolean;
+        };
+        /**
+         * SettlementReconOut
+         * @description The Layer A read: per-statement rows plus the per-payout rollup.
+         */
+        SettlementReconOut: {
+            /** Channel */
+            channel: string;
+            /** From Date */
+            from_date?: string | null;
+            /** Payouts */
+            payouts: components["schemas"]["SettlementPayoutRollup"][];
+            /** Statements */
+            statements: components["schemas"]["SettlementStatementRecon"][];
+            /** To Date */
+            to_date?: string | null;
+        };
+        /**
+         * SettlementStatementRecon
+         * @description One statement reconciled across its sales, settlement and payout sides.
+         *
+         *     `sales_total` sums the orders that settled on this statement;
+         *     `settled_total` sums its order-grain lines; `statement_net_payable` is the
+         *     statement's own declared figure (null for talabat file-rows, which then
+         *     carry a `no_statement_total` flag instead of a false variance). Each
+         *     variance is null when a side is unknown, never a misleading 0.
+         */
+        SettlementStatementRecon: {
+            /** Channel */
+            channel: string;
+            /** Currency */
+            currency?: string | null;
+            /** Flags */
+            flags?: string[];
+            /** Lines Count */
+            lines_count: number;
+            /** Orders Count */
+            orders_count: number;
+            /** Orders Promoted */
+            orders_promoted: number;
+            /** Payment Due Date */
+            payment_due_date?: string | null;
+            payout?: components["schemas"]["SettlementPayoutInfo"] | null;
+            /** Payout Transfer Id */
+            payout_transfer_id?: string | null;
+            /** Period End */
+            period_end?: string | null;
+            /** Period Start */
+            period_start?: string | null;
+            /** Sales Total */
+            sales_total?: string | null;
+            /** Sales Vs Settled */
+            sales_vs_settled?: string | null;
+            /** Sales Vs Settled Flag */
+            sales_vs_settled_flag: boolean;
+            /** Settled Total */
+            settled_total?: string | null;
+            /** Settled Vs Statement */
+            settled_vs_statement?: string | null;
+            /** Settled Vs Statement Flag */
+            settled_vs_statement_flag: boolean;
+            /** Statement Id */
+            statement_id: string;
+            /** Statement Net Payable */
+            statement_net_payable?: string | null;
+        };
         /** SplitOrderRequest */
         SplitOrderRequest: {
             /** Item Ids */
@@ -17376,6 +17571,41 @@ export interface operations {
             };
         };
     };
+    push_deliveroo_finance_api_v1_aggregators_deliveroo_finance_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeliverooFinancePush"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliverooFinanceResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     push_keeta_finance_api_v1_aggregators_keeta_finance_post: {
         parameters: {
             query?: never;
@@ -17470,6 +17700,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AggregatorReconciliationList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    settlement_reconciliation_report_api_v1_aggregators_reconciliation_settlement_get: {
+        parameters: {
+            query: {
+                /** @description Aggregator channel to reconcile */
+                channel: string;
+                /** @description ISO date; include statements from this period */
+                from?: string | null;
+                /** @description ISO date; include statements up to this period */
+                to?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettlementReconOut"];
                 };
             };
             /** @description Validation Error */
@@ -30685,7 +30951,7 @@ export interface operations {
     upload_image_api_v1_uploads_image_post: {
         parameters: {
             query?: {
-                /** @description R2 folder prefix (e.g. products, categories) */
+                /** @description GCS folder prefix (e.g. products, categories) */
                 folder?: string;
             };
             header?: never;
@@ -30721,7 +30987,7 @@ export interface operations {
     delete_image_api_v1_uploads_image_delete: {
         parameters: {
             query: {
-                /** @description R2 object key or full public URL */
+                /** @description GCS object key or full public URL */
                 key: string;
             };
             header?: never;

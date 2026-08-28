@@ -31,6 +31,8 @@ def _agg(**over):
         gross_sales=Decimal("40.00"),
         vat_amount=None,
         delivery_fee=Decimal("0"),
+        commission_amount=None,
+        payment_fee=None,
         status="40",
         placed_at=None,
         business_date="2026-08-27",
@@ -126,7 +128,7 @@ async def test_off_platform_branch_is_created(monkeypatch):
     async def fake_find_conv(db, ext):
         return None
 
-    async def fake_build(db, agg, label):
+    async def fake_build(db, agg, label, *, draw_stock=True):
         return built
 
     monkeypatch.setattr(promote.reconcile, "_branch_has_grubops", fake_has_grubops)
@@ -141,9 +143,15 @@ async def test_off_platform_branch_is_created(monkeypatch):
 
 
 async def test_grubops_owned_order_is_never_recreated(monkeypatch):
-    """Barsha/Sharjah with a GrubOps order → link only, never build or edit."""
+    """Barsha/Sharjah with a GrubOps order → link only, never build/recreate it.
+
+    The one edit promotion is allowed on a GrubOps-owned order is overlaying the
+    marketplace's ACTUAL settled fees onto its fee columns (a null-guarded fee
+    stamp), so the assertion is: nothing is built, and only the fee overlay runs.
+    """
     grubops_order = SimpleNamespace(id=uuid.uuid4())
     build_calls = {"n": 0}
+    stamp_calls = {"n": 0, "kwargs": None}
 
     async def fake_has_grubops(db, branch_id):
         return True
@@ -151,19 +159,29 @@ async def test_grubops_owned_order_is_never_recreated(monkeypatch):
     async def fake_find_mm(db, channel, ext):
         return grubops_order
 
-    async def fake_build(db, agg, label):
+    async def fake_build(db, agg, label, *, draw_stock=True):
         build_calls["n"] += 1
         return SimpleNamespace(id=uuid.uuid4())
+
+    async def fake_stamp(db, order, **kwargs):
+        stamp_calls["n"] += 1
+        stamp_calls["kwargs"] = kwargs
+        return None
 
     monkeypatch.setattr(promote.reconcile, "_branch_has_grubops", fake_has_grubops)
     monkeypatch.setattr(promote.reconcile, "_find_mm_order", fake_find_mm)
     monkeypatch.setattr(promote, "_build_order", fake_build)
+    monkeypatch.setattr(promote.order_fees, "stamp", fake_stamp)
 
     agg = _agg()
+    agg.commission_amount = Decimal("9.00")  # the marketplace has settled it
     out = await promote.promote_order(_FakeDB(), agg)
     assert out is grubops_order
     assert agg.mm_order_id == grubops_order.id
     assert build_calls["n"] == 0  # GrubOps owns it — nothing built
+    # The actual settled fee is overlaid onto the GrubOps order.
+    assert stamp_calls["n"] == 1
+    assert stamp_calls["kwargs"]["actual_commission"] == Decimal("9.00")
 
 
 async def test_grubops_branch_gap_is_filled(monkeypatch):
@@ -180,7 +198,7 @@ async def test_grubops_branch_gap_is_filled(monkeypatch):
     async def fake_find_conv(db, ext):
         return None
 
-    async def fake_build(db, agg, label):
+    async def fake_build(db, agg, label, *, draw_stock=True):
         build_calls["n"] += 1
         return built
 

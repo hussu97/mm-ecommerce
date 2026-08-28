@@ -56,10 +56,12 @@ import csv
 import io
 import json
 import logging
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from app.core.config import settings
 from app.models.aggregator import CHANNEL_NOON
 from app.services.aggregators.modifiers import expand_modifiers
 from app.services.aggregators.normalized import (
@@ -70,9 +72,11 @@ from app.services.aggregators.normalized import (
     StandardOrderItem,
     StandardPayout,
     StandardStatement,
+    StandardStatementLine,
     StatementsResult,
 )
 from app.services.aggregators.session_store import LoadedSession
+from app.services.aggregators.statement_docs import store_statement_invoice
 from app.services.providers.aggregator_base import (
     AggregatorAuthError,
     AggregatorUnavailableError,
@@ -94,17 +98,18 @@ _OMS_PAGE_SIZE = 100
 #: If `data.pages` exceeds this, a truncation note is added to the result.
 _OMS_MAX_PAGES = 10
 
-#: Noon publishes wallet statements roughly weekly (~7–8 days between refs). The
-#: shared daily ingest lookback is 1 day (order-date channels), which almost
-#: always contains no statement *publication* date — so nightly sales looked
-#: empty even though the restaurant traded. Widen statement/payment discovery
-#: to cover at least one publish cycle; upserts stay idempotent.
-_PUBLICATION_LOOKBACK_DAYS = 14
-
 
 def _publication_since(since: datetime) -> datetime:
-    """Earliest date for wallet statement/payment discovery (weekly publish grain)."""
-    return since - timedelta(days=max(_PUBLICATION_LOOKBACK_DAYS - 1, 0))
+    """Earliest date for wallet statement/payment discovery (weekly publish grain).
+
+    Noon publishes wallet statements roughly weekly (~7–8 days between refs), and
+    the shared daily ingest lookback is 1 day — which almost always contains no
+    statement *publication* date, so a nightly finance pass looked empty even
+    though the restaurant traded. `AGGREGATOR_NOON_PUBLICATION_LOOKBACK_DAYS`
+    widens discovery to cover at least one publish cycle; upserts stay idempotent.
+    """
+    days = max(settings.AGGREGATOR_NOON_PUBLICATION_LOOKBACK_DAYS - 1, 0)
+    return since - timedelta(days=days)
 
 
 #: Distinctive phrases from an Akamai Bot Manager deny page. Kept narrow so a
@@ -538,6 +543,13 @@ class NoonClient(BaseAggregatorClient):
             return None
         placed_at = _parse_datetime(order.get("createdAt"))
         outlet_info = order.get("outletInfo") or {}
+        # The OMS order carries the end customer under `customerInfo` (name +
+        # UAE mobile), with `receiverInfo` as the fallback when the payer and the
+        # receiver differ. Both are dropped by the RMS statement path, so an
+        # OMS-sourced order is the only place noon exposes who the order was for.
+        customer_info = order.get("customerInfo") or order.get("receiverInfo") or {}
+        if not isinstance(customer_info, dict):
+            customer_info = {}
         return StandardOrder(
             external_order_id=order_id,
             external_outlet_id=_str_or_none(
@@ -550,8 +562,8 @@ class NoonClient(BaseAggregatorClient):
             cancelled_at=None,
             status=_str_or_none(order.get("orderStatusCode")),
             currency=_str_or_none(order.get("currencyCode")) or "AED",
-            customer_name=None,
-            customer_phone=None,
+            customer_name=_str_or_none(customer_info.get("name")),
+            customer_phone=_str_or_none(customer_info.get("phone")),
             gross_sales=_num(
                 order.get("orderOutletSubtotal")
                 if order.get("orderOutletSubtotal") is not None
@@ -759,26 +771,33 @@ class NoonClient(BaseAggregatorClient):
             raw=row,
         )
 
+    #: The genuinely SEPARATE fees on a noon statement row — the ones that are
+    #: not the commission and so must be netted out of `fees_exc_vat` to leave
+    #: it. `lead_generation_fee` is deliberately NOT here: verified against the
+    #: live statement (item 30 → fees_exc_vat -8.1 = commission -7.5 + payment
+    #: -0.6), noon reports the COMMISSION itself under `lead_generation_fee`, so
+    #: subtracting it as if it were an extra fee zeroed every noon commission.
+    _NOON_NON_COMMISSION_FEES: tuple[tuple[str, str], ...] = (
+        ("payment_fee", "paymentFee"),
+        ("delivery_fee", "deliveryFee"),
+        ("cancellation_fee", "cancellationFee"),
+        ("discount_service_fee", "discountServiceFee"),
+        ("long_distance_fee_mp", "longDistanceFeeMp"),
+        ("delivery_discount_fee", "deliveryDiscountFee"),
+    )
+
     @staticmethod
     def _commission_from(row: dict[str, Any]) -> Decimal | None:
-        """The real commission, backed out of the statement the way the
-        Playwright normaliser did: `fees_exc_vat` less the itemised non-
-        commission fees, floored at zero. None when `fees_exc_vat` is absent —
-        an unknown cut, not a zero one.
+        """The real commission, backed out of the statement: `fees_exc_vat` less
+        the genuinely non-commission fees (`_NOON_NON_COMMISSION_FEES`), floored
+        at zero. `lead_generation_fee` is the commission itself and is left in.
+        None when `fees_exc_vat` is absent — an unknown cut, not a zero one.
         """
         fees_exc_vat = _num(_first(row, "fees_exc_vat", "feesExcVat"))
         if fees_exc_vat is None:
             return None
         other = Decimal(0)
-        for snake, camel in (
-            ("payment_fee", "paymentFee"),
-            ("delivery_fee", "deliveryFee"),
-            ("cancellation_fee", "cancellationFee"),
-            ("lead_generation_fee", "leadGenerationFee"),
-            ("discount_service_fee", "discountServiceFee"),
-            ("long_distance_fee_mp", "longDistanceFeeMp"),
-            ("delivery_discount_fee", "deliveryDiscountFee"),
-        ):
+        for snake, camel in NoonClient._NOON_NON_COMMISSION_FEES:
             fee = _abs(_num(_first(row, snake, camel)))
             if fee is not None:
                 other += fee
@@ -789,10 +808,21 @@ class NoonClient(BaseAggregatorClient):
     async def fetch_statements(
         self, session: LoadedSession, *, since: datetime, until: datetime
     ) -> StatementsResult:
-        """Wallet Statement tab — settlement summaries (invoice archival deferred until PDF discovery)."""
+        """Wallet Statement tab — settlement summaries plus per-order lines.
+
+        The wallet row is a summary; the per-order settlement breakdown (the
+        line grain that maps each fee/credit back to a sales order) lives in the
+        RMS `statement/orders` endpoint keyed by the statement refs. We fetch it
+        once for every in-window statement and attach the lines to their parent,
+        so a finance sweep fills `aggregator_statement_line`. noon exposes no
+        downloadable statement file of its own, so we also render those same
+        per-order rows to a CSV and archive it as the statement document
+        (`_archive_statement_csv`).
+        """
         statement_rows = await self._wallet_rows(session, "statement")
         publish_since = _publication_since(since)
         statements: list[StandardStatement] = []
+        by_id: dict[str, StandardStatement] = {}
         for row in statement_rows:
             if _entry_type(row) != "statement":
                 continue
@@ -801,10 +831,71 @@ class NoonClient(BaseAggregatorClient):
             statement = self._statement_from(row)
             if statement is not None:
                 statements.append(statement)
+                by_id[statement.statement_id] = statement
 
+        # Per-order settlement lines for the in-window statements. Best-effort:
+        # a failure here must not lose the summaries we already have.
+        lines_note: str | None = None
+        if by_id:
+            try:
+                order_rows = await self._post_tabular(
+                    session,
+                    _ORDER_STATEMENT_URL,
+                    {"statementNrList": list(by_id.keys())},
+                )
+                grouped: dict[str, list[StandardStatementLine]] = {}
+                raw_by_stmt: dict[str, list[dict]] = {}
+                for row in order_rows:
+                    stmt_ref = _str_or_none(
+                        _first(row, "statement_nr", "statementNr", "reference_nr")
+                    )
+                    if stmt_ref is None or stmt_ref not in by_id:
+                        continue
+                    grouped.setdefault(stmt_ref, []).extend(
+                        self._statement_lines_from_order_row(stmt_ref, row)
+                    )
+                    raw_by_stmt.setdefault(stmt_ref, []).append(row)
+                for stmt_ref, lines in grouped.items():
+                    parent = by_id[stmt_ref]
+                    idx = statements.index(parent)
+                    # Generate + archive a statement DOCUMENT from the settled
+                    # per-order rows. noon exposes no downloadable statement file
+                    # of its own (audited 2026-08: no API endpoint responds, the
+                    # console SPA route is opaque), so rather than leave finance
+                    # with no VAT document we render noon's own per-order
+                    # settlement data — every fee, VAT and net line — to a CSV and
+                    # archive THAT to object storage. A real, retrievable
+                    # settlement document for the period; best-effort, so an
+                    # archive failure never loses the summary or the lines.
+                    archive = self._archive_statement_csv(
+                        stmt_ref, raw_by_stmt.get(stmt_ref, [])
+                    )
+                    if archive is not None:
+                        statements[idx] = replace(
+                            parent,
+                            lines=lines,
+                            invoice_object_key=archive.object_key,
+                            invoice_content_type=archive.content_type,
+                            invoice_original_filename=archive.original_filename,
+                            invoice_fetched_at=archive.fetched_at,
+                        )
+                    else:
+                        statements[idx] = replace(parent, lines=lines)
+            except (AggregatorAuthError, AggregatorUnavailableError) as exc:
+                lines_note = (
+                    f"noon statement lines unavailable ({exc}); statement "
+                    "summaries stored without per-order lines"
+                )
+                logger.warning("noon statement-line fetch failed: %s", exc)
+
+        notes = [
+            n
+            for n in (_truncation_note(statement_rows, publish_since), lines_note)
+            if n
+        ]
         return StatementsResult(
             statements=statements,
-            truncation_note=_truncation_note(statement_rows, publish_since),
+            truncation_note=" | ".join(notes) if notes else None,
         )
 
     async def fetch_payouts(
@@ -854,14 +945,111 @@ class NoonClient(BaseAggregatorClient):
         )
         if statement_id is None:
             return None
+        # The wallet statement row carries the settlement window explicitly
+        # (periodStart/periodEnd). Prefer them; the row `date` is only the
+        # publication day, which is why period_start used to come back null.
+        period_start = _parse_date(_first(row, "period_start", "periodStart"))
+        period_end = _parse_date(_first(row, "period_end", "periodEnd")) or day
         return StandardStatement(
             statement_id=str(statement_id),
-            period_end=day.isoformat() if day else None,
+            period_start=period_start.isoformat() if period_start else None,
+            period_end=period_end.isoformat() if period_end else None,
             payment_due_date=day.isoformat() if day else None,
             net_payable=_num(_first(row, "amount", "value")),
             currency=_first(row, "currency", "currencyCode") or "AED",
             raw=row,
         )
+
+    @staticmethod
+    def _archive_statement_csv(statement_id: str, rows: list[dict]):
+        """Render the statement's settled per-order rows to a CSV and archive it.
+
+        noon publishes no downloadable statement file, so this is noon's own
+        settlement data (order id, business date, item value, every fee, VAT,
+        net payable) written out as the statement document and stored under the
+        private invoice prefix. Returns the `StoredStatementInvoice`, or None when
+        there is nothing to archive or object storage is unconfigured / errors —
+        the caller keeps the statement either way.
+        """
+        if not rows:
+            return None
+        fieldnames: list[str] = []
+        for row in rows:
+            for key in row:
+                if key not in fieldnames:
+                    fieldnames.append(str(key))
+        buffer = io.StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({str(k): v for k, v in row.items()})
+        body = buffer.getvalue().encode("utf-8")
+        try:
+            return store_statement_invoice(
+                channel=CHANNEL_NOON,
+                statement_id=statement_id,
+                filename=f"{statement_id}.csv",
+                body=body,
+                content_type="text/csv",
+            )
+        except Exception:  # noqa: BLE001 — archival is best-effort
+            logger.exception("noon statement-doc archive failed for %s", statement_id)
+            return None
+
+    @staticmethod
+    def _statement_lines_from_order_row(
+        statement_id: str, row: dict[str, Any]
+    ) -> list[StandardStatementLine]:
+        """Per-order settlement lines from an RMS `statement/orders` row.
+
+        Each settled order carries an `external_order_id` (order_nr) plus its
+        fee breakdown — the natural join back to the sales orders (Q5). We emit
+        one `order`-grain line per non-null figure so a line keeps both the
+        order ref and what the marketplace charged/paid for it. Amounts are
+        left null when the column is absent (unknown, never a fabricated zero).
+        """
+        order_id = _first(row, "order_nr", "orderNr", "order_id")
+        if not order_id:
+            return []
+        order_id = str(order_id)
+        line_date = _parse_date(_first(row, "order_date", "orderDate", "business_date"))
+        line_date_iso = line_date.isoformat() if line_date else None
+        currency = _first(row, "currency", "currencyCode") or "AED"
+        # (label, line_type, fee_category, value)
+        candidates: list[tuple[str, str, str | None, Decimal | None]] = [
+            (
+                "net_payable",
+                "settlement",
+                None,
+                _num(_first(row, "net_payable", "netPayable")),
+            ),
+            (
+                "gross_sales",
+                "sale",
+                None,
+                _num(_first(row, "order_value", "orderValue", "item_value")),
+            ),
+            ("commission", "fee", "commission", NoonClient._commission_from(row)),
+            ("vat", "vat", "vat", _abs(_num(_first(row, "total_vat", "totalVat")))),
+        ]
+        lines: list[StandardStatementLine] = []
+        for label, line_type, fee_category, amount in candidates:
+            if amount is None:
+                continue
+            lines.append(
+                StandardStatementLine(
+                    source_key=f"noon:{statement_id}:{order_id}:{label}",
+                    statement_id=statement_id,
+                    external_order_id=order_id,
+                    line_date=line_date_iso,
+                    line_type=line_type,
+                    fee_category=fee_category,
+                    description=None,
+                    amount=amount,
+                    currency=currency,
+                )
+            )
+        return lines
 
 
 #: The module-level singleton, matching the other providers — stateless (the

@@ -28,8 +28,10 @@ read the body as well as the status — a challenge is a dead session, not data.
 Auth is a bearer `accessToken`. In the browser it is read from the `accessToken`
 cookie first and localStorage second; here it is read from the session's cookies
 first and its tokens second (`_access_token`), and sent as `Authorization:
-Bearer …` on every call plus an `x-global-entity-id: tb_ae` header. Entity is
-`TB_AE` (Talabat UAE).
+Bearer …` on every call plus an `x-global-entity-id: tb_ae` header. Entity
+defaults to `TB_AE` (Talabat UAE) but is read off the session
+(`tokens["global_entity_id"]`, injected from `aggregator_account.extras` by
+`session_store.enrich_session`) so a non-UAE entity needs no code change.
 
 Money is taken verbatim and left null where a column is absent (None is
 "unknown", not zero — a blank commission cell is not a free order), every order
@@ -67,6 +69,7 @@ from app.services.aggregators.normalized import (
 )
 from app.services.aggregators.session_store import LoadedSession
 from app.services.providers.aggregator_base import (
+    AggregatorAuthError,
     AggregatorUnavailableError,
     BaseAggregatorClient,
 )
@@ -76,6 +79,10 @@ logger = logging.getLogger(__name__)
 # ── Endpoints and entity ──────────────────────────────────────────────────────
 _ORDERS_GRAPHQL = "https://vm-supergraph.eu.prd.portal.restaurant/graphql"
 _FINANCE_GRAPHQL = "https://vagw-api.eu.prd.portal.restaurant/query"
+#: The default Talabat global entity (UAE). The live value is read off the
+#: session (`tokens["global_entity_id"]`, populated from `aggregator_account`
+#: `.extras` by `session_store.enrich_session`); this is only the fallback when
+#: the account carries none, so behaviour is unchanged until an operator sets it.
 _GLOBAL_ENTITY_ID = "TB_AE"
 
 # ── Report Builder export constants (orders) ──────────────────────────────────
@@ -545,6 +552,20 @@ class TalabatClient(BaseAggregatorClient):
 
     # ── session-sourced credentials ───────────────────────────────────────────
     @staticmethod
+    def _global_entity_id(session: LoadedSession) -> str:
+        """The Talabat global entity id for this session.
+
+        Read from `tokens["global_entity_id"]` (injected from
+        `aggregator_account.extras` by `session_store.enrich_session`), falling
+        back to `_GLOBAL_ENTITY_ID` (`TB_AE`) when the account carries none — so
+        the request is byte-identical to before until an operator sets it.
+        """
+        value = (session.tokens or {}).get("global_entity_id")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return _GLOBAL_ENTITY_ID
+
+    @staticmethod
     def _access_token(session: LoadedSession) -> str | None:
         """The bearer `accessToken`, from the session's cookies then tokens.
 
@@ -654,7 +675,7 @@ class TalabatClient(BaseAggregatorClient):
         """
         headers = {
             "content-type": "application/json",
-            "x-global-entity-id": _GLOBAL_ENTITY_ID.lower(),
+            "x-global-entity-id": self._global_entity_id(session).lower(),
         }
         token = self._access_token(session)
         if token:
@@ -692,6 +713,7 @@ class TalabatClient(BaseAggregatorClient):
                 f"{self.channel} session carries no order store ids "
                 "(tokens.account_ids / finance accounts) — cannot scope an export"
             )
+        entity = self._global_entity_id(session)
         from_iso = since.date().isoformat()
         to_iso = until.date().isoformat()
         filters = {
@@ -708,7 +730,7 @@ class TalabatClient(BaseAggregatorClient):
             query=_ESTIMATE_EXPORT_SIZE_QUERY,
             variables={
                 "input": {
-                    "globalEntityId": _GLOBAL_ENTITY_ID,
+                    "globalEntityId": entity,
                     "exportType": _EXPORT_TYPE_ORDERS,
                     "filters": filters,
                 }
@@ -729,7 +751,7 @@ class TalabatClient(BaseAggregatorClient):
             variables={
                 "input": {
                     "name": f"sales-{from_iso}-{to_iso}",
-                    "globalEntityId": _GLOBAL_ENTITY_ID,
+                    "globalEntityId": entity,
                     "exportType": _EXPORT_TYPE_ORDERS,
                     "filters": filters,
                     "format": _EXPORT_FORMAT_CSV,
@@ -760,6 +782,7 @@ class TalabatClient(BaseAggregatorClient):
         self, session: LoadedSession, *, export_id: str
     ) -> dict[str, Any]:
         """Poll `ListExports` until our export is completed (or terminally bad)."""
+        entity = self._global_entity_id(session)
         deadline = asyncio.get_event_loop().time() + _EXPORT_POLL_TIMEOUT_SECONDS
         last: dict[str, Any] | None = None
         while asyncio.get_event_loop().time() < deadline:
@@ -769,7 +792,7 @@ class TalabatClient(BaseAggregatorClient):
                 query=_LIST_EXPORTS_QUERY,
                 variables={
                     "input": {
-                        "globalEntityId": _GLOBAL_ENTITY_ID,
+                        "globalEntityId": entity,
                         "pagination": {"pageSize": 20, "sortOrder": "SORT_ORDER_DESC"},
                         "filter": {"exportType": []},
                     }
@@ -806,8 +829,11 @@ class TalabatClient(BaseAggregatorClient):
             timeout=_CSV_DOWNLOAD_TIMEOUT_SECONDS,
         )
         if self._is_auth_failure(response):
-            raise AggregatorUnavailableError(
-                f"{self.channel} report download was challenged/blocked"
+            # A 401/403 or a PerimeterX challenge on the download is a dead
+            # session, not slowness — flip needs_bootstrap rather than loop.
+            raise AggregatorAuthError(
+                f"{self.channel} report download was challenged/blocked "
+                "— session no longer authenticates"
             )
         status = getattr(response, "status_code", 0)
         if status >= 400:
@@ -958,8 +984,13 @@ class TalabatClient(BaseAggregatorClient):
             if s is not None
         ]
         # Attempt to enrich with the detailed xlsx bundle (per-order fee lines).
-        # If the bulk download fails — bot wall, network blip, missing permission —
-        # we degrade gracefully: the metadata statements above are still correct.
+        # If the bulk download fails — a network blip, a missing permission, a
+        # provider 5xx — we degrade gracefully: the metadata statements above are
+        # still correct, but the per-order lines/fees are absent, so we flag that
+        # in `truncation_note` rather than letting a metadata-only result pass for
+        # a complete one. (A dead session raises AggregatorAuthError, which is not
+        # caught here so it can flip needs_bootstrap.)
+        truncation_note: str | None = None
         try:
             bundle_statements = await self._fetch_bundle_statements(
                 session, accounts=accounts, from_date=from_date, to_date=to_date
@@ -971,7 +1002,13 @@ class TalabatClient(BaseAggregatorClient):
                 self.channel,
                 exc,
             )
-        return StatementsResult(statements=statements)
+            truncation_note = (
+                "Talabat detailed statement bundle (xlsx) could not be "
+                f"downloaded ({exc}); per-order statement lines and fee/VAT "
+                "breakdowns are absent — the statements returned carry "
+                "settlement metadata only."
+            )
+        return StatementsResult(statements=statements, truncation_note=truncation_note)
 
     async def fetch_payouts(
         self, session: LoadedSession, *, since: datetime, until: datetime
@@ -1018,6 +1055,7 @@ class TalabatClient(BaseAggregatorClient):
         `nextPageToken`, on a token it has already followed, and on the hard page
         ceiling — any one of which prevents an infinite live-portal loop.
         """
+        entity = self._global_entity_id(session)
         rows: list[dict[str, Any]] = []
         seen_ids: set[str] = set()
         seen_tokens: set[str] = set()
@@ -1027,7 +1065,7 @@ class TalabatClient(BaseAggregatorClient):
             if page_token:
                 pagination["pageToken"] = page_token
             params = {
-                "globalEntityId": _GLOBAL_ENTITY_ID,
+                "globalEntityId": entity,
                 "accounts": accounts,
                 date_keys[0]: from_date.isoformat(),
                 date_keys[1]: to_date.isoformat(),
@@ -1077,13 +1115,14 @@ class TalabatClient(BaseAggregatorClient):
         Raises `AggregatorUnavailableError` on any transport or API failure so
         the caller can degrade gracefully without dropping the metadata statements.
         """
+        entity = self._global_entity_id(session)
         counts_data = await self._graphql(
             session,
             endpoint=_FINANCE_GRAPHQL,
             query=_BULK_STATEMENT_COUNTS_QUERY,
             variables={
                 "params": {
-                    "globalEntityId": _GLOBAL_ENTITY_ID,
+                    "globalEntityId": entity,
                     "accounts": accounts,
                     "statementDateFrom": from_date.isoformat(),
                     "statementDateTo": to_date.isoformat(),
@@ -1127,6 +1166,11 @@ class TalabatClient(BaseAggregatorClient):
                 continue
             bundle_bytes = await self._download_bundle(session, url)
             parsed = self._parse_bundle_bytes(bundle_bytes)
+            # Archive the downloaded zip (the VAT-claim source document) to R2 and
+            # stamp the invoice fields onto every statement parsed out of it.
+            parsed = self._archive_bundle(
+                parsed, bundle_bytes, from_date=win_start, to_date=win_end
+            )
             logger.info(
                 "%s bundle %s – %s: %d detailed statements",
                 self.channel,
@@ -1137,6 +1181,66 @@ class TalabatClient(BaseAggregatorClient):
             all_statements.extend(parsed)
         return all_statements
 
+    def _archive_bundle(
+        self,
+        statements: list[StandardStatement],
+        bundle_bytes: bytes,
+        *,
+        from_date: date,
+        to_date: date,
+    ) -> list[StandardStatement]:
+        """Persist the statement zip to R2 and stamp the invoice fields on it.
+
+        The zip is one physical document — the portal's own
+        `additionalStatementsArchive_…zip` — covering every branch statement in
+        the window, so each parsed statement points at the same archived object.
+
+        `store_statement_invoice` returns None when R2 is unconfigured or the
+        body is empty; then the statements are returned unchanged, still
+        carrying their parsed totals and lines (archival is best-effort — it must
+        never drop a statement). The same is true if the upload itself throws.
+        """
+        if not statements or not bundle_bytes:
+            return statements
+        from app.services.aggregators import statement_docs
+
+        filename = (
+            f"additionalStatementsArchive_{from_date.isoformat()}"
+            f"_to_{to_date.isoformat()}.zip"
+        )
+        archive_id = f"bundle-{from_date.isoformat()}-{to_date.isoformat()}"
+        try:
+            stored = statement_docs.store_statement_invoice(
+                channel=self.channel,
+                statement_id=archive_id,
+                filename=filename,
+                body=bundle_bytes,
+                content_type="application/zip",
+            )
+        except Exception:  # noqa: BLE001 - an archive failure must not drop lines
+            logger.warning(
+                "%s statement bundle archive failed for %s – %s; "
+                "statements kept without an invoice document",
+                self.channel,
+                from_date,
+                to_date,
+                exc_info=True,
+            )
+            return statements
+        if stored is None:
+            return statements
+        return [
+            replace(
+                stmt,
+                invoice_object_key=stored.object_key,
+                invoice_content_type=stored.content_type,
+                invoice_original_filename=stored.original_filename,
+                invoice_fetched_at=stored.fetched_at,
+                invoice_attachments=stored.attachments,
+            )
+            for stmt in statements
+        ]
+
     async def _bundle_download_url(
         self,
         session: LoadedSession,
@@ -1146,13 +1250,14 @@ class TalabatClient(BaseAggregatorClient):
         to_date: date,
     ) -> str | None:
         """Request the bulk statement zip download URL for a single date window."""
+        entity = self._global_entity_id(session)
         data = await self._graphql(
             session,
             endpoint=_FINANCE_GRAPHQL,
             query=_BULK_STATEMENT_DOWNLOAD_QUERY,
             variables={
                 "params": {
-                    "globalEntityId": _GLOBAL_ENTITY_ID,
+                    "globalEntityId": entity,
                     "accounts": accounts,
                     "statementDateFrom": from_date.isoformat(),
                     "statementDateTo": to_date.isoformat(),
@@ -1183,8 +1288,11 @@ class TalabatClient(BaseAggregatorClient):
             timeout=_CSV_DOWNLOAD_TIMEOUT_SECONDS,
         )
         if self._is_auth_failure(response):
-            raise AggregatorUnavailableError(
-                f"{self.channel} bundle download was challenged/blocked"
+            # A 401/403 or a PerimeterX challenge on the download is a dead
+            # session, not slowness — flip needs_bootstrap rather than loop.
+            raise AggregatorAuthError(
+                f"{self.channel} bundle download was challenged/blocked "
+                "— session no longer authenticates"
             )
         status = getattr(response, "status_code", 0)
         if status >= 400:

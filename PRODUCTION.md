@@ -61,7 +61,7 @@ Internet
 ├── admin.meltingmomentscakes.com  → Vercel (admin panel)
 ├── api.meltingmomentscakes.com    → GCP VM: FastAPI via Nginx + SSL
 ├── pos.meltingmomentscakes.com    → GCP VM: the register API, its own app + container
-└── pub-<hash>.r2.dev              → Cloudflare R2 (object storage)
+└── storage.googleapis.com        → Google Cloud Storage (object storage)
 ```
 
 **GCP VM** (e2-micro, 1 vCPU shared, 1 GB RAM) runs:
@@ -420,61 +420,39 @@ docker exec melting-moments-cakes-postgres-1 psql -U mm_user -d postgres -c "DRO
 
 ---
 
-## Step 11b: Cloudflare R2 (Media Storage)
+## Step 11b: Google Cloud Storage (Media Storage)
 
-R2 stores product images and other uploaded assets.
+GCS stores product images and other uploaded assets. Authentication is via
+Application Default Credentials — the GCE VM's default service account — so
+there are no access-key/secret pairs to manage; the two settings below are just
+bucket names.
 
-### Create the bucket
+### Buckets
 
-1. Log in to [dash.cloudflare.com](https://dash.cloudflare.com) and select your account
-2. In the left sidebar, go to **R2 Object Storage**
-3. Click **Create bucket**
-   - **Name**: `melting-moments-cakes`
-   - **Location**: leave as automatic (Cloudflare picks the closest region to the first request)
-4. Click **Create bucket**
+Two buckets are used:
 
-### Enable public access
+- **`mm-product-images`** — public-read, serves product images at
+  `https://storage.googleapis.com/mm-product-images/<key>`. Configured in
+  `GCS_IMAGE_BUCKET`.
+- **`melting-moments-data`** — private (uniform bucket-level access,
+  public-access-prevention), holds settlement invoices under the `invoices/`
+  prefix and other finance/data documents. Configured in `GCS_INVOICE_BUCKET`.
+  Downloads are served through short-lived V4 signed URLs.
 
-1. Open the bucket → **Settings** tab
-2. Under **Public access** → **R2.dev subdomain**, click **Allow Access**
-3. Confirm — Cloudflare shows a permanent URL like `https://pub-<hash>.r2.dev`
-4. Copy that URL — it goes into `CLOUDFLARE_R2_PUBLIC_URL` in Step 13c
+### Service account access
 
-### Create an R2 API token
-
-The API needs write access to upload media files.
-
-1. From the R2 overview page, find the **Account Details** panel on the right side
-2. Click **Manage** next to **API Tokens**
-3. Choose **Create API Token** (Account API token — not User API token)
-4. Configure the token:
-   - **Token name**: `melting-moments-api`
-   - **Permissions**: `Object Read & Write`
-   - **Bucket**: select `melting-moments-cakes` (scope to this bucket only)
-5. Click **Create API Token**
-6. **Copy immediately** — the Secret Access Key is shown only once:
-   - **Access Key ID** → `CLOUDFLARE_R2_ACCESS_KEY`
-   - **Secret Access Key** → `CLOUDFLARE_R2_SECRET_KEY`
-
-### Find your endpoint and account ID
-
-Your **Account ID** is visible in the **Account Details** panel on the R2 overview page (also in the dashboard URL: `dash.cloudflare.com/<account-id>/r2`).
-
-The S3-compatible endpoint is:
-```
-https://<account-id>.r2.cloudflarestorage.com
-```
-→ `CLOUDFLARE_R2_ENDPOINT`
+The API runs on the GCE VM under its default compute service account, which has
+`roles/editor` and the `devstorage.read_write` scope, plus
+`roles/iam.serviceAccountTokenCreator` on itself (needed so it can IAM-sign V4
+URLs for the private bucket). No key file is deployed — `storage.Client()` picks
+up the VM identity from the metadata server.
 
 ### Summary of values for Step 13c
 
-| Secret | Where to find it |
-|--------|-----------------|
-| `CLOUDFLARE_R2_ACCESS_KEY` | API token creation page (Access Key ID) |
-| `CLOUDFLARE_R2_SECRET_KEY` | API token creation page (Secret Access Key) |
-| `CLOUDFLARE_R2_BUCKET` | `melting-moments-cakes` (literal) |
-| `CLOUDFLARE_R2_ENDPOINT` | `https://<account-id>.r2.cloudflarestorage.com` |
-| `CLOUDFLARE_R2_PUBLIC_URL` | `https://pub-<hash>.r2.dev` (from bucket Settings → R2.dev subdomain) |
+| Setting | Value |
+|--------|-------|
+| `GCS_IMAGE_BUCKET` | `mm-product-images` (public-read product images) |
+| `GCS_INVOICE_BUCKET` | `melting-moments-data` (private invoices/data) |
 
 ---
 
@@ -743,15 +721,16 @@ will only be reached when Stripe cannot produce a session.
 | `RESEND_API_KEY` | `re_...` | Resend dashboard → API Keys |
 | `FROM_EMAIL` | `noreply@meltingmomentscakes.com` | Must match a verified Resend sending domain. Unmonitored — the emails tell customers not to reply. |
 
-#### Cloudflare R2 (media storage)
+#### Google Cloud Storage (media storage)
 
-| Secret | Production value | Notes |
+Bucket names, not secrets — auth is via the VM service account (ADC). Both
+default correctly in the workflows, so a GitHub secret is only needed to point
+at a different bucket.
+
+| Setting | Production value | Notes |
 |--------|-----------------|-------|
-| `CLOUDFLARE_R2_ACCESS_KEY` | R2 token access key | Cloudflare dashboard → R2 → Manage R2 API Tokens |
-| `CLOUDFLARE_R2_SECRET_KEY` | R2 token secret key | Same page as above |
-| `CLOUDFLARE_R2_BUCKET` | `melting-moments-cakes` | Literal |
-| `CLOUDFLARE_R2_ENDPOINT` | `https://<account_id>.r2.cloudflarestorage.com` | Cloudflare dashboard → R2 → bucket → Settings |
-| `CLOUDFLARE_R2_PUBLIC_URL` | `https://pub-<hash>.r2.dev` | From bucket Settings → R2.dev subdomain |
+| `GCS_IMAGE_BUCKET` | `mm-product-images` | Public-read product images |
+| `GCS_INVOICE_BUCKET` | `melting-moments-data` | Private invoices/data (signed-URL downloads) |
 
 #### BNPL — Tabby
 
@@ -959,7 +938,9 @@ it here and redeploying.
 | `AGGREGATOR_CONFIG_ENCRYPTION_KEY` | (unset) | Fernet key encrypting the derived session blobs at rest in `aggregator_session`. Empty keeps the ingest inert rather than storing credentials in plaintext. `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. GitHub secret |
 | `AGGREGATOR_SESSION_PUSH_TOKEN` | (unset) | Bearer the bootstrap/warmer worker presents to `POST /aggregators/session` — the one write path into `aggregator_session`. GitHub secret |
 | `AGGREGATOR_RUN_HOUR_DXB` | `23` | Hour (Asia/Dubai) of the once-daily pass that mirrors sales + finance and reconciles every aggregator. Wall-clock anchored with a boot catch-up so a redeploy never skips a run |
-| `AGGREGATOR_LOOKBACK_DAYS` | `1` | The single lookback window for the whole daily pass — sales, finance AND promotion all use it, so what is mirrored and what becomes a real MM order stay in lockstep. 1 day for now; widen as we scale |
+| `AGGREGATOR_LOOKBACK_DAYS` | `1` | The sales lookback window for the daily pass. 1 day for now; widen as we scale |
+| `AGGREGATOR_PROMOTE_LOOKBACK_DAYS` | `30` | How far back promotion reaches — separate from the sales lookback. Statements settle days-to-weeks late and a statement line only links to its MM order once promoted, so promotion must cover the settlement window or the payout→statement→line→order→mm chain never closes |
+| `AGGREGATOR_NOON_PUBLICATION_LOOKBACK_DAYS` | `14` | Noon publishes wallet statements ~weekly; its finance discovery widens the 1-day lookback to at least one publish cycle |
 | `AGGREGATOR_TIMEOUT_SECONDS` | `20.0` | Aggregator HTTP timeout |
 | `AGGREGATOR_REQUESTS_PER_SECOND` | `1.0` | Ceiling on outbound calls per marketplace (PerimeterX/Akamai). `0` disables |
 

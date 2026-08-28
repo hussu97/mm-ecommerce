@@ -50,6 +50,19 @@ logger = logging.getLogger(__name__)
 _API = "https://partners.careem.com/api/saturn-ext"
 _TENANT = "FOOD"
 _PAGE_SIZE = 50
+#: Careem scopes the per-outlet orders endpoint by city id (1 = Dubai). The live
+#: value is read off the session (`tokens["city_id"]`, injected from
+#: `aggregator_account.extras` by `session_store.enrich_session`); this is the
+#: fallback when the account carries none, so behaviour is unchanged until an
+#: operator sets it. NOTE: a *per-outlet* city ultimately belongs on
+#: `aggregator_branch_map` (an outlet, not an account, has a city) — account-level
+#: `extras["city_id"]` is the pragmatic single-brand step until an outlet spans
+#: more than one city.
+_DEFAULT_CITY_ID = "1"
+#: Hard ceiling on payout pages so a bad/stuck `totalRecords` (or a session that
+#: has quietly expired into a redirect) cannot spin the loop forever against the
+#: live console — mirrors talabat's `_MAX_FINANCE_PAGES` guard.
+_MAX_PAYOUT_PAGES = 200
 
 
 def _num(value: Any) -> Decimal | None:
@@ -80,6 +93,20 @@ def _first(mapping: dict[str, Any], *keys: str) -> Any:
 class CareemClient(BaseAggregatorClient):
     channel = CHANNEL_CAREEM
     uses_tls_impersonation = False
+
+    @staticmethod
+    def _city_id(session: LoadedSession) -> str:
+        """The city id the per-outlet orders endpoint is scoped by.
+
+        Read from `tokens["city_id"]` (injected from `aggregator_account.extras`
+        by `session_store.enrich_session`), falling back to `_DEFAULT_CITY_ID`
+        (Dubai) when the account carries none — so the request is identical to
+        before until an operator sets it.
+        """
+        value = (session.tokens or {}).get("city_id")
+        if value not in (None, "", 0):
+            return str(value)
+        return _DEFAULT_CITY_ID
 
     # ── scope / outlet discovery ────────────────────────────────────────────
     async def discover_outlets(self, session: LoadedSession) -> list[dict[str, Any]]:
@@ -135,6 +162,7 @@ class CareemClient(BaseAggregatorClient):
         self, session: LoadedSession, *, since: datetime, until: datetime
     ) -> SalesResult:
         outlets = await self.discover_outlets(session)
+        city_id = self._city_id(session)
         orders: list[StandardOrder] = []
         for outlet in outlets:
             if not outlet["active"]:
@@ -142,7 +170,7 @@ class CareemClient(BaseAggregatorClient):
             payload = await self.request_json(
                 session,
                 "GET",
-                f"{_API}/v1/careem/1/company/{outlet['external_company_id']}"
+                f"{_API}/v1/careem/{city_id}/company/{outlet['external_company_id']}"
                 f"/brand/{outlet['external_brand_id']}"
                 f"/outlet/{outlet['external_outlet_id']}/partner-orders-minimal",
                 params={
@@ -208,7 +236,7 @@ class CareemClient(BaseAggregatorClient):
         accounts = self._billing_accounts(outlets)
         payouts: list[StandardPayout] = []
         page = 0
-        while True:
+        for _ in range(_MAX_PAYOUT_PAGES):
             body = {
                 "tenant": _TENANT,
                 "billingAccounts": accounts,
@@ -231,6 +259,17 @@ class CareemClient(BaseAggregatorClient):
             page += 1
             if not rows or page * _PAGE_SIZE >= total:
                 break
+        else:
+            # The loop exhausted the cap without a natural stop — a bad/absent
+            # `totalRecords` that never satisfies the break. Stop rather than
+            # hammer the console; the payouts gathered so far are still returned.
+            logger.warning(
+                "%s payout pagination hit the %d-page cap (%d rows so far); "
+                "results may be truncated",
+                self.channel,
+                _MAX_PAYOUT_PAGES,
+                len(payouts),
+            )
         return PayoutsResult(payouts=payouts)
 
     def _payout_from(self, row: dict[str, Any]) -> StandardPayout:

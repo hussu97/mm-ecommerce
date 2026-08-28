@@ -52,12 +52,15 @@ from app.schemas.aggregator import (
     AggregatorSessionResponse,
     AggregatorWorkerAccount,
     AggregatorWorkerSession,
+    DeliverooFinancePush,
+    DeliverooFinanceResult,
     KeetaFinancePush,
     KeetaFinanceResult,
     KeetaOrdersPush,
     KeetaOrdersResult,
     ReconSummaryOut,
     ReconSummaryRow,
+    SettlementReconOut,
 )
 from app.services.aggregators import (
     account_store,
@@ -65,6 +68,7 @@ from app.services.aggregators import (
     ingest,
     mapping,
     session_store,
+    settlement_reconcile,
 )
 
 router = APIRouter()
@@ -378,6 +382,28 @@ async def push_keeta_finance(
     return KeetaFinanceResult(statements=statements, payouts=payouts)
 
 
+@router.post("/deliveroo/finance", response_model=DeliverooFinanceResult)
+async def push_deliveroo_finance(
+    body: DeliverooFinancePush,
+    _: None = Depends(_require_push_token),
+    db: AsyncSession = Depends(get_db),
+) -> DeliverooFinanceResult:
+    """Ingest a batch of in-page-fetched Deliveroo invoice payloads.
+
+    Deliveroo's invoice list replays over httpx, but the invoice download 403s
+    behind Cloudflare, so the bootstrap worker downloads each statement CSV and
+    PDF in-page (where the browser's `cf_clearance` applies) and pushes the raw
+    payloads here. Each is parsed by `deliveroo_provider.parse_pushed_finance`
+    into a statement (with per-order lines and an archived VAT PDF) and upserted
+    exactly as the httpx finance sweep does. Returns the statement and line
+    counts written.
+    """
+    statements, lines = await ingest.ingest_deliveroo_finance_payloads(
+        db, body.payloads
+    )
+    return DeliverooFinanceResult(statements=statements, lines=lines)
+
+
 def _flagged_clause():
     """An order is flagged iff an item/refund flag is set or `flags` is non-empty."""
     return or_(
@@ -528,3 +554,34 @@ async def reconciliation_summary(
         avg_rate_effective=totals_row.avg_rate_effective,
     )
     return ReconSummaryOut(by_channel=by_channel, totals=totals)
+
+
+@router.get(
+    "/reconciliation/settlement",
+    response_model=SettlementReconOut,
+    dependencies=[Depends(require("reports.sales"))],
+)
+async def settlement_reconciliation_report(
+    channel: str = Query(..., description="Aggregator channel to reconcile"),
+    from_date: str | None = Query(
+        None, alias="from", description="ISO date; include statements from this period"
+    ),
+    to_date: str | None = Query(
+        None, alias="to", description="ISO date; include statements up to this period"
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> SettlementReconOut:
+    """Layer A: per-statement sales↔settlement↔payout rollup for one channel.
+
+    Read-only. For each statement in the window it reports the sales total (the
+    orders that settled on it), the settlement total (its order-grain lines and
+    its own declared net payable), the linked payout, and the two variances;
+    plus a per-payout rollup that checks a batch transfer against the summed net
+    payable of the statements it cleared.
+    """
+    if channel not in AGGREGATOR_CHANNELS:
+        raise BadRequestError(f"unknown aggregator channel: {channel}")
+    result = await settlement_reconcile.settlement_reconciliation(
+        db, channel, from_date=from_date, to_date=to_date
+    )
+    return SettlementReconOut.model_validate(result)

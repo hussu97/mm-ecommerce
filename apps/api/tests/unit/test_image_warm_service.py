@@ -32,7 +32,7 @@ from app.services.image_warm_service import (
     "url",
     [
         "https://storage.googleapis.com/mm-product-images/menu/abc.jpg",
-        "https://pub-abc.r2.dev/products/uuid.png",
+        "https://storage.googleapis.com/mm-product-images/products/uuid.png",
         "https://media.meltingmomentscakes.com/banners/promo.jpg",
         "/images/tiles/tile-cakes.jpg",
     ],
