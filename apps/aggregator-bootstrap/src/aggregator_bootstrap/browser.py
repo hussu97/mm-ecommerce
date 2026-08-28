@@ -20,6 +20,7 @@ The model is "one human login, then hydrate forever":
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -106,6 +107,21 @@ class _Opened:
         elif self.browser is not None and self.chrome is None:
             await self.browser.close()
         _stop_chrome(self.chrome)
+
+
+def _bearer_aud(auth_header: str) -> str | None:
+    """The `aud` claim of a `Bearer <jwt>` header, or None. Used to tell Careem's
+    OIDC identity token (aud=com.careem.internal) from its partner-API token."""
+    if not auth_header.lower().startswith("bearer "):
+        return None
+    parts = auth_header[7:].split(".")
+    if len(parts) < 2:
+        return None
+    try:
+        pad = parts[1] + "=" * (-len(parts[1]) % 4)
+        return json.loads(base64.urlsafe_b64decode(pad)).get("aud")
+    except Exception:  # noqa: BLE001 — a non-JWT bearer just has no aud
+        return None
 
 
 def _storage_state_path(channel: str) -> Path:
@@ -451,13 +467,31 @@ async def probe_channel(channel: str) -> ProbeResult:
             page = await _first_page(opened)
 
             def _on_request(request) -> None:
-                if probe.match not in request.url or "authorization" in captured:
+                if probe.match not in request.url:
                     return
                 headers = request.headers
-                # Capture the first match, but prefer one that carries the
-                # Authorization bearer: Careem fires bearer-less `/api/saturn-ext/`
-                # calls (the OAuth code-exchange) before the authenticated ones, so
-                # overwrite a bearer-less snapshot once a bearer request appears.
+                # Careem: the finances page fires an OIDC identity-token call
+                # (aud=com.careem.internal) AND the real partner-API calls, which
+                # carry a business-audience bearer. Log every saturn-ext request's
+                # aud+url to identify them, and prefer capturing a NON-identity
+                # (partner-API) bearer over the identity one.
+                if channel == "careem" and "authorization" in headers:
+                    aud = _bearer_aud(headers.get("authorization", ""))
+                    logger.info(
+                        "careem saturn-ext: aud=%s %s %s",
+                        aud,
+                        request.method,
+                        request.url[:120],
+                    )
+                    if aud and aud != "com.careem.internal":
+                        captured.clear()
+                        captured.update(headers)
+                    elif "authorization" not in captured:
+                        captured.update(headers)  # provisional identity token
+                    return
+                if "authorization" in captured:
+                    return
+                # Non-careem: capture the first match, preferring a bearer one.
                 if not captured or "authorization" in headers:
                     captured.clear()
                     captured.update(headers)
@@ -499,20 +533,31 @@ async def probe_channel(channel: str) -> ProbeResult:
             # `/api/saturn-ext/` call fires, so the Authorization header the
             # provider replays is often not captured on the first settle. Give the
             # exchange a moment and re-load the probe page until the header lands.
-            if channel == "careem" and "authorization" not in captured:
-                for _ in range(4):
+            if channel == "careem":
+                # Reload until we hold a PARTNER-API bearer, not just the OIDC
+                # identity token the exchange call carries. Try a couple of known
+                # business surfaces so a saturn-ext API call actually fires.
+                surfaces = [
+                    probe.probe_url,
+                    "https://partners.careem.com/saturn-ext/merchant/orders",
+                    "https://partners.careem.com/home",
+                ]
+                for i in range(6):
                     await asyncio.sleep(4)
-                    if "authorization" in captured:
+                    cap_aud = _bearer_aud(captured.get("authorization", ""))
+                    if cap_aud and cap_aud != "com.careem.internal":
                         break
                     try:
                         await page.goto(
-                            probe.probe_url, wait_until="commit", timeout=30_000
+                            surfaces[i % len(surfaces)],
+                            wait_until="commit",
+                            timeout=30_000,
                         )
                     except Exception:  # noqa: BLE001 — SPA lazy nav; keep polling
                         pass
                 logger.info(
-                    "careem: authorization captured=%s",
-                    "authorization" in captured,
+                    "careem: captured token aud=%s",
+                    _bearer_aud(captured.get("authorization", "")),
                 )
             result = await _snapshot_context(channel, opened.context, page, captured)
         finally:
