@@ -12,11 +12,14 @@ fills the form after Cloudflare has passed. OTP/captcha channels stay headed.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
 from ..config import settings
 from ..mailbox import OTPPollingError, wait_for_otp
+
+logger = logging.getLogger("aggregator-bootstrap")
 
 
 class LoginError(RuntimeError):
@@ -666,10 +669,12 @@ async def login_careem(
         raise LoginError(
             f"Careem login did not expose an email input at {page.url}"
         ) from exc
+    logger.info("careem: email step at %s", page.url)
     await email_input.fill(address)
     otp_since = datetime.now(UTC)
     await _careem_submit(page, email_input)
     await page.wait_for_timeout(3_000)
+    logger.info("careem: after email submit, url=%s", page.url)
 
     # Verification-code step — one text box, submit, done.
     otp_input = page.locator("input[type='text']").first
@@ -678,6 +683,7 @@ async def login_careem(
     except Exception as exc:  # noqa: BLE001
         if await _careem_is_authenticated(page):
             return page
+        await _careem_debug_shot(page, "no-otp-input")
         raise LoginError(
             f"Careem did not present a verification-code input at {page.url}"
         ) from exc
@@ -692,6 +698,7 @@ async def login_careem(
             channel="careem",
         )
     except OTPPollingError as exc:
+        await _careem_debug_shot(page, "no-otp")
         if owned_page:
             await page.close()
         raise LoginChallengeError(
@@ -699,10 +706,27 @@ async def login_careem(
             "mailbox. Save this channel's Microsoft app on Admin → Logins, run "
             "mailbox-auth, or complete the login manually."
         ) from exc
+    logger.info("careem: OTP retrieved (len=%d), filling", len(otp.strip()))
     await otp_input.fill(otp.strip())
     await _careem_submit(page, otp_input)
     await page.wait_for_timeout(6_000)
+    logger.info(
+        "careem: after OTP submit, url=%s authed=%s",
+        page.url,
+        await _careem_is_authenticated(page),
+    )
+    await _careem_debug_shot(page, "after-otp")
     return page
+
+
+async def _careem_debug_shot(page, tag: str) -> None:
+    """Best-effort screenshot to the sessions volume for post-mortem inspection."""
+    try:
+        path = f"{settings.STORAGE_STATE_DIR}/careem-debug-{tag}.png"
+        await page.screenshot(path=path, full_page=True)
+        logger.info("careem: debug screenshot -> %s", path)
+    except Exception:  # noqa: BLE001 — diagnostics must never break the flow
+        pass
 
 
 #: Channel -> login flow. `login --auto` calls these for email_password
