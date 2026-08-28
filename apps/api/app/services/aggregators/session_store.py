@@ -24,6 +24,7 @@ from app.models.aggregator import (
     SESSION_DEAD,
     SESSION_LIVE,
     SESSION_NEEDS_BOOTSTRAP,
+    AggregatorBranchMap,
     AggregatorSession,
 )
 from app.models.base import utcnow
@@ -130,6 +131,29 @@ def _merge_extra_tokens(
     return replace(session, tokens=tokens) if changed else session
 
 
+async def _talabat_outlet_ids(db: AsyncSession) -> list[str]:
+    """Active Talabat order-store ids, from the branch map (the canonical config).
+
+    The order export scopes to these `account_ids`. The browser capture used to
+    scrape them from the Report Builder store picker, so an automated
+    email/OTP re-login — which never opens that page — lands a session with no
+    store ids and `fetch_sales` cannot scope an export. The branch map already
+    holds them (`external_outlet_id`), one operator-owned source, so injecting
+    them here makes ingest survive any re-login instead of silently breaking on
+    the next captured session.
+    """
+    rows = await db.scalars(
+        select(AggregatorBranchMap.external_outlet_id).where(
+            AggregatorBranchMap.channel == "talabat",
+            AggregatorBranchMap.is_active.is_(True),
+            AggregatorBranchMap.external_outlet_id.is_not(None),
+        )
+    )
+    # De-dup, preserve a stable order (the export is order-insensitive, but a
+    # deterministic list keeps the request byte-identical run to run).
+    return sorted({str(r) for r in rows if r})
+
+
 async def enrich_talabat_from_account(
     db: AsyncSession, session: LoadedSession | None
 ) -> LoadedSession | None:
@@ -138,9 +162,25 @@ async def enrich_talabat_from_account(
     from app.services.aggregators import account_store
 
     acct = await account_store.load(db, session.channel, session.account_ref)
-    if acct is None:
-        return session
-    return _merge_extra_tokens(session, acct.extras or {}, _TALABAT_EXTRA_TOKEN_KEYS)
+    extras = acct.extras or {} if acct is not None else {}
+    session = _merge_extra_tokens(session, extras, _TALABAT_EXTRA_TOKEN_KEYS)
+    # Only reach for the branch map when the captured session carries no store
+    # ids of its own — a session that scraped them keeps precedence, and this
+    # backfills the automated-login case (see `_talabat_outlet_ids`). Mirrors
+    # the provider's `_order_account_ids` key set; kept local to avoid importing
+    # the provider (and its httpx stack) into the session store.
+    tokens = session.tokens or {}
+    has_ids = any(
+        isinstance(tokens.get(k), list) and tokens.get(k)
+        for k in ("account_ids", "store_ids", "accountIds")
+    )
+    if not has_ids:
+        outlet_ids = await _talabat_outlet_ids(db)
+        if outlet_ids:
+            merged = dict(tokens)
+            merged["account_ids"] = outlet_ids
+            session = replace(session, tokens=merged)
+    return session
 
 
 async def enrich_careem_from_account(

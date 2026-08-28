@@ -331,6 +331,16 @@ async def test_careem_payout_pagination_stops_at_the_page_cap(monkeypatch):
 
 
 # ── session enrichment from account extras (talabat entity, careem city) ──────
+class _FakeScalarDB:
+    """Minimal async db stub: `await db.scalars(...)` yields `rows`."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def scalars(self, _stmt):
+        return list(self._rows)
+
+
 async def test_talabat_enrich_session_pulls_global_entity_from_account(monkeypatch):
     from app.services.aggregators import session_store as ss
 
@@ -338,13 +348,17 @@ async def test_talabat_enrich_session_pulls_global_entity_from_account(monkeypat
         return SimpleNamespace(extras={"global_entity_id": "TB_KW"})
 
     monkeypatch.setattr("app.services.aggregators.account_store.load", fake_load)
-    session = ss.LoadedSession(channel="talabat", account_ref="", tokens={})
-    out = await ss.enrich_session(SimpleNamespace(), session)
+    # already carries store ids → the branch-map path is skipped
+    session = ss.LoadedSession(
+        channel="talabat", account_ref="", tokens={"account_ids": ["1"]}
+    )
+    out = await ss.enrich_session(_FakeScalarDB([]), session)
     assert out.tokens["global_entity_id"] == "TB_KW"
 
 
-async def test_talabat_enrich_session_is_a_noop_without_extras(monkeypatch):
-    """No extras → the same session object → byte-identical requests as before."""
+async def test_talabat_enrich_backfills_store_ids_from_branch_map(monkeypatch):
+    """An automated re-login lands a session with no store ids; enrichment must
+    inject the outlet ids from the branch map so `fetch_sales` can still scope."""
     from app.services.aggregators import session_store as ss
 
     async def fake_load(_db, _channel, _ref):
@@ -352,9 +366,27 @@ async def test_talabat_enrich_session_is_a_noop_without_extras(monkeypatch):
 
     monkeypatch.setattr("app.services.aggregators.account_store.load", fake_load)
     session = ss.LoadedSession(channel="talabat", account_ref="", tokens={})
-    out = await ss.enrich_session(SimpleNamespace(), session)
-    assert out is session
-    assert "global_entity_id" not in out.tokens
+    out = await ss.enrich_session(
+        _FakeScalarDB(["793319", "711571", "711571"]), session
+    )
+    # de-duped, sorted, and byte-stable
+    assert out.tokens["account_ids"] == ["711571", "793319"]
+
+
+async def test_talabat_enrich_keeps_scraped_store_ids(monkeypatch):
+    """A session that already scraped its store ids keeps them — the branch map
+    only backfills, never overrides a captured session."""
+    from app.services.aggregators import session_store as ss
+
+    async def fake_load(_db, _channel, _ref):
+        return SimpleNamespace(extras={})
+
+    monkeypatch.setattr("app.services.aggregators.account_store.load", fake_load)
+    session = ss.LoadedSession(
+        channel="talabat", account_ref="", tokens={"account_ids": ["999"]}
+    )
+    out = await ss.enrich_session(_FakeScalarDB(["711571"]), session)
+    assert out.tokens["account_ids"] == ["999"]
 
 
 async def test_careem_enrich_session_pulls_city_id_from_account(monkeypatch):
