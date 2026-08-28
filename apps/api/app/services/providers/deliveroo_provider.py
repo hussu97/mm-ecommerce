@@ -538,7 +538,12 @@ class DeliverooClient(BaseAggregatorClient):
         self, session: LoadedSession, *, since: datetime, until: datetime
     ) -> SalesResult:
         start = since.date().isoformat()
-        end = until.date().isoformat()
+        # Deliveroo's `end_date` is EXCLUSIVE (an end of the 27th returns up to the
+        # 26th), while `until` here is the LAST day to include — so advance it a day.
+        # Without this a single-day "yesterday" window (start == until.date()) is an
+        # empty range and the outlet returns no orders (verified: the 27th's order
+        # was silently dropped until end_date became the 28th).
+        end = (until.date() + timedelta(days=1)).isoformat()
         orders: list[StandardOrder] = []
         gaps: list[str] = []
         for restaurant_id in self._restaurant_ids(session):
