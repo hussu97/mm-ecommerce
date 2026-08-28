@@ -44,8 +44,10 @@ from app.models.aggregator import (
     CHANNEL_KEETA,
     RUN_COMPLETED,
     RUN_FAILED,
+    RUN_MODE_BACKFILL,
     RUN_MODE_FINANCE,
     RUN_MODE_SALES,
+    RUN_PARTIAL,
     RUN_RUNNING,
     SESSION_LIVE,
     AggregatorBranchMap,
@@ -609,9 +611,21 @@ async def _upsert_payout(db: AsyncSession, channel: str, payout) -> None:
 
 
 # ── per-channel sweeps ───────────────────────────────────────────────────────
-async def _new_run(db: AsyncSession, channel: str, mode: str) -> AggregatorSyncRun:
+async def _new_run(
+    db: AsyncSession,
+    channel: str,
+    mode: str,
+    *,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> AggregatorSyncRun:
     run = AggregatorSyncRun(
-        channel=channel, mode=mode, status=RUN_RUNNING, started_at=utcnow()
+        channel=channel,
+        mode=mode,
+        status=RUN_RUNNING,
+        started_at=utcnow(),
+        from_date=from_date.isoformat() if from_date else None,
+        to_date=to_date.isoformat() if to_date else None,
     )
     db.add(run)
     await db.flush()
@@ -623,6 +637,121 @@ async def _new_run(db: AsyncSession, channel: str, mode: str) -> AggregatorSyncR
 _BACKFILL_LOOKBACK_DAYS = 365
 
 
+def _dubai_range_window(from_date: date, to_date: date) -> tuple[datetime, datetime]:
+    """Inclusive business-date range [from_date 00:00 .. to_date 23:59:59.999999],
+    as Dubai-aware datetimes.
+
+    Every provider filters its window on `since.date()`/`until.date()` in Dubai
+    business time (Talabat/Deliveroo pass those dates to their export APIs, adding
+    their own +1 exclusive-end day). Anchoring both ends to the Dubai day boundary
+    makes an explicit range mean exactly those business dates inclusive — the same
+    calendar-alignment the daily `_start_of_today_dubai` path relies on, so a
+    range rerun tiles cleanly with the nightly sweep and never double-counts at a
+    seam. Dubai has no DST, so a fixed wall-clock boundary is unambiguous.
+    """
+    start = datetime(from_date.year, from_date.month, from_date.day, tzinfo=_DUBAI)
+    end = datetime(
+        to_date.year, to_date.month, to_date.day, 23, 59, 59, 999999, tzinfo=_DUBAI
+    )
+    return start, end
+
+
+def _sweep_window(
+    now: datetime,
+    *,
+    from_date: date | None,
+    to_date: date | None,
+    lookback_days: int | None,
+    lookback_hours: int | None,
+) -> tuple[datetime, datetime]:
+    """Resolve the (since, until) window for a sweep.
+
+    Precedence: explicit business-date range → rolling `lookback_hours` (sub-day
+    catch-up, no calendar boundary) → Dubai-calendar `lookback_days` ending at the
+    last instant of yesterday (the daily default; a 1-day lookback = yesterday's
+    Dubai date exactly, whole days tiling with no overlap).
+    """
+    if from_date is not None and to_date is not None:
+        return _dubai_range_window(from_date, to_date)
+    if lookback_hours is not None:
+        return now - timedelta(hours=lookback_hours), now
+    today_start = _start_of_today_dubai(now)
+    days = (
+        lookback_days
+        if lookback_days is not None
+        else settings.AGGREGATOR_LOOKBACK_DAYS
+    )
+    until = today_start - timedelta(microseconds=1)
+    since = today_start - timedelta(days=days)
+    return since, until
+
+
+async def _fetch_and_persist(
+    db: AsyncSession,
+    channel: str,
+    provider: BaseAggregatorClient,
+    mode: str,
+    session,
+    *,
+    since: datetime,
+    until: datetime,
+) -> tuple[int, str | None, dict]:
+    """Fetch one channel/mode for a window and persist it. No run bookkeeping.
+
+    Returns (records_written, truncation_note, detail) where detail breaks the
+    write down by kind ({"orders": n} for sales, {"statements": n, "payouts": m,
+    "invoices": k} for finance). Raises AggregatorAuthError /
+    AggregatorUnavailableError for the caller to record on the run row. Shared by
+    the daily `_sweep_channel` and the ranged `run_range`, so both take the exact
+    same idempotent upsert path (every write is an on-conflict upsert on a
+    channel-scoped natural key — re-running any window never double-counts).
+    """
+    if mode == RUN_MODE_SALES:
+        result: SalesResult = await provider.fetch_sales(
+            session, since=since, until=until
+        )
+        written = 0
+        for order in result.orders:
+            # One malformed order must not abort the whole channel's sweep and roll
+            # back every good order with it — isolate it, like the reconcile/promote
+            # passes and the Keeta push path already do.
+            try:
+                await upsert_order(db, channel, order)
+                written += 1
+            except Exception:  # noqa: BLE001 — one order must not stop the rest
+                logger.exception(
+                    "aggregator %s sales: order %s failed to upsert",
+                    channel,
+                    order.external_order_id,
+                )
+        return written, result.truncation_note, {"orders": written}
+    finance: FinanceResult = await provider.fetch_finance(
+        session, since=since, until=until
+    )
+    for statement in finance.statements:
+        await _upsert_statement(db, channel, statement)
+    for payout in finance.payouts:
+        await _upsert_payout(db, channel, payout)
+    # The statement→payout rollup and reconciliation run channel-agnostically in
+    # `sweep_reconcile_once`, so they cover the push channels (Keeta, Deliveroo
+    # finance) that never reach this httpx sweep too.
+    written = len(finance.statements) + len(finance.payouts)
+    detail = {"statements": len(finance.statements), "payouts": len(finance.payouts)}
+    return written, finance.truncation_note, detail
+
+
+async def _session_for(db: AsyncSession, channel: str, provider: BaseAggregatorClient):
+    """Load + enrich + prepare a channel session, or None if not live."""
+    session = await session_store.load(db, channel)
+    session = await session_store.enrich_session(db, session)
+    prepare = getattr(provider, "prepare_session", None)
+    if callable(prepare):
+        session = await prepare(db, session)
+    if session is None or session.status != SESSION_LIVE:
+        return None
+    return session
+
+
 async def _sweep_channel(
     db: AsyncSession,
     channel: str,
@@ -631,78 +760,30 @@ async def _sweep_channel(
     *,
     lookback_days: int | None = None,
     lookback_hours: int | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
 ) -> int:
-    """One channel's sweep for one mode. Returns records written; 0 on skip."""
-    session = await session_store.load(db, channel)
-    session = await session_store.enrich_session(db, session)
-    prepare = getattr(provider, "prepare_session", None)
-    if callable(prepare):
-        session = await prepare(db, session)
-    if session is None or session.status != SESSION_LIVE:
+    """One channel's sweep for one mode. Returns records written; 0 on skip.
+
+    With `from_date`/`to_date` (Dubai business dates) it sweeps that explicit
+    inclusive range; otherwise the Dubai-calendar lookback window (daily default).
+    """
+    session = await _session_for(db, channel, provider)
+    if session is None:
         return 0
 
-    run = await _new_run(db, channel, mode)
-    now = utcnow()
-    written = 0
-    truncation: str | None = None
-    # The window is calendar-aligned to Dubai days: it ends at the start of TODAY,
-    # so the default 1-day lookback is exactly YESTERDAY's date (not a rolling 24h
-    # straddling two dates). The daily pass therefore pulls "yesterday's sales,
-    # statements and payments" cleanly, and consecutive days tile with no gap or
-    # overlap. An adhoc `lookback_hours` sweep stays rolling-from-now (it is used
-    # for sub-day catch-up, where a calendar boundary makes no sense).
-    if lookback_hours is not None:
-        since = now - timedelta(hours=lookback_hours)
-        until = now
-    else:
-        today_start = _start_of_today_dubai(now)
-        days = (
-            lookback_days
-            if lookback_days is not None
-            else settings.AGGREGATOR_LOOKBACK_DAYS
-        )
-        # End at the last instant of yesterday (Dubai), so `until.date()` is
-        # yesterday and the inclusive `<= until.date()` filters never reach today;
-        # start at the first instant of the oldest day in the window. For the
-        # default 1-day lookback that is exactly yesterday's Dubai date.
-        until = today_start - timedelta(microseconds=1)
-        since = today_start - timedelta(days=days)
+    run = await _new_run(db, channel, mode, from_date=from_date, to_date=to_date)
+    since, until = _sweep_window(
+        utcnow(),
+        from_date=from_date,
+        to_date=to_date,
+        lookback_days=lookback_days,
+        lookback_hours=lookback_hours,
+    )
     try:
-        if mode == RUN_MODE_SALES:
-            result: SalesResult = await provider.fetch_sales(
-                session, since=since, until=until
-            )
-            for order in result.orders:
-                # One malformed order must not abort the whole channel's sweep and
-                # roll back every good order with it — isolate it, like the
-                # reconcile/promote passes and the Keeta push path already do.
-                try:
-                    await upsert_order(db, channel, order)
-                    written += 1
-                except Exception:  # noqa: BLE001 — one order must not stop the rest
-                    logger.exception(
-                        "aggregator %s sales: order %s failed to upsert",
-                        channel,
-                        order.external_order_id,
-                    )
-            truncation = result.truncation_note
-        else:
-            finance: FinanceResult = await provider.fetch_finance(
-                session, since=since, until=until
-            )
-            for statement in finance.statements:
-                await _upsert_statement(db, channel, statement)
-            for payout in finance.payouts:
-                await _upsert_payout(db, channel, payout)
-            # The statement→payout rollup runs channel-agnostically in
-            # `sweep_reconcile_once`, so it covers the push channels (Keeta,
-            # Deliveroo finance) that never reach this httpx sweep too.
-            written = len(finance.statements) + len(finance.payouts)
-            truncation = finance.truncation_note
-            # Reconciliation runs channel-agnostically after promotion
-            # (`sweep_reconcile_once`), so it covers Keeta — which is pushed in and
-            # never reaches this httpx finance sweep — as well as the httpx
-            # channels, rather than only the ones swept here.
+        written, truncation, _detail = await _fetch_and_persist(
+            db, channel, provider, mode, session, since=since, until=until
+        )
     except AggregatorAuthError as exc:
         run.status = RUN_FAILED
         run.error = str(exc)[:2000]
@@ -733,6 +814,8 @@ async def sweep_channel_once(
     *,
     lookback_days: int | None = None,
     lookback_hours: int | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
 ) -> int:
     """Adhoc one-channel sweep (sales or finance) with an optional wider window."""
     _register_providers()
@@ -747,9 +830,247 @@ async def sweep_channel_once(
             mode,
             lookback_days=lookback_days,
             lookback_hours=lookback_hours,
+            from_date=from_date,
+            to_date=to_date,
         )
         await db.commit()
         return written
+
+
+#: "mmBATCH" + 9 — one lock for the whole ranged rerun, so two manual triggers
+#: serialise. It may overlap the nightly sweep safely: every write is an
+#: idempotent upsert on a channel-scoped natural key and promotion converges on
+#: the `(source, external_reference)` key, so a concurrent pass updates rather
+#: than duplicates.
+_RANGE_LOCK_KEY = 0x6D6D_4241_5443_4809
+
+
+async def _range_stats(
+    db: AsyncSession, channel: str, from_date: date, to_date: date
+) -> dict:
+    """Promotion/coverage stats for a channel over a business-date range.
+
+    All counts are scoped to `aggregator_order.business_date` in [from, to]
+    (String(10), lexicographic == chronological for ISO dates). "existing" =
+    promoted onto an order GrubOps already owns (Barsha/Sharjah overlay); "new" =
+    promotion-created. Invoices/statements/payouts are counted from the DB, so a
+    re-run reports the true current coverage, not just this pass's deltas.
+    """
+    from app.models.grubops_order import GrubOpsOrderMap
+
+    lo, hi = from_date.isoformat(), to_date.isoformat()
+    in_range = (
+        AggregatorOrder.channel == channel,
+        AggregatorOrder.business_date >= lo,
+        AggregatorOrder.business_date <= hi,
+    )
+    retrieved = (
+        await db.scalar(
+            select(func.count()).select_from(AggregatorOrder).where(*in_range)
+        )
+        or 0
+    )
+    promoted = (
+        await db.scalar(
+            select(func.count())
+            .select_from(AggregatorOrder)
+            .where(*in_range, AggregatorOrder.mm_order_id.is_not(None))
+        )
+        or 0
+    )
+    grubops_owned = select(GrubOpsOrderMap.mm_order_id).where(
+        GrubOpsOrderMap.mm_order_id.is_not(None)
+    )
+    existing = (
+        await db.scalar(
+            select(func.count())
+            .select_from(AggregatorOrder)
+            .where(
+                *in_range,
+                AggregatorOrder.mm_order_id.is_not(None),
+                AggregatorOrder.mm_order_id.in_(grubops_owned),
+            )
+        )
+        or 0
+    )
+    statements = (
+        await db.scalar(
+            select(func.count())
+            .select_from(AggregatorStatement)
+            .where(AggregatorStatement.channel == channel)
+        )
+        or 0
+    )
+    invoices = (
+        await db.scalar(
+            select(func.count())
+            .select_from(AggregatorStatement)
+            .where(
+                AggregatorStatement.channel == channel,
+                AggregatorStatement.invoice_object_key.is_not(None),
+            )
+        )
+        or 0
+    )
+    payouts = (
+        await db.scalar(
+            select(func.count())
+            .select_from(AggregatorPayout)
+            .where(AggregatorPayout.channel == channel)
+        )
+        or 0
+    )
+    not_promoted = retrieved - promoted
+    pct = lambda n: round(100.0 * n / retrieved, 1) if retrieved else 0.0  # noqa: E731
+    return {
+        "orders_retrieved": retrieved,
+        "orders_promoted": promoted,
+        "orders_promoted_new": promoted - existing,
+        "orders_promoted_existing": existing,
+        "orders_not_promoted": not_promoted,
+        "pct_promoted": pct(promoted),
+        "pct_existing": pct(existing),
+        "pct_not_promoted": pct(not_promoted),
+        "statements_total": statements,
+        "invoices_total": invoices,
+        "payouts_total": payouts,
+    }
+
+
+async def run_range(
+    channels: list[str],
+    from_date: date,
+    to_date: date,
+    *,
+    modes: tuple[str, ...] = (RUN_MODE_SALES, RUN_MODE_FINANCE),
+    promote: bool = True,
+    reconcile: bool = True,
+) -> list[dict]:
+    """Re-runnable scrape+promote+reconcile over an explicit Dubai business-date
+    range, for any set of channels, any number of times a day.
+
+    One `aggregator_sync_run` row per channel (mode=backfill) records the whole
+    operation with rich stats — what was retrieved (orders/statements/payouts/
+    invoices) and the promotion split (new / existing / not-promoted, with %s) —
+    plus any per-mode error, so the admin Runs table can show exactly what each
+    trigger did. Idempotent: safe to re-run the same range, and to overlap the
+    nightly sweep. Push-only channels (Keeta) are recorded as skipped — rerun
+    those via the bootstrap worker.
+    """
+    _register_providers()
+    from app.models.aggregator import AGGREGATOR_CHANNELS
+    from app.services.aggregators import promote as promote_mod
+    from app.services.aggregators import reconcile as reconcile_mod
+
+    results: list[dict] = []
+    async with advisory_lock.held(_RANGE_LOCK_KEY, name="aggregator range") as mine:
+        if not mine:
+            logger.warning("aggregator range rerun already in progress; skipping")
+            return results
+        for channel in channels:
+            if channel not in AGGREGATOR_CHANNELS:
+                raise ValueError(f"unknown aggregator channel: {channel}")
+            async with AsyncSessionFactory() as db:
+                result = await _run_range_channel(
+                    db,
+                    channel,
+                    from_date,
+                    to_date,
+                    modes=modes,
+                    promote=promote,
+                    reconcile=reconcile,
+                    promote_mod=promote_mod,
+                    reconcile_mod=reconcile_mod,
+                )
+                await db.commit()
+                results.append(result)
+    return results
+
+
+async def _run_range_channel(
+    db: AsyncSession,
+    channel: str,
+    from_date: date,
+    to_date: date,
+    *,
+    modes: tuple[str, ...],
+    promote: bool,
+    reconcile: bool,
+    promote_mod,
+    reconcile_mod,
+) -> dict:
+    run = await _new_run(
+        db, channel, RUN_MODE_BACKFILL, from_date=from_date, to_date=to_date
+    )
+    stats: dict = {
+        "from": from_date.isoformat(),
+        "to": to_date.isoformat(),
+        "modes": {},
+    }
+    errors: list[str] = []
+
+    provider = PROVIDERS.get(channel)
+    if provider is None:
+        # Push-only channel (Keeta): the httpx sweep can't reach it.
+        run.status = RUN_FAILED
+        run.error = "push-only channel — rerun sales/finance via the bootstrap worker"
+        run.finished_at = utcnow()
+        stats["skipped"] = "push_only"
+        stats.update(await _range_stats(db, channel, from_date, to_date))
+        run.stats = stats
+        return {"channel": channel, "status": run.status, "stats": stats}
+
+    session = await _session_for(db, channel, provider)
+    if session is None:
+        run.status = RUN_FAILED
+        run.error = "session not live — needs a headed re-login"
+        run.finished_at = utcnow()
+        stats["skipped"] = "session_not_live"
+        run.stats = stats
+        return {"channel": channel, "status": run.status, "stats": stats}
+
+    since, until = _dubai_range_window(from_date, to_date)
+    for mode in modes:
+        try:
+            written, trunc, detail = await _fetch_and_persist(
+                db, channel, provider, mode, session, since=since, until=until
+            )
+            stats["modes"][mode] = {"written": written, **detail}
+            if trunc:
+                stats["modes"][mode]["truncation"] = trunc
+        except AggregatorAuthError as exc:
+            errors.append(f"{mode}: session dead: {exc}")
+            await session_store.mark_needs_bootstrap(db, channel, error=str(exc))
+        except AggregatorUnavailableError as exc:
+            errors.append(f"{mode}: unavailable: {exc}")
+        except Exception as exc:  # noqa: BLE001 — one mode must not kill the run row
+            errors.append(f"{mode}: {exc}")
+            logger.exception("aggregator %s range %s failed", channel, mode)
+
+    if promote:
+        try:
+            await promote_mod.promote_channel(db, channel)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"promote: {exc}")
+            logger.exception("aggregator %s range promote failed", channel)
+    if reconcile:
+        try:
+            await link_statements_to_payouts(db, channel)
+            await reconcile_mod.reconcile_channel(db, channel)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"reconcile: {exc}")
+            logger.exception("aggregator %s range reconcile failed", channel)
+
+    stats.update(await _range_stats(db, channel, from_date, to_date))
+    run.finished_at = utcnow()
+    if errors:
+        run.status = RUN_PARTIAL
+        run.error = "; ".join(errors)[:2000]
+    else:
+        run.status = RUN_COMPLETED
+        await session_store.record_success(db, channel)
+    run.stats = stats
+    return {"channel": channel, "status": run.status, "stats": stats}
 
 
 async def _sweep_all(mode: str, lock_key: int) -> int:

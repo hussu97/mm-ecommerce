@@ -17,7 +17,11 @@ import pytest
 from cryptography.fernet import Fernet
 
 from app.services.aggregators import crypto
-from app.services.aggregators.ingest import _start_of_today_dubai
+from app.services.aggregators.ingest import (
+    _dubai_range_window,
+    _start_of_today_dubai,
+    _sweep_window,
+)
 from app.services.aggregators.normalized import GRAIN_LINE
 from app.services.aggregators.reconcile import _item_discrepancy
 from app.services.aggregators.session_store import LoadedSession
@@ -48,6 +52,48 @@ def test_one_day_lookback_is_exactly_yesterdays_dubai_date():
     since = today_start - timedelta(days=1)
     assert since.date() == date(2026, 8, 27)  # yesterday
     assert until.date() == date(2026, 8, 27)  # not today — inclusive filters stay put
+
+
+def test_dubai_range_window_is_inclusive_business_dates():
+    """An explicit range maps to Dubai day boundaries so every provider's
+    `since.date()`/`until.date()` filter covers from_date..to_date inclusive."""
+    since, until = _dubai_range_window(date(2026, 8, 27), date(2026, 8, 28))
+    assert since.date() == date(2026, 8, 27)
+    assert since.hour == 0 and since.minute == 0
+    assert until.date() == date(2026, 8, 28)
+    assert until.hour == 23 and until.minute == 59
+    assert since.utcoffset() == timedelta(hours=4)  # Dubai, not UTC
+
+
+def test_dubai_range_window_single_day():
+    since, until = _dubai_range_window(date(2026, 8, 28), date(2026, 8, 28))
+    assert since.date() == until.date() == date(2026, 8, 28)
+    assert since < until
+
+
+def test_sweep_window_precedence_range_over_lookback():
+    """Explicit from/to wins over lookback_days/hours; lookback_hours is rolling;
+    else the Dubai-calendar lookback ending at the last instant of yesterday."""
+    now = datetime(2026, 8, 28, 19, 0, tzinfo=timezone.utc)
+    # explicit range
+    s, u = _sweep_window(
+        now,
+        from_date=date(2026, 8, 20),
+        to_date=date(2026, 8, 22),
+        lookback_days=99,
+        lookback_hours=99,
+    )
+    assert s.date() == date(2026, 8, 20) and u.date() == date(2026, 8, 22)
+    # rolling hours (no calendar boundary)
+    s, u = _sweep_window(
+        now, from_date=None, to_date=None, lookback_days=None, lookback_hours=6
+    )
+    assert u == now and s == now - timedelta(hours=6)
+    # calendar lookback default → yesterday
+    s, u = _sweep_window(
+        now, from_date=None, to_date=None, lookback_days=1, lookback_hours=None
+    )
+    assert s.date() == date(2026, 8, 27) and u.date() == date(2026, 8, 27)
 
 
 @pytest.fixture

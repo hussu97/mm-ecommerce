@@ -35,6 +35,7 @@ def _agg(**over):
         payment_fee=None,
         status="40",
         placed_at=None,
+        delivered_at=None,
         business_date="2026-08-27",
         mm_order_id=None,
         promoted_at=None,
@@ -51,6 +52,21 @@ class _FakeDB:
 
     async def execute(self, _stmt):
         return None
+
+
+@pytest.fixture(autouse=True)
+def _noop_pos_attach(monkeypatch):
+    """Promotion now files the order onto the register via
+    `pos_order_service.attach_promoted_aggregator_order`; the ownership/build
+    tests here don't exercise the register, so no-op it by default (a test that
+    cares overrides this with its own recorder)."""
+
+    async def _attach(db, order, *, placed_at=None, delivered_at=None):
+        return order
+
+    monkeypatch.setattr(
+        promote.pos_order_service, "attach_promoted_aggregator_order", _attach
+    )
 
 
 # ── _refresh_order backfills a customer onto an existing order ────────────────
@@ -177,6 +193,80 @@ async def test_off_platform_branch_is_created(monkeypatch):
     assert out is built
     assert agg.mm_order_id == built.id
     assert agg.promoted_at is not None
+
+
+async def test_promotion_owned_order_is_attached_to_pos(monkeypatch):
+    """A promotion-owned (off-platform) order is filed onto the register, so it
+    shows up like a GrubOps order — with the marketplace's placed/delivered
+    timestamps."""
+    built = SimpleNamespace(id=uuid.uuid4())
+    attach_calls = []
+
+    async def fake_has_grubops(db, branch_id):
+        return False
+
+    async def fake_find_conv(db, ext):
+        return None
+
+    async def fake_build(db, agg, label, *, draw_stock=True):
+        return built
+
+    async def rec_attach(db, order, *, placed_at=None, delivered_at=None):
+        attach_calls.append((order, placed_at, delivered_at))
+        return order
+
+    monkeypatch.setattr(promote.reconcile, "_branch_has_grubops", fake_has_grubops)
+    monkeypatch.setattr(promote, "_find_convergence_order", fake_find_conv)
+    monkeypatch.setattr(promote, "_build_order", fake_build)
+    monkeypatch.setattr(
+        promote.pos_order_service, "attach_promoted_aggregator_order", rec_attach
+    )
+
+    placed = datetime(2026, 8, 27, 12, 0, tzinfo=timezone.utc)
+    delivered = datetime(2026, 8, 27, 12, 40, tzinfo=timezone.utc)
+    agg = _agg(placed_at=placed, delivered_at=delivered)
+    await promote.promote_order(_FakeDB(), agg)
+    assert len(attach_calls) == 1
+    order, p, d = attach_calls[0]
+    assert order is built and p == placed and d == delivered
+
+
+async def test_grubops_owned_order_is_not_re_attached_to_pos(monkeypatch):
+    """A GrubOps-owned order (Barsha/Sharjah) is already on the register — the
+    promotion overlay must NOT attach it a second time."""
+    grubops_order = SimpleNamespace(id=uuid.uuid4())
+    attach_calls = []
+
+    async def fake_has_grubops(db, branch_id):
+        return True
+
+    async def fake_find_mm(db, channel, ext):
+        return grubops_order
+
+    async def fake_stamp(db, order, **kwargs):
+        return None
+
+    async def rec_attach(db, order, *, placed_at=None, delivered_at=None):
+        attach_calls.append(order)
+        return order
+
+    monkeypatch.setattr(promote.reconcile, "_branch_has_grubops", fake_has_grubops)
+    monkeypatch.setattr(promote.reconcile, "_find_mm_order", fake_find_mm)
+    monkeypatch.setattr(promote.order_fees, "stamp", fake_stamp)
+    monkeypatch.setattr(
+        promote.pos_order_service, "attach_promoted_aggregator_order", rec_attach
+    )
+
+    await promote.promote_order(_FakeDB(), _agg())
+    assert attach_calls == []  # never re-attached — GrubOps owns the register row
+
+
+def test_promoter_channel_label_matches_grubops_noon_food():
+    """Promoted noon orders must carry "Noon Food" (the marketplace/GrubOps name),
+    not "Noon", so they group with GrubOps noon orders everywhere."""
+    from app.models.aggregator import CHANNEL_NOON
+
+    assert promote.reconcile.CHANNEL_GRUBOPS_LABEL[CHANNEL_NOON] == "Noon Food"
 
 
 async def test_grubops_owned_order_is_never_recreated(monkeypatch):

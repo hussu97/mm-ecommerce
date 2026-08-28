@@ -50,11 +50,19 @@ logger = logging.getLogger(__name__)
 
 #: How each channel's `source_channel` is spelled on `grubops_order_map` — the
 #: clean `sourceDisplayName` GrubOps hands back, which the order ingest stores.
+# The customer-facing marketplace name stamped on the promoted MM order's
+# `aggregator_channel`. These MUST match the label GrubOps writes for the same
+# marketplace (GrubOps takes it from the order payload's `foodAggregatorName`),
+# so a promoted order and a GrubOps order are display-identical everywhere — the
+# admin order list, dashboards and the daily report all group on this string.
+# Noon's marketplace name in the payload is "Noon Food" (and the daily report's
+# column code is `noon_food`), NOT "Noon" — a mismatch here would show DSO/Karama
+# noon sales under a separate "Noon" bucket from Barsha/Sharjah's "Noon Food".
 CHANNEL_GRUBOPS_LABEL = {
     CHANNEL_CAREEM: "Careem",
     CHANNEL_DELIVEROO: "Deliveroo",
     CHANNEL_TALABAT: "Talabat",
-    CHANNEL_NOON: "Noon",
+    CHANNEL_NOON: "Noon Food",
     CHANNEL_KEETA: "Keeta 2.0",
 }
 

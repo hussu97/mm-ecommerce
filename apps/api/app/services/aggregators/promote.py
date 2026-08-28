@@ -70,6 +70,7 @@ from app.services.aggregators.modifiers import modifiers_from_json
 from app.services.catalog import external_item_map_service
 from app.services.orders import order_fees, order_lifecycle
 from app.services.orders.order_pricing import VAT_RATE
+from app.services.pos import pos_order_service
 
 logger = logging.getLogger(__name__)
 
@@ -589,6 +590,17 @@ async def promote_order(
         await db.refresh(existing, ["items"])
         await _refresh_order(db, existing, agg)
         order = existing
+
+    # File the promotion-owned order onto the register as a historical, settled
+    # POS order — so it appears in the POS screens, POS reports and the daily
+    # sales email exactly like a GrubOps-ingested order, with no distinction. This
+    # is the promotion-owned branch (DSO/Karama and any aggregator-only sale); the
+    # Barsha/Sharjah GrubOps-owned path returned above already attached the order.
+    # Idempotent (guarded on the check number) and a no-op until the order is
+    # terminal, so a still-in-progress order is filed on a later re-promote.
+    await pos_order_service.attach_promoted_aggregator_order(
+        db, order, placed_at=agg.placed_at, delivered_at=agg.delivered_at
+    )
 
     agg.mm_order_id = order.id
     agg.promoted_at = utcnow()

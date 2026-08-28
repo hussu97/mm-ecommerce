@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import func, or_, select, text
@@ -499,6 +500,87 @@ async def attach_aggregator_order(
     order.check_number = check_number
     order.opened_at = utcnow()
     order.arrives_at = utcnow()
+    return order
+
+
+#: A promoted (scraped) aggregator order is filed after the fact, so its outcome
+#: is already known — it is attached with a TERMINAL pos_status, never `pending`.
+#: Mirrors GrubOps' `_sync_pos_status` ladder (delivered→closed, cancelled→void).
+_PROMOTED_POS_STATUS: dict[str, str] = {
+    OrderStatusEnum.DELIVERED.value: PosOrderStatusEnum.CLOSED.value,
+    OrderStatusEnum.CANCELLED.value: PosOrderStatusEnum.VOID.value,
+}
+
+
+async def attach_promoted_aggregator_order(
+    db: AsyncSession,
+    order: Order,
+    *,
+    placed_at: datetime | None = None,
+    delivered_at: datetime | None = None,
+) -> Order:
+    """Put a PROMOTED (scraped) aggregator order onto the register as a HISTORICAL,
+    already-settled POS order — so it appears in the POS order screens, the POS
+    reports and the daily sales email exactly like a GrubOps-ingested order, with
+    no distinction between the two.
+
+    Unlike `attach_aggregator_order` (which files a live order into the incoming
+    queue on TODAY's business day as `pending`), a promoted order was scraped a
+    day or more after the fact and its outcome is settled. So it is attached with:
+      - its OWN marketplace business date (already on the order from the scrape),
+        not today's — the daily report keys on this;
+      - a TERMINAL pos_status (delivered→closed, cancelled→void), never `pending`,
+        so it never alarms the iPad or sits in the live queue as waiting work;
+      - `opened_at`/`closed_at` from the marketplace timeline, not `now`.
+
+    Only terminal orders are attached; a still-in-progress promoted order is left
+    off the register and picked up on a later re-promote once it settles. No-op
+    (and idempotent) once the order already carries a `check_number`.
+    """
+    if order.check_number is not None:
+        return order
+    status_val = getattr(order.status, "value", order.status)
+    pos_status = _PROMOTED_POS_STATUS.get(status_val)
+    if pos_status is None:
+        return order  # not yet terminal — attach on a later re-promote
+    if order.branch_id is None:
+        return order
+    branch = await db.get(Branch, order.branch_id)
+    if branch is None:
+        return order
+
+    settings = await _settings(db)
+    business_date = order.business_date
+    if not business_date:
+        tz = await business_day_service.resolve_timezone(db)
+        business_date = business_day_service.business_date_for(
+            branch, placed_at or utcnow(), tz
+        )
+        order.business_date = business_date
+
+    order.is_pos = True
+    order.order_type = OrderTypeEnum.DELIVERY.value
+    order.pos_status = pos_status
+    order.opened_at = placed_at or order.created_at or utcnow()
+    if pos_status == PosOrderStatusEnum.CLOSED.value:
+        order.closed_at = delivered_at or placed_at or utcnow()
+
+    # The check number is unique per (branch, business_date); two orders filed
+    # into the same trading day can read the same max, so assign under a savepoint
+    # and retry the loser on the unique-constraint violation — the same shape
+    # `create_pos_order` uses. The order row already exists (promotion flushed it),
+    # so this is an UPDATE whose flush is what the constraint checks.
+    for attempt in range(4):
+        order.check_number = await _next_check_number(
+            db, branch.id, business_date, settings.order_number_reset_daily
+        )
+        try:
+            async with db.begin_nested():
+                await db.flush()
+            break
+        except IntegrityError:
+            if attempt == 3:
+                raise
     return order
 
 
