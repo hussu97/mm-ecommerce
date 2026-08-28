@@ -451,6 +451,12 @@ async def _build_order(
         branch_id=agg.branch_id,
         business_date=agg.business_date,
         payment_method="cod",
+        # The MM order's `created_at` is the moment the order was placed on the
+        # MARKETPLACE, not the moment promotion happened to file it here — so order
+        # history and any "created" sort/report line up with the aggregator's own
+        # timeline. `placed_at` is that moment; fall back to now only if the scrape
+        # carried no timestamp.
+        created_at=agg.placed_at or utcnow(),
         **_money_fields(agg),
     )
     db.add(order)
@@ -508,6 +514,11 @@ async def _refresh_order(db: AsyncSession, order: Order, agg: AggregatorOrder) -
         order.customer_name = agg.customer_name
     if not order.customer_phone and agg.customer_phone:
         order.customer_phone = agg.customer_phone
+    # Correct the created_at of an order first filed before this rule (or one this
+    # pass converged onto) to the marketplace placed_at, so historical rows line
+    # up with the aggregator timeline too. Only when the scrape has a timestamp.
+    if agg.placed_at is not None and order.created_at != agg.placed_at:
+        order.created_at = agg.placed_at
     await db.flush()
     await order_fees.stamp(db, order, **_actual_fee_overrides(agg))
     await _drive_status(db, order, agg)

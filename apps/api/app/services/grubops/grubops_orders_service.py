@@ -445,6 +445,24 @@ def _parse_ts(value: Any) -> datetime | None:
         return None
 
 
+def _placed_at(info: dict) -> datetime | None:
+    """When the order was placed on the marketplace — the `OrderCreated` history
+    event, falling back to the earliest order-line `createdAt`. Used as the MM
+    order's `created_at` so its timeline matches the aggregator's, not our poll."""
+    for h in info.get("orderHistories") or []:
+        if h.get("status") == "OrderCreated":
+            ts = _parse_ts(h.get("timeStamp"))
+            if ts:
+                return ts
+    line_times = [
+        _parse_ts(line.get("createdAt"))
+        for line in (info.get("orderLines") or [])
+        if isinstance(line, dict)
+    ]
+    line_times = [t for t in line_times if t]
+    return min(line_times) if line_times else None
+
+
 #: The GrubOps history statuses that mean "the order ended cancelled", so the
 #: reason can be read off the event's own description when the header omits it.
 _CANCEL_STATUSES = {"OrderCanceled", "OrderRejected", "OrderFailed"}
@@ -724,6 +742,10 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
         # column's own note on why this is null rather than a guess.
         aggregator_customer_is_member=None,
         notes=_customer_note(header),
+        # `created_at` is when the order was placed on the marketplace (the
+        # OrderCreated event), not when GrubOps polling filed it here — so order
+        # history and "created" sorts line up with the aggregator timeline.
+        created_at=_placed_at(info) or utcnow(),
     )
     db.add(order)
     await db.flush()
