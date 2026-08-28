@@ -709,13 +709,35 @@ async def login_careem(
     logger.info("careem: OTP retrieved (len=%d), filling", len(otp.strip()))
     await otp_input.fill(otp.strip())
     await _careem_submit(page, otp_input)
-    await page.wait_for_timeout(6_000)
+    await page.wait_for_timeout(4_000)
+    logger.info("careem: after OTP submit, url=%s", page.url)
+
+    # Password step — Careem asks for the account password AFTER the OTP
+    # ("Enter Careem password"), so the flow is email → OTP → password.
+    if not await _careem_is_authenticated(page):
+        pwd = password or settings.CAREEM_PASSWORD or ""
+        pwd_input = page.locator("input[type='password']")
+        try:
+            await pwd_input.wait_for(state="visible", timeout=20_000)
+        except Exception:  # noqa: BLE001 — no password step on this account/build
+            await _careem_debug_shot(page, "no-password-step")
+        else:
+            if not pwd:
+                await _careem_debug_shot(page, "password-needed")
+                raise LoginError(
+                    "Careem reached the password step but no password is stored "
+                    "on the account recipe (or CAREEM_PASSWORD)."
+                )
+            await pwd_input.fill(pwd)
+            await _careem_submit(page, pwd_input)
+            await page.wait_for_timeout(6_000)
+
     logger.info(
-        "careem: after OTP submit, url=%s authed=%s",
+        "careem: login done, url=%s authed=%s",
         page.url,
         await _careem_is_authenticated(page),
     )
-    await _careem_debug_shot(page, "after-otp")
+    await _careem_debug_shot(page, "final")
     return page
 
 
