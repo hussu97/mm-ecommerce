@@ -1,10 +1,13 @@
 """The daily sales email: one spreadsheet, every branch, every channel.
 
 A branch owner does not open the manager app each morning; a mail with the
-numbers already in it is read. This builds that mail — a single `.xlsx` whose
-five stacked blocks (Sales Revenue, Order Count, Sales Discount, Charges, Net
-Revenue) each carry one row per branch and one column per channel — and sends it
-after the last branch has closed for the day.
+numbers already in it is read. This builds that mail — an `.xlsx` with five tabs,
+all for the one frozen trading day: a **Summary** matrix whose five stacked
+blocks (Sales Revenue, Order Count, Sales Discount, Charges, Net Revenue) each
+carry one row per branch and one column per channel, plus per-row/column/grand
+totals; and a tab each of the records behind it — **Orders** (order level),
+**Statements** and **Statement Lines** (the marketplace settlement detail) and
+**Payouts** — and sends it after the last branch has closed for the day.
 
 Money basis, decided with the owner: **what the customer paid, VAT included.**
 Sales Revenue is the order total; Net Revenue is that less our costs and any
@@ -36,6 +39,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import advisory_lock, trading_hours
 from app.core.database import AsyncSessionFactory
+from app.models.aggregator import (
+    AggregatorPayout,
+    AggregatorStatement,
+    AggregatorStatementLine,
+)
 from app.models.branch import Branch
 from app.models.email_log import EmailLog
 from app.models.order import Order, OrderStatusEnum
@@ -259,52 +267,351 @@ async def build(
     )
 
 
+@dataclass
+class ReportDetail:
+    """The per-record backing sheets, all scoped to the same frozen business date
+    range as the summary matrix: one row per order, per statement, per statement
+    line, per payout."""
+
+    orders: list = field(default_factory=list)
+    statements: list = field(default_factory=list)
+    statement_lines: list = field(default_factory=list)
+    payouts: list = field(default_factory=list)
+
+
+async def build_detail(
+    db: AsyncSession, *, date_from: str, date_to: str, branch_id=None
+) -> ReportDetail:
+    """Fetch the order/statement/line/payout rows for the detail sheets.
+
+    Orders are the same delivered-trade set the summary counts, keyed on the
+    frozen business date. Finance rows (statement lines, payouts) are the events
+    DATED to that range — a line whose `line_date` or a payout whose
+    `transfer_date` falls in it — and the statements those lines roll up to, so
+    the finance tabs show what settled on the day rather than the whole ledger.
+    """
+    courier_cost = func.coalesce(OrderDelivery.cost_total, OrderDelivery.quoted_cost)
+    order_stmt = (
+        select(
+            Order.business_date,
+            Order.order_number,
+            Branch.name,
+            Order.source,
+            Order.aggregator_channel,
+            Order.status,
+            Order.pos_status,
+            Order.customer_name,
+            Order.total,
+            Order.vat_amount,
+            func.coalesce(Order.aggregator_fee, 0),
+            func.coalesce(Order.payment_fee, 0),
+            func.coalesce(courier_cost, 0),
+            func.coalesce(Order.refunded_amount, 0),
+        )
+        .select_from(Order)
+        .outerjoin(OrderDelivery, OrderDelivery.order_id == Order.id)
+        .outerjoin(Branch, Branch.id == Order.branch_id)
+        .where(Order.is_pos.is_(True))
+        .where(Order.business_date >= date_from, Order.business_date <= date_to)
+        .where(_DELIVERED)
+        .order_by(Order.business_date, Branch.name, Order.aggregator_channel)
+    )
+    if branch_id is not None:
+        order_stmt = order_stmt.where(Order.branch_id == branch_id)
+    orders = (await db.execute(order_stmt)).all()
+
+    line_stmt = (
+        select(AggregatorStatementLine)
+        .where(
+            AggregatorStatementLine.line_date >= date_from,
+            AggregatorStatementLine.line_date <= date_to,
+        )
+        .order_by(
+            AggregatorStatementLine.channel,
+            AggregatorStatementLine.line_date,
+            AggregatorStatementLine.statement_id,
+        )
+    )
+    lines = (await db.execute(line_stmt)).scalars().all()
+
+    # The statements those in-range lines belong to, plus any statement whose own
+    # period falls in the range (a summary-grain statement with no per-day line).
+    stmt_ids = {ln.statement_id for ln in lines if ln.statement_id}
+    stmt_stmt = (
+        select(AggregatorStatement)
+        .where(
+            or_(
+                AggregatorStatement.statement_id.in_(stmt_ids) if stmt_ids else False,
+                and_(
+                    AggregatorStatement.period_start <= date_to,
+                    AggregatorStatement.period_end >= date_from,
+                ),
+            )
+        )
+        .order_by(AggregatorStatement.channel, AggregatorStatement.period_start)
+    )
+    statements = (await db.execute(stmt_stmt)).scalars().all()
+
+    payout_stmt = (
+        select(AggregatorPayout)
+        .where(
+            AggregatorPayout.transfer_date >= date_from,
+            AggregatorPayout.transfer_date <= date_to,
+        )
+        .order_by(AggregatorPayout.channel, AggregatorPayout.transfer_date)
+    )
+    payouts = (await db.execute(payout_stmt)).scalars().all()
+
+    return ReportDetail(
+        orders=orders,
+        statements=statements,
+        statement_lines=lines,
+        payouts=payouts,
+    )
+
+
 def _num(value: Decimal | int) -> float | int:
     if isinstance(value, int):
         return value
     return float(round(value, 2))
 
 
-def to_xlsx(report: DailySalesReport) -> bytes:
-    """Render the report to a single-sheet workbook, sections stacked."""
-    from openpyxl import Workbook
-    from openpyxl.styles import Font
+def _dec(value) -> float:
+    return float(round(value or _ZERO, 2))
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Daily Sales"
-    bold = Font(bold=True)
 
+def _write_sheet(ws, headers: list[str], rows: list[list], bold) -> None:
+    """A simple header + rows sheet, header bold, columns auto-ish widened."""
+    for ci, text in enumerate(headers, start=1):
+        ws.cell(row=1, column=ci, value=text).font = bold
+    for ri, row in enumerate(rows, start=2):
+        for ci, value in enumerate(row, start=1):
+            ws.cell(row=ri, column=ci, value=value)
+    for ci, text in enumerate(headers, start=1):
+        width = max(
+            10,
+            min(
+                40,
+                max(
+                    [len(str(text))]
+                    + [len(str(r[ci - 1])) if ci - 1 < len(r) else 0 for r in rows]
+                )
+                + 2,
+            ),
+        )
+        ws.column_dimensions[ws.cell(row=1, column=ci).column_letter].width = width
+
+
+def _summary_sheet(ws, report: DailySalesReport, bold) -> None:
+    """The branch×channel matrix, five stacked sections, each with a Total column
+    (row sum) and a Totals row (column sum) — the summations the summary owes."""
     r = 1
     for title, metric in _SECTIONS:
         ws.cell(row=r, column=1, value=title).font = bold
         r += 1
-        header = ["date", "branch"] + [_label(c) for c in report.columns]
+        header = ["date", "branch"] + [_label(c) for c in report.columns] + ["TOTAL"]
         for ci, text in enumerate(header, start=1):
             ws.cell(row=r, column=ci, value=text).font = bold
         r += 1
+        col_totals = [0.0 for _ in report.columns]
+        grand = 0.0
         for row in report.rows:
             ws.cell(row=r, column=1, value=row.business_date)
             ws.cell(row=r, column=2, value=row.branch_name)
-            for ci, col in enumerate(report.columns, start=3):
-                ws.cell(row=r, column=ci, value=_num(metric(row.cells[col])))
+            row_total = 0.0
+            for ci, col in enumerate(report.columns):
+                v = _num(metric(row.cells[col]))
+                ws.cell(row=r, column=3 + ci, value=v)
+                col_totals[ci] += float(v)
+                row_total += float(v)
+            ws.cell(row=r, column=3 + len(report.columns), value=round(row_total, 2))
+            grand += row_total
             r += 1
-        r += 1  # a blank row between blocks, as in the owner's layout
+        # Totals row.
+        ws.cell(row=r, column=2, value="TOTAL").font = bold
+        for ci, tv in enumerate(col_totals):
+            ws.cell(row=r, column=3 + ci, value=round(tv, 2)).font = bold
+        ws.cell(
+            row=r, column=3 + len(report.columns), value=round(grand, 2)
+        ).font = bold
+        r += 2  # blank row between blocks
 
     ws.column_dimensions["A"].width = 12
     ws.column_dimensions["B"].width = 16
+
+
+def to_xlsx(report: DailySalesReport, detail: ReportDetail | None = None) -> bytes:
+    """Render the report to a multi-sheet workbook.
+
+    Summary (the branch×channel matrix with per-row/column/grand totals), then a
+    tab each of the underlying records for the same frozen date range: Orders,
+    Statements, Statement Lines, Payouts. `detail=None` renders Summary only (the
+    old single-report call), so existing callers keep working."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    wb = Workbook()
+    bold = Font(bold=True)
+
+    summary = wb.active
+    summary.title = "Summary"
+    _summary_sheet(summary, report, bold)
+
+    if detail is not None:
+        _write_sheet(
+            wb.create_sheet("Orders"),
+            [
+                "date",
+                "order #",
+                "branch",
+                "channel",
+                "status",
+                "customer",
+                "total",
+                "vat",
+                "commission",
+                "payment fee",
+                "courier cost",
+                "refund",
+                "net",
+            ],
+            [
+                # positional: 0 date,1 order#,2 branch,3 source,4 channel,5 status,
+                # 6 pos_status,7 customer,8 total,9 vat,10 commission,11 payfee,
+                # 12 courier,13 refund
+                [
+                    o[0],
+                    o[1],
+                    o[2] or "",
+                    _order_channel_label(o[3], o[4]),
+                    (o[5] or o[6] or ""),
+                    o[7] or "",
+                    _dec(o[8]),
+                    _dec(o[9]),
+                    _dec(o[10]),
+                    _dec(o[11]),
+                    _dec(o[12]),
+                    _dec(o[13]),
+                    _dec(
+                        (o[8] or _ZERO)
+                        - (o[10] or _ZERO)
+                        - (o[11] or _ZERO)
+                        - (o[12] or _ZERO)
+                        - (o[13] or _ZERO)
+                    ),
+                ]
+                for o in detail.orders
+            ],
+            bold,
+        )
+        _write_sheet(
+            wb.create_sheet("Statements"),
+            [
+                "channel",
+                "statement id",
+                "period start",
+                "period end",
+                "gross sales",
+                "total fees",
+                "total vat",
+                "net payable",
+                "payout id",
+                "invoice",
+            ],
+            [
+                [
+                    s.channel,
+                    s.statement_id,
+                    s.period_start,
+                    s.period_end,
+                    _dec(s.gross_sales),
+                    _dec(s.total_fees),
+                    _dec(s.total_vat),
+                    _dec(s.net_payable),
+                    s.payout_transfer_id or "",
+                    "yes" if s.invoice_object_key else "",
+                ]
+                for s in detail.statements
+            ],
+            bold,
+        )
+        _write_sheet(
+            wb.create_sheet("Statement Lines"),
+            [
+                "channel",
+                "statement id",
+                "order id",
+                "date",
+                "type",
+                "fee category",
+                "description",
+                "amount",
+            ],
+            [
+                [
+                    ln.channel,
+                    ln.statement_id,
+                    ln.external_order_id or "",
+                    ln.line_date,
+                    ln.line_type or "",
+                    ln.fee_category or "",
+                    ln.description or "",
+                    _dec(ln.amount),
+                ]
+                for ln in detail.statement_lines
+            ],
+            bold,
+        )
+        _write_sheet(
+            wb.create_sheet("Payouts"),
+            [
+                "channel",
+                "transfer id",
+                "date",
+                "amount",
+                "status",
+                "statement id",
+                "reference",
+            ],
+            [
+                [
+                    p.channel,
+                    p.transfer_id,
+                    p.transfer_date,
+                    _dec(p.transfer_amount),
+                    p.transfer_status or "",
+                    p.statement_id or "",
+                    p.payment_reference or "",
+                ]
+                for p in detail.payouts
+            ],
+            bold,
+        )
 
     buffer = BytesIO()
     wb.save(buffer)
     return buffer.getvalue()
 
 
-def _body_html(label: str, row_count: int) -> str:
+def _order_channel_label(source: str | None, aggregator_channel: str | None) -> str:
+    if source == "aggregator":
+        return aggregator_channel or "aggregator"
+    if source == "online":
+        return "website"
+    if source == "cashier":
+        return "counter"
+    return source or ""
+
+
+def _body_html(label: str, detail: ReportDetail) -> str:
     return (
         f"<p>Daily sales for <strong>{label}</strong> is attached as a "
-        f"spreadsheet.</p><p>{row_count} branch-day rows across five sections: "
-        f"Sales Revenue, Order Count, Sales Discount, Charges, and Net Revenue. "
-        f"Delivered trade only.</p>"
+        f"spreadsheet.</p><p>Five tabs, all for this trading day: <strong>Summary"
+        f"</strong> (branch×channel matrix with totals), <strong>Orders</strong> "
+        f"({len(detail.orders)}), <strong>Statements</strong> "
+        f"({len(detail.statements)}), <strong>Statement Lines</strong> "
+        f"({len(detail.statement_lines)}) and <strong>Payouts</strong> "
+        f"({len(detail.payouts)}). Delivered trade only.</p>"
     )
 
 
@@ -313,13 +620,14 @@ async def send(
 ) -> dict:
     """Build the report and mail it, once per recipient, journalled."""
     report = await build(db, date_from=date_from, date_to=date_to)
-    xlsx = to_xlsx(report)
+    detail = await build_detail(db, date_from=date_from, date_to=date_to)
+    xlsx = to_xlsx(report, detail)
 
     single = date_from == date_to
     label = date_from if single else f"{date_from} to {date_to}"
     subject = f"Melting Moments — Daily sales {label}"
     filename = f"daily-sales-{date_from}{'' if single else '_' + date_to}.xlsx"
-    html = _body_html(label, len(report.rows))
+    html = _body_html(label, detail)
 
     outcomes = []
     for recipient in recipients:

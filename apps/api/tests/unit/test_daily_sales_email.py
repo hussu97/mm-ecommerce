@@ -206,6 +206,105 @@ async def test_xlsx_has_the_five_sections_with_discount_and_charges_negative():
     assert shj_charges[header.index("talabat")] == -900.0  # 800 + 100, negative
 
 
+async def test_summary_sheet_carries_row_column_and_grand_totals():
+    import io
+
+    rows = [
+        _row(_SHJ, "aggregator", "Talabat", 2, "100", "0", "10", "0", "0", "0"),
+        _row(_SHJ, "online", None, 1, "50", "0", "0", "0", "5", "0"),
+    ]
+    report = await dse.build(
+        _stub_db(rows), date_from="2026-08-24", date_to="2026-08-24"
+    )
+    wb = load_workbook(io.BytesIO(dse.to_xlsx(report)))
+    values = list(wb["Summary"].iter_rows(values_only=True))
+    rev_idx = next(i for i, r in enumerate(values) if r[0] == "Sales Revenue")
+    header = values[rev_idx + 1]
+    assert header[-1] == "TOTAL"  # a total column was added
+    shj = next(r for r in values[rev_idx:] if r[1] == "Sharjah Kitchen")
+    assert shj[-1] == 150.0  # row total across channels (100 talabat + 50 website)
+    totals = next(r for r in values[rev_idx:] if r[1] == "TOTAL")
+    assert totals[-1] == 150.0  # grand total
+
+
+async def test_xlsx_has_the_four_detail_tabs_scoped_to_the_date():
+    import io
+
+    report = await dse.build(_stub_db([]), date_from="2026-08-27", date_to="2026-08-27")
+    detail = dse.ReportDetail(
+        orders=[
+            # positional row, as build_detail's SELECT returns
+            (
+                "2026-08-27",
+                "AGG-1",
+                "DSO",
+                "aggregator",
+                "Talabat",
+                "delivered",
+                "closed",
+                "Ali",
+                D("50"),
+                D("2.4"),
+                D("5"),
+                D("1"),
+                D("0"),
+                D("0"),
+            ),
+        ],
+        statements=[
+            SimpleNamespace(
+                channel="noon",
+                statement_id="S1",
+                period_start="2026-08-27",
+                period_end="2026-08-27",
+                gross_sales=D("100"),
+                total_fees=D("10"),
+                total_vat=D("5"),
+                net_payable=D("85"),
+                payout_transfer_id="P1",
+                invoice_object_key="k",
+            )
+        ],
+        statement_lines=[
+            SimpleNamespace(
+                channel="noon",
+                statement_id="S1",
+                external_order_id="E1",
+                line_date="2026-08-27",
+                line_type="sale",
+                fee_category="commission",
+                description="x",
+                amount=D("10"),
+            )
+        ],
+        payouts=[
+            SimpleNamespace(
+                channel="noon",
+                transfer_id="P1",
+                transfer_date="2026-08-27",
+                transfer_amount=D("85"),
+                transfer_status="paid",
+                statement_id="S1",
+                payment_reference="ref",
+            )
+        ],
+    )
+    wb = load_workbook(io.BytesIO(dse.to_xlsx(report, detail)))
+    assert wb.sheetnames == [
+        "Summary",
+        "Orders",
+        "Statements",
+        "Statement Lines",
+        "Payouts",
+    ]
+    assert wb["Orders"].cell(row=2, column=2).value == "AGG-1"
+    assert wb["Orders"].cell(row=2, column=4).value == "Talabat"  # channel label
+    assert wb["Orders"].cell(row=2, column=13).value == 44.0  # net = 50-5-1
+    assert wb["Statements"].cell(row=2, column=2).value == "S1"
+    assert wb["Statement Lines"].cell(row=2, column=8).value == 10.0
+    assert wb["Payouts"].cell(row=2, column=4).value == 85.0
+
+
 # ── Scheduling: a day sends once the last branch's close + buffer has passed ──
 
 _DUBAI = ZoneInfo("Asia/Dubai")
