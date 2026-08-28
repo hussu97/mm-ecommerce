@@ -306,7 +306,12 @@ async def _outlet_ids_from_map(db: AsyncSession) -> list[str]:
 
 class DeliverooClient(BaseAggregatorClient):
     channel = CHANNEL_DELIVEROO
-    uses_tls_impersonation = False
+    # Partner Hub is Cloudflare-fronted. The JSON API tolerates plain httpx, but
+    # the invoice FILE download (`/invoices/{id}/download`) answers httpx with a
+    # Cloudflare 403 HTML interstitial — verified live: the identical request via
+    # curl_cffi impersonating Chrome + the session's cf_clearance cookie returns
+    # the real CSV/PDF (200). So impersonate, which the whole provider then uses.
+    uses_tls_impersonation = True
 
     def build_headers(
         self, session: LoadedSession, extra: dict[str, str] | None = None
@@ -852,7 +857,9 @@ class DeliverooClient(BaseAggregatorClient):
         sweep still records the statement summary. Never raises: an archive
         failure must not fail the sweep.
         """
-        pdf_bytes = await self._invoice_file(session, statement_id, "statement_pdf")
+        # `pdf` / `invoice_pdf` are the real file_types (the invoice's own
+        # download_links use them); `statement_pdf` 500s "failed to get download url".
+        pdf_bytes = await self._invoice_file(session, statement_id, "pdf")
         if pdf_bytes is None:
             pdf_bytes = await self._invoice_file(session, statement_id, "invoice_pdf")
         try:
@@ -993,7 +1000,9 @@ class DeliverooClient(BaseAggregatorClient):
             "GET",
             f"{_API}/invoices/{invoice_id}/download",
             params={
-                "file_type": "statement_csv",
+                # `csv`, not `statement_csv` — the real file_type the invoice's own
+                # download_links use ("failed to get download url" otherwise).
+                "file_type": "csv",
                 "invoice_origin": "restaurant-payments",
             },
         )
