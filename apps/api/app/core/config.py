@@ -420,10 +420,13 @@ class Settings(BaseSettings):
     #: process was down is caught up on next boot. 23:00 keeps the pull after the
     #: trading day has closed and off the marketplaces' busy hours.
     AGGREGATOR_RUN_HOUR_DXB: int = 23
-    #: The single lookback window for the whole daily pass — sales, finance AND
-    #: promotion all use it, so there is one consistent notion of "recent" and no
-    #: gap between what is mirrored and what becomes a real MM order. Kept at 1 day
-    #: for now (writes are idempotent, so re-pulling is free); widen it as we scale.
+    #: The daily pass's window, in whole Dubai calendar days ending at the start of
+    #: today — so 1 means "yesterday's date" exactly (sales, statements and
+    #: payments for yesterday), and consecutive days tile with no gap or overlap.
+    #: The finance discovery widens this per marketplace where settlement is not
+    #: daily (see AGGREGATOR_NOON_PUBLICATION_LOOKBACK_DAYS), and promotion reaches
+    #: back further still (AGGREGATOR_PROMOTE_LOOKBACK_DAYS) to link late statements
+    #: to the orders they settle. Writes are idempotent, so widen this freely.
     AGGREGATOR_LOOKBACK_DAYS: int = 1
     #: How far back promotion (and the mm-order / statement-line linkage it fills)
     #: reaches, SEPARATE from the sales lookback. Settlement statements post days

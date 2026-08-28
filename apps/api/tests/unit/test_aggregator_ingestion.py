@@ -9,6 +9,7 @@ write path.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -16,10 +17,36 @@ import pytest
 from cryptography.fernet import Fernet
 
 from app.services.aggregators import crypto
+from app.services.aggregators.ingest import _start_of_today_dubai
 from app.services.aggregators.normalized import GRAIN_LINE
 from app.services.aggregators.reconcile import _item_discrepancy
 from app.services.aggregators.session_store import LoadedSession
 from app.services.providers.careem_provider import CareemClient
+
+# ── daily window is calendar-aligned to "yesterday" (Dubai) ───────────────────
+
+
+def test_start_of_today_dubai_is_local_midnight_as_utc():
+    """Dubai is UTC+4, so 00:00 Dubai is 20:00 UTC the previous day."""
+    now = datetime(2026, 8, 28, 19, 0, tzinfo=timezone.utc)  # 23:00 Dubai on the 28th
+    assert _start_of_today_dubai(now) == datetime(
+        2026, 8, 27, 20, 0, tzinfo=timezone.utc
+    )
+
+
+def test_one_day_lookback_is_exactly_yesterdays_date():
+    """[until - 1 day, until) with until = start-of-today spans all of yesterday."""
+    now = datetime(2026, 8, 28, 19, 0, tzinfo=timezone.utc)
+    until = _start_of_today_dubai(now)
+    since = until - timedelta(days=1)
+    # The window is the whole Dubai calendar day of the 27th and nothing of the 28th.
+    assert since == datetime(
+        2026, 8, 26, 20, 0, tzinfo=timezone.utc
+    )  # 00:00 Dubai 27th
+    assert until == datetime(
+        2026, 8, 27, 20, 0, tzinfo=timezone.utc
+    )  # 00:00 Dubai 28th
+    assert (until - since) == timedelta(days=1)
 
 
 @pytest.fixture
@@ -47,7 +74,6 @@ def test_crypto_passes_none_through(encryption_key):
 
 
 # ── daily scheduler (wall-clock, catch-up, retry) ────────────────────────────
-from datetime import datetime, timedelta, timezone  # noqa: E402
 from zoneinfo import ZoneInfo  # noqa: E402
 
 from app.services.aggregators import ingest  # noqa: E402

@@ -645,18 +645,27 @@ async def _sweep_channel(
     now = utcnow()
     written = 0
     truncation: str | None = None
-    # The default window is the shared daily lookback; an adhoc sweep can widen it
-    # (e.g. a first-time channel backfill) via lookback_days / lookback_hours.
+    # The window is calendar-aligned to Dubai days: it ends at the start of TODAY,
+    # so the default 1-day lookback is exactly YESTERDAY's date (not a rolling 24h
+    # straddling two dates). The daily pass therefore pulls "yesterday's sales,
+    # statements and payments" cleanly, and consecutive days tile with no gap or
+    # overlap. An adhoc `lookback_hours` sweep stays rolling-from-now (it is used
+    # for sub-day catch-up, where a calendar boundary makes no sense).
     if lookback_hours is not None:
         since = now - timedelta(hours=lookback_hours)
-    elif lookback_days is not None:
-        since = now - timedelta(days=lookback_days)
+        until = now
     else:
-        since = now - timedelta(days=settings.AGGREGATOR_LOOKBACK_DAYS)
+        until = _start_of_today_dubai(now)
+        days = (
+            lookback_days
+            if lookback_days is not None
+            else settings.AGGREGATOR_LOOKBACK_DAYS
+        )
+        since = until - timedelta(days=days)
     try:
         if mode == RUN_MODE_SALES:
             result: SalesResult = await provider.fetch_sales(
-                session, since=since, until=now
+                session, since=since, until=until
             )
             for order in result.orders:
                 # One malformed order must not abort the whole channel's sweep and
@@ -674,7 +683,7 @@ async def _sweep_channel(
             truncation = result.truncation_note
         else:
             finance: FinanceResult = await provider.fetch_finance(
-                session, since=since, until=now
+                session, since=since, until=until
             )
             for statement in finance.statements:
                 await _upsert_statement(db, channel, statement)
@@ -705,7 +714,7 @@ async def _sweep_channel(
 
     run.status = RUN_COMPLETED
     run.finished_at = utcnow()
-    run.stats = {"written": written, "from": since.isoformat(), "to": now.isoformat()}
+    run.stats = {"written": written, "from": since.isoformat(), "to": until.isoformat()}
     if truncation:
         run.stats["truncation"] = truncation
         logger.info("aggregator %s %s truncated: %s", channel, mode, truncation)
@@ -859,6 +868,20 @@ async def run_daily_once() -> tuple[int, int]:
     if reconciled:
         logger.info("aggregator reconciliation wrote %s row(s)", reconciled)
     return sales, finance
+
+
+def _start_of_today_dubai(now: datetime) -> datetime:
+    """Midnight (00:00 Asia/Dubai) at the start of today, as an aware UTC datetime.
+
+    The exclusive upper bound of the daily window. Anchoring the window's end to a
+    calendar day boundary — rather than to `now` — is what makes a 1-day lookback
+    mean "yesterday's date" exactly, so the daily pass mirrors whole days and two
+    consecutive runs never double-count or skip the seam between them.
+    """
+    local_midnight = now.astimezone(_DUBAI).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return local_midnight.astimezone(timezone.utc)
 
 
 def _run_hour_local(now: datetime) -> datetime:
